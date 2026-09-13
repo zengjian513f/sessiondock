@@ -1,4 +1,4 @@
-const CACHE_PREFIX = 'agenthub-shell-';
+const CACHE_PREFIX = 'sessiondock-shell-';
 const CACHE_NAME = `${CACHE_PREFIX}v1`;
 const APP_SHELL = [
   new URL('./', self.location.href).href,
@@ -51,7 +51,7 @@ self.addEventListener('fetch', event => {
         const shell = await caches.match(new URL('./', self.registration.scope).href);
         if (shell) return shell;
       }
-      return new Response('AgentHub 当前离线，请恢复网络后重试。', {
+      return new Response('SessionDock 当前离线，请恢复网络后重试。', {
         status: 503,
         headers: { 'Content-Type': 'text/plain; charset=utf-8' },
       });

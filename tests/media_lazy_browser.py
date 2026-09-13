@@ -63,7 +63,7 @@ def main():
                 if args.synthetic_descriptors:
                     def capability_script(route):
                         response=route.fetch()
-                        script=response.text()+"\n globalThis.AgentHubCapabilities=Object.freeze({...AgentHubCapabilities,config:Object.freeze({...AgentHubCapabilities.config,media_lazy:true})});"
+                        script=response.text()+"\n globalThis.SessionDockCapabilities=Object.freeze({...SessionDockCapabilities,config:Object.freeze({...SessionDockCapabilities.config,media_lazy:true})});"
                         route.fulfill(response=response,body=script)
                     def metadata(route):
                         data=route.fetch().json();data["capabilities"]["media_lazy"]=True
@@ -104,7 +104,7 @@ def main():
                     assert page.locator(".media-load-error").count()==0
                     print("REPRO: token GET503; rendered img complete=true naturalWidth=0; no visible HTTP reason or retry control")
                     return
-                assert page.evaluate("AgentHubCapabilities.config.media_lazy===true"),"real backend must declare media_lazy"
+                assert page.evaluate("SessionDockCapabilities.config.media_lazy===true"),"real backend must declare media_lazy"
                 assert page.evaluate("cache.get(viewKey(S.sel,S.agent)).msgs.flatMap(m=>m.media||[]).every(m=>m.lazy===true&&!('mime' in m)&&!('width' in m)&&!('height' in m))")
                 expect(page.locator(".media-load-error")).to_contain_text("HTTP 503")
                 expect(page.locator(".media-load-error")).to_contain_text("Synthetic media failure 503")

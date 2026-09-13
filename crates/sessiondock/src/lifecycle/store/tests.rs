@@ -64,7 +64,7 @@ fn intent_and_start_are_durable_before_authority_and_replay_does_not_authorize()
     assert_eq!(created.record.state(), State::Prepared);
     assert!(model::nonce(created.record.launch_id()));
     assert!(model::nonce(created.record.instance_id()));
-    assert!(created.record.host_name().starts_with("agenthub-"));
+    assert!(created.record.host_name().starts_with("sessiondock-"));
     let before = f.bytes();
     let replay = store.create("request-one", &spec).unwrap();
     assert!(replay.record == created.record);

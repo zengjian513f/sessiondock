@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # run_validation: skip
 """Operator tool: compare GET /api/search latency and result uids of two
-running services (SessionDock vs Python agenthub). Read-only GET only
+running services (SessionDock vs Python sessiondock). Read-only GET only
 (urllib ProxyHandler({}), no proxy). Not part of the validation sweep.
 Never writes files.
 """
@@ -19,7 +19,7 @@ TIMEOUT = 120
 DEFAULTS = (
     ("ddp_guard", {}),
     ("guard", {"word": "1"}),
-    ("agenthub.*rust", {"regex": "1"}),
+    ("sessiondock.*rust", {"regex": "1"}),
     ("zzqqxx_no_such_token", {}),
 )
 

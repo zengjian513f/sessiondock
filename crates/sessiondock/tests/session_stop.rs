@@ -29,7 +29,7 @@ const OTHER_CODEX_SID: &str = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
 const CLAUDE_SID: &str = "2c9d8e7f-6a5b-4c4d-9e3f-2a1b0c9d8e7f";
 /// Exits on EOF like an idle CLI prompt: Ctrl-D ends the `read` loop.
 const FAKE_EOF_EXITS: &str = r#"#!/bin/sh
-printf 'FAKE_%s_ARGV' "$AGENTHUB_TEST_LABEL"
+printf 'FAKE_%s_ARGV' "$SESSIONDOCK_TEST_LABEL"
 for arg in "$@"; do printf ' [%s]' "$arg"; done
 printf '\n'
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; *) printf "RS_UNKNOWN\n" ;; esac; done'
@@ -37,7 +37,7 @@ exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\n"; while IFS= r
 /// Ignores EOF (a CLI that does not react to Ctrl-D): every EOF simply loops
 /// back into a blocking read. Only the host's SIGHUP ends it.
 const FAKE_EOF_IGNORED: &str = r#"#!/bin/sh
-printf 'FAKE_%s_ARGV' "$AGENTHUB_TEST_LABEL"
+printf 'FAKE_%s_ARGV' "$SESSIONDOCK_TEST_LABEL"
 for arg in "$@"; do printf ' [%s]' "$arg"; done
 printf '\n'
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\n"; while :; do IFS= read -r line || continue; case "$line" in quit) exit 0 ;; *) printf "RS_UNKNOWN\n" ;; esac; done'
@@ -136,7 +136,7 @@ impl Fixture {
         ] {
             directory(path);
         }
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         file(&bin.join("fake-codex"), FAKE_EOF_EXITS.as_bytes(), 0o700);
         file(&bin.join("fake-claude"), FAKE_EOF_IGNORED.as_bytes(), 0o700);
         let codex_uid = sha1_uid("codex", &codex_rollout(&codex_root, CODEX_SID, &work));
@@ -174,11 +174,11 @@ impl Fixture {
         "profiles":[
             {"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
              "args":[],"new_args":[],"resume_args":["resume","{sid}"],
-             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","AGENTHUB_TEST_LABEL":"CODEX"},
+             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","SESSIONDOCK_TEST_LABEL":"CODEX"},
              },
             {"id":"claude-cli-v1","source":"claude","executable":bin.join("fake-claude"),
              "args":[],"new_args":["--session-id","{session_id}"],"resume_args":["--resume","{sid}"],
-             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","AGENTHUB_TEST_LABEL":"CLAUDE"},
+             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","SESSIONDOCK_TEST_LABEL":"CLAUDE"},
              }
         ]});
         file(&launcher, config.to_string().as_bytes(), 0o600);

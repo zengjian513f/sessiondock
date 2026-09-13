@@ -8,9 +8,9 @@ from route_ledger import LEGACY, ROOT, ROUTER, UID_EXPR, api_path, loose_match, 
 
 STATE, LIB = ROOT / "crates/sessiondock/src/state.rs", ROOT / "crates/sessiondock/src/lib.rs"
 FUNC_RE = re.compile(r"^\s*(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(")
-ALLOWS_RE = re.compile(r"AgentHubCapabilities\.allows\(\s*['\"]([A-Za-z_]\w*)['\"]\s*\)")
-CFG_TRUE_RE = re.compile(r"AgentHubCapabilities\.config\.([A-Za-z_]\w*)\s*===\s*true")
-BACKEND_RE = re.compile(r"AgentHubCapabilities\.config\.backend\s*(?:===|!==|==|!=)\s*['\"]rust['\"]")
+ALLOWS_RE = re.compile(r"SessionDockCapabilities\.allows\(\s*['\"]([A-Za-z_]\w*)['\"]\s*\)")
+CFG_TRUE_RE = re.compile(r"SessionDockCapabilities\.config\.([A-Za-z_]\w*)\s*===\s*true")
+BACKEND_RE = re.compile(r"SessionDockCapabilities\.config\.backend\s*(?:===|!==|==|!=)\s*['\"]rust['\"]")
 HELPER_DEF_RE = re.compile(r"function\s+(\w+Enabled)\s*\(")
 CAP_BODY_RE = re.compile(r"pub fn capabilities\(\) -> Value \{(.+?)^\}", re.M | re.S)
 ASSIGN_RE = re.compile(r'capabilities\["([a-z_]+)"\]\s*=')

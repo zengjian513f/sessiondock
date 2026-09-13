@@ -721,7 +721,7 @@ async fn composer_raw_attachments_use_native_cwd_and_keep_json_files_as_bytes() 
         .await;
         assert_eq!(response.status(), StatusCode::OK);
         let result = value(response).await;
-        let relative = Path::new("agenthub_attachments").join("1").join(name);
+        let relative = Path::new("sessiondock_attachments").join("1").join(name);
         assert_eq!(result["relative_path"], relative.to_str().unwrap());
         assert_eq!(
             result["path_style"],
@@ -819,7 +819,7 @@ async fn composer_raw_attachments_reject_invalid_scope_path_size_and_disabled_wr
     .await;
     assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     assert_eq!(snapshot(&fixture.files), before);
-    assert!(!fixture.files.join("agenthub_attachments").exists());
+    assert!(!fixture.files.join("sessiondock_attachments").exists());
     let response = request(
         &app,
         "POST",

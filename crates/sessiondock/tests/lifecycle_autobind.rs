@@ -31,9 +31,9 @@ use tower::ServiceExt;
 const HELD_SID: &str = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 const DECOY_SID: &str = "1b2c3d4e-5f6a-4b7c-8d8e-9f0a1b2c3d4e";
 /// Re-exec under argv0 `codex`; fd 3 holds the rollout named by the profile
-/// environment (`AGENTHUB_TEST_*` keys pass the launcher allowlist).
+/// environment (`SESSIONDOCK_TEST_*` keys pass the launcher allowlist).
 const FAKE_CODEX: &str = r#"#!/bin/bash
-exec -a codex /bin/bash -c 'exec 3<>"$AGENTHUB_TEST_ROLLOUT"; printf "RS_SHELL_READY\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; esac; done'
+exec -a codex /bin/bash -c 'exec 3<>"$SESSIONDOCK_TEST_ROLLOUT"; printf "RS_SHELL_READY\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; esac; done'
 "#;
 
 fn directory(path: &Path) {
@@ -125,7 +125,7 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
     }
     file(
         &web.join("index.html"),
-        b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",
+        b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",
         0o600,
     );
     file(&bin.join("fake-codex"), FAKE_CODEX.as_bytes(), 0o700);
@@ -141,7 +141,7 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
     "adapters":[],
     "profiles":[{"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
         "args":[],"new_args":[],"resume_args":["resume","{sid}"],
-        "env":{"PATH":"/usr/bin:/bin","HOME":root.join("home"),"AGENTHUB_TEST_ROLLOUT":held},
+        "env":{"PATH":"/usr/bin:/bin","HOME":root.join("home"),"SESSIONDOCK_TEST_ROLLOUT":held},
         }]});
     file(&launcher, config.to_string().as_bytes(), 0o600);
     drop(LifecycleStore::initialize(&lifecycle).unwrap());

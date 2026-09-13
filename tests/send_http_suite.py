@@ -229,8 +229,8 @@ def main():
                 path.write_text(f"#!/bin/sh\nexec {PY} {REPO / 'tests' / script} \"$@\"\n")
             path.chmod(0o700)
         shared = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color", "LANG": "C.UTF-8"}
-        env_c = {**shared, "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}
-        env_x = {**shared, "AGENTHUB_TEST_CODEX_ROOT": str(root / "codex")}
+        env_c = {**shared, "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}
+        env_x = {**shared, "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex")}
         def prof(pid, source, exe, args, rargs, env, cwd):
             return {"id": pid, "source": source, "executable": str(root / "bin" / exe), "args": args,
                     "new_args": ["--session-id", "{session_id}"] if source == "claude" else [],

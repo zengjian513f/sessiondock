@@ -1,7 +1,7 @@
 'use strict';
 
 const SOURCES = Object.freeze(Object.fromEntries(
-  Object.values(AGENTHUB_CLIS).map(cli => [cli.source, {
+  Object.values(SESSIONDOCK_CLIS).map(cli => [cli.source, {
     name: cli.name, icon: cli.icon, color: cli.color,
   }])));
 
@@ -10,7 +10,7 @@ const SOURCES = Object.freeze(Object.fromEntries(
 const store = {
   get(k, d) {
     try {
-      const v = AgentHubCapabilities.stored(k, STORAGE_PREFIX);
+      const v = SessionDockCapabilities.stored(k, STORAGE_PREFIX);
       return v === null ? d : JSON.parse(v);
     } catch { return d; }
   },
@@ -22,11 +22,11 @@ const QUEUED_MESSAGES_VERSION = 5;
 function loadQueuedMessages() {
   const saved = store.get('queuedMessages', []);
   const valid = Array.isArray(saved) ? saved : [];
-  if (!AgentHubCapabilities.allows('outbox')) return valid;
+  if (!SessionDockCapabilities.allows('outbox')) return valid;
   const fromVersion = +store.get('queuedMessagesVersion', 1) || 1;
   if (fromVersion !== QUEUED_MESSAGES_VERSION) {
     const migrated = valid.flatMap(([uid, items]) => {
-      const kept = agenthubCli(uid)?.migrateQueuedMessages(
+      const kept = sessiondockCli(uid)?.migrateQueuedMessages(
         items, fromVersion, QUEUED_MESSAGES_VERSION) || [];
       return kept.length ? [[uid, kept]] : [];
     });
@@ -37,7 +37,7 @@ function loadQueuedMessages() {
   return valid;
 }
 
-const FONT_CHOICES = AgentHubTypography.choices;
+const FONT_CHOICES = SessionDockTypography.choices;
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 
 function applyTheme(choice = store.get('theme', 'system'), persist = false) {
@@ -87,7 +87,7 @@ const S = {
   live: new Set(),    // 仍在运行的会话 uid
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
   liveStarted: new Map(), // uid → 当前 CLI 主进程启动时间（Unix 秒）
-  activeOnly: AgentHubCapabilities.allows('live') && store.get('activeOnly', false), // 未探测时不按空集合筛选
+  activeOnly: SessionDockCapabilities.allows('live') && store.get('activeOnly', false), // 未探测时不按空集合筛选
   compactTurns: store.get('compactTurns', true), // 已完成回合只保留过程合集与最终结论
   unread: new Map(store.get('unread', [])),   // uid → {count, tmux}; 只计代理产生的新内容
   cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
@@ -105,7 +105,7 @@ const MOBILE = matchMedia('(max-width: 720px)');
 // 顶栏和会话头按三级宽度排版：窄屏 ≤720，中屏 721–1199，宽屏 ≥1200。断点与 style.css 一致。
 const MEDIUM = matchMedia('(max-width: 1199px)');
 function layoutTier() { return MOBILE.matches ? 'narrow' : MEDIUM.matches ? 'medium' : 'wide'; }
-// 页面既可挂在站点根目录，也可由反代放到 /agenthub/ 之类的子路径。
+// 页面既可挂在站点根目录，也可由反代放到 /sessiondock/ 之类的子路径。
 const APP_BASE = new URL('.', location.href);
 const DEBUG_RUN = /^[A-Za-z0-9_-]{1,64}$/.test(
   new URLSearchParams(location.search).get('debug_run') || '')
@@ -125,13 +125,13 @@ const appUrl = path => {
   if (HUB_MODE && url.pathname.endsWith('/api/term/complete-dir')) url.searchParams.set('node', newNodeId());
   return url.toString();
 };
-const BUILD_ID = document.querySelector('meta[name="agenthub-build"]')?.content || '';
+const BUILD_ID = document.querySelector('meta[name="sessiondock-build"]')?.content || '';
 // One ephemeral page identity joins HTTP, SSE, terminal and final DOM receipts.
 // It intentionally is not persisted: duplicated/restored tabs must remain distinct.
 const AUDIT_PAGE_ID = globalThis.crypto?.randomUUID?.()
   || [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
-window.__agenthubPageId = AUDIT_PAGE_ID;
+window.__sessiondockPageId = AUDIT_PAGE_ID;
 
 let browserAuditQueue = [];
 let browserAuditTimer = 0;
@@ -166,7 +166,7 @@ function capAuditQueue() {
 }
 
 function browserAuditEvent(event, data = {}, content = null, fields = {}) {
-  if (!AgentHubCapabilities.allows('audit')) return;
+  if (!SessionDockCapabilities.allows('audit')) return;
   try {
     let auditContent = content;
     let auditData = data;
@@ -200,7 +200,7 @@ function auditPayload(events) {
 }
 
 async function flushBrowserAudit() {
-  if (!AgentHubCapabilities.allows('audit')) return;
+  if (!SessionDockCapabilities.allows('audit')) return;
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (browserAuditSending || !browserAuditQueue.length) return;
@@ -211,8 +211,8 @@ async function flushBrowserAudit() {
     const response = await fetch(appUrl('api/audit/browser'), {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json', 'X-AgentHub-Page': AUDIT_PAGE_ID,
-        'X-AgentHub-Build': BUILD_ID,
+        'Content-Type': 'application/json', 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID,
       },
       body: auditPayload(events),
     });
@@ -249,7 +249,7 @@ async function flushBrowserAudit() {
 // page.hidden 那条快照留 content；分两包发，合计不超过 60 KB。发不出去的留在
 // 队列里，页面若只是进了 bfcache 还能补发。
 function flushBrowserAuditBeacon() {
-  if (!AgentHubCapabilities.allows('audit')) return;
+  if (!SessionDockCapabilities.allows('audit')) return;
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (!navigator.sendBeacon || !browserAuditQueue.length) return;
@@ -322,7 +322,7 @@ function browserStateSnapshot(reason = '') {
 let browserSnapshotTimer = 0;
 let lastBrowserSnapshot = '';
 function scheduleBrowserSnapshot(reason = 'render') {
-  if (!AgentHubCapabilities.allows('audit')) return;
+  if (!SessionDockCapabilities.allows('audit')) return;
   clearTimeout(browserSnapshotTimer);
   browserSnapshotTimer = setTimeout(() => {
     try {
@@ -511,7 +511,7 @@ const el = (tag, cls, html) => {
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=tmux）
-const liveStatusTitle = tmux => !AgentHubCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
+const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
   : tmux ? '运行于 tmux' : '运行中';
 const sessionIconMarkup = (src, live, tmux) => `<span class="ico">${icon(src)}<span
   class="item-status${live ? ' visible' : ''}${tmux ? ' tmux' : ''}" id="dlive"
@@ -823,7 +823,7 @@ function queuedAfterTimestamp(uid) {
 function queuePendingUserMessage(uid, text, media = []) {
   text = String(text || '');
   if (!uid || !text.trim()) return null;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli) return null;
   const created = Date.now();
   const item = cli.createQueuedMessage({
@@ -880,8 +880,8 @@ function acceptServerOutboxVersion(uid, version) {
 }
 
 function syncServerOutbox(uid, items, version = null, { retireMissing = false } = {}) {
-  if (!AgentHubCapabilities.allows('outbox')) return false;
-  if (!['claude', 'codex'].includes(agenthubCli(uid)?.source)
+  if (!SessionDockCapabilities.allows('outbox')) return false;
+  if (!['claude', 'codex'].includes(sessiondockCli(uid)?.source)
       || !Array.isArray(items)) return false;
   if (staleServerOutbox(uid, version)) {
     browserAuditEvent('outbox.snapshot_rejected', {version, reason: 'stale'}, items, {uid});
@@ -985,10 +985,10 @@ async function retryClientQueuedMessage(uid, id) {
 }
 
 function reconcileQueuedMessages(uid, messages) {
-  if (!AgentHubCapabilities.allows('outbox')) return false;
+  if (!SessionDockCapabilities.allows('outbox')) return false;
   const items = queuedMessages(uid).slice();
   if (!items.length) return false;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli) return false;
   let changed = false;
   for (const message of messages || []) {
@@ -1051,8 +1051,8 @@ function reconcileQueuedMessages(uid, messages) {
  *  新输入。服务端已经确认旧输入后 outbox 会消失；若当前活动时间线出现了
  *  因果更晚的另一条 user/command，它不是“仍待确认”，而是已被新分支取代。 */
 function retireSupersededClaudeMessages(uid, ids, messages) {
-  if (!AgentHubCapabilities.allows('outbox')) return false;
-  if (agenthubCli(uid)?.source !== 'claude' || !ids?.size) return false;
+  if (!SessionDockCapabilities.allows('outbox')) return false;
+  if (sessiondockCli(uid)?.source !== 'claude' || !ids?.size) return false;
   const laterInputs = (messages || []).filter(message =>
     ['user', 'command'].includes(message?.role)
     && Number.isFinite(Date.parse(message.ts || '')));
@@ -1072,11 +1072,11 @@ function retireSupersededClaudeMessages(uid, ids, messages) {
 
 /** 超时未获 CLI 原生回执时保留消息，并明确标成“发送未确认”。 */
 function expireQueuedMessages(now = Date.now()) {
-  if (!AgentHubCapabilities.allows('outbox')) return false;
+  if (!SessionDockCapabilities.allows('outbox')) return false;
   let changed = false;
   let selectedChanged = false;
   for (const [uid, current] of S.queued) {
-    const cli = agenthubCli(uid);
+    const cli = sessiondockCli(uid);
     if (!cli || !Array.isArray(current)) continue;
     const hasNativeHistory = cache.has(viewKey(uid));
     const settled = current.map(item => cli.settleQueuedMessage(
@@ -1165,8 +1165,8 @@ async function fetchMessages(uid, opts = {}) {
   try {
     r = await fetch(appUrl(url), {
       signal: opts.signal,
-      headers: {'X-AgentHub-Trace': traceId, 'X-AgentHub-Page': AUDIT_PAGE_ID,
-        'X-AgentHub-Build': BUILD_ID},
+      headers: {'X-SessionDock-Trace': traceId, 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID},
     });
   } catch (error) {
     browserAuditEvent('http.request.failed', {
@@ -1179,7 +1179,7 @@ async function fetchMessages(uid, opts = {}) {
   if (!r.ok) {
     browserAuditEvent('http.response.received', {url, status: r.status, ok: false},
       null, {uid, traceId, severity: 'warning'});
-    const detail = AgentHubCapabilities.config.backend === 'rust'
+    const detail = SessionDockCapabilities.config.backend === 'rust'
       ? await r.json().catch(() => null) : null;
     const error = new Error(detail?.error || 'HTTP ' + r.status);
     error.status = r.status;
@@ -1190,7 +1190,7 @@ async function fetchMessages(uid, opts = {}) {
   // Content-Length 仍可能是压缩后大小。优先用服务端给出的同口径长度；
   // 连到旧服务端时，压缩响应改显示不定进度，也不伪造一个较小的分母。
   const contentTotal = +r.headers.get('Content-Length') || 0;
-  const decodedTotal = +r.headers.get('X-AgentHub-Decoded-Length') || 0;
+  const decodedTotal = +r.headers.get('X-SessionDock-Decoded-Length') || 0;
   const encoded = !!r.headers.get('Content-Encoding');
   const total = decodedTotal || (encoded ? 0 : contentTotal);
   const reader = r.body.getReader();
@@ -1295,7 +1295,7 @@ function applyCoveredActivity(uid, agent, entry, data) {
 }
 
 function applyMigrationMeta(uid, agent, entry, meta) {
-  if (AgentHubCapabilities.config.backend !== 'rust' || !meta
+  if (SessionDockCapabilities.config.backend !== 'rust' || !meta
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.spawned_by || null,
@@ -1333,7 +1333,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     return 0;
   }
   if (data.outbox_only) {
-    if (!AgentHubCapabilities.allows('outbox')) return 0;
+    if (!SessionDockCapabilities.allows('outbox')) return 0;
     if (!agent && Array.isArray(data.outbox)) {
       if (staleServerOutbox(uid, data.outbox_version)) return 0;
       const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
@@ -1370,7 +1370,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     globalThis.revealConversationForPrompt?.(uid, e.prompt);
   }
   let missingOutboxIds = null;
-  if (AgentHubCapabilities.allows('outbox') && !agent && Array.isArray(data.outbox)) {
+  if (SessionDockCapabilities.allows('outbox') && !agent && Array.isArray(data.outbox)) {
     const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
     missingOutboxIds = new Set(queuedMessages(uid)
       .filter(item => item.server && item.id && !ids.has(item.id))
@@ -1407,7 +1407,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
       // Rust keeps SSE live during explicit window reloads and native resets.
       // Publish the new snapshot together with any suffix/activity accepted
       // while this renderer yields; Python retains its existing render path.
-      const options = AgentHubCapabilities.config.backend === 'rust'
+      const options = SessionDockCapabilities.config.backend === 'rust'
         ? {historyPageEntry: cache.get(key)} : {};
       await renderSession(data.meta, data.messages, data.activity, options);
     }
@@ -1484,7 +1484,7 @@ const migrationReadRetries = new Map();
 const migrationReadProbes = new Map();
 
 function migrationReadPaused(uid, agent = null) {
-  return AgentHubCapabilities.config.backend === 'rust'
+  return SessionDockCapabilities.config.backend === 'rust'
     && migrationReadFailures.has(viewKey(uid, agent));
 }
 
@@ -1510,7 +1510,7 @@ const RETRY_MAX_MS = 15000;
 const retryDelay = attempt => Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempt));
 
 function renderMigrationReadFailure(uid, agent = null) {
-  if (AgentHubCapabilities.config.backend !== 'rust' || S.sel !== uid || S.agent !== agent) return;
+  if (SessionDockCapabilities.config.backend !== 'rust' || S.sel !== uid || S.agent !== agent) return;
   const detail = $('#detail');
   if (!detail) return;
   $('#migration-read-error')?.remove();
@@ -1542,7 +1542,7 @@ function renderMigrationReadFailure(uid, agent = null) {
 
 /** 不可恢复失败的登记：暂停该视图的后台读取与 SSE，保留先前快照。 */
 function reportMigrationReadFailure(uid, agent, error) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return null;
+  if (SessionDockCapabilities.config.backend !== 'rust') return null;
   const failure = {message: String(error?.message || error?.error || '无法确认最新历史，请重试。'),
     status: Number(error?.status) || 0, code: String(error?.code || '')};
   migrationReadFailures.set(viewKey(uid, agent), failure);
@@ -1554,13 +1554,13 @@ function reportMigrationReadFailure(uid, agent, error) {
 /** 请求失败的分流：瞬时失败不登记（返回 null，由调用方按退避重试），
  *  其余交给 reportMigrationReadFailure。 */
 function reportReadFailure(uid, agent, error) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return null;
+  if (SessionDockCapabilities.config.backend !== 'rust') return null;
   if (transientReadFailure(error)) return null;
   return reportMigrationReadFailure(uid, agent, error);
 }
 
 async function retryMigrationRead(uid, agent = null) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return false;
+  if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const key = viewKey(uid, agent);
   if (migrationReadRetries.has(key)) return migrationReadRetries.get(key);
   const task = (async () => {
@@ -1602,7 +1602,7 @@ async function retryMigrationRead(uid, agent = null) {
  *  原生文件并发增长等情况也会以 migration-error 携带 503；它仍是瞬时失败，
  *  留给随后到来的 es.onerror 按 Python 同款的退避策略重开。 */
 function pauseMigrationWatch(es, uid, agent, error = null) {
-  if (AgentHubCapabilities.config.backend !== 'rust' || _es !== es
+  if (SessionDockCapabilities.config.backend !== 'rust' || _es !== es
       || _esUid !== uid || S.sel !== uid || S.agent !== agent) return false;
   if (!error) return false;
   if (transientReadFailure(error)) return false;
@@ -1614,7 +1614,7 @@ function pauseMigrationWatch(es, uid, agent, error = null) {
  *  探明原因：不可恢复（501 等）就暂停并给出理由；瞬时失败或读取成功则说明
  *  只是流本身没建起来，交回退避重连。探测不改快照、不重开流。 */
 function probeWatchRejection(uid, agent) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return Promise.resolve(false);
+  if (SessionDockCapabilities.config.backend !== 'rust') return Promise.resolve(false);
   const key = viewKey(uid, agent);
   const current = migrationReadProbes.get(key);
   if (current) return current;
@@ -1679,7 +1679,7 @@ const pendingWindowRecoveries = new Map();
 const recoveredPendingWindows = new Map();
 
 function reconcilePendingSnapshot(uid, data) {
-  if (!AgentHubCapabilities.allows('outbox')) return false;
+  if (!SessionDockCapabilities.allows('outbox')) return false;
   if (!data || !Array.isArray(data.outbox)) return false;
   const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
   const missing = new Set(queuedMessages(uid)
@@ -1704,7 +1704,7 @@ function reconcilePendingSnapshot(uid, data) {
  * 重载（最早 100 + 最新 500），而不是反复下载完整长会话。
  */
 function recoverPendingWindow(uid, ids) {
-  if (!AgentHubCapabilities.allows('outbox')) return Promise.resolve(false);
+  if (!SessionDockCapabilities.allows('outbox')) return Promise.resolve(false);
   const key = viewKey(uid);
   const fingerprint = [...ids].sort().join('\0');
   if (!fingerprint || recoveredPendingWindows.get(uid) === fingerprint) {
@@ -1757,7 +1757,7 @@ function recoverPendingWindow(uid, ids) {
 }
 
 function reconcilePendingUid(uid) {
-  if (!AgentHubCapabilities.allows('outbox')) return Promise.resolve(false);
+  if (!SessionDockCapabilities.allows('outbox')) return Promise.resolve(false);
   uid = String(uid || '');
   if (!queuedMessages(uid).some(item => item?.server)) return Promise.resolve(false);
   const current = pendingReconciliations.get(uid);
@@ -1802,7 +1802,7 @@ function reconcilePendingUid(uid) {
 }
 
 async function reconcileAllPendingMessages() {
-  if (!AgentHubCapabilities.allows('outbox')) return [];
+  if (!SessionDockCapabilities.allows('outbox')) return [];
   expireQueuedMessages();
   if (document.hidden) return [];
   const uids = [...S.queued]
@@ -1858,7 +1858,7 @@ function watchSession(uid, agent = S.agent) {
   const es = new EventSource(appUrl('api/watch?' + p));
   _es = es;
   _esUid = uid;
-  es.__agenthubConnectionId = connectionId;
+  es.__sessiondockConnectionId = connectionId;
   let received = 0;
   browserAuditEvent('sse.connecting', {start: e.end, agent: agent || ''}, null,
     {uid, connectionId});
@@ -1868,7 +1868,7 @@ function watchSession(uid, agent = S.agent) {
     if (_es === es) _esRetryAttempt = 0;
     browserAuditEvent('sse.opened', {ready_state: es.readyState}, null, {uid, connectionId});
   };
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     es.addEventListener('migration-error', event => {
       let reason;
       try { reason = JSON.parse(event.data); }
@@ -1912,7 +1912,7 @@ function watchSession(uid, agent = S.agent) {
     if (_es !== es) return;
     _es = null;
     clearTimeout(_esRetry);
-    if (AgentHubCapabilities.config.backend !== 'rust') {
+    if (SessionDockCapabilities.config.backend !== 'rust') {
       _esRetry = setTimeout(() => {
         if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
       }, 1500);
@@ -1937,7 +1937,7 @@ function closeWatch() {
   clearTimeout(_esRetry);
   if (_es) {
     browserAuditEvent('sse.closed_by_page', {ready_state: _es.readyState}, null,
-      {uid: _esUid, connectionId: _es.__agenthubConnectionId || ''});
+      {uid: _esUid, connectionId: _es.__sessiondockConnectionId || ''});
     _es.close(); _es = null; _esUid = null;
   }
 }
@@ -2010,7 +2010,7 @@ setInterval(tickSync, TICK_MS);
 
 // ---- 活跃会话 ----
 async function refreshLive(force = false) {
-  if (!AgentHubCapabilities.allows('live')) return;
+  if (!SessionDockCapabilities.allows('live')) return;
   const d = await (await fetch(appUrl('api/live' + (force ? '?force=1' : '')))).json();
   applyNodeState(d, 'live');
   const next = new Set(d.uids);
@@ -2032,7 +2032,7 @@ async function refreshLive(force = false) {
 
 let livePollRequest = null;
 function pollLive(force = false) {
-  if (!AgentHubCapabilities.allows('live')) return Promise.resolve();
+  if (!SessionDockCapabilities.allows('live')) return Promise.resolve();
   if (document.hidden) return Promise.resolve();
   if (livePollRequest) {
     // Timer ticks share the current cycle; explicit refreshes still get a
@@ -2099,7 +2099,7 @@ function syncActiveOnlyList() {
 }
 
 function selectSessionScope(activeOnly) {
-  if (activeOnly && !AgentHubCapabilities.allows('live')) {
+  if (activeOnly && !SessionDockCapabilities.allows('live')) {
     showConsoleToast('运行状态未知：Rust 后端尚未实现进程探测，不能按活跃状态筛选。');
     return;
   }
@@ -2131,7 +2131,7 @@ document.addEventListener('visibilitychange', () => {
 function renderSessionCounts() {
   const pool = sidebarSessions().filter(s => !S.off.has(s.source) && nodeSelected(s));
   const active = pool.filter(s => s.pending || S.live.has(s.uid)).length;
-  const known = AgentHubCapabilities.allows('live');
+  const known = SessionDockCapabilities.allows('live');
   $('#session-active').textContent = known ? active : '?';
   if (!known) {
     $('#livecount').dataset.unknown = 'true';
@@ -2157,7 +2157,7 @@ function showSessionCount() {
 
 const pendingUid = name => `tmux:${name}`;
 
-/** agenthub 自己启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
+/** SessionDock启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
 function pendingTmuxSessions() {
   if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
   return T.pending.flatMap(t => {
@@ -2170,7 +2170,7 @@ function pendingTmuxSessions() {
     return [{
       node_id: t.node_id, node_name: t.node_name, stale: t.stale,
       uid: pendingUid(t.name), pending: true, name: t.name, tmuxName: t.name, source,
-      ...(AgentHubCapabilities.config.backend === 'rust' ? {record_id:t.record_id,launch_id:t.launch_id,
+      ...(SessionDockCapabilities.config.backend === 'rust' ? {record_id:t.record_id,launch_id:t.launch_id,
         instance_id:t.instance_id,running:t.running,state:t.state,unavailable_reason:t.unavailable_reason,
         native_binding:t.native_binding,binding:t.binding} : {}),
       title: t.title || `新建 ${SOURCES[source].name} 会话`,
@@ -2257,7 +2257,7 @@ async function syncSidebarView(row, base, latest, attempt = 0) {
   } catch (error) {
     // 列表签名可能不会再变化；瞬时失败（断网、503）按退避补三次（1.5/3/6 s），
     // 仍不影响其他会话；4xx 这类请求本身不成立的失败不重试。
-    if (attempt < 3 && (AgentHubCapabilities.config.backend !== 'rust' || transientReadFailure(error))) {
+    if (attempt < 3 && (SessionDockCapabilities.config.backend !== 'rust' || transientReadFailure(error))) {
       setTimeout(() => syncSidebarView(row, base, latest, attempt + 1), retryDelay(attempt));
     }
   }
@@ -2927,11 +2927,11 @@ async function toggleSessionStar(uid) {
 }
 
 /* ---------- Claude 时间线固定显示（Rust 只读迁移能力） ----------
- * 只改 agenthub 自己的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
+ * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
  * Python 页面没有这个能力声明，保持原有双 Esc 原生回滚流程。 */
 function timelinePinEnabled() {
-  return AgentHubCapabilities.config.backend === 'rust'
-    && AgentHubCapabilities.config.timeline_pin === true;
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.timeline_pin === true;
 }
 
 function timelinePinFailed(message) {
@@ -3164,7 +3164,7 @@ function groupBy(list) {
 // instead of "waiting" (its `stale` is the receipt flag, not a hub cache).
 const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
   ? pendingStateLabel(s) : '等待首条消息'}`;
-const rustPendingRow = s => !!s.pending && !!s.record_id && AgentHubCapabilities.config.backend === 'rust';
+const rustPendingRow = s => !!s.pending && !!s.record_id && SessionDockCapabilities.config.backend === 'rust';
 const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') + (s.pending ? pendingMeta(s)
   : [fmtTime(s.updated), fmtSize(s.size), s.model || '',
                        s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
@@ -3507,7 +3507,7 @@ function followContinuedSession(uid) {
 // 三次（1.5/3/6 s），期间可手动重试；仍失败则停在可点击重试的提示上。
 const openRetries = new Map();
 function scheduleOpenRetry(uid, agent, ac) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return;
+  if (SessionDockCapabilities.config.backend !== 'rust') return;
   const key = viewKey(uid, agent);
   const attempt = (openRetries.get(key) || 0) + 1;
   const box = $('#detail .empty');
@@ -3576,7 +3576,7 @@ async function openSession(uid, agent = null) {
     });
   } catch (e) {
     if (e.name === 'AbortError') return;      // 已经切到别的会话了
-    if (AgentHubCapabilities.config.backend === 'rust'
+    if (SessionDockCapabilities.config.backend === 'rust'
         && (S.sel !== uid || S.agent !== selectedAgent)) return;
     progressDone();
     $('#detail').innerHTML = `<div class="empty">读取失败: ${esc(e.message)}</div>`;
@@ -3587,7 +3587,7 @@ async function openSession(uid, agent = null) {
   }
   if (S.sel !== uid || S.agent !== selectedAgent) return; // 期间切了别的视图
   const { data, bytes } = res;
-  if (AgentHubCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
+  if (SessionDockCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
   if (!selectedAgent && Array.isArray(data.outbox)) {
     syncServerOutbox(uid, data.outbox, data.outbox_version);
   }
@@ -3755,8 +3755,8 @@ function historyGapNode(info) {
 }
 
 function historyPagesEnabled() {
-  return AgentHubCapabilities.config.backend === 'rust'
-    && AgentHubCapabilities.config.history_pages === true;
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.history_pages === true;
 }
 
 const historyPageRequests = new Map();
@@ -4615,8 +4615,8 @@ function renderSessionAction(m, button = $('#a-session-action')) {
 // then the host's guarded stop); an unmanaged/external CLI is a typed refusal.
 // Without process detection `S.live` only holds sessions this page launched or
 // took over, so a listed managed instance also makes the session stoppable.
-const sessionStopCapable = () => AgentHubCapabilities.config.backend === 'rust'
-  && AgentHubCapabilities.config.session_stop === true;
+const sessionStopCapable = () => SessionDockCapabilities.config.backend === 'rust'
+  && SessionDockCapabilities.config.session_stop === true;
 function sessionStoppable(uid) {
   if (S.live.has(uid)) return true;
   return sessionStopCapable() && typeof T !== 'undefined'
@@ -4678,8 +4678,8 @@ async function stopSession(m, button = null) {
 }
 
 // Rust 回收站能力：文件进服务端显式配置的回收站目录，而不是 Python 的固定路径。
-const trashCapable = () => AgentHubCapabilities.config.backend === 'rust'
-  && AgentHubCapabilities.config.trash === true;
+const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
+  && SessionDockCapabilities.config.trash === true;
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
 // 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
 function confirmForceDelete(count, detail) {
@@ -5795,11 +5795,11 @@ function groupNode(items, initiallyOpen = false) {
 function safeMediaSrc(src) {
   src = String(src || '');
   if (/^\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
-  if (AgentHubCapabilities.config.backend === 'rust' && AgentHubCapabilities.config.media_lazy === true) return '';
+  if (SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.config.media_lazy === true) return '';
   if (HUB_MODE && /^\/api\/nodes\/[0-9a-f]{32}\/api\/media\/[0-9a-f]{32}$/.test(src)) return appUrl(src);
   // Native history is untrusted: Rust's local media capability does not grant
   // permission for the browser to contact URLs mentioned in that history.
-  if (!AgentHubCapabilities.allows('media_remote')) return '';
+  if (!SessionDockCapabilities.allows('media_remote')) return '';
   if (!/^https?:\/\//i.test(src)) return '';
   try {
     const u = new URL(src);
@@ -5808,13 +5808,13 @@ function safeMediaSrc(src) {
 }
 
 function lazyMediaEnabled() {
-  return AgentHubCapabilities.config.backend === 'rust'
-    && AgentHubCapabilities.config.media_lazy === true;
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.media_lazy === true;
 }
 
 function mediaContinuationEnabled() {
-  return AgentHubCapabilities.config.backend === 'rust'
-    && AgentHubCapabilities.config.media_continuation === true;
+  return SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.config.media_continuation === true;
 }
 
 // Error-only diagnostics never materialize an image body. Completed results
@@ -6265,7 +6265,7 @@ function questionNode(m) {
           ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
     </section>`).join('');
   if (live) {
-    const cli = agenthubCli(m.uid);
+    const cli = sessiondockCli(m.uid);
     const cliName = cli?.name || 'CLI';
     const waiting = promptState === 'waiting';
     const direct = waiting && rows.length === 1 && !rows[0].multiple
@@ -6379,7 +6379,7 @@ function renderQueuedMessages(uid = S.sel) {
   const box = $('#msgs');
   if (!box || S.agent || uid !== S.sel) return;
   for (const item of queuedMessages(uid)) {
-    const cli = agenthubCli(uid);
+    const cli = sessiondockCli(uid);
     const queuedMessage = {role: 'user', text: item.text, media: item.media,
       counted: false, ts: item.created_iso || item.created_at || item.ts};
     const node = stampMessageTime(msgNode(queuedMessage), [queuedMessage]);
@@ -6465,7 +6465,7 @@ function renderConversationTail(activity, uid = S.sel) {
   // 冲突被丢弃；随后正文 reset 已把它放进完整缓存，但队尾重画过去只看
   // 增量，乐观副本便会永久残留。Claude 有本地副本时，每次画队尾都用
   // 已接受的完整缓存兜底对账一次。通常只有一条、几千项，且仅发送期间执行。
-  if (agenthubCli(uid)?.source === 'claude'
+  if (sessiondockCli(uid)?.source === 'claude'
       && queuedMessages(uid).length && entry?.msgs?.length) {
     reconcileQueuedMessages(uid, entry.msgs);
   }
@@ -6514,7 +6514,7 @@ const clipText = t => t.length > CLIP ? t.slice(0, CLIP) + '\n… (点下方按�
 
 let syntaxLoading = false;
 function ensureSyntax() {
-  if (syntaxLoading || window.agenthubHighlight) return;
+  if (syntaxLoading || window.sessiondockHighlight) return;
   syntaxLoading = true;
   const script = document.createElement('script');
   script.type = 'module';
@@ -6537,14 +6537,14 @@ function paintSyntax(root = document) {
     + '.tool-diff-line > code[data-code-path]:not([data-syntax-done])');
   const nodes = [...new Set([...blocks, ...summaries, ...tools, ...diffLines])];
   if (!nodes.length) return;
-  if (!window.agenthubHighlight) { ensureSyntax(); return; }
+  if (!window.sessiondockHighlight) { ensureSyntax(); return; }
   for (const code of nodes) {
     code.dataset.syntaxDone = '1';
-    const result = code.matches('code.tool-command') && window.agenthubHighlightShellCommand
-      ? window.agenthubHighlightShellCommand(code.textContent)
-      : (code.matches('pre.tool-out') && window.agenthubHighlightSegments
-          ? window.agenthubHighlightSegments(code.textContent, code.dataset.codePath || '')
-          : window.agenthubHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
+    const result = code.matches('code.tool-command') && window.sessiondockHighlightShellCommand
+      ? window.sessiondockHighlightShellCommand(code.textContent)
+      : (code.matches('pre.tool-out') && window.sessiondockHighlightSegments
+          ? window.sessiondockHighlightSegments(code.textContent, code.dataset.codePath || '')
+          : window.sessiondockHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
     if (!result?.html) continue;
     code.innerHTML = result.html;
     code.classList.add('hljs');
@@ -6560,7 +6560,7 @@ function paintSyntax(root = document) {
   }
 }
 
-addEventListener('agenthub-highlight-ready', () => paintSyntax(document));
+addEventListener('sessiondock-highlight-ready', () => paintSyntax(document));
 
 // 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
 function md(text, full, media = [], context = {}) {
@@ -6760,7 +6760,7 @@ document.addEventListener('contextmenu', async event => {
     for (const button of fileMenu.querySelectorAll('button')) button.hidden = true;
     place();
     try {
-      if (!AgentHubCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
+      if (!SessionDockCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
       const query = new URL(target.href).searchParams, ref = query.get('ref');
       const response = await fetch(appUrl('/api/session/resolve-files'), {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -7098,7 +7098,7 @@ function showSearchMatches(rows) {
 }
 
 async function fetchSearch(params, signal) {
-  if (!AgentHubCapabilities.allows('search')) {
+  if (!SessionDockCapabilities.allows('search')) {
     return {ok: false, data: {error: 'Rust 后端尚未实现全文搜索；当前只能筛选标题和目录。'}};
   }
   params.set('progress', '1');
@@ -7136,7 +7136,7 @@ async function runSearch() {
   S.term = q;
   const run = searchRun;
   if (!q) { S.results = null; showSessionCount(); renderSide(); return; }
-  if (!AgentHubCapabilities.allows('search')) {
+  if (!SessionDockCapabilities.allows('search')) {
     renderSide();
     $('#stat').textContent = ' Rust 后端尚未实现全文搜索；当前只筛选标题和目录。';
     $('#stat').classList.add('err');
@@ -7216,7 +7216,7 @@ function renderOpts() {
 $('#reload').onclick = () => { cancelSearch(true); loadSessions(true); };
 
 /* ---------- 回收站 ---------- */
-// 删除只是把会话文件移进 ~/.local/share/agenthub/trash/，这里是它唯一的出口：
+// 删除只是把会话文件移进 ~/.local/share/sessiondock/trash/，这里是它唯一的出口：
 // 看还剩什么、放回原处、或者真的删掉。
 let trashItems = [];
 let trashBusy = false;
@@ -7787,7 +7787,7 @@ document.addEventListener('keydown', e => {
 // SessionDock 是 Python 服务的替代品而非开发版：没有常驻横幅。只有能力声明
 // 本身无法解析（capabilities.js 失效关闭）时才提示检查服务配置。
 const backendNotice = $('#backend-notice');
-if (backendNotice && AgentHubCapabilities.config.configuration_error) {
+if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }

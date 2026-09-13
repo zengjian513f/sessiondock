@@ -59,7 +59,7 @@ def main():
                 page.on("response", lambda response: searches.append((response.url, response.status,
                     response.headers.get("content-type", ""))) if "/api/search?" in response.url else None)
                 page.goto(base, wait_until="networkidle")
-                assert page.evaluate("AgentHubCapabilities.allows('search')") is True
+                assert page.evaluate("SessionDockCapabilities.allows('search')") is True
                 expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
                 page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("Needle Cat cat")

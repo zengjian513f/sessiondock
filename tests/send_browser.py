@@ -134,11 +134,11 @@ def send_attachments(page, root, label, sends, *, fail_first=False):
     assert sent.value.status == 200, sent.value.text()
     batch = uploaded.value.json()["attachment_id"]
     expected = label + "\n\n" + "\n".join(
-        f"附件{i}: ./agenthub_attachments/{batch}/{payload['name']}"
+        f"附件{i}: ./sessiondock_attachments/{batch}/{payload['name']}"
         for i, payload in enumerate(payloads, 1))
     assert sends[-1]["text"] == expected, sends[-1]
     for payload in payloads:
-        path = root / "work/claude-area/agenthub_attachments" / batch / payload["name"]
+        path = root / "work/claude-area/sessiondock_attachments" / batch / payload["name"]
         assert path.read_bytes() == payload["buffer"]
     # The renderer replaces attachment path lines with file/image cards.
     wait_history(page, label)
@@ -182,7 +182,7 @@ def main():
                  "args": ["--settings", SETTINGS, "--reply"], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
+                         "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:

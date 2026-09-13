@@ -117,7 +117,7 @@ def _ready(gate, row):
 
 
 def probe(base, uid, native: Path, args):
-    if "/.local/share/agenthub" in str(native.resolve()):
+    if "/.local/share/sessiondock" in str(native.resolve()):
         die("refusing production native path")
     host, port = loopback(base)
     until = time.monotonic() + BUDGET

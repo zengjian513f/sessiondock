@@ -29,7 +29,7 @@ fn receipt(text: &str, confirmation: u64) -> Receipt {
                 scope: scope(),
                 target: Target {
                     host_instance: "synthetic-instance-0001abcd".into(),
-                    terminal_id: "agenthub-claude-0d3c5a8e".into(),
+                    terminal_id: "sessiondock-claude-0d3c5a8e".into(),
                     ownership_epoch: "guarded_v1".into(),
                 },
                 text: text.into(),

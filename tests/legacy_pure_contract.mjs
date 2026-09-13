@@ -34,8 +34,8 @@ const A = 'a'.repeat(32), B = 'b'.repeat(32), TOKEN = '/api/media/' + A;
 const HUB = `/api/nodes/${A}/api/media/${B}`;
 const same = (actual, expected) => assert.equal(JSON.stringify(actual), JSON.stringify(expected));
 function ctx(globals = {}) {
-  return vm.createContext({URL, URLSearchParams, AgentHubCapabilities: {config: {}, allows: () => false},
-    HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/agenthub/'), DEBUG_RUN: '',
+  return vm.createContext({URL, URLSearchParams, SessionDockCapabilities: {config: {}, allows: () => false},
+    HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/'), DEBUG_RUN: '',
     selectedNodeIds: () => ['n1', 'n2'], newNodeId: () => 'nid', appUrl: x => x, el: element, ...globals});
 }
 function fn(name, globals = {}, source = app) { return load(ctx(globals), name, source); }
@@ -83,20 +83,20 @@ test('fmtSize/fmtTime/shortCwd follow the current unit, calendar and ellipsis ru
 
 test('appUrl resolves against APP_BASE, injects debug_run on /api/, and hub node filters', () => {
   const url = (g, path) => fn('appUrl', g)(path);
-  const base = {APP_BASE: new URL('http://127.0.0.1:8080/agenthub/')};
-  assert.equal(url(base, '/api/media/' + A), `http://127.0.0.1:8080/agenthub/api/media/${A}`);
-  assert.equal(url(base, 'api/sessions'), 'http://127.0.0.1:8080/agenthub/api/sessions');
-  assert.equal(url(base, ''), 'http://127.0.0.1:8080/agenthub/');
+  const base = {APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/')};
+  assert.equal(url(base, '/api/media/' + A), `http://127.0.0.1:8080/sessiondock/api/media/${A}`);
+  assert.equal(url(base, 'api/sessions'), 'http://127.0.0.1:8080/sessiondock/api/sessions');
+  assert.equal(url(base, ''), 'http://127.0.0.1:8080/sessiondock/');
   assert.equal(url(base, 'https://evil.example/x'), 'https://evil.example/x');
-  assert.equal(url({...base, DEBUG_RUN: 'run_1'}, 'api/sessions'), 'http://127.0.0.1:8080/agenthub/api/sessions?debug_run=run_1');
+  assert.equal(url({...base, DEBUG_RUN: 'run_1'}, 'api/sessions'), 'http://127.0.0.1:8080/sessiondock/api/sessions?debug_run=run_1');
   assert.equal(url({...base, DEBUG_RUN: 'run_1'}, 'index.html').includes('debug_run'), false);
-  assert.equal(url({...base, HUB_MODE: true}, 'api/search'), 'http://127.0.0.1:8080/agenthub/api/search?nodes=n1%2Cn2');
-  assert.equal(url({...base, HUB_MODE: true}, 'api/trash/purge'), 'http://127.0.0.1:8080/agenthub/api/trash/purge?nodes=n1%2Cn2');
-  assert.equal(url({...base, HUB_MODE: true}, 'api/search?nodes=keep'), 'http://127.0.0.1:8080/agenthub/api/search?nodes=keep');
+  assert.equal(url({...base, HUB_MODE: true}, 'api/search'), 'http://127.0.0.1:8080/sessiondock/api/search?nodes=n1%2Cn2');
+  assert.equal(url({...base, HUB_MODE: true}, 'api/trash/purge'), 'http://127.0.0.1:8080/sessiondock/api/trash/purge?nodes=n1%2Cn2');
+  assert.equal(url({...base, HUB_MODE: true}, 'api/search?nodes=keep'), 'http://127.0.0.1:8080/sessiondock/api/search?nodes=keep');
   assert.equal(url({...base, HUB_MODE: true}, 'api/sessions').includes('nodes='), false);
-  assert.equal(url({...base, HUB_MODE: true}, 'api/term/complete-dir'), 'http://127.0.0.1:8080/agenthub/api/term/complete-dir?node=nid');
+  assert.equal(url({...base, HUB_MODE: true}, 'api/term/complete-dir'), 'http://127.0.0.1:8080/sessiondock/api/term/complete-dir?node=nid');
   assert.equal(url({...base, HUB_MODE: false}, 'api/search').includes('nodes='), false);
-  assert.equal(url(base, null), 'http://127.0.0.1:8080/agenthub/null');
+  assert.equal(url(base, null), 'http://127.0.0.1:8080/sessiondock/null');
 });
 
 test('only exact Rust boolean flags enable history pages, lazy media and continuation', () => {
@@ -107,7 +107,7 @@ test('only exact Rust boolean flags enable history pages, lazy media and continu
     {backend: 'rust', history_pages: false, media_lazy: false, media_continuation: false},
     {backend: 'rust', history_pages: 'true', media_lazy: 'true', media_continuation: 'true'},
     {backend: 'rust', history_pages: true, media_lazy: true, media_continuation: true}]) {
-    const c = ctx({AgentHubCapabilities: {config}});
+    const c = ctx({SessionDockCapabilities: {config}});
     for (const [name, flag] of flags) {
       load(c, name);
       assert.equal(c[name](), config.backend === 'rust' && config[flag] === true, `${name} ${JSON.stringify(config)}`);
@@ -117,7 +117,7 @@ test('only exact Rust boolean flags enable history pages, lazy media and continu
 
 test('safeMediaSrc admits local tokens, hub paths only when not lazy, remote http(s) only when allowed', () => {
   const src = (config, extra = {}) => fn('safeMediaSrc', {
-    AgentHubCapabilities: {config, allows: name => extra.allows === true || extra.allows?.[name] === true},
+    SessionDockCapabilities: {config, allows: name => extra.allows === true || extra.allows?.[name] === true},
     HUB_MODE: extra.HUB_MODE === true, appUrl: extra.appUrl || (x => 'APP:' + x), URL});
   const rustLazy = src({backend: 'rust', media_lazy: true});
   assert.equal(rustLazy(TOKEN), 'APP:' + TOKEN);
@@ -207,7 +207,7 @@ test('validateMediaPage extra edges: 16-item cap, extra fields, start mismatch, 
 test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only gates, Python skip', () => {
   const reason = (over, ...args) => {
     const c = ctx({
-      AgentHubCapabilities: {config: {backend: 'rust'}, allows: () => true},
+      SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => true},
       T: {listLoaded: true, listError: '', enabled: true, ended: new Map(), pending: [],
         resume_sources: {codex: true}, sources: {codex: true}},
       takeover() {}, Terminal() {}, FitAddon() {},
@@ -245,7 +245,7 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.equal(hubReason(true, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {}}}), '');
   assert.equal(hubReason(false, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {codex: true}}}), '已退出');
   assert.equal(reason({T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]])}}, 'u'), '已退出');
-  assert.equal(reason({AgentHubCapabilities: {config: {backend: 'python'}, allows: () => true},
+  assert.equal(reason({SessionDockCapabilities: {config: {backend: 'python'}, allows: () => true},
     T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]]), sources: {codex: true}},
     linkedTermSession: () => ({name: 't'})}, 'u'), '');
   assert.match(reason({T: {listLoaded: true, enabled: true, pending: [{record_id: 'r', name: 'p', stale: true}],
@@ -253,9 +253,9 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.equal(reason({T: {listLoaded: true, enabled: true, pending: [{record_id: 'r', name: 'p', stale: true,
     unavailable_reason: '还在准备'}], ended: new Map()}, pendingUid: () => 'u'}, 'u'), '还在准备');
   assert.match(reason({T: {listLoaded: true, enabled: false, ended: new Map(), pending: []}}, 'u'), /未返回具体原因/);
-  assert.match(reason({linkedTermSession: () => null, AgentHubCapabilities: {config: {backend: 'rust'}, allows: () => false},
+  assert.match(reason({linkedTermSession: () => null, SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false},
     T: {listLoaded: true, enabled: true, ended: new Map(), pending: [], resume_sources: {}}}, 'codex:u'), /不能按名称猜测关联/);
-  assert.match(reason({AgentHubCapabilities: {config: {backend: 'python'}, allows: () => true},
+  assert.match(reason({SessionDockCapabilities: {config: {backend: 'python'}, allows: () => true},
     linkedTermSession: () => null, T: {listLoaded: true, enabled: true, sources: {}, ended: new Map(), pending: []}}, 'codex:u'),
     /未找到可用的 Codex 命令/);
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, true), '上次失败');
@@ -345,14 +345,14 @@ test('unread rows carry only a count; the badge colour comes from the current st
   same(badge('none'), {classes: ['idle'], text: '', title: '会话运行中'});   // not visible: neither live nor counted
   S.live.add('none');
   same(badge('none'), {classes: ['visible'], text: '', title: '会话运行中'});
-  same(badge('pending', 'agenthub-x'), {classes: ['tmux', 'visible'], text: '', title: 'tmux 会话运行中'});
+  same(badge('pending', 'sessiondock-x'), {classes: ['tmux', 'visible'], text: '', title: 'tmux 会话运行中'});
 });
 
 test('liveStatusTitle says unknown without the live capability and tmux/direct with it', () => {
-  const rust = fn('liveStatusTitle', {AgentHubCapabilities: {config: {backend: 'rust'}, allows: () => false}});
+  const rust = fn('liveStatusTitle', {SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false}});
   assert.equal(rust(false), '运行状态未知，尚未实现进程探测');
   assert.equal(rust(true), '运行状态未知，尚未实现进程探测');
-  const python = fn('liveStatusTitle', {AgentHubCapabilities: {config: {}, allows: () => true}});
+  const python = fn('liveStatusTitle', {SessionDockCapabilities: {config: {}, allows: () => true}});
   assert.equal(python(false), '运行中');
   assert.equal(python(true), '运行于 tmux');
 });
@@ -360,21 +360,21 @@ test('liveStatusTitle says unknown without the live capability and tmux/direct w
 test('composer attachment paths follow the destination node, including Windows drives and UNC', () => {
   const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
   const prompt = fn('buildComposerPrompt', {}, term);
-  for (const path of [String.raw`C:\work\agenthub_attachments\1\截图 a.png`,
-    'D:/work/agenthub_attachments/1/截图 a.png',
-    String.raw`\\server\share\agenthub_attachments\1\截图 a.png`,
-    String.raw`\\?\C:\work\agenthub_attachments\1\截图 a.png`,
-    '//server/share/agenthub_attachments/1/截图 a.png']) {
-    for (const relative_path of ['agenthub_attachments/1/截图 a.png',
-      String.raw`agenthub_attachments\1\截图 a.png`, String.raw`.\agenthub_attachments\1\截图 a.png`]) {
+  for (const path of [String.raw`C:\work\sessiondock_attachments\1\截图 a.png`,
+    'D:/work/sessiondock_attachments/1/截图 a.png',
+    String.raw`\\server\share\sessiondock_attachments\1\截图 a.png`,
+    String.raw`\\?\C:\work\sessiondock_attachments\1\截图 a.png`,
+    '//server/share/sessiondock_attachments/1/截图 a.png']) {
+    for (const relative_path of ['sessiondock_attachments/1/截图 a.png',
+      String.raw`sessiondock_attachments\1\截图 a.png`, String.raw`.\sessiondock_attachments\1\截图 a.png`]) {
       assert.equal(prompt('查看', [{path, relative_path}], []),
-        '查看\n\n附件1: ' + String.raw`.\agenthub_attachments\1\截图 a.png`);
+        '查看\n\n附件1: ' + String.raw`.\sessiondock_attachments\1\截图 a.png`);
     }
   }
-  assert.equal(prompt('', [{path_style: 'windows', relative_path: 'agenthub_attachments/2/a.json'}]),
-    '附件1: ' + String.raw`.\agenthub_attachments\2\a.json`);
-  assert.equal(prompt('', [{path_style: 'posix', path: '/work/a', relative_path: './agenthub_attachments/1/a b.txt'}]),
-    '附件1: ./agenthub_attachments/1/a b.txt');
+  assert.equal(prompt('', [{path_style: 'windows', relative_path: 'sessiondock_attachments/2/a.json'}]),
+    '附件1: ' + String.raw`.\sessiondock_attachments\2\a.json`);
+  assert.equal(prompt('', [{path_style: 'posix', path: '/work/a', relative_path: './sessiondock_attachments/1/a b.txt'}]),
+    '附件1: ./sessiondock_attachments/1/a b.txt');
   assert.equal(prompt('', [{path: '/work/a', relative_path: String.raw`dir/a\b.txt`}]),
     '附件1: ' + String.raw`./dir/a\b.txt`);
   assert.equal(prompt('', [{path: String.raw`C:\work\a b.txt`}]), '附件1: ' + String.raw`C:\work\a b.txt`);

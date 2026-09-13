@@ -49,7 +49,7 @@ struct Document {
 
 impl Document {
     fn validate(&self) -> Result<(), Error> {
-        if self.format != "agenthub-delivery" || self.schema != 1 {
+        if self.format != "sessiondock-delivery" || self.schema != 1 {
             return Err(Error::UnsupportedSchema);
         }
         codex::validate_snapshot(&self.codex).map_err(|_| Error::Invalid)?;
@@ -103,7 +103,7 @@ impl DeliveryStore {
         claude_epoch: String,
     ) -> Result<Self, Error> {
         let document = Document {
-            format: "agenthub-delivery".into(),
+            format: "sessiondock-delivery".into(),
             schema: 1,
             codex: codex::Machine::new(codex_epoch)
                 .map_err(|_| Error::Invalid)?
@@ -138,7 +138,7 @@ impl DeliveryStore {
         claude_epoch: String,
     ) -> Result<Self, Error> {
         let document = Document {
-            format: "agenthub-delivery".into(),
+            format: "sessiondock-delivery".into(),
             schema: 1,
             codex: codex::Machine::new(codex_epoch)
                 .map_err(|_| Error::Invalid)?

@@ -149,7 +149,7 @@ def need(conn, resp, pred, why, timeout=POLL):
 
 def exercise(host, port, source, spec):
     uid, path, sid = spec["uid"], spec["path"], spec["sid"]
-    if "/.local/share/agenthub" in str(path.resolve()):
+    if "/.local/share/sessiondock" in str(path.resolve()):
         fail("refusing production native path")
     conn, resp = open_watch(host, port, uid, window(host, port, uid))
     try:

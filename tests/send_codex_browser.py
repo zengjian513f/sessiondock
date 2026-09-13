@@ -132,7 +132,7 @@ def main():
                  "args": ["--reply", "-c", 'model_reasoning_effort="low"'], "new_args": [],
                  "resume_args": ["resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CODEX_ROOT": str(root / "codex")}}]}))
+                         "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:

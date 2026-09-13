@@ -65,8 +65,8 @@ impl Fake {
                     }
                     let head = String::from_utf8_lossy(&buffer).to_string();
                     let target = head.split(' ').nth(1).unwrap_or("").to_string();
-                    let token_ok = head.contains("X-AgentHub-Node-Token: ")
-                        && head.contains("X-AgentHub-Protocol: 1\r\n");
+                    let token_ok = head.contains("X-SessionDock-Node-Token: ")
+                        && head.contains("X-SessionDock-Protocol: 1\r\n");
                     hits.lock().unwrap().push(target.clone());
                     let (path, query) = target.split_once('?').unwrap_or((&target, ""));
                     let mode = mode.lock().unwrap().clone();

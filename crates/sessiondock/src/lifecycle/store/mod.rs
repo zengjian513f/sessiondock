@@ -54,7 +54,7 @@ struct Document {
 }
 impl Document {
     fn validate(&self) -> Result<(), Error> {
-        if self.format != "agenthub-lifecycle" || self.schema != SCHEMA {
+        if self.format != "sessiondock-lifecycle" || self.schema != SCHEMA {
             return Err(Error::UnsupportedSchema);
         }
         if (self.revision == 0) != self.records.is_empty() {
@@ -181,7 +181,7 @@ impl LifecycleStore {
             .map_err(|error| Error::Io("create lifecycle directory", error.kind()))?;
         let owner = random()?;
         let document = Document {
-            format: "agenthub-lifecycle".into(),
+            format: "sessiondock-lifecycle".into(),
             schema: SCHEMA,
             revision: 0,
             records: BTreeMap::new(),
@@ -278,7 +278,7 @@ impl LifecycleStore {
             spec: spec.clone(),
             launch_id: random()?,
             instance_id: random()?,
-            host_name: format!("agenthub-{}", random()?),
+            host_name: format!("sessiondock-{}", random()?),
             revision: self.next_revision()?,
             state: State::Prepared,
             failure: None,

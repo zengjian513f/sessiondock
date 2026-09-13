@@ -26,7 +26,7 @@ use std::{
 
 const SID: &str = "7c1e4d2a-9b3f-4e5a-8d6c-1f2e3a4b5c6d";
 const INSTANCE: &str = "synthetic-codex-instance-0001";
-const NAME: &str = "agenthub-codex-7c1e4d2a";
+const NAME: &str = "sessiondock-codex-7c1e4d2a";
 const FOOTER: &str = "gpt-5.6-luna low · /synthetic/codex-area";
 const PLACEHOLDER: &str = "Ask Codex to do anything";
 

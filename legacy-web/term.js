@@ -1,12 +1,12 @@
 'use strict';
 
 // 接管会话: 在服务端把它用 tmux resume 起来, 然后把终端嵌在会话详情底部。
-// 会话跑在 tmux 里, 所以关掉页面/重启 agenthub 都不会打断它。
+// 会话跑在 tmux 里, 所以关掉页面/重启 sessiondock 都不会打断它。
 const TERM_RENDER_BATCH_MS = 20;
 const TERM_RENDER_BATCH_MAX = 32 * 1024;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
-const TERM_PAGE_ID = window.__agenthubPageId || crypto.randomUUID?.()
+const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
   || [...crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
 
@@ -114,9 +114,9 @@ async function prepareTerminalFont() {
   try {
     await document.fonts?.load(`${size}px ${configured}`, TERM_FONT_SAMPLE);
     const configuredRatio = terminalFontGridRatio(configured, size);
-    const keepUbuntuGlyphs = configured.includes('"AgentHub Ubuntu Sans Mono"');
+    const keepUbuntuGlyphs = configured.includes('"SessionDock Ubuntu Sans Mono"');
     if (!keepUbuntuGlyphs && Math.abs(configuredRatio - 2) > .025) {
-      const grid = '"AgentHub CJK Mono Grid"';
+      const grid = '"SessionDock CJK Mono Grid"';
       const faces = await document.fonts?.load(`${size}px ${grid}`, TERM_FONT_SAMPLE);
       const ratio = faces?.length ? terminalFontGridRatio(grid, size) : 0;
       if (Math.abs(ratio - 2) <= .025) resolved = `${grid}, ${configured}`;
@@ -314,8 +314,8 @@ async function loadTermList() {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
-    ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (AgentHubCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}` : '')),
-    ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (AgentHubCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}` : '')),
+    ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}` : '')),
+    ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}` : '')),
   ].join('\n');
   const before = fingerprint();
   let loaded = false;
@@ -355,7 +355,7 @@ async function loadTermList() {
     T.backend = data.backend || '';
     T.backends = data.backends || [];
     T.pending = data.pending || [];
-    if (AgentHubCapabilities.config.backend === 'rust') {
+    if (SessionDockCapabilities.config.backend === 'rust') {
       for (const [uid, ended] of T.ended) {
         const replacement = T.list.find(row => row.uid === uid && row.instance_id !== ended.instanceId);
         if (replacement) {
@@ -364,7 +364,7 @@ async function loadTermList() {
         }
       }
     }
-  } else if (AgentHubCapabilities.config.backend === 'rust' && transient) {
+  } else if (SessionDockCapabilities.config.backend === 'rust' && transient) {
     // 瞬时失败：保留上一轮的 enabled/sources/list/pending，“+”与接管按钮不消失；
     // 下一轮轮询自然恢复。只有明确的 4xx 才把状态清空。
   } else {
@@ -383,7 +383,7 @@ async function loadTermList() {
     const valid = new Set([...T.list, ...T.pending].map(x => x.name));
     const kept = new Map([...T.openViews].filter(([name, saved]) => {
       if (!valid.has(name)) return false;
-      if (AgentHubCapabilities.config.backend !== 'rust') return true;
+      if (SessionDockCapabilities.config.backend !== 'rust') return true;
       const row = (saved.record_id ? T.pending : T.list).find(row => row.name === name);
       return !!row && saved.uid === (row.uid || (row.record_id && pendingUid(row.name)))
         && saved.instance_id === row.instance_id && (!row.record_id || saved.record_id === row.record_id);
@@ -394,7 +394,7 @@ async function loadTermList() {
     }
     for (const name of T.views.keys()) {
       const current = [...T.list, ...T.pending].find(row => row.name === name);
-      const replaced = AgentHubCapabilities.config.backend === 'rust'
+      const replaced = SessionDockCapabilities.config.backend === 'rust'
         && current
         && T.views.get(name)?.instanceId
         && T.views.get(name).instanceId !== current.instance_id;
@@ -412,7 +412,7 @@ async function loadTermList() {
     await rebindSelectedTermSession();
   }
   const create = $('#new-session');
-  const createEnabled = T.enabled && AgentHubCapabilities.allows('terminal_create');
+  const createEnabled = T.enabled && SessionDockCapabilities.allows('terminal_create');
   if (create && create.classList.contains('hidden') === createEnabled) {
     create.classList.toggle('hidden', !createEnabled);
     // 新建按钮出现/消失改变顶栏右侧占宽，放不放得下要重新量
@@ -432,7 +432,7 @@ async function loadTermList() {
   for (const pending of pendingTmuxSessions()) if (!pending.stale) resolveNewSession(pending);
   // Declared launches leave the sidebar once their native record exists;
   // the selected pending page still has to follow that association.
-  if (AgentHubCapabilities.config.backend === 'rust')
+  if (SessionDockCapabilities.config.backend === 'rust')
     for (const row of T.pending) if ((row.declared_sid || row.binding?.state === 'confirmed') && !row.stale) resolveNewSession(row);
   restoreTermPane(S.sel, S.agent);
 }
@@ -450,7 +450,7 @@ function sessionTermMeta(uid) {
  */
 function linkedTermSession(uid, { followReplacement = false } = {}) {
   const panes = [...(T.list || []), ...(T.pending || [])];
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     const exact = panes.filter(pane => pane.instance_id && (pane.uid === uid
       || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === uid)));
     return exact.length === 1 ? {name: exact[0].name, uid} : null;
@@ -481,7 +481,7 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
   // 优先保留普通会话的叶子名，再用 root_sid 追溯回同一 pane。
   const ids = [...new Set([session.sid, session.root_sid].filter(Boolean))];
   for (const sid of ids) {
-    const name = (session.node_id ? session.node_id + '~' : '') + `agenthub-${session.source}-${String(sid).slice(0, 8)}`;
+    const name = (session.node_id ? session.node_id + '~' : '') + `sessiondock-${session.source}-${String(sid).slice(0, 8)}`;
     const pane = panes.find(x => x.name === name);
     const result = linked(pane, name);
     if (result) return result;
@@ -500,8 +500,8 @@ function takenOver(uid) {
  *  claims for itself and reports any other page's lease as an ownership
  *  error. Python-served pages and undeclared capabilities send nothing extra. */
 function termSendLease(name) {
-  if (AgentHubCapabilities.config.backend !== 'rust'
-      || !AgentHubCapabilities.allows('outbox')) return {};
+  if (SessionDockCapabilities.config.backend !== 'rust'
+      || !SessionDockCapabilities.allows('outbox')) return {};
   const lease = T.views.get(name)?.inputLease;
   if (!lease?.token || !lease?.instance_id) return {};
   const out = { page: TERM_PAGE_ID, token: lease.token, instance_id: lease.instance_id };
@@ -515,8 +515,8 @@ function termSendLease(name) {
  *  composer (see `termSendLease`), so it returns null instead of a body.
  *  Python-served pages and undeclared capabilities keep the original body. */
 function termInputBody(name, body) {
-  if (AgentHubCapabilities.config.backend !== 'rust'
-      || !AgentHubCapabilities.allows('terminal_input')) return body;
+  if (SessionDockCapabilities.config.backend !== 'rust'
+      || !SessionDockCapabilities.allows('terminal_input')) return body;
   const lease = T.views.get(name)?.inputLease;
   const out = { name, page: TERM_PAGE_ID, token: lease?.token || '' };
   for (const key of ['uid', 'instance_id', 'record_id', 'launch_id']) {
@@ -577,7 +577,7 @@ async function takeover(uid, btn) {
   try {
     // Rust: takeover is an idempotent, server-resolved `resume` receipt; the
     // request ID keeps a retried click from starting a second CLI.
-    const rustResume = AgentHubCapabilities.config.backend === 'rust'
+    const rustResume = SessionDockCapabilities.config.backend === 'rust'
       ? {request_id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`} : {};
     let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), ...rustResume });
     if (d.needs_confirm) {
@@ -598,7 +598,7 @@ async function takeover(uid, btn) {
     // Rust: the receipt is ready, but the fresh instance reaches the console
     // list only once its guarded observation matches the session row; wait
     // for that (bounded) instead of attaching against a stale list.
-    for (let attempt = 0; AgentHubCapabilities.config.backend === 'rust' && attempt < 12
+    for (let attempt = 0; SessionDockCapabilities.config.backend === 'rust' && attempt < 12
          && !(T.list || []).some(row => row.name === d.name && row.instance_id === d.instance_id); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 500));
       await loadTermList();
@@ -628,8 +628,8 @@ async function post(url, body) {
   try {
     const r = await fetch(appUrl(url), {
       method: 'POST', headers: {
-        'Content-Type': 'application/json', 'X-AgentHub-Trace': traceId,
-        'X-AgentHub-Page': TERM_PAGE_ID, 'X-AgentHub-Build': BUILD_ID,
+        'Content-Type': 'application/json', 'X-SessionDock-Trace': traceId,
+        'X-SessionDock-Page': TERM_PAGE_ID, 'X-SessionDock-Build': BUILD_ID,
       },
       body: JSON.stringify(payload),
     });
@@ -701,7 +701,7 @@ function showBugReportToast(report, worker) {
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
 // 引用，以及同一个上传接口。处理会话的 cwd 固定为仓库根目录，因此上传
-// 先落到仓库的 agenthub_attachments/，与在该目录的会话里发送附件完全一致。
+// 先落到仓库的 sessiondock_attachments/，与在该目录的会话里发送附件完全一致。
 const BUG_REPORT_UPLOAD_UID = 'bug-report';
 // newComposerDraft 定义在下方的对话输入框段落，只能在运行时按需创建。
 let bugReportDraft = null;
@@ -1130,7 +1130,7 @@ async function loadCwdCompletions(complete = false) {
   const input = $('#new-cwd');
   const value = input.value.trim();
   const recent = matchingRecentCwdOptions(value);
-  if (AgentHubCapabilities.config.backend === 'rust' && !AgentHubCapabilities.allows('terminal_complete_dir')) {
+  if (SessionDockCapabilities.config.backend === 'rust' && !SessionDockCapabilities.allows('terminal_complete_dir')) {
     renderCwdOptions(value, recent, [], '请填写已配置白名单中的现有工作目录；不会自动创建目录。');
     return;
   }
@@ -1231,7 +1231,7 @@ function showNewSessionStage(info) {
       <button class="session-menu-action" data-report-bug title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action" title="停止会话" aria-label="停止会话">${uiIcon('power')}</button>
-      ${AgentHubCapabilities.config.backend === 'rust' && AgentHubCapabilities.allows('terminal_bind')
+      ${SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.allows('terminal_bind')
         ? `<button class="session-menu-action" id="a-native-bind" title="关联原生会话"
             aria-label="关联原生会话">${uiIcon('link')}</button>
           <button class="session-menu-action" id="a-pending-release" title="释放本页控制台"
@@ -1242,7 +1242,7 @@ function showNewSessionStage(info) {
       <span class="meta-secondary"><code>${esc(shortCwd(info.cwd, 999))}</code></span>
       <span class="meta-source">${esc(src.name)}</span></div>`)}
     </div></div>
-  </div><div class="empty new-session-wait">${AgentHubCapabilities.config.backend === 'rust'
+  </div><div class="empty new-session-wait">${SessionDockCapabilities.config.backend === 'rust'
     ? esc(pendingBindingMessage(info))
     : '终端已启动，正在等待会话记录落盘…'}</div>`;
   $('#detail .mobile-back').onclick = showMobileList;
@@ -1279,7 +1279,7 @@ function workerStatusMessage(info) {
 
 /** Sidebar meta text of a Rust pending row (Python rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
-  if (AgentHubCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
+  if (SessionDockCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
   if (s.state === 'exited') return '实例已退出';
   if (s.state === 'failed') return '启动失败';
   if (s.state === 'cancel_requested') return '正在停止';
@@ -1305,7 +1305,7 @@ function pendingBindingMessage(info) {
 
 let nativeBindReceipt = null;
 function openNativeBindDialog(info) {
-  if (AgentHubCapabilities.config.backend !== 'rust' || !AgentHubCapabilities.allows('terminal_bind')) return;
+  if (SessionDockCapabilities.config.backend !== 'rust' || !SessionDockCapabilities.allows('terminal_bind')) return;
   const current = T.pending.find(row => row.record_id === info.record_id) || info;
   if (!current.running || current.stale) { alert(current.unavailable_reason || '该实例不可关联。'); return; }
   if (current.declared_sid) { alert(pendingBindingMessage(current)); return; }
@@ -1350,7 +1350,7 @@ $('#native-bind-form').onsubmit = async event => {
 };
 
 async function stopPendingSession(info, button) {
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     if (!confirm('停止这个明确创建的终端实例？创建回执和草稿会保留。')) return;
     if (button) button.disabled = true;
     try {
@@ -1371,7 +1371,7 @@ async function stopPendingSession(info, button) {
 }
 
 async function discardPendingSession(info) {
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     // A finished receipt (exited/failed/cancelled) is dropped from the pending
     // view through `term/discard`; a running one must be stopped first.
     const current = T.pending.find(row => row.record_id === info.record_id) || info;
@@ -1399,7 +1399,7 @@ async function discardPendingSession(info) {
 async function openPendingSession(info) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending);
-  if (AgentHubCapabilities.config.backend !== 'rust' || (pending.running && !pending.stale))
+  if (SessionDockCapabilities.config.backend !== 'rust' || (pending.running && !pending.stale))
     await openTermPane(pending.name);
   resolveNewSession(pending);
 }
@@ -1439,7 +1439,7 @@ function discardAbandonedNewSession(info) {
 }
 
 async function resolveNewSession(info) {
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     // Periodic term/list is authoritative for this launch-only view. Never run
     // Python's filename-based resolution or automatic draft/receipt cleanup.
     const current = T.pending.find(row => row.record_id === info.record_id);
@@ -1899,7 +1899,7 @@ function ensureTerm(name) {
   // xterm 的正常 scrollback。改造前遗留在默认 server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
-    if (T.list?.find(x => x.name === name)?.server === 'agenthub') return true;
+    if (T.list?.find(x => x.name === name)?.server === 'sessiondock') return true;
     wheelBy(e.deltaY);
     return false;
   });
@@ -2015,7 +2015,7 @@ function settleActivatedTermView(view) {
 }
 
 function currentTermView(name = T.name) {
-  const row = AgentHubCapabilities.config.backend === 'rust'
+  const row = SessionDockCapabilities.config.backend === 'rust'
     ? (String(T.uid || '').startsWith('tmux:') ? (T.pending || []) : T.list).find(row => row.name === name) : null;
   return { mode: T.mode, height: T.height,
     ...(row ? {uid: row.uid || (row.record_id && pendingUid(row.name)), instance_id: row.instance_id,
@@ -2038,7 +2038,7 @@ function rememberTermOpen(name, open) {
 }
 
 function restoreTermPane(uid, agent = null) {
-  if (AgentHubCapabilities.config.backend === 'rust' && T.ended.has(uid)) return;
+  if (SessionDockCapabilities.config.backend === 'rust' && T.ended.has(uid)) return;
   if (!uid || agent || S.sel !== uid || !sessionTerminalEnabled(uid) || !$('#a-term')) return;
   const name = takenOver(uid);
   if (!name || !T.openViews.has(name)) return;
@@ -2074,7 +2074,7 @@ function restoreTermPane(uid, agent = null) {
 
 async function openTermPane(name, autoFocus = true, requestedMode = null) {
   const existing = T.views.get(name);
-  if (AgentHubCapabilities.config.backend === 'rust' && existing?.bindingUid && existing.bindingUid !== T.uid) {
+  if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid && existing.bindingUid !== T.uid) {
     ConsoleUI.errors.set(T.uid, '同一实例的另一类控制台仍保持连接；请先在原页面操作中释放本页控制台，再打开。');
     renderTakeoverBtn();
     return false;
@@ -2239,7 +2239,7 @@ function handleTermRevoked(view, ip = '') {
 }
 
 function recordHostExit(view, uid, event) {
-  if (AgentHubCapabilities.config.backend !== 'rust') return false;
+  if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const incomplete = event.code === 1011 && event.reason.startsWith('host output incomplete');
   if (!incomplete && !(event.code === 1000 && event.reason === 'host exited')) return false;
   const reason = incomplete
@@ -2285,11 +2285,11 @@ async function attachOwnedTerm(view, allowRefresh = true) {
   if (view.ended || view.retired) return false;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
-  const row = (AgentHubCapabilities.config.backend === 'rust'
+  const row = (SessionDockCapabilities.config.backend === 'rust'
     ? (String(wantedUid || '').startsWith('tmux:') ? (T.pending || []) : (T.list || []))
     : [...(T.list || []), ...(T.pending || [])]).find(row => row.name === name);
   const uid = row?.uid || T.uid;
-  const bound = AgentHubCapabilities.config.backend === 'rust';
+  const bound = SessionDockCapabilities.config.backend === 'rust';
   const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
   if (bound && ((!row?.uid && !launch) || !row.instance_id
       || (view.instanceId && view.instanceId !== row.instance_id))) {
@@ -2416,7 +2416,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
       handleTermRevoked(view, event.reason.slice('revoked:'.length));
       return;
     }
-    if (AgentHubCapabilities.config.backend === 'rust' && event.code === 4002 && event.reason === 'launch retired') {
+    if (SessionDockCapabilities.config.backend === 'rust' && event.code === 4002 && event.reason === 'launch retired') {
       view.revoked = true;
       view.retired = true;
       cancelTermReconnect(view);
@@ -2848,7 +2848,7 @@ function switchComposerDraft(uid) {
 }
 
 function renderComposer() {
-  const name = AgentHubCapabilities.allows('outbox') && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
+  const name = SessionDockCapabilities.allows('outbox') && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const box = $('#composer');
   box.classList.toggle('hidden', !name);
   switchComposerDraft(name ? S.sel : null);
@@ -2872,7 +2872,7 @@ function syncComposerMode() {
 
 async function prepareTerminalDraft(uid) {
   const name = takenOver(uid);
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!name || !['claude', 'codex'].includes(cli?.source) || uid.startsWith('tmux:')) {
     return { proceed: true, overwriteDraft: '' };
   }
@@ -2897,7 +2897,7 @@ async function prepareTerminalDraft(uid) {
 async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) {
   const name = takenOver(uid);
   if (!name) return false;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   const serverQueued = !!text && ['claude', 'codex'].includes(cli?.source)
     && !uid.startsWith('tmux:');
   const queuedId = text && !serverQueued && typeof queuePendingUserMessage === 'function'
@@ -3268,7 +3268,7 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
 
 function composerAttachmentIdentity(uid) {
   const identity = {uid};
-  if (AgentHubCapabilities.config.backend !== 'rust' || !String(uid).startsWith('tmux:')) {
+  if (SessionDockCapabilities.config.backend !== 'rust' || !String(uid).startsWith('tmux:')) {
     return identity;
   }
   const pending = (T.pending || []).find(row => pendingUid(row.name) === uid);
@@ -3281,7 +3281,7 @@ function composerAttachmentIdentity(uid) {
 
 let composerSending = false;
 async function submitComposer() {
-  if (!AgentHubCapabilities.allows('outbox')) {
+  if (!SessionDockCapabilities.allows('outbox')) {
     alert('可靠发送尚未启用；可在已验证的控制台内手动输入。');
     return;
   }
@@ -3458,14 +3458,14 @@ async function answerCliQuestion(uid, optionIndex) {
   if (rows?.length !== 1 || rows[0].multiple || !rows[0].options?.[optionIndex]) return false;
   // 不同 CLI 的菜单定位语义不同（Claude 用方向键，Codex 用数字直选），
   // 具体按键必须由各自实现决定，不能在公共交互层猜测当前光标位置。
-  const keys = agenthubCli(uid)?.questionAnswerKeys(prompt, optionIndex);
+  const keys = sessiondockCli(uid)?.questionAnswerKeys(prompt, optionIndex);
   if (!keys?.length) return false;
   return sendToSession(null, keys, uid);
 }
 
 async function answerCliQuestionForm(uid, optionIndexes) {
   const prompt = activeCliQuestion(uid);
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli?.canAnswerQuestionForm(prompt)) return false;
   const groups = cli.questionFormAnswerKeyGroups(prompt, optionIndexes);
   if (!groups?.length) return false;
@@ -3482,7 +3482,7 @@ async function answerCliQuestionForm(uid, optionIndexes) {
 
 async function cancelCliQuestion(uid) {
   composerEscAt = -Infinity;
-  const keys = agenthubCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
+  const keys = sessiondockCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
   return keys?.length ? sendToSession(null, keys, uid) : false;
 }
 
@@ -3498,7 +3498,7 @@ async function sendComposerEscape(now = performance.now()) {
   const draft = composerDraft(uid, false);
   const empty = !String($('#cinput')?.value || '').trim()
     && !(draft?.attachments?.length) && !(draft?.quotes?.some(q => q.text?.trim()));
-  const escape = agenthubCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
+  const escape = sessiondockCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
     || { rewind: false, nextAt: -Infinity };
   const rewind = escape.rewind;
   composerEscAt = escape.nextAt;
@@ -3719,8 +3719,8 @@ addEventListener('online', () => foregroundTerm(true));
 // Rust capabilities. The Python live poll normally refreshes this list; do not
 // lose discovery of new/replacement hosts just because Rust keeps live:false.
 async function pollRustTermList() {
-  if (AgentHubCapabilities.config.backend !== 'rust'
-      || !AgentHubCapabilities.allows('terminal') || AgentHubCapabilities.allows('live')) return;
+  if (SessionDockCapabilities.config.backend !== 'rust'
+      || !SessionDockCapabilities.allows('terminal') || SessionDockCapabilities.allows('live')) return;
   try {
     if (!document.hidden) await loadTermList();
   } catch { /* Keep the next observation available after a render/network error. */ }
@@ -3728,6 +3728,6 @@ async function pollRustTermList() {
 }
 
 loadTermList();
-if (AgentHubCapabilities.config.backend === 'rust'
-    && AgentHubCapabilities.allows('terminal') && !AgentHubCapabilities.allows('live'))
+if (SessionDockCapabilities.config.backend === 'rust'
+    && SessionDockCapabilities.allows('terminal') && !SessionDockCapabilities.allows('live'))
   setTimeout(pollRustTermList, 3000);

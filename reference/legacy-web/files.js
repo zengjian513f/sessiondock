@@ -7,15 +7,15 @@
   for (const key of ['uid', 'agent', 'ref']) if (initial.has(key)) context.set(key, initial.get(key));
   const store = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
   const restore = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
-  const preferences = {...{sort:'name', order:'asc', view:'list', hidden:true}, ...restore('agenthub-files-view', {})};
+  const preferences = {...{sort:'name', order:'asc', view:'list', hidden:true}, ...restore('sessiondock-files-view', {})};
   const states = {queued:'等待中', running:'处理中', uploading:'上传中', completed:'已完成', failed:'失败', cancelled:'已取消', interrupted:'已中断'};
   const labels = {mkdir:'新建文件夹', 'new-file':'新建文件', rename:'重命名', copy:'复制', move:'移动', delete:'永久删除', trash:'历史删除', restore:'历史还原', purge:'历史清理', compress:'压缩', extract:'解压', bundle:'打包下载', upload:'上传'};
   let data = null, controller, selected = new Set(), anchor = -1, loading = false;
-  let clipboard = restore('agenthub-files-clipboard', null);
+  let clipboard = restore('sessiondock-files-clipboard', null);
   let knownJobs = new Map(), lastJobs = [], pollTimer, polling = false, taskSignature = '';
   let uploadDestination = '', resumeJob = null, previewController;
   const uploads = new Map(), uploading = new Set(), xhrs = new Map(), bundleDownloads = new Set();
-  const historyKey = 'agenthub-files-history:' + context.toString();
+  const historyKey = 'sessiondock-files-history:' + context.toString();
   if (!history.state?.files) history.replaceState({files:0}, '', location.href);
   let maxHistory = Math.max(history.state.files, restore(historyKey, 0));
 
@@ -124,7 +124,7 @@
     data = result; selected.clear(); anchor = -1;
     $('machine').textContent = result.hostname + (result.writable ? '' : ' · 只读');
     const segments = result.path.split('/').filter(Boolean), title = segments.at(-1) || '根目录';
-    document.title = title + ' · 文件管理 · AgentHub'; document.querySelector('h1').textContent = title;
+    document.title = title + ' · 文件管理 · SessionDock'; document.querySelector('h1').textContent = title;
     $('breadcrumbs').replaceChildren(); let path = '';
     for (const [index,name] of ['根目录', ...segments].entries()) {
       if (index) { path += '/' + name; $('breadcrumbs').append(element('span','›')); }
@@ -203,7 +203,7 @@
       if (action === 'info') return preview(items[0], true);
       if (action === 'copy' || action === 'cut') {
         clipboard = {node:data.node_id, action:action === 'cut' ? 'move' : 'copy', paths};
-        store('agenthub-files-clipboard',clipboard); selectionChanged(); status(`已${action === 'cut' ? '剪切' : '复制'} ${paths.length} 项`); return;
+        store('sessiondock-files-clipboard',clipboard); selectionChanged(); status(`已${action === 'cut' ? '剪切' : '复制'} ${paths.length} 项`); return;
       }
       if (action === 'paste') return await transfer(clipboard.paths, directory, clipboard.action);
       if (action === 'upload') { uploadDestination = directory; $('upload-input').value = ''; $('upload-input').click(); return; }
@@ -255,7 +255,7 @@
         }
         box.append(list);
       } else if (info.preview === 'text') {
-        AgentHubFilePreview.textPreview(box, info, (ref, image) => AgentHubFilePreview.documentLink(ref, info,
+        SessionDockFilePreview.textPreview(box, info, (ref, image) => SessionDockFilePreview.documentLink(ref, info,
           (path, media, hash) => {
             if (media) return apiURL({mode:'preview',path});
             const url = new URL('file.html', base); url.search = context.toString();
@@ -293,7 +293,7 @@
             && clipboard?.node === data?.node_id && clipboard?.action === 'move' && job.completed?.length) {
           clipboard.paths = clipboard.paths.filter(path => !job.completed.includes(path));
           if (!clipboard.paths.length) clipboard = null;
-          store('agenthub-files-clipboard',clipboard);
+          store('sessiondock-files-clipboard',clipboard);
         }
         if (job.state === 'completed' && job.artifact && bundleDownloads.has(job.id)) {
           bundleDownloads.delete(job.id); download(apiURL({mode:'artifact',job:job.id}),job.download_name);
@@ -425,7 +425,7 @@
   $('entries').addEventListener('dragstart',event => {
     const row = event.target.closest('.entry'); if (!row) return;
     if (!selected.has(row.dataset.path)) selectEntry(Number(row.dataset.index));
-    event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData('application/x-agenthub-files',JSON.stringify({node:data.node_id,paths:[...selected]}));
+    event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData('application/x-sessiondock-files',JSON.stringify({node:data.node_id,paths:[...selected]}));
   });
   $('workspace').addEventListener('dragover',event => {
     if (!data?.writable) return; event.preventDefault();
@@ -438,7 +438,7 @@
     const row = event.target.closest('.entry'), entry = row && data.entries[Number(row.dataset.index)];
     const destination = entry?.kind === 'directory' ? entry.path : data.path;
     if (event.dataTransfer.files.length) { startUploads([...event.dataTransfer.files],destination); return; }
-    try { const value = JSON.parse(event.dataTransfer.getData('application/x-agenthub-files')); if (value.node !== data.node_id) throw new Error('暂不支持跨机器拖放'); await transfer(value.paths,destination,event.ctrlKey ? 'copy' : 'move'); }
+    try { const value = JSON.parse(event.dataTransfer.getData('application/x-sessiondock-files')); if (value.node !== data.node_id) throw new Error('暂不支持跨机器拖放'); await transfer(value.paths,destination,event.ctrlKey ? 'copy' : 'move'); }
     catch (error) { status(error.message,true); }
   });
   function editAddress() { $('address-form').hidden = false; $('address').value = data?.path || ''; $('address').focus(); $('address').select(); }
@@ -449,10 +449,10 @@
   addEventListener('popstate',load);
   for (const id of ['sort','view','hidden']) {
     if (id === 'hidden') $(id).checked = preferences.hidden; else $(id).value = preferences[id];
-    $(id).onchange = () => { preferences[id] = id === 'hidden' ? $(id).checked : $(id).value; store('agenthub-files-view',preferences); if (id === 'view' && data) renderEntries(); else navigate(data?.path || '',0); };
+    $(id).onchange = () => { preferences[id] = id === 'hidden' ? $(id).checked : $(id).value; store('sessiondock-files-view',preferences); if (id === 'view' && data) renderEntries(); else navigate(data?.path || '',0); };
   }
   function orderLabel() { $('order').textContent = preferences.order === 'asc' ? '升序 ↑' : '降序 ↓'; }
-  orderLabel(); $('order').onclick = () => { preferences.order = preferences.order === 'asc' ? 'desc' : 'asc'; orderLabel(); store('agenthub-files-view',preferences); navigate(data?.path || '',0); };
+  orderLabel(); $('order').onclick = () => { preferences.order = preferences.order === 'asc' ? 'desc' : 'asc'; orderLabel(); store('sessiondock-files-view',preferences); navigate(data?.path || '',0); };
   for (const th of document.querySelectorAll('th[data-sort]')) th.onclick = () => { if (preferences.sort === th.dataset.sort) $('order').click(); else { $('sort').value = th.dataset.sort; $('sort').dispatchEvent(new Event('change')); } };
   document.addEventListener('keydown',event => {
     if (document.querySelector('dialog[open]') || event.target.closest('input,textarea,select,[contenteditable]')) return;
@@ -480,7 +480,7 @@
     if (file.name !== resumeJob.upload_name || file.size !== resumeJob.total_bytes || file.lastModified !== resumeJob.upload_modified) { status('请重新选择原上传文件（名称、大小和修改时间须一致）',true); return; }
     sendUpload(resumeJob,file);
   };
-  addEventListener('storage',event => { if (event.key === 'agenthub-files-clipboard') { clipboard = restore(event.key,null); selectionChanged(); } });
+  addEventListener('storage',event => { if (event.key === 'sessiondock-files-clipboard') { clipboard = restore(event.key,null); selectionChanged(); } });
   addEventListener('beforeunload',event => { if (uploading.size) { event.preventDefault(); event.returnValue = ''; } });
 
   load();

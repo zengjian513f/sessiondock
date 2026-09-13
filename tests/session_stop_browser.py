@@ -92,7 +92,7 @@ def main():
                             dialog.accept()
                         page.on("dialog", on_dialog)
                         page.goto(base, wait_until="networkidle")
-                        assert page.evaluate("AgentHubCapabilities.config.session_stop") is True
+                        assert page.evaluate("SessionDockCapabilities.config.session_stop") is True
                         return page
 
                     # ---- Desktop: resume, then stop through the header action.

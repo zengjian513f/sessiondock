@@ -2,8 +2,8 @@
 
 // Optional development-backend contract. An ordinary Python-served page has
 // no such meta tag and retains all existing behavior.
-globalThis.AgentHubCapabilities = (() => {
-  const meta = document.querySelector('meta[name="agenthub-capabilities"]');
+globalThis.SessionDockCapabilities = (() => {
+  const meta = document.querySelector('meta[name="sessiondock-capabilities"]');
   let config = {};
   if (meta) {
     try {
@@ -19,27 +19,9 @@ globalThis.AgentHubCapabilities = (() => {
   config = Object.freeze({...config});
   const allows = name => config[name] !== false;
   const namespace = typeof config.storage_namespace === 'string' && config.storage_namespace
-    ? config.storage_namespace : config.backend === 'rust' ? 'sessiondock.' : '';
-  // Batch 44 WP-F: a same-origin deployment that replaced the Python page still
-  // holds every preference under Python's prefix (`agenthub.`, hub
-  // `agenthub.hub.<path>.`). `stored(key)` reads `<prefix><key>` and, only when
-  // the Rust namespace is set, falls back once to that Python key and copies
-  // the value forward; the Python key itself is never written again.
-  const legacyNamespace = () => {
-    if (!namespace) return '';
-    const hub = document.querySelector('meta[name="agenthub-mode"]')?.content === 'hub';
-    return hub ? `agenthub.hub.${location.pathname}.` : 'agenthub.';
-  };
+    ? config.storage_namespace : 'sessiondock.';
   const stored = (key, prefix = namespace) => {
-    const value = localStorage.getItem(prefix + key);
-    if (value !== null) return value;
-    const legacy = legacyNamespace();
-    if (!legacy || legacy === prefix) return null;
-    const previous = localStorage.getItem(legacy + key);
-    if (previous !== null) {
-      try { localStorage.setItem(prefix + key, previous); } catch { /* quota: still read it */ }
-    }
-    return previous;
+    return localStorage.getItem(prefix + key);
   };
   return Object.freeze({config, allows, namespace, declared: !!meta, stored});
 })();

@@ -1,7 +1,7 @@
 'use strict';
 
-const HUB_MODE = document.querySelector('meta[name="agenthub-mode"]')?.content === 'hub';
-const STORAGE_PREFIX = HUB_MODE ? `agenthub.hub.${location.pathname}.` : 'agenthub.';
+const HUB_MODE = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub';
+const STORAGE_PREFIX = HUB_MODE ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';
 // list 只有启用的机器，别处都按它；machines 是设置页用的完整名单（含停用的），
 // 顺序就是注册表顺序，只由用户在设置页拖动决定，不随启用状态变
 const Nodes = {list: [], machines: [], off: new Set(), capabilities: {}, errors: new Map()};

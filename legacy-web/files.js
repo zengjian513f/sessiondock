@@ -5,29 +5,19 @@
   const initial = new URLSearchParams(location.search);
   const context = new URLSearchParams();
   for (const key of ['uid', 'agent', 'ref']) if (initial.has(key)) context.set(key, initial.get(key));
-  // Batch 44 WP-F: Rust keys are `<namespace>files-<key>`; a page without a
-  // namespace keeps Python's bare `agenthub-files-<key>`. A missing Rust key
-  // falls back once to the pre-rename `<namespace>agenthub-files-<key>` and
-  // then to Python's key (same-origin replacement), copying the value forward.
-  const namespace = AgentHubCapabilities.namespace;
-  const storageKey = key => (namespace ? namespace + 'files-' : 'agenthub-files-') + key;
-  const legacyKeys = key => namespace ? [namespace + 'agenthub-files-' + key, 'agenthub-files-' + key] : [];
+  const namespace = SessionDockCapabilities.namespace;
+  const storageKey = key => namespace + 'files-' + key;
   const store = (key, value) => { try { localStorage.setItem(storageKey(key), JSON.stringify(value)); } catch {} };
   const restore = (key, fallback) => {
     try {
-      let raw = localStorage.getItem(storageKey(key));
-      for (const legacy of legacyKeys(key)) {
-        if (raw !== null) break;
-        raw = localStorage.getItem(legacy);
-        if (raw !== null) localStorage.setItem(storageKey(key), raw);
-      }
+      const raw = localStorage.getItem(storageKey(key));
       return JSON.parse(raw) ?? fallback;
     } catch { return fallback; }
   };
   const preferences = {...{sort:'name', order:'asc', view:'list', hidden:true}, ...restore('view', {})};
   // Rust declares `files_write` (actions, conflicts, chunk size, trash delete).
   // A Python page has no declaration and keeps every original behavior.
-  const writeCaps = AgentHubCapabilities.config.files_write;
+  const writeCaps = SessionDockCapabilities.config.files_write;
   const supports = action => !writeCaps || !Array.isArray(writeCaps.actions) || writeCaps.actions.includes(action);
   const UPLOAD_CHUNK = writeCaps && Number.isInteger(writeCaps.chunk_bytes) && writeCaps.chunk_bytes > 0 ? writeCaps.chunk_bytes : 8*1024*1024;
   const trashDelete = !!writeCaps && writeCaps.delete === 'trash';
@@ -132,7 +122,7 @@
         ? '<svg viewBox="0 0 24 24"><path fill="#dca735" d="M2 6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10H2z"/><path fill="#f6cb63" d="M2 9h20v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>'
         : '<svg viewBox="0 0 24 24"><path fill="var(--bg)" stroke="#7195c1" d="M5 2h9l5 5v15H5z"/><path fill="#d8e7fa" stroke="#7195c1" d="M14 2v5h5"/><path stroke="#9bb2ce" d="M8 11h8M8 15h8M8 19h6"/></svg>';
       icon.setAttribute('aria-hidden', 'true');
-      if (AgentHubCapabilities.allows('file_thumbnails') && preferences.view === 'grid' && /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov)$/i.test(entry.name)) {
+      if (SessionDockCapabilities.allows('file_thumbnails') && preferences.view === 'grid' && /\.(png|jpe?g|gif|webp|avif|bmp|mp4|webm|mov)$/i.test(entry.name)) {
         const thumb = element('img', undefined, 'thumbnail'); thumb.alt = ''; thumb.loading = 'lazy';
         thumb.src = apiURL({mode:'thumbnail', path:entry.path});
         thumb.onerror = () => { thumb.remove(); };
@@ -179,7 +169,7 @@
     for (const id of ['parent','previous','next']) navigation($(id), null);
     $('file-table').setAttribute('aria-busy','true'); selectionChanged(); historyButtons();
     try {
-      if (!AgentHubCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
+      if (!SessionDockCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
       if (!context.get('uid') || !context.get('ref')) throw new Error('请从会话中的目录链接打开文件管理器');
       const params = new URLSearchParams(location.search);
       const result = await get({path:params.get('path'), offset:params.get('offset') || 0, sort:preferences.sort, order:preferences.order, hidden:preferences.hidden ? 1 : 0}, request.signal);
@@ -300,7 +290,7 @@
         }
         box.append(list);
       } else if (info.preview === 'text') {
-        AgentHubFilePreview.textPreview(box, info, (ref, image) => AgentHubFilePreview.documentLink(ref, info,
+        SessionDockFilePreview.textPreview(box, info, (ref, image) => SessionDockFilePreview.documentLink(ref, info,
           (path, media, hash) => {
             if (media) return apiURL({mode:'preview',path});
             const url = new URL('file.html', base); url.search = context.toString();
@@ -322,7 +312,7 @@
   }
 
   async function poll() {
-    if (!AgentHubCapabilities.allows('files_jobs')) {
+    if (!SessionDockCapabilities.allows('files_jobs')) {
       $('tasks-list').textContent = 'Rust 后端尚未实现文件写入和传输任务；当前只提供受限读取与直接下载。';
       $('tasks-dialog').querySelector('p.muted').textContent = '未启动后台文件操作。';
       return;
@@ -479,7 +469,7 @@
   $('entries').addEventListener('dragstart',event => {
     const row = event.target.closest('.entry'); if (!row) return;
     if (!selected.has(row.dataset.path)) selectEntry(Number(row.dataset.index));
-    event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData('application/x-agenthub-files',JSON.stringify({node:data.node_id,paths:[...selected]}));
+    event.dataTransfer.effectAllowed = 'copyMove'; event.dataTransfer.setData('application/x-sessiondock-files',JSON.stringify({node:data.node_id,paths:[...selected]}));
   });
   $('workspace').addEventListener('dragover',event => {
     if (!data?.writable) return; event.preventDefault();
@@ -492,7 +482,7 @@
     const row = event.target.closest('.entry'), entry = row && data.entries[Number(row.dataset.index)];
     const destination = entry?.kind === 'directory' ? entry.path : data.path;
     if (event.dataTransfer.files.length) { startUploads([...event.dataTransfer.files],destination); return; }
-    try { const value = JSON.parse(event.dataTransfer.getData('application/x-agenthub-files')); if (value.node !== data.node_id) throw new Error('暂不支持跨机器拖放'); await transfer(value.paths,destination,event.ctrlKey ? 'copy' : 'move'); }
+    try { const value = JSON.parse(event.dataTransfer.getData('application/x-sessiondock-files')); if (value.node !== data.node_id) throw new Error('暂不支持跨机器拖放'); await transfer(value.paths,destination,event.ctrlKey ? 'copy' : 'move'); }
     catch (error) { status(error.message,true); }
   });
   function editAddress() { $('address-form').hidden = false; $('address').value = data?.path || ''; $('address').focus(); $('address').select(); }

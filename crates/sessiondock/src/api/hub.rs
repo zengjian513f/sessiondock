@@ -234,8 +234,8 @@ async fn hub_gate(State(state): State<HubState>, request: Request, next: Next) -
             "local_only",
         );
     }
-    if request.headers().contains_key("x-agenthub-protocol")
-        || request.headers().contains_key("x-agenthub-node-token")
+    if request.headers().contains_key("x-sessiondock-protocol")
+        || request.headers().contains_key("x-sessiondock-node-token")
     {
         return error_json(
             StatusCode::FORBIDDEN,

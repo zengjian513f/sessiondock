@@ -13,7 +13,7 @@ function load(context,name) {
 }
 const path='/api/media/'+'a'.repeat(32);
 function setup(config={backend:'rust',media_lazy:true}) {
-  const context=vm.createContext({AgentHubCapabilities:{config,allows:()=>true},HUB_MODE:true,
+  const context=vm.createContext({SessionDockCapabilities:{config,allows:()=>true},HUB_MODE:true,
     URL,AbortController,TextDecoder,Uint8Array,mediaDiagnostics:new Map(),mediaDiagnosticActive:0,
     setTimeout:()=>1,clearTimeout:()=>{},appUrl:x=>x,esc:x=>String(x).replaceAll('"','&quot;')});
   for(const name of ['lazyMediaEnabled','safeMediaSrc','imageHtml','diagnoseMedia']) load(context,name);

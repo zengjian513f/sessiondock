@@ -641,7 +641,7 @@ fn actions_move_within_one_root_and_delete_into_root_trash_with_partial_results(
     assert_eq!(fs::read(file).unwrap(), before);
     assert!(file.starts_with(fixture.trash_dir()));
     assert!(!fixture.write.join(".sessiondock-trash").exists());
-    assert!(!fixture.write.join(".agenthub-trash").exists());
+    assert!(!fixture.write.join(".sessiondock-trash").exists());
     let manifest: Value =
         serde_json::from_slice(&fs::read(file.parent().unwrap().join("manifest.json")).unwrap())
             .unwrap();

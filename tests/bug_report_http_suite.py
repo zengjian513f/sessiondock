@@ -188,10 +188,10 @@ def run(opener, base, root, repo):
     upload, raw = call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=%E6%88%AA%E5%9B%BE.png",
                        raw=b"\x89PNG\x01\x02\x03\x04", content_type="image/png")
     if (upload.get("ok") is not True or upload.get("attachment_id") != "1" or upload.get("kind") != "image"
-            or upload.get("relative_path") != "agenthub_attachments/1/截图.png"):
+            or upload.get("relative_path") != "sessiondock_attachments/1/截图.png"):
         fail("attachment upload", upload, raw)
     shot = Path(upload["path"])
-    if shot != repo / "agenthub_attachments/1/截图.png" or shot.read_bytes() != b"\x89PNG\x01\x02\x03\x04":
+    if shot != repo / "sessiondock_attachments/1/截图.png" or shot.read_bytes() != b"\x89PNG\x01\x02\x03\x04":
         fail("attachment upload", f"path {shot}")
     again, raw = call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=%E6%88%AA%E5%9B%BE.png&id=1",
                       raw=b"\x89PNG\x01\x02\x03\x04", content_type="image/png")
@@ -224,7 +224,7 @@ def run(opener, base, root, repo):
          {"page_id": "page-1", "uid": "claude:none", "events": [{"event": "dom.snapshot", "ts": "t"}]}, want=202)
     reply, raw = call(opener, base, "POST", "/api/bug-report", {
         "description": "点了按钮没反应，见 [附件1]", "uid": "claude:none", "page_id": "page-1",
-        "source": "claude", "terminal_name": "agenthub-none", "snapshot": {"data": {"selected": "claude:none"}},
+        "source": "claude", "terminal_name": "sessiondock-none", "snapshot": {"data": {"selected": "claude:none"}},
         "cols": 100, "rows": 30, "_build": build,
         "attachments": [{"path": str(shot), "number": 1, "name": "截图.png", "kind": "image",
                          "mime": "image/png", "size": 8, "attachment_id": "1"}]}, want=202)
@@ -323,8 +323,8 @@ def main():
             path.write_text(f"#!/bin/sh\nexec {PY} {REPO / 'tests' / script} \"$@\"\n")
             path.chmod(0o700)
         shared = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color", "LANG": "C.UTF-8"}
-        env_c = {**shared, "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}
-        env_x = {**shared, "AGENTHUB_TEST_CODEX_ROOT": str(root / "codex")}
+        env_c = {**shared, "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}
+        env_x = {**shared, "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex")}
 
         def prof(pid, source, exe, args, env):
             return {"id": pid, "source": source, "executable": str(root / "bin" / exe), "args": args,
