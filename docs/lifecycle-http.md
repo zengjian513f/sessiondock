@@ -208,7 +208,7 @@ confirmed stop drops the UID from `S.live`. Python-served pages are
 unchanged.
 
 Validation: `cargo test -p sessiondock --test session_stop --locked`
-(isolated ptyhost + fake CLIs: graceful stop with `/api/live` exited,
+(temporary ptyhost + fake CLIs: graceful stop with `/api/live` exited,
 `already_exited`, replay, request conflict, external stop, 400/404, and a
 shell that ignores EOF escalating to the guarded stop within the bound;
 skips when ptyhost is unbuilt) and `python3 tests/session_stop_browser.py`
@@ -257,7 +257,7 @@ cannot regain native control simply because the host remains alive.
 
 ## Acceptance evidence
 
-`tests/lifecycle_browser.py` builds an isolated corpus and private launcher
+`tests/lifecycle_browser.py` builds a temporary corpus and private launcher
 configuration for a fixed free shell. It uses the real legacy create dialog,
 pending xterm keyboard, Web stop/restart, sidebar navigation and mobile stop
 action. It checks same-request replay creates only one shell, conflicting specs
@@ -268,6 +268,6 @@ lost response, shutdown, capacity and crash-recovery boundaries separately.
 
 The `--native-binding` browser variant additionally uses the real mobile-sized
 confirmation dialog, checks pending socket identity survives binding, explicitly
-releases then opens the native console, and cancels it from isolated browser
+releases then opens the native console, and cancels it from a temporary browser
 storage. Its free shell deliberately ignores HUP: a subsequent Web restart must
 still deny native claim while guarded host status proves the child is alive.

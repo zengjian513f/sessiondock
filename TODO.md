@@ -24,7 +24,7 @@
 - [ ] 增加服务端请求/响应 tracing 与结构化日志，同时保持凭据、正文和原生记录默认不落盘。
 - [ ] 产出可复现发布包和 Linux/Windows/macOS CI 矩阵；Windows OpenSSH 原生构建遵循
   `docs/deploy-windows.md`。
-- [ ] 将真实 Claude/Codex/Grok CLI 套件纳入明确的发布验收步骤；继续使用隔离配置和
+- [ ] 将真实 Claude/Codex/Grok CLI 套件纳入明确的发布验收步骤；继续使用临时配置和
   `AGENTS.md` 规定的低成本测试模型，不进入普通 `cargo test`。
 
 ## Frontend direction

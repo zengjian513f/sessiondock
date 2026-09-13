@@ -4,9 +4,17 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Names
 
-**SessionDock.** This Rust project: crate and binary `sessiondock`, hub binary `sessiondock-hub`, environment prefix `SESSIONDOCK_` ([environment.md](environment.md)), test hook `SESSIONDOCK_TEST_PTYHOST_BINARY`, `localStorage` namespaces `sessiondock.` / `sessiondock.hub.<path>.`, `/api/meta` hostname fallback `SessionDock` (the default is the system host name since batch 44 WP-C), the installable identity (`manifest.webmanifest` name/short_name, `apple-mobile-web-app-title`, service-worker cache `sessiondock-shell-*`, page titles `… · SessionDock`), deployment unit `sessiondock.service` under the prefix `/srv/sessiondock` behind the proxy location `/sessiondock/`. Internal server leases use `sessiondock-delivery-executor` and `sessiondock-bug-report`; these transient page names are not persisted ledger formats. UIDs are path hashes and did not change with the name. User-facing product names say SessionDock. References to Python, historical artifacts and compatible identifiers keep their original names as listed below.
+**SessionDock.** The Rust product and user-facing name. Its binaries are
+`sessiondock` and `sessiondock-hub`; configuration uses `SESSIONDOCK_`.
+Browser storage, install metadata and service names use the same name. UIDs did
+not change during the rename. See [environment.md](environment.md).
 
-**Kept `agenthub` identifiers.** The wire/DOM contract shared with the Python frontend and Python Hub nodes keeps its spelling: headers `X-AgentHub-Protocol`, `X-AgentHub-Node-Token`, `X-AgentHub-Page`, `X-AgentHub-Trace`, `X-AgentHub-Build`, `X-AgentHub-Decoded-Length`; template markers `__AGENTHUB_MODE__`, `__AGENTHUB_HOSTNAME__`, `__AGENTHUB_ASSET_VERSION__`; meta tags `agenthub-capabilities`, `agenthub-mode`; the JS globals and identifiers `AgentHubCapabilities`, `agenthubCli`, `AGENTHUB_CLIS`, `agenthubHighlight*`, `__agenthubConnectionId`, `__agenthubPageId`, `agenthub-build`, `agenthub-highlight-ready`, `AgentHubFilePreview`, `AgentHubTypography`, the `AgentHub …` font family names and the `agenthub-files-*` / `agenthub-shell-` page storage keys; the Python namespaces `agenthub.` / `agenthub.hub.<path>.` used when `storage_namespace` is empty; the persisted ledger format tags `agenthub-delivery` / `agenthub-lifecycle` (renaming them would orphan deployed ledgers); the Python project name `agenthub` and its paths (`../agenthub`, `agenthub/static`, `~/.local/share/agenthub`, `agenthub_attachments/`, `.agenthub-trash`, `.agenthub-upload`, `deploy/agenthub*.service`, `nginx-agenthub*.conf`); the Python-side environment names quoted in comparison tables (`AGENTHUB_HOST_*`, `AGENTHUB_TERM_BACKEND`, `AGENTHUB_SESSION`, which ptyhost still exports); the shared fake-CLI test-hook prefix `AGENTHUB_TEST_*` and the hooks under it (`AGENTHUB_TEST_LABEL`, `AGENTHUB_TEST_CLAUDE_ROOT`, `AGENTHUB_TEST_CODEX_ROOT`, `AGENTHUB_TEST_FREE_SHELL_BINARY`, …), `AGENTHUB_PYTHON_SOURCE`, `AGENTHUB_DELIVERY_TEST_CHILD_DIRECTORY`; and the imported crates `ptyhost` / `ptyhost-client` with `AGENTHUB_HOST_DIR`. `reference/legacy-web/` is Python's frozen static tree and is never renamed.
+**Kept `agenthub` identifiers.** Compatibility names are not branding. Keep
+existing `X-AgentHub-*` headers, `__AGENTHUB_*` template markers,
+`agenthub-*` DOM/storage keys, `AgentHub*` JavaScript names, `AGENTHUB_*`
+environment and test hooks, and `agenthub-delivery` / `agenthub-lifecycle`
+ledger tags. Keep Python paths and `reference/legacy-web/` unchanged. Renaming
+these values would break peers, tests, stored preferences or deployed ledgers.
 
 ## Identifiers
 
@@ -123,7 +131,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Delivery
 
-**Delivery ledger.** Isolated `delivery-ledger.json` opened from an explicit private directory; missing data is not permission to initialize. Independent of native history and of send execution. See [store](delivery-store.md#one-envelope-existing-provider-schemas).
+**Delivery ledger.** Private `delivery-ledger.json`. Missing data does not permit initialization. It is independent of native history and send execution. See [store](delivery-store.md#one-envelope-existing-provider-schemas).
 
 **Outbox.** `GET /api/session/outbox` is a committed display projection of receipts for a verified NativeScope. `outbox_read` does not enable the `outbox` send/retry/discard capability. See [delivery HTTP](delivery-http.md).
 

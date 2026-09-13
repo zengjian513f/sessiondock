@@ -5,12 +5,12 @@ file is a map, not a product spec; historical migration material is optional.
 
 ## 1. What this repository is and is not
 
-- [README.md](../README.md) — Independent Rust backend serving first-stage `legacy-web/`. Native histories stay read-only; enabled services add terminal, reliable-send and file operations. The node listener and separate `sessiondock-hub` implement the shared Hub protocol. Vue `web/` stays frozen until stage two.
+- [README.md](../README.md) — Project scope, runtime and frontend direction.
 - [AGENTS.md](../AGENTS.md) — Repository workflow and current development boundaries. Native histories stay read-only; do not commit credentials or runtime data.
 
 ## 2. Vocabulary
 
-Read [glossary.md](glossary.md) before any contract. It defines UID/SID, event versus message, byte cursor versus semantic anchor, grants, native spans versus file references, and fork versus subagent.
+Read [glossary.md](glossary.md) first. It defines the shared terms.
 
 ## 3. Architecture and module map
 
@@ -29,7 +29,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Terminal / lifecycle
 
-- [session-host.md](session-host.md) — Imported ptyhost; always pass an isolated development `--dir`.
+- [session-host.md](session-host.md) — Imported ptyhost; always pass a private development `--dir`.
 - [terminal-ownership.md](terminal-ownership.md) — Browser lease state machine; existence does not enable endpoints.
 - [terminal-identity.md](terminal-identity.md) — Lease versus instance guard; PID or SID alone is not incarnation proof.
 - [lifecycle-store.md](lifecycle-store.md) — Private creation-intent receipts; no launch or native bind.
@@ -67,12 +67,14 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ## 6. Validate and run locally
 
-- [validation.md](validation.md) — Table of every default suite in [tests/run_validation.py](../tests/run_validation.py). `--list` prints the plan; `--dry-run` does not execute. A full run takes the `target/` lock — skip it while other agents are building.
+- [validation.md](validation.md) — Validation suites and runner options. A full
+  run takes the `target/` lock; do not start one during another build.
 - [runbook-dev.md](runbook-dev.md) — Synthetic corpus, loopback bind and optional service configuration.
 
 ## 7. Delegating tooling tasks
 
-[delegation.md](delegation.md) — Local `grok-4.6` may draft one self-contained, mechanically verifiable file. Human review is mandatory. Never delegate delivery, authorization, native semantics, or the ptyhost protocol.
+[delegation.md](delegation.md) — Rules for narrow Grok drafts. Review every
+result; never delegate correctness-sensitive code.
 
 ## 8. First-day checklist (safe commands)
 

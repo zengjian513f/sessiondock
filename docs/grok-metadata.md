@@ -85,10 +85,9 @@ agent ownership semantics remain unchanged.
 
 Run `cargo test -p sessiondock --locked sessions::` and build the server.
 Then run `python3 tests/grok_parity.py --python-source ../agenthub --browser`.
-The Python checkout is adapter-only and read-only; all metadata, chats and
-mutations are generated under the test's private temporary directory. The
-server is isolated on loopback, browser requests are restricted to it, and no
-CLI homes, paid CLIs, production hosts or active sessions are accessed.
+The Python checkout is adapter-only and read-only. Tests create all data in a
+temporary directory and bind the server to loopback. They access no CLI homes,
+paid CLIs, production hosts, or active sessions.
 
 Rust tests cover optional chat stamps, stable directory UID, metadata/cursor
 separation, frozen search snapshots, independent mtime fallbacks, bounded

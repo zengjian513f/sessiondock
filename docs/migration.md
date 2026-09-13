@@ -41,10 +41,9 @@ Credentials and production runtime data are never imported into this repository.
 
 ## Validation and deployment
 
-Complete an implementation batch before running its consolidated tests. Validate
-Rust, HTTP contracts, legacy browser flows and affected platforms with isolated
-fixtures. Native-history comparisons are read-only. Model CLI tests use the
-isolated configuration and inexpensive models specified in `AGENTS.md`.
+Validate completed changes with the affected Rust, HTTP, browser, and platform
+checks. Tests use temporary fixtures. Native-history comparisons are read-only.
+Model CLI tests use temporary configuration and the models in `AGENTS.md`.
 
 A production bug fix includes deploying the validated change to affected services,
 preserving managed CLI processes and a rollback copy, then checking service

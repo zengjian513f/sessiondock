@@ -2528,10 +2528,6 @@ function renderPickBar() {
 async function deleteSessions(uids, button = null) {
   if (!uids.length || sessionDeleteBusy) return null;
   const pending = pendingTmuxSessions().filter(s => uids.includes(s.uid));
-  if (AgentHubCapabilities.config.backend === 'rust' && pending.length) {
-    alert('Rust 创建回执与草稿不会被丢弃；请打开该实例，通过详情中的停止操作取消。');
-    return null;
-  }
   const pendingIds = new Set(pending.map(s => s.uid));
   const recorded = uids.filter(uid => !pendingIds.has(uid));
   const action = pending.length ? (recorded.length ? '删除 / 丢弃' : '丢弃') : '删除';

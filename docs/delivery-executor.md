@@ -206,7 +206,7 @@ error. A raw text-submit with Enter still routes to the reliable-send composer
   native record, request-ID replay, draft consent, lease-held ownership,
   swallowed line uncertain + retry refused + discard, restart recovery without
   re-injection, unknown composer, tracking window, FIFO).
-- Integration (real router + isolated ptyhost + launcher + ledger, fake Claude
+- Integration (real router + temporary ptyhost + launcher + ledger, fake Claude
   CLI only): `cargo test -p sessiondock --test delivery_send` — send →
   receipt persisted before injection → native `user` record appears → confirmed;
   request-ID replay; uploaded media path delivery; wrong name / unknown session; console draft
@@ -229,9 +229,9 @@ production host is used.
 ## What stays uncertain or unsupported
 
 - Real-CLI verification against a live `claude` binary
-  (`tests/send_claude_real.py`) runs automatically in the normal sweep with
+  (`tests/send_claude_real.py`) runs only with `--include-real` or direct invocation, using
   the cheapest configuration (`claude-haiku-4-5-20251001`, `--effort low`,
-  exact model ID asserted from the JSONL, isolated `CLAUDE_CONFIG_DIR` reusing
+  exact model ID asserted from the JSONL, temporary `CLAUDE_CONFIG_DIR` reusing
   the login read-only, proxy variables passed through); it skips with a
   printed reason when the binary is absent or a standalone call cannot
   authenticate. Grok is not a send target; the Codex real-CLI suite

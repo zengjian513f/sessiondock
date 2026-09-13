@@ -1,7 +1,6 @@
 # Python AgentHub → Rust migration history
 
-> 本文是已结束迁移阶段的历史归档，不是当前计划、合同或会话启动必读文件。
-> 当前未完成工作只记在 `TODO.md`；当前行为以代码、测试和 `docs/` 合同为准。
+> 历史记录，不是操作指令。当前状态以代码、测试、`docs/` 和 `TODO.md` 为准。
 >
 > 基线：原仓库提交 `ee2e373c134f4f16a3452ba35fa5346ea441fb9f`。
 > 第一阶段继续使用 legacy HTML/CSS/JavaScript；Vue/TypeScript 重构是第二阶段。

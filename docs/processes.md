@@ -1,9 +1,8 @@
 # Controlled process observations
 
-This is an isolated, read-only migration capability. It does not discover
-native CLI home directories, launch or stop a CLI, clean records, or grant
-terminal control. An explicitly configured development `SESSIONDOCK_PTYHOST_DIR`
-is required; unset means no host observations. External CLI processes use the
+This optional capability only observes configured host records. It does not
+discover CLI homes, control processes, clean records, or grant terminal access.
+It requires `SESSIONDOCK_PTYHOST_DIR`; unset disables host observations. External CLI processes use the
 Python-shaped native scan of [liveness.md](liveness.md), which `/api/live`
 merges with the observations described here.
 
@@ -189,7 +188,7 @@ Validation uses artificial native catalog rows, copied synthetic JSONL fixtures,
 and loopback fake peers. Tests cover exact matches and ambiguity, duplicates,
 subagent rejection, source/UID conflict, empty legacy metadata, exited versus
 unreachable, identity replacement, redaction, deadlines, HTTP admission, and
-shutdown. The earlier isolated free-shell terminal smoke test validates the
+shutdown. The earlier temporary free-shell smoke test validates the
 independent transport; this catalog does not execute a paid or real native CLI.
 
 An opt-in Unix smoke test also runs one fixed free shell with synthetic metadata,

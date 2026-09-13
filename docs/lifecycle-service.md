@@ -148,6 +148,6 @@ old authorities and all injected cancellation persistence-failure boundaries.
 The ignored `explicit_free_shell_creation_survives_response_drop_and_shutdown_then_cancels_exact_host`
 test requires both `SESSIONDOCK_TEST_PTYHOST_BINARY` and
 `AGENTHUB_TEST_FREE_SHELL_BINARY` as explicit absolute binary paths. It runs only an
-isolated free shell in private temporary directories, verifies response-drop
+temporary free shell in private directories, verifies response-drop
 ownership, live-host survival across service shutdown/reopen, and exact guarded
 cancellation. Never substitute a model CLI or a production host directory.

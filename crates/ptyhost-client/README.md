@@ -1,7 +1,7 @@
 # ptyhost-client
 
 An asynchronous client for the **local** ptyhost wire protocol. The Web server's
-isolated terminal bridge and read-only controlled-host catalog use this library.
+private terminal bridge and read-only host catalog use this library.
 It does not launch processes, select production sessions, implement browser
 WebSockets, infer CLI acceptance, or provide a general terminal manager.
 
@@ -21,9 +21,8 @@ if let Some(record) = records.first() {
 # Ok(()) }
 ```
 
-The constructor has no environment/home/default-directory discovery. Relative
-paths are fixed against the constructor's cwd. Select an isolated development
-directory yourself; never point this example at production state for a test.
+The constructor does not discover environment, home, or default paths. Relative
+paths use its cwd. Tests must use a private development directory, never production state.
 
 `discover` reads bounded regular JSON files and returns sorted public summaries.
 It does **not** connect, inspect PIDs, delete stale files, or prove the host is

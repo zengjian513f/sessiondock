@@ -7,7 +7,7 @@
 静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力；
 请求不访问静态目录中的动态路径。无需 Node.js 服务或前端构建。
 
-`ptyhost-client` 是独立的异步本地协议库；仅配置隔离host目录时，HTTP才接入
+`ptyhost-client` 是独立的异步本地协议库；仅配置私有 host 目录时，HTTP才接入
 claim/WS传输。受控host匹配full SID/UID，缺少/冲突证据保留unknown；
 关联快照本身不授权控制，claim重新观察唯一关联并固定instance，随后只使用
 guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，可靠发送仍关闭。

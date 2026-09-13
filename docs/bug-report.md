@@ -200,7 +200,7 @@ window's dates line by line (≤ 100 000 rows).
 - `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
   `python3 tests/meta_capabilities_suite.py`.
 - `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real
-  Claude worker with `claude-haiku-4-5-20251001 --effort low` in an isolated
+  Claude worker with `claude-haiku-4-5-20251001 --effort low` in a temporary
   `CLAUDE_CONFIG_DIR`, prompt confirmed from the real `user` record, model id
   asserted from the assistant record, instance killed, bundle and session
   files deleted.

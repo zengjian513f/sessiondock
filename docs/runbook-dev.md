@@ -40,7 +40,7 @@ export SESSIONDOCK_WEB_DIR=legacy-web
 without binding a listener or starting a CLI. The hostname defaults to the system
 hostname and can be overridden with `SESSIONDOCK_HOSTNAME`.
 
-## 4. Optional isolated features
+## 4. Optional private runtime services
 
 Use a private development tree for synthetic ptyhost, delivery, lifecycle, audit,
 trash and bug-report data. The runtime follows each module's documented format;

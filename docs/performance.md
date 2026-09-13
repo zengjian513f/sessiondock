@@ -13,7 +13,7 @@ python3 tests/real_roots_bench.py --claude-root ~/.claude/projects --codex-root 
   --i-understand-this-reads-real-histories
 ```
 
-隔离 loopback 服务，只配置三个读根（无 state/host/delivery 目录），结束后校验根下
+独立 loopback 服务只配置三个读根（无 state/host/delivery 目录），结束后校验根下
 每个文件的 size/mtime 未变。2026-09-12 本机：792 行（729 支持、63 不支持），
 Claude 508 文件 / 795 MB，Codex 470 文件 / 2.5 GB，Grok 187 MB。
 
@@ -34,7 +34,7 @@ Claude 508 文件 / 795 MB，Codex 470 文件 / 2.5 GB，Grok 187 MB。
 
 ## 全文搜索：搜索文本缓存（WP-B，2026-09-13）
 
-设计见 [read-model.md](read-model.md#搜索)。隔离实例（只配三个真实读根 + scratch
+设计见 [read-model.md](read-model.md#搜索)。独立实例（只配三个真实读根 + scratch
 下的 `SESSIONDOCK_SEARCH_CACHE_DIR`，816 行、3.6 GB），对照 Python 8710（只 GET），机器
 负载 load average 120–160（其它 WP 并行验收），release 构建。`rss` 为
 `/proc/<pid>/status` 的 VmRSS，每 100 ms 采样，"后"为搜索结束 1 s 后。
@@ -130,7 +130,7 @@ WP-A 的索引单元基准（`cargo test -p sessiondock --lib sessions::index::t
 | 搜索 `searches` | 2（另占 1 个读 worker） | `SESSIONDOCK_SEARCH_WORKERS`，**不再占读池** | `search_busy`（仅关闭） | 等待许可 |
 | 媒体 / 文件作业 `media_jobs` / `file_jobs` | 2 / 2 | 不变 | | 2 s 等待 |
 
-隔离实例对真实根（803 会话）：16 并发 `/api/messages`（8 个 `window=1` + 8 个
+独立实例对真实根（803 会话）：16 并发 `/api/messages`（8 个 `window=1` + 8 个
 `append=1`）全 200；一次 40 s 全文搜索期间 12 个 `/api/sessions`、`/api/live`、
 `/api/term/list`、`/api/messages` 探针全 200；两个标签页（列表 + 活动会话详情）
 观察 180 s 0 个非 2xx；断网 6 s 恢复后 SSE 在 ≤ 2 s 内重连，无横幅、不暂停
@@ -180,7 +180,7 @@ VmRSS，MB：
 ## 空闲页面 CPU（第四十四批 WP-A）
 
 一个无头页面停在活动会话 `claude:179009468904dece`（22 个子代理，文件持续追加）
-40 s，隔离实例（`scratchpad/monkey/wpa/idle_cpu_iso.py`）：
+40 s，独立实例（`scratchpad/monkey/wpa/idle_cpu_iso.py`）：
 
 | | 修改前 | 修改后 |
 | --- | ---: | ---: |
