@@ -6,7 +6,8 @@
 ## 1. 前置条件
 
 1. 按 [runbook-dev.md](runbook-dev.md#1-build) 构建 `sessiondock`、`ptyhost`；使用 Hub
-   时同时构建 `sessiondock-hub`。
+   时同时构建 `sessiondock-hub`。Windows 实机必须遵循
+   [原生构建与滚动部署流程](deploy-windows.md)，不得在 OpenSSH 会话中调用 rustup shim。
 2. 显式配置原生只读根、loopback bind、ptyhost/launcher 和需要持久化的服务目录。
    配置路径可以按 Python 部署的实际布局重叠；cwd 不是文件访问授权。
 3. 运行 `sessiondock --check-config`，核对普通监听、节点监听、Hub、终端、delivery、
