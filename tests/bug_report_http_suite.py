@@ -12,8 +12,6 @@ RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
 PTYHOST = REPO / "target/debug/ptyhost"
 PY = shutil.which("python3") or "/usr/bin/python3"
-CLAUDE_MODEL = "claude-haiku-4-5-20251001"
-CODEX_MODEL = "gpt-5.6-luna"
 FINAL = ("submitted", "submitted_unconfirmed", "failed")
 BUNDLE_FILES = ("description.md", "browser-state.json", "events.jsonl", "environment.json",
                 "worker-prompt.md", "manifest.json")
@@ -332,22 +330,20 @@ def main():
                     "resume_args": ["--resume", "{sid}"] if source == "claude" else ["resume", "{sid}"],
                     "env": env}
 
-        def launcher(name, profiles, bug):
+        def launcher(name, profiles):
             cfg = root / name
             cfg.touch(mode=0o600)
             cfg.write_text(json.dumps({
                 "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-                "adapters": [], "profiles": profiles,
-                "bug_report_profiles": bug}))
+                "adapters": [], "profiles": profiles}))
             cfg.chmod(0o600)
             return cfg
+        # The worker runs the source's one configured CLI on its default
+        # model, exactly what /api/term/create starts (Python WORKER_SOURCES).
         good = launcher("launcher.json", [
-            prof("claude-cheap-v1", "claude", "fake-claude", ["--model", CLAUDE_MODEL, "--effort", "low", "--reply"], env_c),
-            prof("codex-cheap-v1", "codex", "fake-codex", ["--model", CODEX_MODEL, "-c", 'model_reasoning_effort="low"'], env_x),
-        ], {"claude": "claude-cheap-v1", "codex": "codex-cheap-v1"})
-        pricey = launcher("launcher-bad.json", [
-            prof("claude-pricey-v1", "claude", "fake-claude", ["--model", "claude-opus-4-1", "--effort", "high"], env_c),
-        ], {"claude": "claude-pricey-v1"})
+            prof("claude-cli-v1", "claude", "fake-claude", ["--reply"], env_c),
+            prof("codex-cli-v1", "codex", "fake-codex", [], env_x),
+        ])
         init = subprocess.run([str(binary), "--initialize-lifecycle", str(root / "ledger")], cwd=REPO,
                               env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         if init.returncode:
@@ -367,20 +363,12 @@ def main():
                 fail("unconfigured", err.get("code"), raw)
             call(opener, base, "GET", "/api/bug-report", want=405)
             passed("unconfigured")
-        with server(binary, root, {"SESSIONDOCK_LAUNCHER_CONFIG": str(pricey), **bug}) as (base, opener):
-            err, raw = call(opener, base, "POST", "/api/bug-report",
-                            {"description": "pricey", "source": "claude"}, want=501)
-            if err.get("code") != "bug_report_model_policy":
-                fail("model policy", err.get("code"), raw)
-            if any((root / "reports").iterdir()):
-                fail("model policy", "a refused launch left a bundle behind")
-            passed("model policy")
         with server(binary, root, {"SESSIONDOCK_LAUNCHER_CONFIG": str(good), **bug}) as (base, opener):
             n = run(opener, base, root, repo)
         alive = leftovers(root)
         if alive:
             fail("cleanup", f"fake CLI still alive pids={alive}")
-        print(f"PASS bug_report_http_suite: {n + 2} scenarios", flush=True)
+        print(f"PASS bug_report_http_suite: {n + 1} scenarios", flush=True)
 
 
 if __name__ == "__main__":

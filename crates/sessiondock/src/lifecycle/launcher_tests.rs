@@ -47,7 +47,6 @@ impl Fixture {
                 env: BTreeMap::new(),
             }],
             profiles: vec![],
-            bug_report_profiles: Default::default(),
         };
         let work = root.join("work");
         Self {
@@ -643,7 +642,6 @@ fn profile_configuration_rejects_only_unusable_process_inputs() {
             source: Source::Codex,
             profile: true,
             resume: true,
-            worker: false,
         }]
     );
     json["profiles"][0]["shell"] = serde_json::json!("/bin/sh -c");
@@ -668,28 +666,24 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             source: Source::Grok,
             profile: false,
             resume: false,
-            worker: false,
         },
         Entry {
             id: "claude-cli-v1".into(),
             source: Source::Claude,
             profile: true,
             resume: true,
-            worker: false,
         },
         Entry {
             id: "codex-cli-v1".into(),
             source: Source::Codex,
             profile: true,
             resume: true,
-            worker: false,
         },
         Entry {
             id: "grok-cli-v1".into(),
             source: Source::Grok,
             profile: true,
             resume: true,
-            worker: false,
         },
     ];
     assert_eq!(launcher.entries(), expected_entries.as_slice());
@@ -950,104 +944,27 @@ fn directory_completion_matches_python() {
 }
 
 #[test]
-fn bug_report_worker_profiles_are_catalogued_but_not_interactive() {
+fn a_leftover_bug_report_profiles_table_is_ignored() {
+    // Batch 41 shipped a per-source worker profile table with a fixed
+    // cheapest-model policy; both are gone. Deployed launcher files that
+    // still carry the key load like any file with an unknown key, and the
+    // worker selects the source's one CLI exactly like `term/create`.
     let fixture = Fixture::new();
-    let mut config = fixture.profiles();
-    let mut worker = config.profiles[0].clone();
-    worker.id = "claude-bug-report-v1".into();
-    worker.args = vec![
-        "--model".into(),
-        "claude-haiku-4-5-20251001".into(),
-        "--effort".into(),
-        "low".into(),
-    ];
-    config.profiles.push(worker);
-    config.bug_report_profiles.claude = Some("claude-bug-report-v1".into());
-    let launcher = Launcher::new(config.clone()).unwrap();
-    let claude: Vec<&Entry> = launcher
-        .entries()
-        .iter()
-        .filter(|entry| entry.source == Source::Claude)
-        .collect();
-    assert_eq!(claude.len(), 2);
-    assert!(claude[0].interactive() && !claude[0].worker);
-    assert_eq!(claude[1].id, "claude-bug-report-v1");
-    assert!(claude[1].worker && !claude[1].interactive());
-    // Exactly one interactive, resume-capable Claude profile remains.
+    let plain = read_config(&fixture.config_file(fixture.json().to_string().as_bytes())).unwrap();
+    let mut json = fixture.json();
+    json["bug_report_profiles"] = serde_json::json!({"codex": "shell-v1", "claude": "missing-v1"});
+    let config = read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap();
+    assert_eq!(entries(&config), entries(&plain));
+    let launcher = Launcher::new(config).unwrap();
     assert_eq!(
-        entries(&config)
-            .iter()
-            .filter(|entry| entry.source == Source::Claude && entry.resume && entry.interactive())
-            .count(),
-        1
+        launcher.entries(),
+        &[Entry {
+            id: "shell-v1".into(),
+            source: Source::Codex,
+            profile: false,
+            resume: false,
+        }]
     );
-}
-
-#[test]
-fn bug_report_policy_accepts_a_login_shell_wrapper_argv() {
-    // Batch 44 WP-F: the profile executable may be a login-shell wrapper
-    // (`with-zshrc`) with the CLI's PATH name as `args[0]`; the policy scans
-    // the arguments after the executable, so the extra leading name changes
-    // nothing, and a wrapper without the model/effort pairs still fails.
-    let wrapped = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>();
-    assert!(bug_report_policy(
-        Source::Claude,
-        &wrapped(&[
-            "claude",
-            "--settings",
-            "/etc/example/claude-bridge-settings.json",
-            "--model",
-            "claude-haiku-4-5-20251001",
-            "--effort",
-            "low",
-            "--session-id",
-            "{session_id}",
-        ])
-    ));
-    assert!(bug_report_policy(
-        Source::Codex,
-        &wrapped(&[
-            "codex",
-            "--enable",
-            "default_mode_request_user_input",
-            "-c",
-            "suppress_unstable_features_warning=true",
-            "-m",
-            "gpt-5.6-luna",
-            "-c",
-            "model_reasoning_effort=\"low\"",
-        ])
-    ));
-    assert!(bug_report_policy(
-        Source::Grok,
-        &wrapped(&["grok", "-m", "grok-4.6", "--reasoning-effort", "low"])
-    ));
-    assert!(!bug_report_policy(
-        Source::Claude,
-        &wrapped(&[
-            "claude",
-            "--settings",
-            "/etc/example/claude-bridge-settings.json"
-        ])
-    ));
-    // The catalogue view keeps the wrapper as argv[0] and the policy reads argv[1..].
-    let fixture = Fixture::new();
-    let mut config = fixture.profiles();
-    let mut worker = config.profiles[0].clone();
-    worker.id = "claude-bug-report-v1".into();
-    worker.args = wrapped(&[
-        "claude",
-        "--model",
-        "claude-haiku-4-5-20251001",
-        "--effort",
-        "low",
-    ]);
-    config.profiles.push(worker);
-    config.bug_report_profiles.claude = Some("claude-bug-report-v1".into());
-    let resolved = bug_report_profiles(&config);
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].argv[1], "claude");
-    assert!(resolved[0].policy_ok());
 }
 
 #[test]

@@ -1,5 +1,5 @@
 //! `POST /api/bug-report` end to end (batch 41): the HTTP router, an isolated
-//! ptyhost, the lifecycle launcher with a cheapest-model profile, the audit
+//! ptyhost, the lifecycle launcher with one Claude profile, the audit
 //! log and the fake Claude CLI from `tests/fake_claude_cli.py`. The worker's
 //! prompt is pasted into the fake composer, confirmed from the synthetic
 //! native `user` record, and the bundle on disk is checked. No model binary,
@@ -28,7 +28,6 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 const FAKE_CLI: &str = include_str!("../../../tests/fake_claude_cli.py");
-const MODEL: &str = "claude-haiku-4-5-20251001";
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -42,7 +41,6 @@ struct Fixture {
     audit: PathBuf,
     web: PathBuf,
     launcher: PathBuf,
-    launcher_bad: PathBuf,
 }
 
 fn directory(path: &Path) {
@@ -118,23 +116,7 @@ impl Fixture {
             &launcher,
             json!({"schema":2,"host_binary":host_binary,"host_dir":host,
             "adapters":[],
-            "profiles":[
-                profile("claude-plain-v1", json!(["--reply"])),
-                profile("claude-cheap-v1", json!(["--model", MODEL, "--effort", "low", "--reply"]))
-            ],
-            "bug_report_profiles":{"claude":"claude-cheap-v1"}})
-            .to_string()
-            .as_bytes(),
-            0o600,
-        );
-        // A profile that names the wrong model: refused at the route.
-        let launcher_bad = root.join("launcher-bad.json");
-        file(
-            &launcher_bad,
-            json!({"schema":2,"host_binary":host_binary,"host_dir":host,
-            "adapters":[],
-            "profiles":[profile("claude-pricey-v1", json!(["--model", "claude-opus-4-1", "--effort", "high"]))],
-            "bug_report_profiles":{"claude":"claude-pricey-v1"}})
+            "profiles":[profile("claude-cli-v1", json!(["--reply"]))]})
             .to_string()
             .as_bytes(),
             0o600,
@@ -152,7 +134,6 @@ impl Fixture {
             audit,
             web,
             launcher,
-            launcher_bad,
         }
     }
     fn config(&self, bug_report: bool, launcher: &Path) -> Config {
@@ -327,26 +308,18 @@ async fn unconfigured_route_is_501_and_capability_false() {
 }
 
 #[tokio::test]
-async fn model_policy_mismatch_is_501_before_any_bundle() {
+async fn source_without_a_cli_is_503_before_any_bundle() {
     let Some(host_binary) = ptyhost_binary() else {
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
     };
     let fixture = Fixture::new(&host_binary);
-    let app = open(fixture.config(true, &fixture.launcher_bad)).await;
+    let app = open(fixture.config(true, &fixture.launcher)).await;
     let (status, meta) = get(&app.prepared.router, "/api/meta").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(meta["capabilities"]["bug_report"], true, "{meta}");
-    let (status, body) = post(
-        &app.prepared.router,
-        "/api/bug-report",
-        json!({"description": "pricey", "source": "claude"}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
-    assert_eq!(body["code"], "bug_report_model_policy");
-    assert_eq!(fs::read_dir(&fixture.reports).unwrap().count(), 0);
-    // Codex has no worker profile here: Python's 503 "本机找不到 codex 命令".
+    // Codex has no configured CLI here: Python's 503 "本机找不到 codex 命令",
+    // and no bundle is written for it.
     let (status, body) = post(
         &app.prepared.router,
         "/api/bug-report",
@@ -355,6 +328,7 @@ async fn model_policy_mismatch_is_501_before_any_bundle() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body["error"].as_str().unwrap().contains("codex"));
+    assert_eq!(fs::read_dir(&fixture.reports).unwrap().count(), 0);
     let (status, body) = post(
         &app.prepared.router,
         "/api/bug-report",

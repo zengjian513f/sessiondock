@@ -1,5 +1,5 @@
 //! Python `tests/test_bug_report.py` semantics for the bundle, the
-//! attachments, the launcher policy and the composer probes. The worker's
+//! attachments and the composer probes. The worker's
 //! HTTP flow against a fake CLI is `tests/bug_report_http.rs`.
 
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
@@ -10,7 +10,6 @@ use super::*;
 use crate::{
     audit::{AuditService, Limits},
     delivery::driver::ScreenCapture,
-    lifecycle::launcher::{BugReportProfile, bug_report_policy},
 };
 
 fn private(path: &Path) {
@@ -48,17 +47,6 @@ impl Fixture {
             self.repo.clone(),
             self.audit_dir.clone(),
             "rs-test-build".into(),
-            vec![BugReportProfile {
-                id: "codex-cheap-v1".into(),
-                source: Source::Codex,
-                argv: vec![
-                    "/usr/bin/codex".into(),
-                    "--model".into(),
-                    "gpt-5.6-luna".into(),
-                    "-c".into(),
-                    "model_reasoning_effort=\"low\"".into(),
-                ],
-            }],
         )
         .unwrap()
     }
@@ -327,127 +315,6 @@ fn resolve_attachments_rejects_paths_outside_the_upload_directory() {
     );
 }
 
-#[test]
-fn model_policy_pins_the_cheapest_configuration_per_source() {
-    let claude = |args: &[&str]| {
-        bug_report_policy(
-            Source::Claude,
-            &args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-        )
-    };
-    assert!(claude(&[
-        "--model",
-        "claude-haiku-4-5-20251001",
-        "--effort",
-        "low",
-        "--session-id",
-        "{session_id}"
-    ]));
-    assert!(!claude(&["--model", "haiku", "--effort", "low"]));
-    assert!(!claude(&["--model", "claude-haiku-4-5-20251001"]));
-    assert!(!claude(&[
-        "--model",
-        "claude-haiku-4-5-20251001",
-        "--effort",
-        "high"
-    ]));
-    assert!(!claude(&[
-        "--model=claude-haiku-4-5-20251001",
-        "--effort",
-        "low"
-    ]));
-    let codex = |args: &[&str]| {
-        bug_report_policy(
-            Source::Codex,
-            &args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-        )
-    };
-    assert!(codex(&[
-        "--model",
-        "gpt-5.6-luna",
-        "-c",
-        "model_reasoning_effort=\"low\""
-    ]));
-    assert!(codex(&[
-        "-m",
-        "gpt-5.6-luna",
-        "--config",
-        "model_reasoning_effort=low"
-    ]));
-    assert!(!codex(&["-m", "gpt-5.6-luna"]));
-    assert!(!codex(&[
-        "-m",
-        "gpt-5",
-        "-c",
-        "model_reasoning_effort=\"low\""
-    ]));
-    let grok = |args: &[&str]| {
-        bug_report_policy(
-            Source::Grok,
-            &args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>(),
-        )
-    };
-    assert!(grok(&["-m", "grok-4.6", "--reasoning-effort", "low"]));
-    assert!(!grok(&["-m", "grok-4.6"]));
-    assert!(!grok(&["-m", "grok-4", "--reasoning-effort", "low"]));
-}
-
-#[test]
-fn launcher_config_names_existing_profiles_of_the_same_source() {
-    use crate::lifecycle::launcher::{Config, bug_report_profiles, read_config};
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().canonicalize().unwrap();
-    let base = |profiles: Value, bug: Value| {
-        json!({"schema": 2, "host_binary": "/usr/bin/true", "host_dir": root.join("host"),
-            "adapters": [], "profiles": profiles,
-            "bug_report_profiles": bug})
-    };
-    let profile = json!({"id": "codex-cheap-v1", "source": "codex", "executable": "/usr/bin/true",
-        "args": ["-m", "gpt-5.6-luna", "-c", "model_reasoning_effort=\"low\""],
-        "new_args": [], "resume_args": [], "env": {}});
-    let write = |value: &Value| {
-        let path = root.join("launcher.json");
-        fs::write(&path, value.to_string()).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
-        path
-    };
-    let ok = read_config(&write(&base(
-        json!([profile]),
-        json!({"codex": "codex-cheap-v1"}),
-    )))
-    .unwrap();
-    let resolved = bug_report_profiles(&ok);
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].id, "codex-cheap-v1");
-    assert_eq!(resolved[0].argv[0], "/usr/bin/true");
-    assert!(resolved[0].policy_ok());
-    // Unknown ids and wrong sources fail; unrelated configuration keys are ignored.
-    assert!(
-        read_config(&write(&base(
-            json!([profile]),
-            json!({"codex": "missing-v1"})
-        )))
-        .is_err()
-    );
-    assert!(
-        read_config(&write(&base(
-            json!([profile]),
-            json!({"claude": "codex-cheap-v1"})
-        )))
-        .is_err()
-    );
-    assert!(
-        read_config(&write(&base(
-            json!([profile]),
-            json!({"bash": "codex-cheap-v1"})
-        )))
-        .is_ok()
-    );
-    // Absent: no worker profiles, still a valid launcher.
-    let none: Config = read_config(&write(&base(json!([profile]), json!({})))).unwrap();
-    assert!(bug_report_profiles(&none).is_empty());
-}
-
 fn capture(text: &str, cursor: (u16, u16)) -> ScreenCapture {
     ScreenCapture {
         text: text.into(),
@@ -627,7 +494,6 @@ fn service_remembers_worker_decorations_from_manifests() {
     assert_eq!(decoration["report_id"], "BUG-20260912-000000-abcdef");
     assert_eq!(decoration["title"], "处理 BUG-20260912-000000-abcdef");
     assert!(service.pending_decoration("other").is_none());
-    assert_eq!(service.sources(), vec![Source::Codex]);
 }
 
 #[test]

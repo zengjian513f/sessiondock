@@ -328,6 +328,18 @@ impl LifecycleService {
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
     }
+    /// Python's fixed source table: the one configured CLI of `source`
+    /// (resume-capable when `resume`), `None` when the source has none or
+    /// more than one. `term/create` and the bug-report worker both select
+    /// through this, so a worker runs exactly what the picker would start.
+    pub fn entry_for(&self, source: Source, resume: bool) -> Option<&launcher::Entry> {
+        let mut candidates = self
+            .entries()
+            .iter()
+            .filter(|entry| entry.source == source && (!resume || entry.resume));
+        let first = candidates.next()?;
+        candidates.next().is_none().then_some(first)
+    }
     /// Python-compatible absolute directory completion. It uses the same
     /// admission path as other requests and does not touch ledger or host state.
     pub async fn complete_directories(
