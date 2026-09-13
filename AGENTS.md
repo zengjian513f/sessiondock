@@ -33,8 +33,11 @@
   the sessions they create. This rule covers the CLI under test only.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
-- Do not create a remote, publish packages or push. Redeploying the running
-  service (rebuild, replace the binary, restart) needs a user request per batch.
+- `origin` is the public GitHub repository `zengjian513f/sessiondock` (created
+  2026-09-13 from a single squashed initial commit; the batch history lives in
+  `BACKEND_MIRGRATION_PLAN.md`). Push when work lands or the user asks, not after
+  every small fix; do not publish packages. Redeploying the running service
+  (rebuild, replace the binary, restart) needs a user request per batch.
 
 ## Structure
 
