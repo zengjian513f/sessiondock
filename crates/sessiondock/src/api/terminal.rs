@@ -295,10 +295,9 @@ fn binding_unavailable() -> ApiError {
     )
 }
 
-/// Raw HTTP input. Same lease/page/token and binding tuple as the WebSocket
-/// attach query; exactly one of `data` (UTF-8 text, sent as-is) or `keys`
-/// (named keys). Legacy `text`/`enter` submit semantics are deliberately not
-/// accepted: this is not the reliable-send composer.
+/// HTTP input under the same lease as WebSocket attach. Exactly one of `data`,
+/// `paste` or `keys` is accepted. `paste` uses the host's bracketed-paste path;
+/// pending-session composers send Enter separately after its acknowledgement.
 #[derive(Deserialize)]
 pub struct SendRequest {
     name: String,
@@ -314,6 +313,8 @@ pub struct SendRequest {
     launch_id: Option<String>,
     #[serde(default)]
     data: Option<String>,
+    #[serde(default)]
+    paste: Option<String>,
     #[serde(default)]
     keys: Option<Vec<String>>,
     #[serde(default)]
@@ -345,8 +346,8 @@ pub async fn send(
         }
         invalid_input("终端输入请求格式无效")
     })?;
-    let payload = match (body.data, body.keys) {
-        (Some(data), None) => {
+    let payload = match (body.data, body.paste, body.keys) {
+        (Some(data), None, None) => {
             // The legacy page gates text writes on the served asset build so a
             // tab that outlived a deployment cannot keep typing blindly.
             if hub.is_none() && body._build != state.assets.build {
@@ -374,7 +375,33 @@ pub async fn send(
             }
             InputPayload::Text(data)
         }
-        (None, Some(keys)) => {
+        (None, Some(paste), None) => {
+            if hub.is_none() && body._build != state.assets.build {
+                return Ok((
+                    StatusCode::CONFLICT,
+                    [(header::CACHE_CONTROL, "no-store")],
+                    Json(json!({
+                        "error": "页面版本已过期，请重新加载整个网页后再输入",
+                        "code": "stale_build",
+                        "reload": true,
+                        "build": state.assets.build,
+                    })),
+                )
+                    .into_response());
+            }
+            if paste.is_empty() {
+                return Err(invalid_input("终端粘贴内容为空"));
+            }
+            if paste.len() > crate::terminal::MAX_PASTE_BYTES {
+                return Err(ApiError::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "terminal_input_too_large",
+                    "单次终端粘贴不能超过 1 MiB",
+                ));
+            }
+            InputPayload::Paste(paste)
+        }
+        (None, None, Some(keys)) => {
             let (names, _) = input::map_keys(&keys).map_err(|error| match error {
                 input::KeyError::Empty => invalid_input("keys 不能为空"),
                 input::KeyError::TooMany => invalid_input("单次最多 256 个按键"),
@@ -387,7 +414,7 @@ pub async fn send(
             })?;
             InputPayload::Keys(names)
         }
-        _ => return Err(invalid_input("必须且只能提供 data 或 keys 之一")),
+        _ => return Err(invalid_input("必须且只能提供 data、paste 或 keys 之一")),
     };
     let expected = match (
         &body.uid,
