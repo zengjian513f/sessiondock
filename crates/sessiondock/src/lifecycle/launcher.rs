@@ -48,7 +48,10 @@ fn default_schema() -> u32 {
 
 /// Private administrator configuration; intentionally not Debug or Serialize.
 /// Schema 1 carries only fixed-argv `adapters`; schema 2 additionally allows
-/// per-source CLI `profiles`.
+/// per-source CLI `profiles`. A bug-report worker launches the source's one
+/// configured CLI exactly like `term/create` (Python `WORKER_SOURCES`); a
+/// leftover `bug_report_profiles` table from batch 41 is ignored like any
+/// other unknown key.
 #[derive(Clone, Deserialize)]
 pub struct Config {
     #[serde(default = "default_schema")]
@@ -59,73 +62,6 @@ pub struct Config {
     pub adapters: Vec<Adapter>,
     #[serde(default)]
     pub profiles: Vec<CliProfile>,
-    /// Batch 41: which ordinary CLI profile a bug-report worker uses per
-    /// source. Each id must name a `profiles` entry of that source; its argv
-    /// is additionally held to `bug_report_policy` when a worker launches.
-    #[serde(default)]
-    pub bug_report_profiles: BugReportProfiles,
-}
-
-/// Python `bug_report.WORKER_SOURCES` mapped to launch profiles. Absent
-/// sources cannot run a worker (`503` at the route, like a missing CLI).
-#[derive(Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct BugReportProfiles {
-    pub claude: Option<String>,
-    pub codex: Option<String>,
-    pub grok: Option<String>,
-}
-
-impl BugReportProfiles {
-    pub fn get(&self, source: Source) -> Option<&str> {
-        match source {
-            Source::Claude => self.claude.as_deref(),
-            Source::Codex => self.codex.as_deref(),
-            Source::Grok => self.grok.as_deref(),
-        }
-    }
-    pub fn is_empty(&self) -> bool {
-        self.claude.is_none() && self.codex.is_none() && self.grok.is_none()
-    }
-}
-
-/// The cheapest configuration per CLI (AGENTS.md real-CLI rule): the exact
-/// dated Claude ID at low effort, Codex `gpt-5.6-luna` at low reasoning
-/// effort, Grok 4.6 at low effort. Fixed in code, not configurable.
-pub const BUG_REPORT_CLAUDE_MODEL: &str = "claude-haiku-4-5-20251001";
-pub const BUG_REPORT_CODEX_MODEL: &str = "gpt-5.6-luna";
-pub const BUG_REPORT_GROK_MODEL: &str = "grok-4.6";
-
-/// Whether `argv` (the profile's fixed `args` followed by `new_args`) pins the
-/// cheapest model and low effort for `source`. Flags are whole arguments
-/// followed by their value, so a model named inside another argument or a
-/// missing effort flag is a mismatch.
-pub fn bug_report_policy(source: Source, argv: &[String]) -> bool {
-    let pair = |flags: &[&str], values: &[&str]| {
-        argv.windows(2).any(|window| {
-            flags.contains(&window[0].as_str()) && values.contains(&window[1].as_str())
-        })
-    };
-    match source {
-        Source::Claude => {
-            pair(&["--model"], &[BUG_REPORT_CLAUDE_MODEL]) && pair(&["--effort"], &["low"])
-        }
-        Source::Codex => {
-            pair(&["--model", "-m"], &[BUG_REPORT_CODEX_MODEL])
-                && pair(
-                    &["-c", "--config"],
-                    &[
-                        "model_reasoning_effort=\"low\"",
-                        "model_reasoning_effort=low",
-                        "model_reasoning_effort='low'",
-                    ],
-                )
-        }
-        Source::Grok => {
-            pair(&["--model", "-m"], &[BUG_REPORT_GROK_MODEL])
-                && pair(&["--reasoning-effort"], &["low"])
-        }
-    }
 }
 
 /// One real CLI installation. `args` is the fixed prefix. Legacy `new_args`
@@ -152,24 +88,13 @@ pub struct CliProfile {
 }
 
 /// Public catalog row for HTTP selection: which configured IDs exist, their
-/// source, whether they are real CLI profiles, whether they can resume, and
-/// whether they are reserved for the bug-report worker (`worker`): a worker
-/// profile is launched by id from `bug_report::worker` only and never counts
-/// as the interactive CLI of its source, so a source with one CLI profile
-/// plus one worker profile still has exactly one interactive choice.
+/// source, whether they are real CLI profiles and whether they can resume.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: String,
     pub source: Source,
     pub profile: bool,
     pub resume: bool,
-    pub worker: bool,
-}
-impl Entry {
-    /// Selectable without an explicit `adapter_id`: everything but worker profiles.
-    pub fn interactive(&self) -> bool {
-        !self.worker
-    }
 }
 pub fn entries(config: &Config) -> Vec<Entry> {
     config
@@ -180,14 +105,12 @@ pub fn entries(config: &Config) -> Vec<Entry> {
             source: adapter.source,
             profile: false,
             resume: false,
-            worker: false,
         })
         .chain(config.profiles.iter().map(|profile| Entry {
             id: profile.id.clone(),
             source: profile.source,
             profile: true,
             resume: true,
-            worker: config.bug_report_profiles.get(profile.source) == Some(profile.id.as_str()),
         }))
         .collect()
 }
@@ -258,49 +181,6 @@ pub struct Launcher {
     adapters: BTreeMap<String, CheckedAdapter>,
     profiles: BTreeMap<String, CheckedProfile>,
     entries: Vec<Entry>,
-}
-
-/// The bug-report worker profiles a launcher configuration names, resolved
-/// to the argv each would run (executable, fixed args, new-session template
-/// with `{session_id}` unsubstituted). `config_bounds` already proved every
-/// named id exists with the right source.
-pub fn bug_report_profiles(config: &Config) -> Vec<BugReportProfile> {
-    [Source::Claude, Source::Codex, Source::Grok]
-        .into_iter()
-        .filter_map(|source| {
-            let id = config.bug_report_profiles.get(source)?;
-            let profile = config
-                .profiles
-                .iter()
-                .find(|profile| profile.id == id && profile.source == source)?;
-            let mut argv = vec![profile.executable.to_string_lossy().into_owned()];
-            argv.extend(profile.args.iter().cloned());
-            argv.extend(profile.new_args.iter().cloned());
-            Some(BugReportProfile {
-                id: id.to_owned(),
-                source,
-                argv,
-            })
-        })
-        .collect()
-}
-
-/// Public view of a bug-report worker profile (batch 41): enough for the
-/// policy assertion and the launch spec, no environment or host credential.
-#[derive(Clone)]
-pub struct BugReportProfile {
-    pub id: String,
-    pub source: Source,
-    /// Executable first, then the fixed args and the new-session template
-    /// with its `{session_id}` placeholder unsubstituted.
-    pub argv: Vec<String>,
-}
-
-impl BugReportProfile {
-    /// The cheapest-model rule, asserted right before a worker launches.
-    pub fn policy_ok(&self) -> bool {
-        bug_report_policy(self.source, &self.argv[1..])
-    }
 }
 
 impl Launcher {
@@ -687,16 +567,6 @@ fn config_bounds(config: &Config) -> Result<(), Error> {
             if !env_name(name) {
                 return Err(Error::InvalidConfig);
             }
-        }
-    }
-    for source in [Source::Claude, Source::Codex, Source::Grok] {
-        if let Some(id) = config.bug_report_profiles.get(source)
-            && !config
-                .profiles
-                .iter()
-                .any(|profile| profile.id == id && profile.source == source)
-        {
-            return Err(Error::InvalidConfig);
         }
     }
     Ok(())

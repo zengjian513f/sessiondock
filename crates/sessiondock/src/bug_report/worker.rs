@@ -1,9 +1,9 @@
 //! The bug-report worker (Python `bug_report.launch` / `_inject_worker`).
 //!
 //! `launch` creates an ordinary managed instance through the lifecycle service
-//! with the source's configured cheapest-model profile (asserted against the
-//! model policy first), records the pending decoration and starts one
-//! injection task. The task waits for the CLI's composer to be empty and
+//! with the source's one configured CLI (what `term/create` would start, on
+//! the CLI's default model like Python), records the pending decoration and
+//! starts one injection task. The task waits for the CLI's composer to be empty and
 //! settled (`delivery::driver` composer models for Claude/Codex, screen
 //! stability for Grok), then under its own launch lease persists a step,
 //! pastes, verifies the paste on screen, persists, presses Enter, persists,
@@ -110,18 +110,19 @@ pub async fn launch(
     rows: u16,
 ) -> Result<Value, String> {
     let label = source_label(source);
-    let profile = ctx
-        .service
-        .profile(source)
-        .ok_or_else(|| format!("本机没有为 {label} 配置缺陷报告处理会话"))?
+    let entry = ctx
+        .lifecycle
+        .entry_for(source, false)
+        .ok_or_else(|| format!("本机找不到 {} 命令", source_name(source)))?
         .clone();
-    if !profile.policy_ok() {
-        return Err(format!("{label} 处理会话的启动配置未固定为最便宜模型"));
-    }
     let repository = ctx.service.repository().to_path_buf();
-    let profile_id = profile.id.clone();
+    let adapter_id = entry.id.clone();
     let spec = tokio::task::spawn_blocking(move || {
-        LaunchSpec::profile_new(source, profile_id, &repository)
+        if entry.profile {
+            LaunchSpec::profile_new(source, adapter_id, &repository)
+        } else {
+            LaunchSpec::new(source, adapter_id, &repository)
+        }
     })
     .await
     .map_err(|_| "启动参数校验任务异常退出".to_owned())?
@@ -151,7 +152,7 @@ pub async fn launch(
         "title": format!("处理 {}", report.report_id), "kind": "bug-report",
         "report_id": report.report_id,
         "record_id": record.record_id(), "launch_id": record.launch_id(),
-        "instance_id": record.instance_id(), "profile": profile.id, "cols": cols, "rows": rows,
+        "instance_id": record.instance_id(), "profile": record.spec().adapter_id(), "cols": cols, "rows": rows,
     });
     let launched_at = SystemTime::now();
     update_manifest(

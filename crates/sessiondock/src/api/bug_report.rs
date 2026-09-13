@@ -22,7 +22,7 @@ use crate::{
     },
     error::ApiError,
     files::WriteService,
-    lifecycle::model::{Source, State as LaunchState},
+    lifecycle::model::State as LaunchState,
     state::AppState,
 };
 
@@ -33,7 +33,7 @@ fn disabled() -> ApiError {
     ApiError::new(
         StatusCode::NOT_IMPLEMENTED,
         "bug_report_disabled",
-        "缺陷报告未启用：需要 SESSIONDOCK_BUG_REPORT_DIR/REPO、审计目录、终端传输、受控创建和 launcher 的 bug_report_profiles",
+        "缺陷报告未启用：需要 SESSIONDOCK_BUG_REPORT_DIR/REPO、审计目录、终端传输和受控创建",
     )
 }
 
@@ -126,21 +126,12 @@ pub async fn report(
             json!({"error": format!("不支持的处理会话类型: {source_text}"), "code": "bug_report_source"}),
         ));
     };
-    let Some(profile) = ctx.service.profile(source) else {
+    // Python `WORKER_SOURCES` / `shutil.which`: the source needs its one
+    // configured CLI, the same the picker starts.
+    if ctx.lifecycle.entry_for(source, false).is_none() {
         return Ok(json_body(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({"error": format!("本机找不到 {} 命令", source_name(source)), "code": "bug_report_source_unavailable"}),
-        ));
-    };
-    if !profile.policy_ok() {
-        return Err(ApiError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "bug_report_model_policy",
-            format!(
-                "{} 处理会话的 launcher 配置没有固定为最便宜模型（{}），不会启动",
-                source_label(source),
-                cheapest(source)
-            ),
         ));
     }
     let cols = dimension(&body["cols"], 120, 40, 300)?;
@@ -261,17 +252,6 @@ pub async fn report(
                     "report_id": report.report_id, "path": report.path}),
             ))
         }
-    }
-}
-
-fn cheapest(source: Source) -> &'static str {
-    use crate::lifecycle::launcher::{
-        BUG_REPORT_CLAUDE_MODEL, BUG_REPORT_CODEX_MODEL, BUG_REPORT_GROK_MODEL,
-    };
-    match source {
-        Source::Claude => BUG_REPORT_CLAUDE_MODEL,
-        Source::Codex => BUG_REPORT_CODEX_MODEL,
-        Source::Grok => BUG_REPORT_GROK_MODEL,
     }
 }
 

@@ -6,7 +6,8 @@
 //! or belong to it), `environment.json` (`git` state of the repository plus
 //! the Rust build), copies of the composer uploads under `attachments/`,
 //! `worker-prompt.md` and `manifest.json`. `worker::launch` then starts an
-//! ordinary lifecycle launch through the configured cheapest-model profile and
+//! ordinary lifecycle launch of the source's configured CLI (the same one
+//! `term/create` starts, on the CLI's own default model like Python) and
 //! injects the prompt through the terminal driver's paste + Enter two-step
 //! persistence; the outcome lands in the manifest as
 //! `submitted` / `submitted_unconfirmed` / `failed`.
@@ -38,7 +39,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     audit::{AuditService, query::QueryFilter, query::ServerEvent},
-    lifecycle::{launcher::BugReportProfile, model::Source},
+    lifecycle::model::Source,
 };
 
 /// Python `EVENT_WINDOW_SECONDS`.
@@ -175,7 +176,6 @@ pub struct BugReportService {
     repository: PathBuf,
     audit_dir: PathBuf,
     build: String,
-    profiles: Vec<BugReportProfile>,
     /// Lifecycle record id → report, for the sidebar's pending row
     /// decoration (Python's pending record `kind`/`title`/`report_id`).
     workers: Mutex<BTreeMap<String, WorkerNote>>,
@@ -189,7 +189,6 @@ impl BugReportService {
         repository: PathBuf,
         audit_dir: PathBuf,
         build: String,
-        profiles: Vec<BugReportProfile>,
     ) -> io::Result<Self> {
         let repository = repository.canonicalize()?;
         let mut workers = BTreeMap::new();
@@ -225,7 +224,6 @@ impl BugReportService {
             repository,
             audit_dir,
             build,
-            profiles,
             workers: Mutex::new(workers),
         })
     }
@@ -239,17 +237,6 @@ impl BugReportService {
     pub fn attachment_root(&self) -> PathBuf {
         self.repository.join(ATTACHMENT_DIR)
     }
-    /// Sources with a configured worker profile (`term/list`-style
-    /// availability for the report dialog).
-    pub fn sources(&self) -> Vec<Source> {
-        self.profiles.iter().map(|profile| profile.source).collect()
-    }
-    pub fn profile(&self, source: Source) -> Option<&BugReportProfile> {
-        self.profiles
-            .iter()
-            .find(|profile| profile.source == source)
-    }
-
     fn note_worker(&self, record_id: &str, report_id: &str) {
         let mut workers = self.workers.lock().unwrap_or_else(|p| p.into_inner());
         workers.insert(

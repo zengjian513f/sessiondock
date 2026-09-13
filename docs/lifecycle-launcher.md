@@ -64,9 +64,9 @@ new sessions remain pending until native records identify them. Resume resolves
 the SID and UID from the frozen native catalog; the client cannot supply a SID
 or argv.
 
-The optional bug-report profile table names noninteractive worker profiles. Its
-model policy is evaluated from the final fixed argv. It does not create a
-working-directory boundary.
+A bug-report worker launches the source's one configured CLI through the same
+selection as `term/create`; there is no worker-specific profile table or model
+policy (a leftover `bug_report_profiles` key is ignored).
 
 ## Validation
 

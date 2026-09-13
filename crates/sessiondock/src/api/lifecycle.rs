@@ -302,19 +302,14 @@ fn select_entry(
     source: Source,
     resume: bool,
 ) -> Result<&Entry, ApiError> {
-    let candidates: Vec<&Entry> = service
-        .entries()
-        .iter()
-        .filter(|entry| entry.source == source && entry.interactive() && (!resume || entry.resume))
-        .collect();
-    match candidates.as_slice() {
-        [entry] => Ok(entry),
-        _ if resume => Err(ApiError::new(
+    match service.entry_for(source, resume) {
+        Some(entry) => Ok(entry),
+        None if resume => Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "launch_adapter",
             "来源没有唯一的可续接 CLI 配置",
         )),
-        _ => Err(ApiError::new(
+        None => Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "launch_adapter",
             "来源没有唯一的已配置 CLI",
