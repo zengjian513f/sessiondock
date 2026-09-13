@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sidebar divider drag on touch screens (Python side_drag_e2e port); isolated Rust server, no CLI.
+"""Sidebar pointer interactions (Python side_drag_e2e port); isolated Rust server, no CLI.
 
 A phone held sideways (or a tablet) is wider than the 720px mobile breakpoint, so it gets the
 desktop split layout with the ``#drag`` divider between the session list and the detail pane. A
@@ -138,6 +138,42 @@ def check_mouse(browser, base, uid):
     # Coarse-pointer hit zone must not exist for a mouse: 5px is the whole target.
     fine = page.evaluate("([x, y]) => [x - 6, x + 6].map(px => document.elementFromPoint(px, y)?.id)", [cx, cy])
     assert "drag" not in fine, fine
+
+    # Drag-selecting sidebar text produces a browser click after mouseup. It must neither open
+    # that row nor lose the selection; automatic metadata/list rendering waits until copying is
+    # done, then catches up from the current in-memory session list.
+    row = page.locator(f'#side .item[data-uid]:not([data-uid="{uid}"])').first
+    title = row.locator(".t")
+    other_uid = row.get_attribute("data-uid")
+    old_title = title.text_content()
+    box = title.bounding_box()
+    assert box and old_title, (box, old_title)
+    page.evaluate("""() => {
+      document.querySelector('#side').addEventListener('pointerdown', () => {
+        window.__sidebarSelectionRenderRace = setInterval(() => renderSide(), 1);
+      }, {once: true});
+    }""")
+    page.mouse.move(box["x"] + 3, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + min(box["width"] - 3, 90), box["y"] + box["height"] / 2, steps=8)
+    page.mouse.up()
+    page.evaluate("clearInterval(window.__sidebarSelectionRenderRace)")
+    selected = page.evaluate("getSelection().toString()")
+    assert selected.strip(), selected
+    assert page.evaluate("S.sel") == uid, (uid, other_uid, page.evaluate("S.sel"))
+    assert row.get_attribute("data-uid") == other_uid
+
+    updated_title = old_title + "（后台更新）"
+    page.evaluate("""([otherUid, updatedTitle]) => {
+      S.sessions = S.sessions.map(row => row.uid === otherUid ? {...row, title: updatedTitle} : row);
+      renderSide();
+    }""", [other_uid, updated_title])
+    assert page.evaluate("getSelection().toString()") == selected
+    assert title.text_content() == old_title
+    page.evaluate("getSelection().removeAllRanges()")
+    page.wait_for_function("([otherUid, updatedTitle]) => document.querySelector(`#side .item[data-uid=\"${CSS.escape(otherUid)}\"] .t`)?.textContent === updatedTitle",
+                           arg=[other_uid, updated_title])
+    assert page.evaluate("getSelection().toString()") == ""
     assert not errors, errors
     context.close()
 
@@ -159,8 +195,8 @@ def main():
                 check_mouse(browser, base, uid)
             finally:
                 browser.close()
-    print("PASS side drag browser: touch drag/cancel/scroll isolation at 814x380, mouse drag/dblclick at desktop, "
-          "width stored under sessiondock.", flush=True)
+    print("PASS sidebar pointer browser: touch drag/cancel/scroll isolation at 814x380, mouse drag/dblclick, "
+          "persistent desktop text selection with deferred refresh, width stored under sessiondock.", flush=True)
 
 
 if __name__ == "__main__":
