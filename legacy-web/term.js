@@ -1189,6 +1189,16 @@ function openNewSessionDialog() {
   setTimeout(() => { $('#new-cwd').focus(); $('#new-cwd').select(); }, 0);
 }
 
+function selectPendingSidebarRow(uid, added) {
+  const row = added ? null : document.querySelector(`#side .item[data-uid="${CSS.escape(uid)}"]`);
+  if (!row) {
+    renderSide();
+    return;
+  }
+  document.querySelectorAll('#side .item.sel').forEach(item => item.classList.remove('sel'));
+  row.classList.add('sel');
+}
+
 function showNewSessionStage(info) {
   if (!T.pendingModes.has(info.name)) T.pendingModes.set(info.name, T.mode);
   // 临时会话也必须完整切换视图；列表或字体慢时不能继续显示/操作旧终端。
@@ -1198,13 +1208,16 @@ function showNewSessionStage(info) {
   progressDone();
   // create 返回后 term/list 可能还没拉完；先把服务端刚确认的新 tmux 放进本地
   // pending，详情页的终端切换、输入框和附件可以立即使用。
-  if (!T.pending.some(x => x.name === info.name)) T.pending.push({ ...info, started: Date.now() / 1000 });
+  const added = !T.pending.some(x => x.name === info.name);
+  if (added) T.pending.push({ ...info, started: Date.now() / 1000 });
   cancelSearch(true);
   S.sel = pendingUid(info.name);
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
-  renderSide();
+  // Clicking an existing pending row must reach term/claim immediately. A full
+  // sidebar rebuild can take seconds for large histories and blocks attach.
+  selectPendingSidebarRow(S.sel, added);
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
   const pendingTitle = info.title || `新建 ${src.name} 会话`;
@@ -1758,6 +1771,10 @@ function termSelectionMouseDown(event) {
   });
 }
 
+function shouldUseTermWebgl(uid = T.uid) {
+  return !String(uid || '').startsWith('tmux:');
+}
+
 function ensureTerm(name) {
   let view = T.views.get(name);
   if (view) return view;
@@ -1794,10 +1811,10 @@ function ensureTerm(name) {
     } catch { view.unicode11 = null; }
   }
   term.open(host);
-  // Codex 用 DEC ?2026 同步输出重画输入框。DOM renderer 在 Chromium/Wayland
-  // 会偶发只提交清行的中间图层；WebGL 把整帧画进同一纹理。不可用或 context
-  // loss 时官方 addon 会被 dispose，xterm 自动恢复 DOM renderer。
-  if (globalThis.WebglAddon?.WebglAddon) {
+  // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
+  // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
+  // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
+  if (shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
     try {
       const webgl = new WebglAddon.WebglAddon();
       webgl.onContextLoss(() => {
