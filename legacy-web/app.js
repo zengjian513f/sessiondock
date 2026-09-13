@@ -2671,6 +2671,81 @@ function cancelLongPress() {
 
 const menuTarget = e => e.target.closest('#side .item');
 
+// 桌面端允许从会话标题、目录和元信息里复制文字。拖选结束时浏览器仍会派发
+// click；这不是打开会话的意图，而且重画左栏会立即销毁刚建立的 Selection。
+// 自动列表更新也要等用户清掉选区后再画，否则活跃会话一刷新，蓝色选区就消失。
+let sidebarRenderDeferred = false;
+let sidebarRenderFlushTimer = 0;
+let sidebarTextPointer = null;
+
+function sidebarTextSelectionActive() {
+  const selection = getSelection();
+  const side = $('#side');
+  return !!selection && !selection.isCollapsed && !!selection.toString()
+    && !!side && side.contains(selection.anchorNode) && side.contains(selection.focusNode);
+}
+
+const sidebarTextSelectionProtected = () => !!sidebarTextPointer || sidebarTextSelectionActive();
+
+function scheduleDeferredSidebarRender() {
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected() || sidebarRenderFlushTimer) return;
+  sidebarRenderFlushTimer = setTimeout(flushDeferredSidebarRender, 0);
+}
+
+function flushDeferredSidebarRender() {
+  sidebarRenderFlushTimer = 0;
+  if (!sidebarRenderDeferred || sidebarTextSelectionProtected()) return;
+  const side = $('#side');
+  const top = side?.scrollTop || 0;
+  sidebarRenderDeferred = false;
+  renderSide();
+  if (side) side.scrollTop = top;
+  paintLive();
+}
+
+document.addEventListener('selectionchange', () => {
+  scheduleDeferredSidebarRender();
+});
+
+$('#side').addEventListener('pointerdown', event => {
+  if (event.pointerType !== 'mouse' || event.button !== 0 || S.picking
+      || !event.target.closest('.t, .m, .cwd, .snip, .gname')) return;
+  sidebarTextPointer = {id: event.pointerId, x: event.clientX, y: event.clientY, moved: false};
+});
+
+document.addEventListener('pointermove', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  if (Math.abs(event.clientX - sidebarTextPointer.x) > 3
+      || Math.abs(event.clientY - sidebarTextPointer.y) > 3) sidebarTextPointer.moved = true;
+});
+
+document.addEventListener('pointerup', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  const pointer = sidebarTextPointer;
+  setTimeout(() => {
+    if (sidebarTextPointer !== pointer) return;
+    sidebarTextPointer = null;
+    scheduleDeferredSidebarRender();
+  }, 0);
+});
+
+document.addEventListener('pointercancel', event => {
+  if (!sidebarTextPointer || sidebarTextPointer.id !== event.pointerId) return;
+  sidebarTextPointer = null;
+  scheduleDeferredSidebarRender();
+});
+
+$('#side').addEventListener('click', event => {
+  const dragged = !!sidebarTextPointer?.moved;
+  sidebarTextPointer = null;
+  if (!dragged && !sidebarTextSelectionActive()) {
+    scheduleDeferredSidebarRender();
+    return;
+  }
+  event.stopPropagation();
+  event.preventDefault();
+}, true);
+
 $('#side').addEventListener('contextmenu', e => {
   const row = menuTarget(e);
   if (!row || S.picking) return;      // 选择模式里点选就够了，不再叠一层菜单
@@ -3106,6 +3181,10 @@ const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') 
  *  每次都重建整棵子树的话, 看起来就是列表一直在闪。
  *  只有真的多了/少了会话(或分组变了)才回去整体重渲染。 */
 function patchSide(list) {
+  if (sidebarTextSelectionProtected()) {
+    sidebarRenderDeferred = true;
+    return true;
+  }
   const side = $('#side');
   const groups = groupBy(list);
   const have = new Map([...side.querySelectorAll(':scope > .group')].map(g => [g.dataset.key, g]));
@@ -3172,7 +3251,10 @@ function agentRow(s, a, depth) {
   it.dataset.owner = s.uid;
   it.dataset.agent = a.id;
   it.dataset.depth = depth;
-  it.onclick = () => { if (!S.picking) openSession(s.uid, a.id); };
+  it.onclick = event => {
+    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+    if (!S.picking) openSession(s.uid, a.id);
+  };
   paintAgentStatus(it);
   return it;
 }
@@ -3202,6 +3284,11 @@ function paintAgentStatus(node) {
 }
 
 function renderSide() {
+  if (sidebarTextSelectionProtected()) {
+    sidebarRenderDeferred = true;
+    return;
+  }
+  sidebarRenderDeferred = false;
   renderSessionCounts();
   const side = $('#side');
   side.innerHTML = '';
@@ -3226,7 +3313,8 @@ function renderSide() {
          aria-label="选中「${esc(label)}」下的全部会话">` : ''}
        <span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(items[0]) : esc(label)}</span>
        <span class="gcount">${items.length}</span>`);
-    head.onclick = () => {
+    head.onclick = event => {
+      if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
       S.closed.has(key) ? S.closed.delete(key) : S.closed.add(key);
       store.set('closed', [...S.closed]);
       g.classList.toggle('closed');
@@ -3269,7 +3357,8 @@ function renderSide() {
       it.dataset.key = s.uid;
       it.dataset.depth = r.depth;
       if (s.pending) it.dataset.tmuxName = s.tmuxName;
-      it.onclick = () => {
+      it.onclick = event => {
+        if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
         if (pickable) return toggleSessionPick(s.uid);
         if (S.picking) return;
         s.pending ? openPendingSession(s) : openSession(s.uid);
