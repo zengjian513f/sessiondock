@@ -2,9 +2,15 @@ use super::super::scanner::{Limits, scan};
 use super::*;
 use crate::media::NativeSpan;
 use serde_json::json;
-use std::path::Path;
+use std::path::PathBuf;
 
 const DATA: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+fn synthetic_root() -> PathBuf {
+    std::env::temp_dir().join("sessiondock-native-image-fixture")
+}
+fn synthetic_path(name: &str) -> PathBuf {
+    synthetic_root().join(name)
+}
 fn image_block() -> Value {
     json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":DATA}})
 }
@@ -14,14 +20,13 @@ fn prepare_value(source: &str, value: Value) -> Result<(Value, Vec<Sidecar>), St
         bytes.as_slice(),
         Limits {
             inline_string_bytes: 64,
-            ..Default::default()
         },
     )
     .unwrap();
     prepare(source, document.root, |image| {
         NativeImage::from_native_span(NativeSpan {
-            root: "/synthetic".into(),
-            path: "/synthetic/session.jsonl".into(),
+            root: synthetic_root(),
+            path: synthetic_path("session.jsonl"),
             file_identity: "fixture".into(),
             record_start: 0,
             record_end: bytes.len() as u64,
@@ -44,7 +49,7 @@ fn project(source: &str, value: Value) -> (Vec<crate::sessions::Event>, Vec<Side
     let map = BTreeMap::from([(999, sidecars.clone())]);
     let (_, events, error) = crate::sessions::providers::parse_with_media(
         source,
-        Path::new("/synthetic/session.jsonl"),
+        &synthetic_path("session.jsonl"),
         &records,
         None,
         "fixture",
@@ -143,7 +148,7 @@ fn huge_data_url_and_equivalent_aliases_share_semantics() {
 }
 
 #[test]
-fn conflicting_aliases_mime_paths_and_unknown_spans_fail_closed() {
+fn later_conflicting_aliases_and_paths_do_not_override_the_first_image_source() {
     for extra in [
         json!({"image_url":format!("data:image/jpeg;base64,{DATA}")}),
         json!({"base64":"X".repeat(96),"media_type":"image/png"}),
@@ -154,18 +159,14 @@ fn conflicting_aliases_mime_paths_and_unknown_spans_fail_closed() {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        assert!(prepare_value("grok", json!({"type":"user","content":[block]})).is_err());
+        let (_, sidecars) =
+            prepare_value("grok", json!({"type":"user","content":[block]})).unwrap();
+        assert_eq!(sidecars.len(), 1);
+        assert_eq!(
+            sidecars[0].image.as_ref().unwrap().encoded_len(),
+            DATA.len()
+        );
     }
-    for value in [
-        json!({"type":"user","content":[{"type":"text","text":DATA}]}),
-        json!({"type":"user","content":[{"type":"text","text":"tutorial","image_url":format!("data:image/png;base64,{DATA}")}]}),
-        json!({"type":"user","content":"x".repeat(100)}),
-        json!({"type":"tool_result","content":{"business":{"image_url":format!("data:image/png;base64,{DATA}")}}}),
-        json!({"type":"user","content":[image_block()],"metadata":DATA}),
-    ] {
-        assert!(prepare_value("grok", value).is_err());
-    }
-    assert!(prepare_value("claude", json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"x","input":{"image":image_block()}}]}})).is_err());
 }
 
 #[test]
@@ -188,21 +189,13 @@ fn sidecar_retained_weight_counts_spare_path_and_key_capacity() {
 }
 
 #[test]
-fn per_record_sidecar_count_is_bounded_before_provider_projection() {
-    assert!(
-        prepare_value(
-            "grok",
-            json!({"type":"user","content":vec![image_block();256]})
-        )
-        .is_ok()
-    );
-    let error = prepare_value(
+fn per_record_sidecars_exceed_former_count_without_rejecting_history() {
+    let (_, sidecars) = prepare_value(
         "grok",
         json!({"type":"user","content":vec![image_block();257]}),
     )
-    .err()
     .unwrap();
-    assert!(error.contains("256"));
+    assert_eq!(sidecars.len(), 257);
 }
 
 #[test]
@@ -218,8 +211,8 @@ fn structured_giant_data_url_streams_into_only_small_private_sidecar() {
     assert!(document.stats.peak_resident_bytes < 100 * 1024);
     let (value, sidecars) = prepare("grok", document.root, |image| {
         NativeImage::from_native_span(NativeSpan {
-            root: "/synthetic".into(),
-            path: "/synthetic/source.jsonl".into(),
+            root: synthetic_root(),
+            path: synthetic_path("source.jsonl"),
             file_identity: "fixture".into(),
             record_start: 0,
             record_end: prefix.len() as u64 + encoded - 1 + suffix.len() as u64,
@@ -309,13 +302,13 @@ fn mcp_without_type_remains_authorized_after_payload_field_removal() {
 }
 
 #[test]
-fn event_media_budget_is_256_across_spanned_and_inline_images() {
+fn spanned_and_inline_images_can_exceed_256() {
     fn parse(content: Vec<Value>) -> (Vec<crate::sessions::Event>, Option<String>) {
         let (value, sidecars) =
             prepare_value("grok", json!({"type":"user","content":content})).unwrap();
         let (_, events, error) = crate::sessions::providers::parse_with_media(
             "grok",
-            Path::new("/synthetic/session.jsonl"),
+            &synthetic_path("session.jsonl"),
             &[(value, 1)],
             None,
             "fixture",
@@ -332,14 +325,11 @@ fn event_media_budget_is_256_across_spanned_and_inline_images() {
             .iter()
             .all(|e| e.media.iter().all(|i| i.native_span().is_some()))
     );
-    // Spanned positions are capped per record; one more inline typed image in
-    // the same event still crosses the provider's per-event budget.
+    // Another inline image survives alongside the 256 private spans.
     content.push(
         json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}),
     );
     let (events, error) = parse(content);
-    assert!(events.is_empty());
-    let error = error.unwrap();
-    assert!(error.contains("256"), "{error}");
-    assert!(!error.contains("16 张"));
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(events.iter().map(|e| e.media.len()).sum::<usize>(), 257);
 }

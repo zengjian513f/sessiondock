@@ -120,7 +120,7 @@ impl Fixture {
         );
         let codex_uid = sha1_uid(&rollout);
         let launcher = root.join("launcher.json");
-        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
+        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,
         "adapters":[],
         "profiles":[
             {"id":"claude-cli-v1","source":"claude","executable":bin.join("fake-claude"),
@@ -129,13 +129,13 @@ impl Fixture {
              "resume_args":["--resume","{sid}"],
              "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","AGENTHUB_TEST_LABEL":"CLAUDE","AGENTHUB_TEST_MARK":"claude-profile"},
              "env_remove":["TERM"],
-             "cwd_roots":[claude_area]},
+             },
             {"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
              "args":["--enable","default_mode_request_user_input","-c","suppress_unstable_features_warning=true"],
              "new_args":[],
              "resume_args":["resume","{sid}"],
-             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","AGENTHUB_TEST_LABEL":"CODEX","AGENTHUB_TEST_MARK":"codex-profile"},
-             "cwd_roots":[codex_area]}
+             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","TERM":"xterm-256color","AGENTHUB_TEST_LABEL":"CODEX","AGENTHUB_TEST_MARK":"codex-profile"},
+             }
         ]});
         file(&launcher, config.to_string().as_bytes(), 0o600);
         drop(LifecycleStore::initialize(&lifecycle).unwrap());
@@ -274,7 +274,6 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         &fixture.host,
         Limits {
             max_line_bytes: 64 * 1024,
-            max_directory_entries: 512,
             operation_timeout: Duration::from_secs(2),
             ..Default::default()
         },
@@ -310,7 +309,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         )),
         "{text}"
     );
-    // env_remove dropped the launcher's default TERM; the host then supplies
+    // env_remove dropped the inherited TERM; the host then supplies
     // its own. Identity variables and TMUX are absent; profile env is present.
     assert!(text.contains("HOME=[/synthetic/claude-home]"), "{text}");
     assert!(text.contains("CLAUDE_CODE_SESSION_ID=[] CODEX_COMPANION_SESSION_ID=[] GROK_SESSION_ID=[] TMUX=[] MARK=[claude-profile]"), "{text}");
@@ -330,13 +329,25 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
     records.push(claude.clone());
 
     // ---- Codex new: fixed prefix only; identity stays pending (no sid anywhere).
+    let cwd_alias = fixture.work.join("codex-linked");
+    std::os::unix::fs::symlink(&fixture.codex_area, &cwd_alias).unwrap();
     let (status, codex_new) = post(
+        &router,
+        "/api/term/create",
+        json!({"source":"codex","cwd":cwd_alias.join("../codex-linked"),"request_id":"cli-codex-new-request"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{codex_new}");
+    assert_eq!(codex_new["cwd"], fixture.codex_area.to_str().unwrap());
+    // The same directory through its canonical spelling reuses the receipt.
+    let (status, replay) = post(
         &router,
         "/api/term/create",
         json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-codex-new-request"}),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{codex_new}");
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["record_id"], codex_new["record_id"]);
     assert_receipt_shape(&codex_new);
     assert_eq!(codex_new["launch_kind"], "new_pending");
     assert!(codex_new["declared_sid"].is_null() && codex_new["declared_uid"].is_null());
@@ -443,24 +454,25 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         json!({"record_id":claude["record_id"],"instance_id":claude["instance_id"],"uid":fixture.codex_uid,"operator_confirmed":true})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{bound}");
 
-    // ---- Rejections: never a client SID/path, never a killed external process.
+    // Managed takeover reuses the existing host even with force, and optional
+    // request IDs or unrelated JSON members do not add Python-absent gates.
     for (body, expected) in [
         (
             json!({"uid":fixture.codex_uid,"request_id":"cli-force","force":true}),
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::OK,
         ),
         (
             json!({"uid":"codex:0000000000000000","request_id":"cli-missing"}),
             StatusCode::NOT_FOUND,
         ),
-        (json!({"uid":fixture.codex_uid}), StatusCode::BAD_REQUEST),
+        (json!({"uid":fixture.codex_uid}), StatusCode::OK),
         (
             json!({"uid":"../etc","request_id":"cli-bad-uid"}),
-            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_FOUND,
         ),
         (
             json!({"uid":fixture.codex_uid,"request_id":"cli-extra","sid":CODEX_SID}),
-            StatusCode::BAD_REQUEST,
+            StatusCode::OK,
         ),
     ] {
         let (status, reply) = post(&router, "/api/term/takeover", body).await;
@@ -472,24 +484,24 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
             StatusCode::CONFLICT,
         ),
         (
-            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-bad","resume_uid":"codex:has space"}),
-            StatusCode::BAD_REQUEST,
+            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-bad-uid","resume_uid":"codex:has space"}),
+            StatusCode::NOT_FOUND,
         ),
         (
-            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-sid","sid":CODEX_SID}),
-            StatusCode::BAD_REQUEST,
+            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-codex-new-request","sid":CODEX_SID}),
+            StatusCode::OK,
         ),
         (
-            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-argv","argv":["/bin/sh"]}),
-            StatusCode::BAD_REQUEST,
+            json!({"source":"codex","cwd":fixture.codex_area,"request_id":"cli-codex-new-request","argv":["/bin/sh"]}),
+            StatusCode::OK,
         ),
         (
             json!({"source":"codex","cwd":fixture.claude_area,"request_id":"cli-outside"}),
-            StatusCode::BAD_REQUEST,
+            StatusCode::OK,
         ),
         (
             json!({"source":"claude","cwd":fixture.work,"request_id":"cli-global-only"}),
-            StatusCode::BAD_REQUEST,
+            StatusCode::OK,
         ),
         (
             json!({"source":"grok","cwd":fixture.work,"request_id":"cli-grok"}),
@@ -509,10 +521,10 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
                 .extension()
                 .is_some_and(|x| x == "json"))
             .count(),
-        3
+        5
     );
 
-    // ---- Directory completion stays inside the configured roots.
+    // ---- Directory completion accepts any absolute directory.
     let work = fixture.work.to_str().unwrap();
     let (status, done) = get(&router, &format!("/api/term/complete-dir?path={work}/c")).await;
     assert_eq!(status, StatusCode::OK, "{done}");
@@ -520,7 +532,8 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
         done["directories"],
         json!([
             format!("{work}/claude-area/"),
-            format!("{work}/codex-area/")
+            format!("{work}/codex-area/"),
+            format!("{work}/codex-linked/")
         ])
     );
     let (status, done) = get(
@@ -530,24 +543,32 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(done["directories"], json!([format!("{work}/codex-area/")]));
-    // A prefix of a root (like "/") only ever suggests that root itself.
+    // Root and other ordinary absolute directories enumerate their real
+    // children; configured work paths do not act as an authorization jail.
     let (status, done) = get(&router, "/api/term/complete-dir?path=/").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(done["directories"], json!([format!("{work}/")]));
-    for path in [
-        "/etc/",
-        "/var/synthetic/",
-        "%2E%2E/",
-        "~/",
-        &format!("{work}/../"),
-        &format!("{work}/claude-area/../"),
-    ] {
+    assert!(
+        done["directories"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("/etc/"))
+    );
+    for path in ["/etc/", "~/", &format!("{work}/../")] {
+        let (status, done) = get(&router, &format!("/api/term/complete-dir?path={path}")).await;
+        assert_eq!(status, StatusCode::OK, "{done}");
+        assert!(
+            !done["directories"].as_array().unwrap().is_empty(),
+            "{path}"
+        );
+    }
+    for path in ["/var/synthetic/", "%2E%2E/"] {
         let (status, done) = get(&router, &format!("/api/term/complete-dir?path={path}")).await;
         assert_eq!(status, StatusCode::OK, "{done}");
         assert_eq!(done["directories"], json!([]), "{path}");
     }
-    let (status, _) = get(&router, "/api/term/complete-dir?path=&unknown=1").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, done) = get(&router, "/api/term/complete-dir?path=&unknown=1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(done["directories"], json!([]));
 
     // ---- Backend selection: only ptyhost; tmux is an explicit error.
     let (status, backend) = post(&router, "/api/term/backend", json!({"backend":"ptyhost"})).await;

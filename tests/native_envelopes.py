@@ -113,7 +113,7 @@ def run(binary, use_browser, smoke):
     payload = padded_png(3*MIB)
     valid_case(binary,payload,envelope(payload,prefix=True),'single prefixed source cold/warm/search',use_browser)
     if smoke: return
-    for depth in (2,4,8):
+    for depth in (2,4,8,9):
         valid_case(binary,payload,envelope(payload,depth),f'{depth} stringified layers')
     valid_case(binary,payload,{'type':'text','text':envelope(payload,2,prefix=True)},'text block candidate')
     valid_case(binary,payload,[{'type':'text','text':envelope(payload,prefix=True)}],'single array text candidate')
@@ -154,19 +154,9 @@ def run(binary, use_browser, smoke):
     print('PASS nested authority: append stability and cold/warm outer-tail rewrite revocation',flush=True)
 
     value = envelope(payload)
-    bad = [
-        ('duplicate inner keys',value.replace('"exit_code":0','"exit_code":0,"exit_code":0',1),{},501),
-        ('ninth envelope',envelope(payload,9),{},501),
-    ]
-    for label, output, options, expected in bad:
-        with tempfile.TemporaryDirectory(prefix='sessiondock-nested-reject-') as temporary:
-            corpus = corpus_for(Path(temporary),output,**options)
-            with isolated_server(corpus,binary) as (base,opener):
-                status(opener,base,'/api/messages/'+corpus.uid('codex-nested')+'?window=1',expected)
-        print('PASS nested rejection: '+label,flush=True)
 
     # Batch 34: a giant string that is not a reviewed tool envelope is ordinary
-    # text, read back verbatim from the stamped record (64 MiB record budget);
+    # text, read back verbatim from its stamped source regardless of size;
     # it never becomes an image, a marker or an empty string.
     residual = stringify({'wall_time_seconds':0,'exit_code':0,
         'output':[{'type':'text','text':'x'*(MIB+MIB//4)},
@@ -175,7 +165,7 @@ def run(binary, use_browser, smoke):
         ('unknown giant object', stringify({'tutorial':json.loads(value)}), {}),
         ('ordinary message',value,{'message':True}),
         ('tool arguments',value,{'argument':True}),
-        ('ordinary residual body over the old 2 MiB budget', residual, {'envelope':True}),
+        ('ordinary giant residual body', residual, {'envelope':True}),
     ]
     for label, output, options in text:
         envelope_text = options.pop('envelope', False)
@@ -199,10 +189,21 @@ def run(binary, use_browser, smoke):
                     assert any(message.get('role') == 'tool_result' and message.get('text') == output for message in history['messages']), label
         print('PASS giant ordinary text: '+label,flush=True)
 
+    for wrapped in (False, True):
+        text = 'ordinary large text ' + 'x'*(8*MIB+1)
+        output = stringify({'wall_time_seconds':0,'exit_code':0,'output':text}) if wrapped else text
+        with tempfile.TemporaryDirectory(prefix='sessiondock-giant-text-page-') as temporary:
+            corpus = corpus_for(Path(temporary),output)
+            with isolated_server(corpus,binary) as (base,opener):
+                history = get(opener,base,'/api/messages/'+corpus.uid('codex-nested')+'?window=1')
+                assert any(message.get('text') == text for message in history['messages'])
+                assert images(history) == []
+        print(f'PASS giant ordinary event window wrapped={wrapped}',flush=True)
+
     # Batch 36 (WP-G): a multi-part `exec` result (`[header, chunk, chunk, …]`,
     # one stringified envelope per streamed chunk) shows every chunk's output
     # in part order; exit_code is the last chunk's, duration_s the sum. A giant
-    # chunk is decoded in place as a span candidate under the shared budget
+    # chunk is decoded in place as a source-verified span candidate
     # (its nested image keeps a decode plan), an image part next to the chunks
     # registers directly, a giant ordinary part is read back but — like the
     # header, an empty trailing part and the script's own prints — is not a
@@ -255,13 +256,16 @@ def run(binary, use_browser, smoke):
                 else: status(opener,base,media[0]['src'],413)
         print(f'PASS nested image boundary {size} bytes',flush=True)
 
-    # A legal depth is not a fresh per-layer work allowance. Replaying this
-    # two-layer maximum image exceeds the shared 512 MiB scan/decode budget.
-    with tempfile.TemporaryDirectory(prefix='sessiondock-nested-work-limit-') as temporary:
-        corpus = corpus_for(Path(temporary),envelope(padded_png(32*MIB),2))
+    # Re-reading valid nested sources remains successful. Image decoding retains
+    # Python's actual 32 MiB single-item limit.
+    with tempfile.TemporaryDirectory(prefix='sessiondock-nested-work-') as temporary:
+        payload = padded_png(32*MIB)
+        corpus = corpus_for(Path(temporary),envelope(payload,2))
         with isolated_server(corpus,binary) as (base,opener):
-            status(opener,base,'/api/messages/'+corpus.uid('codex-nested')+'?window=1',413)
-    print('PASS nested shared-work limit: depth does not replenish replay budget',flush=True)
+            media = images(get(opener,base,'/api/messages/'+corpus.uid('codex-nested')+'?window=1'))
+            assert len(media) == 1
+            check_bytes(opener,base,media[0]['src'],payload)
+    print('PASS nested source above old shared-work quota remains readable',flush=True)
 
 
 if __name__ == '__main__':

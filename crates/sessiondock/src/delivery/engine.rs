@@ -15,7 +15,6 @@ use std::{
     },
 };
 
-const QUERY_LIMIT: usize = 128;
 const LOG_LIMIT: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -28,9 +27,6 @@ pub enum Error {
     CommitPending,
     DispatchPending,
     InternalCommand,
-    UnsupportedAgent,
-    UnsupportedMedia,
-    InvalidLimit,
     Protocol,
 }
 impl std::fmt::Display for Error {
@@ -214,33 +210,23 @@ impl DeliveryEngine {
     /// Both exact recovery proposals must commit and be acknowledged before
     /// this constructor returns a usable engine. Partial recovery returns Err.
     pub fn open(directory: &Path) -> Result<Self, Error> {
-        let store = DeliveryStore::open(directory).map_err(Error::Store)?;
-        let (cs, hs) = store.snapshots().map_err(Error::Store)?;
-        let (mut codex, cp) = codex::Machine::restore(cs.clone(), fresh_epoch(&cs.version.epoch)?)
-            .map_err(Error::Codex)?;
-        let (mut claude, hp) =
-            claude::Machine::restore(hs.clone(), fresh_epoch(&hs.version.epoch)?)
-                .map_err(Error::Claude)?;
-        let [cp @ codex::Effect::Persist { version: cv, .. }] = cp.as_slice() else {
-            return Err(Error::Protocol);
+        let store = match DeliveryStore::open(directory) {
+            Ok(store) => store,
+            Err(store::Error::MissingLedger) => return Self::initialize(directory),
+            Err(store::Error::Invalid | store::Error::UnsupportedSchema) => {
+                let (ce, he) = (epoch()?, epoch()?);
+                let store = DeliveryStore::reset(directory, ce.clone(), he.clone())
+                    .map_err(Error::Store)?;
+                return Ok(Self::assemble(
+                    store,
+                    codex::Machine::new(ce).map_err(Error::Codex)?,
+                    claude::Machine::new(he).map_err(Error::Claude)?,
+                ));
+            }
+            Err(error) => return Err(Error::Store(error)),
         };
-        let [hp @ claude::Effect::Persist { version: hv, .. }] = hp.as_slice() else {
-            return Err(Error::Protocol);
-        };
-        let ca = store.commit_codex(&cs.version, cp).map_err(Error::Store)?;
-        if ca != codex::Command::Persisted(cv.clone()) {
-            return Err(Error::Protocol);
-        }
-        if !codex.apply(ca).map_err(Error::Codex)?.is_empty() {
-            return Err(Error::Protocol);
-        }
-        let ha = store.commit_claude(&hs.version, hp).map_err(Error::Store)?;
-        if ha != claude::Command::Persisted(hv.clone()) {
-            return Err(Error::Protocol);
-        }
-        if !claude.apply(ha).map_err(Error::Claude)?.is_empty() {
-            return Err(Error::Protocol);
-        }
+        let snapshots = store.snapshots().map_err(Error::Store)?;
+        let (codex, claude) = recover(&store, snapshots)?;
         Ok(Self::assemble(store, codex, claude))
     }
     fn assemble(store: DeliveryStore, codex: codex::Machine, claude: claude::Machine) -> Self {
@@ -288,34 +274,44 @@ impl DeliveryEngine {
                 }
             }
         }
-        // Detect external ledger changes even on pure read/replay paths.
-        if let Err(error) = self.store.snapshots() {
-            self.freeze();
-            return Err(Error::Store(error));
+        let snapshots = match self.store.snapshots() {
+            Ok(snapshots) => snapshots,
+            Err(
+                store::Error::MissingLedger
+                | store::Error::Invalid
+                | store::Error::UnsupportedSchema,
+            ) => {
+                let directory = self.store.directory().to_path_buf();
+                let (ce, he) = (epoch()?, epoch()?);
+                self.store = DeliveryStore::reset(&directory, ce.clone(), he.clone())
+                    .map_err(Error::Store)?;
+                self.codex = codex::Machine::new(ce).map_err(Error::Codex)?;
+                self.claude = claude::Machine::new(he).map_err(Error::Claude)?;
+                self.pending = None;
+                return Ok(());
+            }
+            Err(error) => return Err(Error::Store(error)),
+        };
+        if self.codex.snapshot() != &snapshots.0 || self.claude.snapshot() != &snapshots.1 {
+            let (codex, claude) = recover(&self.store, snapshots)?;
+            self.codex = codex;
+            self.claude = claude;
+            self.pending = None;
         }
         Ok(())
     }
-    /// agent_id is resolved by the caller's inventory; Codex child delivery is unsupported.
+    /// `agent_id` is already resolved by the caller's inventory. The Codex
+    /// ledger remains keyed by its native UID, as Python's queue is.
     pub fn apply_codex(
         &mut self,
         command: codex::Command,
-        agent_id: Option<&str>,
+        _agent_id: Option<&str>,
     ) -> Result<DispatchBatch, Error> {
         self.check()?;
-        if agent_id.is_some() {
-            return Err(Error::UnsupportedAgent);
-        }
-        if matches!(
-            command,
-            codex::Command::Persisted(_) | codex::Command::PersistenceFailed { .. }
-        ) {
+        if matches!(command, codex::Command::Persisted(_)) {
             return Err(Error::InternalCommand);
         }
-        if let codex::Command::Submit { request, .. } = &command {
-            if !request.payload.media.is_empty() {
-                return Err(Error::UnsupportedMedia);
-            }
-        } else if self.pending.is_some() {
+        if !matches!(command, codex::Command::Submit { .. }) && self.pending.is_some() {
             return Err(Error::CommitPending);
         }
         if self.pending.is_some() && !matches!(self.pending, Some(Proposal::Codex { .. })) {
@@ -327,17 +323,10 @@ impl DeliveryEngine {
     }
     pub fn apply_claude(&mut self, command: claude::Command) -> Result<DispatchBatch, Error> {
         self.check()?;
-        if matches!(
-            command,
-            claude::Command::Persisted(_) | claude::Command::PersistenceFailed(_)
-        ) {
+        if matches!(command, claude::Command::Persisted(_)) {
             return Err(Error::InternalCommand);
         }
-        if let claude::Command::Enqueue { request, .. } = &command {
-            if !request.payload.attachments.is_empty() {
-                return Err(Error::UnsupportedMedia);
-            }
-        } else if self.pending.is_some() {
+        if !matches!(command, claude::Command::Enqueue { .. }) && self.pending.is_some() {
             return Err(Error::CommitPending);
         }
         if self.pending.is_some() && !matches!(self.pending, Some(Proposal::Claude { .. })) {
@@ -390,18 +379,12 @@ impl DeliveryEngine {
                     payload,
                     expected_frame,
                     overwrite,
-                } => {
-                    if !payload.media.is_empty() {
-                        self.freeze();
-                        return Err(Error::UnsupportedMedia);
-                    }
-                    CodexAction::Prepare {
-                        operation,
-                        payload,
-                        expected_frame,
-                        overwrite,
-                    }
-                }
+                } => CodexAction::Prepare {
+                    operation,
+                    payload,
+                    expected_frame,
+                    overwrite,
+                },
                 InjectEnter {
                     operation,
                     target,
@@ -480,18 +463,12 @@ impl DeliveryEngine {
                     payload,
                     expected_frame,
                     overwrite,
-                } => {
-                    if !payload.attachments.is_empty() {
-                        self.freeze();
-                        return Err(Error::UnsupportedMedia);
-                    }
-                    ClaudeAction::Prepare {
-                        operation,
-                        payload,
-                        expected_frame,
-                        overwrite,
-                    }
-                }
+                } => ClaudeAction::Prepare {
+                    operation,
+                    payload,
+                    expected_frame,
+                    overwrite,
+                },
                 PressEnter {
                     operation,
                     target,
@@ -546,7 +523,15 @@ impl DeliveryEngine {
     }
     /// Retry only the retained exact Persist, never a terminal action.
     pub fn retry_commit(&mut self) -> Result<DispatchBatch, Error> {
+        let had_pending = self.pending.is_some();
         self.check()?;
+        // A commit can reach disk even when its acknowledgment is lost. In
+        // that case `check` reloads and restores the durable snapshot, which
+        // consumes the stale in-memory proposal. Recovery deliberately emits
+        // no terminal action because an in-flight write is now uncertain.
+        if had_pending && self.pending.is_none() {
+            return Ok(self.batch(Vec::new(), Vec::new()));
+        }
         self.commit_pending()
     }
     fn commit_pending(&mut self) -> Result<DispatchBatch, Error> {
@@ -621,9 +606,6 @@ impl DeliveryEngine {
     }
     fn commit_error(&mut self, error: store::Error) -> Result<DispatchBatch, Error> {
         self.log(LogEvent::CommitFailed, None);
-        if error == store::Error::Uncertain {
-            self.freeze();
-        }
         Err(Error::Store(error))
     }
     pub fn receipts(
@@ -633,7 +615,6 @@ impl DeliveryEngine {
         limit: usize,
     ) -> Result<Vec<ReceiptInfo>, Error> {
         self.check()?;
-        limit_ok(limit)?;
         Ok(match provider {
             Provider::Codex => self
                 .codex
@@ -658,7 +639,6 @@ impl DeliveryEngine {
     /// Safe diagnostics remain available when frozen. Entries contain no request,
     /// prompt, scope, file path, native proof or adapter-provided reason.
     pub fn logs(&self, after_sequence: u64, limit: usize) -> Result<Vec<LogEntry>, Error> {
-        limit_ok(limit)?;
         Ok(self
             .logs
             .iter()
@@ -667,11 +647,8 @@ impl DeliveryEngine {
             .cloned()
             .collect())
     }
-    pub fn codex_outbox(&mut self, uid: &str, agent_id: Option<&str>) -> Result<Outbox, Error> {
+    pub fn codex_outbox(&mut self, uid: &str, _agent_id: Option<&str>) -> Result<Outbox, Error> {
         self.check()?;
-        if agent_id.is_some() {
-            return Err(Error::UnsupportedAgent);
-        }
         let snapshot = self.codex.snapshot();
         let mut rows = Vec::new();
         for row in snapshot
@@ -679,18 +656,18 @@ impl DeliveryEngine {
             .values()
             .filter(|r| r.request.payload.uid == uid && r.visible_in_outbox())
         {
-            if !row.request.payload.media.is_empty() {
-                return Err(Error::UnsupportedMedia);
-            }
-            let (state, attempts, error) = codex_state(row.state);
             rows.push(OutboxRow::new(
                 &row.request.request_id,
                 uid,
                 &row.request.payload.text,
                 row.created_ms,
-                state,
-                attempts,
-                error,
+                codex_state(row.state),
+                row.request
+                    .payload
+                    .media
+                    .iter()
+                    .map(|item| item.0.clone())
+                    .collect(),
             ));
         }
         rows.sort_by(|a, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
@@ -713,18 +690,19 @@ impl DeliveryEngine {
         receipts.sort_by_key(|r| r.sequence);
         let mut rows = Vec::new();
         for row in receipts {
-            if !row.request.payload.attachments.is_empty() {
-                return Err(Error::UnsupportedMedia);
-            }
             let (state, error) = claude_state(row.state);
             rows.push(OutboxRow::new(
                 &row.request.id,
                 &scope.uid,
                 &row.request.payload.text,
                 row.created_ms,
-                state,
-                u32::from(row.attempted),
-                error,
+                (state, u32::from(row.attempted), error),
+                row.request
+                    .payload
+                    .attachments
+                    .iter()
+                    .map(|item| item.0.clone())
+                    .collect(),
             ));
         }
         Ok(Outbox {
@@ -787,6 +765,37 @@ impl DeliveryEngine {
     }
 }
 
+fn recover(
+    store: &DeliveryStore,
+    (cs, hs): (codex::Snapshot, claude::Snapshot),
+) -> Result<(codex::Machine, claude::Machine), Error> {
+    let (mut codex, cp) = codex::Machine::restore(cs.clone(), fresh_epoch(&cs.version.epoch)?)
+        .map_err(Error::Codex)?;
+    let (mut claude, hp) = claude::Machine::restore(hs.clone(), fresh_epoch(&hs.version.epoch)?)
+        .map_err(Error::Claude)?;
+    let [cp @ codex::Effect::Persist { version: cv, .. }] = cp.as_slice() else {
+        return Err(Error::Protocol);
+    };
+    let [hp @ claude::Effect::Persist { version: hv, .. }] = hp.as_slice() else {
+        return Err(Error::Protocol);
+    };
+    let ca = store.commit_codex(&cs.version, cp).map_err(Error::Store)?;
+    if ca != codex::Command::Persisted(cv.clone()) {
+        return Err(Error::Protocol);
+    }
+    if !codex.apply(ca).map_err(Error::Codex)?.is_empty() {
+        return Err(Error::Protocol);
+    }
+    let ha = store.commit_claude(&hs.version, hp).map_err(Error::Store)?;
+    if ha != claude::Command::Persisted(hv.clone()) {
+        return Err(Error::Protocol);
+    }
+    if !claude.apply(ha).map_err(Error::Claude)?.is_empty() {
+        return Err(Error::Protocol);
+    }
+    Ok((codex, claude))
+}
+
 fn epoch() -> Result<String, Error> {
     let mut bytes = [0_u8; 32];
     getrandom::fill(&mut bytes).map_err(|_| Error::RandomUnavailable)?;
@@ -798,13 +807,6 @@ fn fresh_epoch(previous: &str) -> Result<String, Error> {
         Err(Error::RandomUnavailable)
     } else {
         Ok(next)
-    }
-}
-fn limit_ok(limit: usize) -> Result<(), Error> {
-    if limit == 0 || limit > QUERY_LIMIT {
-        Err(Error::InvalidLimit)
-    } else {
-        Ok(())
     }
 }
 fn codex_info(r: &codex::Receipt, known: bool, pending: bool) -> ReceiptInfo {
@@ -861,15 +863,15 @@ impl OutboxRow {
         uid: &str,
         text: &str,
         created: u64,
-        state: &'static str,
-        attempts: u32,
-        error: Option<&'static str>,
+        projection: (&'static str, u32, Option<&'static str>),
+        media: Vec<serde_json::Value>,
     ) -> Self {
+        let (state, attempts, error) = projection;
         Self {
             id: id.into(),
             uid: uid.into(),
             text: text.into(),
-            media: vec![],
+            media,
             created,
             state,
             error,

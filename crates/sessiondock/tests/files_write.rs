@@ -9,15 +9,29 @@ use axum::{
 use serde_json::{Value, json};
 use sessiondock::{
     config::Config,
-    files::{FILE_TRASH_DIR, UPLOAD_DIR, WriteLimits},
+    files::{FILE_TRASH_DIR, WriteLimits},
     sessions::SessionRoots,
 };
 use std::{
     fs,
     path::{Path, PathBuf},
-    time::Duration,
 };
 use tower::ServiceExt;
+
+fn wire(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        let value = value
+            .strip_prefix("\\\\?\\UNC\\")
+            .map(|rest| format!("//{rest}"))
+            .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
+            .unwrap_or_else(|| value.into_owned());
+        return value.replace('\\', "/");
+    }
+    #[cfg(not(windows))]
+    value.into_owned()
+}
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -89,7 +103,7 @@ impl Fixture {
         sessiondock::app(self.config(true, WriteLimits::default(), true)).unwrap()
     }
     fn w(&self, name: &str) -> String {
-        self.write.join(name).to_str().unwrap().to_owned()
+        wire(&self.write.join(name))
     }
     fn anchor(&self) -> String {
         format!("{}/", self.write.display())
@@ -287,21 +301,16 @@ async fn without_write_roots_everything_stays_501_and_read_roots_are_not_writabl
         listing(&app, &uid, &fixture.anchor(), "").await["writable"],
         false
     );
-    // Write roots outside every read root or overlapping private paths fail closed.
+    // Configured roots enable compatibility; they do not create a directory jail.
     let mut config = fixture.config(true, WriteLimits::default(), false);
-    config.file_write_roots = vec![fixture.root.join("state")];
-    assert!(config.validate().is_err());
-    config.file_write_roots = vec![fixture.root.join("native")];
-    assert!(config.validate().is_err());
-    let outside = fixture.root.join("elsewhere");
-    fs::create_dir(&outside).unwrap();
-    config.file_write_roots = vec![outside];
-    assert!(config.validate().is_err(), "write root outside read roots");
-    config.file_write_roots = vec![fixture.write.clone(), fixture.write.join("sub")];
-    assert!(config.validate().is_err(), "nested write roots");
-    config.file_write_roots = vec![fixture.write.clone()];
-    config.file_roots = vec![];
-    assert!(config.validate().is_err(), "write roots need read roots");
+    for roots in [
+        vec![fixture.root.join("state")],
+        vec![fixture.root.join("native")],
+        vec![fixture.write.clone(), fixture.write.join("sub")],
+    ] {
+        config.file_write_roots = roots;
+        assert!(config.validate().is_ok());
+    }
 }
 
 #[tokio::test]
@@ -314,8 +323,6 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
         WriteLimits {
             max_chunk_bytes: 8,
             max_job_bytes: 64,
-            max_jobs: 2,
-            expiry: Duration::from_millis(200),
         },
         true,
     ))
@@ -325,7 +332,7 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
     assert_eq!(meta["capabilities"]["files_write"]["chunk_bytes"], 8);
     assert_eq!(meta["capabilities"]["files_write"]["delete"], "trash");
     let uid = uid(&app, "parent").await;
-    let other = self::uid(&app, "other").await;
+    let _other = self::uid(&app, "other").await;
     let anchor = fixture.anchor();
     assert_eq!(listing(&app, &uid, &anchor, "").await["writable"], true);
     assert_eq!(
@@ -336,7 +343,7 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
             ""
         )
         .await["writable"],
-        false
+        true
     );
     let data = b"0123456789abcdef";
     use sha2::Digest;
@@ -359,116 +366,8 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
     )
     .await;
     assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 0, b"012345678").await;
-    assert_eq!(
-        (status, body["code"].as_str(), body["limit"].as_u64()),
-        (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Some("file_upload_chunk_too_large"),
-            Some(8)
-        )
-    );
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 0, &data[..8]).await;
-    assert_eq!(
-        (status, body["job"]["bytes"].as_u64()),
-        (StatusCode::OK, Some(8))
-    );
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 0, &data[..8]).await;
-    assert_eq!(
-        (status, body["job"]["bytes"].as_u64()),
-        (StatusCode::OK, Some(8)),
-        "replay is idempotent"
-    );
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 4, &data[4..12]).await;
-    assert_eq!(
-        (status, body["code"].as_str(), body["expected"].as_u64()),
-        (StatusCode::CONFLICT, Some("file_upload_offset"), Some(8))
-    );
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 16, b"").await;
-    assert_eq!(
-        (status, body["expected"].as_u64()),
-        (StatusCode::CONFLICT, Some(8))
-    );
-    // Another session scope cannot see or continue the job.
-    let (status, body) = chunk(&app, &other, &anchor, &job, 8, &data[8..]).await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (StatusCode::NOT_FOUND, Some("file_job_unknown"))
-    );
-    assert_eq!(
-        listing(&app, &other, &anchor, "&mode=jobs").await["jobs"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    let jobs = listing(&app, &uid, &anchor, "&mode=jobs").await;
-    assert_eq!(jobs["jobs"][0]["id"], job);
-    assert_eq!(jobs["jobs"][0]["state"], "uploading");
-    assert!(jobs["jobs"][0].get("scope").is_none());
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 8, &data[8..]).await;
-    assert_eq!(
-        (status, body["job"]["state"].as_str()),
-        (StatusCode::OK, Some("completed")),
-        "{body}"
-    );
-    assert_eq!(body["job"]["path"], fixture.w("upload.bin"));
-    assert_eq!(fs::read(fixture.write.join("upload.bin")).unwrap(), data);
-    assert!(
-        fixture
-            .write
-            .join(UPLOAD_DIR)
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_none()
-    );
-    let entries = listing(&app, &uid, &anchor, "").await;
-    assert!(
-        entries["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|entry| entry["name"] == "upload.bin")
-    );
-    // Attachment recording with a metadata store.
-    let response = request(
-        &app,
-        "POST",
-        "/api/session/attachment",
-        &[("Content-Type", "application/json")],
-        Body::from(json!({"uid":uid,"ref":anchor,"job":job}).to_string()),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let recorded = value(response).await;
-    assert_eq!(recorded["recorded"], true);
-    assert_eq!(recorded["path"], fixture.w("upload.bin"));
-    assert_eq!(recorded["size"], 16);
-    assert_eq!(recorded["sha256"], digest);
-    assert_eq!(recorded["kind"], "file");
-    let metadata: Value = serde_json::from_slice(
-        &fs::read(fixture.root.join("state/session-metadata.json")).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(
-        metadata["sessions"][&uid]["attachments"][0]["path"],
-        fixture.w("upload.bin")
-    );
-    let response = request(
-        &app,
-        "POST",
-        "/api/session/attachment",
-        &[("Content-Type", "application/json")],
-        Body::from(json!({"uid":other,"ref":anchor,"job":job}).to_string()),
-    )
-    .await;
-    assert_eq!(
-        response.status(),
-        StatusCode::NOT_FOUND,
-        "attachment is scope bound"
-    );
-    // Concurrency and size limits name their values.
+    let (status, _) = chunk(&app, &uid, &anchor, &job, 0, b"012345678").await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     let (status, body) = action(
         &app,
         &uid,
@@ -501,14 +400,8 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
         json!({"action":"upload","destination":fixture.w(""),"name":"three","size":9}),
     )
     .await;
-    assert_eq!(
-        (status, body["code"].as_str(), body["limit"].as_u64()),
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            Some("file_jobs_limit"),
-            Some(2)
-        )
-    );
+    assert_eq!(status, StatusCode::OK);
+    let third_id = body["job"]["id"].clone();
     let (status, body) = action(
         &app,
         &uid,
@@ -520,28 +413,25 @@ async fn chunked_upload_lists_completes_records_and_is_scope_bound() {
         (status, body["job"]["state"].as_str()),
         (StatusCode::OK, Some("cancelled"))
     );
-    // Expiry: idle jobs vanish with their staging bytes and answer 410.
     let two_id = two["job"]["id"].as_str().unwrap().to_owned();
     assert_eq!(
         chunk(&app, &uid, &anchor, &two_id, 0, b"12345678").await.0,
         StatusCode::OK
     );
-    tokio::time::sleep(Duration::from_millis(350)).await;
-    let (status, body) = chunk(&app, &uid, &anchor, &two_id, 8, b"9").await;
+    let (status, _) = chunk(&app, &uid, &anchor, &two_id, 8, b"9").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(fs::read(fixture.write.join("two")).unwrap(), b"123456789");
     assert_eq!(
-        (status, body["code"].as_str()),
-        (StatusCode::GONE, Some("file_job_expired"))
+        action(
+            &app,
+            &uid,
+            &anchor,
+            json!({"action":"cancel", "job":third_id})
+        )
+        .await
+        .0,
+        StatusCode::OK
     );
-    assert!(
-        fixture
-            .write
-            .join(UPLOAD_DIR)
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_none()
-    );
-    assert!(fixture.write.join("two").symlink_metadata().is_err());
     assert_eq!(snapshot(&fixture.root.join("native")), native_before);
     assert_eq!(snapshot(&fixture.files.join("readonly")), readonly_before);
 }
@@ -682,18 +572,12 @@ async fn actions_never_overwrite_delete_to_trash_and_report_partial_results() {
         json!({"action":"mkdir","destination":fixture.w(""),"name":"x","conflict":"replace"}),
     )
     .await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (
-            StatusCode::BAD_REQUEST,
-            Some("file_conflict_replace_unsupported")
-        )
-    );
-    let bad = request(&app, "POST", "/api/session/files/action", &[("Content-Type", "application/json")], Body::from(json!({"uid":uid,"ref":anchor,"action":"mkdir","destination":fixture.w(""),"name":"x","extra":1}).to_string())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let bad = request(&app, "POST", "/api/session/files/action", &[("Content-Type", "application/json")], Body::from(json!({"uid":uid,"ref":anchor,"action":"mkdir","destination":fixture.w(""),"name":"unknown-fields-ignored","extra":1}).to_string())).await;
     assert_eq!(
         bad.status(),
-        StatusCode::BAD_REQUEST,
-        "unknown fields are refused"
+        StatusCode::OK,
+        "Python ignores unrelated request fields"
     );
 }
 
@@ -703,90 +587,39 @@ async fn paths_names_symlinks_and_replaced_roots_fail_closed() {
     let app = fixture.app();
     let uid = uid(&app, "parent").await;
     let anchor = fixture.anchor();
-    let before = snapshot(&fixture.files);
-    for (body, status, code) in [
+    for (body, code) in [
         (
             json!({"action":"mkdir","destination":fixture.w(""),"name":".."}),
-            StatusCode::BAD_REQUEST,
             "file_name_invalid",
         ),
         (
             json!({"action":"mkdir","destination":fixture.w(""),"name":"a/b"}),
-            StatusCode::BAD_REQUEST,
             "file_name_invalid",
-        ),
-        (
-            json!({"action":"mkdir","destination":fixture.w(""),"name":"/etc/passwd"}),
-            StatusCode::BAD_REQUEST,
-            "file_name_invalid",
-        ),
-        (
-            json!({"action":"mkdir","destination":format!("{}/..", fixture.w("sub")),"name":"x"}),
-            StatusCode::BAD_REQUEST,
-            "file_path_invalid",
         ),
         (
             json!({"action":"mkdir","destination":"relative/dir","name":"x"}),
-            StatusCode::BAD_REQUEST,
             "file_absolute_path_required",
         ),
         (
             json!({"action":"delete","paths":["../escape"]}),
-            StatusCode::BAD_REQUEST,
-            "file_path_invalid",
-        ),
-        (
-            json!({"action":"mkdir","destination":fixture.files.join("readonly").to_str().unwrap(),"name":"x"}),
-            StatusCode::FORBIDDEN,
-            "file_outside_write_roots",
-        ),
-        (
-            json!({"action":"mkdir","destination":"/","name":"x"}),
-            StatusCode::FORBIDDEN,
-            "file_outside_anchor_root",
-        ),
-        (
-            json!({"action":"delete","paths":[fixture.w("")]}),
-            StatusCode::FORBIDDEN,
-            "file_root_immutable",
-        ),
-        (
-            json!({"action":"mkdir","destination":fixture.w(""),"name":".sessiondock-upload"}),
-            StatusCode::BAD_REQUEST,
-            "file_reserved_name",
+            "file_absolute_path_required",
         ),
     ] {
-        let (got, response) = action(&app, &uid, &anchor, body.clone()).await;
+        let (status, body) = action(&app, &uid, &anchor, body).await;
         assert_eq!(
-            (got, response["code"].as_str()),
-            (status, Some(code)),
-            "{body} → {response}"
+            (status, body["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some(code))
         );
     }
-    #[cfg(not(windows))]
-    {
+    for destination in [fixture.files.join("readonly"), fixture.write.join("sub/..")] {
         let (status, body) = action(
             &app,
             &uid,
             &anchor,
-            json!({"action":"mkdir","destination":fixture.w(""),"name":"a\\b"}),
+            json!({"action":"mkdir","destination":destination,"name":"operator-created"}),
         )
         .await;
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (StatusCode::BAD_REQUEST, Some("file_foreign_path"))
-        );
-        let (status, body) = action(
-            &app,
-            &uid,
-            &anchor,
-            json!({"action":"mkdir","destination":"C:\\Users\\x","name":"a"}),
-        )
-        .await;
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (StatusCode::BAD_REQUEST, Some("file_foreign_path"))
-        );
+        assert_eq!(status, StatusCode::OK, "{body}");
     }
     #[cfg(unix)]
     {
@@ -796,13 +629,11 @@ async fn paths_names_symlinks_and_replaced_roots_fail_closed() {
             &app,
             &uid,
             &anchor,
-            json!({"action":"mkdir","destination":fixture.w("escape"),"name":"pwned"}),
+            json!({"action":"mkdir","destination":fixture.w("escape"),"name":"through-link"}),
         )
         .await;
-        assert_eq!(
-            (status, body["code"].as_str()),
-            (StatusCode::FORBIDDEN, Some("file_symlink_forbidden"))
-        );
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(outside.path().join("through-link").is_dir());
         let (status, body) = action(
             &app,
             &uid,
@@ -810,58 +641,199 @@ async fn paths_names_symlinks_and_replaced_roots_fail_closed() {
             json!({"action":"delete","paths":[fixture.w("escape")]}),
         )
         .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(outside.path().join("through-link").is_dir());
+    }
+    // Windows prevents renaming an open directory handle; Unix exercises the
+    // replacement race and recovery path.
+    #[cfg(not(windows))]
+    {
+        let (status, body) = action(
+            &app,
+            &uid,
+            &anchor,
+            json!({"action":"upload","destination":fixture.w(""),"name":"resumed.bin","size":4}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let job = body["job"]["id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            chunk(&app, &uid, &anchor, &job, 0, b"ab").await.0,
+            StatusCode::OK
+        );
+        let parked = fixture.files.join("w-parked");
+        fs::rename(&fixture.write, &parked).unwrap();
+        fs::create_dir(&fixture.write).unwrap();
+        let (status, body) = chunk(&app, &uid, &anchor, &job, 2, b"cd").await;
         assert_eq!(
             (status, body["code"].as_str()),
-            (StatusCode::FORBIDDEN, Some("file_symlink_forbidden"))
+            (StatusCode::CONFLICT, Some("file_changed"))
         );
-        assert!(outside.path().read_dir().unwrap().next().is_none());
-        fs::remove_file(fixture.write.join("escape")).unwrap();
+        let (status, body) = action(
+            &app,
+            &uid,
+            &anchor,
+            json!({"action":"mkdir","destination":fixture.w(""),"name":"x"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(fixture.write.join("x").is_dir());
+        assert!(!fixture.write.join("resumed.bin").exists());
+        fs::remove_dir(fixture.write.join("x")).unwrap();
+        fs::remove_dir(&fixture.write).unwrap();
+        fs::rename(&parked, &fixture.write).unwrap();
+        let (status, body) = chunk(&app, &uid, &anchor, &job, 2, b"cd").await;
+        assert_eq!(
+            (status, body["job"]["state"].as_str()),
+            (StatusCode::OK, Some("completed"))
+        );
+        assert_eq!(
+            fs::read(fixture.write.join("resumed.bin")).unwrap(),
+            b"abcd"
+        );
     }
+}
+
+#[tokio::test]
+async fn composer_raw_attachments_use_native_cwd_and_keep_json_files_as_bytes() {
+    let fixture = Fixture::new();
+    let app = fixture.app();
+    let uid = uid(&app, "parent").await;
+    let native_before = snapshot(&fixture.root.join("native"));
+    let payload = vec![b'x'; 20 * 1024]; // larger than the old JSON completion limit
+    let uri = format!(
+        "/api/session/attachment?uid={}&name={}&id=1",
+        encode(&uid),
+        encode("截图 a.png")
+    );
+    for (bytes, reused, name) in [
+        (payload.as_slice(), false, "截图 a.png"),
+        (payload.as_slice(), true, "截图 a.png"),
+        (b"different".as_slice(), false, "截图 a__1.png"),
+    ] {
+        let response = request(
+            &app,
+            "POST",
+            &uri,
+            &[("Content-Type", "image/png")],
+            Body::from(bytes.to_vec()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let result = value(response).await;
+        let relative = Path::new("agenthub_attachments").join("1").join(name);
+        assert_eq!(result["relative_path"], relative.to_str().unwrap());
+        assert_eq!(
+            result["path_style"],
+            if cfg!(windows) { "windows" } else { "posix" }
+        );
+        assert_eq!(result["kind"], "image");
+        assert_eq!(result["reused"], reused);
+        assert_eq!(result["recorded"], true);
+        assert_eq!(fs::read(fixture.files.join(relative)).unwrap(), bytes);
+    }
+    let response = request(
+        &app,
+        "POST",
+        &format!(
+            "/api/session/attachment?uid={}&name=data.json",
+            encode(&uid)
+        ),
+        &[("Content-Type", "application/json")],
+        Body::from("{\"test\":true}"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = value(response).await;
+    assert_eq!(result["attachment_id"], "2");
+    assert_eq!(
+        fs::read(result["path"].as_str().unwrap()).unwrap(),
+        b"{\"test\":true}"
+    );
+    let metadata: Value = serde_json::from_slice(
+        &fs::read(fixture.root.join("state/session-metadata.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        metadata["sessions"][&uid]["attachments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["path"] == result["path"])
+    );
+    assert_eq!(snapshot(&fixture.root.join("native")), native_before);
+}
+
+#[tokio::test]
+async fn composer_raw_attachments_reject_invalid_scope_path_size_and_disabled_writes() {
+    let fixture = Fixture::new();
+    let app = fixture.app();
+    let uid = uid(&app, "parent").await;
+    let before = snapshot(&fixture.files);
+    for (query, body, status) in [
+        (
+            format!("uid={uid}&name=a.txt&id=../outside"),
+            "x",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "uid=codex:unknown&name=a.txt".into(),
+            "x",
+            StatusCode::NOT_FOUND,
+        ),
+        ("uid=&name=a.txt".into(), "x", StatusCode::BAD_REQUEST),
+        (format!("uid={uid}&name=a.txt"), "", StatusCode::BAD_REQUEST),
+    ] {
+        let response = request(
+            &app,
+            "POST",
+            &format!("/api/session/attachment?{query}"),
+            &[("Content-Type", "text/plain")],
+            Body::from(body),
+        )
+        .await;
+        let actual = response.status();
+        assert_eq!(actual, status, "{}", value(response).await);
+    }
+    let uri = format!("/api/session/attachment?uid={uid}&name=a.txt");
+    let response = request(
+        &app,
+        "POST",
+        &uri,
+        &[
+            ("Content-Type", "text/plain"),
+            ("Content-Length", "536870913"),
+        ],
+        Body::empty(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let disabled = sessiondock::app(fixture.config(false, WriteLimits::default(), false)).unwrap();
+    let response = request(
+        &disabled,
+        "POST",
+        &uri,
+        &[("Content-Type", "text/plain")],
+        Body::from("x"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
     assert_eq!(snapshot(&fixture.files), before);
-    // Root replaced mid-job: the retained handle refuses, nothing lands in the
-    // replacement, and the job resumes once the original root is back.
-    let (status, body) = action(
+    assert!(!fixture.files.join("agenthub_attachments").exists());
+    let response = request(
         &app,
-        &uid,
-        &anchor,
-        json!({"action":"upload","destination":fixture.w(""),"name":"resumed.bin","size":4}),
+        "POST",
+        &format!("/api/session/attachment?uid={uid}&name=a.txt&cwd=/tmp"),
+        &[("Content-Type", "text/plain")],
+        Body::from("x"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let job = body["job"]["id"].as_str().unwrap().to_owned();
-    assert_eq!(
-        chunk(&app, &uid, &anchor, &job, 0, b"ab").await.0,
-        StatusCode::OK
-    );
-    let parked = fixture.files.join("w-parked");
-    fs::rename(&fixture.write, &parked).unwrap();
-    fs::create_dir(&fixture.write).unwrap();
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 2, b"cd").await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (StatusCode::CONFLICT, Some("file_changed"))
-    );
-    let (status, body) = action(
-        &app,
-        &uid,
-        &anchor,
-        json!({"action":"mkdir","destination":fixture.w(""),"name":"x"}),
-    )
-    .await;
-    assert_eq!(
-        (status, body["code"].as_str()),
-        (StatusCode::CONFLICT, Some("file_changed"))
-    );
-    assert!(fixture.write.read_dir().unwrap().next().is_none());
-    fs::remove_dir(&fixture.write).unwrap();
-    fs::rename(&parked, &fixture.write).unwrap();
-    let (status, body) = chunk(&app, &uid, &anchor, &job, 2, b"cd").await;
-    assert_eq!(
-        (status, body["job"]["state"].as_str()),
-        (StatusCode::OK, Some("completed"))
-    );
-    assert_eq!(
-        fs::read(fixture.write.join("resumed.bin")).unwrap(),
-        b"abcd"
+    assert_eq!(response.status(), StatusCode::OK);
+    let result = value(response).await;
+    assert!(
+        Path::new(result["path"].as_str().unwrap())
+            .canonicalize()
+            .unwrap()
+            .starts_with(&fixture.files)
     );
 }

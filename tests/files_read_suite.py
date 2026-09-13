@@ -6,10 +6,10 @@ tests/history_parity.py. Asserts live Rust handlers, not guessed status codes.
 """
 from __future__ import annotations
 
-import argparse, json, os, sys, tempfile
+import argparse, http.client, json, os, sys, tempfile
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 from urllib.request import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -17,7 +17,7 @@ from history_parity import (  # noqa: E402
     BINARY as DEBUG_BINARY, REPO, Corpus, claude_row, isolated_server)
 
 BINARY = (p if (p := REPO / "target/release" / DEBUG_BINARY.name).is_file() else DEBUG_BINARY)
-RAW, BLOB, RESOLVE = 32 * 1024 * 1024, 3 * 1024 * 1024, 1100 * 1024
+RAW, BLOB, RESOLVE = 32 * 1024 * 1024, 3 * 1024 * 1024, 4 * 1024 * 1024
 LIST_KEYS = ("path", "root", "parent", "entries", "total", "offset", "writable", "errors", "incomplete")
 
 
@@ -73,7 +73,7 @@ def leak(raw, *needles):
 def listing_ok(data, files, outside, area, raw):
     if not isinstance(data, dict) or any(k not in data for k in LIST_KEYS):
         fail(area, "listing missing documented keys", raw)
-    if data.get("writable") is not False or data.get("root") != str(files):
+    if data.get("writable") is not False or data.get("root") != str(Path(files).anchor):
         fail(area, f"writable/root {data.get('writable')!r} {data.get('root')!r}", raw)
     root, forbidden = str(files), str(outside)
     for row in data.get("entries") or []:
@@ -102,11 +102,13 @@ def run(opener, base, uid, files, outside, notes, blob, pdf, nested, huge, escap
         fail("resolve", "unmentioned ref must be 404 file_not_referenced", raw)
     _, denied, _ = want(opener, base, "unmentioned GET", 404, "GET",
                         route(uid, str(unmentioned)), code="file_not_referenced")
-    _, nav, _ = want(opener, base, "nav outside", 403, "GET",
-                     route(uid, str(files), True, path=str(outside)), code="file_outside_anchor_root")
-    if leak(denied, str(files), str(outside)) or leak(nav, str(files), str(outside)):
-        fail("unauthorized", "error body leaked an absolute root path", denied + nav)
-    passed("unauthorized path 404 file_not_referenced / 403 file_outside_anchor_root")
+    _, nav, listing = want(opener, base, "nav outside", 200, "GET",
+                     route(uid, str(files), True, path=str(outside)))
+    if listing.get("path") != str(outside):
+        fail("navigation", "grant did not permit outside-directory navigation", nav)
+    if leak(denied, str(files), str(outside)):
+        fail("unauthorized", "error body leaked an absolute path", denied)
+    passed("unmentioned direct ref stays 404; directory grant permits filesystem navigation")
 
     hdrs, raw, _ = want(opener, base, "text", 200, "GET", route(uid, str(notes)))
     ctype, length = hdrs.get("content-type", ""), hdrs.get("content-length")
@@ -140,34 +142,42 @@ def run(opener, base, uid, files, outside, notes, blob, pdf, nested, huge, escap
     passed("PDF CSP frame-ancestors 'self' and nosniff")
 
     for path, label in ((escape, "symlink outside"), (inside, "symlink inside")):
-        want(opener, base, label, 403, "GET", route(uid, str(path)), code="file_symlink_forbidden")
-    passed("symlink outside and inside both 403 file_symlink_forbidden (never followed)")
+        want(opener, base, label, 200, "GET", route(uid, str(path)))
+    passed("symlink outside and inside both resolve and read normally")
 
     _, raw, data = want(opener, base, "list root", 200, "GET", route(uid, str(files), True))
     listing_ok(data, files, outside, "list root", raw)
-    if data.get("parent") is not None:
-        fail("list root", "parent must be null at the file root (do not leak the parent path)", raw)
+    if data.get("parent") != str(files.parent):
+        fail("list root", "parent navigation must continue above configured roots", raw)
     names = {row.get("name"): row for row in data["entries"]}
     for name in ("escape.link", "inside.link"):
         row = names.get(name) or {}
-        if row.get("kind") != "unavailable" or row.get("symlink") is not True:
-            fail("list root", f"{name} must be unavailable symlink", raw)
+        if row.get("kind") != "file" or row.get("symlink") is not True:
+            fail("list root", f"{name} must be a navigable file symlink", raw)
     _, raw, nested_list = want(opener, base, "list nested", 200, "GET", route(uid, str(nested), True))
     listing_ok(nested_list, files, outside, "list nested", raw)
     if nested_list.get("parent") != str(files):
         fail("list nested", f"parent {nested_list.get('parent')!r}", raw)
     if not any(row.get("name") == "child.txt" for row in nested_list["entries"]):
         fail("list nested", "missing child.txt", raw)
-    passed("directory listing shape; parent null at root; never lists outside")
+    passed("directory listing shape; parents continue to OS root; symlinks navigable")
 
     want(opener, base, "raw 32 MiB", 413, "GET", route(uid, str(huge)), code="file_raw_budget")
     passed("size over 32 MiB raw limit → 413 file_raw_budget")
 
-    got, _, raw = fetch(opener, base, "POST", "/api/session/resolve-files",
-                        {"Content-Type": "application/json"}, b" " * (RESOLVE + 1))
-    if got != 413:
-        fail("resolve body", f"HTTP {got} want 413", raw)
-    passed("resolve-files body over 1100 KiB → 413")
+    endpoint = urlsplit(base)
+    conn = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=10)
+    try:
+        conn.putrequest("POST", "/api/session/resolve-files")
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(RESOLVE + 1))
+        conn.endheaders()
+        response = conn.getresponse()
+        assert response.status == 413, response.status
+        response.read()
+    finally:
+        conn.close()
+    passed("resolve-files body over 4 MiB → 413")
 
     want(opener, base, "unknown uid", 404, "GET", route("codex:missing", str(notes)), code="session_error")
     passed("unknown uid → 404 session_error")

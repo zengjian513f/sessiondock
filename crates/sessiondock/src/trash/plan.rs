@@ -5,11 +5,7 @@
 //! protection set is computed once from the same rows so that a batch cannot
 //! delete a child first and then its now "childless" parent.
 
-use std::{
-    collections::BTreeSet,
-    fs, io,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeSet, fs, io, path::PathBuf};
 
 use serde_json::Value;
 
@@ -89,10 +85,7 @@ impl Plan {
         self.files.iter().map(|file| file.stamp.size).sum()
     }
 
-    /// Derive the file set for one published row. Paths are accepted only when
-    /// they stay inside the configured root for the row's source, with no
-    /// symlink anywhere on the way (checked component by component, so an
-    /// aliased directory cannot redirect a rename either).
+    /// Derive the file set from the published inventory row.
     pub fn derive(row: &Value, roots: &SessionRoots) -> Result<Self, TrashError> {
         let uid = text(row, "uid").to_owned();
         let source = text(row, "source").to_owned();
@@ -115,14 +108,6 @@ impl Plan {
         }
         let mut files = Vec::new();
         let mut push = |path: PathBuf, role: FileRole| -> Result<(), TrashError> {
-            if files.len() >= super::FILES_PER_ENTRY_LIMIT {
-                return Err(TrashError::new(
-                    413,
-                    "too_many_files",
-                    "会话文件数量超过回收站单条目限制",
-                ));
-            }
-            trusted_within(root, &path)?;
             let stamp = if role == FileRole::Directory {
                 Stamp::capture_directory(&path)?
             } else {
@@ -169,9 +154,7 @@ impl Plan {
             "grok" => {
                 // WP-E, Python parity: the whole session directory moves
                 // (events/updates/prompt_context/... included), not only the
-                // two files the index reads. The summary must still be there:
-                // it is what identifies the directory as this session.
-                Stamp::capture(&origin.join("summary.json"))?;
+                // two files the index reads.
                 push(origin.clone(), FileRole::Directory)?;
             }
             _ => return Err(TrashError::new(409, "unknown_source", "未知的会话来源")),
@@ -189,55 +172,4 @@ impl Plan {
             files,
         })
     }
-}
-
-/// `path` must be absolute, lexically inside `root` (no `..`), and every
-/// existing component from the root down must be a non-symlink directory
-/// (the final component may be absent or a regular file).
-pub fn trusted_within(root: &Path, path: &Path) -> Result<(), TrashError> {
-    if !path.is_absolute()
-        || path.components().any(|component| {
-            matches!(
-                component,
-                std::path::Component::ParentDir | std::path::Component::CurDir
-            )
-        })
-        || !path.starts_with(root)
-        || path == root
-    {
-        return Err(TrashError::new(
-            403,
-            "path_outside_root",
-            "路径不在配置的数据源目录内",
-        ));
-    }
-    for ancestor in path.ancestors() {
-        if !ancestor.starts_with(root) {
-            break;
-        }
-        match fs::symlink_metadata(ancestor) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(TrashError::new(
-                    403,
-                    "symlink_rejected",
-                    "路径经过符号链接，拒绝跟随",
-                ));
-            }
-            Ok(metadata) if ancestor != path && !metadata.is_dir() => {
-                return Err(TrashError::new(
-                    403,
-                    "path_outside_root",
-                    "路径的父级不是目录",
-                ));
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound && ancestor == path => {}
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                // A missing parent is acceptable only for restore, which
-                // recreates it; the caller re-walks after creation.
-            }
-            Err(_) => return Err(TrashError::new(503, "stat_failed", "无法确认路径的父目录")),
-        }
-    }
-    Ok(())
 }

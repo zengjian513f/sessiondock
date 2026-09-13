@@ -1,5 +1,5 @@
 //! Startup snapshot of regular frontend files. Requests never walk the disk.
-//! Symlinks are rejected at load. HTML pages receive mode, hostname, build and
+//! In-root aliases are resolved at load. HTML pages receive mode, hostname, build and
 //! capabilities; other assets use the build ETag. GET and HEAD only; `files.html`
 //! with `open=1` redirects to `file.html`. This is not a dynamic static-file server.
 //! The hub binary serves the same snapshot in `Mode::Hub` (`__AGENTHUB_MODE__`
@@ -51,7 +51,7 @@ fn escape_html(value: &str) -> String {
 }
 
 impl Assets {
-    /// Snapshot only regular files at startup. No request can follow a symlink or expose repo files.
+    /// Snapshot frontend files and in-root aliases at startup.
     pub fn load(root: &Path, hostname: &str, capabilities: &serde_json::Value) -> io::Result<Self> {
         Self::load_mode(root, hostname, capabilities, Mode::Local)
     }
@@ -66,49 +66,45 @@ impl Assets {
     ) -> io::Result<Self> {
         let root = root.canonicalize()?;
         let mut raw = BTreeMap::<String, Vec<u8>>::new();
-        let mut total = 0;
         fn collect(
             root: &Path,
             dir: &Path,
+            ancestors: &mut Vec<std::path::PathBuf>,
             raw: &mut BTreeMap<String, Vec<u8>>,
-            total: &mut usize,
         ) -> io::Result<()> {
+            let resolved = dir.canonicalize()?;
+            if !resolved.starts_with(root) || ancestors.contains(&resolved) {
+                return Ok(());
+            }
+            ancestors.push(resolved);
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
-                let kind = entry.file_type()?;
-                if entry.file_name().to_string_lossy().starts_with('.') {
+                let path = entry.path();
+                let resolved = match path.canonicalize() {
+                    Ok(path) => path,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
+                if !resolved.starts_with(root) {
                     continue;
                 }
-                if kind.is_symlink() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "frontend symlinks are not allowed",
-                    ));
-                }
-                if kind.is_dir() {
-                    collect(root, &entry.path(), raw, total)?;
-                } else if kind.is_file() {
-                    let size = entry.metadata()?.len();
-                    if size > 8 * 1024 * 1024 || *total as u64 + size > 32 * 1024 * 1024 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "frontend exceeds asset budget",
-                        ));
-                    }
-                    let data = fs::read(entry.path())?;
-                    *total += data.len();
-                    let path = entry
-                        .path()
+                let metadata = fs::metadata(&resolved)?;
+                if metadata.is_dir() {
+                    collect(root, &path, ancestors, raw)?;
+                } else if metadata.is_file() {
+                    let data = fs::read(&resolved)?;
+                    let name = path
                         .strip_prefix(root)
                         .unwrap()
                         .to_string_lossy()
                         .replace('\\', "/");
-                    raw.insert(format!("/{path}"), data);
+                    raw.insert(format!("/{name}"), data);
                 }
             }
+            ancestors.pop();
             Ok(())
         }
-        collect(&root, &root, &mut raw, &mut total)?;
+        collect(&root, &root, &mut Vec::new(), &mut raw)?;
         if !raw.contains_key("/index.html") {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -251,4 +247,39 @@ pub fn serve_asset(
         .headers_mut()
         .insert(header::ETAG, etag.parse().unwrap());
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshots_large_files_and_hidden_assets() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
+        fs::write(root.path().join("large.bin"), vec![7; 9 * 1024 * 1024]).unwrap();
+        fs::write(root.path().join(".asset"), b"hidden").unwrap();
+        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
+        assert!(assets.entries.contains_key("/large.bin"));
+        assert!(assets.entries.contains_key("/.asset"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshots_in_root_aliases_without_following_escape_or_cycles() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
+        fs::create_dir(root.path().join("dir")).unwrap();
+        fs::write(root.path().join("dir/file.js"), "test").unwrap();
+        symlink("dir", root.path().join("alias")).unwrap();
+        symlink("..", root.path().join("dir/cycle")).unwrap();
+        fs::write(outside.path().join("secret"), "outside").unwrap();
+        symlink(outside.path().join("secret"), root.path().join("escape")).unwrap();
+        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
+        assert!(assets.entries.contains_key("/dir/file.js"));
+        assert!(assets.entries.contains_key("/alias/file.js"));
+        assert!(!assets.entries.contains_key("/escape"));
+    }
 }

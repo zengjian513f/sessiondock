@@ -129,7 +129,7 @@ def main():
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [str(root / "work")],
+
             "adapters": [{"id": "synthetic-shell-v1", "source": "codex",
                           "executable": str(Path("/bin/sh").resolve()), "args": ["-c", SHELL],
                           "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}],
@@ -137,8 +137,7 @@ def main():
                           "args": ["--settings", "/synthetic/bridge-settings.json"],
                           "new_args": ["--session-id", "{session_id}"],
                           "resume_args": ["--resume", "{sid}"],
-                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home"},
-                          "cwd_roots": [str(root / "work" / "claude-area")]}]}))
+                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home"}}]}))
         cfg.chmod(0o600)
         init = subprocess.run([str(args.binary), "--initialize-lifecycle", str(root / "ledger")],
                               cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)

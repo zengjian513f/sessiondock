@@ -6,14 +6,6 @@ use std::{
     sync::LazyLock,
 };
 
-/// Scan budgets per selected view. The largest real sessions observed (a
-/// 228 MB Codex rollout, a 174 MB fork chain) carry about 41 MB of semantic
-/// text and 47,000 unique references under the Python `files.references`
-/// rules, so both limits keep an order of magnitude of headroom; Python itself
-/// has no limit. `resolve-files`/file-page requests still report 413 beyond
-/// them; the media index degrades instead (`ReferenceIndex::complete`).
-pub(crate) const MAX_REFERENCE_BYTES: usize = 512 * 1024 * 1024;
-pub(crate) const MAX_REFERENCES: usize = 250_000;
 static LINE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?::[0-9]+(?::[0-9]+)?|#L[0-9]+(?:C[0-9]+)?)$").unwrap());
 static QUOTED: LazyLock<Regex> = LazyLock::new(|| {
@@ -34,92 +26,79 @@ static MEDIA_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
 static FILE_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bfile://[^\s<>`\"'，。；、！？()\[\]{}]+"#).unwrap());
 
-/// A local image reference is still only a reference, not a filesystem grant.
-/// URL decoding occurs exactly once and only for file:/// URLs. Ordinary path
-/// percent signs are literal. Platform/no-follow/root checks remain downstream.
+/// Decode a local media path as Python media.register_path does.
 pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
-    let invalid = || {
-        FileError::new(
+    let raw = raw.trim().trim_matches(['<', '>']);
+    if raw.is_empty() {
+        return Err(FileError::new(
             400,
             "file_media_reference_invalid",
-            "媒体文件引用需要本地路径或无 authority 的 file:/// URL；不展开 HOME、网络地址或控制字符",
-        )
-    };
-    if raw.is_empty() || raw.len() > MAX_PATH_BYTES || raw.chars().any(char::is_control) {
-        return Err(invalid());
+            "图片路径不能为空",
+        ));
     }
-    // Markdown delimiters are removed by the reference lexer, not here. A
-    // decoded filename may legitimately end in a space or `>` on Unix.
-    let value = raw;
-    if value
-        .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file://"))
-    {
-        let path = &value[7..];
-        if !path.starts_with('/') || path.starts_with("//") || path.contains(['?', '#', '\\']) {
-            return Err(invalid());
-        }
-        let mut decoded = Vec::with_capacity(path.len());
-        let mut bytes = path.bytes();
-        while let Some(byte) = bytes.next() {
-            if byte == b'%' {
-                let high = bytes
-                    .next()
-                    .and_then(|b| (b as char).to_digit(16))
-                    .ok_or_else(invalid)?;
-                let low = bytes
-                    .next()
-                    .and_then(|b| (b as char).to_digit(16))
-                    .ok_or_else(invalid)?;
-                decoded.push(((high << 4) | low) as u8);
-            } else {
-                decoded.push(byte);
-            }
-        }
-        let decoded = String::from_utf8(decoded).map_err(|_| invalid())?;
-        if decoded.chars().any(char::is_control)
-            || decoded.starts_with("//")
-            || decoded.contains('\\')
-            || decoded.contains("://")
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let (Some(high), Some(low)) = (bytes.get(index + 1), bytes.get(index + 2))
+            && let (Some(high), Some(low)) =
+                ((*high as char).to_digit(16), (*low as char).to_digit(16))
         {
-            return Err(invalid());
+            decoded.push((high * 16 + low) as u8);
+            index += 3;
+            continue;
         }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    let decoded = String::from_utf8_lossy(&decoded);
+    let value = if let Some(rest) = decoded.strip_prefix("file://") {
         #[cfg(windows)]
-        let decoded = if decoded.as_bytes().get(2) == Some(&b':')
-            && decoded
-                .as_bytes()
-                .get(1)
-                .is_some_and(u8::is_ascii_alphabetic)
-        {
-            decoded[1..].to_owned()
+        let windows_path = rest.starts_with('\\')
+            || (rest.as_bytes().get(1) == Some(&b':') && rest.as_bytes()[0].is_ascii_alphabetic());
+        #[cfg(not(windows))]
+        let windows_path = false;
+        let path = if rest.starts_with('/') || windows_path {
+            rest
         } else {
-            return Err(invalid());
+            rest.find('/').map_or("", |slash| &rest[slash..])
         };
-        return Ok(decoded);
-    }
-    if value.starts_with('~')
-        || value.contains("://")
-        || value
-            .get(..5)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("file:"))
+        #[cfg(windows)]
+        let verbatim = path.starts_with("\\\\?\\");
+        #[cfg(not(windows))]
+        let verbatim = false;
+        if verbatim {
+            path
+        } else {
+            path.split(['?', '#']).next().unwrap_or("")
+        }
+    } else {
+        &decoded
+    };
+    #[cfg(windows)]
     {
-        return Err(invalid());
+        let value = value
+            .strip_prefix("\\\\?\\UNC\\")
+            .map(|rest| format!("//{rest}"))
+            .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
+            .unwrap_or_else(|| value.to_owned());
+        let value = value
+            .strip_prefix('/')
+            .filter(|value| value.as_bytes().get(1) == Some(&b':'))
+            .unwrap_or(&value);
+        return Ok(value.replace('\\', "/"));
     }
-    if value.is_empty() {
-        return Err(invalid());
-    }
-    // Unlike source-file links, image references are exact filenames. Stripping
-    // :line/#L suffixes here would corrupt decoded names such as image%23L2 and
-    // would make token reauthorization normalize the same path differently.
+    #[cfg(not(windows))]
     Ok(value.to_owned())
 }
 
 pub fn clean_ref(value: &str) -> Result<String, FileError> {
-    if value.is_empty() || value.len() > MAX_PATH_BYTES || value.chars().any(char::is_control) {
+    if value.is_empty() || value.chars().count() > MAX_PATH_BYTES || value.contains('\0') {
         return Err(FileError::new(
             400,
             "file_reference_invalid",
-            "文件引用为空、过长或包含控制字符",
+            "文件引用为空、过长或包含空字符",
         ));
     }
     let clean = LINE
@@ -135,13 +114,7 @@ pub fn clean_ref(value: &str) -> Result<String, FileError> {
     Ok(clean)
 }
 pub(super) fn validate_scope(scope: &FileScope<'_>) -> Result<(), FileError> {
-    if scope.uid.is_empty()
-        || scope.uid.len() > 256
-        || scope.uid.chars().any(char::is_control)
-        || scope
-            .agent
-            .is_some_and(|agent| agent.len() > 256 || agent.chars().any(char::is_control))
-    {
+    if scope.uid.is_empty() {
         return Err(FileError::new(
             400,
             "file_scope_invalid",
@@ -155,9 +128,9 @@ pub(super) struct ReferenceIndex {
     pub refs: BTreeSet<String>,
     pub basenames: BTreeMap<String, Vec<String>>,
     pub directories: Vec<String>,
-    scanned: usize,
     media: bool,
-    /// False once a media-mode scan stopped at a budget: later references are
+    /// Complete selected-branch scan marker retained for media integration.
+    /// The index no longer truncates at an arbitrary reference budget; all
     /// simply unknown (no placeholder), never a scope-wide failure.
     pub complete: bool,
 }
@@ -180,7 +153,6 @@ impl ReferenceIndex {
             refs: BTreeSet::new(),
             basenames: BTreeMap::new(),
             directories: Vec::new(),
-            scanned: 0,
             media,
             complete: true,
         };
@@ -215,7 +187,6 @@ impl ReferenceIndex {
             }
         }
         for reference in native_refs {
-            index.charge(reference.len())?;
             // Exact typed refs from the selected native view, not fake text
             // fed through the token scanner. Invalid refs cannot grant access;
             // image(ref) reports their precise error if actually selected.
@@ -247,27 +218,9 @@ impl ReferenceIndex {
         } {
             self.refs.insert(reference);
         }
-        if self.refs.len() > MAX_REFERENCES {
-            return self.exhausted(FileError::new(
-                413,
-                "file_reference_budget",
-                "所选历史中的文件引用过多，无法安全完成解析",
-            ));
-        }
         Ok(())
     }
-    /// Media scans degrade (stop, keep what was indexed); file resolution
-    /// keeps the explicit error so a user-initiated open is never guessed.
-    fn exhausted(&mut self, error: FileError) -> Result<(), FileError> {
-        if self.media {
-            self.complete = false;
-            Ok(())
-        } else {
-            Err(error)
-        }
-    }
     fn scan(&mut self, value: &str) -> Result<(), FileError> {
-        self.charge(value.len())?;
         if !self.complete {
             return Ok(());
         }
@@ -312,38 +265,16 @@ impl ReferenceIndex {
         }
         Ok(())
     }
-    fn charge(&mut self, bytes: usize) -> Result<(), FileError> {
-        self.scanned = self.scanned.saturating_add(bytes);
-        if self.scanned > MAX_REFERENCE_BYTES {
-            return self.exhausted(FileError::new(
-                413,
-                "file_reference_budget",
-                "所选历史的文件引用解析超过 512 MiB 预算",
-            ));
-        }
-        Ok(())
-    }
-    fn scan_value(&mut self, value: &Value, depth: usize) -> Result<(), FileError> {
-        if depth > 32 {
-            return Err(FileError::new(
-                413,
-                "file_reference_depth",
-                "工具参数嵌套过深，不能完整解析文件引用",
-            ));
-        }
-        match value {
-            Value::String(value) => self.scan(value)?,
-            Value::Array(values) => {
-                for value in values {
-                    self.scan_value(value, depth + 1)?;
-                }
+
+    fn scan_value(&mut self, value: &Value, _depth: usize) -> Result<(), FileError> {
+        let mut pending = vec![value];
+        while let Some(value) = pending.pop() {
+            match value {
+                Value::String(value) => self.scan(value)?,
+                Value::Array(values) => pending.extend(values.iter()),
+                Value::Object(values) => pending.extend(values.values()),
+                _ => {}
             }
-            Value::Object(values) => {
-                for value in values.values() {
-                    self.scan_value(value, depth + 1)?;
-                }
-            }
-            _ => {}
         }
         Ok(())
     }

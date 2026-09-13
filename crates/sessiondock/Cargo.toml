@@ -19,6 +19,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 avif-parse = { version = "2", default-features = false }
 html-escape = "0.2"
 regex = "1"
+fancy-regex = "0.18"
 getrandom = "0.3"
 subtle = "2"
 futures-util = { version = "0.3", features = ["sink"] }
@@ -27,10 +28,12 @@ cap-std = "4"
 cap-fs-ext = "4"
 # Batch 44 WP-A: glibc arena cap and trim so evicted views really leave RSS.
 libc = "0.2"
+# Atomic no-clobber file/directory/symlink rename through checked parent handles.
+rustix = { version = "1", features = ["fs"] }
 axum.workspace = true
 serde.workspace = true
 tokio.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 indexmap.workspace = true
 sha1.workspace = true
 sha2.workspace = true
@@ -38,13 +41,18 @@ chrono.workspace = true
 mime_guess.workspace = true
 async-stream.workspace = true
 tokio-util.workspace = true
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 # WP-W: process identity on Windows (OpenProcess + GetProcessTimes,
-# token user SID for the owner check). Query-only rights, no enumeration.
+# token user SID for the owner check), plus retained-handle file renames.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
+    "Wdk_Storage_FileSystem",
+    "Win32_System_IO",
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
 

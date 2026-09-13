@@ -156,9 +156,8 @@ def main():
             print("PASS walk 250: start/end/total/remaining, ≤16/page, unique src, stable next, sha256 PNG/GREEN")
             walk(opener, base, corpus, "claude-walk", "CLAUDE 100 IMAGES", 100)
             print("PASS claude tool_result 100-image continuation pages")
-            body = expect_http(opener, base, "/api/messages/" + uid(corpus, "codex-over") + "?window=1", 501)
-            assert "256" in body, body
-            print("PASS 257 images fail HTTP 501 mentioning 256")
+            walk(opener, base, corpus, "codex-over", "WALK 257", 257)
+            print("PASS 257 images are all available through continuation")
             expect_http(opener, base, media_route(corpus, "codex-walk", "xyz"), 400)
             expect_http(opener, base, media_route(corpus, "claude-walk", cursor), 403)
             print("PASS malformed media cursor 400; cursor on the other session 403")

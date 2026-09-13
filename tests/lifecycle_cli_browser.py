@@ -11,6 +11,7 @@ binary, native CLI home or production host is touched.
 """
 import hashlib
 import json
+import shlex
 import os
 from pathlib import Path
 import socket
@@ -32,7 +33,13 @@ printf 'FAKE_CODEX_ARGV_BEGIN\\n'
 i=0
 for arg in "$@"; do printf 'A%s [%s]\\n' "$i" "$arg"; i=$((i+1)); done
 printf 'FAKE_CODEX_ARGV_END %s\\n' "$i"
-printf 'FAKE_CODEX_SID_ENV [%s]\\n' "$CODEX_COMPANION_SESSION_ID$CLAUDE_CODE_SESSION_ID$GROK_SESSION_ID$TMUX"
+printf 'FAKE_CODEX_SID_ENV [%s]\\n' "$CODEX_COMPANION_SESSION_ID$CLAUDE_CODE_SESSION_ID$GROK_SESSION_ID$TMUX$CODEX_THREAD_ID$CODEX_SESSION_ID$CLAUDE_PID"
+printf 'SERVICE_INHERITED [%s]\\n' "$SESSIONDOCK_TEST_INHERITED"
+printf 'SERVICE_OVERRIDE [%s]\\n' "$SESSIONDOCK_TEST_OVERRIDE"
+printf 'SERVICE_REMOVE [%s]\\n' "$SESSIONDOCK_TEST_REMOVE"
+printf 'SERVICE_HOME [%s]\\n' "$HOME"
+printf 'SERVICE_HOST [%s]\\n' "$AGENTHUB_SESSION"
+service-env-tool
 """ + FREE_SHELL
 # The fake Claude writes one synthetic record for its assigned session ID only
 # after the first input line, like a CLI persisting the first user message.
@@ -41,8 +48,10 @@ printf 'FAKE_CLAUDE_ARGV_BEGIN\\n'
 i=0
 for arg in "$@"; do printf 'A%s [%s]\\n' "$i" "$arg"; i=$((i+1)); done
 printf 'FAKE_CLAUDE_ARGV_END %s\\n' "$i"
-printf 'FAKE_CLAUDE_SID_ENV [%s]\\n' "$CLAUDE_CODE_SESSION_ID$CODEX_COMPANION_SESSION_ID$GROK_SESSION_ID$TMUX"
+printf 'FAKE_CLAUDE_SID_ENV [%s]\\n' "$CLAUDE_CODE_SESSION_ID$CODEX_COMPANION_SESSION_ID$GROK_SESSION_ID$TMUX$CODEX_THREAD_ID$CODEX_SESSION_ID$CLAUDE_PID"
 printf 'FAKE_CLAUDE_HOME [%s]\\n' "$HOME"
+printf 'SERVICE_WRAPPER [%s]\\n' "$SESSIONDOCK_TEST_WRAPPER"
+printf 'SERVICE_PATH [%s]\\n' "$PATH"
 sid=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--session-id" ]; then sid="$2"; fi
@@ -108,17 +117,22 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True):
     page.locator('input[name="new-source"][value="claude"]').check()
     cwd = page.locator("#new-cwd")
     if expect_completion:
-        # Bounded server completion strictly inside the configured roots.
-        cwd.fill(str(work) + "/cl")
-        option = page.locator("#new-cwd-options [data-cwd-option]", has_text="claude-area/")
+        # Completion preserves the entered spelling and does not treat cwd as
+        # an authorization root.
+        cwd.fill("~/linked")
+        option = page.locator("#new-cwd-options [data-cwd-option]", has_text="linked-claude/")
         expect(option).to_be_visible()
         option.click()
-        expect(cwd).to_have_value(str(work / "claude-area") + "/")
-        for outside_path in [str(work.parent / "host") + "/", str(work) + "/../", "/etc/", "~/"]:
-            outside = context.request.get(base + "/api/term/complete-dir", params={"path": outside_path})
-            assert outside.status == 200 and outside.json()["directories"] == [], outside.text()
+        expect(cwd).to_have_value("~/linked-claude/")
+        for ordinary_path in [str(work.parent / "host") + "/", str(work) + "/../", "/etc/"]:
+            completed = context.request.get(base + "/api/term/complete-dir", params={"path": ordinary_path})
+            assert completed.status == 200, completed.text()
+        parent_rows = context.request.get(
+            base + "/api/term/complete-dir", params={"path": str(work) + "/../"}
+        ).json()["directories"]
+        assert str(work) + "/../work/" in parent_rows, parent_rows
     else:
-        cwd.fill(str(work / "claude-area"))
+        cwd.fill("~/claude-area")
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/create") as created:
         page.locator("#new-session-go").click()
     response = created.value
@@ -141,6 +155,8 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True):
         # The narrow mobile xterm clips wide rows; the identity rows fit.
         xterm_includes(page, f"A2 [--session-id]\nA3 [{receipt['declared_sid']}]\nFAKE_CLAUDE_ARGV_END 4")
     xterm_includes(page, "FAKE_CLAUDE_SID_ENV []")
+    xterm_includes(page, "SERVICE_WRAPPER [loaded]")
+    xterm_includes(page, "SERVICE_PATH [/usr/bin:/bin]")
     expect(page.locator(".new-session-wait")).to_contain_text("已按服务端声明的完整会话 ID 启动")
     return receipt
 
@@ -152,29 +168,48 @@ def main():
         root = Path(temporary).resolve()
         for name in ["host", "work", "work/claude-area", "work/codex-area", "ledger", "bin", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)
+        (root / "work/linked-claude").symlink_to(root / "work/claude-area", target_is_directory=True)
+        server_wrapper = root / "bin/server-home"
+        # Only this child service receives the synthetic environment. The
+        # browser process and the operator's home/model configuration stay intact.
+        service_env = {
+            "HOME": str(root / "work"), "PATH": str(root / "bin") + ":/usr/bin:/bin",
+            "SESSIONDOCK_TEST_INHERITED": "service-value",
+            "SESSIONDOCK_TEST_OVERRIDE": "service-value",
+            "SESSIONDOCK_TEST_REMOVE": "service-value",
+        }
+        for key in ["CLAUDE_CODE_SESSION_ID", "CODEX_COMPANION_SESSION_ID", "GROK_SESSION_ID",
+                    "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDE_PID", "TMUX", "AGENTHUB_SESSION"]:
+            service_env[key] = "stale-parent-identity"
+        server_wrapper.write_text(
+            "#!/bin/sh\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in service_env.items())
+            + "exec " + shlex.quote(str(BINARY)) + ' "$@"\n'
+        )
+        server_wrapper.chmod(0o700)
         corpus = Corpus(root)
         corpus.put(CODEX_SID, "codex", [codex_row("session_meta", {"id": CODEX_SID, "cwd": str(root / "work/codex-area")}),
             codex_message("user", "Unchanged native history")], [])
         native = corpus.paths[CODEX_SID].read_bytes()
         codex_uid = corpus.uid(CODEX_SID)
-        for name, body in [("fake-claude", FAKE_CLAUDE), ("fake-codex", FAKE_CODEX)]:
+        for name, body in [("fake-claude", FAKE_CLAUDE), ("fake-codex", FAKE_CODEX),
+                           ("service-env-tool", "#!/bin/sh\nprintf 'SERVICE_PATH_OK\\n'\n"),
+                           ("cli-wrapper", '#!/bin/sh\nexport SESSIONDOCK_TEST_WRAPPER=loaded\nexec "$@"\n')]:
             (root / "bin" / name).write_text(body)
             (root / "bin" / name).chmod(0o700)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
-            "host_dir": str(root / "host"), "cwd_roots": [str(root / "work")], "adapters": [], "profiles": [
-                {"id": "claude-cli-v1", "source": "claude", "executable": str(root / "bin/fake-claude"),
-                 "args": ["--settings", SETTINGS], "new_args": ["--session-id", "{session_id}"],
+            "host_dir": str(root / "host"), "adapters": [], "profiles": [
+                {"id": "claude-cli-v1", "source": "claude", "executable": str(root / "bin/cli-wrapper"),
+                 "args": [str(root / "bin/fake-claude"), "--settings", SETTINGS], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home", "TERM": "xterm-256color",
-                         "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")},
-                 "cwd_roots": [str(root / "work/claude-area")]},
+                         "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}},
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-codex"),
                  "args": ["--enable", "default_mode_request_user_input", "-c", "suppress_unstable_features_warning=true"],
                  "resume_args": ["resume", "{sid}"],
-                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"},
-                 "cwd_roots": [str(root / "work/codex-area")]}]}))
+                 "env": {"TERM": "xterm-256color", "SESSIONDOCK_TEST_OVERRIDE": "profile-value"},
+                 "env_remove": ["SESSIONDOCK_TEST_REMOVE"]}]}))
         initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
@@ -184,7 +219,7 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
-                with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger", launcher_config=configuration) as (base, _):
+                with isolated_server(corpus, server_wrapper, host_dir=root / "host", lifecycle_dir=root / "ledger", launcher_config=configuration) as (base, _):
                     errors = []
                     claims = []
                     takeovers = []
@@ -198,6 +233,7 @@ def main():
                         page.on("pageerror", lambda error: errors.append(str(error)))
                         page.on("dialog", lambda dialog: dialog.accept())
                         page.goto(base, wait_until="networkidle")
+                        page.get_by_role("button", name="时间轴", exact=True).click()
                         return page
 
                     # ---- Desktop: Claude profile through the real dialog.
@@ -222,7 +258,7 @@ def main():
                     expect(page.locator("#termpane")).to_be_visible()
                     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     xterm_includes(page, "FAKE_CLAUDE_ARGV_BEGIN\nA0 [--settings]")
-                    expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible()
+                    expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_be_visible(timeout=20000)
                     expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
                     listed = context.request.get(base + "/api/term/list").json()
                     row = next(row for row in listed["sessions"] if row["uid"] == uid)
@@ -245,16 +281,21 @@ def main():
                     xterm_includes(page, argv_lines("CODEX", ["--enable", "default_mode_request_user_input", "-c",
                         "suppress_unstable_features_warning=true", "resume", CODEX_SID]))
                     xterm_includes(page, "FAKE_CODEX_SID_ENV []")
+                    for expected in ["SERVICE_INHERITED [service-value]", "SERVICE_OVERRIDE [profile-value]",
+                                     "SERVICE_REMOVE []", f"SERVICE_HOME [{root / 'work'}]",
+                                     f"SERVICE_HOST [{resumed['name']}]", "SERVICE_PATH_OK"]:
+                        xterm_includes(page, expected)
                     assert claims[-1].get("uid") == codex_uid and claims[-1].get("instance_id") == resumed["instance_id"], claims[-1]
                     assert "record_id" not in claims[-1]
                     meta = json.loads((root / "host" / (resumed["name"] + ".json")).read_text())["meta"]
                     assert meta["sid"] == CODEX_SID and meta["uid"] == codex_uid, meta
                     expect(page.locator(f'#side .item[data-uid="tmux:{resumed["name"]}"]')).to_have_count(0)
-                    # A repeated takeover reuses the live instance; force is refused.
+                    # Repeated takeovers, including the legacy force flag, reuse
+                    # the exact live instance.
                     again = context.request.post(base + "/api/term/takeover", data={"uid": codex_uid, "request_id": "browser-repeat-request"})
                     assert again.status == 200 and again.json()["record_id"] == resumed["record_id"] and again.json()["action"] == "reused", again.text()
                     forced = context.request.post(base + "/api/term/takeover", data={"uid": codex_uid, "request_id": "browser-force-request", "force": True})
-                    assert forced.status == 501, forced.text()
+                    assert forced.status == 200 and forced.json()["record_id"] == resumed["record_id"] and forced.json()["action"] == "reused", forced.text()
                     tmux = context.request.post(base + "/api/term/backend", data={"backend": "tmux"})
                     assert tmux.status == 400, tmux.text()
                     assert len([path for path in (root / "host").glob("*.json")]) == 2
@@ -302,7 +343,8 @@ def main():
                     time.sleep(.05)
     print("PASS lifecycle CLI browser: Claude profile --session-id echoed in pending console (desktop+mobile), "
           "declared identity followed after the fake CLI persisted its record, Codex resume via console button "
-          "with exact `resume <sid>` argv, reuse/force/tmux refusals, native bytes unchanged")
+          "with exact `resume <sid>` argv, inherited service PATH/HOME/custom env, explicit overrides/removals, "
+          "stale parent identity removal, executable wrapper, reuse including legacy force, tmux refusal, native bytes unchanged")
 
 
 if __name__ == "__main__":

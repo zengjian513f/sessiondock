@@ -2,9 +2,7 @@
 """Linux fresh-process benchmark for synthetic stringified Codex tool images.
 
 Defaults to one envelope layer, 3/32 MiB PNGs, three fresh servers per size.
-For nested replay use --sizes-mib 3 --depth 8. This is not a budget-rejection
-benchmark: HTTP 413 or any other failed response aborts, never becomes a timing
-success. Shared replay work remains bounded at 512 MiB per operation.
+Every measured request must return a complete successful response.
 Python fixture generation is outside timings and is not server RSS. GET timings
 include complete HTTP body consumption and SHA256, not Python image decoding.
 No CLI/model, native home, production service or external file roots are used.
@@ -27,7 +25,6 @@ from native_spans_benchmark import fetch_image, file_sha256, percentile
 
 PHASES = ('first_window', 'cold_get', 'warm_get')
 MEMORY_PHASES = ('startup', *PHASES)
-SHARED_REPLAY_WORK_BYTES = 512 * MIB
 
 
 def fixture(root, size, depth):
@@ -91,7 +88,6 @@ def sample(binary, size_mib, depth, index):
                 'envelope_depth': depth, 'sample': index, 'server_pid': process.pid,
                 'native_bytes': native_size, 'tool_record_bytes': tool_record_bytes,
                 'image_bytes': size, 'image_sha256': digest,
-                'shared_replay_work_bytes': SHARED_REPLAY_WORK_BYTES,
                 'first_window': initial, 'cold_get': cold, 'warm_get': warm,
                 'memory_bytes': memory, 'token_stable': True, 'native_unchanged': True}
         assert file_sha256(path) == native_digest
@@ -103,18 +99,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=DEFAULT_BINARY)
     parser.add_argument('--samples', type=int, default=3)
-    parser.add_argument('--depth', type=int, default=1, help='stringified envelope layers, 1..8')
+    parser.add_argument('--depth', type=int, default=1, help='positive number of stringified envelope layers')
     parser.add_argument('--sizes-mib', '--sizes', dest='sizes', type=int, nargs='+', default=[3, 32],
                         help='decoded PNG sizes in MiB (default: 3 32)')
     args = parser.parse_args()
     if not sys.platform.startswith('linux') or not Path('/proc/self/status').is_file():
         parser.error('requires Linux procfs; no inferred cross-platform memory measurements')
-    if not 1 <= args.samples <= 20 or not 1 <= args.depth <= 8:
-        parser.error('samples must be 1..20 and depth must be 1..8')
+    if not 1 <= args.samples <= 20 or args.depth < 1:
+        parser.error('samples must be 1..20 and depth must be positive')
     if not 1 <= len(args.sizes) <= 16 or any(not 1 <= size <= 32 for size in args.sizes):
         parser.error('specify 1..16 sizes, each 1..32 MiB')
-    if args.depth > 1 and 32 in args.sizes:
-        parser.error('32 MiB nested-depth budget rejection is not a performance success; use --sizes-mib 3 for nested replay')
     binary = args.binary.resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error('--binary must name an existing executable server binary')
@@ -122,7 +116,7 @@ def main():
     print(json.dumps({'kind': 'benchmark', 'binary_sha256': binary_digest,
         'binary_bytes': binary.stat().st_size, 'source': 'codex', 'samples': args.samples,
         'image_sizes_mib': args.sizes, 'envelope_depth': args.depth,
-        'shared_replay_work_bytes': SHARED_REPLAY_WORK_BYTES, 'platform': sys.platform,
+        'platform': sys.platform,
         'window_timing': 'loopback HTTP and JSON decode',
         'get_timing': 'loopback HTTP, complete streamed body consumption and SHA256 verification',
         'excluded': 'fixture generation, process startup, procfs sampling, post-phase token/native checks',

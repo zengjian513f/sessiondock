@@ -43,9 +43,6 @@ use crate::{
 pub const TICK: Duration = Duration::from_millis(1500);
 /// Idle cadence when nothing is pending.
 pub const IDLE: Duration = Duration::from_secs(6);
-/// Evidence note bound (also enforced by the model).
-const EVIDENCE_PATH_CHARS: usize = 160;
-
 /// One candidate pairing computed off the reactor.
 struct Match {
     record: Record,
@@ -98,7 +95,7 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
         return Ok(None);
     }
     let candidates: Vec<Record> = service
-        .list(0, super::model::MAX_RECORDS)
+        .list(0, usize::MAX)
         .await?
         .into_iter()
         .filter(|record| {
@@ -165,7 +162,6 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
             match found.as_slice() {
                 [] => {}
                 [(session, pids)] => {
-                    let path: String = session.path.chars().take(EVIDENCE_PATH_CHARS).collect();
                     let held: Vec<i64> = pids
                         .iter()
                         .copied()
@@ -173,7 +169,8 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                         .collect();
                     let evidence = format!(
                         "cli_pids={held:?} under host child pid {child} ({}); native record {path}",
-                        record.host_name()
+                        record.host_name(),
+                        path = session.path.as_str()
                     );
                     pairings.push(Pairing::Unique(Box::new(Match {
                         record,

@@ -125,7 +125,7 @@ def main():
                     rows = audit_lines(audit)
                     assert health["accepted_events"] == len(rows) == health["written_events"], (health, len(rows))
                     assert health["dropped_events"] == health["dropped_batches"] == 0, health
-                    assert health["rejected_requests"] == health["rate_limited_requests"] == 0, health
+                    assert health["rejected_requests"] == 0, health
                     assert health["write_errors"] == 0, health
                     assert health["written_bytes"] == health["retained_bytes"] > 0, health
                     files = audit_files(audit)
@@ -165,7 +165,7 @@ def main():
                     assert get_json(opener, base, "/api/meta")["capabilities"]["audit"] is False
                     assert get_json(opener, base, "/api/health")["audit"] == {
                         "enabled": False, "accepted_events": 0, "accepted_batches": 0,
-                        "rejected_events": 0, "rejected_requests": 0, "rate_limited_requests": 0,
+                        "rejected_events": 0, "rejected_requests": 0,
                         "dropped_events": 0, "dropped_batches": 0, "written_events": 0,
                         "written_bytes": 0, "write_errors": 0, "retained_bytes": 0,
                         "queued_batches": 0, "queued_bytes": 0}

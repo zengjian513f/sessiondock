@@ -1,6 +1,6 @@
 //! Loopback development binary. No option starts the Web service.
-//! `--initialize-delivery` and `--initialize-lifecycle` require a preexisting
-//! empty private directory and exit without starting Web or any CLI.
+//! `--initialize-delivery` and `--initialize-lifecycle` create their state
+//! directories as needed and exit without starting Web or any CLI.
 //! `--check-config` validates the environment exactly as startup does, prints
 //! the effective paths and exits without opening any ledger, binding or
 //! starting a CLI (the cutover preflight). Bind failure and graceful shutdown
@@ -14,7 +14,7 @@ use std::{error::Error, path::PathBuf};
 
 use sessiondock::config::Config;
 
-const USAGE: &str = "usage: sessiondock [--check-config | --initialize-delivery ABSOLUTE_DIRECTORY | --initialize-lifecycle ABSOLUTE_DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]";
+const USAGE: &str = "usage: sessiondock [--check-config | --initialize-delivery DIRECTORY | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]";
 
 /// The reactor's thread count comes from `SESSIONDOCK_ASYNC_WORKERS` (batch
 /// 44 WP-A), so the runtime is built after the environment is read.
@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(value) => value
             .to_str()
             .and_then(|text| text.trim().parse::<usize>().ok())
-            .filter(|n| (1..=sessiondock::config::Pools::MAX_ASYNC_WORKERS).contains(n))
+            .filter(|n| *n >= 1)
             .unwrap_or_else(sessiondock::config::Pools::default_async_workers),
         None => sessiondock::config::Pools::default_async_workers(),
     };
@@ -40,7 +40,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
-            "sessiondock [--check-config | --initialize-delivery ABSOLUTE_DIRECTORY | --initialize-lifecycle ABSOLUTE_DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]\nNo option starts the loopback development Web service.\n--check-config validates SESSIONDOCK_* like startup, prints the effective paths and exits.\nInitialization requires a preexisting empty private directory and exits without starting Web or any CLI.\n--write-bridge-settings writes the Claude `--settings` hooks file (0600) that runs this binary as `claude-hook --state-dir $SESSIONDOCK_STATE_DIR`.\nclaude-hook reads one Claude Code hook payload from stdin and records an AskUserQuestion card under <state dir>/claude-prompts; it never prints and always exits 0."
+            "sessiondock [--check-config | --initialize-delivery DIRECTORY | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]\nNo option starts the loopback development Web service.\n--check-config validates SESSIONDOCK_* like startup, prints the effective paths and exits.\nInitialization creates the requested state directory as needed and exits without starting Web or any CLI.\n--write-bridge-settings writes the Claude `--settings` hooks file (0600) that runs this binary as `claude-hook --state-dir $SESSIONDOCK_STATE_DIR`.\nclaude-hook reads one Claude Code hook payload from stdin and records an AskUserQuestion card under <state dir>/claude-prompts; it never prints and always exits 0."
         );
         return Ok(());
     }
@@ -63,13 +63,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
     if check_config {
         // Same validation as startup (from_env already validated); nothing is
         // bound or spawned, so this is safe against production paths. The
-        // launcher file is read and cross-checked exactly like `prepare_app`
-        // does, so a cwd root that startup would refuse fails here too.
+        // The launcher file is read and its host directory cross-checked
+        // exactly like `prepare_app`; legacy cwd-root fields grant nothing.
         match (&config.lifecycle_dir, &config.launcher_config) {
             (Some(_), Some(path)) => {
                 let launcher = sessiondock::lifecycle::launcher::read_config(path)
                     .map_err(std::io::Error::other)?;
                 config.validate_launcher(&launcher)?;
+                sessiondock::lifecycle::launcher::Launcher::new(launcher)
+                    .map_err(std::io::Error::other)?;
                 println!("launcher=ok");
             }
             (None, None) => {}
@@ -95,7 +97,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             sessiondock::lifecycle::store::LifecycleStore::initialize(&directory).map(drop)
         })
         .await??;
-        println!("Isolated lifecycle ledger initialized. No Web service or CLI was started.");
+        println!("Lifecycle ledger initialized. No Web service or CLI was started.");
         return Ok(());
     }
     if initialize {
@@ -109,7 +111,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
             sessiondock::delivery::engine::DeliveryEngine::initialize(&directory).map(drop)
         })
         .await??;
-        println!("Isolated delivery ledger initialized. No Web service or CLI was started.");
+        println!("Delivery ledger initialized. No Web service or CLI was started.");
         return Ok(());
     }
     let bind = config.bind;
@@ -211,7 +213,7 @@ fn claude_hook(arguments: &[std::ffi::OsString]) -> Result<(), Box<dyn Error>> {
         [flag, directory] if flag == "--state-dir" => Some(PathBuf::from(directory)),
         _ => None,
     };
-    if let Some(directory) = state_dir.filter(|directory| directory.is_absolute()) {
+    if let Some(directory) = state_dir {
         let mut stdin = std::io::stdin().lock();
         let _ = sessiondock::bridge::claude::run_hook(&directory, &mut stdin);
     }
@@ -228,15 +230,11 @@ fn write_bridge_settings(path: PathBuf) -> Result<(), Box<dyn Error>> {
             message.to_owned(),
         ))
     };
-    if !path.is_absolute() {
-        return Err(invalid(
-            "--write-bridge-settings requires an absolute file path",
-        ));
-    }
+    let path = std::path::absolute(path)?;
     let state_dir = std::env::var_os("SESSIONDOCK_STATE_DIR")
         .map(PathBuf::from)
-        .filter(|directory| directory.is_absolute() && directory.is_dir())
-        .ok_or_else(|| invalid("SESSIONDOCK_STATE_DIR must name an existing absolute directory"))?;
+        .ok_or_else(|| invalid("SESSIONDOCK_STATE_DIR is required for bridge settings"))?;
+    let state_dir = std::path::absolute(state_dir)?;
     let command = std::env::current_exe()?;
     sessiondock::bridge::claude::write_settings(&path, &command, &state_dir)?;
     println!(
@@ -310,7 +308,6 @@ fn print_effective_config(config: &Config) {
     println!("file_write_roots={}", list(&config.file_write_roots));
     println!("audit_dir={}", path(&config.audit_dir));
     println!("trash_dir={}", path(&config.trash_dir));
-    println!("proc_scan={}", if config.proc_scan { "1" } else { "0" });
     println!("proc_root={}", config.proc_root.display());
     println!("grok_active={}", path(&config.grok_active));
     println!(
@@ -340,7 +337,6 @@ fn print_effective_config(config: &Config) {
     println!("read_workers={}", config.pools.read_workers);
     println!("runtime_probes={}", config.pools.runtime_probes());
     println!("response_permits={}", config.pools.responses());
-    println!("admission_wait_ms={}", config.pools.wait.as_millis());
     println!("history_page_events={}", config.pools.history_page_events);
     println!("async_workers={}", config.pools.async_workers);
     println!("cache_entries={}", config.pools.cache_entries);

@@ -44,7 +44,7 @@ fn summary_only_and_zero_byte_chat_are_visible_with_truthful_versions() {
         assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
         let row = &list["sessions"][0];
         assert_eq!(row["uid"], uid);
-        assert_eq!(row["path"], directory.to_str().unwrap());
+        assert_eq!(row["path"].as_str(), Some(path_text(&directory).as_ref()));
         assert_eq!(row["title"], "Summary-only title");
         assert_eq!(row["cwd"], "/synthetic/Grok+project");
         assert_eq!(row["chat_exists"], chat.is_some());
@@ -179,8 +179,7 @@ fn fallback_uses_correct_file_mtime_never_native_record_timestamps() {
 fn size_is_the_whole_session_directory_and_attachment_subtrees_are_never_parsed() {
     // Python `_dir_size`: every regular file under the session directory
     // counts (updates.jsonl, tool definitions, attachments…), nothing in
-    // there is parsed, and the bounded walk (8 levels) never stalls on a
-    // deep tree: the 20-level `summary.json` is neither parsed nor counted.
+    // there is parsed, including files nested more than eight levels deep.
     let chat = message("Known input");
     let (_temp, directory, store, uid) = fixture(Some(&chat), json!({}));
     let deep = (0..20).fold(directory.join("attachments"), |path, _| path.join("nested"));
@@ -199,7 +198,8 @@ fn size_is_the_whole_session_directory_and_attachment_subtrees_are_never_parsed(
     .unwrap();
     let result = store.list(false).unwrap();
     assert_eq!(result["sessions"].as_array().unwrap().len(), 1);
-    let expected = 2 + chat.len() + b"invalid native data".len() + 10 + 32;
+    let expected =
+        2 + chat.len() + b"invalid native data".len() + 10 + 32 + b"this must never parse".len();
     assert_eq!(result["sessions"][0]["size"], expected);
     assert!(result["sessions"][0].get("size_scope").is_none());
     assert_eq!(result["sessions"][0]["chat_exists"], true);
@@ -225,6 +225,7 @@ fn size_is_the_whole_session_directory_and_attachment_subtrees_are_never_parsed(
             + b"invalid native data".len()
             + 20
             + 32
+            + b"this must never parse".len()
     );
 }
 
@@ -252,31 +253,27 @@ fn bad_summary_budget_or_special_chat_are_not_successful_empty_histories() {
         ));
         unsupported_row("summary.json");
     }
-    let file = fs::File::create(directory.join("summary.json")).unwrap();
-    file.set_len(GROK_SUMMARY_LIMIT + 1).unwrap();
-    unsupported_row("16 MiB");
-    assert_eq!(
-        store
-            .messages(&uid, &MessageQuery::default())
-            .unwrap_err()
-            .status,
-        413
-    );
+    fs::write(
+        directory.join("summary.json"),
+        serde_json::to_vec(&json!({"padding":"x".repeat(16 * 1024 * 1024 + 1)})).unwrap(),
+    )
+    .unwrap();
+    assert!(store.messages(&uid, &MessageQuery::default()).is_ok());
+    let list = store.list(true).unwrap();
+    assert_eq!(list["sessions"][0]["supported"], true);
     fs::write(directory.join("summary.json"), b"{}").unwrap();
     fs::create_dir(directory.join("chat_history.jsonl")).unwrap();
-    unsupported_row("不可读取");
+    let list = store.list(true).unwrap();
+    assert_eq!(list["sessions"][0]["supported"], true);
     assert_eq!(
-        store
-            .messages(&uid, &MessageQuery::default())
-            .unwrap_err()
-            .status,
-        403
+        store.messages(&uid, &MessageQuery::default()).unwrap()["messages"],
+        json!([])
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn unreadable_chat_and_summary_or_links_never_become_missing_chat() {
+fn ordinary_chat_links_follow_python_and_os_permission_errors_remain_visible() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let (_temp, directory, store, uid) = fixture(None, json!({}));
     store.list(false).unwrap();
@@ -284,13 +281,10 @@ fn unreadable_chat_and_summary_or_links_never_become_missing_chat() {
     fs::write(&target, b"").unwrap();
     let chat = directory.join("chat_history.jsonl");
     symlink(&target, &chat).unwrap();
-    assert!(store.messages(&uid, &MessageQuery::default()).is_err());
+    assert!(store.messages(&uid, &MessageQuery::default()).is_ok());
     let linked = store.list(true).unwrap();
-    assert_eq!(
-        linked["sessions"][0]["supported"], false,
-        "a linked chat is not an absent chat: {}",
-        linked["sessions"][0]
-    );
+    assert_eq!(linked["sessions"][0]["supported"], true);
+    assert_eq!(linked["sessions"][0]["chat_exists"], true);
     fs::remove_file(&chat).unwrap();
     fs::write(&chat, b"").unwrap();
     for path in [&chat, &directory.join("summary.json")] {

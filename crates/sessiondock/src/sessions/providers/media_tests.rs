@@ -255,7 +255,7 @@ fn codex_json_tool_envelopes_preserve_exit_and_duration_after_media_extraction()
 }
 
 #[test]
-fn up_to_256_images_are_typed_per_event_and_257_fail_the_whole_event() {
+fn typed_images_above_256_remain_readable() {
     for source in ["claude", "codex", "grok"] {
         for count in [16, 17, 256, 257] {
             for tool in [false, true] {
@@ -266,18 +266,11 @@ fn up_to_256_images_are_typed_per_event_and_257_fail_the_whole_event() {
                     vec![message(source, "user", images)]
                 };
                 let (meta, events, error) = parse_records(source, records);
-                if count <= 256 {
-                    assert!(error.is_none(), "{source} count={count}: {error:?}");
-                    assert_eq!(
-                        events.iter().map(|event| event.media.len()).sum::<usize>(),
-                        count
-                    );
-                } else {
-                    let error = error.unwrap();
-                    assert!(error.contains("256"), "{source}: {error}");
-                    assert!(!error.contains("16 张"));
-                    assert!(events.is_empty());
-                }
+                assert!(error.is_none(), "{source} count={count}: {error:?}");
+                assert_eq!(
+                    events.iter().map(|event| event.media.len()).sum::<usize>(),
+                    count
+                );
                 assert_private(&meta, &events);
             }
         }
@@ -294,11 +287,17 @@ fn up_to_256_images_are_typed_per_event_and_257_fail_the_whole_event() {
 }
 
 #[test]
-fn invalid_external_images_still_fail_closed() {
+fn external_and_malformed_images_do_not_fail_history_projection() {
     for source in ["claude", "codex", "grok"] {
-        for block in [
-            json!({"type":"image_url","image_url":"https://example.invalid/private.png"}),
-            json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"!"}}),
+        for (block, remote) in [
+            (
+                json!({"type":"image_url","image_url":"https://example.invalid/private.png"}),
+                true,
+            ),
+            (
+                json!({"type":"image","source":{"type":"base64","media_type":"image/png","data":"!"}}),
+                false,
+            ),
         ] {
             for tool in [false, true] {
                 let records = if tool {
@@ -307,8 +306,15 @@ fn invalid_external_images_still_fail_closed() {
                     vec![message(source, "user", json!([block]))]
                 };
                 let (meta, events, error) = parse_records(source, records);
-                assert!(error.is_some(), "{source} tool={tool}");
-                assert!(events.is_empty());
+                assert!(error.is_none(), "{source} tool={tool}: {error:?}");
+                assert!(!events.is_empty());
+                assert_eq!(
+                    events.iter().any(|event| event.media.iter().any(|image| {
+                        image.remote_ref() == Some("https://example.invalid/private.png")
+                    })),
+                    remote,
+                    "{source} tool={tool}"
+                );
                 assert_private(&meta, &events);
             }
         }
@@ -317,10 +323,10 @@ fn invalid_external_images_still_fail_closed() {
 
 /// Batch 33: a non-image block of an unknown kind is skipped like the
 /// reference `_flatten_content` — its payload never becomes text or media —
-/// and the session row reports the skip. Codex tool output keeps its
-/// separately reviewed envelope grammar and still fails closed there.
+/// and the session row reports the skip. Codex tool output follows Python's
+/// `_stringify` fallback for serializable unknown blocks.
 #[test]
-fn unknown_nonimage_blocks_are_skipped_without_leaking_their_payload() {
+fn unknown_message_blocks_are_skipped_and_codex_tool_blocks_use_python_stringify() {
     for source in ["claude", "codex", "grok"] {
         for block in [
             json!({"type":"audio","data":PNG}),
@@ -344,8 +350,11 @@ fn unknown_nonimage_blocks_are_skipped_without_leaking_their_payload() {
             );
             let (meta, events, error) = parse_records(source, tool_records(source, json!([block])));
             if source == "codex" {
-                assert!(error.is_some(), "codex tool {kind}");
-                assert!(events.is_empty());
+                assert!(error.is_none(), "codex tool {kind}: {error:?}");
+                let result = events.last().unwrap();
+                assert_eq!(result.message["role"], "tool_result");
+                assert!(result.message["text"].as_str().unwrap().contains(&kind));
+                assert!(result.media.is_empty());
             } else {
                 assert!(error.is_none(), "{source} tool {kind}: {error:?}");
                 let result = events
@@ -360,7 +369,9 @@ fn unknown_nonimage_blocks_are_skipped_without_leaking_their_payload() {
                     "{source}"
                 );
             }
-            assert_private(&meta, &events);
+            if source != "codex" {
+                assert_private(&meta, &events);
+            }
         }
     }
 }
@@ -553,10 +564,13 @@ fn business_content_arrays_stay_json_and_unmarked_mcp_json_text_is_not_decoded()
     assert_eq!(events.last().unwrap().message["text"], literal);
     assert!(events.last().unwrap().media.is_empty());
     let unknown = json!({"content":[{"type":"unknown","data":PNG}],"isError":false});
-    let (meta, events, error) = parse_records("codex", tool_records("codex", unknown));
-    assert!(error.is_some());
-    assert!(events.is_empty());
-    assert_private(&meta, &events);
+    let (_, events, error) = parse_records("codex", tool_records("codex", unknown.clone()));
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(
+        events.last().unwrap().message["text"],
+        string(&unknown["content"][0])
+    );
+    assert!(events.last().unwrap().media.is_empty());
 }
 
 #[test]

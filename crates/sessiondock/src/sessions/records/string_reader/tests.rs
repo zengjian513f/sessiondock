@@ -181,7 +181,7 @@ fn physical_limit_probes_only_one_extra_byte_and_never_succeeds_truncated() {
     assert!(reader.finish().is_err());
     assert_eq!(source.position(), 4);
     assert!(JsonStringReader::new(b"".as_slice(), 2, hash(b""), 1).is_err());
-    assert!(JsonStringReader::new(b"".as_slice(), 0, hash(b""), MAX_PHYSICAL + 1).is_err());
+    assert!(JsonStringReader::new(b"".as_slice(), 0, hash(b""), 256 * 1024 * 1024 + 1).is_ok());
     decode(b"abc", b"abc", 1, 3);
 }
 
@@ -235,7 +235,6 @@ fn scanner_physical_span_length_and_digest_are_the_reader_contract() {
             },
             scanner::Limits {
                 inline_string_bytes: 2,
-                ..Default::default()
             },
         )
         .unwrap();
@@ -323,6 +322,8 @@ fn checked_native_range_and_string_hash_must_both_finish_before_publication() {
     let range = reader.finish().unwrap();
     let mut replacement = bytes.to_vec();
     *replacement.last_mut().unwrap() = b' ';
+    #[cfg(windows)]
+    std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(&path, replacement).unwrap();
     assert!(
         range.finish().is_err(),

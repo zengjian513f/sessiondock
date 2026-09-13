@@ -1,4 +1,6 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+#[cfg(test)]
+use std::time::Duration;
 
 use axum::{
     body::Body,
@@ -46,11 +48,8 @@ pub struct AppState {
     pub file_write_http: Arc<Semaphore>,
     pub runtime: Option<Arc<crate::runtime::ManagedRuntime>>,
     pub runtime_probes: Arc<Semaphore>,
-    /// Bounded admission wait shared by every response/probe pool (batch 44
-    /// WP-A, `Pools::wait`); the reader carries its own copy.
-    pub admission_wait: Duration,
-    /// Explicit read-only `/proc` scan for external CLIs (`SESSIONDOCK_PROC_SCAN=1`);
-    /// `None` keeps `/api/live` to managed observations and `live:false`.
+    /// Native process discovery on supported platforms; `None` means the
+    /// platform has no scanner implementation.
     pub proc_scan: Option<Arc<crate::runtime::procscan::ProcScanner>>,
     /// Spawner recording (needs the scan and the metadata store).
     pub spawn_watch: Option<Arc<crate::runtime::spawn::SpawnWatcher>>,
@@ -84,48 +83,26 @@ pub struct AppState {
 pub struct Reader {
     pub store: Arc<SessionStore>,
     pub workers: Arc<Semaphore>,
-    /// How long `run`/`acquire` queue for a worker before 503 `reader_busy`
-    /// (batch 44 WP-A). Zero restores immediate rejection.
-    pub wait: Duration,
 }
 
-/// Queue for one permit of `pool` for at most `wait`, then 503 `code`.
+/// Queue for an available permit; closing the pool interrupts waiting requests.
 /// Dropping the future while queued (a cancelled request) leaves the queue;
 /// once returned, the permit is the caller's to hold through its work.
 pub async fn admit(
     pool: &Arc<Semaphore>,
-    wait: Duration,
     code: &'static str,
-    busy: &'static str,
 ) -> Result<OwnedSemaphorePermit, ApiError> {
-    if wait.is_zero() {
-        return pool
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, code, busy));
-    }
-    match tokio::time::timeout(wait, pool.clone().acquire_owned()).await {
-        Ok(Ok(permit)) => Ok(permit),
-        Ok(Err(_closed)) => Err(ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            code,
-            "服务正在关闭",
-        )),
-        Err(_elapsed) => Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, code, busy)),
-    }
+    pool.clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, code, "服务正在关闭"))
 }
 
 impl Reader {
-    /// Queue for a blocking worker within the bounded wait; the caller owns
+    /// Queue for a blocking worker; the caller owns
     /// the permit and must keep it until its blocking work has really ended.
     pub async fn acquire(&self) -> Result<OwnedSemaphorePermit, ApiError> {
-        admit(
-            &self.workers,
-            self.wait,
-            "reader_busy",
-            "只读工作池繁忙，请稍后重试",
-        )
-        .await
+        admit(&self.workers, "reader_busy").await
     }
 
     /// Only bounded background coordinators use a waiting admission. Their
@@ -159,7 +136,7 @@ impl Reader {
         .map_err(ApiError::from)
     }
 
-    /// Queue (bounded) then spawn: a request cancelled while queued never
+    /// Queue then spawn: a request cancelled while queued never
     /// holds a permit; one cancelled after spawning retains it until the
     /// blocking work ends.
     pub async fn run<T, F>(&self, work: F) -> Result<T, ApiError>
@@ -217,7 +194,7 @@ pub fn capabilities() -> Value {
         "terminal": false, "outbox": false, "audit": false, "files": false,
         "mutations": false, "hub": false, "trash": false, "timeline_pin": false,
         "bug_report": false,
-        "media": true, "media_remote": false, "media_lazy": true, "history_pages": true,
+        "media": true, "media_remote": true, "media_lazy": true, "history_pages": true,
         "media_continuation": true,
         "history_semantics": "limited_native"
     })
@@ -228,17 +205,16 @@ mod tests {
     use super::*;
     use crate::sessions::SessionRoots;
 
-    fn make_reader(workers: usize, wait: Duration) -> Reader {
+    fn make_reader(workers: usize) -> Reader {
         Reader {
             store: Arc::new(SessionStore::new(SessionRoots::default())),
             workers: Arc::new(Semaphore::new(workers)),
-            wait,
         }
     }
 
     #[tokio::test]
-    async fn a_queued_request_is_admitted_when_a_worker_frees_within_the_wait() {
-        let reader = make_reader(1, Duration::from_secs(5));
+    async fn a_queued_request_is_admitted_when_a_worker_frees() {
+        let reader = make_reader(1);
         let held = reader.workers.clone().acquire_owned().await.unwrap();
         let queued = reader.clone();
         let task = tokio::spawn(async move { queued.run(|_| Ok(7)).await });
@@ -250,29 +226,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_exhausted_wait_is_503_reader_busy_and_zero_wait_rejects_at_once() {
-        let reader = make_reader(1, Duration::from_millis(60));
-        let held = reader.workers.clone().acquire_owned().await.unwrap();
-        let started = std::time::Instant::now();
-        let error = reader.run(|_| Ok(())).await.unwrap_err();
-        assert!(started.elapsed() >= Duration::from_millis(60));
-        assert_eq!(
-            (error.status, error.code),
-            (StatusCode::SERVICE_UNAVAILABLE, "reader_busy")
-        );
-        let immediate = make_reader(1, Duration::ZERO);
-        let _held2 = immediate.workers.clone().acquire_owned().await.unwrap();
-        let started = std::time::Instant::now();
-        let error = immediate.run(|_| Ok(())).await.unwrap_err();
-        assert!(started.elapsed() < Duration::from_millis(50));
-        assert_eq!(error.code, "reader_busy");
-        drop(held);
-        assert_eq!(reader.run(|_| Ok(1)).await.unwrap(), 1);
-    }
-
-    #[tokio::test]
     async fn a_request_cancelled_while_queued_never_takes_a_permit() {
-        let reader = make_reader(1, Duration::from_secs(5));
+        let reader = make_reader(1);
         let held = reader.workers.clone().acquire_owned().await.unwrap();
         let queued = reader.clone();
         let task = tokio::spawn(async move {
@@ -292,25 +247,12 @@ mod tests {
     #[tokio::test]
     async fn the_shared_admission_helper_uses_the_pool_specific_code() {
         let pool = Arc::new(Semaphore::new(1));
-        let held = admit(&pool, Duration::from_secs(1), "x_busy", "x")
-            .await
-            .unwrap();
-        let error = admit(&pool, Duration::from_millis(20), "x_busy", "busy text")
-            .await
-            .unwrap_err();
-        assert_eq!(
-            (error.status, error.code, error.message.as_str()),
-            (StatusCode::SERVICE_UNAVAILABLE, "x_busy", "busy text")
-        );
+        let held = admit(&pool, "x_busy").await.unwrap();
         drop(held);
-        let permit = admit(&pool, Duration::from_millis(20), "x_busy", "busy text")
-            .await
-            .unwrap();
+        let permit = admit(&pool, "x_busy").await.unwrap();
         drop(permit);
         pool.close();
-        let error = admit(&pool, Duration::from_millis(20), "x_busy", "busy text")
-            .await
-            .unwrap_err();
+        let error = admit(&pool, "x_busy").await.unwrap_err();
         assert_eq!(error.message, "服务正在关闭");
     }
 }

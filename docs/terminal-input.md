@@ -37,21 +37,22 @@ translates under DECCKM), `f1`–`f12`, and `ctrl-<a-z>` / `C-x` / `^x`
 (letter & 0x1f), plus one single ASCII letter or digit (`1`–`9`, `y`, `p`)
 typed literally — the Codex question menu and command approval answers the
 live question cards send ([delivery.md](delivery.md), WP-G). Exact host names,
-lower-case aliases and that single-character form only; anything else is 400
-`invalid_terminal_input` and is never typed literally.
+lower-case aliases are normalized. Every other nonempty key name up to the
+host's 256-byte per-key ceiling is typed literally, matching Python ptyhost.
 
-Limits: 1 MiB decoded bytes per request (ptyhost's own send/paste ceiling) (text or summed key bytes), ≤ 256
-keys, 16 requests per sliding second per exact name/instance (429
-`terminal_input_rate` with a retry hint), 128 KiB JSON body, the shared
-operations permit and per-name gate, 2 s host timeout. Codes: 501
+Limits: 1 MiB decoded bytes per request (ptyhost's own send/paste ceiling),
+≤ 256 keys (the host's guarded-operation ceiling), 4 MiB host
+control line including JSON escaping. There is no per-second input count limit.
+Requests serialize on the per-name gate and use Python's 10 s host-operation
+timeout. Codes: 501
 `terminal_disabled`, 400, 413 `terminal_input_too_large`, 403/409/410 as
-above, 429 `terminal_busy`, 504 `terminal_input_ambiguous` when the host did
+above, 504 `terminal_input_ambiguous` when the host did
 not acknowledge — the write may or may not have happened and is never
 retried automatically.
 
 ## `POST /api/term/scroll`
 
-`{name, up?, lines? (1..100, default 3), cancel?}` → `200 {pos:0,
+`{name, up?, lines? (default 3), cancel?}` → `200 {pos:0,
 scrollback:"browser"}`; 404 `terminal_missing` without a record, 400 on bad
 shape, 501 when the transport is off. The Python ptyhost backend's `scroll()`
 already returned 0 and `leave_copy_mode()` was a no-op because the browser's
@@ -75,7 +76,7 @@ instance leaves the list, matching Python.
 
 `cargo test -p sessiondock --test terminal_input --locked` (isolated
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
-refusal without lease, after revoke and after exit, size and rate limits;
+refusal without lease, after revoke and after exit, size limits and input bursts;
 skips when ptyhost is not built) plus five input unit tests, and
 `python3 tests/terminal_input_browser.py` (desktop HTTP `data` while a scroll
 is pending, 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no

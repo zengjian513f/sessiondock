@@ -47,7 +47,6 @@ pub const MEMORY_ONLY_BYTES: u64 = 64 * 1024 * 1024;
 /// (a transient projection costs several times its file).
 pub const SLOT_BYTES: u64 = 8 * 1024 * 1024;
 const TEMP_PREFIX: &str = ".search-tmp-";
-const HEADER_LIMIT: usize = 64 * 1024;
 /// Read size of the chunked body stream; the buffer grows only for a line
 /// longer than this and is reused across bodies by one worker.
 pub const CHUNK_BYTES: usize = 1024 * 1024;
@@ -300,28 +299,8 @@ fn build_fingerprint() -> String {
         .clone()
 }
 
-/// The explicit cache directory must already exist as a private directory:
-/// like every other private directory here it is never created, widened or
-/// tightened by the service (`docs/security-model.md`).
 fn check_private_dir(dir: &Path) -> io::Result<()> {
-    let meta = fs::symlink_metadata(dir)?;
-    if !meta.is_dir() || meta.file_type().is_symlink() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "search cache path must be an existing directory, not a link",
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if meta.permissions().mode() & 0o077 != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "search cache directory must be mode 0700 (owner only); permissions are never changed automatically",
-            ));
-        }
-    }
-    Ok(())
+    fs::create_dir_all(dir)
 }
 
 impl SearchCache {
@@ -468,7 +447,7 @@ impl SearchCache {
             if let Some(position) = head[start..].iter().position(|byte| *byte == b'\n') {
                 break start + position;
             }
-            if read == 0 || head.len() >= HEADER_LIMIT {
+            if read == 0 {
                 return Lookup::Miss;
             }
         };
@@ -821,11 +800,10 @@ mod tests {
         }
     }
 
-    /// tempdir() creates 0700 directories; a wider one must be refused.
     #[test]
-    fn missing_link_or_wide_directories_are_refused() {
+    fn cache_directories_are_created_and_follow_ordinary_aliases() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(SearchCache::open(Some(dir.path().join("absent")), 1 << 20).is_err());
+        assert!(SearchCache::open(Some(dir.path().join("absent")), 1 << 20).is_ok());
         let private = private_dir(dir.path(), "private");
         #[cfg(unix)]
         {
@@ -833,10 +811,10 @@ mod tests {
             let wide = dir.path().join("wide");
             fs::create_dir(&wide).unwrap();
             fs::set_permissions(&wide, fs::Permissions::from_mode(0o750)).unwrap();
-            assert!(SearchCache::open(Some(wide), 1 << 20).is_err());
+            assert!(SearchCache::open(Some(wide), 1 << 20).is_ok());
             let link = dir.path().join("link");
             std::os::unix::fs::symlink(&private, &link).unwrap();
-            assert!(SearchCache::open(Some(link), 1 << 20).is_err());
+            assert!(SearchCache::open(Some(link), 1 << 20).is_ok());
         }
         assert!(SearchCache::open(Some(private), 1 << 20).is_ok());
     }

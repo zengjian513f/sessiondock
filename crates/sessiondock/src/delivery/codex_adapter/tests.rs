@@ -3,8 +3,8 @@
 //! No CLI is started and no native home is touched.
 use super::*;
 use crate::delivery::codex::{
-    Command, DraftObservation, DraftState, Effect, EnterResult, Error as MachineError, Machine,
-    Payload, PreparedEvidence, Request, Target,
+    Command, DraftObservation, DraftState, Effect, EnterResult, Machine, Payload, PreparedEvidence,
+    Request, Target,
 };
 use crate::sessions::{SessionRoots, SessionStore, ViewSnapshot};
 use serde_json::{Value, json};
@@ -93,7 +93,7 @@ impl Fixture {
             codex: Some(root.clone()),
             ..Default::default()
         });
-        let uid = uid_of(&store, &path);
+        let uid = uid_of(&path);
         Self {
             _temp: temp,
             root,
@@ -132,17 +132,8 @@ impl Fixture {
     }
 }
 
-fn uid_of(store: &SessionStore, path: &Path) -> String {
-    let list = store.list(true).unwrap();
-    list["sessions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|row| row["path"] == path.to_string_lossy().as_ref())
-        .unwrap()["uid"]
-        .as_str()
-        .unwrap()
-        .to_owned()
+fn uid_of(path: &Path) -> String {
+    crate::sessions::uid_for("codex", path)
 }
 
 fn possible(observation: &Observation) -> &PossibleMatch {
@@ -223,7 +214,7 @@ fn exact_match_after_boundary_is_a_possible_text_match_with_physical_range() {
 }
 
 #[test]
-fn the_machine_still_refuses_a_possible_text_match() {
+fn the_machine_accepts_a_possible_text_match_like_python() {
     let fixture = Fixture::new(&[meta("sid-one")]);
     let boundary = fixture.boundary();
     append(&fixture.path, &encoded(&turn("t1", "echo  one", AFTER)));
@@ -302,21 +293,17 @@ fn the_machine_still_refuses_a_possible_text_match() {
         )
         .is_empty()
     );
-    // Same UID, same fixed confirmation cursor, real user input, trimmed text
-    // equal, record after the boundary: everything but the correlation holds,
-    // and the domain still refuses to acknowledge from text alone.
-    assert_eq!(
-        machine
-            .apply(Command::NativeAck {
-                request_id: "request-one".into(),
-                evidence,
-            })
-            .unwrap_err(),
-        MachineError::UnprovenAcknowledgment
+    // Python retires the first causal matching native user record.
+    persist(
+        &mut machine,
+        Command::NativeAck {
+            request_id: "request-one".into(),
+            evidence,
+        },
     );
     assert_eq!(
         machine.snapshot().receipts["request-one"].state,
-        crate::delivery::codex::State::Uncertain
+        crate::delivery::codex::State::Acknowledged
     );
 }
 
@@ -369,7 +356,7 @@ fn utf8_multiline_text_matches_exactly() {
 }
 
 #[test]
-fn an_earlier_identical_input_after_the_boundary_makes_the_match_ambiguous() {
+fn first_causal_identical_input_matches_python_row_order() {
     let fixture = Fixture::new(&[meta("sid-one")]);
     let boundary = fixture.boundary();
     // A human typed the same text into the TUI just before our Enter; its
@@ -387,12 +374,12 @@ fn an_earlier_identical_input_after_the_boundary_makes_the_match_ambiguous() {
         &encoded(&[user(Some(AFTER), "same text", Some("t2"))]),
     );
     let observation = fixture.observe(&boundary, "same text");
-    assert_eq!(
-        observation.outcome,
-        Outcome::Uncertain(Uncertainty::Ambiguous { candidates: 2 })
-    );
+    let Outcome::Possible(found) = observation.outcome else {
+        panic!()
+    };
+    assert_eq!(found.record.turn_id.as_deref(), Some("t2"));
     assert!(observation.watch.is_some());
-    // Two later identical inputs are just as ambiguous.
+    // Like Python, two later identical inputs select the first causal record.
     let fixture = Fixture::new(&[meta("sid-two")]);
     let boundary = fixture.boundary();
     append(
@@ -402,10 +389,10 @@ fn an_earlier_identical_input_after_the_boundary_makes_the_match_ambiguous() {
             user(Some(AFTER), "same text", Some("t2")),
         ]),
     );
-    assert_eq!(
-        fixture.observe(&boundary, "same text").outcome,
-        Outcome::Uncertain(Uncertainty::Ambiguous { candidates: 2 })
-    );
+    let Outcome::Possible(found) = fixture.observe(&boundary, "same text").outcome else {
+        panic!()
+    };
+    assert_eq!(found.record.turn_id.as_deref(), Some("t1"));
 }
 
 #[test]
@@ -558,7 +545,7 @@ fn inherited_fork_prefix_is_never_evidence() {
                    "timestamp": "2026-09-12T09:30:00.000Z", "cwd": "/synthetic"}),
         )],
     );
-    let child_uid = uid_of(&fixture.store, &child);
+    let child_uid = uid_of(&child);
     let snapshot = fixture.fresh_uid(&child_uid);
     // The inherited parent input is visible history for the child ...
     let history = snapshot
@@ -679,24 +666,25 @@ fn foreign_scope_media_and_blank_text_stay_uncertain() {
     );
 
     let mut media = fixture.delivered("hello");
-    media.media.push(MediaRef {
-        id: "image-one".into(),
-        content_digest: "sha256:0".into(),
-    });
-    assert_eq!(
-        observe(&snapshot, &boundary, &media).outcome,
-        Outcome::Uncertain(Uncertainty::MediaUnsupported)
-    );
+    media.media.push(MediaRef(json!({
+        "id": "image-one",
+        "content_digest": "sha256:0",
+    })));
+    let Outcome::Possible(found) = observe(&snapshot, &boundary, &media).outcome else {
+        panic!("outbox-only media must not block native text confirmation")
+    };
+    assert_eq!(found.evidence.observed_media, media.media);
     assert_eq!(
         observe(&snapshot, &boundary, &fixture.delivered(" \n\t")).outcome,
         Outcome::Uncertain(Uncertainty::UnmatchableText)
     );
-    // Over-long cursor fields are a sanitized read failure, not a match.
+    // Cursor fields have no Rust-only length rejection. A wrong anchor simply
+    // cannot prove that this delivery starts at the captured checkpoint.
     let mut long = boundary.clone();
     long.confirmation.anchor = "a".repeat(513);
     assert_eq!(
         observe(&snapshot, &long, &fixture.delivered("hello")).outcome,
-        Outcome::Uncertain(Uncertainty::Unreadable { status: 400 })
+        Outcome::Uncertain(Uncertainty::CheckpointMismatch)
     );
 }
 

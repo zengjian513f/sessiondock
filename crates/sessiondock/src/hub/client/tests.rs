@@ -13,6 +13,7 @@ fn target(addr: SocketAddr) -> Target {
     Target {
         addr,
         token: "t".repeat(40),
+        tls: false,
     }
 }
 
@@ -177,6 +178,35 @@ async fn chunked_and_close_delimited_bodies_are_decoded() {
 }
 
 #[tokio::test]
+async fn response_header_limit_is_per_line_not_aggregate() {
+    let first = "a".repeat(40 * 1024);
+    let second = "b".repeat(40 * 1024);
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nX-First: {first}\r\nX-Second: {second}\r\nContent-Length: 2\r\n\r\n{{}}"
+    )
+    .into_bytes();
+    let (addr, _) = serve(response).await;
+    let (status, value) = client()
+        .json(&target(addr), "GET", "/x", None, Duration::from_millis(500))
+        .await
+        .unwrap();
+    assert_eq!((status, value), (200, json!({})));
+
+    let oversized = format!(
+        "HTTP/1.1 200 OK\r\nX-Big: {}\r\nContent-Length: 2\r\n\r\n{{}}",
+        "x".repeat(LINE_LIMIT)
+    )
+    .into_bytes();
+    let (addr, _) = serve(oversized).await;
+    assert_eq!(
+        client()
+            .json(&target(addr), "GET", "/x", None, Duration::from_millis(500))
+            .await,
+        Err(ClientError::Invalid("response line too long"))
+    );
+}
+
+#[tokio::test]
 async fn read_line_streams_ndjson_and_100_continue_is_skipped() {
     let response = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\n\
         Transfer-Encoding: chunked\r\n\r\n10\r\n{\"type\":\"a\"}\n{\"t\r\na\r\nype\":\"b\"}\n\r\n0\r\n\r\n";
@@ -300,10 +330,21 @@ async fn transport_failures_map_to_public_codes() {
         .unwrap_err();
     // A port that was just released: refused, or closed by the kernel's
     // TIME_WAIT/backlog handling while the machine is under test load.
+    #[cfg(not(windows))]
     assert!(
         matches!(
             error,
             ClientError::ConnectionRefused | ClientError::ConnectionClosed
+        ),
+        "{error:?}"
+    );
+    // A just-released Windows loopback port can remain pending until the
+    // caller's connect deadline; preserve that distinct timeout result.
+    #[cfg(windows)]
+    assert!(
+        matches!(
+            error,
+            ClientError::ConnectionRefused | ClientError::ConnectionClosed | ClientError::Timeout
         ),
         "{error:?}"
     );
@@ -454,7 +495,7 @@ fn request_failure_texts_match_python_and_never_carry_private_detail() {
     );
     assert_eq!(
         format!("{:?}", target("127.0.0.1:1".parse().unwrap())),
-        "Target(127.0.0.1:1, token <redacted>)"
+        "Target(http://127.0.0.1:1, token <redacted>)"
     );
 }
 

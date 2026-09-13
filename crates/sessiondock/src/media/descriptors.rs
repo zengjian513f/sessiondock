@@ -88,9 +88,6 @@ impl MediaStore {
         if images.is_empty() {
             return Ok(Vec::new());
         }
-        if images.len() > MAX_ITEMS {
-            return Err(MediaError::Limit);
-        }
         let mut table = self
             .descriptors
             .lock()
@@ -103,12 +100,8 @@ impl MediaStore {
                 return Err(MediaError::Unavailable);
             }
         }
-        if requested.len() > table.maximum {
-            return Err(MediaError::Limit);
-        }
         let mut missing = Vec::new();
         let mut required = 0usize;
-        let mut batch = 0usize;
         for (&token, image) in &requested {
             let source = image.embedded_source();
             let bytes = match source.as_deref().map(|source| &source.data) {
@@ -120,7 +113,6 @@ impl MediaStore {
                 None => 0,
                 _ => return Err(MediaError::Unsupported),
             };
-            batch = batch.checked_add(bytes).ok_or(MediaError::Limit)?;
             if let Some(entry) = table.entries.get(token) {
                 if !matches(&entry.descriptor, image) {
                     return Err(MediaError::Unavailable);
@@ -129,9 +121,6 @@ impl MediaStore {
                 required = required.checked_add(bytes).ok_or(MediaError::Limit)?;
                 missing.push((*image, source, bytes));
             }
-        }
-        if batch > self.encoded_budget.maximum {
-            return Err(MediaError::Limit);
         }
         while table.entries.len() + missing.len() > table.maximum
             || self
@@ -147,9 +136,7 @@ impl MediaStore {
                 .filter(|(token, _)| !requested.contains_key(token.as_str()))
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(token, _)| token.clone());
-            let Some(candidate) = candidate else {
-                return Err(MediaError::Busy);
-            };
+            let Some(candidate) = candidate else { break };
             table.entries.remove(&candidate);
         }
         for (image, source, bytes) in missing {
@@ -202,7 +189,8 @@ impl MediaStore {
 
     /// Reauthorize first, including cache hits. A miss reserves bytes and a slot
     /// under the short cache lock, then validates using the retained new handle.
-    /// Concurrent requests for the same token explicitly receive Busy.
+    /// Concurrent requests may decode the same token independently; cache
+    /// retention must not become an input-admission rule.
     pub(crate) fn materialize(
         &self,
         ticket: MediaTicket,
@@ -260,13 +248,7 @@ impl MediaStore {
             entry.used = used;
             return Ok(entry.blob.clone());
         }
-        if cache.in_flight.contains(&descriptor.token) {
-            return Err(error(MediaError::Busy));
-        }
-        if length > self.budget.maximum || self.maximum_items == 0 {
-            return Err(error(MediaError::Limit));
-        }
-        while cache.entries.len() + cache.in_flight.len() >= self.maximum_items
+        while cache.entries.len() >= self.maximum_items
             || self
                 .budget
                 .used
@@ -279,20 +261,13 @@ impl MediaStore {
                 .iter()
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(token, _)| token.clone());
-            let Some(victim) = victim else {
-                return Err(error(MediaError::Busy));
-            };
+            let Some(victim) = victim else { break };
             cache.entries.remove(&victim);
         }
         self.budget.used.fetch_add(length, Ordering::AcqRel);
         let charge = Charge {
             budget: self.budget.clone(),
             bytes: length,
-        };
-        cache.in_flight.insert(descriptor.token.clone());
-        let flight = Flight {
-            store: self,
-            token: &descriptor.token,
         };
         drop(cache);
         let (bytes, mime, width, height) = prepared.read_checked(length).map_err(error)?;
@@ -308,32 +283,21 @@ impl MediaStore {
             .lock()
             .map_err(|_| error(MediaError::Unavailable))?;
         let used = tick(&mut cache);
-        cache.entries.insert(
-            descriptor.token.clone(),
-            Entry {
-                source: prepared.source_weak(),
-                grant: descriptor.grant.clone(),
-                native_scope: None,
-                blob: blob.clone(),
-                used,
-            },
-        );
+        if length <= self.budget.maximum && self.maximum_items > 0 {
+            cache.entries.insert(
+                descriptor.token.clone(),
+                Entry {
+                    source: prepared.source_weak(),
+                    grant: descriptor.grant.clone(),
+                    native_scope: None,
+                    blob: blob.clone(),
+                    used,
+                },
+            );
+        }
         drop(cache);
-        drop(flight);
         Ok(blob)
     }
 }
-struct Flight<'a> {
-    store: &'a MediaStore,
-    token: &'a str,
-}
-impl Drop for Flight<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut cache) = self.store.cache.lock() {
-            cache.in_flight.remove(self.token);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests;

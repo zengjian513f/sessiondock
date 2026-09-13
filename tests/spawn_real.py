@@ -7,7 +7,7 @@ the Linux /proc scan still saw grok.
 Rules: cheapest models only (Claude `claude-haiku-4-5-20251001` `--effort low`,
 Grok `grok-4.6` `--reasoning-effort low`); isolated `CLAUDE_CONFIG_DIR` reuses
 credentials read-only; proxy passthrough; Claude JSONL assistant records carry
-the exact model id; release binary read-only with `SESSIONDOCK_PROC_SCAN=1` and
+the exact model id; release binary read-only with native process discovery and
 a temp state dir; GET `/api/sessions?force=1` must list the new Grok row;
 `spawned_by` is `{"source":"claude","sid":U}` when recorded, else presence only
 (grok -p may have finished); delete only the created `U.jsonl`, the new Grok
@@ -168,7 +168,7 @@ def print_dry_run(binary):
     print(shlex.join(str(p) for p in cmd))
     print("cwd=<temp-directory>")
     print("CLAUDE_CONFIG_DIR=<temp>/claude-config  # credentials copied read-only")
-    print(f"SESSIONDOCK_PROC_SCAN=1 SESSIONDOCK_CLAUDE_ROOT=<isolated-or-real>/projects "
+    print(f"SESSIONDOCK_CLAUDE_ROOT=<isolated-or-real>/projects "
           f"SESSIONDOCK_GROK_ROOT={GROK_ROOT} SESSIONDOCK_CODEX_ROOT=<temp>/codex "
           f"SESSIONDOCK_STATE_DIR=<temp>/state SESSIONDOCK_BIND=127.0.0.1:<ephemeral> "
           f"SESSIONDOCK_WEB_DIR={REPO / 'legacy-web'} {binary}")
@@ -240,7 +240,7 @@ def run(binary):
             passed("model")
             state, codex = tmp / "state", tmp / "codex"
             state.mkdir(mode=0o700); codex.mkdir(mode=0o700)
-            extra = {"SESSIONDOCK_PROC_SCAN": "1", "SESSIONDOCK_CLAUDE_ROOT": str(jsonl.parent.parent),
+            extra = {"SESSIONDOCK_CLAUDE_ROOT": str(jsonl.parent.parent),
                      "SESSIONDOCK_GROK_ROOT": str(GROK_ROOT), "SESSIONDOCK_CODEX_ROOT": str(codex),
                      "SESSIONDOCK_STATE_DIR": str(state)}
             with server_with_env(Path(binary), extra) as (base, opener):

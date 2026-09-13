@@ -11,7 +11,7 @@ POST /api/session/send under this page's own console lease, the outbox row
 shows Codex's "终端写入待核对" (Python `failed`, attempts 1) with 检查终端/移除
 until the fake CLI's native user record (with its turn ID) arrives over SSE,
 then the row is replaced by the real message and the server ledger row is
-confirmed with `OperationTurn`. A second page without a lease sees the
+confirmed with the causal native text record. A second page without a lease sees the
 documented ownership error while the first page holds the console. Finally a
 390 px page sends from the composer through the server-held lease.
 """
@@ -127,13 +127,12 @@ def main():
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
-            "host_dir": str(root / "host"), "cwd_roots": [str(root / "work")], "adapters": [], "profiles": [
+            "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(wrapper),
                  "args": ["--reply", "-c", 'model_reasoning_effort="low"'], "new_args": [],
                  "resume_args": ["resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CODEX_ROOT": str(root / "codex")},
-                 "cwd_roots": [str(root / "work/codex-area")]}]}))
+                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CODEX_ROOT": str(root / "codex")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:

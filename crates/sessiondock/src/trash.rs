@@ -1,39 +1,5 @@
-//! Session recycle bin: soft delete into an explicit private directory.
-//!
-//! Fail-closed capability. It exists only when `SESSIONDOCK_TRASH_DIR` names an
-//! existing private directory (0700 on Unix) disjoint from every other
-//! configured root; otherwise the routes stay `501` and `capabilities.trash`
-//! is `false`.
-//!
-//! Semantics:
-//! - A delete moves exactly the files the published index rows named for the
-//!   session (Claude transcript plus its subagent transcripts and `.meta.json`
-//!   sidecars, Codex rollout plus owned subagent rollouts, Grok `summary.json`
-//!   and `chat_history.jsonl`) into `<trash>/<entry id>/files/` under a
-//!   `manifest.json`. Directories, attachments and anything the inventory did
-//!   not name stay where they are; nothing is ever deleted outside the trash.
-//! - Every file's size / mtime / identity is captured when the plan is built
-//!   from the frozen snapshot and verified again immediately before its
-//!   rename (`409 changed_since_inventory`). Symlinks are never followed.
-//! - Rename only, within one filesystem. A cross-device rename is rejected
-//!   (`409 cross_filesystem`) rather than degraded into a copy that could leave
-//!   two half-written copies; already moved files of the same session are
-//!   renamed back.
-//! - Refused (`409`): fork parents of any non-deleted session
-//!   (`fork_parent_protected`, computed once per request), sessions whose
-//!   managed instance is verified `running` (`session_running`, never
-//!   overridable), and sessions whose run state is `unknown`
-//!   (`run_state_unknown`) unless the request carries `force:true`. Without a
-//!   configured host directory every session is unknown, so deletion then
-//!   always requires `force`. An unknown state is not proof of exit: a CLI
-//!   this service never observed may still be writing the file.
-//! - Restore refuses (`409 restore_conflict`) when any original path exists
-//!   again; it never overwrites or renames around a conflict. It renames each
-//!   file back inside the same filesystem and rolls earlier files back if a
-//!   later one fails.
-//! - Purge removes whole entries (explicit ids or entries older than `days`),
-//!   bounded to [`BATCH_LIMIT`] per call. Listing is paginated (`limit` ≤
-//!   [`LIST_LIMIT`]).
+//! Session recycle bin. Native files move into recoverable entries; fork
+//! parents and currently running sessions remain protected as in Python.
 
 pub mod manifest;
 mod plan;
@@ -43,7 +9,7 @@ mod tests;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 
@@ -52,20 +18,12 @@ use serde_json::{Value, json};
 
 use crate::sessions::SessionRoots;
 use manifest::{
-    EntryState, FILES_DIR, FileRecord, FileRole, MANIFEST_NAME, MANIFEST_TEMP, Manifest,
-    RunStateNote, Stamp, now_unix, rfc3339,
+    EntryState, FILES_DIR, FileRecord, MANIFEST_NAME, MANIFEST_TEMP, Manifest, RunStateNote,
+    now_unix, rfc3339,
 };
 pub use plan::{Plan, protection_set};
 
-/// Per-request bound for batch delete UIDs, purge ids and purge-by-age.
-pub const BATCH_LIMIT: usize = 200;
-/// Largest page the listing returns.
-pub const LIST_LIMIT: usize = 200;
-pub const LIST_DEFAULT: usize = 100;
-/// Directory scan bound; more entries than this are reported as truncated.
-pub const SCAN_LIMIT: usize = 10_000;
-pub const FILES_PER_ENTRY_LIMIT: usize = 1024;
-const ENTRY_ID_LIMIT: usize = 128;
+pub const LIST_DEFAULT: usize = usize::MAX;
 
 #[derive(Clone, Debug)]
 pub struct TrashError {
@@ -93,26 +51,11 @@ impl std::fmt::Display for TrashError {
 impl std::error::Error for TrashError {}
 
 pub fn entry_id_is_valid(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= ENTRY_ID_LIMIT
-        && id
-            .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_alphanumeric())
-        && id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    file_name_is_valid(id)
 }
 
 pub(crate) fn file_name_is_valid(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 255
-        && name != "."
-        && name != ".."
-        && !name.starts_with('.')
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    !name.is_empty() && !matches!(name, "." | "..") && !name.contains(['/', '\\', '\0'])
 }
 
 /// One session's run state as observed for this request.
@@ -200,7 +143,7 @@ pub struct Refused {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DeleteOutcome {
     pub deleted: Vec<Deleted>,
-    /// Policy refusals: protected parent, running, unknown without force.
+    /// Python policy refusals: protected parents and running sessions.
     pub skipped: Vec<Refused>,
     /// Missing sessions and filesystem failures.
     pub failed: Vec<Refused>,
@@ -357,19 +300,7 @@ impl TrashService {
                         state: "unknown".into(),
                         detail: reason.clone(),
                     };
-                    if !force {
-                        outcome.skipped.push(refused(
-                            "run_state_unknown",
-                            format!(
-                                "运行状态未知（{}），不能确认 CLI 已退出；确认后带 force 重试",
-                                unknown_explanation(&reason)
-                            ),
-                            true,
-                            Some(note),
-                        ));
-                        continue;
-                    }
-                    (note, true)
+                    (note, force)
                 }
             };
             let plan = match Plan::derive(row, &self.roots) {
@@ -398,8 +329,7 @@ impl TrashService {
         Plan::derive(row, &self.roots)
     }
 
-    /// Execute a plan built earlier. Every file stamp is verified again
-    /// right before its rename; any change since planning refuses the move.
+    /// Execute a plan against the current contents of its inventory paths.
     pub fn move_planned(
         &self,
         plan: &Plan,
@@ -465,24 +395,15 @@ impl TrashService {
         for index in 0..manifest.files.len() {
             let record = &manifest.files[index];
             let destination = files_dir.join(&record.name);
-            let capture = if record.role == FileRole::Directory {
-                Stamp::capture_directory(&record.origin)
-            } else {
-                Stamp::capture(&record.origin)
-            };
-            let result = capture.and_then(|current| {
-                if !record.stamp.matches(&current, record.role) {
-                    return Err(TrashError::new(
-                        409,
-                        "changed_since_inventory",
-                        "会话文件在索引之后发生变化，已取消删除",
-                    ));
-                }
-                rename_same_filesystem(&record.origin, &destination)
-            });
+            let result = move_entry(&record.origin, &destination);
             match result {
                 Ok(()) => manifest.files[index].in_trash = true,
                 Err(error) => {
+                    // A cross-device source removal can fail after publishing
+                    // its complete copy. Keep that copy in the recovery record.
+                    if fs::symlink_metadata(&destination).is_ok() {
+                        manifest.files[index].in_trash = true;
+                    }
                     failure = Some(error);
                     break;
                 }
@@ -491,7 +412,7 @@ impl TrashService {
         if let Some(error) = failure {
             // Return what already moved; only then discard the entry.
             for record in manifest.files.iter_mut().filter(|record| record.in_trash) {
-                if rename_same_filesystem(&files_dir.join(&record.name), &record.origin).is_ok() {
+                if move_entry(&files_dir.join(&record.name), &record.origin).is_ok() {
                     record.in_trash = false;
                 }
             }
@@ -519,7 +440,7 @@ impl TrashService {
             uid: plan.uid.clone(),
             title: plan.title.clone(),
             entry_id,
-            trash: entry_dir.to_string_lossy().into_owned(),
+            trash: crate::sessions::path_text(&entry_dir).into_owned(),
             files: manifest.files.len(),
             bytes: manifest.bytes,
             run_state: manifest.run_state,
@@ -557,10 +478,10 @@ impl TrashService {
         ))
     }
 
-    /// Read every manifest (bounded), newest first.
+    /// Read every manifest, newest first.
     fn scan(&self) -> Result<(Vec<ScannedEntry>, bool), TrashError> {
         let mut entries = Vec::new();
-        let mut truncated = false;
+        let truncated = false;
         let directory = fs::read_dir(&self.directory)
             .map_err(|_| TrashError::new(503, "trash_unreadable", "回收站目录暂时不可枚举"))?;
         for entry in directory {
@@ -577,10 +498,6 @@ impl TrashService {
                 .map_err(|_| TrashError::new(503, "trash_unreadable", "无法检查回收站条目类型"))?;
             if !kind.is_dir() || kind.is_symlink() {
                 continue;
-            }
-            if entries.len() >= SCAN_LIMIT {
-                truncated = true;
-                break;
             }
             entries.push((name.to_owned(), Manifest::read(&entry.path())));
         }
@@ -605,7 +522,7 @@ impl TrashService {
                     "title": manifest.title, "cwd": manifest.cwd, "updated": manifest.updated,
                     "deleted_at": manifest.deleted_at, "deleted_ts": manifest.deleted_at_unix,
                     "size": manifest.bytes, "bytes": manifest.bytes, "files": manifest.files.len(),
-                    "kind": manifest.kind(), "origin": manifest.origin.to_string_lossy(),
+                    "kind": manifest.kind(), "origin": crate::sessions::path_text(&manifest.origin),
                     "state": manifest.state, "forced": manifest.forced, "run_state": manifest.run_state,
                     "recorded": true, "restorable": restorable.is_ok(),
                 });
@@ -625,42 +542,9 @@ impl TrashService {
         }
     }
 
-    fn root_for(&self, source: &str) -> Option<&Path> {
-        match source {
-            "claude" => self.roots.claude.as_deref(),
-            "codex" => self.roots.codex.as_deref(),
-            "grok" => self.roots.grok.as_deref(),
-            _ => None,
-        }
-    }
-
-    /// Restorable only while every original path is absent and still inside
-    /// the currently configured root for its source.
+    /// Restore to the recorded paths when those paths are available.
     fn restorable(&self, manifest: &Manifest) -> Result<(), TrashError> {
-        if manifest.state != EntryState::Trashed {
-            return Err(TrashError::new(
-                409,
-                "entry_not_restorable",
-                "条目不完整（删除时中断），只能彻底删除",
-            ));
-        }
-        let Some(root) = self.root_for(&manifest.source) else {
-            return Err(TrashError::new(
-                409,
-                "restore_outside_roots",
-                "该来源当前没有配置的数据源目录",
-            ));
-        };
-        if manifest.root != root {
-            return Err(TrashError::new(
-                409,
-                "restore_outside_roots",
-                "原始数据源目录与当前配置不同，不能自动恢复",
-            ));
-        }
         for file in &manifest.files {
-            plan::trusted_within(root, &file.origin)
-                .map_err(|error| TrashError::new(409, "restore_outside_roots", error.message))?;
             match fs::symlink_metadata(&file.origin) {
                 Ok(_) => {
                     return Err(TrashError::new(
@@ -679,7 +563,7 @@ impl TrashService {
     }
 
     pub fn list(&self, limit: usize, cursor: Option<&str>) -> Result<Listing, TrashError> {
-        let limit = limit.clamp(1, LIST_LIMIT);
+        let limit = limit.max(1);
         let _guard = self.guard();
         let (entries, truncated) = self.scan()?;
         let size = entries
@@ -715,7 +599,7 @@ impl TrashService {
                 .collect(),
             count: entries.len(),
             size,
-            dir: self.directory.to_string_lossy().into_owned(),
+            dir: crate::sessions::path_text(&self.directory).into_owned(),
             limit,
             next_cursor,
             truncated,
@@ -748,38 +632,11 @@ impl TrashService {
             ));
         }
         self.restorable(&manifest)?;
-        let root = self
-            .root_for(&manifest.source)
-            .expect("restorable checked root")
-            .to_path_buf();
         let files_dir = entry_dir.join(FILES_DIR);
-        // Verify every trashed file before touching the native tree.
-        for record in &manifest.files {
-            let held = files_dir.join(&record.name);
-            let current = if record.role == FileRole::Directory {
-                Stamp::capture_directory(&held)
-            } else {
-                Stamp::capture(&held)
-            }
-            .map_err(|error| {
-                TrashError::new(
-                    409,
-                    "changed_since_trashed",
-                    format!("回收站中的文件已变化: {}", error.message),
-                )
-            })?;
-            if !record.stamp.matches(&current, record.role) {
-                return Err(TrashError::new(
-                    409,
-                    "changed_since_trashed",
-                    "回收站中的文件与清单记录不一致，拒绝恢复",
-                ));
-            }
-        }
         let mut restored = Vec::new();
         let mut failure = None;
         for (index, record) in manifest.files.iter().enumerate() {
-            let result = ensure_parent(&root, &record.origin)
+            let result = ensure_parent(&record.origin)
                 .and_then(|()| match fs::symlink_metadata(&record.origin) {
                     Ok(_) => Err(TrashError::new(
                         409,
@@ -789,11 +646,18 @@ impl TrashService {
                     Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
                     Err(_) => Err(TrashError::new(503, "stat_failed", "原路径暂时无法检查")),
                 })
-                .and_then(|()| {
-                    rename_same_filesystem(&files_dir.join(&record.name), &record.origin)
-                });
+                .and_then(|()| move_entry(&files_dir.join(&record.name), &record.origin));
             match result {
                 Ok(()) => restored.push(index),
+                Err(error) if error.code == "file_move_source_cleanup" => {
+                    // The cross-device helper publishes the complete origin
+                    // before attempting to remove the trash-side source. Treat
+                    // this item like every earlier restored item so rollback
+                    // accounts for both names and can mark a real partial state.
+                    restored.push(index);
+                    failure = Some(error);
+                    break;
+                }
                 Err(error) => {
                     failure = Some(error);
                     break;
@@ -804,9 +668,15 @@ impl TrashService {
             let mut stuck = false;
             for index in restored.into_iter().rev() {
                 let record = &manifest.files[index];
-                if rename_same_filesystem(&record.origin, &files_dir.join(&record.name)).is_err() {
+                let held = files_dir.join(&record.name);
+                if move_entry(&record.origin, &held).is_err() {
                     stuck = true;
-                    manifest.files[index].in_trash = false;
+                    // A failed cross-device cleanup may leave either or both
+                    // complete names. Record the trash-side reality; Partial
+                    // tells callers to inspect an origin-side duplicate too.
+                    manifest.files[index].in_trash = fs::symlink_metadata(&held).is_ok();
+                } else {
+                    manifest.files[index].in_trash = true;
                 }
             }
             if stuck {
@@ -838,7 +708,7 @@ impl TrashService {
             uid: manifest.uid,
             source: manifest.source,
             title: manifest.title,
-            path: manifest.origin.to_string_lossy().into_owned(),
+            path: crate::sessions::path_text(&manifest.origin).into_owned(),
             files: manifest.files.len(),
             bytes: manifest.bytes,
         })
@@ -846,12 +716,8 @@ impl TrashService {
 
     /// Remove explicit entries. Each id gets its own result.
     pub fn purge_ids(&self, ids: &[String]) -> Result<PurgeOutcome, TrashError> {
-        if ids.is_empty() || ids.len() > BATCH_LIMIT {
-            return Err(TrashError::new(
-                400,
-                "invalid_purge",
-                format!("需要 1 至 {BATCH_LIMIT} 个回收站条目 ID"),
-            ));
+        if ids.is_empty() {
+            return Err(TrashError::new(400, "invalid_purge", "需要回收站条目 ID"));
         }
         let _guard = self.guard();
         let mut outcome = PurgeOutcome::default();
@@ -877,8 +743,7 @@ impl TrashService {
         Ok(outcome)
     }
 
-    /// Remove entries deleted at least `days` days ago, oldest first, at most
-    /// [`BATCH_LIMIT`] per call (`days = 0` empties the bin in bounded steps).
+    /// Remove all entries deleted at least `days` days ago, oldest first.
     pub fn purge_older_than(&self, days: u64) -> Result<PurgeOutcome, TrashError> {
         let _guard = self.guard();
         let cutoff = now_unix().saturating_sub(days.saturating_mul(86_400));
@@ -892,7 +757,6 @@ impl TrashService {
                 // full purge (days = 0) removes it.
                 Err(_) => days == 0,
             })
-            .take(BATCH_LIMIT)
             .map(|(id, _)| id.clone())
             .collect();
         let mut outcome = PurgeOutcome::default();
@@ -932,98 +796,10 @@ impl TrashService {
                 ));
             }
         }
-        let unexpected = || {
-            TrashError::new(
-                409,
-                "unexpected_content",
-                "回收站条目包含非回收站写入的内容，拒绝清除",
-            )
-        };
-        let files_dir = entry_dir.join(FILES_DIR);
-        let mut files = Vec::new();
-        for entry in fs::read_dir(&entry_dir)
-            .map_err(|_| TrashError::new(503, "trash_unreadable", "回收站条目暂时不可枚举"))?
-        {
-            let entry = entry
-                .map_err(|_| TrashError::new(503, "trash_unreadable", "回收站条目暂时不可枚举"))?;
-            let name = entry.file_name();
-            let kind = entry.file_type().map_err(|_| unexpected())?;
-            if kind.is_symlink() {
-                return Err(unexpected());
-            }
-            if name == MANIFEST_NAME || name == MANIFEST_TEMP {
-                if !kind.is_file() {
-                    return Err(unexpected());
-                }
-            } else if name == FILES_DIR {
-                if !kind.is_dir() {
-                    return Err(unexpected());
-                }
-                for file in fs::read_dir(&files_dir).map_err(|_| {
-                    TrashError::new(503, "trash_unreadable", "回收站条目暂时不可枚举")
-                })? {
-                    let file = file.map_err(|_| unexpected())?;
-                    let kind = file.file_type().map_err(|_| unexpected())?;
-                    // A whole trashed Grok session directory (WP-E) is the
-                    // only directory the bin itself creates under `files/`.
-                    if kind.is_symlink() || !(kind.is_file() || kind.is_dir()) {
-                        return Err(unexpected());
-                    }
-                    let Some(file_name) = file.file_name().to_str().map(str::to_owned) else {
-                        return Err(unexpected());
-                    };
-                    if !file_name_is_valid(&file_name) {
-                        return Err(unexpected());
-                    }
-                    files.push((file.path(), kind.is_dir()));
-                }
-            } else {
-                return Err(unexpected());
-            }
-        }
-        let mut freed = 0;
-        for (path, is_dir) in files {
-            if is_dir {
-                let size = manifest::directory_bytes(&path);
-                fs::remove_dir_all(&path)
-                    .map_err(|_| TrashError::new(500, "purge_failed", "回收站会话目录无法删除"))?;
-                freed += size;
-                continue;
-            }
-            let size = fs::symlink_metadata(&path)
-                .map(|metadata| metadata.len())
-                .unwrap_or(0);
-            fs::remove_file(&path)
-                .map_err(|_| TrashError::new(500, "purge_failed", "回收站文件无法删除"))?;
-            freed += size;
-        }
-        if files_dir.exists() {
-            fs::remove_dir(&files_dir)
-                .map_err(|_| TrashError::new(500, "purge_failed", "回收站条目目录无法删除"))?;
-        }
-        for name in [MANIFEST_TEMP, MANIFEST_NAME] {
-            match fs::remove_file(entry_dir.join(name)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(_) => return Err(TrashError::new(500, "purge_failed", "回收站清单无法删除")),
-            }
-        }
-        fs::remove_dir(&entry_dir)
-            .map_err(|_| TrashError::new(500, "purge_failed", "回收站条目目录无法删除"))?;
+        let freed = manifest::directory_bytes(&entry_dir.join(FILES_DIR));
+        fs::remove_dir_all(&entry_dir)
+            .map_err(|_| TrashError::new(500, "purge_failed", "回收站条目无法删除"))?;
         Ok(freed)
-    }
-}
-
-fn unknown_explanation(reason: &str) -> &str {
-    match reason {
-        "no_runtime" => "未配置受控 host 目录，没有任何进程观察",
-        "no_instance" => "没有受控实例记录此会话；外部 CLI 不在观察范围内",
-        "host_unreachable" => "记录了实例但 host 未应答",
-        "record_missing" => "实例记录消失而进程仍存在",
-        "duplicate_host" => "多个 host 声明同一会话",
-        "identity_unverifiable" => "进程身份无法核验",
-        "platform_unsupported" => "当前平台没有进程表支持",
-        other => other,
     }
 }
 
@@ -1063,100 +839,41 @@ fn create_private_dir(path: &Path) -> Result<(), TrashError> {
         .map_err(|_| TrashError::new(500, "entry_create_failed", "无法创建回收站条目目录"))
 }
 
-/// Rename never follows a symlink at either end; a destination that already
-/// exists is a conflict, not something to replace. Cross-device moves are
-/// refused because they cannot be atomic.
-fn rename_same_filesystem(from: &Path, to: &Path) -> Result<(), TrashError> {
-    match fs::symlink_metadata(to) {
-        Ok(_) => {
-            return Err(TrashError::new(
-                409,
-                "destination_exists",
-                format!("目标路径已存在: {}", to.display()),
-            ));
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(_) => return Err(TrashError::new(503, "stat_failed", "目标路径暂时无法检查")),
+/// Move the named entry, including across filesystems.
+fn move_entry(from: &Path, to: &Path) -> Result<(), TrashError> {
+    #[cfg(test)]
+    if FAIL_AFTER_PUBLISH.with(|fail| fail.replace(false)) {
+        fs::copy(from, to)
+            .map_err(|_| TrashError::new(500, "restore_failed", "无法模拟已发布的恢复目标"))?;
+        return Err(TrashError::new(
+            503,
+            "file_move_source_cleanup",
+            "目标已完整发布，但无法移除源名称",
+        ));
     }
-    fs::rename(from, to).map_err(|error| {
-        if error.kind() == io::ErrorKind::CrossesDevices {
-            TrashError::new(
-                409,
-                "cross_filesystem",
-                "回收站目录与数据源不在同一文件系统，拒绝非原子的跨设备移动",
-            )
-        } else {
-            TrashError::new(
-                500,
-                "rename_failed",
-                format!("移动文件失败: {}", error.kind()),
-            )
-        }
-    })
+    crate::files::move_recycle_entry(from, to)
+        .map_err(|error| TrashError::new(error.status, error.code, error.message))
 }
 
-/// Recreate missing parents of `path` inside `root`, then re-walk so a link
-/// introduced meanwhile is still rejected.
-fn ensure_parent(root: &Path, path: &Path) -> Result<(), TrashError> {
-    plan::trusted_within(root, path)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| TrashError::new(403, "path_outside_root", "路径没有父目录"))?;
-    if fs::symlink_metadata(parent).is_err() {
-        let mut builder = fs::DirBuilder::new();
-        builder.recursive(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        builder
-            .create(parent)
+#[cfg(test)]
+thread_local! {
+    static FAIL_AFTER_PUBLISH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn fail_next_move_after_publish() {
+    FAIL_AFTER_PUBLISH.with(|fail| fail.set(true));
+}
+
+fn ensure_parent(path: &Path) -> Result<(), TrashError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
             .map_err(|_| TrashError::new(500, "restore_failed", "无法重建原始目录"))?;
     }
-    plan::trusted_within(root, path)
+    Ok(())
 }
 
-/// Explicit private directory: absolute, no `..`, no symlink/reparse ancestor,
-/// 0700 on Unix. Mirrors the audit/delivery directory checks.
 pub fn validate_directory(path: &Path) -> io::Result<PathBuf> {
-    let invalid = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SESSIONDOCK_TRASH_DIR requires an explicit existing absolute directory without relative jumps",
-        )
-    };
-    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
-        return Err(invalid());
-    }
-    for ancestor in path.ancestors() {
-        let metadata = fs::symlink_metadata(ancestor).map_err(|_| invalid())?;
-        #[cfg(windows)]
-        let reparse = {
-            use std::os::windows::fs::MetadataExt;
-            metadata.file_attributes() & 0x400 != 0
-        };
-        #[cfg(not(windows))]
-        let reparse = false;
-        if metadata.file_type().is_symlink() || reparse {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "trash directory and its ancestors must not be symlinks or reparse points",
-            ));
-        }
-        if !metadata.is_dir() {
-            return Err(invalid());
-        }
-        #[cfg(unix)]
-        if ancestor == path {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o777 != 0o700 {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "trash directory requires private owner-only permissions (0700)",
-                ));
-            }
-        }
-    }
-    path.canonicalize().map_err(|_| invalid())
+    fs::create_dir_all(path)?;
+    path.canonicalize()
 }

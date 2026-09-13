@@ -116,27 +116,19 @@ WP-A 的索引单元基准（`cargo test -p sessiondock --lib sessions::index::t
 
 ## 并发预算（第四十四批 WP-A）
 
-所有池都是"有界等待"：拿不到许可先排队（tokio `Semaphore`，FIFO），排到
-`SESSIONDOCK_ADMISSION_WAIT_MS`（默认 10 s）仍无空位才 503 `*_busy`；等待中被
-取消的请求离开队列、从不持有许可；已开始的阻塞工作持有许可到结束（不因 HTTP
-取消而提前释放，和以前一样）。`SESSIONDOCK_ADMISSION_WAIT_MS=0` 恢复旧的即时拒绝
-（测试用）。
+所有池使用 tokio `Semaphore` 排队。等待中的请求取消后离开队列且不持有许可；
+已开始的阻塞工作持有许可到结束，不因 HTTP 取消而提前释放。池关闭会唤醒等待者。
 
 | 池 | 旧值 | 新默认（W = `SESSIONDOCK_READ_WORKERS` = `clamp(核数/2, 8, 32)`） | 503 代码 | 准入方式 |
 | --- | ---: | ---: | --- | --- |
-| 只读工作池（列表 / 详情 / 分页 / 文件 / 媒体 / 偏好写入 / 观察） | 4，`try_acquire` | W（本机 256 核 → 32） | `reader_busy` | 有界等待 |
-| 受控进程观察 `runtime_probes` | 2 | `clamp(W/2, 2, 16)` | `runtime_busy` | 有界等待 |
-| 历史页 / 图片分页响应 `history_page_http` | 8 | `clamp(2W, 8, 64)` | `history_page_busy` | 有界等待 |
-| 媒体响应 `media_http` | 8 | 同上 | `media_busy` | 有界等待 |
-| 文件写入响应 `file_write_http` | 8 | 同上 | `files_busy` | 有界等待 |
-| 生命周期响应 `lifecycle_http` | 8 | 同上 | 429 `lifecycle_response_busy` | 仍即时拒绝（见下） |
-| 搜索 `searches` | 2（另占 1 个读 worker） | 2，**不再占读池** | `search_busy` | 即时拒绝（预算由 WP-B 定） |
-| SSE 观察 `watchers` | 32 | 32 | `watch_limit` | 即时拒绝 |
+| 只读工作池（列表 / 详情 / 分页 / 文件 / 媒体 / 偏好写入 / 观察） | 4，`try_acquire` | W（本机 256 核 → 32） | `reader_busy`（仅关闭） | 等待许可 |
+| 受控进程观察 `runtime_probes` | 2 | `max(W/2, 2)` | `runtime_busy`（仅关闭） | 等待许可 |
+| 历史页 / 图片分页响应 `history_page_http` | 8 | `max(2W, 8)` | `history_page_busy`（仅关闭） | 等待许可 |
+| 媒体响应 `media_http` | 8 | 同上 | `media_busy`（仅关闭） | 等待许可 |
+| 文件写入响应 `file_write_http` | 8 | 同上 | `files_busy`（仅关闭） | 等待许可 |
+| 生命周期响应 `lifecycle_http` | 8 | 同上 | `lifecycle_response_busy`（仅关闭） | 等待许可 |
+| 搜索 `searches` | 2（另占 1 个读 worker） | `SESSIONDOCK_SEARCH_WORKERS`，**不再占读池** | `search_busy`（仅关闭） | 等待许可 |
 | 媒体 / 文件作业 `media_jobs` / `file_jobs` | 2 / 2 | 不变 | | 2 s 等待 |
-
-`lifecycle_http` 的准入函数是同步的（`api/lifecycle.rs::admit` 在十处 `?` 后直接
-用），改成等待要给 WP-E 正在改的 `api/lifecycle.rs`/`api/terminal.rs` 加 `.await`；
-本批只按比例放大容量，等待化留给合并后的一行改动。
 
 隔离实例对真实根（803 会话）：16 并发 `/api/messages`（8 个 `window=1` + 8 个
 `append=1`）全 200；一次 40 s 全文搜索期间 12 个 `/api/sessions`、`/api/live`、
@@ -207,13 +199,13 @@ VmRSS，MB：
 | 一条 SSE 观察空转 20 s（安静会话） | — | 1440 ms（7.2 %；其中"什么都不做"1.9 %） | 发布者每 500 ms 的探测不再每次遍历目录（视图打开容忍 3 s 旧列表，文件自己 `stat`）；剩余是根变化引起的重扫 |
 | 一条 SSE 观察空转 20 s（活动会话） | 2680 ms（13.4 %） | 1850 ms（9.2 %） | 同上 + 文件每次增长的重投影 |
 
-归因（临时计时，proc scan 关闭、同一页面 41 s、根目录持续被写入）：4.47 CPU-s 中
+归因（临时计时，不计进程扫描、同一页面 41 s、根目录持续被写入）：4.47 CPU-s 中
 **2.3 s 是 19 次"活动文件变了 → 重投影"**（11 MB 的 Claude 主会话每次 100–300 ms：
 `parse_candidate` 每次都把全部记录重新投影成事件，AST 复用与否都一样——
 `SESSIONDOCK_AST_CACHE_MB=1024` 实测无差别），0.17 s 是 19 次 `malloc_trim`，其余是遍历 +
 重建行（根一变就要重建：遍历 ~20 ms + `graph::build` ~27 ms + 签名 ~7 ms；视图读到比
 索引新的字节时仍立即重扫一次——把它节流到每秒一次试过，但读模型的测试与文档承诺
-`meta` 与字节一致，故撤回；其余打开按 `OPEN_TTL` 3 s 复用列表）。打开 proc scan 再加 ~3.5 %
+`meta` 与字节一致，故撤回；其余打开按 `OPEN_TTL` 3 s 复用列表）。计入进程扫描再加 ~3.5 %
 （每 3 s 一次冷扫描，与 Python 同频）。要到 ≤ 5 % 一核，剩下两件都在本包范围外：
 `sessions/views` 的追加改成增量投影（WP-C 文件），`graph::build` 改增量
 （`sessions/index/graph.rs`，WP-C 文件）。

@@ -4,16 +4,15 @@
 //! page, which treats any non-2xx answer as "retry this batch later"):
 //! `501` unconfigured, `202 {"ok":true,"accepted":N,"skipped":K,"dropped":B}`
 //! (dropped batches still answer `202` so the page does not resend them),
-//! `400` malformed body, `413` body over the route limit or more than the
-//! event cap, `429` per-client token bucket (`Retry-After`), `503` during
-//! shutdown or when every parse slot is busy (`Retry-After: 1`).
+//! `400` malformed body, `413` body over Python's route limit or more than the
+//! event cap, and `503` during shutdown.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use axum::{
     Extension, Json,
     extract::{ConnectInfo, Request, State},
-    http::{StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -23,14 +22,6 @@ use crate::{
     error::ApiError,
     state::AppState,
 };
-
-fn retry_after(error: ApiError, seconds: u64) -> Response {
-    let mut response = error.into_response();
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, seconds.max(1).into());
-    response
-}
 
 pub async fn browser(
     State(state): State<AppState>,
@@ -43,12 +34,7 @@ pub async fn browser(
     let client = peer
         .map(|Extension(ConnectInfo(address))| address.ip())
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
-    let content_length = request
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<usize>().ok());
-    let admission = match service.admit(client, content_length) {
+    let admission = match service.admit() {
         Ok(admission) => admission,
         Err(Refusal::Closed) => {
             return Err(ApiError::new(
@@ -57,31 +43,7 @@ pub async fn browser(
                 "服务正在关闭",
             ));
         }
-        Err(Refusal::RateLimited { retry_after: wait }) => {
-            return Ok(retry_after(
-                ApiError::new(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limited",
-                    "浏览器诊断上报过于频繁",
-                ),
-                wait.as_secs_f64().ceil() as u64,
-            ));
-        }
-        Err(Refusal::Busy) => {
-            return Ok(retry_after(
-                ApiError::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "audit_busy",
-                    "诊断解析槽位繁忙，请稍后重试",
-                ),
-                1,
-            ));
-        }
     };
-    if admission.dropped() {
-        // Queue saturated: acknowledge without copying the body.
-        return Ok(accepted(0, 0, true));
-    }
     let limit = service.limits().body_bytes;
     let body = axum::body::to_bytes(request.into_body(), limit)
         .await

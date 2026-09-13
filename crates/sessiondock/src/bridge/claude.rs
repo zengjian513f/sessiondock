@@ -25,8 +25,6 @@ pub const PROMPTS_DIRNAME: &str = "claude-prompts";
 pub const VERSION: u64 = 1;
 /// The hook subcommand name (`sessiondock claude-hook`).
 pub const HOOK_SUBCOMMAND: &str = "claude-hook";
-/// Largest hook payload the subcommand reads from stdin (Claude's are a few KiB).
-pub const HOOK_INPUT_LIMIT: u64 = 4 * 1024 * 1024;
 
 static SESSION_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{6,128}$").expect("session id regex"));
@@ -341,12 +339,8 @@ pub fn write_settings(path: &Path, command: &Path, state_dir: &Path) -> io::Resu
 /// record it, and report nothing. Failures never reach Claude (exit 0 with no
 /// output is the caller's contract); the return value is for tests only.
 pub fn run_hook(state_dir: &Path, input: &mut dyn io::Read) -> bool {
-    use std::io::Read;
     let mut data = Vec::new();
-    if Read::take(input, HOOK_INPUT_LIMIT)
-        .read_to_end(&mut data)
-        .is_err()
-    {
+    if input.read_to_end(&mut data).is_err() {
         return false;
     }
     let Ok(value) = serde_json::from_slice::<Value>(&data) else {
@@ -600,6 +594,19 @@ mod tests {
         assert!(
             PromptStore::new(temp.path())
                 .prompt("session-stdin")
+                .is_some()
+        );
+        let large = hook(
+            "session-large",
+            "PreToolUse",
+            "t2",
+            json!({"questions": [{"question": "q".repeat(4 * 1024 * 1024 + 1)}]}),
+        )
+        .to_string();
+        assert!(run_hook(temp.path(), &mut large.as_bytes()));
+        assert!(
+            PromptStore::new(temp.path())
+                .prompt("session-large")
                 .is_some()
         );
         assert!(!run_hook(temp.path(), &mut "not json".as_bytes()));

@@ -172,9 +172,9 @@ def main():
         if "permissionDecision" in settings.read_text():
             fail("the bridge settings must be passive")
         relative = subprocess.run([str(BINARY), "--write-bridge-settings", "relative.json"], env=env,
-                                  capture_output=True, timeout=20)
-        if relative.returncode == 0:
-            fail("a relative settings path must be refused")
+                                  cwd=root, capture_output=True, timeout=20)
+        if relative.returncode != 0 or not (root / "relative.json").is_file():
+            fail("relative settings path must resolve from cwd")
         unset = subprocess.run([str(BINARY), "--write-bridge-settings", str(root / "x.json")],
                                env={"PATH": env["PATH"]}, capture_output=True, timeout=20)
         if unset.returncode == 0:

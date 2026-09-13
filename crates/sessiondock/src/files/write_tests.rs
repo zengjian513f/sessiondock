@@ -1,8 +1,8 @@
 //! Synthetic-only write-side tests: authorization boundaries, TOCTOU, atomic
-//! no-overwrite, chunk offsets, trash and expiry. No native homes or CLIs.
+//! no-overwrite, chunk offsets, trash and cancellation. No native homes or CLIs.
 use super::*;
 use serde_json::{Value, json};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf};
 
 struct Fixture {
     _temp: tempfile::TempDir,
@@ -93,7 +93,7 @@ impl Fixture {
         outcome.body["job"].clone()
     }
     fn w(&self, name: &str) -> String {
-        self.write.join(name).to_str().unwrap().to_owned()
+        boundary::wire_path(&self.write.join(name)).unwrap()
     }
     fn trash_dir(&self) -> PathBuf {
         self.state.join(FILE_TRASH_DIR)
@@ -117,83 +117,36 @@ impl Fixture {
 }
 
 #[test]
-fn names_paths_and_roots_are_explicit_boundaries() {
+fn names_are_validated_but_configured_directories_do_not_jail_writes() {
     let fixture = Fixture::new();
-    for name in [
-        "..",
-        ".",
-        "a/b",
-        "/abs",
-        "",
-        "a\0b",
-        "bad\nname",
-        ".sessiondock-x",
-    ] {
-        let (status, code) =
-            fixture.act_err(json!({"action":"mkdir","destination":fixture.w(""),"name":name}));
-        assert_eq!(status, 400, "{name:?} {code}");
+    for name in ["..", ".", "a/b", "a\\b", "/abs", "", "a\0b"] {
+        assert_eq!(
+            fixture
+                .act_err(json!({"action":"mkdir","destination":fixture.w(""),"name":name}))
+                .0,
+            400
+        );
     }
-    #[cfg(not(windows))]
-    {
-        let (status, code) =
-            fixture.act_err(json!({"action":"mkdir","destination":fixture.w(""),"name":"a\\b"}));
-        assert_eq!((status, code), (400, "file_foreign_path"));
-        let (status, code) =
-            fixture.act_err(json!({"action":"mkdir","destination":"C:\\temp","name":"x"}));
-        assert_eq!((status, code), (400, "file_foreign_path"));
+    for destination in [fixture.root.join("readonly"), fixture.write.join("sub/..")] {
+        let result = fixture
+            .act(json!({"action":"mkdir","destination":destination,"name":"allowed"}))
+            .unwrap();
+        assert_eq!(result.status, 200, "{}", result.body);
     }
-    // Relative and `..` write paths are refused before any root lookup.
-    assert_eq!(
-        fixture
-            .act_err(json!({"action":"mkdir","destination":"sub","name":"x"}))
-            .0,
-        400
-    );
-    assert_eq!(
-        fixture.act_err(
-            json!({"action":"mkdir","destination":format!("{}/sub/..", fixture.w("")),"name":"x"})
-        ),
-        (400, "file_path_invalid")
-    );
-    assert_eq!(
-        fixture.act_err(json!({"action":"delete","paths":[format!("{}/../w/sub", fixture.w(""))]})),
-        (400, "file_path_invalid")
-    );
-    // Inside the read root but not inside a write root: read roots never
-    // become writable implicitly.
-    assert_eq!(
-        fixture.act_err(json!({"action":"mkdir","destination":fixture.root.join("readonly").to_str().unwrap(),"name":"x"})),
-        (403, "file_outside_write_roots")
-    );
-    // Outside the anchor's read root entirely.
     let outside = tempfile::tempdir().unwrap();
+    let result = fixture.act(json!({"action":"new-file","destination":outside.path(),"name":".sessiondock-ordinary"})).unwrap();
+    assert_eq!(result.status, 200, "{}", result.body);
+    assert!(outside.path().join(".sessiondock-ordinary").is_file());
     assert_eq!(
         fixture
-            .act_err(
-                json!({"action":"mkdir","destination":outside.path().to_str().unwrap(),"name":"x"})
-            )
+            .act_err(json!({"action":"delete","paths":[fixture.state]}))
             .0,
         403
     );
-    // The reserved staging name cannot be targeted through paths either; a
-    // legacy `.agenthub-*` directory is an ordinary (deletable) entry now.
+    #[cfg(unix)]
     assert_eq!(
-        fixture.act_err(json!({"action":"delete","paths":[fixture.w(UPLOAD_DIR)]})),
-        (400, "file_reserved_name")
-    );
-    assert_eq!(
-        fixture.act_err(json!({"action":"delete","paths":[fixture.w(".agenthub-trash")]})),
-        (404, "file_not_found")
-    );
-    assert_eq!(
-        fixture.act_err(json!({"action":"delete","paths":[fixture.w("")]})),
-        (403, "file_root_immutable")
-    );
-    assert_eq!(
-        fixture.act_err(
-            json!({"action":"mkdir","destination":fixture.w(""),"name":"x","conflict":"replace"})
-        ),
-        (400, "file_conflict_replace_unsupported")
+        fixture.act_err(json!({"action":"delete","paths":["/"]})).0,
+        403
     );
     for action in [
         "copy", "compress", "extract", "bundle", "restore", "purge", "retry", "trash",
@@ -204,26 +157,14 @@ fn names_paths_and_roots_are_explicit_boundaries() {
                     json!({"action":action,"paths":[fixture.w("sub")],"destination":fixture.w("")})
                 )
                 .0,
-            501,
-            "{action}"
+            501
         );
     }
-    assert_eq!(fixture.act_err(json!({"action":"format"})).0, 400);
-    assert!(
-        fixture
-            .root
-            .join("readonly")
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_none()
-    );
-    assert!(outside.path().read_dir().unwrap().next().is_none());
 }
 
 #[cfg(unix)]
 #[test]
-fn symlinks_inside_root_are_refused_as_destination_source_and_leaf() {
+fn writes_resolve_symlink_parents_but_rename_and_trash_the_leaf_link() {
     let fixture = Fixture::new();
     let outside = tempfile::tempdir().unwrap();
     std::os::unix::fs::symlink(outside.path(), fixture.write.join("escape")).unwrap();
@@ -233,93 +174,97 @@ fn symlinks_inside_root_are_refused_as_destination_source_and_leaf() {
         fixture.write.join("victim-link"),
     )
     .unwrap();
-    assert_eq!(
-        fixture.act_err(json!({"action":"mkdir","destination":fixture.w("escape"),"name":"x"})),
-        (403, "file_symlink_forbidden")
-    );
-    assert_eq!(
-        fixture.act_err(
-            json!({"action":"upload","destination":fixture.w("escape"),"name":"x","size":1})
-        ),
-        (403, "file_symlink_forbidden")
-    );
-    assert_eq!(
-        fixture.act_err(json!({"action":"rename","paths":[fixture.w("escape")],"name":"renamed"})),
-        (403, "file_symlink_forbidden")
-    );
-    assert_eq!(
-        fixture.act_err(json!({"action":"delete","paths":[fixture.w("victim-link")]})),
-        (403, "file_symlink_forbidden")
-    );
-    assert_eq!(
-        fixture.act_err(
-            json!({"action":"move","paths":[fixture.w("sub")],"destination":fixture.w("escape")})
-        ),
-        (403, "file_symlink_forbidden")
-    );
-    assert!(outside.path().join("x").symlink_metadata().is_err());
-    assert_eq!(
-        fs::read(outside.path().join("victim.txt")).unwrap(),
-        b"outside"
-    );
+    let created = fixture
+        .act(json!({"action":"mkdir","destination":fixture.w("escape"),"name":"x"}))
+        .unwrap();
+    assert_eq!(created.status, 200, "{}", created.body);
+    assert!(outside.path().join("x").is_dir());
+    let renamed = fixture
+        .act(json!({"action":"rename","paths":[fixture.w("escape")],"name":"renamed"}))
+        .unwrap();
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
     assert!(
         fixture
             .write
-            .join("escape")
+            .join("renamed")
             .symlink_metadata()
             .unwrap()
             .is_symlink()
     );
-    assert!(fixture.trash_entries().is_empty());
+    let deleted = fixture
+        .act(json!({"action":"delete","paths":[fixture.w("victim-link")]}))
+        .unwrap();
+    assert_eq!(deleted.status, 200, "{}", deleted.body);
+    assert!(!fixture.write.join("victim-link").exists());
+    assert_eq!(
+        fs::read(outside.path().join("victim.txt")).unwrap(),
+        b"outside"
+    );
+    assert_eq!(fixture.trash_entries().len(), 1);
 }
 
 #[cfg(unix)]
 #[test]
-fn multiply_linked_files_are_readable_but_never_moved_renamed_or_deleted() {
-    let mut fixture = Fixture::new();
+fn moving_and_deleting_a_hardlink_alias_preserves_the_other_alias() {
+    let fixture = Fixture::new();
     fs::write(fixture.write.join("shared.txt"), b"shared").unwrap();
     fs::hard_link(
         fixture.write.join("shared.txt"),
         fixture.write.join("alias.txt"),
     )
     .unwrap();
-    fixture
-        .messages
-        .push(json!({"role":"assistant","text":"`alias.txt`"}));
-    // Read side: an ordinary file for listing and reading.
-    let target = fixture
-        .reader
-        .target(&fixture.scope(), "alias.txt", None)
-        .unwrap();
-    assert_eq!(target.kind(), "file");
-    let listing = fixture
-        .reader
-        .list(&fixture.anchor(), &ListOptions::default())
-        .unwrap();
-    assert!(
-        listing["entries"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["name"] == "alias.txt" && row["kind"] == "file")
-    );
-    // Write side: neither alias may be detached from the shared data.
     for body in [
         json!({"action":"rename","paths":[fixture.w("alias.txt")],"name":"renamed.txt"}),
-        json!({"action":"move","paths":[fixture.w("alias.txt")],"destination":fixture.w("sub")}),
-        json!({"action":"delete","paths":[fixture.w("shared.txt")]}),
+        json!({"action":"move","paths":[fixture.w("renamed.txt")],"destination":fixture.w("sub")}),
+        json!({"action":"delete","paths":[fixture.w("sub/renamed.txt")]}),
     ] {
-        assert_eq!(fixture.act_err(body), (403, "file_hardlink_forbidden"));
+        let result = fixture.act(body).unwrap();
+        assert_eq!(result.status, 200, "{}", result.body);
+        assert_eq!(
+            fs::read(fixture.write.join("shared.txt")).unwrap(),
+            b"shared"
+        );
     }
+    assert_eq!(fixture.trash_entries().len(), 1);
+}
+
+#[test]
+fn replace_preserves_old_destination_in_trash_and_large_upload_defaults_match_python() {
+    let fixture = Fixture::new();
+    fs::write(fixture.write.join("source.txt"), b"new content").unwrap();
+    fs::write(fixture.write.join("destination.txt"), b"old content").unwrap();
+    let result = fixture
+        .act(json!({"action":"rename","paths":[fixture.w("source.txt")],
+        "name":"destination.txt","conflict":"replace"}))
+        .unwrap();
+    assert_eq!(result.status, 200, "{}", result.body);
     assert_eq!(
-        fs::read(fixture.write.join("alias.txt")).unwrap(),
-        b"shared"
+        fs::read(fixture.write.join("destination.txt")).unwrap(),
+        b"new content"
     );
+    let trash = fixture.trash_entries();
+    assert_eq!(trash.len(), 1);
+    assert_eq!(fs::read(&trash[0]).unwrap(), b"old content");
+    let large = fixture.start_upload("large.bin", 1024 * 1024 * 1024 * 1024, json!({}));
+    assert_eq!(large["state"], "uploading");
+    assert_eq!(fixture.writer.limits().max_chunk_bytes, 8 * 1024 * 1024);
+}
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_rename_preserves_link_without_following_its_missing_target() {
+    let fixture = Fixture::new();
+    let missing = fixture.write.join("does-not-exist");
+    std::os::unix::fs::symlink(&missing, fixture.write.join("dangling")).unwrap();
+    let result = fixture
+        .act(json!({"action":"rename","paths":[fixture.w("dangling")],"name":"renamed"}))
+        .unwrap();
+    assert_eq!(result.status, 200, "{}", result.body);
     assert_eq!(
-        fs::read(fixture.write.join("shared.txt")).unwrap(),
-        b"shared"
+        fs::read_link(fixture.write.join("renamed")).unwrap(),
+        missing
     );
-    assert!(fixture.trash_entries().is_empty());
+    assert!(!missing.exists());
 }
 
 #[cfg(unix)]
@@ -382,7 +327,8 @@ fn component_swapped_for_symlink_between_resolve_and_write_is_detected() {
 }
 
 #[test]
-fn root_replaced_mid_job_is_refused_and_nothing_lands_in_the_replacement() {
+#[cfg(not(windows))]
+fn existing_upload_rejects_replacement_but_new_requests_can_use_the_new_directory() {
     let fixture = Fixture::new();
     let job = fixture.start_upload("moved-root.bin", 4, json!({}));
     let id = job["id"].as_str().unwrap().to_owned();
@@ -392,11 +338,13 @@ fn root_replaced_mid_job_is_refused_and_nothing_lands_in_the_replacement() {
     fs::create_dir(&fixture.write).unwrap();
     let error = fixture.upload(&id, 2, b"cd").err().unwrap();
     assert_eq!(error.code, "file_changed");
-    assert_eq!(
-        fixture.act_err(json!({"action":"mkdir","destination":fixture.w(""),"name":"x"})),
-        (409, "file_changed")
-    );
-    assert!(fixture.write.read_dir().unwrap().next().is_none());
+    let fresh = fixture
+        .act(json!({"action":"mkdir","destination":fixture.w(""),"name":"x"}))
+        .unwrap();
+    assert_eq!(fresh.status, 200, "{}", fresh.body);
+    assert!(fixture.write.join("x").is_dir());
+    assert!(!fixture.write.join("moved-root.bin").exists());
+    fs::remove_dir(fixture.write.join("x")).unwrap();
     fs::remove_dir(&fixture.write).unwrap();
     fs::rename(&old, &fixture.write).unwrap();
     assert_eq!(fixture.upload(&id, 2, b"cd").unwrap().status, 200);
@@ -673,10 +621,10 @@ fn actions_move_within_one_root_and_delete_into_root_trash_with_partial_results(
         fixture.act_err(json!({"action":"move","paths":[fixture.w("dest/sub")],"destination":fixture.w("dest/sub")})),
         (400, "file_move_into_self")
     );
-    assert_eq!(
-        fixture.act_err(json!({"action":"move","paths":[fixture.w("dest/a.txt")],"destination":fixture.root.join("w2").to_str().unwrap()})),
-        (403, "file_move_cross_root")
-    );
+    let result = fixture.act(json!({"action":"move","paths":[fixture.w("dest/a.txt")],"destination":fixture.root.join("w2")})).unwrap();
+    assert_eq!(result.status, 200, "{}", result.body);
+    let result = fixture.act(json!({"action":"move","paths":[fixture.root.join("w2/a.txt")],"destination":fixture.w("dest")})).unwrap();
+    assert_eq!(result.status, 200, "{}", result.body);
     let before = fs::read(fixture.write.join("dest/a.txt")).unwrap();
     let outcome = fixture.act(json!({"action":"delete","paths":[fixture.w("dest/a.txt"), fixture.w("dest/sub"), fixture.w("nope")]})).unwrap();
     assert_eq!(outcome.status, 200);
@@ -699,7 +647,10 @@ fn actions_move_within_one_root_and_delete_into_root_trash_with_partial_results(
             .unwrap();
     assert_eq!(manifest["path"], fixture.w("dest/a.txt"));
     assert_eq!(manifest["uid"], "claude:synthetic");
-    assert_eq!(job["completed"][0]["trash"]["path"], file.to_str().unwrap());
+    assert_eq!(
+        job["completed"][0]["trash"]["path"],
+        boundary::wire_path(file).unwrap()
+    );
     assert_eq!(
         fs::read(
             trashed
@@ -737,12 +688,10 @@ fn actions_move_within_one_root_and_delete_into_root_trash_with_partial_results(
 }
 
 #[test]
-fn limits_expiry_cancel_and_scope_binding_are_explicit() {
+fn upload_sizes_cancel_and_scope_binding_match_file_manager() {
     let fixture = Fixture::with_limits(WriteLimits {
-        max_jobs: 2,
         max_job_bytes: 8,
         max_chunk_bytes: 4,
-        expiry: Duration::from_millis(50),
     });
     let error = fixture
         .act(json!({"action":"upload","destination":fixture.w(""),"name":"big","size":9}))
@@ -754,14 +703,6 @@ fn limits_expiry_cancel_and_scope_binding_are_explicit() {
     );
     let first = fixture.start_upload("one", 8, json!({}));
     let _second = fixture.start_upload("two", 8, json!({}));
-    let error = fixture
-        .act(json!({"action":"upload","destination":fixture.w(""),"name":"three","size":8}))
-        .err()
-        .unwrap();
-    assert_eq!(
-        (error.status, error.code, error.details["limit"].as_u64()),
-        (429, "file_jobs_limit", Some(2))
-    );
     assert_eq!(
         fixture.write.join(UPLOAD_DIR).read_dir().unwrap().count(),
         2
@@ -790,59 +731,36 @@ fn limits_expiry_cancel_and_scope_binding_are_explicit() {
             .status,
         200
     );
-    let error = fixture.act(json!({"action":"delete","paths":(0..257).map(|i| fixture.w(&format!("f{i}"))).collect::<Vec<_>>()})).err().unwrap();
+    let error = fixture.act(json!({"action":"delete","paths":(0..2001).map(|i| fixture.w(&format!("f{i}"))).collect::<Vec<_>>()})).err().unwrap();
     assert_eq!((error.status, error.code), (413, "file_items_limit"));
-    fixture.writer.registry().expire_all();
-    let error = fixture
+    fixture
         .upload(third["id"].as_str().unwrap(), 4, b"efgh")
-        .err()
         .unwrap();
-    assert_eq!((error.status, error.code), (410, "file_job_expired"));
-    assert!(
-        fixture
-            .write
-            .join(UPLOAD_DIR)
-            .read_dir()
-            .unwrap()
-            .next()
-            .is_none(),
-        "expired staging removed"
-    );
     assert_eq!(
         fixture.writer.jobs(&fixture.scope())["jobs"]
             .as_array()
             .unwrap()
             .len(),
-        0
+        3
     );
     assert_eq!(
         fixture.upload(&"0".repeat(32), 0, b"").err().unwrap().code,
         "file_job_unknown"
     );
-    // Roots must be explicit and non-overlapping; limits must be positive.
-    assert_eq!(
-        WriteService::open(vec![], WriteLimits::default(), None)
-            .err()
-            .unwrap()
-            .code,
-        "file_write_roots_required"
-    );
-    assert_eq!(
+    assert!(WriteService::open(vec![], WriteLimits::default(), None).is_ok());
+    assert!(
         WriteService::open(
             vec![fixture.write.clone(), fixture.write.join("sub")],
             WriteLimits::default(),
             None
         )
-        .err()
-        .unwrap()
-        .code,
-        "file_write_roots_overlap"
+        .is_ok()
     );
     assert_eq!(
         WriteService::open(
             vec![fixture.write.clone()],
             WriteLimits {
-                max_jobs: 0,
+                max_chunk_bytes: 0,
                 ..Default::default()
             },
             None
@@ -852,17 +770,14 @@ fn limits_expiry_cancel_and_scope_binding_are_explicit() {
         .code,
         "file_write_limits_invalid"
     );
-    // The trash lives in the private state directory, never inside a write root.
-    assert_eq!(
+    // Roots enable the feature; actual private-state guards protect mutations.
+    assert!(
         WriteService::open(
             vec![fixture.write.clone()],
             WriteLimits::default(),
             Some(fixture.write.join("sub"))
         )
-        .err()
-        .unwrap()
-        .code,
-        "file_trash_overlap"
+        .is_ok()
     );
     let without_trash =
         WriteService::open(vec![fixture.write.clone()], WriteLimits::default(), None).unwrap();
@@ -890,6 +805,152 @@ fn limits_expiry_cancel_and_scope_binding_are_explicit() {
             .any(|action| action == "delete")
     );
     assert!(fixture.writer.writable(&fixture.write.join("anything")));
-    assert!(!fixture.writer.writable(&fixture.root.join("readonly")));
+    assert!(fixture.writer.writable(&fixture.root.join("readonly")));
     assert_eq!(fixture.writer.capabilities()["chunk_bytes"], 4);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn cross_device_moves_and_trash_preserve_trees_links_and_recoverable_originals() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+    let fixture = Fixture::new();
+    let destination = match tempfile::tempdir_in("/dev/shm") {
+        Ok(dir) => dir,
+        Err(error) => {
+            eprintln!("SKIP cross-device fixture: {error}");
+            return;
+        }
+    };
+    if fs::metadata(destination.path()).unwrap().dev()
+        == fs::metadata(&fixture.write).unwrap().dev()
+    {
+        eprintln!("SKIP: /dev/shm and fixture have the same device");
+        return;
+    }
+    fs::create_dir_all(fixture.write.join("tree/sub")).unwrap();
+    fs::write(fixture.write.join("tree/sub/note"), b"cross-device bytes").unwrap();
+    fs::hard_link(
+        fixture.write.join("tree/sub/note"),
+        fixture.write.join("tree/hard-alias"),
+    )
+    .unwrap();
+    fs::set_permissions(
+        fixture.write.join("tree/sub/note"),
+        fs::Permissions::from_mode(0o640),
+    )
+    .unwrap();
+    let victim = fixture.root.join("keep-target");
+    fs::write(&victim, b"link target untouched").unwrap();
+    symlink(&victim, fixture.write.join("tree/absolute-link")).unwrap();
+    symlink("missing", fixture.write.join("tree/dangling")).unwrap();
+    let moved = fixture
+        .act(json!({"action":"move","paths":[fixture.w("tree")],"destination":destination.path()}))
+        .unwrap();
+    assert_eq!(moved.status, 200, "{}", moved.body);
+    assert!(!fixture.write.join("tree").exists());
+    let target = destination.path().join("tree");
+    assert_eq!(
+        fs::read(target.join("sub/note")).unwrap(),
+        b"cross-device bytes"
+    );
+    assert_eq!(
+        fs::metadata(target.join("sub/note"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+    assert_eq!(fs::read_link(target.join("absolute-link")).unwrap(), victim);
+    assert_eq!(
+        fs::read_link(target.join("dangling")).unwrap(),
+        PathBuf::from("missing")
+    );
+    let recovered = fixture.trash_entries();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(
+        fs::read(recovered[0].join("sub/note")).unwrap(),
+        b"cross-device bytes"
+    );
+    // The destination tree now lives on another device from the private trash.
+    let deleted = fixture
+        .act(json!({"action":"delete","paths":[target]}))
+        .unwrap();
+    assert_eq!(deleted.status, 200, "{}", deleted.body);
+    assert!(!target.exists());
+    assert_eq!(fixture.trash_entries().len(), 2);
+    assert_eq!(fs::read(&victim).unwrap(), b"link target untouched");
+    // Ordinary file moves must also retain their original, rather than unlink it.
+    fs::write(fixture.write.join("single"), b"regular original").unwrap();
+    let moved = fixture
+        .act(
+            json!({"action":"move","paths":[fixture.w("single")],"destination":destination.path()}),
+        )
+        .unwrap();
+    assert_eq!(moved.status, 200, "{}", moved.body);
+    assert_eq!(
+        fs::read(destination.path().join("single")).unwrap(),
+        b"regular original"
+    );
+    assert!(!fixture.write.join("single").exists());
+    assert!(
+        fixture
+            .trash_entries()
+            .iter()
+            .any(|p| p.file_name().unwrap() == "single"
+                && fs::read(p).unwrap() == b"regular original")
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn copied_directory_symlink_is_removed_as_a_link_without_traversing_it() {
+    use std::os::windows::fs::symlink_dir;
+
+    let temp = tempfile::tempdir().unwrap();
+    let target = temp.path().join("target");
+    let source = temp.path().join("source-link");
+    let destination = temp.path().join("copied-link");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("kept.txt"), b"target remains").unwrap();
+    if let Err(error) = symlink_dir(&target, &source) {
+        eprintln!("SKIP directory symlink unavailable: {error}");
+        return;
+    }
+
+    super::write::copy_then_remove_entry_for_test(&source, &destination).unwrap();
+
+    assert!(fs::symlink_metadata(&source).is_err());
+    assert!(
+        fs::symlink_metadata(&destination)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read(destination.join("kept.txt")).unwrap(),
+        b"target remains"
+    );
+    assert_eq!(
+        fs::read(target.join("kept.txt")).unwrap(),
+        b"target remains"
+    );
+}
+
+#[test]
+fn attachment_above_the_old_32_mib_cap_is_saved_without_truncation() {
+    let fixture = Fixture::new();
+    let payload = vec![b'x'; 33 * 1024 * 1024];
+    let result = fixture
+        .writer
+        .bug_report_upload(
+            &fixture.root,
+            Some("1"),
+            "large.bin",
+            "application/octet-stream",
+            &payload,
+        )
+        .unwrap();
+    let path = result["path"].as_str().unwrap();
+    assert_eq!(fs::read(path).unwrap(), payload);
 }

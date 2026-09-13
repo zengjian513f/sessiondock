@@ -1,26 +1,17 @@
-//! Bounded, best-effort browser diagnostics intake (M7).
+//! Best-effort browser diagnostics intake.
 //!
 //! The legacy page posts small batches of browser-side receipts to
-//! `POST /api/audit/browser`. This module accepts them only when an explicit
-//! private `SESSIONDOCK_AUDIT_DIR` is configured, and it is designed so that
-//! diagnostics can never change request-handling semantics:
+//! `POST /api/audit/browser`. When `SESSIONDOCK_AUDIT_DIR` is configured,
+//! diagnostics are queued without waiting for disk:
 //!
-//! * Every request is admitted before its body is copied: shutdown, per-client
-//!   token bucket, an in-flight parse permit and the queue byte budget are all
-//!   checked first, using `Content-Length` as the upper bound. A saturated queue
-//!   answers `202` with `dropped:true` without reading the body at all.
-//! * Only structured metadata survives: the client `content` field (message
-//!   text, composer drafts, outbox items) is skipped by the deserializer and
-//!   never allocated; request headers are never read; secret-looking keys are
-//!   redacted; absolute filesystem paths are replaced by `<path>`; strings,
-//!   arrays, objects, depth and the serialized `data` size are bounded.
+//! * The HTTP route applies Python's 4 MiB body and 100-event limits.
+//! * Only structured metadata survives. The client `content` field is parsed
+//!   with the request but is not retained. Secret keys are redacted and nested
+//!   diagnostic data stops after Python's depth 12.
 //! * The writer is a dedicated OS thread fed by a `std::sync::mpsc` channel
-//!   bounded by both batch count and total bytes. Producers use `try_send`;
-//!   they never block and never wait for disk.
-//! * Records are appended as JSONL to `<dir>/browser-YYYY-MM-DD.jsonl`,
-//!   rotated by size into `browser-YYYY-MM-DD.NNNN.jsonl`, with a total-bytes
-//!   retention cap that deletes the oldest segments first (never the active one
-//!   and never files that do not match the segment pattern).
+//!   using Python's 20,000-item queue bound. Producers use `try_send`.
+//! * Records are appended to one JSONL file per UTC day. Matching daily files
+//!   older than Python's 14-day retention window are removed.
 //! * Durability policy: every batch is written with one `write_all`; the file is
 //!   `fdatasync`ed when the writer has been idle for one second after writes,
 //!   when a segment is rotated out, and during graceful shutdown. Losing the
@@ -30,7 +21,6 @@
 //!   and counts anything beyond it as dropped.
 
 mod intake;
-mod limiter;
 pub mod query;
 mod writer;
 
@@ -40,23 +30,22 @@ mod tests;
 use std::{
     io,
     net::IpAddr,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use serde::Serialize;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 pub use intake::{Batch, Rejection};
 
-/// Operating budgets. The defaults are the production values; tests and fault
-/// injection lower them explicitly through `Config::audit_limits`.
+/// Python's protocol limits plus shutdown and fault-injection controls.
 #[derive(Clone)]
 pub struct Limits {
     /// Route body limit. It matches the Python service's 4 MiB because the
@@ -66,22 +55,8 @@ pub struct Limits {
     pub body_bytes: usize,
     /// Events per request; more is `413` like the Python service.
     pub max_events: usize,
-    /// Serialized `data` budget per event after sanitization.
-    pub data_bytes: usize,
-    /// Queue capacity in batches (channel bound).
+    /// Python `audit.QUEUE_LIMIT`; the Rust channel carries prepared batches.
     pub queue_batches: usize,
-    /// Queue capacity in bytes of prepared JSONL.
-    pub queue_bytes: usize,
-    /// Concurrent body reads/parses.
-    pub in_flight: usize,
-    /// Token bucket refill per client IP.
-    pub rate_per_second: f64,
-    /// Token bucket capacity per client IP.
-    pub burst: u32,
-    /// Size-based segment rotation threshold.
-    pub file_bytes: u64,
-    /// Total bytes retained across all segments before the oldest are deleted.
-    pub retained_bytes: u64,
     /// How long graceful shutdown waits for the writer to drain.
     pub shutdown_deadline: Duration,
     /// Fault injection: while held, the writer does not write. Tests use it to
@@ -94,26 +69,10 @@ impl Default for Limits {
         Self {
             body_bytes: 4 * 1024 * 1024,
             max_events: 100,
-            data_bytes: 8 * 1024,
-            queue_batches: 256,
-            queue_bytes: 4 * 1024 * 1024,
-            in_flight: 4,
-            rate_per_second: 10.0,
-            burst: 40,
-            file_bytes: 8 * 1024 * 1024,
-            retained_bytes: 64 * 1024 * 1024,
+            queue_batches: 20_000,
             shutdown_deadline: Duration::from_secs(2),
             gate: None,
         }
-    }
-}
-
-impl Limits {
-    /// Upper bound of one prepared batch: every event is limited to its data
-    /// budget plus the bounded envelope fields.
-    pub fn batch_bytes(&self) -> usize {
-        self.max_events
-            .saturating_mul(self.data_bytes.saturating_add(intake::EVENT_OVERHEAD))
     }
 }
 
@@ -171,7 +130,6 @@ struct Counters {
     accepted_batches: AtomicU64,
     rejected_events: AtomicU64,
     rejected_requests: AtomicU64,
-    rate_limited_requests: AtomicU64,
     dropped_events: AtomicU64,
     dropped_batches: AtomicU64,
     written_events: AtomicU64,
@@ -189,7 +147,6 @@ pub struct Snapshot {
     pub accepted_batches: u64,
     pub rejected_events: u64,
     pub rejected_requests: u64,
-    pub rate_limited_requests: u64,
     pub dropped_events: u64,
     pub dropped_batches: u64,
     pub written_events: u64,
@@ -210,23 +167,8 @@ struct Shared {
 }
 
 impl Shared {
-    fn reserve(&self, bytes: usize) -> bool {
-        let mut current = self.queued_bytes.load(Ordering::Acquire);
-        loop {
-            let next = match current.checked_add(bytes) {
-                Some(next) if next <= self.limits.queue_bytes => next,
-                _ => return false,
-            };
-            match self.queued_bytes.compare_exchange_weak(
-                current,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return true,
-                Err(observed) => current = observed,
-            }
-        }
+    fn reserve(&self, bytes: usize) {
+        self.queued_bytes.fetch_add(bytes, Ordering::AcqRel);
     }
 
     fn release(&self, bytes: usize) {
@@ -242,7 +184,6 @@ impl Shared {
             accepted_batches: load(&counters.accepted_batches),
             rejected_events: load(&counters.rejected_events),
             rejected_requests: load(&counters.rejected_requests),
-            rate_limited_requests: load(&counters.rate_limited_requests),
             dropped_events: load(&counters.dropped_events),
             dropped_batches: load(&counters.dropped_batches),
             written_events: load(&counters.written_events),
@@ -259,8 +200,6 @@ impl Shared {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     Closed,
-    RateLimited { retry_after: Duration },
-    Busy,
 }
 
 /// Result of a submitted batch. `dropped` means the queue had no capacity;
@@ -273,64 +212,38 @@ pub struct Outcome {
     pub dropped: bool,
 }
 
-/// Admission ticket: holds the in-flight parse permit and the transient byte
-/// reservation until the batch is either queued or abandoned.
+/// Admission ticket proving the service was open when body reading began.
 pub struct Admission {
-    shared: Arc<Shared>,
-    reserved: Option<usize>,
-    _permit: OwnedSemaphorePermit,
-}
-
-impl Admission {
-    /// True when the queue refused the estimated batch: respond without
-    /// reading the body.
-    pub fn dropped(&self) -> bool {
-        self.reserved.is_none()
-    }
+    _private: (),
 }
 
 impl std::fmt::Debug for Admission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Admission")
-            .field("reserved", &self.reserved)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Drop for Admission {
-    fn drop(&mut self) {
-        if let Some(bytes) = self.reserved.take() {
-            self.shared.release(bytes);
-        }
+        formatter.debug_struct("Admission").finish_non_exhaustive()
     }
 }
 
 pub struct AuditService {
     shared: Arc<Shared>,
     tx: mpsc::SyncSender<Batch>,
-    limiter: Mutex<limiter::Limiter>,
-    in_flight: Arc<Semaphore>,
     done: watch::Receiver<bool>,
     shutdown: CancellationToken,
 }
 
 impl AuditService {
-    /// Starts the writer thread for an already validated private directory.
+    /// Creates the directory when needed and starts the writer thread.
     /// No file is created until the first batch arrives.
     pub fn open(
         directory: PathBuf,
         limits: Limits,
         shutdown: CancellationToken,
     ) -> io::Result<Self> {
-        if !directory.is_absolute() || !directory.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "audit requires an explicit existing absolute directory",
-            ));
+        std::fs::create_dir_all(&directory)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700));
         }
-        let limiter = limiter::Limiter::new(limits.burst, limits.rate_per_second);
-        let in_flight = Arc::new(Semaphore::new(limits.in_flight.max(1)));
         let (tx, rx) = mpsc::sync_channel(limits.queue_batches.max(1));
         let shared = Arc::new(Shared {
             limits,
@@ -343,7 +256,7 @@ impl AuditService {
         let (done_tx, done) = watch::channel(false);
         let worker = writer::Writer::new(directory, shared.clone(), shutdown.clone());
         std::thread::Builder::new()
-            .name("agenthub-audit".into())
+            .name("sessiondock-audit".into())
             .spawn(move || {
                 worker.run(rx);
                 let _ = done_tx.send(true);
@@ -351,8 +264,6 @@ impl AuditService {
         Ok(Self {
             shared,
             tx,
-            limiter: Mutex::new(limiter),
-            in_flight,
             done,
             shutdown,
         })
@@ -375,54 +286,12 @@ impl AuditService {
             .fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Cheap checks that run before the request body is copied. The byte
-    /// reservation uses the declared length (capped by the batch bound) as an
-    /// upper estimate and is shrunk to the prepared size on submission.
-    pub fn admit(
-        &self,
-        client: IpAddr,
-        content_length: Option<usize>,
-    ) -> Result<Admission, Refusal> {
+    /// Check shutdown before the request body is copied.
+    pub fn admit(&self) -> Result<Admission, Refusal> {
         if self.shutdown.is_cancelled() || self.shared.stop.load(Ordering::Acquire) {
             return Err(Refusal::Closed);
         }
-        let now = Instant::now();
-        let wait = self
-            .limiter
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take(client, now);
-        if let Some(retry_after) = wait {
-            self.shared
-                .counters
-                .rate_limited_requests
-                .fetch_add(1, Ordering::Relaxed);
-            return Err(Refusal::RateLimited { retry_after });
-        }
-        let permit = self
-            .in_flight
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| Refusal::Busy)?;
-        let bound = self.shared.limits.batch_bytes();
-        let estimate = content_length.map_or(bound, |length| length.min(bound));
-        let reserved = if self.shared.queued_batches.load(Ordering::Acquire)
-            < self.shared.limits.queue_batches
-            && self.shared.reserve(estimate)
-        {
-            Some(estimate)
-        } else {
-            self.shared
-                .counters
-                .dropped_batches
-                .fetch_add(1, Ordering::Relaxed);
-            None
-        };
-        Ok(Admission {
-            shared: self.shared.clone(),
-            reserved,
-            _permit: permit,
-        })
+        Ok(Admission { _private: () })
     }
 
     /// Validates the body, builds the immutable JSONL snapshot and hands it to
@@ -430,22 +299,15 @@ impl AuditService {
     /// client; invalid individual events are skipped and counted.
     pub fn submit(
         &self,
-        mut admission: Admission,
+        _admission: Admission,
         client: IpAddr,
         body: &[u8],
     ) -> Result<Outcome, Rejection> {
-        let Some(reserved) = admission.reserved else {
-            return Ok(Outcome {
-                dropped: true,
-                ..Outcome::default()
-            });
-        };
         let limits = &self.shared.limits;
         let prepared = intake::prepare(
             body,
             client,
             limits.max_events,
-            limits.data_bytes,
             &self.shared.sequence,
             SystemTime::now(),
         )
@@ -468,24 +330,6 @@ impl AuditService {
         };
         let accepted = batch.events as usize;
         let actual = batch.bytes.len();
-        // Shrink (or, if the estimate was too small, top up) the reservation
-        // to the real snapshot size before the queue takes ownership of it.
-        if actual <= reserved {
-            self.shared.release(reserved - actual);
-        } else if !self.shared.reserve(actual - reserved) {
-            self.shared.release(reserved);
-            admission.reserved = None;
-            counters.dropped_batches.fetch_add(1, Ordering::Relaxed);
-            counters
-                .dropped_events
-                .fetch_add(accepted as u64, Ordering::Relaxed);
-            return Ok(Outcome {
-                accepted,
-                skipped: prepared.skipped,
-                dropped: true,
-            });
-        }
-        admission.reserved = Some(actual);
         if self.shutdown.is_cancelled() || self.shared.stop.load(Ordering::Acquire) {
             counters.dropped_batches.fetch_add(1, Ordering::Relaxed);
             counters
@@ -498,10 +342,9 @@ impl AuditService {
             });
         }
         self.shared.queued_batches.fetch_add(1, Ordering::AcqRel);
+        self.shared.reserve(actual);
         match self.tx.try_send(batch) {
             Ok(()) => {
-                // The writer releases the bytes once the batch leaves the queue.
-                admission.reserved = None;
                 counters.accepted_batches.fetch_add(1, Ordering::Relaxed);
                 counters
                     .accepted_events
@@ -514,6 +357,7 @@ impl AuditService {
             }
             Err(_) => {
                 self.shared.queued_batches.fetch_sub(1, Ordering::AcqRel);
+                self.shared.release(actual);
                 counters.dropped_batches.fetch_add(1, Ordering::Relaxed);
                 counters
                     .dropped_events
@@ -557,47 +401,13 @@ impl Drop for AuditService {
     }
 }
 
-/// Configuration check for `SESSIONDOCK_AUDIT_DIR`: an existing absolute
-/// directory without relative jumps, symlinked ancestors or, on Unix, group and
-/// world permissions. Returns the canonical path for overlap comparisons.
+/// Prepare the configured directory as Python's audit store does.
 pub fn validate_directory(path: &Path) -> io::Result<PathBuf> {
-    let invalid = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SESSIONDOCK_AUDIT_DIR requires an explicit existing absolute directory without relative jumps",
-        )
-    };
-    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
-        return Err(invalid());
+    std::fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
     }
-    for ancestor in path.ancestors() {
-        let metadata = std::fs::symlink_metadata(ancestor).map_err(|_| invalid())?;
-        #[cfg(windows)]
-        let reparse = {
-            use std::os::windows::fs::MetadataExt;
-            metadata.file_attributes() & 0x400 != 0
-        };
-        #[cfg(not(windows))]
-        let reparse = false;
-        if metadata.file_type().is_symlink() || reparse {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "audit directory and its ancestors must not be symlinks or reparse points",
-            ));
-        }
-        if !metadata.is_dir() {
-            return Err(invalid());
-        }
-        #[cfg(unix)]
-        if ancestor == path {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o777 != 0o700 {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "audit directory requires private owner-only permissions (0700)",
-                ));
-            }
-        }
-    }
-    path.canonicalize().map_err(|_| invalid())
+    path.canonicalize()
 }

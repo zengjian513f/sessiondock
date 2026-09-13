@@ -7,7 +7,7 @@ use indexmap::IndexMap;
 
 use super::*;
 use crate::runtime::procscan::{
-    ProcScanner, ProcTree, ScanLimits, SessionRoots,
+    ProcScanner, ProcTree, SessionRoots,
     tests::{FakeProc, session},
 };
 
@@ -297,7 +297,7 @@ fn results_are_memoised_per_scan_and_recorded_once() {
         BTreeMap::from([(sessions[1].uid.clone(), parent("claude", SID_CLAUDE))])
     );
     let empty = Arc::new(crate::runtime::procscan::scan(
-        Arc::new(ProcTree::open(proc.root.clone(), ScanLimits::default())),
+        Arc::new(ProcTree::open(proc.root.clone())),
         None,
         &SessionRoots::default(),
     ));

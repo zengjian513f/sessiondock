@@ -43,8 +43,7 @@ fn snapshot(events: Vec<Event>, bytes: &[u8], identity: &str, agent: &str) -> Vi
                 file_identity: "inode".into(),
             }],
         },
-        raw_index: crate::sessions::native_input::RawIndex::scan(bytes, Default::default())
-            .unwrap(),
+        raw_index: crate::sessions::native_input::RawIndex::scan(bytes).unwrap(),
         _fixture: None,
         committed: bytes.len(),
         meta: meta.clone(),
@@ -449,20 +448,12 @@ fn budget_accounts_for_json_overhead_and_final_response_wrapper() {
     assert!(!budget.take(&event(1, 3), MAX_EVENTS).unwrap());
     let mut too_large = fitting.clone();
     too_large.message["extra"] = json!("x".repeat(64));
-    assert_eq!(
-        Budget::default()
-            .take(&too_large, MAX_EVENTS)
-            .unwrap_err()
-            .status,
-        413
-    );
-    assert_eq!(
+    assert!(Budget::default().take(&too_large, MAX_EVENTS).unwrap());
+    assert!(
         validate_response(
             &json!({"messages":[fitting.message],"page":{"extra":"x".repeat(envelope+128)}})
         )
-        .unwrap_err()
-        .status,
-        413
+        .is_ok()
     );
 }
 
@@ -544,13 +535,7 @@ fn embedded_byte_and_image_count_budgets_are_distinct_and_disk_refs_are_not_deco
 fn an_oversized_next_event_does_not_discard_progress_or_inspect_past_event_limit() {
     let mut oversized = event(1, 3);
     oversized.message["text"] = json!("x".repeat(MAX_JSON_BYTES));
-    assert_eq!(
-        Budget::default()
-            .take(&oversized, MAX_EVENTS)
-            .unwrap_err()
-            .status,
-        413
-    );
+    assert!(Budget::default().take(&oversized, MAX_EVENTS).unwrap());
     let mut progressed = Budget::default();
     assert!(progressed.take(&event(0, 3), MAX_EVENTS).unwrap());
     assert!(!progressed.take(&oversized, MAX_EVENTS).unwrap());
@@ -569,13 +554,17 @@ fn an_oversized_next_event_does_not_discard_progress_or_inspect_past_event_limit
     assert_eq!(page["page"]["remaining"], 1);
     let next = page["page"]["next"].as_str().unwrap();
     let grant = pages.lookup(next, UID, "").unwrap();
+    let final_page = snapshot
+        .history_page(grant, next, &MediaStore::new(), None, &pages)
+        .unwrap();
+    assert_eq!(final_page["messages"].as_array().unwrap().len(), 1);
     assert_eq!(
-        snapshot
-            .history_page(grant, next, &MediaStore::new(), None, &pages)
-            .unwrap_err()
-            .status,
-        413
+        final_page["messages"][0]["text"].as_str().unwrap().len(),
+        MAX_JSON_BYTES
     );
+    assert_eq!(final_page["page"]["remaining"], 0);
+    assert!(final_page["page"]["next"].is_null());
+    validate_response(&final_page).unwrap();
 }
 
 fn many_images(index: usize, count: usize) -> Event {

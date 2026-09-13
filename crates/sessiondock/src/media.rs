@@ -14,30 +14,41 @@ pub(crate) use file_media::PreparedImage;
 pub(crate) use file_media::{failure, silent_failure};
 pub(crate) use native_media::NativeSpan;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+#[cfg(test)]
+use base64::engine::general_purpose::STANDARD;
+use base64::{
+    Engine as _, alphabet,
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
+};
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
+#[cfg(test)]
+use std::collections::BTreeSet;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicUsize, Ordering},
     },
 };
 
-pub const MAX_IMAGE_BYTES: usize = 3 * 1024 * 1024 / 2;
-pub const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_ITEMS: usize = 256;
-pub const MAX_CACHE_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_DIMENSION: u32 = 8192;
-pub const MAX_PIXELS: u64 = 16 * 1024 * 1024;
+/// Python `media.MAX_ITEM`: one decoded image may be at most 32 MiB.
+pub const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_ENCODED_BYTES: usize = MAX_IMAGE_BYTES * 4 / 3 + 16;
+pub const MAX_CACHE_BYTES: usize = 128 * 1024 * 1024;
+const CACHE_ITEMS: usize = 512;
+static PYTHON_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::RequireCanonical)
+        .with_decode_allow_trailing_bits(true),
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaError {
     Unsupported,
     Invalid,
     Limit,
-    Busy,
     Unavailable,
 }
 impl MediaError {
@@ -46,7 +57,7 @@ impl MediaError {
             Self::Unsupported => 501,
             Self::Invalid => 422,
             Self::Limit => 413,
-            Self::Busy | Self::Unavailable => 503,
+            Self::Unavailable => 503,
         }
     }
 }
@@ -55,8 +66,7 @@ impl std::fmt::Display for MediaError {
         f.write_str(match self {
             Self::Unsupported => "此媒体格式或编码特性尚未支持；外链不会自动读取",
             Self::Invalid => "媒体图片的编码、声明格式或文件结构无效",
-            Self::Limit => "图片大小、像素或媒体批次超过明确预算",
-            Self::Busy => "媒体缓存预算仍被在途响应占用，请稍后重试",
+            Self::Limit => "图片超过 32 MiB 限制",
             Self::Unavailable => "媒体服务暂不可用",
         })
     }
@@ -123,90 +133,72 @@ pub struct NativeImage {
 }
 impl NativeImage {
     pub fn from_block(block: &Value) -> Result<Option<Self>, String> {
-        Self::parse(block).map_err(|error| error.to_string())
+        Ok(Self::parse(block).ok().flatten())
     }
     fn parse(block: &Value) -> Result<Option<Self>, MediaError> {
-        let kind = block["type"].as_str().unwrap_or("");
-        let explicit = matches!(kind, "image" | "input_image" | "image_url")
-            || block.get("image_url").is_some()
-            || (kind == "file" && block["file"].is_object());
-        if !explicit {
-            return Ok(None);
-        }
-        let mut chosen: Option<(Mime, &str)> = None;
-        let mut reference: Option<String> = None;
         for object in [block.get("source"), block.get("file"), Some(block)]
             .into_iter()
             .flatten()
+            .filter(|object| object.is_object())
         {
-            if !object.is_object() {
-                return Err(MediaError::Invalid);
+            let first_text = |keys: &[&str]| {
+                keys.iter()
+                    .find_map(|key| object[*key].as_str().filter(|value| !value.is_empty()))
+            };
+            if let (Some(data), Some(mime)) = (
+                first_text(&["data", "base64"]),
+                first_text(&["media_type", "mime_type", "mimeType", "type"])
+                    .and_then(|value| Mime::parse(value).ok()),
+            ) && decoded_length(data).is_ok()
+            {
+                return Self::embedded(mime, data).map(Some);
             }
-            let mut data = None;
-            for key in ["data", "base64"] {
-                if let Some(value) = object.get(key) {
-                    let value = value.as_str().ok_or(MediaError::Invalid)?;
-                    if data.is_some_and(|prior| prior != value) {
-                        return Err(MediaError::Invalid);
+            let url = ["url", "image_url"].iter().find_map(|key| {
+                object[*key]
+                    .as_str()
+                    .or_else(|| object[*key]["url"].as_str())
+                    .filter(|value| !value.is_empty())
+            });
+            if let Some(url) = url {
+                if remote_reference(url) {
+                    return Self::file_reference(url.to_owned()).map(Some);
+                }
+                if let Some((head, data)) = url
+                    .strip_prefix("data:")
+                    .and_then(|url| url.split_once(','))
+                {
+                    if head.contains(";base64")
+                        && let Some(mime) = head
+                            .split(';')
+                            .next()
+                            .and_then(|value| Mime::parse(value).ok())
+                        && decoded_length(data).is_ok()
+                    {
+                        return Self::embedded(mime, data).map(Some);
                     }
-                    data = Some(value);
+                } else if let Ok(reference) = crate::files::normalize_media_ref(url) {
+                    return Self::file_reference(reference).map(Some);
                 }
             }
-            if let Some(data) = data {
-                let mut mime = None;
-                for key in ["media_type", "mime_type", "mimeType"] {
-                    if let Some(value) = object.get(key) {
-                        let value = Mime::parse(value.as_str().ok_or(MediaError::Invalid)?)?;
-                        if mime.is_some_and(|prior| prior != value) {
-                            return Err(MediaError::Invalid);
-                        }
-                        mime = Some(value);
-                    }
-                }
-                choose(&mut chosen, (mime.ok_or(MediaError::Invalid)?, data))?;
-            }
-            for key in ["url", "image_url"] {
-                if let Some(value) = object.get(key) {
-                    let url = value
-                        .as_str()
-                        .or_else(|| value["url"].as_str())
-                        .ok_or(MediaError::Invalid)?;
-                    let Some((head, payload)) = url
-                        .strip_prefix("data:")
-                        .and_then(|url| url.split_once(','))
-                    else {
-                        choose_reference(&mut reference, url)?;
-                        continue;
-                    };
-                    let mime = head
-                        .strip_suffix(";base64")
-                        .ok_or(MediaError::Unsupported)?;
-                    choose(&mut chosen, (Mime::parse(mime)?, payload))?;
-                }
-            }
-            if let Some(path) = object.get("path") {
-                choose_reference(&mut reference, path.as_str().ok_or(MediaError::Invalid)?)?;
+            if let Some(path) = object["path"].as_str()
+                && let Ok(reference) = crate::files::normalize_media_ref(path)
+            {
+                return Self::file_reference(reference).map(Some);
             }
         }
-        if let Some(reference) = reference {
-            if chosen.is_some() {
-                return Err(MediaError::Invalid);
-            }
-            return Self::file_reference(reference).map(Some);
-        }
-        let (mime, encoded) = chosen.ok_or(MediaError::Unsupported)?;
-        decoded_length(encoded)?;
-        let token = random_token()?;
-        Ok(Some(Self {
+        Ok(None)
+    }
+    fn embedded(mime: Mime, encoded: &str) -> Result<Self, MediaError> {
+        Ok(Self {
             source: Arc::new(ImageSource {
-                token,
+                token: random_token()?,
                 semantic: native_media::semantic(mime, &Sha1::digest(encoded).into()),
                 data: ImageData::Embedded {
                     mime,
                     encoded: encoded.into(),
                 },
             }),
-        }))
+        })
     }
     pub fn encoded_len(&self) -> usize {
         match &self.source.data {
@@ -228,7 +220,13 @@ impl NativeImage {
     }
     pub(crate) fn file_ref(&self) -> Option<&str> {
         match &self.source.data {
-            ImageData::FileReference(reference) => Some(reference),
+            ImageData::FileReference(reference) if !remote_reference(reference) => Some(reference),
+            _ => None,
+        }
+    }
+    pub(crate) fn remote_ref(&self) -> Option<&str> {
+        match &self.source.data {
+            ImageData::FileReference(reference) if remote_reference(reference) => Some(reference),
             _ => None,
         }
     }
@@ -245,39 +243,29 @@ impl NativeImage {
         })
     }
 }
+
+/// Python media._remote: preserve an HTTP(S) URL for the browser to load.
+pub(crate) fn remote_reference(reference: &str) -> bool {
+    let Some((scheme, rest)) = reference.split_once("://") else {
+        return false;
+    };
+    (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+        && !rest.split(['/', '?', '#']).next().unwrap_or("").is_empty()
+}
+
+pub(crate) fn remote_image(reference: &str) -> Value {
+    json!({"src": reference, "mime": "", "alt": "会话图片", "external": true})
+}
 fn random_token() -> Result<String, MediaError> {
     let mut random = [0u8; 16];
     getrandom::fill(&mut random).map_err(|_| MediaError::Unavailable)?;
     Ok(random.iter().map(|byte| format!("{byte:02x}")).collect())
 }
-fn choose_reference(chosen: &mut Option<String>, raw: &str) -> Result<(), MediaError> {
-    let reference = crate::files::normalize_media_ref(raw).map_err(|error| {
-        if error.status == 413 {
-            MediaError::Limit
-        } else {
-            MediaError::Unsupported
-        }
-    })?;
-    if chosen.as_ref().is_some_and(|prior| prior != &reference) {
-        return Err(MediaError::Invalid);
-    }
-    *chosen = Some(reference);
-    Ok(())
-}
-fn choose<'a>(
-    chosen: &mut Option<(Mime, &'a str)>,
-    candidate: (Mime, &'a str),
-) -> Result<(), MediaError> {
-    if chosen.is_some_and(|prior| prior != candidate) {
-        return Err(MediaError::Invalid);
-    }
-    *chosen = Some(candidate);
-    Ok(())
-}
 fn decoded_length(encoded: &str) -> Result<usize, MediaError> {
     if encoded.len() > MAX_ENCODED_BYTES {
         return Err(MediaError::Limit);
     }
+    let encoded = python_base64_payload(encoded);
     if encoded.is_empty() || !encoded.len().is_multiple_of(4) {
         return Err(MediaError::Invalid);
     }
@@ -295,6 +283,17 @@ fn decoded_length(encoded: &str) -> Result<usize, MediaError> {
         return Err(MediaError::Limit);
     }
     Ok(length)
+}
+
+/// Python accepts trailing padding after a complete four-character group.
+/// Partial groups still require canonical padding; the decoder validates them.
+fn python_base64_payload(encoded: &str) -> &str {
+    let unpadded = encoded.trim_end_matches('=');
+    if unpadded.len().is_multiple_of(4) {
+        unpadded
+    } else {
+        encoded
+    }
 }
 
 struct Budget {
@@ -340,7 +339,6 @@ struct Entry {
 struct Cache {
     entries: BTreeMap<String, Entry>,
     clock: u64,
-    in_flight: BTreeSet<String>,
 }
 pub struct MediaStore {
     descriptors: Mutex<descriptors::Descriptors>,
@@ -356,7 +354,7 @@ impl Default for MediaStore {
 }
 impl MediaStore {
     pub fn new() -> Self {
-        Self::with_limits(MAX_ITEMS, MAX_CACHE_BYTES)
+        Self::with_limits(CACHE_ITEMS, MAX_CACHE_BYTES)
     }
     fn with_limits(maximum_items: usize, bytes: usize) -> Self {
         Self {
@@ -368,7 +366,6 @@ impl MediaStore {
             cache: Mutex::new(Cache {
                 entries: BTreeMap::new(),
                 clock: 0,
-                in_flight: BTreeSet::new(),
             }),
             budget: Arc::new(Budget {
                 used: AtomicUsize::new(0),
@@ -381,11 +378,21 @@ impl MediaStore {
     /// eviction; failed batches publish no partially registered new tokens.
     #[cfg(test)]
     pub fn project(&self, images: &[NativeImage]) -> Result<Vec<Value>, MediaError> {
-        let images = images
-            .iter()
-            .map(PreparedImage::embedded)
-            .collect::<Result<Vec<_>, _>>()?;
-        self.project_prepared(&images)
+        let mut output = vec![Value::Null; images.len()];
+        let mut prepared = Vec::new();
+        let mut positions = Vec::new();
+        for (position, image) in images.iter().enumerate() {
+            if let Some(reference) = image.remote_ref() {
+                output[position] = remote_image(reference);
+            } else {
+                prepared.push(PreparedImage::embedded(image)?);
+                positions.push(position);
+            }
+        }
+        for (position, value) in positions.into_iter().zip(self.project_prepared(&prepared)?) {
+            output[position] = value;
+        }
+        Ok(output)
     }
     #[cfg(test)]
     pub(crate) fn project_prepared(
@@ -394,9 +401,6 @@ impl MediaStore {
     ) -> Result<Vec<Value>, MediaError> {
         if images.is_empty() {
             return Ok(Vec::new());
-        }
-        if images.len() > self.maximum_items {
-            return Err(MediaError::Limit);
         }
         let mut cache = self.cache.lock().map_err(|_| MediaError::Unavailable)?;
         let mut requested = BTreeMap::new();
@@ -408,11 +412,9 @@ impl MediaStore {
             }
         }
         let mut missing = Vec::new();
-        let mut batch_bytes = 0usize;
         let mut required = 0usize;
         for (&token, image) in &requested {
             let length = image.length()?;
-            batch_bytes = batch_bytes.checked_add(length).ok_or(MediaError::Limit)?;
             if let Some(entry) = cache.entries.get(token) {
                 if !image.matches_entry(entry) {
                     return Err(MediaError::Unavailable);
@@ -421,9 +423,6 @@ impl MediaStore {
                 required = required.checked_add(length).ok_or(MediaError::Limit)?;
                 missing.push((*image, length));
             }
-        }
-        if batch_bytes > self.budget.maximum {
-            return Err(MediaError::Limit);
         }
         let protected: BTreeSet<_> = requested.keys().copied().collect();
         while cache.entries.len() + missing.len() > self.maximum_items
@@ -440,9 +439,7 @@ impl MediaStore {
                 .filter(|(token, _)| !protected.contains(token.as_str()))
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(token, _)| token.clone());
-            let Some(candidate) = candidate else {
-                return Err(MediaError::Busy);
-            };
+            let Some(candidate) = candidate else { break };
             cache.entries.remove(&candidate);
         }
         // Only project increments the budget, under this lock. Blob destruction
@@ -553,6 +550,7 @@ impl MediaStore {
 
 fn inspect(mime: Mime, bytes: &[u8]) -> Result<(u32, u32), MediaError> {
     match mime {
+        Mime::Png => png(bytes),
         Mime::Jpeg => jpeg(bytes),
         mime => formats::inspect(mime.text(), bytes),
     }
@@ -581,12 +579,6 @@ fn tick(cache: &mut Cache) -> u64 {
 fn dimensions(width: u32, height: u32) -> Result<(u32, u32), MediaError> {
     if width == 0 || height == 0 {
         return Err(MediaError::Invalid);
-    }
-    if width > MAX_DIMENSION
-        || height > MAX_DIMENSION
-        || u64::from(width) * u64::from(height) > MAX_PIXELS
-    {
-        return Err(MediaError::Limit);
     }
     Ok((width, height))
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """No `AgentHub` brand residue in the served frontend (batch 44 WP-F, watcher F9/F10).
 
-Static check over the `legacy-web/` shell files (`index.html`, `files.html`,
-`file.html`, `manifest.webmanifest`, `service-worker.js`, `pwa-install.js`):
+Recursive static check over every HTML, JavaScript, CSS and manifest under
+`legacy-web/`, including generated notices/tooltips and nested credits pages:
 the installable identity (manifest name/short_name, `apple-mobile-web-app-title`,
 the install script's `data-app-name`), the service-worker cache name and
 offline text, every page `<title>` and the titles `files.js` / `file.js` set at
@@ -25,7 +25,7 @@ WEB = ROOT / "legacy-web"
 
 # Exact contract identifiers (docs/glossary.md "Names"): removed before the scan.
 WHITELIST = [
-    "AgentHubCapabilities", "AgentHubTypography", "AgentHubFilePreview",
+    "AgentHubCapabilities", "AgentHubTypography", "AgentHubFilePreview", "AgentHubCli", "agenthubLanguageForPath",
     "agenthub-capabilities", "agenthub-mode", "agenthub-build", "agenthub-highlight-ready",
     "__AGENTHUB_MODE__", "__AGENTHUB_HOSTNAME__", "__AGENTHUB_ASSET_VERSION__",
     "AGENTHUB_CLIS", "agenthubCli", "agenthubHighlight", "__agenthubConnectionId", "__agenthubPageId",
@@ -36,11 +36,14 @@ WHITELIST = [
     # One-time migration sources (docs/migration.md): read, copied forward, never written.
     "agenthub.hub.", "'agenthub.'", "agenthub-files-", "agenthub-shell-",
     # Python-side names quoted in comments/notices.
-    "agenthub_attachments", "/agenthub/", "AGENTHUB_TEST_", "AGENTHUB_SESSION",
+    "/agenthub/", "AGENTHUB_TEST_", "AGENTHUB_SESSION",
+    # Exact Python terminal identifiers used for interoperability, not UI prose.
+    "tmux:agenthub-", "`agenthub-${session.source}", "=== 'agenthub'",
 ]
-# The installable identity: every page, the manifest, the service worker and the
-# install script are scanned line by line (comments excluded).
-SCANNED = ["index.html", "files.html", "file.html", "manifest.webmanifest", "service-worker.js", "pwa-install.js"]
+# Scan the entire served textual frontend, including JS-generated tooltips,
+# nested credits pages and CSS; a shell-only scan misses ordinary UI copy.
+SCANNED = sorted(path.relative_to(WEB).as_posix() for path in WEB.rglob("*")
+                 if path.suffix in {".html", ".js", ".css", ".webmanifest"})
 COMMENT = re.compile(r"^\s*(?://|<!--|\*|/\*)")
 
 
@@ -59,8 +62,20 @@ def main():
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if COMMENT.match(line):
                 continue
-            if re.search(r"agenthub", stripped(line), re.IGNORECASE):
+            if re.search(r"agent\s*hub", stripped(line), re.IGNORECASE):
                 failures.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()[:160]}")
+
+    extra_sources = ["crates/ptyhost/src/main.rs", "crates/ptyhost/Cargo.toml",
+                     "crates/ptyhost-client/Cargo.toml", "web/index.html"]
+    extra_sources.extend(path.relative_to(ROOT).as_posix()
+                         for path in sorted((ROOT / "web/src").rglob("*"))
+                         if path.suffix in {".vue", ".ts", ".js", ".css", ".html", ".json"})
+    for name in extra_sources:
+        for number, line in enumerate((ROOT / name).read_text(encoding="utf-8").splitlines(), 1):
+            if COMMENT.match(line):
+                continue
+            if re.search(r"agent\s*hub", stripped(line), re.IGNORECASE):
+                failures.append(f"{name}:{number}: {line.strip()[:160]}")
 
     manifest = json.loads((WEB / "manifest.webmanifest").read_text(encoding="utf-8"))
     for field in ("name", "short_name"):
@@ -86,6 +101,8 @@ def main():
         for needle in needles:
             if needle not in text:
                 failures.append(f"legacy-web/{script}: missing runtime title {needle}")
+    if 'SessionDock 已更新。当前页面已停止发送，请重新加载。' not in (WEB / "app.js").read_text(encoding="utf-8"):
+        failures.append("legacy-web/app.js: stale-page notice does not name SessionDock")
     # Storage keys: files pages use `<namespace>files-*`, never `<namespace>agenthub-files-*`.
     files_js = (WEB / "files.js").read_text(encoding="utf-8")
     if "namespace + 'files-'" not in files_js or re.search(r"(?:store|restore)\('agenthub-files", files_js):
@@ -96,8 +113,8 @@ def main():
         for line in failures:
             print("  " + line)
         sys.exit(1)
-    print(f"PASS brand names check: {scanned} legacy-web shell files scanned; manifest/service worker/page titles/"
-          f"PWA identity say SessionDock; the remaining `agenthub` spellings are the {len(WHITELIST)} "
+    print(f"PASS brand names check: {scanned} legacy-web text files scanned; manifest/service worker/page titles/"
+          f"PWA identity and {len(extra_sources)} additional source files say SessionDock; the remaining `agenthub` spellings are the {len(WHITELIST)} "
           "whitelisted contract identifiers from docs/glossary.md")
 
 

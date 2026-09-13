@@ -10,9 +10,8 @@ of the lifecycle migration.
 ## Public library contract
 
 `open(directory, launcher_config, terminal, limits, cancellation_token)` only opens
-an initialized private ledger. It never initializes, selects defaults, resets
-corruption or discovers CLI homes. Configuration must provide disjoint private
-ledger/host roots and server-owned, versioned adapter definitions; see the store
+an initialized ledger. It never initializes, selects defaults, resets
+corruption or discovers CLI homes. Configuration supplies server-owned CLI definitions; see the store
 and launcher contracts. The passed terminal service must be the same instance
 used for browser claims. The caller must enforce configuration/root separation
 and HTTP authorization. The service never guesses native scope.
@@ -21,7 +20,7 @@ and HTTP authorization. The service never guesses native scope.
   performs one spawn, then returns its private receipt. Exact duplicates query
   the existing intent and cannot spawn again; conflicting specs fail.
 - `get(record_id)` and `list(offset, limit)` refresh launched records using exact
-  instance evidence. Lists are limited by the existing 128-record store budget.
+  instance evidence. Lists include all retained receipts without a fixed record quota.
 - `target(record_id)` performs a fresh observation and returns an immutable
   `Arc<LaunchTarget>` only for a verified Running, non-cancelled instance. This
   target still requires guarded revalidation when terminal ownership is claimed.
@@ -59,8 +58,7 @@ spawn result, release its capacity early or release the store lock prematurely.
 
 All store reads, JSON encoding, recovery, fsync, launcher validation/spawn and
 final store destruction run off the Tokio reactor. Only one such task is active
-per coordinator. Process-wide opening work has two permits and rejects excess
-open calls as Busy. The spawn/join operation is never timed out or aborted: after
+per coordinator. Opening work waits for its permit. The spawn/join operation is never timed out or aborted: after
 a successful OS spawn there is no safe timeout that can discard its Child.
 
 The library permit ends when a public method returns its private Record or target.
@@ -87,9 +85,8 @@ acceptance is inferred from readiness, terminal output or a timestamp.
 
 Every successful spawn immediately transfers its exact `std::process::Child` to
 a process-wide reaper before leaving blocking work. The reaper has one thread and
-128 fixed slots; capacity is reserved before creating a new durable intent. It
-uses `try_wait`, retains wait-error handles as unknown, and releases slots only on
-known child exit. It never kills children. No service/store is retained by the
+a growing collection of owned children. It uses `try_wait`, retains wait-error
+handles as unknown, and removes jobs only on known child exit. It never kills children. No service/store is retained by the
 reaper. Reopening in the same process can subscribe to a still-owned Child only
 by matching host root and complete record/name/source/launch/instance identity;
 completed jobs are removed, not retained as an unbounded tombstone map. Thus
@@ -135,17 +132,16 @@ kill. Already-exited exact status can finish cancellation without sending kill.
 
 Observations carry exact record ID, launch ID, instance ID and revision. The store
 rejects stale observations and old-handle cancellation tokens. The durable store
-retains its freeze-on-write-error and external-change policies, fixed receipt and
-byte budgets, and explicit non-Unix durability-unavailable behavior. Nothing here
+reloads current ledger data and reports actual persistence failures. Nothing here
 claims exactly-once external execution or support for arbitrary filesystems.
 
 ## Validation
 
-Synthetic service tests exercise bounded admission and stalled blocking work,
-dropped responses, shutdown and lock release, spawn rejection, idempotency,
+Synthetic service tests exercise queued admission and stalled blocking work,
+dropped responses, shutdown, spawn rejection, idempotency,
 guarded readiness/restart, fresh status, replacement and wrong-instance rejection,
 durable cancellation, ACK-without-exit uncertainty, lost responses, crash recovery,
-no duplicate kill, corruption/freeze, and uninitialized-directory rejection.
+no duplicate kill, corruption handling, and missing-ledger rejection.
 Store tests additionally cover strict schema migration, exact-revision evidence,
 old authorities and all injected cancellation persistence-failure boundaries.
 

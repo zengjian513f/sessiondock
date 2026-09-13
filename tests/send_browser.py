@@ -12,6 +12,7 @@ and is cleared before the prompt is pasted. A second page without a lease
 sees the documented ownership error while the first page holds the console.
 Finally a 390 px page sends from the composer through the server-held lease.
 """
+import base64
 import hashlib
 import json
 import os
@@ -25,6 +26,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from media_browser import PNG
 
 FAKE_CLI = REPO / "tests/fake_claude_cli.py"
 SETTINGS = "/synthetic/bridge-settings.json"
@@ -84,10 +86,14 @@ def user_messages(page):
 
 
 def wait_history(page, text, timeout=20000):
-    page.wait_for_function(
-        "text => [...document.querySelectorAll('#msgs .msg:not(.client-outbox)')].some(n => n.textContent.includes(text))"
-        " && !document.querySelector('#msgs .client-outbox')",
-        arg=text, timeout=timeout)
+    try:
+        page.wait_for_function(
+            "text => [...document.querySelectorAll('#msgs .msg:not(.client-outbox)')].some(n => n.textContent.includes(text))"
+            " && !document.querySelector('#msgs .client-outbox')",
+            arg=text, timeout=timeout)
+    except Exception:
+        print("history timeout:", page.evaluate("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText, outbox: [...document.querySelectorAll('.client-pending-state')].map(n => n.textContent)})"), flush=True)
+        raise
 
 
 def send_from_composer(page, text):
@@ -97,6 +103,53 @@ def send_from_composer(page, text):
     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/send", timeout=20000) as sent:
         ta.press("Enter")
     return sent.value
+
+
+def send_attachments(page, root, label, sends, *, fail_first=False):
+    """Real chooser, raw uploads and delivery, with a recoverable upload error."""
+    payloads = [
+        {"name": f"{label} 数据.json", "mimeType": "application/json", "buffer": b'{"data":"' + b'x' * 20000 + b'"}'},
+        {"name": f"{label} 截图.png", "mimeType": "image/png", "buffer": base64.b64decode(PNG)},
+    ]
+    page.locator("#cadd").click()
+    with page.expect_file_chooser() as chooser:
+        page.locator('#attach-menu [data-attach="file"]').click()
+    chooser.value.set_files(payloads)
+    expect(page.locator("#compose-items .draft-card")).to_have_count(2)
+    page.locator("#cinput").fill(label)
+    if fail_first:
+        def unavailable(route):
+            route.fulfill(status=503, content_type="application/json", body='{"error":"synthetic upload unavailable"}')
+        page.route("**/api/session/attachment?*", unavailable)
+        count = len(sends)
+        page.locator("#csend").click()
+        expect(page.locator("#compose-items .draft-card.failed")).to_contain_text("synthetic upload unavailable")
+        expect(page.locator("#cinput")).to_have_value(label)
+        assert len(sends) == count, sends
+        page.unroute("**/api/session/attachment?*", unavailable)
+    with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/attachment") as uploaded:
+        with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/send", timeout=20000) as sent:
+            page.locator("#csend").click()
+    assert uploaded.value.status == 200, uploaded.value.text()
+    assert sent.value.status == 200, sent.value.text()
+    batch = uploaded.value.json()["attachment_id"]
+    expected = label + "\n\n" + "\n".join(
+        f"附件{i}: ./agenthub_attachments/{batch}/{payload['name']}"
+        for i, payload in enumerate(payloads, 1))
+    assert sends[-1]["text"] == expected, sends[-1]
+    for payload in payloads:
+        path = root / "work/claude-area/agenthub_attachments" / batch / payload["name"]
+        assert path.read_bytes() == payload["buffer"]
+    # The renderer replaces attachment path lines with file/image cards.
+    wait_history(page, label)
+    native_users = [json.loads(line)["message"]["content"]
+        for history in (root / "claude/project-history").glob("*.jsonl")
+        for line in history.read_text().splitlines() if json.loads(line)["type"] == "user"]
+    assert expected in native_users, native_users
+    for payload in payloads:
+        expect(page.locator("#msgs")).to_contain_text(payload["name"])
+    expect(page.locator("#compose-items .draft-card")).to_have_count(0)
+    expect(page.locator("#cinput")).to_have_value("")
 
 
 def wait_server_outbox_empty(context, base, uid, timeout=15.0):
@@ -114,7 +167,7 @@ def main():
         raise SystemExit("Reliable-send browser acceptance currently requires POSIX.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-send-") as temporary:
         root = Path(temporary).resolve()
-        for name in ["host", "work", "work/claude-area", "ledger", "delivery", "bin", "home", "claude", "codex", "grok"]:
+        for name in ["host", "work", "work/claude-area", "ledger", "delivery", "state", "bin", "home", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)
         corpus = Corpus(root)
         python = Path(subprocess.check_output(["/bin/sh", "-c", "command -v python3"]).decode().strip()).resolve()
@@ -124,13 +177,12 @@ def main():
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
-            "host_dir": str(root / "host"), "cwd_roots": [str(root / "work")], "adapters": [], "profiles": [
+            "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "claude-cli-v1", "source": "claude", "executable": str(wrapper),
                  "args": ["--settings", SETTINGS, "--reply"], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")},
-                 "cwd_roots": [str(root / "work/claude-area")]}]}))
+                         "LANG": "C.UTF-8", "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:
@@ -140,7 +192,8 @@ def main():
             browser = playwright.chromium.launch(**options)
             try:
                 with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                                     launcher_config=configuration, delivery_dir=root / "delivery") as (base, _):
+                                     launcher_config=configuration, delivery_dir=root / "delivery", state_dir=root / "state",
+                                     file_roots=(root / "work",), file_write_roots=(root / "work",)) as (base, _):
                     errors, dialogs, sends = [], [], []
 
                     def watch(context):
@@ -208,6 +261,9 @@ def main():
                     assert [json.loads(row)["message"]["content"] for row in raw if json.loads(row)["type"] == "user"] == \
                         ["first line at the console", "hello from the composer"], raw
 
+                    send_attachments(page, root, "desktop attachments", sends, fail_first=True)
+                    wait_server_outbox_empty(context, base, uid)
+
                     # ---- A second page without the console lease is refused while
                     # this page holds it; nothing is persisted or pasted.
                     other = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
@@ -270,6 +326,8 @@ def main():
                     assert "lease" not in sends[-1], sends[-1]
                     wait_history(page, "from the phone")
                     wait_history(page, "OK: from the phone")
+                    send_attachments(page, root, "mobile attachments", sends)
+                    wait_server_outbox_empty(mobile, base, uid)
                     assert not errors, errors
                     mobile.close()
             finally:
@@ -292,7 +350,8 @@ def main():
     print("PASS send browser: composer send under the page's console lease confirmed by the fake CLI's "
           "native record over SSE (optimistic outbox row replaced by the history message, server ledger "
           "emptied by the tracker), a second page refused with the terminal_ownership error on both composer "
-          "calls while the console is held, and a 390 px composer send through the server-claimed lease")
+          "calls while the console is held, a 390 px composer send through the server-claimed lease, "
+          "and desktop/mobile JSON+image attachments with upload-error draft retention and retry")
 
 
 if __name__ == "__main__":

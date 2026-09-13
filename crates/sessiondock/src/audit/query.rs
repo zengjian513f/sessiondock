@@ -2,9 +2,9 @@
 //! segments the browser intake writes, and the time-window query a diagnostic
 //! bundle needs (Python `EventStore.record` / `EventStore.query`).
 //!
-//! A server event goes through the same bounded queue as a browser batch:
-//! `try_send`, never a wait for disk, counted as dropped when the queue is
-//! full. Only structured metadata is stored (`bounded_data`); there is no
+//! A server event goes through the same queue as a browser batch: `try_send`,
+//! never a wait for disk, counted as dropped when the queue is full. Only
+//! structured metadata is stored; there is no
 //! `content` blob, which is the documented difference from Python's SQLite
 //! store. The query reads the segment files of the window's dates line by
 //! line and returns matching rows in file order (ascending `seq`).
@@ -23,12 +23,9 @@ use super::{AuditService, Batch, intake, writer};
 
 /// Python `query(limit=100_000)` for the bug-report window.
 pub const MAX_QUERY_ROWS: usize = 100_000;
-/// One JSONL record; longer lines are skipped (the intake bounds records far
-/// below this, so such a line is not one of ours).
-const MAX_LINE_BYTES: usize = 256 * 1024;
 
-/// One server-side event. Strings are bounded like the browser envelope
-/// fields; `data` is sanitized and budgeted like browser `data`.
+/// One server-side event. Strings are clipped like Python's audit row fields;
+/// `data` is sanitized like browser `data`.
 pub struct ServerEvent<'a> {
     pub event: &'a str,
     pub category: &'a str,
@@ -44,12 +41,7 @@ impl AuditService {
     /// Queue one server-side event without blocking. Returns whether the
     /// writer accepted it; a refused or dropped event is counted, never retried.
     pub fn record(&self, event: ServerEvent<'_>) -> bool {
-        let limits = &self.shared.limits;
-        let Some(record) = server_record(&event, limits.data_bytes, SystemTime::now()) else {
-            self.shared
-                .counters
-                .rejected_events
-                .fetch_add(1, Ordering::Relaxed);
+        let Some(record) = server_record(&event, SystemTime::now()) else {
             return false;
         };
         let mut record = record;
@@ -65,12 +57,13 @@ impl AuditService {
         };
         if self.shutdown.is_cancelled()
             || self.shared.stop.load(Ordering::Acquire)
-            || self.shared.queued_batches.load(Ordering::Acquire) >= limits.queue_batches
-            || !self.shared.reserve(length)
+            || self.shared.queued_batches.load(Ordering::Acquire)
+                >= self.shared.limits.queue_batches
         {
             return dropped();
         }
         self.shared.queued_batches.fetch_add(1, Ordering::AcqRel);
+        self.shared.reserve(length);
         match self.tx.try_send(Batch {
             bytes: bytes.into_boxed_slice(),
             events: 1,
@@ -89,8 +82,8 @@ impl AuditService {
     }
 }
 
-fn bounded(text: &str, max: usize) -> Option<&str> {
-    (text.len() <= max).then_some(text)
+fn bounded(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
 }
 
 /// Same millisecond RFC 3339 text the intake stamps `received_at` with, so
@@ -110,27 +103,24 @@ pub fn rfc3339(now: SystemTime) -> String {
 
 /// The stored shape of a server event: the browser record's fields with
 /// `client: "server"`, no client timestamp and the given category.
-pub fn server_record(event: &ServerEvent<'_>, data_bytes: usize, now: SystemTime) -> Option<Value> {
-    if !intake::valid_event_name(event.event) || event.event.starts_with("browser.") {
-        return None;
-    }
-    let uid = bounded(event.uid, intake::UID_MAX)?;
+pub fn server_record(event: &ServerEvent<'_>, now: SystemTime) -> Option<Value> {
+    let uid = bounded(event.uid, intake::UID_MAX);
     Some(json!({
         "seq": 0,
         "received_at": rfc3339(now),
-        "event": event.event,
-        "category": bounded(event.category, 80)?,
-        "severity": if event.severity.is_empty() { "info" } else { bounded(event.severity, intake::SEVERITY_MAX)? },
+        "event": if event.event.is_empty() { "unknown".to_owned() } else { bounded(event.event, intake::EVENT_NAME_MAX) },
+        "category": bounded(event.category, 80),
+        "severity": if event.severity.is_empty() { "info".to_owned() } else { bounded(event.severity, intake::SEVERITY_MAX) },
         "client_ts": Value::Null,
-        "page_id": bounded(event.page_id, intake::ID_MAX)?,
+        "page_id": bounded(event.page_id, intake::ID_MAX),
         "uid": uid,
         "source": uid.split_once(':').map_or("", |(source, _)| source),
-        "trace_id": bounded(event.trace_id, intake::ID_MAX)?,
+        "trace_id": bounded(event.trace_id, intake::ID_MAX),
         "request_id": "",
         "connection_id": "",
-        "build": bounded(event.build, intake::ID_MAX)?,
+        "build": bounded(event.build, intake::ID_MAX),
         "client": "server",
-        "data": intake::bounded_data(&event.data, data_bytes),
+        "data": intake::sanitize(&event.data, 0),
     }))
 }
 
@@ -155,7 +145,7 @@ impl QueryFilter {
 
 /// Rows whose `received_at` lies in `[since, until]` and match `filter`,
 /// in file order, at most `limit`. Segments outside the window's dates are
-/// not opened; a malformed or over-long line is skipped. Blocking I/O: run
+/// not opened; a malformed line is skipped. Blocking I/O: run
 /// on a blocking executor.
 pub fn query(
     directory: &Path,
@@ -191,9 +181,6 @@ pub fn query(
             match reader.read_until(b'\n', &mut line) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {}
-            }
-            if line.len() > MAX_LINE_BYTES {
-                continue;
             }
             let Ok(row) = serde_json::from_slice::<Value>(&line) else {
                 continue;
@@ -233,7 +220,6 @@ mod tests {
                 build: "b",
                 data,
             },
-            8 * 1024,
             SystemTime::now(),
         )
         .unwrap()
@@ -244,13 +230,13 @@ mod tests {
         let row = event(
             "bug_report.created",
             "codex:one",
-            json!({"report_id":"BUG-1","token":"x"}),
+            json!({"report_id":"BUG-1","password":"x"}),
         );
         assert_eq!(row["event"], "bug_report.created");
         assert_eq!(row["client"], "server");
         assert_eq!(row["source"], "codex");
         assert_eq!(row["severity"], "info");
-        assert_eq!(row["data"]["token"], "<redacted>");
+        assert_eq!(row["data"]["password"], "<redacted>");
         assert!(row.get("content").is_none());
         assert!(
             server_record(
@@ -264,10 +250,9 @@ mod tests {
                     build: "",
                     data: Value::Null
                 },
-                1024,
                 SystemTime::now()
             )
-            .is_none()
+            .is_some()
         );
     }
 
@@ -276,8 +261,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let now = SystemTime::now();
         let date = intake::utc_date(now);
-        // Browser rows as the intake writes them: the prefix is added by the
-        // intake, which is why `server_record` refuses it for server events.
+        // Browser rows as the intake writes them: the prefix is added by intake.
         let browser = |name: &str, uid: &str| {
             let mut row = event("x", uid, json!({}));
             row["event"] = json!(format!("browser.{name}"));

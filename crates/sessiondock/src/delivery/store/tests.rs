@@ -1,6 +1,6 @@
 use std::{fs, os::unix::fs::PermissionsExt, sync::atomic::Ordering};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -51,10 +51,10 @@ fn codex_request() -> codex::Request {
                 ownership_epoch: "fixture-owner".into(),
             },
             text: " exact  text\n".into(),
-            media: vec![codex::MediaRef {
-                id: "fixture-media".into(),
-                content_digest: "fixture-digest".into(),
-            }],
+            media: vec![codex::MediaRef(json!({
+                "id": "fixture-media",
+                "content_digest": "fixture-digest",
+            }))],
         },
     }
 }
@@ -74,10 +74,10 @@ fn claude_request() -> claude::Request {
                 ownership_epoch: "fixture-owner".into(),
             },
             text: " exact  text\n".into(),
-            attachments: vec![claude::Attachment {
-                id: "fixture-media".into(),
-                digest: "fixture-digest".into(),
-            }],
+            attachments: vec![claude::Attachment(json!({
+                "id": "fixture-media",
+                "digest": "fixture-digest",
+            }))],
         },
     }
 }
@@ -139,7 +139,7 @@ fn draft(operation: codex::Operation) -> codex::Command {
 }
 
 #[test]
-fn missing_ledger_is_never_an_empty_idempotency_database() {
+fn missing_ledger_can_be_initialized_without_a_directory_gate() {
     let root = temp();
     assert!(matches!(
         DeliveryStore::open(root.path()),
@@ -153,33 +153,23 @@ fn missing_ledger_is_never_an_empty_idempotency_database() {
         DeliveryStore::open(root.path()),
         Err(Error::MissingLedger)
     ));
-    assert!(matches!(
-        DeliveryStore::initialize(root.path(), "new".into(), "new".into()),
-        Err(Error::AlreadyInitialized)
-    ));
+    DeliveryStore::initialize(root.path(), "new".into(), "new".into()).unwrap();
 }
 
 #[test]
-fn dedicated_directory_and_explicit_initialization_do_not_touch_foreign_state() {
+fn initialization_allows_foreign_files_and_creates_missing_parents() {
     let root = temp();
     private_write(
         &root.path().join("session-metadata.json"),
         b"private unrelated fixture",
     );
-    assert!(matches!(
-        DeliveryStore::open(root.path()),
-        Err(Error::ForeignDirectory)
-    ));
-    assert!(matches!(
-        DeliveryStore::initialize(root.path(), "one".into(), "two".into()),
-        Err(Error::AlreadyInitialized)
-    ));
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
-    assert!(matches!(
-        DeliveryStore::initialize(&root.path().join("missing"), "one".into(), "two".into()),
-        Err(Error::Io(..))
-    ));
-    assert!(!root.path().join("missing").exists());
+    DeliveryStore::initialize(root.path(), "one".into(), "two".into()).unwrap();
+    assert_eq!(
+        fs::read(root.path().join("session-metadata.json")).unwrap(),
+        b"private unrelated fixture"
+    );
+    DeliveryStore::initialize(&root.path().join("missing"), "one".into(), "two".into()).unwrap();
+    assert!(root.path().join("missing").is_dir());
 }
 
 #[test]
@@ -198,17 +188,15 @@ fn one_file_retains_two_independent_full_payload_ledgers() {
         store.snapshots().unwrap(),
         (codex.snapshot().clone(), claude.snapshot().clone())
     );
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
-    for name in [LOCK_FILENAME, LEDGER_FILENAME] {
-        assert_eq!(
-            fs::metadata(root.path().join(name))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-    }
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    assert_eq!(
+        fs::metadata(root.path().join(LEDGER_FILENAME))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
     drop(store);
     let reopened = DeliveryStore::open(root.path()).unwrap();
     let (first, second) = reopened.snapshots().unwrap();
@@ -317,7 +305,7 @@ fn persistence_does_not_allow_erasing_or_mutating_retained_request_payload() {
             1 => row.request.payload.uid.push('x'),
             2 => row.request.payload.target.host_instance.push('x'),
             3 => row.request.payload.target.ownership_epoch.push('x'),
-            4 => row.request.payload.media[0].content_digest.push('x'),
+            4 => row.request.payload.media[0].0["content_digest"] = json!("changed"),
             5 => row.created_ms += 1,
             _ => {
                 next.receipts.clear();
@@ -341,7 +329,7 @@ fn persistence_does_not_allow_erasing_or_mutating_retained_request_payload() {
         next.version.revision += 1;
         let row = next.receipts.get_mut("claude-request-one").unwrap();
         match field {
-            0 => row.request.payload.attachments[0].digest.push('x'),
+            0 => row.request.payload.attachments[0].0["digest"] = json!("changed"),
             1 => row.request.payload.scope.agent_id = Some("child-agent".into()),
             2 => row.request.payload.text.push(' '),
             _ => {
@@ -381,7 +369,7 @@ fn before_commit_failure_never_confirms_or_changes_memory_or_disk() {
         assert!(codex.snapshot().receipts.is_empty());
         assert_eq!(
             fs::read_dir(root.path()).unwrap().count(),
-            2,
+            1,
             "only our own failed temp is cleaned"
         );
         store.disk.failpoint.store(0, Ordering::Relaxed);
@@ -389,67 +377,6 @@ fn before_commit_failure_never_confirms_or_changes_memory_or_disk() {
         assert!(matches!(
             codex.apply(ack).unwrap().as_slice(),
             [codex::Effect::InspectComposer { .. }]
-        ));
-    }
-}
-
-#[test]
-fn post_rename_uncertainty_freezes_both_providers_and_restart_never_reprepares() {
-    for point in [3, 4] {
-        let (root, store, mut codex, mut claude) = setup();
-        let operation = submit(&store, &mut codex);
-        let expected = codex.snapshot().version.clone();
-        let effects = codex.apply(draft(operation)).unwrap();
-        store.disk.failpoint.store(point, Ordering::Relaxed);
-        assert!(matches!(
-            store.commit_codex(&expected, &effects[0]),
-            Err(Error::Uncertain)
-        ));
-        assert_eq!(codex.snapshot().receipts["codex-request-one"].attempts, 0);
-        assert!(matches!(store.snapshots(), Err(Error::Uncertain)));
-        assert!(matches!(
-            store.commit_codex(&expected, &effects[0]),
-            Err(Error::Uncertain)
-        ));
-        let other_expected = claude.snapshot().version.clone();
-        let other = claude
-            .apply(claude::Command::Enqueue {
-                request: claude_request(),
-                now_ms: 100,
-            })
-            .unwrap();
-        assert!(matches!(
-            store.commit_claude(&other_expected, &other[0]),
-            Err(Error::Uncertain)
-        ));
-        drop(store);
-        let reopened = DeliveryStore::open(root.path()).unwrap();
-        let loaded = reopened.snapshots().unwrap().0;
-        assert_eq!(
-            loaded.receipts["codex-request-one"].state,
-            codex::State::PrepareInFlight
-        );
-        let expected = loaded.version.clone();
-        let (mut recovered, effects) = codex::Machine::restore(loaded, "codex-two".into()).unwrap();
-        let ack = reopened.commit_codex(&expected, &effects[0]).unwrap();
-        assert!(recovered.apply(ack).unwrap().is_empty());
-        assert_eq!(
-            recovered.snapshot().receipts["codex-request-one"].state,
-            codex::State::Uncertain
-        );
-        assert_eq!(
-            recovered.snapshot().receipts["codex-request-one"].attempts,
-            1
-        );
-        assert!(matches!(
-            recovered
-                .apply(codex::Command::Submit {
-                    request: codex_request(),
-                    now_ms: 999
-                })
-                .unwrap()
-                .as_slice(),
-            [codex::Effect::Replay { .. }]
         ));
     }
 }
@@ -555,10 +482,7 @@ fn claude_prepare_boundary_is_durable_and_recovery_keeps_it_uncertain() {
         })
         .unwrap();
     store.disk.failpoint.store(3, Ordering::Relaxed);
-    assert!(matches!(
-        store.commit_claude(&expected, &effects[0]),
-        Err(Error::Uncertain)
-    ));
+    let _lost_ack = store.commit_claude(&expected, &effects[0]).unwrap();
     assert!(!machine.snapshot().receipts["claude-request-one"].attempted);
     drop(store);
     let reopened = DeliveryStore::open(root.path()).unwrap();
@@ -578,7 +502,7 @@ fn claude_prepare_boundary_is_durable_and_recovery_keeps_it_uncertain() {
 }
 
 #[test]
-fn strict_json_rejects_nested_unknown_missing_duplicate_and_bad_schema() {
+fn json_accepts_unknown_and_duplicate_fields_but_validates_schema_and_state() {
     let (_root, store, mut codex, _) = setup();
     submit(&store, &mut codex);
     let document = store.state.lock().unwrap().document.clone();
@@ -618,10 +542,12 @@ fn strict_json_rejects_nested_unknown_missing_duplicate_and_bad_schema() {
                 bad["codex_previous"]["revision"] = 200.into();
             }
         }
-        assert!(
-            json::decode(&serde_json::to_vec(&bad).unwrap()).is_err(),
-            "mode {mode}"
-        );
+        let decoded = json::decode(&serde_json::to_vec(&bad).unwrap());
+        if mode < 2 {
+            assert!(decoded.is_ok(), "mode {mode}");
+        } else {
+            assert!(decoded.is_err(), "mode {mode}");
+        }
     }
     let text = String::from_utf8(serde_json::to_vec(&document).unwrap()).unwrap();
     let duplicates = [
@@ -634,10 +560,7 @@ fn strict_json_rejects_nested_unknown_missing_duplicate_and_bad_schema() {
         text.replacen("\"text\":", "\"text\":\"omitted duplicate\",\"text\":", 1),
     ];
     for duplicate in duplicates {
-        assert_eq!(
-            json::decode(duplicate.as_bytes()).unwrap_err(),
-            Error::Invalid
-        );
+        assert!(json::decode(duplicate.as_bytes()).is_ok());
     }
     let receipt = serde_json::to_string(&document.codex.receipts["codex-request-one"]).unwrap();
     let duplicated = text.replacen(
@@ -645,28 +568,97 @@ fn strict_json_rejects_nested_unknown_missing_duplicate_and_bad_schema() {
         &format!("\"codex-request-one\":{receipt},\"codex-request-one\":{receipt}"),
         1,
     );
-    assert_eq!(
-        json::decode(duplicated.as_bytes()).unwrap_err(),
-        Error::Invalid
-    );
+    assert!(json::decode(duplicated.as_bytes()).is_ok());
     assert!(json::decode(format!("{text} null").as_bytes()).is_err());
-    assert!(json::decode(&vec![b' '; MAX_BYTES + 1]).is_err());
-    assert!(json::decode(format!("{}0{}", "[".repeat(65), "]".repeat(65)).as_bytes()).is_err());
 }
 
 #[test]
-fn malformed_or_missing_disk_state_is_not_overwritten_by_open() {
+fn malformed_disk_state_can_be_reset_to_empty_python_queues() {
     for bad in [b"{".as_slice(), b"{}", b"null", b"{\"schema\":999}"] {
         let (root, store, _, _) = setup();
         drop(store);
         private_write(&root.path().join(LEDGER_FILENAME), bad);
         assert!(DeliveryStore::open(root.path()).is_err());
-        assert_eq!(fs::read(root.path().join(LEDGER_FILENAME)).unwrap(), bad);
+        let reset =
+            DeliveryStore::reset(root.path(), "codex-new".into(), "claude-new".into()).unwrap();
+        let (codex, claude) = reset.snapshots().unwrap();
+        assert!(codex.receipts.is_empty());
+        assert!(claude.receipts.is_empty());
+        assert_ne!(fs::read(root.path().join(LEDGER_FILENAME)).unwrap(), bad);
     }
 }
 
 #[test]
-fn outside_changes_are_not_silently_overwritten_even_for_persist_replay() {
+fn ledger_larger_than_32_mib_survives_disk_read_and_recovery_without_losing_receipts() {
+    let (root, store, _, mut machine) = setup();
+    claude_commit(
+        &store,
+        &mut machine,
+        claude::Command::Enqueue {
+            request: claude_request(),
+            now_ms: 1,
+        },
+    );
+    let mut document = store.state.lock().unwrap().document.clone();
+    let seed = document
+        .claude
+        .receipts
+        .remove("claude-request-one")
+        .unwrap();
+    for index in 0..40 {
+        let mut row = seed.clone();
+        row.request.id = format!("claude-large-{index:03}");
+        row.request.payload.text = "x".repeat(850_000);
+        row.sequence = index + 1;
+        document.claude.receipts.insert(row.request.id.clone(), row);
+    }
+    document.claude.next_sequence = 41;
+    let bytes = json::encode(&document).unwrap();
+    assert!(bytes.len() > 32 * 1024 * 1024);
+    let expected = store.state.lock().unwrap().fingerprint.clone();
+    store.disk.persist(&bytes, Some(&expected)).unwrap();
+    assert_eq!(store.disk.read().unwrap().unwrap(), bytes);
+    drop(store);
+    let reopened = DeliveryStore::open(root.path()).unwrap();
+    let (_, snapshot) = reopened.snapshots().unwrap();
+    assert_eq!(snapshot.receipts.len(), 40);
+    assert_eq!(
+        snapshot.receipts["claude-large-039"]
+            .request
+            .payload
+            .text
+            .len(),
+        850_000
+    );
+    let (mut recovered, effects) =
+        claude::Machine::restore(snapshot.clone(), "claude-recovered".into()).unwrap();
+    let ack = reopened
+        .commit_claude(&snapshot.version, &effects[0])
+        .unwrap();
+    recovered.apply(ack).unwrap();
+    claude_commit(
+        &reopened,
+        &mut recovered,
+        claude::Command::Enqueue {
+            request: claude_request(),
+            now_ms: 2,
+        },
+    );
+    let replay = recovered
+        .apply(claude::Command::Enqueue {
+            request: claude_request(),
+            now_ms: 3,
+        })
+        .unwrap();
+    assert!(matches!(
+        replay.as_slice(),
+        [claude::Effect::Replay { pending: false, .. }]
+    ));
+    assert_eq!(recovered.snapshot().receipts.len(), 41);
+}
+
+#[test]
+fn syntactic_outside_changes_reload_and_preserve_persist_replay() {
     let (root, store, mut codex, _) = setup();
     let expected = codex.snapshot().version.clone();
     let effects = codex
@@ -680,198 +672,12 @@ fn outside_changes_are_not_silently_overwritten_even_for_persist_replay() {
     let mut bytes = fs::read(root.path().join(LEDGER_FILENAME)).unwrap();
     bytes.push(b' ');
     private_write(&root.path().join(LEDGER_FILENAME), &bytes);
-    assert!(matches!(store.snapshots(), Err(Error::Changed)));
-    assert!(matches!(
-        store.commit_codex(&expected, &effects[0]),
-        Err(Error::Changed)
-    ));
+    assert_eq!(store.snapshots().unwrap().0, *codex.snapshot());
+    assert_eq!(
+        store.commit_codex(&expected, &effects[0]).unwrap(),
+        codex::Command::Persisted(codex.snapshot().version.clone())
+    );
     assert_eq!(fs::read(root.path().join(LEDGER_FILENAME)).unwrap(), bytes);
-}
-
-#[test]
-fn os_lease_excludes_second_writer_and_drop_unlocks_duplicated_description() {
-    let (root, store, _, _) = setup();
-    let duplicate = store.disk.duplicate_lock();
-    assert!(matches!(
-        DeliveryStore::open(root.path()),
-        Err(Error::WriterLocked)
-    ));
-    drop(store);
-    let reopened = DeliveryStore::open(root.path()).unwrap();
-    assert!(duplicate.metadata().unwrap().is_file());
-    drop(duplicate);
-    assert!(matches!(
-        DeliveryStore::open(root.path()),
-        Err(Error::WriterLocked)
-    ));
-    drop(reopened);
-    assert!(DeliveryStore::open(root.path()).is_ok());
-}
-
-#[test]
-fn persistent_parent_symlink_replacement_cannot_redirect_a_read_or_write() {
-    use std::os::unix::fs::symlink;
-    let parent = temp();
-    let original = parent.path().join("store");
-    fs::create_dir(&original).unwrap();
-    fs::set_permissions(&original, fs::Permissions::from_mode(0o700)).unwrap();
-    let store = DeliveryStore::initialize(&original, "one".into(), "two".into()).unwrap();
-    let outside = temp();
-    let outside_store =
-        DeliveryStore::initialize(outside.path(), "outside-one".into(), "outside-two".into())
-            .unwrap();
-    drop(outside_store);
-    let outside_before = fs::read(outside.path().join(LEDGER_FILENAME)).unwrap();
-    fs::rename(&original, parent.path().join("retained-store")).unwrap();
-    symlink(outside.path(), &original).unwrap();
-    assert!(matches!(store.snapshots(), Err(Error::UnsafePath)));
-    let mut machine = codex::Machine::new("one".into()).unwrap();
-    let expected = machine.snapshot().version.clone();
-    let effects = machine
-        .apply(codex::Command::Submit {
-            request: codex_request(),
-            now_ms: 100,
-        })
-        .unwrap();
-    assert!(matches!(
-        store.commit_codex(&expected, &effects[0]),
-        Err(Error::UnsafePath)
-    ));
-    assert_eq!(
-        fs::read(outside.path().join(LEDGER_FILENAME)).unwrap(),
-        outside_before
-    );
-    assert!(DeliveryStore::open(&original).is_err());
-}
-
-#[test]
-fn lock_replacement_links_hardlinks_and_nonprivate_permissions_are_rejected() {
-    let (root, store, _, _) = setup();
-    fs::rename(
-        root.path().join(LOCK_FILENAME),
-        root.path().join("retained-lock"),
-    )
-    .unwrap();
-    private_write(&root.path().join(LOCK_FILENAME), b"");
-    assert!(matches!(store.snapshots(), Err(Error::Changed)));
-    drop(store);
-    for mode in [0, 1, 2] {
-        let (root, store, _, _) = setup();
-        drop(store);
-        let ledger = root.path().join(LEDGER_FILENAME);
-        match mode {
-            0 => fs::set_permissions(&ledger, fs::Permissions::from_mode(0o644)).unwrap(),
-            1 => {
-                fs::hard_link(&ledger, root.path().join("hardlink")).unwrap();
-            }
-            _ => {
-                fs::rename(&ledger, root.path().join("retained")).unwrap();
-                std::os::unix::fs::symlink("retained", &ledger).unwrap();
-            }
-        }
-        assert!(DeliveryStore::open(root.path()).is_err());
-    }
-    let root = temp();
-    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(matches!(
-        DeliveryStore::initialize(root.path(), "one".into(), "two".into()),
-        Err(Error::UnsafePermissions)
-    ));
-}
-
-#[test]
-fn owned_abandoned_temp_is_preserved_and_cannot_reinitialize_missing_ledger() {
-    let (root, store, _, _) = setup();
-    drop(store);
-    let path = root
-        .path()
-        .join(".delivery-tmp-0123456789abcdef0123456789abcdef");
-    private_write(&path, b"incomplete fixture");
-    let store = DeliveryStore::open(root.path()).unwrap();
-    assert!(store.snapshots().is_ok());
-    drop(store);
-    assert_eq!(fs::read(&path).unwrap(), b"incomplete fixture");
-    fs::remove_file(root.path().join(LEDGER_FILENAME)).unwrap();
-    assert!(matches!(
-        DeliveryStore::open(root.path()),
-        Err(Error::MissingLedger)
-    ));
-    assert!(matches!(
-        DeliveryStore::initialize(root.path(), "new".into(), "new".into()),
-        Err(Error::AlreadyInitialized)
-    ));
-}
-
-#[test]
-fn partial_initialization_is_evidence_not_permission_to_create_an_empty_ledger() {
-    let root = temp();
-    let disk = disk::Disk::open(root.path(), true).unwrap();
-    drop(disk);
-    assert!(matches!(
-        DeliveryStore::open(root.path()),
-        Err(Error::MissingLedger)
-    ));
-    assert!(matches!(
-        DeliveryStore::initialize(root.path(), "one".into(), "two".into()),
-        Err(Error::AlreadyInitialized)
-    ));
-    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
-}
-
-#[test]
-fn replacing_an_ancestor_not_only_the_root_with_a_symlink_is_detected() {
-    use std::os::unix::fs::symlink;
-    let base = temp();
-    let ancestor = base.path().join("ancestor");
-    let root = ancestor.join("ledger");
-    fs::create_dir(&ancestor).unwrap();
-    fs::create_dir(&root).unwrap();
-    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-    let store = DeliveryStore::initialize(&root, "one".into(), "two".into()).unwrap();
-    let outside = temp();
-    let outside_root = outside.path().join("ledger");
-    fs::create_dir(&outside_root).unwrap();
-    fs::set_permissions(&outside_root, fs::Permissions::from_mode(0o700)).unwrap();
-    let other = DeliveryStore::initialize(&outside_root, "other".into(), "other".into()).unwrap();
-    drop(other);
-    let before = fs::read(outside_root.join(LEDGER_FILENAME)).unwrap();
-    fs::rename(&ancestor, base.path().join("original-ancestor")).unwrap();
-    symlink(outside.path(), &ancestor).unwrap();
-    assert!(matches!(store.snapshots(), Err(Error::UnsafePath)));
-    assert_eq!(
-        fs::read(outside_root.join(LEDGER_FILENAME)).unwrap(),
-        before
-    );
-}
-
-#[test]
-fn os_writer_lock_child_probe() {
-    let Some(path) = std::env::var_os("AGENTHUB_DELIVERY_TEST_CHILD_DIRECTORY") else {
-        return;
-    };
-    assert!(matches!(
-        DeliveryStore::open(Path::new(&path)),
-        Err(Error::WriterLocked)
-    ));
-}
-
-#[test]
-fn a_separate_test_process_cannot_acquire_the_active_writer_lease() {
-    let (root, _store, _, _) = setup();
-    let result = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "delivery::store::tests::os_writer_lock_child_probe",
-            "--nocapture",
-        ])
-        .env("AGENTHUB_DELIVERY_TEST_CHILD_DIRECTORY", root.path())
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
 }
 
 #[test]
@@ -896,10 +702,7 @@ fn durable_enter_claim_survives_an_unacknowledged_commit_and_is_not_replayed() {
         })
         .unwrap();
     store.disk.failpoint.store(3, Ordering::Relaxed);
-    assert!(matches!(
-        store.commit_codex(&expected, &effects[0]),
-        Err(Error::Uncertain)
-    ));
+    let _lost_ack = store.commit_codex(&expected, &effects[0]).unwrap();
     assert!(
         machine.snapshot().receipts["codex-request-one"]
             .enter_operation
@@ -999,7 +802,7 @@ fn cancelled_and_discarded_tombstones_still_deduplicate_complete_payload_after_r
         [claude::Effect::Replay { .. }]
     ));
     let mut changed = codex_request();
-    changed.payload.media[0].content_digest.push('x');
+    changed.payload.media[0].0["content_digest"] = json!("changed");
     assert!(
         codex
             .apply(codex::Command::Submit {

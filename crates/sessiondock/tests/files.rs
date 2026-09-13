@@ -18,6 +18,21 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
+fn wire(path: &Path) -> String {
+    let value = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        let value = value
+            .strip_prefix("\\\\?\\UNC\\")
+            .map(|rest| format!("//{rest}"))
+            .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
+            .unwrap_or_else(|| value.into_owned());
+        return value.replace('\\', "/");
+    }
+    #[cfg(not(windows))]
+    value.into_owned()
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -208,7 +223,7 @@ async fn legacy_routes_preserve_native_and_file_bytes_and_writes_stay_unimplemen
     let fixture = Fixture::new();
     let before = snapshot(&fixture.root);
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let response = resolve(&app, &uid, "", &["note.txt", "./nested", "unmentioned.txt"]).await;
     assert_eq!(response.status(), StatusCode::OK);
     let response = value(response).await;
@@ -224,7 +239,7 @@ async fn legacy_routes_preserve_native_and_file_bytes_and_writes_stay_unimplemen
     assert_eq!(listing["writable"], false);
     assert_eq!(
         listing["root"],
-        fixture.root.join("files").to_str().unwrap()
+        wire(fixture.root.ancestors().last().unwrap())
     );
     for endpoint in ["/api/session/files/action", "/api/session/files/upload"] {
         let response=request(&app,"POST",endpoint,&[("Content-Type","application/json")],Body::from(json!({"uid":uid,"ref":"./nested","action":"delete","paths":[fixture.file("note.txt")]}).to_string())).await;
@@ -234,7 +249,7 @@ async fn legacy_routes_preserve_native_and_file_bytes_and_writes_stay_unimplemen
 }
 
 #[tokio::test]
-async fn root_navigation_scope_branch_and_unknown_native_fail_closed() {
+async fn root_navigation_preserves_scope_branch_and_unknown_native_checks() {
     let fixture = Fixture::new();
     let app = fixture.app();
     let parent = row(&app, "parent").await;
@@ -281,7 +296,7 @@ async fn root_navigation_scope_branch_and_unknown_native_fail_closed() {
         )
         .await
         .status(),
-        StatusCode::FORBIDDEN
+        StatusCode::OK
     );
     assert_eq!(
         get(
@@ -310,7 +325,7 @@ async fn root_navigation_scope_branch_and_unknown_native_fail_closed() {
         .await,
     )
     .await;
-    assert!(root["parent"].is_null());
+    assert_eq!(root["parent"], wire(&fixture.root));
     assert_eq!(
         get(&app, &route(false, "codex:missing", "note.txt", &[]))
             .await
@@ -323,22 +338,23 @@ async fn uid_for(app: &Router, sid: &str) -> String {
 }
 
 #[tokio::test]
-async fn disabled_and_malformed_requests_and_unknown_modes_are_explicit() {
+async fn reads_without_roots_and_malformed_requests_and_unknown_modes_are_explicit() {
     let fixture = Fixture::new();
     let mut cfg = fixture.config();
     cfg.file_roots.clear();
     let disabled = sessiondock::app(cfg).unwrap();
-    let response = resolve(&disabled, "codex:missing", "", &["note.txt"]).await;
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    assert_eq!(value(response).await["code"], "files_disabled");
+    let uid = uid(&disabled, "parent").await;
+    let response = get(&disabled, &route(false, &uid, "note.txt", &[])).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        &to_bytes(response.into_body(), 1024).await.unwrap()[..],
+        b"synthetic safe text"
+    );
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     for body in [
         json!({"uid":uid,"refs":"note.txt"}),
         json!({"uid":uid,"refs":[null]}),
-        json!({"uid":uid,"refs":vec!["x";257]}),
-        json!({"uid":uid,"refs":["x".repeat(4097)]}),
-        json!({"uid":uid,"refs":["note.txt"],"cwd":"/not-authority"}),
     ] {
         let response = request(
             &app,
@@ -350,21 +366,27 @@ async fn disabled_and_malformed_requests_and_unknown_modes_are_explicit() {
         .await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
+    for refs in [vec!["x".to_owned(); 257], vec!["x".repeat(4097)]] {
+        let response = request(
+            &app,
+            "POST",
+            "/api/session/resolve-files",
+            &[("Content-Type", "application/json")],
+            Body::from(json!({"uid":uid,"refs":refs}).to_string()),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
     let oversized = request(
         &app,
         "POST",
         "/api/session/resolve-files",
         &[("Content-Type", "application/json")],
-        Body::from(" ".repeat(1100 * 1024 + 1)),
+        Body::from(" ".repeat(4 * 1024 * 1024 + 1)),
     )
     .await;
     assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    for extra in [
-        [("offset", "-1")],
-        [("hidden", "yes")],
-        [("limit", "501")],
-        [("path", "../")],
-    ] {
+    for extra in [[("offset", "-1")], [("path", "../")]] {
         assert_eq!(
             get(&app, &route(true, &uid, "./nested", &extra))
                 .await
@@ -372,7 +394,7 @@ async fn disabled_and_malformed_requests_and_unknown_modes_are_explicit() {
             StatusCode::BAD_REQUEST
         );
     }
-    for mode in ["jobs", "trash", "artifact", "thumbnail", "unrecognized"] {
+    for mode in ["jobs", "trash", "artifact", "thumbnail"] {
         let response = get(&app, &route(true, &uid, "./nested", &[("mode", mode)])).await;
         assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
         assert_eq!(value(response).await["code"], "file_mode_not_implemented");
@@ -395,7 +417,7 @@ async fn disabled_and_malformed_requests_and_unknown_modes_are_explicit() {
 async fn range_head_if_range_preview_mime_and_csp_are_honest() {
     let fixture = Fixture::new();
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let download = route(false, &uid, "large.bin", &[("download", "1")]);
     let response = request(
         &app,
@@ -494,40 +516,43 @@ async fn range_head_if_range_preview_mime_and_csp_are_honest() {
 }
 
 #[tokio::test]
-async fn two_unpolled_bodies_hold_capacity_drop_frees_it_without_reading() {
+async fn concurrent_download_and_text_requests_queue_and_complete() {
     let fixture = Fixture::new();
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let uri = route(false, &uid, "large.bin", &[("download", "1")]);
-    let first = get(&app, &uri).await;
-    let second = get(&app, &uri).await;
-    assert_eq!(first.status(), StatusCode::OK);
-    assert_eq!(second.status(), StatusCode::OK);
-    let busy = get(&app, &uri).await;
-    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(value(busy).await["code"], "files_busy");
-    drop(first);
-    let accepted = get(&app, &uri).await;
-    assert_eq!(accepted.status(), StatusCode::OK);
-    drop(accepted);
-    drop(second);
     let text = route(false, &uid, "note.txt", &[]);
-    let first = get(&app, &text).await;
-    let second = get(&app, &text).await;
-    assert_eq!(
-        get(&app, &text).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    drop(first);
-    drop(second);
-    assert_eq!(get(&app, &text).await.status(), StatusCode::OK);
+    let mut tasks = tokio::task::JoinSet::new();
+    for route in [uri, text] {
+        for _ in 0..8 {
+            let app = app.clone();
+            let route = route.clone();
+            tasks.spawn(async move {
+                let response = get(&app, &route).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                assert!(
+                    !to_bytes(response.into_body(), 1024 * 1024)
+                        .await
+                        .unwrap()
+                        .is_empty()
+                );
+            });
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+    })
+    .await
+    .expect("queued file reads should complete when preceding bodies drain");
 }
 
 #[tokio::test]
 async fn slow_reader_reads_one_chunk_at_a_time_and_detects_next_native_change() {
     let fixture = Fixture::new();
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let uri = route(false, &uid, "large.bin", &[("download", "1")]);
     let response = get(&app, &uri).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -558,7 +583,7 @@ async fn slow_reader_reads_one_chunk_at_a_time_and_detects_next_native_change() 
 async fn changed_unpolled_file_and_truncated_transfer_are_body_errors() {
     let fixture = Fixture::new();
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let uri = route(false, &uid, "large.bin", &[("download", "1")]);
     let response = get(&app, &uri).await;
     fs::OpenOptions::new()
@@ -583,7 +608,7 @@ async fn shutdown_stops_unpolled_or_slow_bodies_and_rejects_new_file_work() {
     let fixture = Fixture::new();
     let cancel = CancellationToken::new();
     let app = sessiondock::app_with_shutdown(fixture.config(), cancel.clone()).unwrap();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let uri = route(false, &uid, "large.bin", &[("download", "1")]);
     let unpolled = get(&app, &uri).await;
     let response = get(&app, &uri).await;
@@ -613,23 +638,23 @@ async fn shutdown_stops_unpolled_or_slow_bodies_and_rejects_new_file_work() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn replaced_navigation_parent_and_symlink_do_not_expose_external_data() {
+async fn symlink_navigation_is_allowed_but_old_transfer_handles_reject_replacement() {
     use std::os::unix::fs::symlink;
     let fixture = Fixture::new();
     let app = fixture.app();
-    let uid = uid(&app, "parent").await;
+    let uid = uid_for(&app, "parent").await;
     let outside = tempfile::tempdir().unwrap();
     fs::write(outside.path().join("note.txt"), b"outside synthetic secret").unwrap();
     symlink(outside.path(), fixture.file("nested/link")).unwrap();
     let listing = value(get(&app, &route(true, &uid, "./nested", &[])).await).await;
-    assert_eq!(listing["incomplete"], true);
+    assert_eq!(listing["incomplete"], false);
     let link = listing["entries"]
         .as_array()
         .unwrap()
         .iter()
         .find(|row| row["name"] == "link")
         .unwrap();
-    assert_eq!(link["kind"], "unavailable");
+    assert_eq!(link["kind"], "directory");
     assert_eq!(link["symlink"], true);
     let uri = route(
         true,
@@ -645,9 +670,411 @@ async fn replaced_navigation_parent_and_symlink_do_not_expose_external_data() {
     fs::rename(fixture.file("nested"), fixture.file("old-nested")).unwrap();
     symlink(outside.path(), fixture.file("nested")).unwrap();
     assert!(to_bytes(response.into_body(), 1024).await.is_err());
-    assert_eq!(get(&app, &uri).await.status(), StatusCode::FORBIDDEN);
+    assert_eq!(get(&app, &uri).await.status(), StatusCode::NOT_FOUND);
+    let fresh = route(
+        true,
+        &uid,
+        "./nested",
+        &[
+            ("path", outside.path().join("note.txt").to_str().unwrap()),
+            ("download", "1"),
+        ],
+    );
+    let response = get(&app, &fresh).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        &to_bytes(response.into_body(), 1024).await.unwrap()[..],
+        b"outside synthetic secret"
+    );
     assert_eq!(
         fs::read(outside.path().join("note.txt")).unwrap(),
         b"outside synthetic secret"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn browser_info_describes_link_leaves_only_after_a_directory_grant() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new();
+    let dangling = fixture.file("dangling-link");
+    symlink("missing-target", &dangling).unwrap();
+    let linked_text = fixture.file("nested/display-name.txt");
+    symlink("child.txt", &linked_text).unwrap();
+    let pdf_name = fixture.file("nested/display-name.pdf");
+    symlink("child.txt", &pdf_name).unwrap();
+    fs::OpenOptions::new()
+        .append(true)
+        .open(fixture.root.join("native/parent.jsonl"))
+        .unwrap()
+        .write_all(format!("{}\n", message("`./dangling-link`")).as_bytes())
+        .unwrap();
+    let native_before = fs::read(fixture.root.join("native/parent.jsonl")).unwrap();
+    let app = fixture.app();
+    let parent = row(&app, "parent").await;
+    let uid = parent["uid"].as_str().unwrap();
+    let worker = parent["agent_items"][0]["id"].as_str().unwrap();
+    let info_uri = |path: &Path| {
+        route(
+            true,
+            uid,
+            "./nested",
+            &[("mode", "info"), ("path", path.to_str().unwrap())],
+        )
+    };
+
+    let response = get(&app, &info_uri(&dangling)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let info = value(response).await;
+    assert_eq!(info["kind"], "symlink");
+    assert_eq!(info["path"], dangling.to_str().unwrap());
+    assert_eq!(info["name"], "dangling-link");
+    assert_eq!(info["link_target"], "missing-target");
+    assert_eq!(info["size"], fs::symlink_metadata(&dangling).unwrap().len());
+    assert!(info["mode"].as_str().unwrap().starts_with('l'));
+    assert!(info.get("preview").is_none());
+    assert!(!dangling.exists());
+
+    // A mentioned direct reference still needs a resolvable file, exactly as
+    // Python files.resolve does; the browser grant does not weaken that route.
+    let direct = get(
+        &app,
+        &route(false, uid, "./dangling-link", &[("mode", "info")]),
+    )
+    .await;
+    assert_eq!(direct.status(), StatusCode::NOT_FOUND);
+    let missing_parent = get(&app, &info_uri(&fixture.file("missing-parent/leaf"))).await;
+    assert_eq!(missing_parent.status(), StatusCode::NOT_FOUND);
+    let missing_leaf = get(&app, &info_uri(&fixture.file("nested/missing-leaf"))).await;
+    assert_eq!(missing_leaf.status(), StatusCode::NOT_FOUND);
+
+    let denied_ref = get(
+        &app,
+        &route(
+            true,
+            uid,
+            "./not-recorded",
+            &[("mode", "info"), ("path", dangling.to_str().unwrap())],
+        ),
+    )
+    .await;
+    assert_eq!(denied_ref.status(), StatusCode::NOT_FOUND);
+    let denied_agent = get(
+        &app,
+        &route(
+            true,
+            uid,
+            "./nested",
+            &[
+                ("mode", "info"),
+                ("path", dangling.to_str().unwrap()),
+                ("agent", worker),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(denied_agent.status(), StatusCode::NOT_FOUND);
+    let other = uid_for(&app, "branch").await;
+    let denied_session = get(
+        &app,
+        &route(
+            true,
+            &other,
+            "./nested",
+            &[("mode", "info"), ("path", dangling.to_str().unwrap())],
+        ),
+    )
+    .await;
+    assert_eq!(denied_session.status(), StatusCode::NOT_FOUND);
+
+    let linked = value(get(&app, &info_uri(&linked_text)).await).await;
+    assert_eq!(linked["kind"], "symlink");
+    assert_eq!(linked["name"], "display-name.txt");
+    assert_eq!(linked["link_target"], "child.txt");
+    assert_eq!(linked["preview"], "text");
+    assert_eq!(linked["text"], "nested text");
+    assert_eq!(
+        linked["size"],
+        fs::symlink_metadata(&linked_text).unwrap().len()
+    );
+    // Python describes the link's suffix, not the target's suffix.
+    let pdf = value(get(&app, &info_uri(&pdf_name)).await).await;
+    assert_eq!(pdf["kind"], "symlink");
+    assert_eq!(pdf["preview"], "application/pdf");
+    assert!(pdf.get("text").is_none());
+    let ordinary = value(get(&app, &info_uri(&fixture.file("note.txt"))).await).await;
+    assert_eq!(ordinary["kind"], "file");
+    assert_eq!(ordinary["preview"], "text");
+    assert_eq!(ordinary["text"], "synthetic safe text");
+
+    // A durable grant still permits this metadata request after its original
+    // directory has gone away; the current native scope is checked above.
+    fs::remove_dir_all(fixture.file("nested")).unwrap();
+    let retained = get(&app, &info_uri(&dangling)).await;
+    assert_eq!(retained.status(), StatusCode::OK);
+    assert_eq!(value(retained).await["kind"], "symlink");
+    assert_eq!(
+        fs::read(fixture.root.join("native/parent.jsonl")).unwrap(),
+        native_before
+    );
+}
+
+#[tokio::test]
+async fn file_queries_read_only_relevant_fields_like_python() {
+    let fixture = Fixture::new();
+    fs::write(fixture.file("nested/.hidden"), "hidden").unwrap();
+    #[cfg(unix)]
+    fs::write(fixture.file("nested/tab\tname.txt"), "tab text").unwrap();
+    let mut config = fixture.config();
+    config.file_write_roots = vec![fixture.file("")];
+    let app = sessiondock::app(config).unwrap();
+    let uid = uid_for(&app, "parent").await;
+    let resolved = request(
+        &app,
+        "POST",
+        "/api/session/resolve-files",
+        &[("Content-Type", "application/json")],
+        Body::from(
+            json!({"uid":uid,"refs":["note.txt"],"cwd":"/not-authority","extra":true}).to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(resolved.status(), StatusCode::OK);
+    assert_eq!(
+        value(resolved).await["targets"][0]["path"],
+        wire(&fixture.file("note.txt"))
+    );
+
+    for directory in [false, true] {
+        let reference = if directory { "./nested" } else { "note.txt" };
+        let path = fixture.file("note.txt");
+        let info = get(
+            &app,
+            &route(
+                directory,
+                &uid,
+                reference,
+                &[
+                    ("mode", "info"),
+                    ("path", path.to_str().unwrap()),
+                    ("offset", "invalid"),
+                    ("raw", "1"),
+                    ("extra", "ignored"),
+                ],
+            ),
+        )
+        .await;
+        assert_eq!(info.status(), StatusCode::OK);
+        assert_eq!(value(info).await["text"], "synthetic safe text");
+        let download = get(
+            &app,
+            &route(
+                directory,
+                &uid,
+                reference,
+                &[
+                    ("mode", "info"),
+                    ("path", path.to_str().unwrap()),
+                    ("download", "1"),
+                    ("offset", "-1"),
+                ],
+            ),
+        )
+        .await;
+        assert_eq!(download.status(), StatusCode::OK);
+        assert!(
+            download.headers()["content-disposition"]
+                .to_str()
+                .unwrap()
+                .starts_with("attachment;")
+        );
+        assert_eq!(
+            to_bytes(download.into_body(), 100).await.unwrap(),
+            b"synthetic safe text".as_slice()
+        );
+    }
+    let raw = get(
+        &app,
+        &route(
+            false,
+            &uid,
+            "note.txt",
+            &[
+                ("mode", "unrecognized"),
+                ("path", "\0ignored"),
+                ("offset", "invalid"),
+                ("raw", "yes"),
+                ("download", "yes"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(raw.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(raw.into_body(), 100).await.unwrap(),
+        b"synthetic safe text".as_slice()
+    );
+    #[cfg(unix)]
+    {
+        let tab = fixture.file("nested/tab\tname.txt");
+        let info = get(
+            &app,
+            &route(
+                true,
+                &uid,
+                "./nested",
+                &[("mode", "info"), ("path", tab.to_str().unwrap())],
+            ),
+        )
+        .await;
+        assert_eq!(info.status(), StatusCode::OK);
+        assert_eq!(value(info).await["text"], "tab text");
+    }
+    for limit in ["501", "0", "invalid", "-1"] {
+        let listing = get(
+            &app,
+            &route(
+                true,
+                &uid,
+                "./nested",
+                &[
+                    ("mode", "unrecognized"),
+                    ("raw", "1"),
+                    ("hidden", "yes"),
+                    ("limit", limit),
+                    ("extra", "ignored"),
+                ],
+            ),
+        )
+        .await;
+        assert_eq!(listing.status(), StatusCode::OK);
+        let expected = if cfg!(unix) { 3 } else { 2 };
+        assert_eq!(
+            value(listing).await["entries"].as_array().unwrap().len(),
+            expected
+        );
+    }
+    let listing = value(
+        get(
+            &app,
+            &route(true, &uid, "./nested", &[("hidden", "0"), ("limit", "1")]),
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(listing["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(listing["total"], if cfg!(unix) { 2 } else { 1 });
+    for offset in [
+        "",
+        "0",
+        "+0",
+        "-0",
+        " 0 ",
+        "1_0",
+        "١٠",
+        "999999999999999999999999999999999999999",
+    ] {
+        let listing = get(&app, &route(true, &uid, "./nested", &[("offset", offset)])).await;
+        assert_eq!(listing.status(), StatusCode::OK, "offset={offset:?}");
+        let listing = value(listing).await;
+        assert_eq!(
+            listing["entries"].as_array().unwrap().len(),
+            if offset.contains('1') || offset.contains('١') || offset.contains('9') {
+                0
+            } else {
+                if cfg!(unix) { 3 } else { 2 }
+            }
+        );
+    }
+    for offset in ["-1", "invalid", "_1", "1_", "1__0", " ", "²"] {
+        assert_eq!(
+            get(&app, &route(true, &uid, "./nested", &[("offset", offset)]))
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST,
+            "offset={offset:?}"
+        );
+    }
+    let jobs = get(
+        &app,
+        &route(
+            true,
+            &uid,
+            "./nested",
+            &[
+                ("mode", "jobs"),
+                ("path", "\0ignored"),
+                ("offset", "invalid"),
+                ("download", "1"),
+            ],
+        ),
+    )
+    .await;
+    assert_eq!(jobs.status(), StatusCode::OK);
+    assert_eq!(value(jobs).await["jobs"], json!([]));
+
+    let upload = request(&app, "POST", "/api/session/files/action", &[("Content-Type", "application/json")], Body::from(json!({"uid":uid,"ref":"./nested","action":"upload","destination":fixture.file("nested"),"name":"query.bin","size":4}).to_string())).await;
+    assert_eq!(upload.status(), StatusCode::OK);
+    let upload = value(upload).await;
+    let job = upload["job"]["id"].as_str().unwrap();
+    let chunk = request(
+        &app,
+        "POST",
+        &format!(
+            "/api/session/files/upload?uid={}&ref={}&job={}&offset=0&extra=ignored",
+            encode(&uid),
+            encode("./nested"),
+            encode(job)
+        ),
+        &[("Content-Type", "application/octet-stream")],
+        Body::from("test"),
+    )
+    .await;
+    assert_eq!(chunk.status(), StatusCode::OK);
+    assert_eq!(fs::read(fixture.file("nested/query.bin")).unwrap(), b"test");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn granted_browser_paths_accept_literal_colon_directories() {
+    let fixture = Fixture::new();
+    fs::create_dir(fixture.file("nested/colon:")).unwrap();
+    fs::write(fixture.file("nested/colon:/child.txt"), "colon text").unwrap();
+    let mut config = fixture.config();
+    config.file_write_roots = vec![fixture.file("")];
+    let app = sessiondock::app(config).unwrap();
+    let uid = uid_for(&app, "parent").await;
+    let directory = format!("{}/colon://", fixture.file("nested").display());
+    let path = format!("{directory}child.txt");
+    let listing = get(
+        &app,
+        &route(true, &uid, "./nested", &[("path", &directory)]),
+    )
+    .await;
+    assert_eq!(listing.status(), StatusCode::OK);
+    assert_eq!(value(listing).await["entries"][0]["name"], "child.txt");
+    let info = get(
+        &app,
+        &route(true, &uid, "./nested", &[("mode", "info"), ("path", &path)]),
+    )
+    .await;
+    assert_eq!(info.status(), StatusCode::OK);
+    assert_eq!(value(info).await["text"], "colon text");
+    let action = request(&app, "POST", "/api/session/files/action", &[("Content-Type", "application/json")], Body::from(json!({"uid":uid,"ref":"./nested","action":"mkdir","destination":directory,"name":"created"}).to_string())).await;
+    assert_eq!(action.status(), StatusCode::OK);
+    assert!(fixture.file("nested/colon:/created").is_dir());
+    assert_eq!(
+        get(
+            &app,
+            &route(
+                true,
+                &uid,
+                "unmentioned-directory",
+                &[("path", &path), ("mode", "info")]
+            )
+        )
+        .await
+        .status(),
+        StatusCode::NOT_FOUND
     );
 }

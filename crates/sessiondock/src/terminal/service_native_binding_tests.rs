@@ -451,7 +451,6 @@ async fn retirement_invalidates_prepared_native_input_and_queued_reclaim_under_t
             &prepared.guard,
             &mut writer,
             HostInput::Data(Bytes::from_static(b"forbidden")),
-            Duration::from_secs(1)
         )
         .await
         .err()

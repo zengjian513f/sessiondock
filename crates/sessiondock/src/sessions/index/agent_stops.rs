@@ -22,7 +22,6 @@ use sha1::{Digest, Sha1};
 
 use super::Stamp;
 use super::summary::{norm_ts, py_str, truthy};
-use crate::sessions::budgets;
 
 /// Agent id → latest stop time (`norm_ts` text).
 pub type Stops = BTreeMap<String, String>;
@@ -151,10 +150,10 @@ pub fn update(scan: &mut StopScan, root: &Path, data: &Path, stamp: Stamp) {
         *scan = StopScan::default();
     }
     if stamp.size > scan.scanned {
-        let Ok(mut file) = super::open_nofollow(root, data) else {
+        let Ok(mut file) = super::open_indexed(root, data) else {
             return;
         };
-        let Ok(meta) = file.metadata() else {
+        let Ok(meta) = cap_std::fs::Metadata::from_file(&file) else {
             return;
         };
         let current = Stamp::of(&meta);
@@ -172,13 +171,11 @@ pub fn update(scan: &mut StopScan, root: &Path, data: &Path, stamp: Stamp) {
 }
 
 /// Feed every complete line in `[scan.scanned, size)` to [`collect`] and
-/// advance `scan.scanned` past the last LF read. A line beyond the record
-/// budget is skipped whole (its bytes are still consumed).
-fn read_lines(file: &mut cap_std::fs::File, size: u64, scan: &mut StopScan) -> Result<(), ()> {
+/// advance `scan.scanned` past the last LF read, regardless of record size.
+fn read_lines(file: &mut std::fs::File, size: u64, scan: &mut StopScan) -> Result<(), ()> {
     file.seek(SeekFrom::Start(scan.scanned)).map_err(|_| ())?;
     let mut buffer = vec![0u8; CHUNK];
     let mut carry: Vec<u8> = Vec::new();
-    let mut skipping = false;
     let mut position = scan.scanned;
     while position < size {
         let want = usize::try_from((size - position).min(CHUNK as u64)).map_err(|_| ())?;
@@ -190,18 +187,11 @@ fn read_lines(file: &mut cap_std::fs::File, size: u64, scan: &mut StopScan) -> R
         let mut chunk = &buffer[..read];
         while !chunk.is_empty() {
             let Some(lf) = chunk.iter().position(|byte| *byte == b'\n') else {
-                if !skipping {
-                    carry.extend_from_slice(chunk);
-                    if carry.len() > budgets::RECORD_BYTES {
-                        carry.clear();
-                        skipping = true;
-                    }
-                }
+                carry.try_reserve(chunk.len()).map_err(|_| ())?;
+                carry.extend_from_slice(chunk);
                 break;
             };
-            if skipping {
-                skipping = false;
-            } else if carry.is_empty() {
+            if carry.is_empty() {
                 collect(&chunk[..lf], scan);
             } else {
                 carry.extend_from_slice(&chunk[..lf]);

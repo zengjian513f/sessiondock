@@ -1,7 +1,7 @@
 //! Synthetic explicit-root image handles. These bytes need not be images: format
 //! validation belongs to media, while files only grants and preserves the read.
 use super::*;
-use crate::files::{MAX_RAW_BYTES, MAX_REFERENCE_PROBES};
+use crate::files::MAX_RAW_BYTES;
 use serde_json::json;
 use std::{
     fs,
@@ -42,62 +42,20 @@ impl Fixture {
 
 #[test]
 #[cfg(not(windows))]
-fn local_file_urls_decode_once_and_plain_paths_keep_percent_bytes() {
-    assert_eq!(
-        normalize_media_ref("file:///tmp/an%20image.png").unwrap(),
-        "/tmp/an image.png"
-    );
-    assert_eq!(
-        normalize_media_ref("file:///tmp/an%2520image.png").unwrap(),
-        "/tmp/an%20image.png"
-    );
-    assert_eq!(
-        normalize_media_ref("file:///tmp/%E5%9B%BE.png").unwrap(),
-        "/tmp/图.png"
-    );
-    assert_eq!(
-        normalize_media_ref("file:///tmp/image%23L2").unwrap(),
-        "/tmp/image#L2"
-    );
-    assert_eq!(
-        normalize_media_ref("an%20image.png").unwrap(),
-        "an%20image.png"
-    );
-    assert_eq!(
-        normalize_media_ref("./image.png:12").unwrap(),
-        "./image.png:12"
-    );
-    let once = normalize_media_ref("file:///tmp/image%23L2").unwrap();
-    assert_eq!(normalize_media_ref(&once).unwrap(), once);
-    let once = normalize_media_ref("file:///tmp/an%2520image.png").unwrap();
-    assert_eq!(normalize_media_ref(&once).unwrap(), once);
-    let once = normalize_media_ref("file:///tmp/image%3E%20").unwrap();
-    assert_eq!(once, "/tmp/image> ");
-    assert_eq!(normalize_media_ref(&once).unwrap(), once);
-    for raw in [
-        "",
-        "~/image.png",
-        "https://example.invalid/a.png",
-        "file:/tmp/a.png",
-        "file://localhost/tmp/a.png",
-        "file://host/tmp/a.png",
-        "file://user:pass@host/tmp/a.png",
-        "file:////host/a.png",
-        "file:///tmp/a.png?download=1",
-        "file:///tmp/a.png#L2",
-        "file:///tmp/%",
-        "file:///tmp/%2",
-        "file:///tmp/%GG",
-        "file:///tmp/%FF",
-        "file:///tmp/%00.png",
-        "file:///%2Fhost/a.png",
-        "file:///tmp/%0A.png",
-        "file:///tmp/%5Ca.png",
-        "file:///tmp/a%3A%2F%2Fb.png",
-        "a\nb.png",
+fn media_paths_use_python_percent_decoding_and_file_url_paths() {
+    for (raw, expected) in [
+        ("an%20image.png", "an image.png"),
+        ("file:///tmp/an%2520image.png", "/tmp/an%20image.png"),
+        ("file://host/tmp/a.png?download=1", "/tmp/a.png"),
+        ("file:///tmp/image%23L2", "/tmp/image"),
+        ("file:///tmp/%GG", "/tmp/%GG"),
+        ("file:///tmp/%FF", "/tmp/�"),
+        ("file:///tmp/%0A.png", "/tmp/\n.png"),
+        ("~/image.png", "~/image.png"),
     ] {
-        assert!(normalize_media_ref(raw).is_err(), "{raw:?}");
+        assert_eq!(normalize_media_ref(raw).unwrap(), expected);
     }
+    assert!(normalize_media_ref("").is_err());
 }
 
 #[test]
@@ -131,7 +89,7 @@ fn exact_native_refs_are_inserted_without_text_tokenization_or_ambient_authority
         .service
         .scoped_media(&fixture.scope(&[]), &[raw])
         .unwrap();
-    assert_eq!(scoped.image(raw).err().unwrap().code, "file_outside_roots");
+    assert_eq!(scoped.image(raw).unwrap().size(), 7);
 }
 
 #[test]
@@ -182,21 +140,19 @@ fn complete_selected_agent_messages_supply_scope_without_cloning_or_merging_pare
 }
 
 #[test]
-fn basename_disambiguation_includes_references_outside_the_requested_window() {
+fn media_basename_uses_cwd_even_when_other_directories_have_same_name() {
     let fixture = Fixture::new();
+    fixture.write("same.png", b"cwd");
     let first = fixture.write("first/same.png", b"first");
     let second = fixture.write("second/same.png", b"second");
     let messages = [
-        json!({"role":"assistant","text":format!("{}\n{}\n`same.png`",first.display(),second.display())}),
+        json!({"role":"assistant","text":format!("`{}`\n`{}`\n`same.png`",first.display(),second.display())}),
     ];
     let scoped = fixture
         .service
         .scoped_media(&fixture.scope(&messages), &[])
         .unwrap();
-    assert_eq!(
-        scoped.image("same.png").err().unwrap().code,
-        "file_ambiguous"
-    );
+    assert!(scoped.image("same.png").is_ok());
     assert!(scoped.image(first.to_str().unwrap()).is_ok());
     assert!(scoped.image(second.to_str().unwrap()).is_ok());
 }
@@ -221,50 +177,37 @@ fn unicode_and_drive_paths_keep_complete_evidence_beyond_the_display_cap() {
     assert!(scoped.image("图0.png").is_ok());
     assert!(scoped.image("🖼.png").is_ok());
     assert!(scoped.image("第一目录/same.png").is_ok());
-    assert_eq!(
-        scoped.image("same.png").err().unwrap().code,
-        "file_ambiguous"
-    );
+    assert_eq!(scoped.image("same.png").err().unwrap().status, 404);
 
     // Lexical coverage is platform-independent; no foreign drive is opened.
     let messages =
         [json!({"role":"assistant","text":r"paths C:\第一目录\same.png D:\第二目录\same.png"})];
     let index = references::ReferenceIndex::media(&messages, &[]).unwrap();
-    assert!(index.refs.contains(r"C:\第一目录\same.png"));
-    assert!(index.refs.contains(r"D:\第二目录\same.png"));
+    assert!(
+        index
+            .refs
+            .contains(&normalize_media_ref(r"C:\第一目录\same.png").unwrap())
+    );
+    assert!(
+        index
+            .refs
+            .contains(&normalize_media_ref(r"D:\第二目录\same.png").unwrap())
+    );
     assert_eq!(index.basenames["same.png"].len(), 2);
 
-    // Beyond the (real-root-sized) budget a media scan degrades: what was
-    // indexed stays resolvable, later references are unknown, no error.
     let messages = [
-        json!({"role":"assistant","text":(0..=references::MAX_REFERENCES)
-            .map(|n|format!("图{n}.png")).collect::<Vec<_>>().join(" ")}),
+        json!({"role":"assistant","text":(0..=250_000).map(|n|format!("picture{n}.png")).collect::<Vec<_>>().join(" ")}),
         json!({"role":"assistant","text":"late.png"}),
     ];
     let index = references::ReferenceIndex::media(&messages, &["typed.png"]).unwrap();
-    assert!(!index.complete);
-    assert!(index.refs.contains("图0.png"));
-    assert!(!index.refs.contains("late.png"));
+    assert!(index.complete);
+    assert!(index.refs.contains("late.png"));
+    assert!(index.refs.contains("typed.png"));
     assert!(
-        index.refs.contains("typed.png"),
-        "typed refs are still inserted"
-    );
-    // The file-resolution index keeps its explicit error for the same input.
-    assert_eq!(
         references::ReferenceIndex::new(&messages)
-            .err()
             .unwrap()
-            .code,
-        "file_reference_budget"
-    );
-    fixture.write("late.png", b"late");
-    let scoped = fixture
-        .service
-        .scoped_media(&fixture.scope(&messages), &[])
-        .unwrap();
-    assert_eq!(
-        scoped.image("late.png").err().unwrap().code,
-        "file_not_referenced"
+            .refs
+            .contains("late.png")
     );
 }
 
@@ -274,9 +217,18 @@ fn markdown_bare_file_urls_and_typed_refs_share_identical_media_normalization() 
     let spaced = fixture.write("an image.png", b"space");
     let percent = fixture.write("an%20image.png", b"percent");
     let hash = fixture.write("image#L2", b"hash");
-    let uri = format!("file://{}", spaced.to_str().unwrap().replace(' ', "%20"));
-    let percent_uri = format!("file://{}", percent.to_str().unwrap().replace('%', "%25"));
-    let hash_uri = format!("file://{}", hash.to_str().unwrap().replace('#', "%23"));
+    let uri_path = |path: &std::path::Path| {
+        let text = path.to_str().unwrap();
+        #[cfg(windows)]
+        let text = format!("/{}", text.trim_start_matches("\\\\?\\").replace('\\', "/"));
+        text.to_string()
+            .replace('%', "%25")
+            .replace(' ', "%20")
+            .replace('#', "%23")
+    };
+    let uri = format!("file://{}", uri_path(&spaced));
+    let percent_uri = format!("file://{}", uri_path(&percent));
+    let hash_uri = format!("file://{}", uri_path(&hash));
     for text in [format!("![image](<{uri}>)"), format!("saved image: {uri}")] {
         let messages = [json!({"role":"assistant","text":text})];
         let scoped = fixture
@@ -294,8 +246,8 @@ fn markdown_bare_file_urls_and_typed_refs_share_identical_media_normalization() 
         .scoped_media(&fixture.scope(&messages), &[])
         .unwrap();
     assert!(scoped.image(&percent_uri).is_ok());
-    assert!(scoped.image(percent.to_str().unwrap()).is_ok());
-    assert!(scoped.image(&hash_uri).is_ok());
+    assert!(scoped.image(percent.to_str().unwrap()).is_err()); // Python unquotes plain paths too.
+    assert!(scoped.image(&hash_uri).is_err()); // Python decodes the URL before dropping its fragment.
     // The ordinary file API still does not expand URL references.
     assert!(
         fixture
@@ -356,17 +308,12 @@ fn bare_image_names_resolve_against_cwd_only_without_a_directory_sweep() {
         .scoped_media(&fixture.scope(&[]), &[directory, "a.png"])
         .unwrap();
     assert_eq!(scoped.image("a.png").err().unwrap().code, "file_not_found");
-    assert_eq!(scoped.probes.get(), 1, "cwd candidate only");
     fixture.write("a.png", b"cwd");
     let mut cwd_image = scoped.image("a.png").unwrap();
     let mut bytes = Vec::new();
     cwd_image.read_to_end(&mut bytes).unwrap();
     assert_eq!(bytes, b"cwd");
-    scoped.probes.set(MAX_REFERENCE_PROBES);
-    assert_eq!(
-        scoped.image("a.png").err().unwrap().code,
-        "file_probe_budget"
-    );
+    assert!(scoped.image("a.png").is_ok());
 }
 
 #[test]
@@ -429,12 +376,11 @@ fn symlinks_special_files_and_replaced_parent_never_bypass_image_checks_but_hard
         .service
         .scoped_media(&fixture.scope(&[]), &["link.png", "hard.png", "socket.png"])
         .unwrap();
-    for (path, code) in [
-        ("link.png", "file_symlink_forbidden"),
-        ("socket.png", "file_special_forbidden"),
-    ] {
-        assert_eq!(scoped.image(path).err().unwrap().code, code);
-    }
+    assert_eq!(scoped.image("link.png").unwrap().size(), 8);
+    assert_eq!(
+        scoped.image("socket.png").err().unwrap().code,
+        "file_special_forbidden"
+    );
     // Python's bug-report attachments are hard links into the project tree:
     // a multiply linked regular file inside the root is readable as an image.
     let mut hard = scoped.image("hard.png").unwrap();
@@ -476,10 +422,10 @@ fn invalid_unselected_native_refs_are_not_grants_or_scope_wide_image_failures() 
             .err()
             .unwrap()
             .code,
-        "file_media_reference_invalid"
+        "file_not_found"
     );
     assert_eq!(
         scoped.image("~/private.png").err().unwrap().code,
-        "file_media_reference_invalid"
+        "file_not_found"
     );
 }

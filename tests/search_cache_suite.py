@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Search-text cache contract (WP-B) over the search_suite fixtures; no Chromium.
 
-Explicit 0700 directory and 0600 entries, cold/hot result identity,
+Explicit directory and cache entries, cold/hot result identity,
 append/rewrite invalidation, cached unsupported sessions, restart reuse, LRU
-byte cap, fail-closed overlap/permissions, warm-up without a search,
+eviction, ordinary path aliases and permissions, warm-up without a search,
 concurrent searches and a list during a search, NDJSON order, memory-only
 mode with a pure state dir, `--check-config`.
 """
@@ -204,7 +204,7 @@ def run_cap(tmp, data):
     passed("byte cap evicts least recently used entries, results unchanged")
 
 
-def run_explicit_and_fail_closed(tmp, data):
+def run_explicit_paths_and_values(tmp, data):
     explicit = tmp / "explicit-cache"
     explicit.mkdir(mode=0o700)
     with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit),
@@ -216,34 +216,31 @@ def run_explicit_and_fail_closed(tmp, data):
     inside = data.root / "claude" / "cache-inside-root"
     inside.mkdir(mode=0o700)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_DIR": str(inside)}, data.root)
-    if code == 0:
-        fail("fail closed", f"cache inside a native root accepted: {out}")
+    if code != 0:
+        fail("native-root cache", out)
     state = data.root / "state-overlap"
     state.mkdir(mode=0o700)
     child = state / "search-text"
     child.mkdir(mode=0o700)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_DIR": str(child), "SESSIONDOCK_STATE_DIR": str(state)}, data.root)
-    if code == 0:
-        fail("fail closed", "cache inside the state directory accepted")
+    if code != 0:
+        fail("state child cache", out)
     wide = data.root / "wide-cache"
     wide.mkdir(mode=0o750)
-    try:
-        with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(wide)}):
-            fail("fail closed", "a group-readable cache directory started")
-    except AssertionError as err:
-        if "exited early" not in str(err):
-            raise
+    with isolated_server(data, BINARY, extra_env={"SESSIONDOCK_SEARCH_CACHE_DIR": str(wide),
+                                                   "SESSIONDOCK_SEARCH_WARMUP": "0"}):
+        pass
     code, out = check_config({"SESSIONDOCK_SEARCH_WORKERS": "0"}, data.root)
-    if code == 0:
-        fail("fail closed", "SESSIONDOCK_SEARCH_WORKERS=0 accepted")
+    if code != 0:
+        fail("zero workers", out)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_BYTES": "12"}, data.root)
-    if code == 0:
-        fail("fail closed", "SESSIONDOCK_SEARCH_CACHE_BYTES=12 accepted")
+    if code != 0:
+        fail("small cache", out)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit), "SESSIONDOCK_SEARCH_WORKERS": "3",
                               "SESSIONDOCK_SEARCH_WARMUP": "7"}, data.root)
     if code != 0 or f"search_cache_dir={explicit}" not in out or "search_workers=3" not in out or "search_warmup=7" not in out:
         fail("check-config", out)
-    passed("--check-config echoes search settings; overlap and bad values fail closed")
+    passed("--check-config accepts cache aliases and values and echoes search settings")
 
 
 def run_warmup(tmp, data):
@@ -291,7 +288,7 @@ def main():
         data = build(corpus_root)
         run_memory_only(tmp, data)
         run_warmup(tmp, data)
-        run_explicit_and_fail_closed(tmp, data)
+        run_explicit_paths_and_values(tmp, data)
         # Mutates the fixtures (append, rewrite): keep it after the others.
         run_persistent(tmp, data)
         run_cap(tmp, data)

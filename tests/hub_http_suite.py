@@ -203,14 +203,20 @@ def check_config(binary, env):
             fail("check-config", f"missing {key}", result.stdout)
     if lines["hostname"] != "SessionDock":
         fail("check-config", "hostname", result.stdout)
-    for name, broken in [("missing nodes file", {"SESSIONDOCK_HUB_NODES": ""}),
-                         ("public bind", {"SESSIONDOCK_HUB_BIND": "0.0.0.0:1"}),
+    defaulted = subprocess.run(
+        [str(binary), "--check-config"],
+        env={**env, "SESSIONDOCK_HUB_NODES": "", "SESSIONDOCK_HUB_CACHE_DIR": ""},
+        capture_output=True, text=True, timeout=30,
+    )
+    if defaulted.returncode != 0:
+        fail("check-config", "default registry paths rejected", defaulted.stderr)
+    for name, broken in [("public bind", {"SESSIONDOCK_HUB_BIND": "0.0.0.0:1"}),
                          ("bad networks", {"SESSIONDOCK_HUB_NETWORKS": "10.0.0.1/24"})]:
         result = subprocess.run([str(binary), "--check-config"], env={**env, **broken}, capture_output=True,
                                 text=True, timeout=30)
         if result.returncode == 0:
             fail("check-config", f"{name} accepted", result.stdout)
-    passed("check-config prints the effective hub settings and fails closed")
+    passed("check-config prints effective/default paths and enforces network boundaries")
 
 
 def main():

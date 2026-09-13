@@ -177,11 +177,9 @@ def run(base, opener):
         fail(route, "literal dot should not match", raw)
     want_hits(opener, base, "zxca.e", "ZxCaSe", 4, regex="1")
     passed("regex valid pattern")
-    route, code, payload, raw = call(opener, base, "(?<=cat)", regex="1")
-    if code != 400 or payload.get("code") != "invalid_search_regex" \
-            or "lookaround" not in str(payload.get("error") or ""):
-        fail(route, f"HTTP {code} code={payload.get('code')} error={payload.get('error')}", raw)
-    passed("lookbehind 400 invalid_search_regex")
+    expect_ok(opener, base, "(?<=cat)", regex="1")
+    expect_ok(opener, base, r"(cat)\1", regex="1")
+    passed("lookbehind and backreferences")
     started = time.perf_counter()
     path, code, packets, _ = ndjson(base, "(a+)+b", timeout=5, regex="1")
     if code != 200 or time.perf_counter() - started > 5:

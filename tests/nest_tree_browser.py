@@ -4,10 +4,9 @@
 Isolated Rust server over a synthetic corpus, Playwright Chromium, desktop and 390 px. Every field the
 tree reads is published by this backend from the corpus itself: ``spawned_by`` is seeded into
 session-metadata.json (the record the process scan writes once), ``agent_items[].active`` is the
-sidecar's open turn (batch 36), ``continued_in`` is the tail ``continued-in`` record. The only page
-state the test sets by hand is ``S.live`` (a synthetic corpus has no CLI process to scan; the Python
-e2e stubs its node's /api/live the same way). Mid-test list changes are made on disk and reach the
-page through a forced rescan plus the page's own sig poll.
+sidecar's open turn (batch 36), and ``continued_in`` is the tail ``continued-in`` record. Mid-test
+list changes are made on disk and reach the page through a forced rescan plus the page's own sig
+poll. The synthetic corpus has no matching CLI process, so the real live endpoint stays empty.
 """
 from __future__ import annotations
 
@@ -149,37 +148,39 @@ def check_page(page, uid, data, server, width):
     assert len({r["group"] for r in flat}) == 3, flat
     base_pad = flat[0]["pad"]       # icon offset from the row's left edge when flat
 
-    # Nested: A is live and x is active, so x leads with a dot; B (with C) leaves the beta group for
-    # A's subtree; D (spawner gone) and E stay roots.
-    page.evaluate("uid => { S.live.add(uid); paintLive(); }", A)
+    # Nested: B (with C) leaves the beta group for A's subtree; the two
+    # transcript agents retain backend order; D (spawner gone) and E stay roots.
     toggle.click()
     assert page.evaluate("S.nest") and toggle.get_attribute("aria-pressed") == "true"
     assert page.evaluate('JSON.parse(localStorage.getItem("sessiondock.nest"))') is True
     tree = rows()
-    expect = [(A, None, 0), (A, "x", 1), (B, None, 1), (C, None, 2), (A, "y", 1), (D, None, 0), (E, None, 0)]
+    expect = [(A, None, 0), (B, None, 1), (C, None, 2), (A, "y", 1), (A, "x", 1), (D, None, 0), (E, None, 0)]
     got = [(r["uid"] or r["key"].split("#")[0], r["agent"], r["depth"]) for r in tree]
     assert got == expect, got
     assert len({r["group"] for r in tree}) == 2 and tree[0]["group"] == tree[5]["group"], tree
     assert [r["group"] for r in tree[:5]] == [tree[0]["group"]] * 5, tree
     assert page.evaluate('key => [...document.querySelectorAll(".group")].find(g => g.dataset.key === key)'
                          '.querySelector(".gcount").textContent', tree[0]["group"]) == "4"
-    assert [r["caret"] for r in tree] == [True, False, True, False, False, False, False], tree
-    assert tree[1]["dot"] and not tree[4]["dot"], "the running subagent carries a dot, the finished one does not"
+    assert [r["caret"] for r in tree] == [True, True, False, False, False, False, False], tree
+    assert not tree[3]["dot"] and not tree[4]["dot"], tree
     marks = page.evaluate(MARKS_JS)
     assert marks and all(m["mark"] and m["icon"] == "claude" and m["opacity"] == "1" for m in marks), marks
     # Indent: the icon moves right with depth and lines up per depth; a root's caret shares the group
     # caret's column; a child's caret sits one indent step further right.
     pads = [r["pad"] for r in tree]
-    assert pads[0] > base_pad and pads[1] > pads[0] and pads[3] > pads[2] == pads[1] == pads[4], pads
+    assert pads[0] > base_pad and pads[1] > pads[0] and pads[2] > pads[1] == pads[3] == pads[4], pads
     assert pads[5] == pads[6] == pads[0], pads
     assert all(r["pad"] < width / 3 for r in tree), pads
     assert abs(tree[0]["caretX"] - tree[0]["gheadCaretX"]) < 1, (tree[0]["caretX"], tree[0]["gheadCaretX"])
-    assert abs(tree[2]["caretX"] - (tree[0]["caretX"] + (pads[1] - pads[0]))) < 1, (tree[2]["caretX"], tree[0]["caretX"], pads)
+    assert abs(tree[1]["caretX"] - (tree[0]["caretX"] + (pads[1] - pads[0]))) < 1, (tree[1]["caretX"], tree[0]["caretX"], pads)
     assert not [r for r in tree if r["sel"]]
-    # The active-only filter has no process facts (no scan): it refuses instead of hiding rows.
-    assert page.locator("#session-active").text_content() == "?"
+    # The backend advertises process discovery and this synthetic corpus has no
+    # matching processes, so the active count and filtered list are empty.
+    assert page.locator("#session-active").text_content() == "0"
     page.locator("#livecount").click()
-    page.wait_for_function('document.querySelector("#console-toast")?.textContent.includes("运行状态未知")')
+    assert page.evaluate("S.activeOnly") is True
+    assert rows() == []
+    page.locator("#allcount").click()
     assert page.evaluate("S.activeOnly") is False and len(rows()) == 7
 
     # A subagent row opens its view and is the only lit row.
@@ -214,13 +215,10 @@ def check_page(page, uid, data, server, width):
     page.reload()
     page.wait_for_function("S.sessions.length === 5")
     assert page.evaluate("S.nest") and [r["depth"] for r in rows()] == [0, 0, 0], rows()
-    page.evaluate("uid => { S.live.add(uid); paintLive(); }", A)   # the reload forgot the live owner
     page.locator(f'#side .item[data-uid="{A}"] .nest-caret').click()
-    assert [r["depth"] for r in rows()] == [0, 1, 1, 2, 1, 0, 0]
+    assert [r["depth"] for r in rows()] == [0, 1, 2, 1, 1, 0, 0], rows()
 
-    # A list refresh that keeps the tree shape patches nodes in place. B is now the live one and
-    # A is not: the running child leads, x loses its running order and follows y by time.
-    page.evaluate("([a, b]) => { S.live.delete(a); S.live.add(b); paintLive(); }", [A, B])
+    # A list refresh that keeps the tree shape patches nodes in place.
     page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark = 1")
     data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C renamed"), [])
     pin_grandchild(data)
@@ -293,9 +291,10 @@ def main():
                     page = context.new_page()
                     errors, failed = [], []
                     page.on("pageerror", lambda error: errors.append(str(error)))
-                    # A watch stream the page closes itself is an aborted request, not a failure.
+                    # Watch streams and stale message deltas are aborted by the
+                    # page itself when selection or navigation changes.
                     page.on("requestfailed", lambda request: failed.append((request.url, request.failure))
-                            if "/api/watch?" not in request.url else None)
+                            if "/api/watch?" not in request.url and request.failure != "net::ERR_ABORTED" else None)
                     page.goto(base, wait_until="networkidle")
                     page.wait_for_function("S.sessions.length === 5")
                     check_page(page, uid, data, server, width)

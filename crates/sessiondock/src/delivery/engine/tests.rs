@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 use std::{fs, os::unix::fs::PermissionsExt};
 
 fn directory() -> tempfile::TempDir {
@@ -57,6 +58,9 @@ fn enqueue(engine: &mut DeliveryEngine, id: &str) -> Result<DispatchBatch, Error
         request: claude_request(id),
         now_ms: 1234,
     })
+}
+fn claim(batch: DispatchBatch) {
+    drop(batch.claim().unwrap());
 }
 fn inspected(engine: &mut DeliveryEngine, id: &str) -> codex::Operation {
     let mut actions = submit(engine, id).unwrap().claim().unwrap();
@@ -202,10 +206,10 @@ fn precommit_failure_retains_exact_pending_and_undurable_replay() {
 fn claude_precommit_failure_replay_is_not_durable() {
     let dir = directory();
     let mut engine = DeliveryEngine::initialize(dir.path()).unwrap();
-    engine.commit_fault = Some((store::Error::Limit, false));
+    engine.commit_fault = Some((store::Error::Changed, false));
     assert!(matches!(
         enqueue(&mut engine, "request-one"),
-        Err(Error::Store(store::Error::Limit))
+        Err(Error::Store(store::Error::Changed))
     ));
     let replay = enqueue(&mut engine, "request-one").unwrap();
     assert!(!replay.replays()[0].known);
@@ -218,22 +222,20 @@ fn claude_precommit_failure_replay_is_not_durable() {
 }
 
 #[test]
-fn lost_ack_after_commit_freezes_both_and_reopen_restores_both_epochs() {
+fn lost_persist_ack_is_retryable_and_reopen_restores_both_epochs() {
     let dir = directory();
     let mut engine = DeliveryEngine::initialize(dir.path()).unwrap();
     let old_codex = engine.codex.snapshot().version.clone();
     let old_claude = engine.claude.snapshot().version.clone();
     let op = inspected(&mut engine, "request-one");
-    engine.commit_fault = Some((store::Error::Uncertain, true));
+    engine.commit_fault = Some((store::Error::Changed, true));
     assert!(matches!(
         engine.apply_codex(draft(op), None),
-        Err(Error::Store(store::Error::Uncertain))
+        Err(Error::Store(store::Error::Changed))
     ));
-    assert!(matches!(engine.retry_commit(), Err(Error::Frozen)));
-    assert!(matches!(
-        enqueue(&mut engine, "request-two"),
-        Err(Error::Frozen)
-    ));
+    let retry = engine.retry_commit().unwrap();
+    assert_eq!(retry.action_count(), 0);
+    retry.claim().unwrap();
     drop(engine);
     let mut engine = DeliveryEngine::open(dir.path()).unwrap();
     assert_ne!(engine.codex.snapshot().version.epoch, old_codex.epoch);
@@ -334,13 +336,12 @@ fn unclaimed_batch_blocks_then_drop_freezes_across_providers() {
 }
 
 #[test]
-fn explicit_initialization_lock_and_missing_ledger_fail_closed() {
+fn normal_open_initializes_missing_ledger_and_reopens_existing() {
     let dir = directory();
-    assert!(DeliveryEngine::open(dir.path()).is_err());
-    let engine = DeliveryEngine::initialize(dir.path()).unwrap();
-    assert!(DeliveryEngine::open(dir.path()).is_err());
+    let engine = DeliveryEngine::open(dir.path()).unwrap();
     drop(engine);
     assert!(DeliveryEngine::initialize(dir.path()).is_err());
+    DeliveryEngine::open(dir.path()).unwrap();
 }
 
 #[test]
@@ -354,52 +355,50 @@ fn callers_cannot_forge_persisted_and_codex_agent_is_rejected() {
         ),
         Err(Error::InternalCommand)
     ));
-    assert!(matches!(
-        engine.apply_claude(claude::Command::PersistenceFailed(
-            engine.claude.snapshot().version.clone()
-        )),
-        Err(Error::InternalCommand)
-    ));
-    assert!(matches!(
-        engine.apply_codex(
-            codex::Command::Submit {
-                request: codex_request("request-one"),
-                now_ms: 0
-            },
-            Some("child")
-        ),
-        Err(Error::UnsupportedAgent)
-    ));
-    assert!(matches!(
-        engine.codex_outbox("codex:synthetic", Some("child")),
-        Err(Error::UnsupportedAgent)
-    ));
+    claim(
+        engine
+            .apply_codex(
+                codex::Command::Submit {
+                    request: codex_request("request-one"),
+                    now_ms: 0,
+                },
+                Some("child"),
+            )
+            .unwrap(),
+    );
+    assert!(
+        engine
+            .codex_outbox("codex:synthetic", Some("child"))
+            .is_ok()
+    );
 }
 
 #[test]
-fn unsupported_media_is_rejected_before_mutation() {
+fn opaque_media_is_persisted_for_outbox_projection() {
     let dir = directory();
     let mut engine = DeliveryEngine::initialize(dir.path()).unwrap();
     let mut request = codex_request("request-one");
-    request.payload.media.push(codex::MediaRef {
-        id: "image".into(),
-        content_digest: "digest".into(),
-    });
-    assert!(matches!(
-        engine.apply_codex(codex::Command::Submit { request, now_ms: 0 }, None),
-        Err(Error::UnsupportedMedia)
-    ));
+    request
+        .payload
+        .media
+        .push(codex::MediaRef(json!({"src":"preview"})));
+    claim(
+        engine
+            .apply_codex(codex::Command::Submit { request, now_ms: 0 }, None)
+            .unwrap(),
+    );
     let mut request = claude_request("request-one");
-    request.payload.attachments.push(claude::Attachment {
-        id: "image".into(),
-        digest: "digest".into(),
-    });
-    assert!(matches!(
-        engine.apply_claude(claude::Command::Enqueue { request, now_ms: 0 }),
-        Err(Error::UnsupportedMedia)
-    ));
-    assert_eq!(engine.codex.snapshot().version.revision, 0);
-    assert_eq!(engine.claude.snapshot().version.revision, 0);
+    request
+        .payload
+        .attachments
+        .push(claude::Attachment(json!({"src":"preview"})));
+    claim(
+        engine
+            .apply_claude(claude::Command::Enqueue { request, now_ms: 0 })
+            .unwrap(),
+    );
+    assert_eq!(engine.codex.snapshot().version.revision, 1);
+    assert_eq!(engine.claude.snapshot().version.revision, 1);
 }
 
 #[test]
@@ -453,7 +452,7 @@ fn hidden_tombstone_retained_and_diagnostics_are_bounded_without_prompt() {
     let logs = engine.logs(0, 128).unwrap();
     assert_eq!(logs.len(), 128);
     assert!(logs[0].sequence > 1);
-    assert!(matches!(engine.logs(0, 129), Err(Error::InvalidLimit)));
+    assert_eq!(engine.logs(0, 129).unwrap().len(), 128);
     let info = engine.receipts(Provider::Claude, 0, 1).unwrap();
     assert!(
         !serde_json::to_string(&(logs, info))
@@ -495,7 +494,7 @@ fn state_mapping_preserves_uncertainty_and_never_calls_it_sent() {
 }
 
 #[test]
-fn external_edit_detected_before_replay() {
+fn external_syntactic_edit_reloads_before_replay() {
     let dir = directory();
     let mut engine = DeliveryEngine::initialize(dir.path()).unwrap();
     inspected(&mut engine, "request-one");
@@ -503,14 +502,67 @@ fn external_edit_detected_before_replay() {
     let mut bytes = fs::read(&path).unwrap();
     bytes.push(b' ');
     fs::write(path, bytes).unwrap();
-    assert!(matches!(
-        submit(&mut engine, "request-one"),
-        Err(Error::Store(store::Error::Changed))
-    ));
-    assert!(matches!(
-        enqueue(&mut engine, "request-two"),
-        Err(Error::Frozen)
-    ));
+    assert_eq!(
+        submit(&mut engine, "request-one").unwrap().action_count(),
+        0
+    );
+    assert_eq!(
+        enqueue(&mut engine, "request-two").unwrap().action_count(),
+        0
+    );
+    assert!(
+        engine
+            .claude_outbox(&scope())
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|row| row.id == "request-two")
+    );
+    assert_eq!(
+        engine
+            .apply_claude(claude::Command::DispatchNext { scope: scope() })
+            .unwrap()
+            .action_count(),
+        1
+    );
+}
+
+#[test]
+fn external_semantic_edit_reloads_both_machines() {
+    let dir = directory();
+    let mut engine = DeliveryEngine::initialize(dir.path()).unwrap();
+    inspected(&mut engine, "request-one");
+
+    let mut external = DeliveryEngine::open(dir.path()).unwrap();
+    inspected(&mut external, "request-two");
+    drop(external);
+
+    assert_eq!(
+        submit(&mut engine, "request-one").unwrap().action_count(),
+        0
+    );
+    assert!(engine.codex_receipt("request-two").unwrap().is_some());
+    assert_eq!(
+        enqueue(&mut engine, "request-three")
+            .unwrap()
+            .action_count(),
+        0
+    );
+    assert!(
+        engine
+            .claude_outbox(&scope())
+            .unwrap()
+            .outbox
+            .iter()
+            .any(|row| row.id == "request-three")
+    );
+    assert_eq!(
+        engine
+            .apply_claude(claude::Command::DispatchNext { scope: scope() })
+            .unwrap()
+            .action_count(),
+        1
+    );
 }
 
 #[test]

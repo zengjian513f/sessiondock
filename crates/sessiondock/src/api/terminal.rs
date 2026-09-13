@@ -42,9 +42,10 @@ fn enabled(state: &AppState) -> Result<&std::sync::Arc<TerminalService>, ApiErro
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ClaimRequest {
+    #[serde(deserialize_with = "python_string")]
     name: String,
+    #[serde(deserialize_with = "python_string")]
     page: String,
     #[serde(default)]
     uid: Option<String>,
@@ -55,15 +56,31 @@ pub struct ClaimRequest {
     #[serde(default)]
     launch_id: Option<String>,
     #[serde(default)]
-    force: bool,
+    force: Value,
     // Legacy post() adds these diagnostics. They confer no authority and are
     // not logged, stored, or forwarded to the host.
     #[serde(default)]
-    _build: String,
+    _build: Value,
     #[serde(default)]
-    _trace_id: String,
+    _trace_id: Value,
     #[serde(default)]
-    _page_id: String,
+    _page_id: Value,
+}
+
+fn python_string<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    let raw = <Box<serde_json::value::RawValue>>::deserialize(deserializer)?;
+    super::delivery::python_id_value(raw.get(), false).map_err(serde::de::Error::custom)
+}
+
+fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null | Value::Bool(false) => false,
+        Value::Number(number) => number.as_f64() != Some(0.0),
+        Value::String(text) => !text.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        Value::Bool(true) => true,
+    }
 }
 
 pub async fn claim(
@@ -86,16 +103,6 @@ pub async fn claim(
             "终端预约请求格式无效",
         )
     })?;
-    if [&body._build, &body._trace_id, &body._page_id]
-        .iter()
-        .any(|field| field.len() > 128)
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_claim",
-            "终端预约诊断字段过长",
-        ));
-    }
     let ip = peer
         .map(|Extension(ConnectInfo(address))| address.ip())
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
@@ -104,19 +111,18 @@ pub async fn claim(
         _ = state.shutdown.cancelled() => return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
         result = async {
             match (&body.uid,&body.instance_id,&body.record_id,&body.launch_id) {
-                (None,None,None,None) => service.claim(&body.name,&body.page,ip,body.force).await.map_err(ApiError::from),
+                (None,None,None,None) => service.claim(&body.name,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from),
                 (None,Some(instance),Some(record),Some(launch)) => {
                     let target=launch_target(&state,&body.name,record,launch,instance).await?;
-                    service.claim_launch(target,&body.page,ip,body.force).await.map_err(ApiError::from)
+                    service.claim_launch(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 (Some(uid),Some(instance),None,None) => {
-                    validate_binding(uid,instance)?;
                     let observed=super::runtime::observe(&state).await?.ok_or_else(binding_unavailable)?;
                     let target=observed.hosts.iter().filter_map(|host|host.bound_target()).find(|target|
                         target.name()==body.name && target.uid()==uid && target.instance_id()==instance
                     ).ok_or_else(binding_unavailable)?;
                     authorize_native(&state,target).await?;
-                    service.claim_bound(target,&body.page,ip,body.force).await.map_err(ApiError::from)
+                    service.claim_bound(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 _ => Err(binding_unavailable()),
             }
@@ -132,7 +138,7 @@ pub async fn claim(
 }
 
 #[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct AttachQuery {
     name: String,
     page: String,
@@ -189,28 +195,25 @@ pub async fn attach(
         &query.launch_id,
     ) {
         (None, None, None, None) => Ok(()),
-        (Some(uid), Some(instance), None, None) => match validate_binding(uid, instance) {
-            Err(error) => Err(error),
-            Ok(()) => {
-                async {
-                    let observed = super::runtime::observe(&state)
-                        .await?
-                        .ok_or_else(binding_unavailable)?;
-                    let target = observed
-                        .hosts
-                        .iter()
-                        .filter_map(|host| host.bound_target())
-                        .find(|target| {
-                            target.name() == query.name
-                                && target.uid() == uid
-                                && target.instance_id() == instance
-                        })
-                        .ok_or_else(binding_unavailable)?;
-                    authorize_native(&state, target).await
-                }
-                .await
+        (Some(uid), Some(instance), None, None) => {
+            async {
+                let observed = super::runtime::observe(&state)
+                    .await?
+                    .ok_or_else(binding_unavailable)?;
+                let target = observed
+                    .hosts
+                    .iter()
+                    .filter_map(|host| host.bound_target())
+                    .find(|target| {
+                        target.name() == query.name
+                            && target.uid() == uid
+                            && target.instance_id() == instance
+                    })
+                    .ok_or_else(binding_unavailable)?;
+                authorize_native(&state, target).await
             }
-        },
+            .await
+        }
         (None, Some(instance), Some(record), Some(launch)) => {
             launch_target(&state, &query.name, record, launch, instance)
                 .await
@@ -221,19 +224,6 @@ pub async fn attach(
     if let Err(error) = binding_validation {
         service.cancel_reservation(&query.name, &query.page, &query.token);
         return Err(error);
-    }
-    if query.connection.len() > 128
-        || !query
-            .connection
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-    {
-        service.cancel_reservation(&query.name, &query.page, &query.token);
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_attach",
-            "终端连接标识无效",
-        ));
     }
     let size = match crate::terminal::terminal_size(query.cols, query.rows) {
         Ok(size) => size,
@@ -282,12 +272,14 @@ pub async fn attach(
             return Err(error.into());
         }
     };
-    let max_input = service.limits().max_input_bytes;
+    // Python accepts WebSocket frames up to 8 MiB. HTTP send/paste keeps the
+    // ptyhost guarded-operation 1 MiB ceiling.
+    let max_input = service.limits().max_host_frame_bytes;
     Ok(ws
         .read_buffer_size(16 * 1024)
         .write_buffer_size(0)
         .max_write_buffer_size(128 * 1024)
-        .max_message_size(max_input)
+        .max_message_size(usize::MAX)
         .max_frame_size(max_input)
         // Upgrade failures drop the callback's PreparedAttachment guard; do not
         // log the rejection, request URI, token, or peer's arbitrary text.
@@ -308,7 +300,6 @@ fn binding_unavailable() -> ApiError {
 /// (named keys). Legacy `text`/`enter` submit semantics are deliberately not
 /// accepted: this is not the reliable-send composer.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SendRequest {
     name: String,
     page: String,
@@ -321,19 +312,17 @@ pub struct SendRequest {
     record_id: Option<String>,
     #[serde(default)]
     launch_id: Option<String>,
-    /// Legacy page context only; the lease decides the target, not this field.
-    #[serde(default)]
-    agent: Option<String>,
     #[serde(default)]
     data: Option<String>,
     #[serde(default)]
     keys: Option<Vec<String>>,
     #[serde(default)]
+    #[serde(deserialize_with = "python_string")]
     _build: String,
     #[serde(default)]
-    _trace_id: String,
+    _trace_id: Value,
     #[serde(default)]
-    _page_id: String,
+    _page_id: Value,
 }
 
 fn invalid_input(message: &'static str) -> ApiError {
@@ -342,6 +331,7 @@ fn invalid_input(message: &'static str) -> ApiError {
 
 pub async fn send(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<SendRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
@@ -355,18 +345,11 @@ pub async fn send(
         }
         invalid_input("终端输入请求格式无效")
     })?;
-    if [&body._build, &body._trace_id, &body._page_id]
-        .iter()
-        .any(|field| field.len() > 128)
-        || body.agent.as_ref().is_some_and(|agent| agent.len() > 256)
-    {
-        return Err(invalid_input("终端输入诊断字段过长"));
-    }
     let payload = match (body.data, body.keys) {
         (Some(data), None) => {
             // The legacy page gates text writes on the served asset build so a
             // tab that outlived a deployment cannot keep typing blindly.
-            if body._build != state.assets.build {
+            if hub.is_none() && body._build != state.assets.build {
                 return Ok((
                     StatusCode::CONFLICT,
                     [(header::CACHE_CONTROL, "no-store")],
@@ -400,9 +383,7 @@ pub async fn send(
                     "terminal_input_too_large",
                     "单次终端输入不能超过 1 MiB",
                 ),
-                input::KeyError::Unknown(_) => invalid_input(
-                    "不支持的按键名；可用：enter escape tab backspace delete insert space home end pageup pagedown up down left right f1-f12 ctrl-<字母>",
-                ),
+                input::KeyError::Unknown(_) => invalid_input("按键名不能为空且不能超过 256 字节"),
             })?;
             InputPayload::Keys(names)
         }
@@ -415,10 +396,7 @@ pub async fn send(
         &body.launch_id,
     ) {
         (None, None, None, None) => ExpectedTarget::Raw,
-        (Some(uid), Some(instance), None, None) => {
-            validate_binding(uid, instance)?;
-            ExpectedTarget::Native { uid, instance }
-        }
+        (Some(uid), Some(instance), None, None) => ExpectedTarget::Native { uid, instance },
         (None, Some(instance), Some(record), Some(launch)) => {
             if record.len() != 32 || launch.len() != 32 || instance.len() != 32 {
                 return Err(binding_unavailable());
@@ -448,25 +426,24 @@ pub async fn send(
 /// The host's `capture` operation is a text snapshot, not a view state, so no
 /// PTY write, key translation, or host I/O happens here at all.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ScrollRequest {
     name: String,
     #[serde(default)]
-    up: bool,
+    up: Value,
     #[serde(default = "default_scroll_lines")]
-    lines: u32,
+    lines: Value,
     #[serde(default)]
-    cancel: bool,
+    cancel: Value,
     #[serde(default)]
-    _build: String,
+    _build: Value,
     #[serde(default)]
-    _trace_id: String,
+    _trace_id: Value,
     #[serde(default)]
-    _page_id: String,
+    _page_id: Value,
 }
 
-fn default_scroll_lines() -> u32 {
-    3
+fn default_scroll_lines() -> Value {
+    json!(3)
 }
 
 pub async fn scroll(
@@ -481,17 +458,6 @@ pub async fn scroll(
             "终端滚动请求格式无效",
         )
     })?;
-    if [&body._build, &body._trace_id, &body._page_id]
-        .iter()
-        .any(|field| field.len() > 128)
-        || !(1..=100).contains(&body.lines)
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_scroll",
-            "终端滚动参数无效：lines 须在 1..100",
-        ));
-    }
     if !service.has_host(&body.name).await? {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -501,7 +467,7 @@ pub async fn scroll(
     }
     // Direction and cancel are accepted for the legacy request shape; there is
     // no server-side position to move, so both are no-ops here.
-    let _ = (body.up, body.cancel);
+    let _ = (body.up, body.lines, body.cancel);
     Ok((
         StatusCode::OK,
         [(header::CACHE_CONTROL, "no-store")],
@@ -540,20 +506,6 @@ async fn launch_target(
     }
     Ok(target)
 }
-fn validate_binding(uid: &str, instance: &str) -> Result<(), ApiError> {
-    if uid.is_empty()
-        || uid.len() > 256
-        || !(16..=128).contains(&instance.len())
-        || uid
-            .bytes()
-            .chain(instance.bytes())
-            .any(|byte| !byte.is_ascii_alphanumeric() && !b"_.:-".contains(&byte))
-    {
-        return Err(binding_unavailable());
-    }
-    Ok(())
-}
-
 /// Python `pending_store.active` keeps a resolved row for 600 s; a finished
 /// Rust receipt (Exited/Failed) leaves `term/list.pending` this long after
 /// its terminal state was recorded. It stays queryable by record id.
@@ -580,7 +532,7 @@ pub async fn list(
     State(state): State<AppState>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
-    let permit = super::lifecycle::admit(&state)?;
+    let permit = super::lifecycle::admit(&state).await?;
     // Python `str(Path.home())`: the frontend abbreviates cwd with it.
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

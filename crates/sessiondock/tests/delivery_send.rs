@@ -65,7 +65,7 @@ fn python3() -> PathBuf {
 }
 
 impl Fixture {
-    fn new(host_binary: &Path) -> Self {
+    fn new(host_binary: &Path, profile: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let lifecycle = root.join("lifecycle");
@@ -102,24 +102,32 @@ impl Fixture {
             "AGENTHUB_TEST_CLAUDE_ROOT":claude_root,"LANG":"C.UTF-8"});
         directory(&root.join("home"));
         let launcher = root.join("launcher.json");
-        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
+        let (executable, args, resume_args) = match profile {
+            "normal" => (
+                bin.join("fake-claude"),
+                json!(["--settings", "/synthetic/bridge-settings.json"]),
+                json!(["--resume", "{sid}"]),
+            ),
+            "slow" => (
+                bin.join("fake-claude-slow"),
+                json!(["--delay", "1500", "--busy-footer", "--reply"]),
+                json!([]),
+            ),
+            "swallow" => (
+                bin.join("fake-claude-swallow"),
+                json!(["--swallow", "2"]),
+                json!([]),
+            ),
+            _ => panic!("unknown fake profile"),
+        };
+        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,
         "adapters":[],
         "profiles":[
-            {"id":"claude-cli-v1","source":"claude","executable":bin.join("fake-claude"),
-             "args":["--settings","/synthetic/bridge-settings.json"],
+            {"id":"claude-test-v1","source":"claude","executable":executable,
+             "args":args,
              "new_args":["--session-id","{session_id}"],
-             "resume_args":["--resume","{sid}"],
-             "env":env,"cwd_roots":[claude_area]},
-            {"id":"claude-slow-v1","source":"claude","executable":bin.join("fake-claude-slow"),
-             "args":["--delay","1500","--busy-footer","--reply"],
-             "new_args":["--session-id","{session_id}"],
-             "resume_args":[],
-             "env":env,"cwd_roots":[claude_area]},
-            {"id":"claude-swallow-v1","source":"claude","executable":bin.join("fake-claude-swallow"),
-             "args":["--swallow","2"],
-             "new_args":["--session-id","{session_id}"],
-             "resume_args":[],
-             "env":env,"cwd_roots":[claude_area]}
+             "resume_args":resume_args,
+             "env":env}
         ]});
         file(&launcher, config.to_string().as_bytes(), 0o600);
         drop(LifecycleStore::initialize(&lifecycle).unwrap());
@@ -160,7 +168,6 @@ impl Fixture {
             &self.host,
             Limits {
                 max_line_bytes: 64 * 1024,
-                max_directory_entries: 512,
                 operation_timeout: Duration::from_secs(2),
                 ..Default::default()
             },
@@ -270,11 +277,10 @@ async fn type_raw(app: &App, fixture: &Fixture, record_id: &str, text: &str) {
 async fn create(
     app: &App,
     fixture: &Fixture,
-    adapter: &str,
     request_id: &str,
 ) -> (String, String, String, String, String) {
     let (status, receipt) = post(&app.prepared.router, "/api/term/create",
-        json!({"source":"claude","cwd":fixture.claude_area,"request_id":request_id,"adapter_id":adapter})).await;
+        json!({"source":"claude","cwd":fixture.claude_area,"request_id":request_id,"adapter_id":"ignored-browser-selector"})).await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
     assert_eq!(receipt["running"], true, "{receipt}");
     let record_id = receipt["record_id"].as_str().unwrap().to_owned();
@@ -388,18 +394,19 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
     };
-    let fixture = Fixture::new(&host_binary);
+    let fixture = Fixture::new(&host_binary, "normal");
     let app = open(&fixture).await;
     let router = app.prepared.router.clone();
-    let (uid, name, instance, record, sid) =
-        create(&app, &fixture, "claude-cli-v1", "send-create-one").await;
+    let (uid, name, instance, record, sid) = create(&app, &fixture, "send-create-one").await;
     let instances = vec![(record.clone(), instance.clone())];
+
+    let request_id = " 短?🦀 ".repeat(20); // Under 128 characters, over 128 UTF-8 bytes.
 
     // Stale build gate before any terminal access.
     let (status, stale) = post(
         &router,
         "/api/session/send",
-        json!({"uid":uid,"name":name,"text":"x","request_id":"send-request-0001","_build":"old"}),
+        json!({"uid":uid,"name":name,"text":"x","request_id":request_id,"_build":"old"}),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -408,12 +415,12 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
     assert_eq!(stale["build"], app.build);
 
     let body = json!({"uid":uid,"name":name,"text":"hello from the web composer","media":[],
-        "activity":null,"request_id":"send-request-0001","page_id":"page-one",
+        "activity":null,"request_id":request_id,"page_id":"page-one",
         "overwrite_draft":"","cursor":null,"_build":app.build,"_trace_id":"t","_page_id":"page-one"});
     let (status, reply) = post(&router, "/api/session/send", body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     assert_eq!(reply["ok"], true);
-    assert_eq!(reply["item"]["id"], "send-request-0001");
+    assert_eq!(reply["item"]["id"], request_id);
     assert_eq!(reply["item"]["uid"], uid);
     assert_eq!(reply["item"]["text"], "hello from the web composer");
     assert_eq!(reply["item"]["server"], true);
@@ -424,10 +431,10 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
         .unwrap()
         .to_owned();
     let revision = reply["outbox_version"]["revision"].as_u64().unwrap();
-    assert_eq!(reply["outbox"][0]["id"], "send-request-0001");
+    assert_eq!(reply["outbox"][0]["id"], request_id);
 
     // The native user record confirms the receipt; the row leaves the outbox.
-    let confirmed = wait_confirmed(&app, &uid, "send-request-0001", Duration::from_secs(10)).await;
+    let confirmed = wait_confirmed(&app, &uid, &request_id, Duration::from_secs(10)).await;
     assert_eq!(confirmed["outbox_version"]["epoch"], epoch);
     assert!(confirmed["outbox_version"]["revision"].as_u64().unwrap() > revision);
     let raw = fs::read_to_string(fixture.jsonl(&sid)).unwrap();
@@ -451,18 +458,18 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
     // Replaying the same request ID is a status lookup, never a second paste.
     let (status, replay) = post(&router, "/api/session/send", body).await;
     assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay["item"]["id"], "send-request-0001");
+    assert_eq!(replay["item"]["id"], request_id);
     assert_eq!(replay["item"]["state"], "confirmed");
     assert!(replay["item"].get("text").is_none());
     assert!(replay["outbox"].as_array().unwrap().is_empty());
     let (status, conflict) = post(&router, "/api/session/send",
-        json!({"uid":uid,"name":name,"text":"another text","request_id":"send-request-0001","_build":app.build})).await;
+        json!({"uid":uid,"name":name,"text":"another text","request_id":request_id,"_build":app.build})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(conflict["error"], "重复发送 ID 对应了不同消息");
     let raw = fs::read_to_string(fixture.jsonl(&sid)).unwrap();
     assert_eq!(raw.lines().count(), 2, "replay must not inject");
 
-    // Attachments need file access this backend does not have: explicit 400.
+    // Uploaded file paths are already in text; media is opaque preview metadata.
     let (status, media) = post(
         &router,
         "/api/session/send",
@@ -470,8 +477,9 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
         "media":[{"kind":"image","token":"abc"}],"_build":app.build}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(media["code"], "delivery_media_unsupported");
+    assert_eq!(status, StatusCode::OK, "{media}");
+    assert_eq!(media["item"]["media"][0]["token"], "abc");
+    wait_confirmed(&app, &uid, "send-request-0002", Duration::from_secs(10)).await;
 
     // Wrong terminal name and unknown session follow the Python codes.
     let (status, unlinked) = post(&router, "/api/session/send",
@@ -567,8 +575,8 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
-    assert_eq!(rows.len(), 3, "{raw}");
-    assert_eq!(rows[2]["message"]["content"], "overwrite me");
+    assert_eq!(rows.len(), 4, "{raw}");
+    assert_eq!(rows[3]["message"]["content"], "overwrite me");
     kill(&app, &instances).await;
     close(app).await;
 }
@@ -579,14 +587,13 @@ async fn busy_tui_confirms_late_and_swallowed_line_stays_uncertain_across_restar
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
     };
-    let fixture = Fixture::new(&host_binary);
-    let app = open(&fixture).await;
+    let slow_fixture = Fixture::new(&host_binary, "slow");
+    let app = open(&slow_fixture).await;
     let router = app.prepared.router.clone();
 
     // Slow instance: the record appears 1.5 s after Enter behind a busy footer.
     let (slow_uid, slow_name, slow_instance, slow_record, slow_sid) =
-        create(&app, &fixture, "claude-slow-v1", "send-create-slow").await;
-    let mut instances = vec![(slow_record, slow_instance)];
+        create(&app, &slow_fixture, "send-create-slow").await;
     let started = Instant::now();
     let (status, reply) = post(&router, "/api/session/send",
         json!({"uid":slow_uid,"name":slow_name,"text":"slow prompt","request_id":"send-request-slow1","_build":app.build})).await;
@@ -603,17 +610,21 @@ async fn busy_tui_confirms_late_and_swallowed_line_stays_uncertain_across_restar
         started.elapsed() >= Duration::from_millis(1400),
         "confirmed before the CLI wrote"
     );
-    let raw = fs::read_to_string(fixture.jsonl(&slow_sid)).unwrap();
+    let raw = fs::read_to_string(slow_fixture.jsonl(&slow_sid)).unwrap();
     assert!(raw.contains("\"slow prompt\""), "{raw}");
     assert!(
         raw.contains("OK: slow prompt"),
         "assistant reply missing: {raw}"
     );
+    kill(&app, &[(slow_record, slow_instance)]).await;
+    close(app).await;
 
     // Swallowing instance: the second submitted line (our send) is dropped.
-    let (uid, name, instance, record, sid) =
-        create(&app, &fixture, "claude-swallow-v1", "send-create-swallow").await;
-    instances.push((record, instance));
+    let fixture = Fixture::new(&host_binary, "swallow");
+    let app = open(&fixture).await;
+    let router = app.prepared.router.clone();
+    let (uid, name, instance, record, sid) = create(&app, &fixture, "send-create-swallow").await;
+    let instances = vec![(record, instance)];
     let (status, reply) = post(&router, "/api/session/send",
         json!({"uid":uid,"name":name,"text":"lost in the tui","request_id":"send-request-lost1","_build":app.build})).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
@@ -767,4 +778,141 @@ async fn send_routes_are_501_without_the_ledger_or_transport() {
         assert_eq!(body["code"], "delivery_send_disabled");
     }
     shutdown.cancel();
+}
+
+/// Frozen Python server uses str(value or "") before enqueue's character slice.
+/// Raw request bodies preserve large integer spelling and duplicate map keys.
+#[tokio::test]
+async fn python_json_request_ids_and_ignored_outbox_query_fields() {
+    let host_binary = ptyhost_binary().expect("build ptyhost for this HTTP integration test");
+    let fixture = Fixture::new(&host_binary, "normal");
+    let app = open(&fixture).await;
+    let router = app.prepared.router.clone();
+    let (uid, name, instance, record, _) = create(&app, &fixture, "json-id-create").await;
+    async fn raw_post(router: &Router, path: &str, body: String) -> (StatusCode, Value) {
+        use tower::ServiceExt;
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri(path)
+                    .header("host", "localhost")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+    let cases: &[(&str, Option<&str>)] = &[
+        (r##"null"##, None),
+        (r##"false"##, None),
+        (r##"0"##, None),
+        (r##"-0"##, None),
+        (r##"0.0"##, None),
+        (r##""""##, None),
+        (r##"[]"##, None),
+        (r##"{}"##, None),
+        (r##"true"##, Some(r##"True"##)),
+        (r##"42"##, Some(r##"42"##)),
+        (r##"-7"##, Some(r##"-7"##)),
+        (r##"1.25"##, Some(r##"1.25"##)),
+        (r##"1e-7"##, Some(r##"1e-07"##)),
+        (r##"1e16"##, Some(r##"1e+16"##)),
+        (r##"0.0001"##, Some(r##"0.0001"##)),
+        (
+            r##"18446744073709551617001"##,
+            Some(r##"18446744073709551617001"##),
+        ),
+        (
+            r##"[true, null, 1.0, -0.0, "短", [], {}]"##,
+            Some(r##"[True, None, 1.0, -0.0, '短', [], {}]"##),
+        ),
+        (
+            r##"{"z": 1, "a": false, "z": 2}"##,
+            Some(r##"{'z': 2, 'a': False}"##),
+        ),
+        (
+            r##"["has'quote", "both'\"quotes", " ‍́️\b", "🦀"]"##,
+            Some(r##"["has'quote", 'both\'"quotes', '\xa0\u200d́️\x7f\x08', '🦀']"##),
+        ),
+        (
+            r##"["汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉"]"##,
+            Some(
+                r##"['汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉"##,
+            ),
+        ),
+    ];
+    let mut generated = std::collections::BTreeSet::new();
+    for (index, (raw, expected)) in cases.iter().enumerate() {
+        let body = format!(
+            r#"{{"uid":{},"name":{},"text":{},"_build":{},"request_id":{raw}}}"#,
+            json!(uid),
+            json!(name),
+            json!(format!("json type case {index}")),
+            json!(app.build)
+        );
+        let (status, reply) = raw_post(&router, "/api/session/send", body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{raw}: {reply}");
+        let id = reply["item"]["id"].as_str().unwrap().to_owned();
+        if let Some(expected) = expected {
+            assert_eq!(&id, expected, "{raw}");
+            let (status, replay) = raw_post(&router, "/api/session/send", body).await;
+            assert_eq!(status, StatusCode::OK, "{raw}: {replay}");
+            assert_eq!(replay["item"]["id"], id);
+            assert_eq!(replay["outbox_version"], reply["outbox_version"]);
+        } else {
+            assert_eq!(id.len(), 36, "{raw}: {id}");
+            assert_eq!(&id[14..15], "4");
+            assert!(
+                generated.insert(id.clone()),
+                "falsy IDs must mint a fresh UUID"
+            );
+        }
+        wait_confirmed(&app, &uid, &id, Duration::from_secs(10)).await;
+    }
+    let baseline = outbox(&app, &uid).await;
+    let (status, queried) = get(
+        &router,
+        &format!("/api/session/outbox?uid={uid}&future=one&future=two&ignored=%E6%96%B0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{queried}");
+    assert_eq!(queried, baseline);
+    // Unknown UIDs use Python's unsupported-source empty snapshot.
+    let (status, unknown) = get(
+        &router,
+        "/api/session/outbox?uid=claude:does-not-exist&future=1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(unknown["outbox"], json!([]));
+    assert_eq!(unknown["outbox_version"]["epoch"], "none");
+    // Retry/discard coerce IDs too, but never mint or truncate lookup keys.
+    for path in ["/api/session/outbox/retry", "/api/session/outbox/discard"] {
+        let (status, numeric) = raw_post(
+            &router,
+            path,
+            format!(
+                r#"{{"uid":{},"id":42,"_build":{}}}"#,
+                json!(uid),
+                json!(app.build)
+            ),
+        )
+        .await;
+        let (string_status, string) = post(
+            &router,
+            path,
+            json!({"uid":uid,"id":"42","_build":app.build}),
+        )
+        .await;
+        assert_eq!(status, string_status, "{path}: {numeric}");
+        assert_eq!(numeric, string, "{path}");
+    }
+    kill(&app, &[(record, instance)]).await;
+    close(app).await;
 }

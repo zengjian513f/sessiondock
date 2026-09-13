@@ -2,15 +2,14 @@
 //! index observes the physical input before any provider interpretation.
 use super::*;
 use crate::media::{NativeImage, NativeSpan};
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Read};
 
 const SMALL: usize = 64 * 1024;
-const OVERSIZED: &str = "普通原生记录超过 64 MiB 上限";
 mod replay_source;
 
 /// Why a complete line produced no row: not a JSON object (skipped and
-/// counted like the Python adapters), or a record budget / media failure
-/// that still fails the session (KEEP).
+/// counted like the Python adapters), or a media failure that still fails the
+/// session (KEEP).
 enum Rejected {
     Invalid,
     Hard(String),
@@ -75,39 +74,13 @@ fn io_error(error: io::Error) -> SessionError {
         .unwrap_or_else(|| SessionError::new(503, "原生记录读取失败，未发布不完整快照"))
 }
 
-// Discharging an image span must not also admit an arbitrarily large ordinary
-// body. Count the remaining serialized JSON without making another body copy.
-fn ordinary_body_fits(value: &Value) -> bool {
-    struct Counter(usize);
-    impl Write for Counter {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0 = self.0.saturating_add(bytes.len());
-            if self.0 > LINE_LIMIT {
-                return Err(io::Error::other("ordinary record limit"));
-            }
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-    serde_json::to_writer(Counter(0), value).is_ok()
-}
-
 pub(in crate::sessions) fn scan_native_records(
     reader: impl Read,
     decoder: &mut Decoder,
     probe: Option<u64>,
-    maximum: u64,
     candidate: &Candidate,
 ) -> Result<RawIndex, SessionError> {
-    let mut index = super::super::native_input::RawIndexBuilder::new(
-        super::super::native_input::IndexLimits {
-            max_bytes: maximum,
-            ..Default::default()
-        },
-        probe,
-    )?;
+    let mut index = super::super::native_input::RawIndexBuilder::new(probe)?;
     let mut failure = None;
     let result = (|| -> Result<(), SessionError> {
         let mut reader = BufReader::with_capacity(
@@ -153,7 +126,7 @@ pub(in crate::sessions) fn scan_native_records(
                     .map_err(|_| Rejected::Invalid)
             } else {
                 let input = Cursor::new(prefix).chain(&mut line);
-                let document = scanner::scan(input, record_limits(maximum));
+                let document = scanner::scan(input, record_limits());
                 // Invalid JSON must still be drained through the physical LF.
                 // EOF without LF never turns a partial record into a row/error.
                 io::copy(&mut line, &mut io::sink()).map_err(io_error)?;
@@ -163,21 +136,12 @@ pub(in crate::sessions) fn scan_native_records(
                     _ if !line.complete => Err(Rejected::Invalid),
                     Ok(document) if document.stats.span_count > 0 => {
                         // Image spans leave the record; ordinary giant text
-                        // is read back, so a record without any image stays
-                        // bound by the same physical line budget as the
-                        // small-record path.
+                        // is read back from its stamped, verified source range.
                         match replay_source::prepare(candidate, start, end, document.root)? {
-                            Ok((_, sidecars))
-                                if sidecars.iter().all(|sidecar| sidecar.image.is_none())
-                                    && line.consumed > LINE_LIMIT as u64 =>
-                            {
-                                Err(Rejected::Hard(OVERSIZED.into()))
-                            }
                             Ok(prepared) => Ok(prepared),
                             Err(reason) => Err(Rejected::Hard(reason)),
                         }
                     }
-                    _ if line.consumed > LINE_LIMIT as u64 => Err(Rejected::Hard(OVERSIZED.into())),
                     Ok(document) => document
                         .into_value()
                         .map(|value| (value, Vec::new()))
@@ -220,9 +184,6 @@ pub(in crate::sessions) fn scan_native_records(
                 }
                 Ok(_) | Err(Rejected::Invalid) => decoder.invalid += 1,
                 Err(Rejected::Hard(reason)) => decoder.error = Some(reason),
-            }
-            if decoder.records.len() > ROW_LIMIT {
-                decoder.error = Some("原生记录超过 1000000 条限制".into());
             }
         }
         Ok(())

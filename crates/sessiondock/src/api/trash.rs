@@ -1,26 +1,4 @@
-//! Session recycle bin routes. Fail closed: without a configured
-//! `SESSIONDOCK_TRASH_DIR` every route answers the unchanged `501`.
-//!
-//! Status contract:
-//! - `DELETE /api/session/{uid}[?force=1]` → `200 {ok,trash,entry_id,uid,title,
-//!   files,bytes,run_state,forced}`; `404 not_found`; `409 fork_parent_protected`
-//!   / `session_running` / `run_state_unknown` (`needs_force:true`) /
-//!   `changed_since_inventory` / `cross_filesystem`; `500 move_failed`.
-//! - `POST /api/sessions/delete {uids:[…≤200], force?}` → always `200 {ok,
-//!   deleted:[…], skipped:[…], failed:[…], errors:[skipped+failed]}` once the
-//!   request is valid (`400` otherwise): partial success is never a 500.
-//! - `GET /api/trash?limit=≤200&cursor=` → `200 {items,count,size,dir,limit,
-//!   next_cursor,truncated}`; `400 invalid_cursor`.
-//! - `POST /api/trash/restore {id}` → `200 {ok,path,uid,source,title,files,
-//!   bytes}`; `404 entry_not_found`; `409 restore_conflict` /
-//!   `entry_not_restorable` / `restore_outside_roots` / `changed_since_trashed`.
-//! - `POST /api/trash/purge {id|ids:[…≤200]|all:true|days:N}` → `200 {ok,
-//!   removed,freed,errors,failed,remaining}`; `404` for a single missing `id`.
-//!
-//! Liveness comes from a fresh runtime observation against the same frozen
-//! native catalog used to plan the delete; nothing is authorized by the shared
-//! `/api/live` cache. Every delete/restore forces an inventory refresh so the
-//! next session list already excludes/includes the session.
+//! Session recycle-bin HTTP routes, using Python-compatible delete protection.
 
 use std::sync::Arc;
 
@@ -38,9 +16,7 @@ use crate::{
     lifecycle::model::{BindingState, State as LaunchState},
     runtime::{ExitReceipt, RuntimeSnapshot},
     state::AppState,
-    trash::{
-        BATCH_LIMIT, DeleteOutcome, LIST_DEFAULT, LIST_LIMIT, Liveness, TrashError, TrashService,
-    },
+    trash::{DeleteOutcome, LIST_DEFAULT, Liveness, TrashError, TrashService},
 };
 
 impl From<TrashError> for ApiError {
@@ -69,7 +45,7 @@ fn invalid(rejection: JsonRejection) -> ApiError {
 }
 
 fn valid_uid(uid: &str) -> bool {
-    !uid.is_empty() && uid.len() <= 256 && !uid.chars().any(char::is_control) && uid.contains(':')
+    !uid.trim().is_empty()
 }
 
 /// Freeze one native snapshot (rows + verified catalog), then observe the
@@ -88,33 +64,47 @@ async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liveness), Api
             Ok((rows, catalog))
         })
         .await?;
-    let Some(runtime) = &state.runtime else {
-        return Ok((rows, Liveness::from_runtime(None)));
+    let document = json!({"sessions": &rows});
+    let external = super::runtime::observe_external_all(state, &document).await?;
+    let mut liveness = if let Some(runtime) = &state.runtime {
+        let _permit = state
+            .runtime_probes
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "runtime_closed",
+                    "进程观察服务已关闭",
+                )
+            })?;
+        let receipts = exit_receipts(state).await?;
+        let snapshot: RuntimeSnapshot =
+            runtime
+                .observe_with(&catalog, &receipts)
+                .await
+                .map_err(|_| {
+                    ApiError::new(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "runtime_unavailable",
+                        "无法读取受管进程状态",
+                    )
+                })?;
+        Liveness::from_runtime(Some(&snapshot))
+    } else {
+        Liveness::default()
     };
-    let _permit = state
-        .runtime_probes
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "runtime_busy",
-                "受控进程观察繁忙，请稍后重试",
-            )
-        })?;
-    let snapshot: RuntimeSnapshot = tokio::select! {
-        biased;
-        _ = state.shutdown.cancelled() => return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
-        result = async {
-            let receipts = exit_receipts(state).await?;
-            runtime.observe_with(&catalog, &receipts).await.map_err(|_| ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "runtime_unavailable",
-                "受控 host 目录不可用或超出观察预算，无法确认会话是否仍在运行",
-            ))
-        } => result?,
-    };
-    Ok((rows, Liveness::from_runtime(Some(&snapshot))))
+    liveness.configured = true;
+    for (uid, running) in external {
+        if running {
+            liveness.states.insert(
+                uid,
+                crate::trash::RunState::Running("native_process".into()),
+            );
+        }
+    }
+    Ok((rows, liveness))
 }
 
 /// Same receipt rule as `/api/live`: a confirmed lifecycle exit for one exact
@@ -124,7 +114,7 @@ async fn exit_receipts(state: &AppState) -> Result<Vec<ExitReceipt>, ApiError> {
         return Ok(Vec::new());
     };
     let records = service
-        .list(0, 128)
+        .list(0, usize::MAX)
         .await
         .map_err(super::lifecycle::failure)?;
     Ok(records
@@ -206,16 +196,13 @@ pub async fn delete_session(
         "not_found" => StatusCode::NOT_FOUND,
         "fork_parent_protected"
         | "session_running"
-        | "run_state_unknown"
         | "changed_since_inventory"
-        | "cross_filesystem"
         | "destination_exists"
         | "root_unconfigured"
         | "path_missing"
         | "unknown_source" => StatusCode::CONFLICT,
-        "path_outside_root" | "symlink_rejected" | "not_regular_file" => StatusCode::FORBIDDEN,
+        "not_regular_file" => StatusCode::FORBIDDEN,
         "stat_failed" => StatusCode::SERVICE_UNAVAILABLE,
-        "too_many_files" => StatusCode::PAYLOAD_TOO_LARGE,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     let mut body = serde_json::to_value(&refused).map_err(|_| encoding())?;
@@ -268,13 +255,6 @@ pub async fn delete_batch(
             "没有选中任何会话",
         ));
     }
-    if uids.len() > BATCH_LIMIT {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "too_many_sessions",
-            format!("单次最多删除 {BATCH_LIMIT} 个会话"),
-        ));
-    }
     let outcome = run_delete(&state, trash, uids, body.force).await?;
     let mut value = serde_json::to_value(&outcome).map_err(|_| encoding())?;
     // Legacy reads `deleted` and `errors`; the typed lists are additive.
@@ -304,27 +284,12 @@ pub async fn list(
     let trash = configured(&state, "/api/trash")?;
     let Query(query) = query
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid_query", "查询参数无效"))?;
-    let limit = if query.limit.is_empty() {
-        LIST_DEFAULT
-    } else {
-        match query.limit.parse::<usize>() {
-            Ok(limit) if (1..=LIST_LIMIT).contains(&limit) => limit,
-            _ => {
-                return Err(ApiError::new(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_limit",
-                    format!("limit 必须在 1 到 {LIST_LIMIT} 之间"),
-                ));
-            }
-        }
-    };
-    if query.cursor.len() > 128 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_cursor",
-            "回收站分页游标无效",
-        ));
-    }
+    let limit = query
+        .limit
+        .parse::<usize>()
+        .ok()
+        .filter(|limit| *limit > 0)
+        .unwrap_or(LIST_DEFAULT);
     let cursor = query.cursor;
     let listing = tokio::task::spawn_blocking(move || {
         trash.list(limit, (!cursor.is_empty()).then_some(cursor.as_str()))
@@ -400,13 +365,6 @@ pub async fn purge(
             StatusCode::BAD_REQUEST,
             "invalid_purge",
             "需要 id/ids，或 all:true / days:N（二者不能同时给出）",
-        ));
-    }
-    if ids.len() > BATCH_LIMIT || days.is_some_and(|days| days > 36_500) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_purge",
-            format!("单次最多清除 {BATCH_LIMIT} 个条目；days 不能超过 36500"),
         ));
     }
     let outcome = tokio::task::spawn_blocking(move || match days {

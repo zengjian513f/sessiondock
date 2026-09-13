@@ -5,10 +5,9 @@
 use super::*;
 use crate::files::FileError;
 use crate::native_replay::DecodePlan;
-use base64::read::DecoderReader;
 use std::{
     io::{self, Read},
-    path::{Component, PathBuf},
+    path::PathBuf,
 };
 
 #[derive(Clone, PartialEq, Eq)]
@@ -66,12 +65,7 @@ impl NativeImage {
             || !span.path.is_absolute()
             || !span.path.starts_with(&span.root)
             || span.path == span.root
-            || [&span.root, &span.path].into_iter().any(|path| {
-                path.components()
-                    .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
-            })
             || span.file_identity.is_empty()
-            || span.file_identity.len() > 4096
             || span.record_start >= span.record_end
             || span.start <= span.record_start
             || span.end < span.start
@@ -83,14 +77,13 @@ impl NativeImage {
                     || plan.last().decoded_len != span.decoded_len
                     || plan.last().decoded_sha1 != span.decoded_sha1
             })
-            || span.encoded_offset > 256
             || span.decoded_len <= span.encoded_offset
             || (span.encoded_offset == 0 && span.payload_sha1 != span.decoded_sha1)
         {
             return Err(MediaError::Invalid);
         }
         let encoded_len = span.decoded_len - span.encoded_offset;
-        if encoded_len > (MAX_CACHE_BYTES as u64).div_ceil(3) * 4 {
+        if encoded_len > MAX_ENCODED_BYTES as u64 {
             return Err(MediaError::Limit);
         }
         span.mime = mime.text().to_owned();
@@ -123,8 +116,6 @@ impl PreparedImage {
             || !id
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            || agent.len() > 256
-            || agent.chars().any(char::is_control)
         {
             return Err(MediaError::Invalid);
         }
@@ -268,10 +259,7 @@ impl MediaStore {
         })?;
         let mime = Mime::parse(&span.mime).map_err(error)?;
         let encoded = span.decoded_len - span.encoded_offset;
-        if !encoded.is_multiple_of(4) {
-            return Err(error(MediaError::Invalid));
-        }
-        let length = (encoded / 4 * 3).min(MAX_CACHE_BYTES as u64) as usize;
+        let length = (encoded / 4 * 3).min(MAX_IMAGE_BYTES as u64) as usize;
         let mut cache = self
             .cache
             .lock()
@@ -299,13 +287,10 @@ impl MediaStore {
             Verified::new(reader, span).finish()?;
             return Ok(blob);
         }
-        if cache.in_flight.contains(&descriptor.token) {
-            return Err(error(MediaError::Busy));
-        }
-        if length == 0 || length > self.budget.maximum || self.maximum_items == 0 {
+        if length == 0 {
             return Err(error(MediaError::Limit));
         }
-        while cache.entries.len() + cache.in_flight.len() >= self.maximum_items
+        while cache.entries.len() >= self.maximum_items
             || self
                 .budget
                 .used
@@ -318,9 +303,7 @@ impl MediaStore {
                 .iter()
                 .min_by_key(|(_, entry)| entry.used)
                 .map(|(token, _)| token.clone());
-            let Some(victim) = victim else {
-                return Err(error(MediaError::Busy));
-            };
+            let Some(victim) = victim else { break };
             cache.entries.remove(&victim);
         }
         self.budget.used.fetch_add(length, Ordering::AcqRel);
@@ -328,48 +311,37 @@ impl MediaStore {
             budget: self.budget.clone(),
             bytes: length,
         };
-        cache.in_flight.insert(descriptor.token.clone());
-        let flight = NativeFlight {
-            store: self,
-            token: &descriptor.token,
-        };
         drop(cache);
         let mut verified = Verified::new(reader, span);
         if span.encoded_offset != 0 {
-            let mut header = [0; 256];
-            let header = &mut header[..span.encoded_offset as usize];
-            verified.read_exact(header).map_err(|_| changed())?;
-            let actual = std::str::from_utf8(header)
+            let mut header = vec![0; span.encoded_offset as usize];
+            verified.read_exact(&mut header).map_err(|_| changed())?;
+            let actual = std::str::from_utf8(&header)
                 .ok()
                 .and_then(|text| text.strip_prefix("data:")?.strip_suffix(";base64,"))
+                .and_then(|text| text.split(';').next())
                 .and_then(|text| Mime::parse(text).ok());
             if actual != Some(mime) {
                 verified.finish()?;
                 return Err(error(MediaError::Invalid));
             }
         }
-        let mut decoder = DecoderReader::new(verified, &STANDARD);
+        let mut encoded_bytes = Vec::new();
+        let read = verified.read_to_end(&mut encoded_bytes);
+        verified.finish()?;
+        read.map_err(|_| error(MediaError::Invalid))?;
+        let encoded_text =
+            std::str::from_utf8(&encoded_bytes).map_err(|_| error(MediaError::Invalid))?;
+        let decoded = decoded_length(encoded_text).map_err(error)?;
         let mut bytes = vec![0; length];
-        let mut written = 0;
-        let decode = loop {
-            let mut extra = [0];
-            let target = if written == bytes.len() {
-                &mut extra[..]
-            } else {
-                &mut bytes[written..]
-            };
-            match decoder.read(target) {
-                Ok(0) => break Ok(()),
-                Ok(_) if written == bytes.len() => break Err(MediaError::Limit),
-                Ok(count) => written += count,
-                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(_) => break Err(MediaError::Invalid),
-            }
-        };
-        decoder.into_inner().finish()?;
-        decode.map_err(error)?;
-        bytes.truncate(written); // Capacity (including base64 padding slack) remains charged.
-        let (width, height) = inspect(mime, &bytes).map_err(error)?;
+        let written = PYTHON_BASE64
+            .decode_slice(python_base64_payload(encoded_text), &mut bytes)
+            .map_err(|_| error(MediaError::Invalid))?;
+        if written != decoded {
+            return Err(error(MediaError::Invalid));
+        }
+        bytes.truncate(written);
+        let (width, height) = inspect(mime, &bytes).unwrap_or((0, 0));
         let blob = Arc::new(MediaBlob {
             bytes,
             mime,
@@ -382,32 +354,21 @@ impl MediaStore {
             .lock()
             .map_err(|_| error(MediaError::Unavailable))?;
         let used = tick(&mut cache);
-        cache.entries.insert(
-            descriptor.token.clone(),
-            Entry {
-                source: descriptor.source.as_ref().map(Arc::downgrade),
-                grant: None,
-                native_scope: descriptor.native_scope.clone(),
-                blob: blob.clone(),
-                used,
-            },
-        );
+        if length <= self.budget.maximum && self.maximum_items > 0 {
+            cache.entries.insert(
+                descriptor.token.clone(),
+                Entry {
+                    source: descriptor.source.as_ref().map(Arc::downgrade),
+                    grant: None,
+                    native_scope: descriptor.native_scope.clone(),
+                    blob: blob.clone(),
+                    used,
+                },
+            );
+        }
         drop(cache);
-        drop(flight);
         Ok(blob)
     }
 }
-struct NativeFlight<'a> {
-    store: &'a MediaStore,
-    token: &'a str,
-}
-impl Drop for NativeFlight<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut cache) = self.store.cache.lock() {
-            cache.in_flight.remove(self.token);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests;

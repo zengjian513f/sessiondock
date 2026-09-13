@@ -2,12 +2,13 @@
 """HTTP contract for POST /api/audit/browser with the new frontend event shapes.
 
 A JSON batch {page_id, uid, _build, events:[{event, ts, uid, data, content}]} is
-admitted only when SESSIONDOCK_AUDIT_DIR names a 0700 directory. Unknown event
+admitted when SESSIONDOCK_AUDIT_DIR is configured; the directory is created
+and chmodded like Python's audit store. Unknown event
 names matching the intake alphabet are accepted. Each event is written as
 structured metadata only (no free-form content) to browser-YYYY-MM-DD.jsonl,
 with the top-level page_id copied onto every row. Named events
 console.button.{state,missing,restored}, detail.rendered, header.layout,
-terminal.pane, dialog.{shown,closed}, click (coordinates + truncated text) and
+terminal.pane, dialog.{shown,closed}, click (coordinates + text) and
 dom.snapshot (header_state object) return 2xx and land in the JSONL. A 3 MiB
 batch of many events is accepted; a 5 MiB batch is 413 body_too_large;
 malformed JSON is 400 invalid_audit_request; without the directory the route is
@@ -193,8 +194,8 @@ def run(opener, base, audit, uid):
     if click["data"].get("x") != 42 or click["data"].get("y") != 108:
         fail("click", "coordinates", json.dumps(click["data"]).encode())
     text = click["data"].get("text")
-    if not isinstance(text, str) or not text.endswith("…") or len(text) != 1025:
-        fail("click", "text must be truncated to 1024 chars plus ellipsis", json.dumps(click["data"]).encode())
+    if text != "Open session " + "字" * 1100:
+        fail("click", "text must retain Python-compatible input", json.dumps(click["data"]).encode())
     header = snap["data"].get("header_state")
     if not isinstance(header, dict) or header.get("selected") != uid:
         fail("dom.snapshot", "header_state object", json.dumps(snap["data"]).encode())

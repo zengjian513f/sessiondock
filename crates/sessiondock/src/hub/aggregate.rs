@@ -348,6 +348,7 @@ fn term_list_body(registry: &Registry, answers: &[Answer]) -> Value {
                 "enabled": answer.flag("enabled") && answer.ok(),
                 "unavailable_reason": reason,
                 "sources": get("sources", json!({})),
+                "resume_sources": if answer.ok() { get("resume_sources", json!({})) } else { json!({}) },
                 "home": get("home", json!("")),
                 // 终端后端是每台机器各自的设置，网页按机器分别展示和切换。
                 "backend": get("backend", json!("")),
@@ -645,9 +646,15 @@ pub async fn delete(
     body: &Value,
 ) -> Result<Value, AggregateError> {
     let groups = group_uids(body, "没有选中任何会话")?;
+    let force = match body.get("force") {
+        None => false,
+        Some(value) => value.as_bool().ok_or_else(|| invalid("需要布尔值 force"))?,
+    };
     let mut result = Map::from_iter([
         ("ok".to_string(), Value::Bool(true)),
         ("deleted".to_string(), json!([])),
+        ("skipped".to_string(), json!([])),
+        ("failed".to_string(), json!([])),
         ("errors".to_string(), json!([])),
     ]);
     for (nid, uids) in &groups {
@@ -658,7 +665,7 @@ pub async fn delete(
                     client,
                     &node,
                     "/api/sessions/delete",
-                    json!({"uids": uids}),
+                    json!({"uids": uids, "force": force}),
                 )
                 .await
             }
@@ -667,6 +674,8 @@ pub async fn delete(
         match answer {
             Some(data) => {
                 extend(&mut result, "deleted", &data);
+                extend(&mut result, "skipped", &data);
+                extend(&mut result, "failed", &data);
                 extend(&mut result, "errors", &data);
             }
             None => failed(&mut result, nid, uids),

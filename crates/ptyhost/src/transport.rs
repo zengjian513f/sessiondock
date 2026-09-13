@@ -54,7 +54,10 @@ impl Stream {
 
     #[cfg_attr(unix, allow(dead_code))]
     pub fn connect_tcp(port: u16) -> io::Result<Self> {
-        Ok(Self::Tcp(std::net::TcpStream::connect(("127.0.0.1", port))?))
+        Ok(Self::Tcp(std::net::TcpStream::connect((
+            "127.0.0.1",
+            port,
+        ))?))
     }
 
     pub fn try_clone(&self) -> io::Result<Self> {

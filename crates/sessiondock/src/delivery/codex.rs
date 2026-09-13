@@ -11,9 +11,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 const SCHEMA: u32 = 1;
-const MAX_RECEIPTS: usize = 4096;
-const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
-const MAX_LEDGER_BYTES: usize = 8 * 1024 * 1024;
+// Matches the terminal host's text input limit; receipt history is not quota.
+const MAX_PAYLOAD_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
@@ -24,11 +23,11 @@ pub struct Target {
     pub ownership_epoch: String,
 }
 
+/// Opaque outbox preview metadata. The actual uploaded path is embedded in
+/// the submitted text before this request reaches delivery.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MediaRef {
-    pub id: String,
-    pub content_digest: String,
-}
+#[serde(transparent)]
+pub struct MediaRef(pub serde_json::Value);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Payload {
@@ -186,7 +185,7 @@ pub enum Correlation {
         enter_operation: Operation,
         turn_id: String,
     },
-    /// Explicitly preserves the weakness of today's text-only TUI heuristic.
+    /// Python-compatible causal text match after the fixed native boundary.
     PossibleTextMatch,
 }
 
@@ -226,10 +225,6 @@ pub enum Command {
         now_ms: u64,
     },
     Persisted(Version),
-    /// The commit may have happened. Freeze until explicit disk recovery.
-    PersistenceFailed {
-        version: Version,
-    },
     DraftObserved {
         operation: Operation,
         observation: DraftObservation,
@@ -349,7 +344,6 @@ pub enum Error {
     WrongState,
     StaleOperation,
     PersistencePending,
-    PersistenceUncertain,
     UnprovenAcknowledgment,
     Capacity,
 }
@@ -386,12 +380,11 @@ pub struct Machine {
     epoch: String,
     committed: Snapshot,
     pending: Option<Pending>,
-    faulted: bool,
 }
 
 impl Machine {
     pub fn new(epoch: String) -> Result<Self, Error> {
-        nonempty(&epoch, 128)?;
+        present(&epoch)?;
         Ok(Self {
             committed: Snapshot {
                 schema: SCHEMA,
@@ -403,7 +396,6 @@ impl Machine {
             },
             epoch,
             pending: None,
-            faulted: false,
         })
     }
 
@@ -411,7 +403,7 @@ impl Machine {
     /// boundaries remain uncertain even if the old process never dispatched.
     pub fn restore(snapshot: Snapshot, new_epoch: String) -> Result<(Self, Vec<Effect>), Error> {
         validate_snapshot(&snapshot)?;
-        nonempty(&new_epoch, 128)?;
+        present(&new_epoch)?;
         if snapshot.version.epoch == new_epoch {
             return Err(Error::Invalid("recovery requires a fresh epoch"));
         }
@@ -419,7 +411,6 @@ impl Machine {
             epoch: new_epoch,
             committed: snapshot.clone(),
             pending: None,
-            faulted: false,
         };
         let mut restored = snapshot;
         for receipt in restored.receipts.values_mut() {
@@ -446,23 +437,8 @@ impl Machine {
     }
 
     pub fn apply(&mut self, command: Command) -> Result<Vec<Effect>, Error> {
-        if self.faulted {
-            return Err(Error::PersistenceUncertain);
-        }
         if let Command::Persisted(version) = command {
             return self.commit(version);
-        }
-        if let Command::PersistenceFailed { version } = command {
-            if self
-                .pending
-                .as_ref()
-                .map(|pending| &pending.snapshot.version)
-                != Some(&version)
-            {
-                return Err(Error::StaleOperation);
-            }
-            self.faulted = true;
-            return Err(Error::PersistenceUncertain);
         }
         if let Command::Submit { request, .. } = &command {
             validate_request(request)?;
@@ -491,18 +467,6 @@ impl Machine {
         }
         match command {
             Command::Submit { request, now_ms } => {
-                if self.committed.receipts.len() >= MAX_RECEIPTS
-                    || self
-                        .committed
-                        .receipts
-                        .values()
-                        .map(|row| payload_bytes(&row.request.payload))
-                        .sum::<usize>()
-                        + payload_bytes(&request.payload)
-                        > MAX_LEDGER_BYTES
-                {
-                    return Err(Error::Capacity);
-                }
                 if self.critical_conflict(&request) {
                     return Err(Error::WrongState);
                 }
@@ -583,7 +547,7 @@ impl Machine {
             Command::InspectionFailed { operation, reason } => {
                 let mut row = self.operation(&operation, &[State::CheckingDraft])?;
                 row.state = State::FailedBeforeWrite;
-                row.issue = Some(bounded_issue(&reason));
+                row.issue = Some(reason);
                 self.change(row, After::None)
             }
             Command::Prepared {
@@ -615,7 +579,7 @@ impl Machine {
             Command::PrepareFailed { operation, reason } => {
                 let mut row = self.operation(&operation, &[State::PrepareInFlight])?;
                 row.state = State::Uncertain;
-                row.issue = Some(bounded_issue(&reason));
+                row.issue = Some(reason);
                 self.change(row, After::None)
             }
             Command::EnterFinished { operation, result } => {
@@ -623,7 +587,7 @@ impl Machine {
                 row.state = State::Uncertain;
                 row.issue = Some(match result {
                     EnterResult::TransportReturned => "终端调用已返回，但没有可靠原生确认".into(),
-                    EnterResult::Unknown(reason) => bounded_issue(&reason),
+                    EnterResult::Unknown(reason) => reason,
                 });
                 self.change(row, After::None)
             }
@@ -739,11 +703,8 @@ impl Machine {
                     row.issue = None;
                     return self.change(row, After::None);
                 }
-                if row.state != State::Uncertain {
-                    // A live prepare/Enter boundary is not dismissable; once
-                    // it settles as uncertain the row may be hidden.
-                    return Err(Error::WrongState);
-                }
+                // Python permits retiring an injecting/confirming row. Hiding
+                // it leaves the authorized operation and callback intact.
                 // Display-only: keep the row's revision so an authorized
                 // one-shot callback is not invalidated, and keep its state.
                 row.dismissed = true;
@@ -810,11 +771,11 @@ impl Machine {
                 let mut row =
                     self.operation(&operation, &[State::Uncertain, State::EnterInFlight])?;
                 row.state = State::Uncertain;
-                row.issue = Some(bounded_issue(&reason));
+                row.issue = Some(reason);
                 // Never move the original confirmation fence after a reset.
                 self.change(row, After::None)
             }
-            Command::Persisted(_) | Command::PersistenceFailed { .. } => unreachable!(),
+            Command::Persisted(_) => unreachable!(),
         }
     }
 
@@ -840,7 +801,6 @@ impl Machine {
             || boundary.source_identity != evidence.record.source_identity
             || evidence.record.start < boundary.position
             || evidence.record.end <= evidence.record.start
-            || evidence.record.turn_id.is_empty()
             || evidence.record.record_id.is_empty()
             || !evidence.real_user_input
             || row.request.payload.text.trim() != evidence.text.trim()
@@ -857,7 +817,10 @@ impl Machine {
                 row.enter_operation.as_ref() == Some(enter_operation)
                     && turn_id == &evidence.record.turn_id
             }
-            Correlation::PossibleTextMatch => false,
+            // Python retires the first causal native user record whose prompt
+            // matches after trimming both ends. The fixed confirmation cursor
+            // above supplies the same boundary here.
+            Correlation::PossibleTextMatch => true,
         };
         if !correlated {
             return Err(Error::UnprovenAcknowledgment);
@@ -871,7 +834,8 @@ impl Machine {
                 accepted.source_identity == evidence.record.source_identity
                     && (accepted.record_id == evidence.record.record_id
                         || accepted.start == evidence.record.start
-                        || accepted.turn_id == evidence.record.turn_id)
+                        || (!evidence.record.turn_id.is_empty()
+                            && accepted.turn_id == evidence.record.turn_id))
             })
         {
             return Err(Error::UnprovenAcknowledgment);
@@ -1022,6 +986,13 @@ fn nonempty(value: &str, max: usize) -> Result<(), Error> {
         Ok(())
     }
 }
+fn present(value: &str) -> Result<(), Error> {
+    if value.trim().is_empty() {
+        Err(Error::Invalid("missing identity"))
+    } else {
+        Ok(())
+    }
+}
 
 fn validate_cursor(cursor: &NativeCursor) -> Result<(), Error> {
     nonempty(&cursor.source_identity, 1024)?;
@@ -1029,28 +1000,10 @@ fn validate_cursor(cursor: &NativeCursor) -> Result<(), Error> {
     nonempty(&cursor.anchor, 256)
 }
 
-fn payload_bytes(payload: &Payload) -> usize {
-    payload.text.len()
-        + payload.uid.len()
-        + payload.target.host_instance.len()
-        + payload.target.session_id.len()
-        + payload.target.ownership_epoch.len()
-        + payload
-            .media
-            .iter()
-            .map(|media| media.id.len() + media.content_digest.len())
-            .sum::<usize>()
-}
-
 fn validate_request(request: &Request) -> Result<(), Error> {
-    if !(8..=128).contains(&request.request_id.len())
-        || !request
-            .request_id
-            .bytes()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-')
-    {
+    if request.request_id.is_empty() || request.request_id.chars().count() > 128 {
         return Err(Error::Invalid(
-            "request_id must be 8..128 ASCII letters/digits/_/-",
+            "request_id must be 1..128 Unicode characters",
         ));
     }
     nonempty(&request.payload.uid, 256)?;
@@ -1058,13 +1011,6 @@ fn validate_request(request: &Request) -> Result<(), Error> {
     nonempty(&request.payload.target.session_id, 256)?;
     nonempty(&request.payload.target.ownership_epoch, 256)?;
     nonempty(&request.payload.text, MAX_PAYLOAD_BYTES)?;
-    if request.payload.media.len() > 64 || payload_bytes(&request.payload) > MAX_PAYLOAD_BYTES {
-        return Err(Error::Capacity);
-    }
-    for media in &request.payload.media {
-        nonempty(&media.id, 256)?;
-        nonempty(&media.content_digest, 256)?;
-    }
     Ok(())
 }
 
@@ -1072,17 +1018,7 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
     if snapshot.schema != SCHEMA {
         return Err(Error::Invalid("unsupported delivery snapshot schema"));
     }
-    nonempty(&snapshot.version.epoch, 128)?;
-    if snapshot.receipts.len() > MAX_RECEIPTS
-        || snapshot
-            .receipts
-            .values()
-            .map(|row| payload_bytes(&row.request.payload))
-            .sum::<usize>()
-            > MAX_LEDGER_BYTES
-    {
-        return Err(Error::Capacity);
-    }
+    present(&snapshot.version.epoch)?;
     let mut consumed = BTreeSet::new();
     for (id, row) in &snapshot.receipts {
         validate_request(&row.request)?;
@@ -1097,10 +1033,8 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
                 "an armed submission cannot have been blindly retried",
             ));
         }
-        if row.dismissed && (row.attempts == 0 || row.state != State::Uncertain) {
-            return Err(Error::Invalid(
-                "only an attempted uncertain receipt can be dismissed",
-            ));
+        if row.dismissed && row.attempts == 0 {
+            return Err(Error::Invalid("only an attempted receipt can be dismissed"));
         }
         if row.attempts == 0
             && (row.enter_operation.is_some() || row.confirmation.is_some() || row.watch.is_some())
@@ -1118,11 +1052,8 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
         {
             nonempty(token, 256)?;
         }
-        if row.issue.as_ref().is_some_and(|issue| issue.len() > 4096) {
-            return Err(Error::Invalid("oversized receipt issue"));
-        }
         if let Some(operation) = &row.enter_operation {
-            nonempty(&operation.epoch, 128)?;
+            present(&operation.epoch)?;
             if operation.request_id != *id
                 || operation.revision == 0
                 || operation.revision > row.revision
@@ -1194,7 +1125,6 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
         }
         if let Some(accepted) = &row.accepted {
             nonempty(&accepted.record_id, 1024)?;
-            nonempty(&accepted.turn_id, 256)?;
             let confirmation = row
                 .confirmation
                 .as_ref()
@@ -1215,7 +1145,8 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
                     row.enter_operation.as_ref() == Some(enter_operation)
                         && turn_id == &accepted.turn_id
                 }
-                _ => false,
+                Some(Correlation::PossibleTextMatch) => true,
+                None => false,
             };
             if !correlated {
                 return Err(Error::Invalid(
@@ -1228,23 +1159,26 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
             {
                 return Err(Error::Invalid("completion predates accepted input"));
             }
-            for key in [
+            let mut keys = vec![
                 (
                     0,
                     accepted.source_identity.clone(),
                     accepted.record_id.clone(),
                 ),
                 (
-                    1,
-                    accepted.source_identity.clone(),
-                    accepted.turn_id.clone(),
-                ),
-                (
                     2,
                     accepted.source_identity.clone(),
                     accepted.start.to_string(),
                 ),
-            ] {
+            ];
+            if !accepted.turn_id.is_empty() {
+                keys.push((
+                    1,
+                    accepted.source_identity.clone(),
+                    accepted.turn_id.clone(),
+                ));
+            }
+            for key in keys {
                 if !consumed.insert(key) {
                     return Err(Error::Invalid("native input consumed more than once"));
                 }
@@ -1252,10 +1186,6 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-fn bounded_issue(issue: &str) -> String {
-    issue.chars().take(1024).collect()
 }
 
 #[cfg(test)]

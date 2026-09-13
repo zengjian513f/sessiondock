@@ -24,7 +24,7 @@ pub(super) fn grok_native_identity(
     let id = summary
         .map(|summary| &summary["info"]["id"])
         .and_then(Value::as_str)
-        .filter(|id| !id.trim().is_empty() && id.len() <= 256 && !id.chars().any(char::is_control));
+        .filter(|id| !id.trim().is_empty());
     match id {
         Some(id) => (Ok(id.to_owned()), vec![id.to_owned()]),
         None => (
@@ -67,9 +67,7 @@ pub(super) fn native_identity(
             continue;
         };
         let Some(value) = value else { continue };
-        let Some(id) = value.as_str().filter(|id| {
-            !id.trim().is_empty() && id.len() <= 256 && !id.chars().any(char::is_control)
-        }) else {
+        let Some(id) = value.as_str().filter(|id| !id.trim().is_empty()) else {
             error.get_or_insert_with(|| {
                 SessionError::new(501, "原生会话 ID 无效，不能确定操作范围")
             });

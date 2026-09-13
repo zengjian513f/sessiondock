@@ -188,18 +188,20 @@ fn public_row<'a>(rows: &'a [Value], nid: &str) -> &'a Value {
 
 #[test]
 fn networks_parse_strictly_and_match_by_address_family() {
-    // The default is loopback only; the private range is explicit configuration.
+    // Python defaults to loopback plus its deployment WireGuard range.
     let nets = parse_networks(&format!("{DEFAULT_NETWORKS},192.0.2.0/24")).unwrap();
-    assert_eq!(nets.len(), 3);
+    assert_eq!(nets.len(), 4);
     assert!(nets[0].contains("127.0.0.1".parse().unwrap()));
     assert!(nets[0].contains("127.255.255.255".parse().unwrap()));
     assert!(!nets[0].contains("128.0.0.1".parse().unwrap()));
     assert!(nets[1].contains("::1".parse().unwrap()));
     assert!(!nets[1].contains("::2".parse().unwrap()));
-    assert!(nets[2].contains("192.0.2.9".parse().unwrap()));
-    assert!(!nets[2].contains("192.0.3.9".parse().unwrap()));
+    assert!(nets[2].contains("10.0.0.9".parse().unwrap()));
+    assert!(!nets[2].contains("10.0.1.9".parse().unwrap()));
+    assert!(nets[3].contains("192.0.2.9".parse().unwrap()));
+    assert!(!nets[3].contains("192.0.3.9".parse().unwrap()));
     assert!(
-        !nets[2].contains("::ffff:192.0.2.9".parse().unwrap()),
+        !nets[3].contains("::ffff:192.0.2.9".parse().unwrap()),
         "no cross-family matches"
     );
     assert_eq!(
@@ -228,7 +230,7 @@ fn networks_parse_strictly_and_match_by_address_family() {
 }
 
 #[test]
-fn validate_url_accepts_only_literal_ip_http_without_path_or_credentials() {
+fn validate_url_accepts_literal_ip_http_and_https_without_path_or_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let registry = open(dir.path());
     assert_eq!(
@@ -242,6 +244,14 @@ fn validate_url_accepts_only_literal_ip_http_without_path_or_credentials() {
     assert_eq!(
         registry.validate_url("HTTP://127.0.0.1").unwrap(),
         "127.0.0.1:80".parse().unwrap()
+    );
+    assert_eq!(
+        registry.validate_url("https://127.0.0.1").unwrap(),
+        "127.0.0.1:443".parse().unwrap()
+    );
+    assert_eq!(
+        registry.validate_url("HTTPS://127.0.0.1:8710/").unwrap(),
+        "127.0.0.1:8710".parse().unwrap()
     );
     assert_eq!(
         registry.validate_url("http://127.0.0.1:").unwrap(),
@@ -265,7 +275,6 @@ fn validate_url_accepts_only_literal_ip_http_without_path_or_credentials() {
         ("http://127.0.0.1?x=1", "节点地址必须是"),
         ("http://127.0.0.1#f", "节点地址必须是"),
         ("http://127.0.0.1//", "节点地址必须是"),
-        ("https://127.0.0.1:8710", "节点地址必须是"),
         ("ftp://127.0.0.1", "节点地址必须是"),
         ("127.0.0.1:8710", "节点地址必须是"),
         ("http://", "节点地址必须是"),

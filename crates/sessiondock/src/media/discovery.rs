@@ -25,12 +25,6 @@ pub(crate) fn discover(message: &Value) -> Vec<Discovered> {
     let mut found = Vec::new();
     let mut seen = BTreeSet::new();
     let mut fence = None;
-    let mut scan_budget = 4 * 1024 * 1024;
-    // Native record limits normally enforce this already. Do not build an
-    // unbounded secondary scanner for callers with arbitrary Values.
-    if text.len() > 2 * 1024 * 1024 {
-        return found;
-    }
     for line in text.lines() {
         if let Some((marker, count, tail)) = fence_line(line) {
             match fence {
@@ -53,16 +47,10 @@ pub(crate) fn discover(message: &Value) -> Vec<Discovered> {
             if start > 0 && line.as_bytes()[start - 1] == b'\\' {
                 continue;
             }
-            if let Some((reference, end)) = markdown(line, start, &mut scan_budget) {
+            if let Some((reference, end)) = markdown(line, start) {
                 spans.push((start, end));
                 position = end;
                 insert(&mut found, &mut seen, reference, false);
-                if found.len() == 16 {
-                    return found;
-                }
-            }
-            if scan_budget == 0 {
-                return found;
             }
         }
         if raw {
@@ -96,9 +84,6 @@ pub(crate) fn discover(message: &Value) -> Vec<Discovered> {
                         continue;
                     }
                     insert(&mut found, &mut seen, reference, true);
-                    if found.len() == 16 {
-                        return found;
-                    }
                 }
                 start = b;
             }
@@ -125,7 +110,9 @@ fn insert(
     reference: &str,
     gallery: bool,
 ) {
-    if local_image(reference) && seen.insert(reference.to_owned()) {
+    if (super::remote_reference(reference) || local_image(reference))
+        && seen.insert(reference.to_owned())
+    {
         found.push(Discovered {
             reference: reference.to_owned(),
             gallery,
@@ -133,16 +120,7 @@ fn insert(
     }
 }
 fn local_image(reference: &str) -> bool {
-    if reference.is_empty()
-        || reference.len() > 4096
-        || reference.contains("![")
-        || reference.contains("](")
-        || reference.starts_with("//")
-        || reference.starts_with("\\\\")
-        || reference
-            .chars()
-            .any(|c| c.is_control() || matches!(c, '?' | '#' | '<' | '>' | '"' | '\''))
-    {
+    if reference.is_empty() {
         return false;
     }
     if reference
@@ -152,6 +130,10 @@ fn local_image(reference: &str) -> bool {
         return crate::files::normalize_media_ref(reference)
             .is_ok_and(|path| image_extension(&path));
     }
+    #[cfg(windows)]
+    let normalized = crate::files::normalize_media_ref(reference).ok();
+    #[cfg(windows)]
+    let reference = normalized.as_deref().unwrap_or(reference);
     if let Some(colon) = reference.find(':') {
         let bytes = reference.as_bytes();
         if colon != 1
@@ -185,12 +167,11 @@ fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
     let count = rest.bytes().take_while(|b| *b == marker).count();
     (count >= 3).then_some((marker, count, &rest[count..]))
 }
-fn markdown<'a>(line: &'a str, start: usize, budget: &mut usize) -> Option<(&'a str, usize)> {
+fn markdown(line: &str, start: usize) -> Option<(&str, usize)> {
     let bytes = line.as_bytes();
     let mut p = start + 2;
     let mut nesting = 0;
     loop {
-        *budget = budget.checked_sub(1)?;
         match *bytes.get(p)? {
             b'\\' => p += 2,
             b'[' => {
@@ -219,7 +200,6 @@ fn markdown<'a>(line: &'a str, start: usize, budget: &mut usize) -> Option<(&'a 
         p += 1;
         begin = p;
         while *bytes.get(p)? != b'>' {
-            *budget = budget.checked_sub(1)?;
             p += 1;
         }
         end = p;
@@ -228,7 +208,6 @@ fn markdown<'a>(line: &'a str, start: usize, budget: &mut usize) -> Option<(&'a 
         begin = p;
         let mut depth = 0;
         loop {
-            *budget = budget.checked_sub(1)?;
             match *bytes.get(p)? {
                 b'\\' => p += 2,
                 b'(' => {
@@ -252,7 +231,6 @@ fn markdown<'a>(line: &'a str, start: usize, budget: &mut usize) -> Option<(&'a 
     if let Some(quote @ (b'\'' | b'"')) = bytes.get(p).copied() {
         p += 1;
         while *bytes.get(p)? != quote {
-            *budget = budget.checked_sub(1)?;
             if bytes[p] == b'\\' {
                 p += 1;
             }
@@ -313,15 +291,13 @@ mod tests {
         );
     }
     #[test]
-    fn remote_data_and_nonimage_sources_are_never_candidates() {
-        assert!(pairs("user","![x](https://example.invalid/x.png) ![x](data:image/png;base64,AAAA) ![x](//example.invalid/x.jpg) file://remote.invalid/tmp/x.bmp https://example.invalid/x.gif?x=.png /tmp/x.svg").is_empty());
-        assert!(
-            pairs(
-                "user",
-                "\\\\host\\share\\image.png ./secret.png?token=abc ./secret.png#fragment"
-            )
-            .is_empty()
+    fn remote_markdown_and_file_urls_are_candidates() {
+        assert_eq!(
+            pairs("user", "![x](https://example.invalid/x.png)"),
+            vec![("https://example.invalid/x.png".into(), false)]
         );
+        assert!(pairs("user", "file://remote.invalid/tmp/x.bmp").is_empty());
+        assert!(pairs("user", "![x](data:image/png;base64,AAAA) /tmp/x.svg").is_empty());
     }
     #[test]
     fn local_file_url_is_validated_without_changing_reference() {
@@ -387,7 +363,7 @@ mod tests {
             .map(|n| format!("./图{n}.png"))
             .collect::<Vec<_>>()
             .join(" ");
-        assert_eq!(pairs("user", &text).len(), 16);
+        assert_eq!(pairs("user", &text).len(), 100);
         for text in [
             "![x](<未完成.png",
             "![x](\\图.png)",

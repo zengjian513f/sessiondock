@@ -4,13 +4,13 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Names
 
-**SessionDock.** This Rust project: crate and binary `sessiondock`, hub binary `sessiondock-hub`, environment prefix `SESSIONDOCK_` ([environment.md](environment.md)), test hook `SESSIONDOCK_TEST_PTYHOST_BINARY`, `localStorage` namespaces `sessiondock.` / `sessiondock.hub.<path>.`, `/api/meta` hostname fallback `SessionDock` (the default is the system host name since batch 44 WP-C), the installable identity (`manifest.webmanifest` name/short_name, `apple-mobile-web-app-title`, service-worker cache `sessiondock-shell-*`, page titles `… · SessionDock`), deployment unit `sessiondock.service` under the prefix `/srv/sessiondock` behind the proxy location `/sessiondock/`. UIDs are path hashes and did not change with the name. Nothing else in the repository is called by the old name.
+**SessionDock.** This Rust project: crate and binary `sessiondock`, hub binary `sessiondock-hub`, environment prefix `SESSIONDOCK_` ([environment.md](environment.md)), test hook `SESSIONDOCK_TEST_PTYHOST_BINARY`, `localStorage` namespaces `sessiondock.` / `sessiondock.hub.<path>.`, `/api/meta` hostname fallback `SessionDock` (the default is the system host name since batch 44 WP-C), the installable identity (`manifest.webmanifest` name/short_name, `apple-mobile-web-app-title`, service-worker cache `sessiondock-shell-*`, page titles `… · SessionDock`), deployment unit `sessiondock.service` under the prefix `/srv/sessiondock` behind the proxy location `/sessiondock/`. Internal server leases use `sessiondock-delivery-executor` and `sessiondock-bug-report`; these transient page names are not persisted ledger formats. UIDs are path hashes and did not change with the name. User-facing product names say SessionDock. References to Python, historical artifacts and compatible identifiers keep their original names as listed below.
 
-**Kept `agenthub` identifiers.** The wire/DOM contract shared with the Python frontend and Python Hub nodes keeps its spelling: headers `X-AgentHub-Protocol`, `X-AgentHub-Node-Token`, `X-AgentHub-Page`, `X-AgentHub-Trace`, `X-AgentHub-Build`, `X-AgentHub-Decoded-Length`; template markers `__AGENTHUB_MODE__`, `__AGENTHUB_HOSTNAME__`, `__AGENTHUB_ASSET_VERSION__`; meta tags `agenthub-capabilities`, `agenthub-mode`; the JS globals and identifiers `AgentHubCapabilities`, `agenthubCli`, `AGENTHUB_CLIS`, `agenthubHighlight*`, `__agenthubConnectionId`, `__agenthubPageId`, `agenthub-build`, `agenthub-highlight-ready`, `AgentHubFilePreview`, `AgentHubTypography`, the `AgentHub …` font family names and the `agenthub-files-*` / `agenthub-shell-` page storage keys; the hub-mode hostname `AgentHub` (Python `HOSTNAME`) and the Python namespaces `agenthub.` / `agenthub.hub.<path>.` used when `storage_namespace` is empty; the persisted ledger format tags `agenthub-delivery` / `agenthub-lifecycle` and the server lease pages `agenthub-delivery-executor` / `agenthub-bug-report` (renaming them would orphan deployed ledgers and leases); the Python project name `agenthub` and its paths (`../agenthub`, `agenthub/static`, `~/.local/share/agenthub`, `agenthub_attachments/`, `.agenthub-trash`, `.agenthub-upload`, `deploy/agenthub*.service`, `nginx-agenthub*.conf`); the Python-side environment names quoted in comparison tables (`AGENTHUB_HOST_*`, `AGENTHUB_TERM_BACKEND`, `AGENTHUB_SESSION`, which ptyhost still exports); the launcher profile whitelist prefix `AGENTHUB_TEST_*` and the test hooks under it (`AGENTHUB_TEST_LABEL`, `AGENTHUB_TEST_CLAUDE_ROOT`, `AGENTHUB_TEST_CODEX_ROOT`, `AGENTHUB_TEST_FREE_SHELL_BINARY`, …), `AGENTHUB_PYTHON_SOURCE`, `AGENTHUB_DELIVERY_TEST_CHILD_DIRECTORY`, `AGENTHUB_METADATA_TEST_LOCK_DIRECTORY`; and the imported crates `ptyhost` / `ptyhost-client` with `AGENTHUB_HOST_DIR`. `reference/legacy-web/` is Python's frozen static tree and is never renamed.
+**Kept `agenthub` identifiers.** The wire/DOM contract shared with the Python frontend and Python Hub nodes keeps its spelling: headers `X-AgentHub-Protocol`, `X-AgentHub-Node-Token`, `X-AgentHub-Page`, `X-AgentHub-Trace`, `X-AgentHub-Build`, `X-AgentHub-Decoded-Length`; template markers `__AGENTHUB_MODE__`, `__AGENTHUB_HOSTNAME__`, `__AGENTHUB_ASSET_VERSION__`; meta tags `agenthub-capabilities`, `agenthub-mode`; the JS globals and identifiers `AgentHubCapabilities`, `agenthubCli`, `AGENTHUB_CLIS`, `agenthubHighlight*`, `__agenthubConnectionId`, `__agenthubPageId`, `agenthub-build`, `agenthub-highlight-ready`, `AgentHubFilePreview`, `AgentHubTypography`, the `AgentHub …` font family names and the `agenthub-files-*` / `agenthub-shell-` page storage keys; the Python namespaces `agenthub.` / `agenthub.hub.<path>.` used when `storage_namespace` is empty; the persisted ledger format tags `agenthub-delivery` / `agenthub-lifecycle` (renaming them would orphan deployed ledgers); the Python project name `agenthub` and its paths (`../agenthub`, `agenthub/static`, `~/.local/share/agenthub`, `agenthub_attachments/`, `.agenthub-trash`, `.agenthub-upload`, `deploy/agenthub*.service`, `nginx-agenthub*.conf`); the Python-side environment names quoted in comparison tables (`AGENTHUB_HOST_*`, `AGENTHUB_TERM_BACKEND`, `AGENTHUB_SESSION`, which ptyhost still exports); the shared fake-CLI test-hook prefix `AGENTHUB_TEST_*` and the hooks under it (`AGENTHUB_TEST_LABEL`, `AGENTHUB_TEST_CLAUDE_ROOT`, `AGENTHUB_TEST_CODEX_ROOT`, `AGENTHUB_TEST_FREE_SHELL_BINARY`, …), `AGENTHUB_PYTHON_SOURCE`, `AGENTHUB_DELIVERY_TEST_CHILD_DIRECTORY`; and the imported crates `ptyhost` / `ptyhost-client` with `AGENTHUB_HOST_DIR`. `reference/legacy-web/` is Python's frozen static tree and is never renamed.
 
 ## Identifiers
 
-**UID.** Local list key `source:sha1(path)[:16]`; Hub node namespaces must not mix UUIDs. Opaque ASCII, not a path; host metadata requires `source:` plus a suffix. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**UID.** Local list key `source:sha1(path)[:16]`; Hub node namespaces must not mix UUIDs. It is an opaque inventory key; host metadata associates it with its source. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
 
 **SID.** Native session id from the record (`sessionId` / `session_meta.payload.id`), listed beside `uid/source/sid`. Display `sid`, filenames and cursor hashes are not native identity. See [native scope](delivery-scope.md#trusted-native-scope-selection).
 
@@ -20,7 +20,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Native history
 
-**Native record.** One committed JSONL object projected by `providers/` (that layer does not open files). One record may emit several events; ordinary lines stay within the 2 MiB record budget. See [read model](read-model.md).
+**Native record.** One committed JSONL object projected by `providers/` (that layer does not open files). One record may emit several events. See [read model](read-model.md).
 
 **Index (lazy).** The session list source: directory walk + stat + a bounded head (96 KiB, ≤ 40 records) and tail (512 KiB) summary per file, cached by file stamp (dev/ino/size/mtime_ns), read in parallel; no startup parse, no session/byte caps, one file's change never fails the list. Ownership/fork graphs, native ids for the runtime catalog, lifecycle resume and trash file sets come from these summaries. See [read model](read-model.md).
 
@@ -30,7 +30,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **Event.** Display unit after provider projection. Indices count all non-status events; several events may share an offset, and inherited events may have offset zero. See [history pages](history-pages.md#wire-contract).
 
-**Message.** Public JSON built from those events for HTTP/SSE. Codex/Grok may group a content array into one message; Claude can emit one visible event per block. See [media grouping](media.md#recognized-input-and-public-projection).
+**Message.** Public JSON built from those events for HTTP/SSE. Codex/Grok may group a content array into one message; Claude can emit one visible event per block. See [media grouping](media.md#recognition-and-grouping).
 
 **counted:false.** Excludes an event from `message_total`. Status records form activity, not body; page indices still include `counted:false`. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
 
@@ -40,7 +40,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **Semantic anchor.** Cursor field binding view identity, the fixed inherited prefix and already displayed events (`rs-m1-2` / `rs-m2-1`). A branch switch or parent-prefix rewrite resets even on a leaf-only append. See [read model](read-model.md).
 
-**Checkpoint.** Physical LF offset/digest (`RawIndex`) and the live byte/semantic snapshot a grant pins. Gap-page tokens stay separate from the live append checkpoint. See [physical input](native-input.md#physical-input-and-checkpoints).
+**Checkpoint.** Physical LF offset/digest (`RawIndex`) and the live byte/semantic snapshot a grant pins. Gap-page tokens stay separate from the live append checkpoint. See [physical input](native-input.md#native-input-and-structural-scanning).
 
 **Reset.** Required on truncate, replace, same-size rewrite, or semantic fork/prefix mismatch. SSE then sends a bounded window, not an unbounded replay. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
 
@@ -52,29 +52,28 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **History page.** `GET /api/messages/{uid}/page` filling the omitted middle range. No live `end`/`head`/`anchor`; inserting a page must not move the append checkpoint or watch stream. See [history pages](history-pages.md#wire-contract).
 
-**Media page.** `GET /api/messages/{uid}/media-page` continuing a message that inlined at most 16 typed images (`media_more`). A page read never moves the live cursor. See [media continuation](media.md#per-message-media-continuation-batch-20).
+**Media page.** `GET /api/messages/{uid}/media-page` continuing the typed images of one message (`media_more`). A page read never moves the live cursor. See [media continuation](media.md#continuation-and-errors).
 
 **Grant.** In-memory 128-bit token in `PageStore` (1024 entries, ten minutes, oldest eviction) binding canonical owner UID, exact agent and the producing view's checkpoint. Shared by history pages and media continuation. See [grants](history-pages.md#checkpoints-lifetime-and-errors).
 
 ## Media
 
-**Native span.** Private `TextSpan`/`NativeSpan`: physical quote range, decoded length/SHA-1 and optional `DecodePlan`. GET re-checks full current-branch membership; a private text span is not filesystem or image authority. See [spans](native-input.md#large-strings-are-not-image-authority).
+**Native span.** Private `TextSpan`/`NativeSpan`: physical quote range, decoded length/SHA-1 and optional `DecodePlan`. GET re-checks full current-branch membership; a private text span is not filesystem or image authority. See [spans](native-input.md#tool-envelopes-and-native-images).
 
-**Inline image.** Embedded payload still inside the 2 MiB record / 1.5 MiB decoded (2 MiB base64) limits. Distinct from 32 MiB structured spans and authorized disk images. See [media limits](media.md#format-and-size-checks).
+**Inline image.** Image data embedded in native history. Python’s 32 MiB decoded-image limit applies equally to inline data and retained native spans. See [media limits](media.md#size-and-cache-behavior).
 
-**File reference.** Markdown or raw path discovered in projected text, or a typed native file block. Discovery does not open files; HTTP needs the complete selected-view index plus configured roots. See [text discovery](media.md#text-discovery-versus-file-authority).
+**File reference.** Markdown or raw path discovered in projected text, or a typed native file block. Discovery does not open files; HTTP resolves the reference against the selected session and its working directory. See [text discovery](media.md#file-references).
 
-**Descriptor.** Registered private source (`src` token, no decoded bytes). The descriptor table holds at most 1024 entries and 32 MiB encoded source. See [media cache](media.md#cache-response-ownership-and-failure).
+**Descriptor.** Registered private source (`src` token, no decoded bytes). Its retention is separate from decoded-image caching. See [media cache](media.md#size-and-cache-behavior).
 
-**Blob.** Validated decoded bytes in `MediaBlob`, charged on a separate 32 MiB / 256-item cache. GET materializes on demand; descriptor eviction is 404 even if a blob remains. See [media cache](media.md#cache-response-ownership-and-failure).
+**Blob.** Decoded bytes in `MediaBlob`, retained in an evicting cache. Cache pressure does not reject a valid GET; GET materializes on demand; descriptor eviction is 404 even if a blob remains. See [media cache](media.md#size-and-cache-behavior).
 
 ## Nested decode
 
-**DecodePlan.** One outer physical range plus at most eight inner `StringRange`s whose offsets address the preceding **decoded** stream, never file bytes. The ninth stringified layer is rejected. See [envelopes](native-input.md#nested-stringified-tool-envelopes-batch-19).
+**DecodePlan.** One outer physical range and inner `StringRange`s whose offsets address the preceding **decoded** stream, never file bytes. See [envelopes](native-input.md#tool-envelopes-and-native-images).
 
-**WorkBudget.** Shared 512 MiB charge for physical bytes read plus every decoded layer while projecting one record; GET uses its own 512 MiB budget. Depth does not replenish either. See [envelopes](native-input.md#nested-stringified-tool-envelopes-batch-19).
 
-**Replay.** GET rebuilds the layered reader from the immutable plan, verifies each layer's length/SHA-1 and outer EOF, then publishes. Identical image bytes are not enough if a parent digest changed. See [envelopes](native-input.md#nested-stringified-tool-envelopes-batch-19).
+**Replay.** GET rebuilds the layered reader from the immutable plan, verifies each layer's length/SHA-1 and outer EOF, then publishes. Identical image bytes are not enough if a parent digest changed. See [envelopes](native-input.md#tool-envelopes-and-native-images).
 
 ## Topology
 
@@ -88,7 +87,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **Compaction.** Claude compact events that rejoin across the tree and hide finished abandoned branches (two compact forms). Codex also filters compacted/internal context. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
 
-**Rewind.** Native branch signal already on disk; live CLI-screen rewind and durable pin are not opened as writes. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [migration batch 2](migration.md#第二批原生历史语义).
+**Rewind.** Native branch signal already on disk; live CLI-screen rewind and durable pin are not opened as writes. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [migration batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
 
 **Last-prompt.** Claude record that cuts the active leaf. An append-only last-prompt can withdraw older displayed events and reset. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
 
@@ -120,20 +119,20 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **Exited.** Host `exited:true`, a confirmed lifecycle exit receipt for the same instance, or (Linux, this Web process only) a previously verified identity gone from `/proc`. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
 
-**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). An empty list never means every session stopped; `capabilities.live` stays false. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). Managed observations retain this state when they cannot prove running or exited. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
 
 ## Delivery
 
 **Delivery ledger.** Isolated `delivery-ledger.json` opened from an explicit private directory; missing data is not permission to initialize. Independent of native history and of send execution. See [store](delivery-store.md#one-envelope-existing-provider-schemas).
 
-**Outbox.** `GET /api/session/outbox` is a committed display projection of receipts for a verified NativeScope. `outbox_read` does not enable the `outbox` send/retry/discard capability. See [delivery HTTP](delivery-http.md#read-only-delivery-http-contract).
+**Outbox.** `GET /api/session/outbox` is a committed display projection of receipts for a verified NativeScope. `outbox_read` does not enable the `outbox` send/retry/discard capability. See [delivery HTTP](delivery-http.md).
 
 **Receipt.** Durable delivery-domain row (Codex/Claude state machine) or a lifecycle creation record. HTTP/terminal write success is not native acknowledgment. See [delivery states](delivery.md#interface-and-state-transitions).
 
 ## Flags and parity
 
-**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, `live:false`, `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [§3.1](../BACKEND_MIRGRATION_PLAN.md#31-浏览器与静态资源).
+**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [§3.1](../BACKEND_MIRGRATION_PLAN.md#31-浏览器与静态资源).
 
-**DELTA.** A named, asserted Python/Rust difference in a parity tool (safety tightening, not a silent count merge). Disappearance or a different result fails. See [media parity](media-parity.md#explicit-differences-not-compatibility-failures).
+**DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [media parity](media-parity.md).
 
 **UNVERIFIED.** A parity difference that is not a documented DELTA and not a clear FAIL. Advanced history parity requires every remaining difference to be a DELTA, never UNVERIFIED. See [validation](../AGENTS.md#validation).

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded read admission: queue instead of fail; wait 0 restores 503 reader_busy."""
+"""Concurrent reads queue until a worker is available."""
 from __future__ import annotations
 
 import argparse
@@ -96,34 +96,8 @@ def run_a(base, opener, uids):
 
 
 def run_b(base, uids):
-    def burst(n):
-        _, results = fanout(base, [f"/api/messages/{uids[i % 6]}" for i in range(n)], timeout=30)
-        busy, ok = 0, 0
-        for st, raw in results:
-            if st == 200:
-                ok += 1
-            elif st == 503:
-                try:
-                    code = json.loads(raw).get("code")
-                except json.JSONDecodeError:
-                    code = ""
-                if code != "reader_busy":
-                    fail("wait0", f"503 without reader_busy", raw[:200])
-                busy += 1
-            else:
-                fail("wait0", f"HTTP {st}", raw[:200])
-        return busy, ok
-
-    busy, ok = burst(12)
-    if busy == 0:
-        busy, ok = burst(24)
-    if busy == 0:
-        print("NOTE wait0: no 503 (reads too fast); counting as passed-with-note", flush=True)
-        passed("wait0 reader_busy (timing note)")
-        return
-    if ok == 0:
-        fail("wait0", "no 200 alongside reader_busy")
-    passed("wait0 at least one 503 reader_busy and one 200")
+    _, results = fanout(base, [f"/api/messages/{uids[i % 6]}" for i in range(24)], timeout=90)
+    codes_ok("queued burst of 24 reads", results)
 
 
 def check_env(corpus: Corpus, extra):
@@ -143,7 +117,7 @@ def run_c(corpus: Corpus):
     if bad.returncode == 0:
         fail("check-config workers=0", "expected non-zero", bad.stdout.decode("utf-8", "replace")[:200])
     passed("check-config READ_WORKERS=0 fails")
-    ok = check_env(corpus, {"SESSIONDOCK_READ_WORKERS": "4", "SESSIONDOCK_ADMISSION_WAIT_MS": "250"})
+    ok = check_env(corpus, {"SESSIONDOCK_READ_WORKERS": "4"})
     text = (ok.stdout + ok.stderr).decode("utf-8", "replace")
     if ok.returncode != 0 or "read_workers=4" not in text:
         fail("check-config workers=4", f"rc={ok.returncode}", text[:240])
@@ -164,12 +138,10 @@ def main():
         uids = [corpus.uid(f"pool-{i:02d}") for i in range(6)]
         with isolated_server(corpus, binary, state_dir=state, extra_env={
             "SESSIONDOCK_READ_WORKERS": "2",
-            "SESSIONDOCK_ADMISSION_WAIT_MS": "10000",
         }) as (base, opener):
             run_a(base, opener, uids)
         with isolated_server(corpus, binary, state_dir=state, extra_env={
             "SESSIONDOCK_READ_WORKERS": "1",
-            "SESSIONDOCK_ADMISSION_WAIT_MS": "0",
         }) as (base, opener):
             run_b(base, uids)
         run_c(corpus)

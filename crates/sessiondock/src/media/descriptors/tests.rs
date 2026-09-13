@@ -66,9 +66,9 @@ fn registration_does_not_decode_and_first_get_survives_original_source_drop() {
 }
 
 #[test]
-fn invalid_encoding_is_registered_but_get_releases_reservation_and_flight() {
+fn invalid_encoding_is_registered_but_get_releases_reservation() {
     let store = MediaStore::new();
-    for payload in ["!!!!", "AAAA"] {
+    for payload in ["!!!!", "AA=A"] {
         let token = register(&store, &image(payload));
         assert_eq!(used(&store), 0);
         for _ in 0..2 {
@@ -76,7 +76,6 @@ fn invalid_encoding_is_registered_but_get_releases_reservation_and_flight() {
             assert_eq!(used(&store), 0);
             let cache = store.cache.lock().unwrap();
             assert!(cache.entries.is_empty());
-            assert!(cache.in_flight.is_empty());
         }
     }
 }
@@ -97,58 +96,40 @@ fn descriptor_eviction_is_independent_from_blob_cache_and_held_ticket_charge() {
 }
 
 #[test]
-fn held_encoded_source_blocks_replacement_until_ticket_cancelled() {
+fn held_encoded_source_does_not_reject_replacement() {
     let store = limits(1, PNG.len(), 256, MAX_CACHE_BYTES);
     let token = register(&store, &image(PNG));
     let held = store.ticket(&token).unwrap();
     let replacement = PreparedImage::embedded(&image(PNG)).unwrap();
-    assert_eq!(
-        store
-            .register_prepared(std::slice::from_ref(&replacement))
-            .unwrap_err(),
-        MediaError::Busy
-    );
+    store
+        .register_prepared(std::slice::from_ref(&replacement))
+        .unwrap();
     assert!(store.ticket(&token).is_none());
+    assert_eq!(encoded(&store), PNG.len() * 2);
+    drop(held); // The replacement still owns its encoded source.
     assert_eq!(encoded(&store), PNG.len());
-    drop(held); // Cancellation before decoding releases retained encoded bytes.
-    assert_eq!(encoded(&store), 0);
     assert!(store.register_prepared(&[replacement]).is_ok());
 }
 
 #[test]
-fn held_blob_cannot_be_evicted_out_of_budget_and_retry_can_materialize() {
-    let bytes = STANDARD.decode(PNG).unwrap().len();
-    let store = limits(10, PNG.len() * 10, 1, bytes);
+fn held_responses_and_disabled_cache_do_not_reject_images() {
+    let bytes = STANDARD.decode(PNG).unwrap();
+    let store = limits(10, PNG.len() * 10, 1, bytes.len());
     let first = register(&store, &image(PNG));
     let second = register(&store, &image(PNG));
-    assert_eq!(used(&store), 0);
     let held = materialize(&store, &first).unwrap();
-    assert_eq!(materialize(&store, &second).err().unwrap().status, 503);
-    assert_eq!(used(&store), bytes);
-    assert!(store.cache.lock().unwrap().entries.is_empty());
-    drop(held);
-    assert_eq!(used(&store), 0);
-    assert!(materialize(&store, &second).is_ok());
-    assert!(store.ticket(&first).is_some()); // Descriptor lifetime is separate.
+    let other = materialize(&store, &second).unwrap();
+    assert_eq!(held.bytes(), bytes);
+    assert_eq!(other.bytes(), bytes);
+    assert!(store.ticket(&first).is_some());
+    let uncached = limits(10, PNG.len() * 10, 0, 1);
+    let token = register(&uncached, &image(PNG));
+    assert_eq!(materialize(&uncached, &token).unwrap().bytes(), bytes);
+    assert!(uncached.cache.lock().unwrap().entries.is_empty());
 }
 
 #[test]
-fn same_token_single_flight_is_busy_without_additional_allocation() {
-    let store = MediaStore::new();
-    let token = register(&store, &image(PNG));
-    store.cache.lock().unwrap().in_flight.insert(token.clone());
-    let flight = Flight {
-        store: &store,
-        token: &token,
-    };
-    assert_eq!(materialize(&store, &token).err().unwrap().status, 503);
-    assert_eq!(used(&store), 0);
-    drop(flight);
-    assert!(materialize(&store, &token).is_ok());
-}
-
-#[test]
-fn concurrent_gets_share_one_blob_or_report_busy_without_duplicate_charges() {
+fn concurrent_gets_all_return_the_image() {
     let store = Arc::new(MediaStore::new());
     let token = register(&store, &image(PNG));
     let barrier = Arc::new(std::sync::Barrier::new(8));
@@ -166,39 +147,29 @@ fn concurrent_gets_share_one_blob_or_report_busy_without_duplicate_charges() {
         .collect::<Vec<_>>();
     let blobs = threads
         .into_iter()
-        .filter_map(|thread| match thread.join().unwrap() {
-            Ok(blob) => Some(blob),
-            Err(error) => {
-                assert_eq!(error.status, 503);
-                None
-            }
-        })
+        .map(|thread| thread.join().unwrap().unwrap())
         .collect::<Vec<_>>();
-    assert!(!blobs.is_empty());
-    assert!(blobs.iter().all(|blob| Arc::ptr_eq(blob, &blobs[0])));
-    assert_eq!(used(&store), STANDARD.decode(PNG).unwrap().len());
-    assert!(store.cache.lock().unwrap().in_flight.is_empty());
+    assert_eq!(blobs.len(), 8);
+    let bytes = STANDARD.decode(PNG).unwrap();
+    assert!(blobs.iter().all(|blob| blob.bytes() == bytes));
 }
 
 #[test]
-fn oversized_descriptor_batch_is_atomic_and_zero_decode() {
+fn descriptor_batch_may_temporarily_exceed_retention_budget() {
     let store = limits(10, PNG.len(), 256, MAX_CACHE_BYTES);
     let token = register(&store, &image(PNG));
     let images = [
         PreparedImage::embedded(&image(PNG)).unwrap(),
         PreparedImage::embedded(&image(PNG)).unwrap(),
     ];
-    assert_eq!(
-        store.register_prepared(&images).unwrap_err(),
-        MediaError::Limit
-    );
-    assert!(store.ticket(&token).is_some());
+    store.register_prepared(&images).unwrap();
+    assert!(store.ticket(&token).is_none());
     assert!(
         images
             .iter()
-            .all(|image| store.ticket(&image.token).is_none())
+            .all(|image| store.ticket(&image.token).is_some())
     );
-    assert_eq!(encoded(&store), PNG.len());
+    assert_eq!(encoded(&store), PNG.len() * 2);
     assert_eq!(used(&store), 0);
 }
 
@@ -233,19 +204,16 @@ fn descriptors_are_bounded_deduplicated_private_and_store_specific() {
     let too_many = (0..257)
         .map(|_| PreparedImage::embedded(&native).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(
-        store.register_prepared(&too_many).unwrap_err(),
-        MediaError::Limit
-    );
+    store.register_prepared(&too_many).unwrap();
     assert_eq!(used(&store), 0);
 }
 
 #[test]
-fn default_descriptor_limit_is_1024_and_blob_limit_stays_256() {
+fn default_retention_limits_match_python_cache() {
     let store = MediaStore::new();
-    assert_eq!(store.maximum_items, 256);
-    assert_eq!(store.budget.maximum, 32 * 1024 * 1024);
-    assert_eq!(store.encoded_budget.maximum, 32 * 1024 * 1024);
+    assert_eq!(store.maximum_items, 512);
+    assert_eq!(store.budget.maximum, 128 * 1024 * 1024);
+    assert_eq!(store.encoded_budget.maximum, 128 * 1024 * 1024);
     let oldest = register(&store, &image(PNG));
     for _ in 1..1024 {
         register(&store, &image(PNG));
@@ -372,14 +340,9 @@ fn bad_file_registers_without_reading_and_does_not_prevent_embedded_materializat
     let values = store.register_prepared(&[bad, good]).unwrap();
     assert!(values.iter().all(|value| value["lazy"] == true));
     assert_eq!(used(&store), 0);
-    assert_eq!(
-        store
-            .materialize(store.ticket(&bad_token).unwrap(), Some(&scope))
-            .err()
-            .unwrap()
-            .status,
-        422
-    );
-    assert_eq!(used(&store), 0);
+    let raw = store
+        .materialize(store.ticket(&bad_token).unwrap(), Some(&scope))
+        .unwrap();
+    assert!(!raw.bytes().is_empty());
     assert!(materialize(&store, &good_token).is_ok());
 }

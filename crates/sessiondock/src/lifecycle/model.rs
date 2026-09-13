@@ -1,22 +1,11 @@
 //! Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`.
 //! No process launch, host I/O, or native-history writes. Specs are data, not
-//! authority; serde cannot bypass cwd/identity checks. Limits are
-//! `MAX_RECORDS`, `MAX_CWD_BYTES`, `MAX_ADAPTER_BYTES`, and `MAX_NATIVE_ID_BYTES`.
+//! authority; serde cannot bypass cwd/identity checks.
 
 use serde::{Deserialize, Serialize};
-use std::{
-    fs,
-    path::{Component, Path},
-};
+use std::path::{Component, Path};
 
 use super::store::Error;
-
-pub const MAX_RECORDS: usize = 128;
-pub const MAX_CWD_BYTES: usize = 4096;
-pub const MAX_ADAPTER_BYTES: usize = 64;
-pub const MAX_NATIVE_ID_BYTES: usize = 256;
-/// Bound of the private evidence note a process-evidence binding records.
-pub const MAX_EVIDENCE_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -28,7 +17,6 @@ pub enum Source {
 
 /// Private persisted intent data, not authority to bind a native session.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BindingSpec {
     source: Source,
     sid: String,
@@ -55,15 +43,7 @@ impl BindingSpec {
             Source::Codex => "codex:",
             Source::Grok => "grok:",
         };
-        let valid = |value: &str| {
-            !value.is_empty()
-                && value.len() <= MAX_NATIVE_ID_BYTES
-                && value
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b))
-        };
-        if !valid(&self.sid)
-            || !valid(&self.uid)
+        if self.sid.is_empty()
             || !self
                 .uid
                 .strip_prefix(prefix)
@@ -92,7 +72,6 @@ pub enum BindingMethod {
     Process,
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BindingRecord {
     pub(super) spec: BindingSpec,
     pub(super) state: BindingState,
@@ -121,11 +100,6 @@ impl BindingRecord {
     }
     pub(super) fn validate(&self) -> Result<(), Error> {
         self.spec.validate()?;
-        if self.evidence.as_deref().is_some_and(|note| {
-            note.is_empty() || note.len() > MAX_EVIDENCE_BYTES || note.chars().any(char::is_control)
-        }) {
-            return Err(Error::Invalid);
-        }
         Ok(())
     }
 }
@@ -138,7 +112,7 @@ impl BindingRecord {
 /// server from its index's native catalog. The kind is private intent data, never a
 /// proof that the CLI accepted the identity.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Launch {
     Fixed,
     NewPending,
@@ -157,51 +131,35 @@ impl Launch {
     fn validate(&self, source: Source) -> Result<(), Error> {
         let ok = match self {
             Self::Fixed => true,
-            // Claude new sessions always receive a server UUID; other sources
-            // never receive one upfront (plan rule: no inferred Codex/Grok SID).
-            Self::NewPending => source != Source::Claude,
-            Self::NewAssigned => source == Source::Claude,
+            // Python assigns a UUID to Claude and Grok; Codex discovers its
+            // thread identity after launch.
+            Self::NewPending => source == Source::Codex,
+            Self::NewAssigned => source != Source::Codex,
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
         if ok { Ok(()) } else { Err(Error::InvalidSpec) }
     }
 }
 
-/// Full native SID shape shared by all three CLIs: a lowercase RFC 4122 text
-/// UUID. Anything else (spaces, slashes, options, display prefixes) is rejected
-/// before it can reach a `{sid}` argument substitution.
+/// Nonempty native SID supplied by the verified catalog.
 pub fn native_sid(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    bytes.len() == 36
-        && bytes.iter().enumerate().all(|(index, byte)| {
-            if matches!(index, 8 | 13 | 18 | 23) {
-                *byte == b'-'
-            } else {
-                byte.is_ascii_digit() || (b'a'..=b'f').contains(byte)
-            }
-        })
+    !text.is_empty()
 }
-/// Full local UID `source:` + nonempty identifier suffix, at most 256 bytes.
+/// Full local UID `source:` + nonempty identifier suffix.
 pub fn native_uid(source: Source, text: &str) -> bool {
     let prefix = match source {
         Source::Claude => "claude:",
         Source::Codex => "codex:",
         Source::Grok => "grok:",
     };
-    text.len() <= MAX_NATIVE_ID_BYTES
-        && text.strip_prefix(prefix).is_some_and(|suffix| {
-            !suffix.is_empty()
-                && suffix
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b))
-        })
+    text.strip_prefix(prefix)
+        .is_some_and(|suffix| !suffix.is_empty())
 }
 
 /// Only an adapter identity, an explicit working directory and a typed launch
 /// kind; no arbitrary command, shell, arguments, environment, credential or
 /// guessed native-session claim. Deliberately no Debug: cwd is private data.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LaunchSpec {
     source: Source,
     adapter_id: String,
@@ -217,7 +175,7 @@ impl LaunchSpec {
     }
     /// CLI-profile new session; the kind follows the fixed per-source rule.
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
-        let launch = if source == Source::Claude {
+        let launch = if source != Source::Codex {
             Launch::NewAssigned
         } else {
             Launch::NewPending
@@ -241,30 +199,21 @@ impl LaunchSpec {
         cwd: &Path,
         launch: Launch,
     ) -> Result<Self, Error> {
-        if !identifier(&adapter_id, 1, MAX_ADAPTER_BYTES) {
+        if adapter_id.is_empty() {
             return Err(Error::InvalidSpec);
         }
-        let text = cwd.to_str().ok_or(Error::InvalidSpec)?;
-        if !valid_cwd(text) {
+        let text = cwd.to_str().ok_or(Error::InvalidSpec)?.trim();
+        let expanded = expand_user(Path::new(text)).ok_or(Error::InvalidSpec)?;
+        let cwd = expanded.as_path();
+        if text.is_empty() || text.contains('\0') || !cwd.is_absolute() {
             return Err(Error::InvalidSpec);
         }
-        // Resolve symlinks first, as Python's `Path.resolve()` does: a session
-        // whose cwd goes through a linked project directory is legitimate. The
-        // canonical path is then checked component by component below.
+        // Resolve symlinks like Python's `Path.resolve()`. The cwd is a process
+        // launch location; it does not authorize any file API or native root.
         let canonical = plain_canonical(cwd).ok_or(Error::InvalidSpec)?;
         let cwd: &Path = &canonical;
-        for ancestor in cwd.ancestors() {
-            let metadata = fs::symlink_metadata(ancestor).map_err(|_| Error::InvalidSpec)?;
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(Error::InvalidSpec);
-            }
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                if metadata.file_attributes() & 0x400 != 0 {
-                    return Err(Error::InvalidSpec);
-                }
-            }
+        if !cwd.is_dir() {
+            return Err(Error::InvalidSpec);
         }
         let cwd = cwd.to_str().ok_or(Error::InvalidSpec)?.to_owned();
         let spec = Self {
@@ -289,7 +238,7 @@ impl LaunchSpec {
         &self.launch
     }
     pub(super) fn validate(&self) -> Result<(), Error> {
-        if !identifier(&self.adapter_id, 1, MAX_ADAPTER_BYTES) || !valid_cwd(&self.cwd) {
+        if self.adapter_id.is_empty() || !valid_cwd(&self.cwd) {
             return Err(Error::InvalidSpec);
         }
         self.launch.validate(self.source)
@@ -308,12 +257,12 @@ impl LaunchSpec {
         }
     }
 }
-/// The canonical cwd in the spelling the CLI and the configured roots use.
+/// The canonical cwd in the spelling the CLI uses.
 /// Windows `canonicalize` answers `\\?\C:\…`; the launcher roots are written
 /// `C:\…`, Node keeps whatever cwd it is started in and Claude derives its
 /// project directory name from that, so a verbatim disk prefix is folded back
 /// (WP-W). Other prefixes (UNC, devices) stay as they are and match no root.
-fn plain_canonical(path: &Path) -> Option<std::path::PathBuf> {
+pub(super) fn plain_canonical(path: &Path) -> Option<std::path::PathBuf> {
     let canonical = path.canonicalize().ok()?;
     #[cfg(windows)]
     {
@@ -332,11 +281,101 @@ fn plain_canonical(path: &Path) -> Option<std::path::PathBuf> {
     }
     Some(canonical)
 }
+
+/// Python `Path.expanduser`, including `~name` through the system account
+/// database on Unix. This only resolves a home name; it grants no authority.
+pub(crate) fn expand_user(path: &Path) -> Option<std::path::PathBuf> {
+    let text = path.to_str()?;
+    let Some(tail) = text.strip_prefix('~') else {
+        return Some(path.to_owned());
+    };
+    #[cfg(windows)]
+    let split = tail.find(['/', '\\']).unwrap_or(tail.len());
+    #[cfg(not(windows))]
+    let split = tail.find('/').unwrap_or(tail.len());
+    let (name, rest) = tail.split_at(split);
+    #[cfg(windows)]
+    let rest = rest.trim_start_matches(['/', '\\']);
+    #[cfg(not(windows))]
+    let rest = rest.trim_start_matches('/');
+    let home = user_home(name)?;
+    Some(if rest.is_empty() {
+        home
+    } else {
+        home.join(rest)
+    })
+}
+
+#[cfg(unix)]
+fn user_home(name: &str) -> Option<std::path::PathBuf> {
+    use std::ffi::{CStr, CString, OsString};
+    use std::os::unix::ffi::OsStringExt;
+    if name.is_empty()
+        && let Some(home) = std::env::var_os("HOME")
+        && !home.is_empty()
+    {
+        return Some(home.into());
+    }
+    let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let mut buffer = vec![0_u8; usize::try_from(configured).unwrap_or(16_384).max(1024)];
+    let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
+    let mut result = std::ptr::null_mut();
+    let status = if name.is_empty() {
+        unsafe {
+            libc::getpwuid_r(
+                libc::geteuid(),
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        }
+    } else {
+        let name = CString::new(name).ok()?;
+        unsafe {
+            libc::getpwnam_r(
+                name.as_ptr(),
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        }
+    };
+    if status != 0 || result.is_null() {
+        return None;
+    }
+    let record = unsafe { record.assume_init() };
+    let bytes = unsafe { CStr::from_ptr(record.pw_dir) }.to_bytes().to_vec();
+    Some(OsString::from_vec(bytes).into())
+}
+
+#[cfg(windows)]
+fn user_home(name: &str) -> Option<std::path::PathBuf> {
+    let current = std::env::var_os("USERPROFILE")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            Some(
+                std::path::PathBuf::from(std::env::var_os("HOMEDRIVE")?)
+                    .join(std::env::var_os("HOMEPATH")?),
+            )
+        })?;
+    if name.is_empty() || std::env::var("USERNAME").is_ok_and(|user| user == name) {
+        return Some(current);
+    }
+    Some(current.parent()?.join(name))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn user_home(name: &str) -> Option<std::path::PathBuf> {
+    name.is_empty()
+        .then(|| std::env::var_os("HOME").map(Into::into))
+        .flatten()
+}
 fn valid_cwd(text: &str) -> bool {
     let path = Path::new(text);
     !text.is_empty()
-        && text.len() <= MAX_CWD_BYTES
-        && !text.chars().any(char::is_control)
+        && !text.contains('\0')
         && path.is_absolute()
         && !path
             .components()
@@ -382,7 +421,6 @@ pub enum Failure {
 
 /// A private full receipt, not a public diagnostic projection.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Record {
     pub(super) record_id: String,
     pub(super) request_id: String,

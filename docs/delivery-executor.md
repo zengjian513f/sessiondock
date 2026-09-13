@@ -28,7 +28,7 @@ uses**. For each operation the driver either:
 - **borrows the page's own lease** when the request carries it and it names the
   exact instance (the legacy composer, under the `outbox` capability, attaches
   `{page, token, instance_id, launch_id?}` — its open console lease); or
-- **claims a server-held lease** (`page = "agenthub-delivery-executor"`,
+- **claims a server-held lease** (`page = "sessiondock-delivery-executor"`,
   `force = false`) when no page lease is supplied.
 
 Because it is an ordinary claimant, a browser page holding the console gets the
@@ -118,9 +118,9 @@ checked readers (`claude_native_inputs`), never an ad-hoc read:
   verified the composer and pressed Enter, so the first matching human input
   after that boundary is this delivery. Records before the fence, without a
   UUID, or already consumed by another receipt never acknowledge.
-- Uncertain stays uncertain. There is no screen-text acknowledgment, no
-  inference from assistant activity, and no request-ID echo (the real Claude
-  TUI supplies none).
+- Without a qualifying native text-and-time match the row stays uncertain.
+  Screen text and assistant activity do not acknowledge it, and the real
+  Claude TUI supplies no request-ID echo.
 
 The tracker re-reads from the advancing watch cursor; when a receipt is overdue
 (Python `CONFIRM_TIMEOUT`, 8 s) it re-reads from the **fixed confirmation
@@ -146,7 +146,9 @@ optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
 
 - Text writes reproduce the stale-build gate before any terminal access:
   `_build` ≠ served build → `409 {code:"stale_build", reload:true, build}`.
-- `request_id`: 8–128 ASCII `[A-Za-z0-9_-]` (empty mints one). A different
+- `request_id`: an empty value mints a UUID; otherwise keep the first 128
+  Unicode characters, including whitespace and punctuation, like Python. Retry
+  and discard use the returned ID exactly without trimming or truncation. A different
   payload for a known ID → `400 request_conflict` ("重复发送 ID 对应了不同消息").
   A **replay of the same ID/payload is a status lookup**, never a second paste;
   a confirmed row replays as `state:"confirmed"` with no text.
@@ -155,10 +157,9 @@ optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
 - Unknown session → `400 session_error`; `name` not the session's unique
   managed instance → `409 terminal_unlinked`; lease held elsewhere →
   `409 terminal_ownership`; draft conflict → `409 {draft_conflict, draft_token}`.
-- **Attachments**: `media` is accepted but a non-empty list is rejected with
-  `400 delivery_media_unsupported` — uploaded-attachment file resolution is not
-  available in this backend yet, so it is refused explicitly rather than
-  silently dropped.
+- **Attachments**: the composer uploads files first and embeds their paths in
+  the text. `media` remains opaque preview metadata in the outbox and does not
+  create a second terminal input.
 
 ### `POST /api/session/draft-status`
 
@@ -208,7 +209,7 @@ error. A raw text-submit with Enter still routes to the reliable-send composer
 - Integration (real router + isolated ptyhost + launcher + ledger, fake Claude
   CLI only): `cargo test -p sessiondock --test delivery_send` — send →
   receipt persisted before injection → native `user` record appears → confirmed;
-  request-ID replay; media 400; wrong name / unknown session; console draft
+  request-ID replay; uploaded media path delivery; wrong name / unknown session; console draft
   consent; slow (busy-TUI) late confirmation; swallowed line stays uncertain,
   retry refused, Web restart does not re-inject, discard retires, later resend
   works; and the routes are `501` without the ledger/transport.
@@ -238,7 +239,7 @@ production host is used.
   `codex` is absent, unauthenticated or over its usage limit.
 - Grok reliable send: no executor is wired. Codex is wired in batch 32
   ([delivery-codex-executor.md](delivery-codex-executor.md)).
-- Uploaded attachments in a send: explicit `400 delivery_media_unsupported`.
+- Uploaded attachment preview metadata is preserved with the receipt.
 - Native queue (`enqueue`/`dequeue`/`popAll`) association, `/rename`,
   `/compact`, hook-backed answers, and stop/interrupt are domain-supported but
   not driven by this batch's executor (ordinary prompt delivery only). Screen

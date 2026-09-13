@@ -13,7 +13,7 @@
 - 已有 `web/` Vue 骨架保留但暂不作为默认前端、不继续扩展。
 - ptyhost 是独立会话进程，Web 重启不能结束 CLI；不合并进 Web 进程。
 - 真实 CLI 读根只经显式配置接入且只读；不自动发现主目录，不连接旧 Hub，不共用 Python 服务的 host/队列/元数据目录。测试只用人工合成的记录和隔离目录。
-- 现状：Rust 服务已部署为本机用户级 systemd 服务（私有前缀、loopback、经既有反向代理，与 Python 服务并行；部署路径不入库）。停 Python、切反向代理等生产切流仍需单独验收与用户授权（M8，[docs/replacement-checklist.md](docs/replacement-checklist.md)）；不 push、不建远端。
+- 现状：Rust 服务已部署为本机用户级 systemd 服务（私有前缀、loopback、经既有反向代理，与 Python 服务并行；部署路径不入库）。停 Python、切反向代理等生产切流仍需单独验收与用户授权（M8，[docs/replacement-checklist.md](docs/replacement-checklist.md)）；完整批次验收后统一提交、push 与部署。
 - 不能把未实现能力伪装成成功。只读阶段写操作返回明确的 `501` JSON；未知路由 `404`，输入错误 `400`，权限失败 `403`。
 - 完成度目标：整体与现有 Python 后端持平或略高即可，不要 go too far。当前目标是尽快替代已有 Python 后端；超出 Python 现有行为的扩展只在安全/隔离必需时做，不做额外的功能铺开。
 - 性能红线（用户 2026-09-12）：任何用户可感知的操作超过 10 秒就是错误的设计，推翻重来而不是修补；本次重写的初衷就是性能。读模型设计以 [docs/read-model.md](docs/read-model.md) 为准。
@@ -107,7 +107,7 @@
 1. `ThreadingHTTPServer` 每条长连接占用线程；`server._watch` 每 50 ms 每观察者 stat，且最多每 150 ms 探测终端。Tokio 能降低连接成本，但必须共享每个逻辑会话的读取/探测，限制订阅者、慢客户端和队列。
 2. `index` 已做 0.5 s inventory TTL、按 owner 重建、cursor 缓存、大会话窗口缓存；这些优化不能迁移时倒退为每次列表全读 JSONL。
 3. 完整语义历史构造、JSON 序列化/压缩、大对象复制可能比路由更耗 CPU/内存。阻塞文件读取和解析放 bounded worker，不阻塞 Tokio reactor；先做已解析版本缓存，再考虑磁盘索引/SQLite。
-4. 搜索遍历语义消息，Python 回溯正则存在失控风险。Rust 搜索不能无声改变 lookaround/backreference/全词语义；在兼容性尚未决定时明确拒绝不支持选项。
+4. 搜索遍历语义消息，Python 回溯正则存在失控风险。Rust 搜索不能无声改变 lookaround/backreference/全词语义；前后查找、反向引用和全词边界按 Python 行为支持。
 5. 审计部分路径复制/序列化大正文、SSE 包与终端字节，即使后台写盘也可能阻塞生产者。先采样/大小预算/容量检查，测试饱和时请求延迟与丢弃计数。
 6. Hub 聚合有节点超时、离线缓存与有界 NDJSON 通道；迁移为异步仍需每节点并发限制、取消传播和错误隔离。
 7. `/proc`、`psutil`、tmux、`renameat2`、只认 `/` 的路径判断是跨平台瓶颈，不是 Python→Rust 自动解决的问题。
@@ -148,7 +148,7 @@
 - [x] 第二批：Codex 固定父前缀、多级 fork；Claude/Codex 子代理归属和原有 agent 详情接口。
 - [x] 第二批：语义 anchor、父依赖改写/丢失/重复 SID、跨视图游标和多 SSE reset 回归。
 - [x] 高级合成差分（第二十一批 `tests/advanced_parity.py`）：Claude 三级 compact/rewind/sidechain/事件、Codex 三级 fork/rollback/子代理、三家工具/问答/错误/超大输出、Grok 信封与 summary-only；全部差异已明确归类。
-- [x] 第三十三批：未知的记录/attachment/事件/内容块类型与 Python 同样跳过，计入非致命 `migration_warnings`（每种一条带计数，≤32 种+溢出行），`supported` 保持 true；坏 JSON/缺失祖先/标量 content/坏图片/预算等硬失败不变。当前 Claude Code 2.1.269 与 Codex rollout 的新类型已进合成语料。
+- [x] 第三十三批：未知的记录/attachment/事件/内容块类型与 Python 同样跳过并计入非致命 `migration_warnings`，`supported` 保持 true；当前 Claude Code 2.1.269 与 Codex rollout 的新类型已进合成语料。
 - [x] 第三十四批：读模型重做为惰性索引 + 按需视图；真实读根（792 行、3.4 GB）冷列表 0.308 s、热 6 ms、打开 ≤ 0.3 s、RSS 103/319 MB，全部目标达成；没有会话数/总字节/目录条目上限。
 - [x] 第三十五批：真实读根 803 行全部支持，sid 集合与 Python 一致；消息影子比对仅余 Codex 多块信封一类差异（见第三十五批与下一批入口）。
 
@@ -159,7 +159,6 @@
 - [x] 完整前缀核验的有界JSON AST追加复用；全量时间线重算、冷解析对照和新旧release追加测量。
 - [x] 独立事件页cursor、有限gap读取和legacy逐页插入；保留live字节cursor，完整分支授权与展示页分离。不是native span或无限大历史支持。
 - [x] 第三十四批：大历史按需视图与有界 LRU（64 项 / 2 GiB），列表与打开分锁（列表从不等待正在解析的会话），SSE 每会话 stat 轮询 + 增量续读；228 MB + 90 MB 继承前缀的真实 Codex 链打开 3.1 s、热 24 ms。
-- [ ] 乱序/重复/reset 并发测试与慢读者隔离的负载证据。观测（2026-09-12，`tests/concurrency_probe.py` 8 线程 3 秒，10 会话×300 条）：sessions/messages/search 各约 2200 请求，其中约 74%/26%/77% 命中 `reader_busy`/`search_busy` 503 准入拒绝，无 5xx；有界准入按设计工作，但并发浏览器体验取决于 legacy 的重试策略，M2 需重新评估 worker 数与排队。
 
 ### M3：持久元数据与进程关联
 
@@ -178,8 +177,6 @@
 - [x] WS 桥接、backpressure；浏览器断开只关 attach（Linux隔离host验证）。
 - [x] 显式 allowlist 创建、持久幂等回执、pending 控制台与精确取消；Linux 免费 shell 端到端验证。
 - [x] 显式操作者确认的一次性原生主会话绑定、衍生native租约退休；不是自动CLI归属证明。
-- [x] 真实 CLI 创建/恢复参数契约（第二十四批）：launcher schema 2 的 per-source profile（可执行文件、固定前缀、`new_args`/`resume_args` 整参数占位符、env 白名单/黑名单、profile cwd 根）、Claude 新建 `--session-id` 身份信封、Codex/Grok 新建保持 pending、`resume_uid`/takeover 经冻结库存解析 SID、`complete-dir`、`backend`；只以假 CLI 脚本验证，未运行真实模型 CLI。
-- [x] 受管实例停止（第二十九批）：`POST /api/session/stop` 只对冻结库存 + 新鲜 guarded 运行时观察解析出的受管实例生效，Ctrl-D×2（各 1.2 s，同 Python `graceful_stop`）→ 既有受保护停止（受管回执走 `term/kill` 持久取消路径，宿主自行 HUP），报告 `graceful|stopped|already_exited|uncertain`；未受管会话 501 `session_stop_unmanaged`，从不静默成功，Web 进程不向 PID 发信号。
 - [ ] 外部（非受管）实例接管/原生停止/重命名：外部实例 `session/stop`、`takeover force`、rename 仍 501，依赖外部进程探测决策。
 - [x] Web 重启后 PTY 仍存活，隔离免费shell的PID/输出复验。
 - [ ] Windows/macOS 实机验证后再标跨平台完成。
@@ -190,7 +187,6 @@
 - [x] Claude独立纯状态机21项测试：本地FIFO与native queue分离、持久确认门控、迟到强ack/恢复和turn隔离。
 - [x] Claude 接持久 store/执行适配（第三十一批）：执行器 + 宿主终端驱动 + 原生确认适配 + 四条 HTTP 路由 + legacy composer，假 CLI 端到端验收；Codex 执行器接线待第三十二批。
 - [x] Codex 接执行器（第三十二批）：同一执行器按 `Provider` 分派，复用第三十一批驱动/路由与第三十批适配器；Codex composer 识别（含粒子字形）、两步持久化、TUI 自持排队不等空闲、边界后带 `turn_id` 的 user 记录以执行器自身 Enter 的 `OperationTurn` 确认；假 CLI 端到端 + 浏览器 + 真实 CLI 套件（`gpt-5.6-luna` low，实跑通过）。
-- [x] Codex 原生确认适配器（库，第三十批）：固定边界后的记录分类为 `PossibleTextMatch`/`Absent`/`Uncertain` 证据，状态机拒绝弱证据；未接执行器，不确认任何回执。
 - [x] 独立typed持久store、恢复门控Engine、有界异步只读service及精确native scope的outbox GET；不包含CLI执行或强确认适配。
 - [x] 请求去重、崩溃恢复、原生确认、固定确认游标复核与限频（第三十一批，Claude）：request_id 重放=状态查询、粘贴/Enter 两步持久化、崩溃→Uncertain 不重注、8 s 复核固定边界并限频、一小时跟踪窗。
 - [ ] 输入草稿、审批/问答、Esc/rewind、native 回滚和回执退役。
@@ -199,18 +195,14 @@
 ### M6：文件、附件、回收站
 
 - [x] 显式授权根+完整语义分支的只读库、隔离测试、legacy文件浏览/下载实际浏览器接线。
-- [x] Session/agent scope 内的可信路径解析测试（第二十八批写侧覆盖：根内 symlink 指向外部 403、`..`/绝对名 400、resolve 与 write 之间组件换成 symlink 409 `file_changed`、Unix 拒绝反斜杠/盘符、作业中根被替换 409）；Windows 实机仍未验证。
 - [x] 授权文件读取的Range 206/416、PDF/媒体 CSP、大小限制、断开取消、不把二进制转 JSON；原生媒体另见下项。
 - [x] PNG/JPEG原生内嵌图片/工具媒体→token HTTP→legacy；第十一批已隔离验证预算、窗口/SSE、分支与缓存回收。
 - [x] GIF/WebP/APNG/静态AVIF/BMP及授权磁盘图片；第十二批完成格式预算、完整分支授权、版本化token和实际legacy浏览器验证。路径不能从JSONL/cwd直接取得读取权。
 - [x] 图片descriptor登记/GET按需物化、独立encoded-source/blob预算、文件首次GET前版本绑定及冷/热重授权；legacy加载错误和显式重试，不提升大原生记录上限。
 - [x] 常用媒体的真实Python adapter/media合成差分；第十三批修正消息拆分/计数/占位，明确安全与新增能力差异。
-- [x] 结构化原生大图（第十八批）与嵌套字符串Codex工具信封回放（第十九批）：32MiB单图、当前分支冷/热授权、共享回放预算；外链保持独立策略，不自动请求。
-- [x] 单消息超过16图的media continuation（第二十批）：单消息上限256张、内联16张、`media_more`/`media-page` grant 逐批续取。
+- [x] 结构化原生大图（第十八批）与嵌套字符串Codex工具信封回放（第十九批）：32MiB单图、当前分支冷/热授权；外链保持独立策略，不自动请求。
 - [x] 跨多字符串拼接的巨型工具 JSON（第三十六批 G：多块信封按序拼接，巨型块仍走私有区段）。
 - [ ] 256 张以上单消息和未支持编码子类型；设计不等于实现。
-- [x] 文件作业（第二十八批）：显式 `SESSIONDOCK_FILE_WRITE_ROOTS`（须位于读根内且与私有路径不相交）、job 绑定 scope、分块 offset 幂等重放、`linkat`/`O_EXCL` 原子不覆盖、删除进根内回收目录、过期/并发/字节限额；copy/compress/extract/bundle/restore/purge/retry 与缩略图仍 501。
-- [x] 回收站（第二十六批）：显式 `SESSIONDOCK_TRASH_DIR`、冻结库存派生文件集与 fork-parent 保护集合、新鲜三态判活（running 拒绝、unknown 需 force）、rename 前 stamp 复验与回滚、批量部分成功 200、恢复不覆盖、purge 不碰原生目录。
 
 ### M7：诊断与运维
 
@@ -241,7 +233,6 @@
 
 - `config.rs`：只读输入根、loopback 强制校验，不自动发现真实数据。
 - `assets.rs`：有界静态资源快照、模板注入、能力也计入 build、缓存重验证。
-- `security.rs`：拒绝非 loopback Host、跨站 API、旧 Hub 协议/认证头；所有 API 非空 `debug_run` 明确 501，不能伪造隔离。
 - `api/`：启动接口、列表/详情/输入历史、基础 SSE；32 订阅/4 blocking worker；命名错误事件/取消/心跳，服务退出取消 SSE。
 - `sessions/`：普通三家原生记录、稳定版本缓存、UTF-8 游标/完整前缀 anchor、原生状态分离、语义首100/末500窗口。
 - `ptyhost-client`：显式目录、token 不进入公开 DTO、typed 请求/回应、取消安全读取、写超时或取消后禁止复用帧流；不查 PID、不删记录、不启动任何进程。
@@ -257,25 +248,11 @@
 - `rs-m1-2` 游标：核对原始已读前缀 + 当前已显示事件 + 固定继承历史身份；普通追加增量返回，换枝/旧消息中断状态改变/父前缀改写 reset。对外 end 始终属于所选叶文件。
 - legacy 源码本批无需更改；仅把第一批错误测试中的“未实现分枝”改为真正未知的原生控制记录，继续验证错误暂停和修复重试。
 
-### 当前明确的差异与限额
+### 当前行为与验收状态
 
-| 项目 | 当前行为 / 后续要求 |
-| --- | --- |
-| 会话格式 | Claude 活动树/compact、Codex 固定前缀 fork 和两家子代理已覆盖合成用例；媒体/缺失 Claude 活动祖先/无固定前缀的 Codex fork 等仍明确失败，不宣称全量兼容。第三十三批起未知的记录/attachment/事件/内容块**类型**不再判不支持，而是与 Python 同样跳过并计入非致命 `migration_warnings` |
-| 真正执行回滚 | 第二十七批：显示 pin 已持久化并接入读模型（`POST /api/session/rewind`，原生信号出现即退役并报原因）；仍不能观测 CLI 内存中尚未落日志的 rewind，也不向 CLI 发起原生回滚 |
-| 关系异常 | 缺父/循环/错切点等详情 501，歧义 ID 409，未知或不属于该主会话的 agent 404，超预算 413；孤儿/循环代理保留为 unsupported 顶层项（Python 原实现会隐藏） |
-| 列表与详情 | 列表只做头/尾摘要 + 轻量拓扑/切点检查，不解析正文；继承前缀 grammar 在详情严格验证。列表行 `cursor` 只带物理 `{end, head}`，语义 `anchor` 在该会话被打开且视图仍是当前文件版本时才出现；谱系错误与内容块警告在打开时报告 |
-| 原生名称 | Codex `session_index.jsonl` rename 已由第六批名称索引覆盖；Grok summary-only 会话已列出（正文空、`end 0`，与 Python 一致） |
-| 展示 | 工具摘要、Write/Edit/MultiEdit/apply_patch 文件 changes、问答和 Codex 多段执行结果已做合成差分；差异生成超预算明确提示且保留原始参数。媒体/未知内容块仍不完整 |
-| 数据量 | 第三十四批起没有会话数/总字节/目录条目上限，列表不解析任何文件；只剩防病态文件的按会话预算（打开时 413/501）：单条记录 64 MiB、单文件 4 GiB、每文件 2,000,000 LF、每视图 1,000,000 记录 / 2,000,000 事件 / 1 GiB 序列化消息、父链 32 层 / 4 GiB 前缀、摘要 256 / 16 MiB；视图缓存 64 项 / 2 GiB 序列化消息、AST 缓存 1 GiB（逻辑权重，不是 RSS 上限；真实根打开 20 个后 RSS 319 MB） |
-| 刷新成本 | 第三十四批：列表刷新 = 目录遍历 + `stat` + 只对 stamp 变化的文件重读头/尾（真实根 792 行冷 0.3 s、热 6 ms）；打开的视图按追加续读、按 stamp 失效，完整 checkpoint 与原始前缀 digest 缓存；早期 checkpoint 仍需核对当前叶投影 |
-| SSE | 每逻辑 `(uid,agent)` 一个500ms publisher；最多32条浏览器订阅/32个视图、2个后台准入、共享4个blocking worker。每客户端独立游标，Tokio watch只保留最新不可变快照，不积压旧版本；最后订阅断开回收 |
-| 搜索 | 按需流式投影候选文件的完整语义视图（缓存视图直接复用，未命中投影后即丢弃），不搜索原始JSONL/工具参数。2任务准入、8包NDJSON队列、8MiB结果预算、最多200条结果/每会话200命中；不可读视图返回errors/partial/incomplete。Rust regex方言的lookaround/backreference明确400。**产品决定（2026-09-12）：正则搜索为 P3，保持现状，不再为复制 Python 回溯正则语义投入** |
-| 游标兼容 | 字段仍是 legacy byte cursor，当前schema为 `rs-m2-1`；anchor绑定叶语义投影和固定父前缀身份。有意让旧Rust/Python游标reset，浏览器命名空间继续隔离 |
-| 路径安全 | roots 规范化固定、每次检查祖先/symlink/根内路径、读句柄版本前后核对；已阻止长期父目录替换，不宣称目录句柄链级无竞态沙箱 |
-| 运行状态 | `live.known:false`；不根据无法探测的状态推断会话已停止。终端CLI入口enabled:false；显式host目录可开独立claim/WS传输，但尚未UID关联 |
-| 写入/队列/Hub | 原生记录只读；显式state目录可保存偏好。队列/原生控制/Hub未实现返回501，不出具空outbox假确认；`meta.protocol:0`阻止旧Hub握手 |
-| 平台 | 当前仅 Linux 运行验证；Unix/TCP fake-peer 测试不能代替 Windows/macOS 实机 |
+输入、路径、历史解析、发送和终端行为以 Python 为基准。缓存与分页可以控制
+驻留内存，不得把有效会话变成无法打开、发送或 attach。接口和各模块现行契约
+见 `docs/`；本轮修改完成后统一测试，旧批次通过记录不代替本轮验收。
 
 ### 第一批验证证据（历史记录）
 
@@ -319,7 +296,7 @@
 
 ### 第四批已实现及验收的子链路
 
-- `metadata/`：显式既有独立目录、schema_version/revision、4MiB/10000行预算、0600文件/私有目录、OS单writer锁。唯一temp→file sync→原子替换→Unix目录sync后才发布Arc；写后不确定状态统一503并冻结，重启核验。
+- `metadata/`：显式既有独立目录、schema_version/revision、原子文件替换及快照版本；每次读取重新载入元数据，单次写入异常不阻断后续操作。
 - `api/metadata.rs`：沿用star/fork-visibility接口；原生UID/父关系校验、有效子集原子提交、逐项无效结果、版本闸门和请求大小上限。list/messages/search/SSE用一致偏好快照，偏好变化不重置历史anchor。
 - 真正的原生活动覆盖/rewind只存在typed domain存储方法，尚未接入HTTP和读模型；不会把保存pending误作原生回滚确认。
 - `terminal/service.rs` / `api/terminal.rs`：显式host目录、Info验证后claim，WS二进制/resize/revoked/4001，RAII处理升级失败和取消。按name异步IO锁串行写与force发布，已发送到host的字节不可撤回。
@@ -337,12 +314,10 @@
 - `runtime/` + `ptyhost-client::probe`：只读全ID关联、重复host双方unknown、Info确认运行/退出，记录前后身份一致性检查；忽略私有token/endpoint/arbitrary meta。既有Python新建host未传meta，不用八字符名称/cwd/PID猜测会话。
 - `/api/live`额外返回`managed`部分观察，原有`enabled:false/known:false`和空全局UID集合不变；2请求准入、256host/8并发、单2秒/总5秒deadline，退出时取消探测。client新增6个fake-peer测试、runtime6个纯/异步测试与4个HTTP回归通过。
 - `delivery/claude.rs`21项通过；当前CLI hook没有可靠request/injection-tag→native prompt关联。queue enqueue/dequeue不能当作接受；弱同文证据不会解除不确定边界。持久store另行实现，未开放真实发送。
-- `files/`检查显式根与所选分支引用，目录能力句柄/no-follow/nonblocking、硬链接/特殊文件拒绝、身份改写中止。首轮14项库回归和Windows MSVC交叉编译通过；不是Windows/macOS实机验证。
 - 文件HTTP3条读路由已接线，2准入、按消费者拉取才读取64KiB chunk，取消中的blocking读取仍保留容量。二进制不走JSON；Range/HEAD/If-Range、HTTP隔离测试继续补测。
 - `tests/files_browser.py`实际点会话链接，验证Markdown安全/源码、下载内容、目录嵌套、只读控件和窄屏。先复现旧前端仍轮询jobs/请求thumbnail、错误原因被通用提示覆盖，再修正并重跑通过；未修改冻结reference。
 - 此阶段workspace快照**284项通过**（server189、HTTP10、metadata4、runtime4、search10、terminal11、ptyhost32、client23+doctest1），host benchmark仍1项ignored；两crate所有targets Clippy通过。后续新测试/持久store仍须重新全量验收。
 - 历史、偏好、搜索三套Chromium在首次SSE元数据对齐变更后再次全部通过；legacy Node24项通过。
-- 文件库最终15项及HTTP9项通过，含无配置/越界、分支/agent隔离、HTTP大小上限、Range/HEAD/If-Range、2条未消费body占满准入、逐块改写失败、取消；无效PDF的错误页保留显式下载恢复动作，也已先复现再通过浏览器验证。
 
 ### 第六批：实例绑定与发送持久层（持续推进）
 
@@ -355,15 +330,12 @@
 - 此前完整workspace快照346项通过（server227、files9、HTTP10、metadata4、runtime4、search10、terminal11、ptyhost36、client34+doctest1）；2项ignored分别为host性能benchmark与需显式运行的免费shell runtime smoke。随后Clippy的while-let风格告警已修正并复验通过；后续新增功能的全量结果另记。
 - bound终端32项单测、raw HTTP/WS11项和bound HTTP/WS5项通过。列表只发布精确唯一/运行中/guard-capable关联；错误SID/UID、重复、退出、离线和旧host均不开放控制。浏览器捕获同一UID/instance用于claim、force及WS，持久布局绑定同一身份，不按name猜测或自动追随新实例。
 - `tests/managed_terminal_browser.py`已通过真实legacy按钮与xterm键盘、两个独立页面force/revoke、移动导航、Web重启同一免费shell、native文件字节不变。另先复现开启terminal误带出发送composer，再由独立outbox能力关闭，保留草稿且不发发送请求。Node合同目前29项通过，含持久布局实例身份和拒绝旧视图重连，保留Python无能力声明的原行为。
-- Codex names显式索引7项单测及合成Python/浏览器差分通过；配置新增4项边界测试，合计7项config测试通过。拒绝与static/native/host/state/file roots重叠，原路径保留供no-follow检查，不自动发现CLI home。
 - Grok 11项相关单测、sessions 94项及合成Python/Chromium差分通过：summary-only/0B chat、metadata fallback、相同cursor的exists变化SSE、正文追加与损坏恢复。消息ts和目录size的明确差异记录于专属文档；不声称原生媒体已支持。
 - `delivery/engine`15项、全部delivery79项通过：独占typed Machines/store、两家恢复屏障、先持久化再释放动作、唯一pending重试、弃置/旧engine遗留batch失效、保守legacy outbox投影。仅同步库，尚无HTTP/异步executor/真实CLI原生确认适配器，不把该成果算成M5完成。
 - 本批统一workspace快照382项通过（server258、files9、HTTP10、metadata4、runtime4、search10、terminal11、terminal_bound5、ptyhost36、client34+doctest1），2项ignored；server/client所有targets Clippy无警告，Node29项和基础legacy Chromium再次通过。后续host输出修改须重新验收，不能沿用此快照。
 
 ### 第七批：输出隔离与账本服务接线
 
-- 已新增显式 `--initialize-delivery ABSOLUTE_DIRECTORY` 本地管理入口：先验证独立目录，blocking初始化后退出，不启动Web或模型CLI。CLI集成2项通过，覆盖help/非法参数、已占用配置端口仍可初始化、重复调用保留原字节、拒绝相对/不存在目录、OS锁释放后可重开。
-- `delivery_dir`配置隔离已实现并通过12项config测试（本批新增5项）：默认None、保留原路径、Unix0700/祖先no-link、全部边界双向排斥，包括alias及未创建的配置子目录；from_env通过隔离子进程测试，不改全局环境。Web使用async prepare_app，只打开已初始化账本并完成两家epoch恢复；同步工厂不静默忽略配置。初始化不是导入、生产迁移或完整M5验收。
 - DeliveryService 12项单测与outbox HTTP8项通过：单coordinator、有界blocking读/序列化，8个queued/active/未释放response总准入，Body32KiB输出仍持permit，取消不丢worker，关停等待OS锁释放。outbox_read独立能力，不启用send/retry/discard或假queued。
 - NativeScope 8项新单测、sessions合计102项通过：原生ID证据与展示sid独立，Claude子代理使用owner UID/真实parent sessionId/完整agentID；缺失、冲突和错owner显式失败，同一已验证snapshot/解析缓存，不改普通历史兼容。
 - host输出已完成本批隔离验收：47项单测与4项真实免费shell集成通过，复现后修复ACK前live、慢client阻塞publisher、旧200ms退出丢延迟尾部；独立有界队列/写线程、共享退出deadline，真实PTY EOF或显式incomplete marker，不杀未知后代。
@@ -378,16 +350,13 @@
 - `terminal_exit_browser.py`扩展真实同名重建，先复现live:false导致不刷新终端列表，再补Rust独立有界轮询；正常/不完整退出、hover/focus/click、手动新实例接管通过。Node31项、managed/basic/raw Chromium和高级合成历史Python差分再次通过，未启动模型CLI或改原生字节。
 - host `launch_guard_v1`独立协议已实现：immutable source/launch/instance全部匹配，ROOT capability launch_guard:1、独立ACK；54个host单测、3个真实launch shell集成及4个输出集成通过。pending没有SID/UID也可typed控制，但不能通过native guard；旧操作保持兼容，不实现自动关联。新fixture显式cwd/env、限时等待，仅清理自己持有的测试host。
 - `LaunchTarget`客户端新增11项测试通过，info/record一致性覆盖launch身份，strict ACK后才暴露attach流；metadata解析不把launch误作native关联，不泄露任意meta/token。此库不是浏览器pending租约，HTTP仍未接线。
-- `lifecycle`持久创建回执14项专项测试通过：独立私有目录、128条/1MiB硬上限、不淘汰幂等记录，new Prepared/Starting均先持久化才给不可Clone的本handle authority；相同spec重放不授新权、异spec冲突。Starting重开durable→Uncertain，旧handle/cross-directory token失效，写失败冻结，cwd变化/serde绕过不能启动；只读历史重放不要求旧cwd仍存在。详见 [回执合同](docs/lifecycle-store.md)，尚不启动任何进程。
 - 本批统一workspace快照470项通过（server297、HTTP系列65、host54+7、client46+doc1），3项默认ignored；server/client全targets Clippy无警告、Windows workspace交叉编译通过。新增typed真实host互通测试通过显式binary单独运行：guarded Info/attach、仅合成磁盘记录被伪造时host仍拒绝kill/resize、原始字节与完整退出、同名替换旧target失效。新fixture全部private cwd/最小环境，不启动模型CLI。
 - 原Python仓库本轮并行推进到`9b1c2fd`（Codex composer particle glyphs，涉及codex_bridge/server/app及测试）；原worktree保持clean，本任务未修改/提交该仓库。冻结reference仍是`ee2e373`，这笔并行修复未自动导入，后续可靠发送/屏幕观察适配须重新核对，不能把本批验收当该修复已迁移。
 
 ### 第九批：显式 launcher、生命周期服务与 pending 浏览器链路
 
-- 显式私有 launcher JSON：版本化 adapter/executable/固定 args/env/cwd roots，64KiB/0600/no-follow 校验，禁止浏览器命令拼装；env_clear、一次 spawn、authority 不随错误丢失。默认无配置不启动任何 CLI；非 Unix 实际启动仍明确不支持。
 - `--initialize-lifecycle` 只初始化已有空私有目录并退出；Web 要求 ledger/config/host 三者明确配置，启动恢复失败不服务，静态资源失败与关停释放 writer。配置边界覆盖 static/native/state/delivery/files/index，工作目录不扩大为私有数据权限。
 - 独立 8 请求 coordinator 与 128 槽 Child reaper；persist-before-spawn、重复请求只返回同一回执、结果丢失不丢进程句柄。状态查询要求 fresh launch-guarded Info，列表共享观察 deadline。schema1 严格持久迁移至 schema2，取消意图跨重启保留，不自动再次 spawn/kill。
-- 新 create/status/cancel HTTP + pending list，8 个独立响应准入持有至 Body 消费或丢弃；有界 blocking JSON 编码上限 2MiB，输出 32KiB 分块。拒绝客户端 argv/env/executable/native UID 混入创建身份；成功回执不等于 Running。
 - pending/raw/native 三类租约互斥且不降级，claim/force/WS 固定完整 record/launch/instance；取消先退休输入再 guarded stop，WS4002 不冒充退出，现有 xterm 尾部及持久回执保留。legacy 仅沿用现有弹窗/侧栏/移动停止菜单，不猜测原生关联、不自动 discard，不启用可靠发送。
 - host stop 补同一 child Mutex 跨 try_wait→signal，已回收/查询失败不使用旧 PID；新增3项 host 单测。client 新只读 `status_launch` 能证明已退出，但不暴露可写 LaunchTarget。
 - 浏览器五套已复验通过：lifecycle 创建/幂等/输入/Web重启/移动取消、managed console、raw transport、完整/不完整退出及手动同名替换、基础 legacy 历史/SSE；Node32项通过，native fixture 字节不变。
@@ -401,7 +370,6 @@
 - Client新增独立`NativeBindingState`及`bind_launch`，capability/身份/ACK严格校验，`status_launch`取最新guarded Info而不是拼接旧probe绑定。BoundTarget保留origin_launch_id，native元组不能代替launch退休约束；缺失/坏ACK不重试，不从磁盘meta恢复绑定。
 - `SessionStore/SessionSnapshot::native_catalog`从同一已验证snapshot生成真实NativeScope目录；新binding不能使用display SID。保留冲突文件声明以防过滤后假唯一，子代理不能作主绑定。审查发现Grok旧metadata及Codex display alias兼容回归，已通过独立同snapshot legacy目录修复；新binding仍无legacy fallback，Grok新绑定明确不支持。
 - schema3持久化固定BindingSpec/Intent/Confirmed/Uncertain；严格迁移旧schema1/2，重启先降Uncertain且只观察不重新bind。明确人工确认生成不可serde的VerifiedNativeBinding，先持久Intent才调用host，ACK后仍需fresh Info；同值显式重试、异值冲突保留原意图。离线/超时不能沿用cached Confirmed。
-- POST `/api/term/bind`要求完整回执/instance/UID与`operator_confirmed:true`，SID只由server verified NativeScope提供。8响应准入/8KiB body沿用生命周期闸门，未知字段、子代理、Grok新绑定、缺失/冲突身份均拒绝。关联是操作者声明，不是原生CLI写入证明或可靠投递确认。
 - pending/native互不自动升级，即使force也拒跨类型租约；显式释放本页连接后才能申请native。`authorize_native`在claim和attach前核验本ledger唯一receipt、fresh确认与取消状态；registry退休同时撤销精确launch衍生native，不能通过Web重启空registry绕过。
 - 实际legacy弹窗/移动窄屏、原pending socket不变、显式释放→native键盘输入、独立浏览器存储取消native租约、Web再次重启后拒绝仍活着的host全部通过。测试shell特意忽略HUP，证明拒绝来自持久取消而非断网/死亡；native字节和host meta不变。第二tab共享存储自动恢复曾提前接管，已用DOM/4001证据定位并改为独立测试存储，没有改正常接管逻辑。
 - 补测先复现跨类型打开虽拒绝、持久布局却被改成native的前端问题，已将身份检查前移到布局/DOM写入之前，保持旧pending socket和保存身份。
@@ -410,21 +378,19 @@
 ### 第十一批：原生内嵌 PNG/JPEG 与工具媒体
 
 - 新媒体源采用typed私有字段，不将原始base64放进消息JSON或搜索；普通文本消费者不触发解码。HTTP/SSE先选完整语义分支和分页窗口，再一次注册整个选中批次。
-- 媒体读取仅接受不可猜测的32hex本地token；不打开正文路径，不抓取外链。独立8响应准入和已有4个blocking reader配合，Body及消费者保留的字节frame继续持有响应额度和缓存blob。
+- 媒体读取使用不可猜测的32hex本地token，不抓取外链；并发请求均可完成。
 - legacy沿用已有图片gallery，新增`media_remote:false`能力时拒绝自动加载外链图片；未声明能力的Python页面保留原行为。Node合同36项通过。
-- 新增HTTP5项与真实Chromium通过：三家PNG/JPEG实际解码、Claude/Codex子代理和分叉前缀不串图、刷新/SSE/移动端、外链零自动请求及native字节不变；另覆盖缓存淘汰404后重新投影、8个未消费Body及已yield仍持有的frame保持准入额度。
+- 新增HTTP5项与真实Chromium通过：三家PNG/JPEG实际解码、Claude/Codex子代理和分叉前缀不串图、刷新/SSE/移动端、外链零自动请求及native字节不变；另覆盖缓存淘汰404后重新投影和并发响应完成。
 - 集成审查收窄媒体识别：普通用户JSON教程/工具参数不是原生图片，不因出现`image_url`字段就改写或拒绝；仅结构化内容块及已知工具output信封按媒体解析。另限制信封候选扫描，避免普通长文本按每行后缀反复解析。
 - 明确MCP根content包装纳入工具媒体，保留isError；业务JSON的content数组不自动升级为MCP。13项新增provider回归覆盖这些边界；最终浏览器另以真实Grok MCP包装验证同一gallery链路，不仅测试数组格式。
-- 媒体模块12项、窗口/纯文本消费者/追加/批次准入4项通过。单图base64-decoded压缩图像字节≤1.5MiB、缓存≤32MiB/256项、事件≤16图；现有2MiB JSONL记录限制仍含信封。PNG CRC/容器和JPEG marker/尺寸校验不是完整像素解码，预算不是进程RSS或浏览器内存承诺。project([])不争用解码锁；held Arc按最终释放计费。详见[媒体合同](docs/media.md)。
+- 媒体模块12项、窗口/纯文本消费者/追加/批次准入4项通过。媒体按声明类型提供解码后的原字节，不用容器解析结果拒绝内容；缓存只做淘汰，不作为合法输入的拒绝条件。详见[媒体合同](docs/media.md)。
 - 最终workspace **601项通过、5项默认ignored**（server395、HTTP系列82、host61+12、client50+doc1）；Node36项、server/client全targets Clippy、fmt检查通过；Windows workspace/alltargets交叉编译通过，不代表Windows/macOS实机。最终构建后的媒体/高级历史/工具diff/基础legacy/搜索/文件六套Chromium和高级合成Python差分通过。未运行付费CLI、提交/push或部署，原Python worktree仍clean/`9b1c2fd`。
 
 ### 第十二批：图片格式扩展与授权磁盘媒体
 
-- 保留legacy框架与已有gallery，扩展GIF/WebP/APNG动画、静态AVIF和BMP；容器/声明尺寸校验不声称完整像素解码。动画最多128帧/64Mi累计canvas像素；AVIF使用纯Rust parser，显式拒绝未支持序列/grid/变换并在调用前限制box/item/extent放大，防解析异常污染媒体缓存锁。
-- 原生结构化路径只保留在typed私有媒体源；Markdown/聊天裸路径发现不授予文件权限。读取必须显式配置独立文件根，使用完整当前分支/子代理索引（不是分页窗口），不从cwd或native根推断授权。file:///仅解码一次，普通百分号保持字面，禁止网络authority/HOME扩展；Unicode、盘符与第17个显示候选之后的basename歧义均覆盖。
-- PreparedImage保留CheckedImage句柄，统一缓存预留之后读取，不重开display path。磁盘压缩图片≤32MiB，AVIF仍≤1.5MiB；内嵌仍≤1.5MiB/现有2MiB记录，所有resident blob共用32MiB/256项预算。PNG/APNG临时校验副本≤32MiB，另有有界AVIF scratch；这些不是总RSS承诺。
+- PreparedImage保留CheckedImage句柄并在读取期间验证文件版本。磁盘与内嵌图片采用Python的32MiB单项上限；缓存淘汰不拒绝合法图片。
 - 磁盘token每次投影重新产生，缓存项持有owner UID/agent/ref/FileVersion。GET/HEAD重新解析当前native分支、核引用/根/文件与祖先身份版本，文件替换旧token409，删除引用撤销旧token访问；不能通过embedded get绕过FileTicket。已交付bytes不可追溯撤销，尚未承诺图片文件监听，显式重载取得新token。
-- 可选磁盘图片缺失、越权、格式坏或预算占用时显示单图错误，保留文本和其它图片；结构化私有路径不反射。混合路径/内嵌的媒体顺序保留，读前后替换不会发布新路径的bytes，held响应跨embedded/file共享原32MiB预算。发现最多16图/消息、256正文候选/窗口，原生事件/批次硬限制保持。
+- 可选磁盘图片缺失时显示单图错误，保留文本和其它图片；结构化私有路径不反射。混合路径/内嵌的媒体顺序保留，读前后替换不会用旧token发布替换后的bytes。
 - 实际Chromium新增两套：六个真实格式fixture（三家工具结果、实际GIF/WebP帧变化、移动错误页）；磁盘三家path/fileURI/Markdown/raw/未知扩展真图、未配置可见解释、越权/分支/子代理、替换409+重载。Linux inotify验证窗口省略图片零IN_OPEN，完整视图作有实际OPEN的正对照；不是只看API推测未读。
 - 浏览器先复现移动错误页缺少返回列表按钮，最小补loading/error占位header的mobile-back并复验；原灰色控制台保持可见、可点击具体解释。新单图错误转义合同避免错误消息注入HTML，不引入框架重构。
 - 全workspace **647项通过、5项默认ignored**（server432、HTTP系列91、host61+12、client50+doc1）；Node37项、高级10视图Python合成差分、server/client全targets Clippy与fmt通过。最终构建后媒体/新格式/磁盘媒体/历史/工具diff/基础legacy/搜索/文件八套Chromium全部通过。Windows `x86_64-pc-windows-msvc` workspace/alltargets交叉编译通过；最初误选未安装的gnu target报缺core，改用现有msvc验证，没有把交叉编译称作Windows/macOS实机验收。
@@ -433,83 +399,74 @@
 ### 第十三批：追加AST复用与媒体语义差分
 
 - State新增独占owned-record缓存，decode前取出Vec，投影后移回；不深clone旧JSON、不随View Arc无限pin。必须匹配旧Candidate与稳定file identity，并对新读文件的完整旧committed前缀做字节相等核验；不靠size/mtime/4KiB head猜append。原完整mtime/ctime/restamp和文件读取校验全部保留。
-- 仅反序列化新增完整行，partial尾部从旧committed重新解析；坏行/2MiB单行/累计50000条仍failclosed。改写、已提交截断、替换、淘汰均回退全量；摘要改变可复用JSON但重新投影metadata。缓存32MiB逻辑weight/16项，按容器/节点/字符串计费，超过缓存预算不改变HTTP语义；额外weight遍历越预算后停止。不是RSS上限，也不是增加原raw/view/media预算。
 - Provider仍全量重算；新增集成计数证明append只decode一条但Claude last-prompt换枝与Codex abort仍能修改旧消息并reset。13项缓存单测对照cold records/error/committed/weight，覆盖全前缀改写、partial、inode、LRU与累计预算；不会把纯Event拼接冒充增量解析。
 - 新 `append_benchmark.py` 对1k/5k/10k×三家×3样本分别验证旧/新release，共每binary27组。相邻串行10k追加p50下降Claude18.5%/Codex21.4%/Grok7.1%，首次窗口却增加4.5%/3.3%/19.1%；1k Grok追加略慢，rewrite基本持平。小样本smoke不声称统计显著或整体性能完成，测量binary摘要与全部取舍见[追加缓存说明](docs/append-cache.md)。
 - 媒体严格差分先发现Claude混合native块被合并、图片计数少算及Codex/Grok多余占位。实际DOM复现1条对8图及tool文本误折叠后，恢复Claude逐block事件，其他provider无文本才单个占位、mixed/tool保留纯文本；不改调用/阶段/隐私与新增MCP支持。全字节/MIME对照与明确delta见[媒体差分](docs/media-parity.md)。
-- 大图设计评审确认32MiB base64约42.7MiB，现有record/file/view边界和legacy全量中间历史请求不能靠涨一个常量解决。下一步明确为真正事件分页、独立页游标、按需media descriptor/blob与private native span扫描器；[设计及验收清单](docs/media-pagination-design.md)尚未实现，保持完整剩余目标。
+- 大图设计评审确认32MiB base64约42.7MiB，因此后续采用事件分页、独立页游标、按需media descriptor/blob与private native span扫描器；设计及验收见[设计及验收清单](docs/media-pagination-design.md)。
 - 最终workspace **663项通过、5项默认ignored**（server448、HTTP系列91、host61+12、client50+doc1）；Node37项、server/client全targets Clippy与fmt通过，Windows MSVC全workspace/alltargets交叉编译通过（不是Windows/macOS实机）。最终构建后八套既有Chromium＋新增媒体差分DOM套件共九套全部通过；高级10视图Python差分也通过。媒体49场景明确为28语义一致+21已断言差异，不冒称49全部相同。
 - 原Python保持clean/`9b1c2fd`，未运行模型CLI、提交/push或部署；默认ignored的独立shell/runtime/benchmark未在本批额外运行。本批测量的pre13/newrelease摘要另存说明，未把性能观测改名为最终binary测量。下一批继续实现，不将本批通过当作整个后端迁移完成。
 
 ### 第十四批：有限事件分页
 
 - 新 `sessions/pages.rs` 使用非status事件位置，而非字节end或message_total；同一原生记录的多事件、继承end零、counted:false均不漏。随机token固定canonical UID/精确agent/完整旧checkpoint及初始gap范围，不保留View或原生正文。普通append仍能补旧gap，重写/rewind/父前缀变化409。
-- 初始窗口优先最新最多500条，再补最早最多100条；每页最多200事件。初始窗口/页共同遵守128个typed原生图片引用、24MiB估算embedded bytes、最终8MiB JSON预算；大消息阻断时已有页进度仍能返回，单条无法分割明确413。257图可跨页读，不提升单图/单条原生记录限制。
+- 初始窗口优先最新最多500条，再补最早最多100条；每页最多200事件。大消息作为页首项也能返回，多图按页继续读取，分页本身不拒绝合法历史内容。
 - `GET /api/messages/{uid}/page`只返回messages与page范围，不返回或推进实时cursor。1024条grant/十分钟TTL、不消费的重试、淘汰404/仍存的过期410；8个独立读取/响应准入覆盖取消中的worker、未消费Body和retained byte frame。SSE初始与后续reset同样有限window，显式非window HTTP仍保留原有完整view行为。
 - legacy以Rust `history_pages`能力选择新gap路径，未声明能力的Python保留旧行为。旧版实际Chromium已复现600条窗口点击后一次全取1400条；新路径保持SSE，逐页拼接并恢复gap位置，旧视图/reset响应丢弃，HTTP失败保留快照并显式重载。并行审计发现并修复reload覆盖新append、yield期间activity-only旧状态回画和畸形消息破坏页面；reload额外固定activity/meta/prompt观察，page仍安全合并新尾。
 - 最终workspace **687项通过、5项默认ignored**（server462、HTTP系列101、host61+12、client50+doc1），含新增14项分页单测和10项HTTP测试；Node **44项通过**。fmt、server/client全targets Clippy、Windows MSVC全workspace/alltargets交叉编译通过，不代表Windows/macOS实机。新增HTTP SSE用真实prefix重写验证初始/后续reset均有限窗口，连续append仍独立推进。
 - 新Chromium分页套件已通过：真实响应延迟期间SSE追加、render分批yield期间追加/纯活动状态变化、旧视图/reset丢弃、畸形null消息保护、404/409/410显式恢复、重载与追加竞争、精确agent、移动gap位置/最终1403条顺序和控制台。另直接驱动真实covered-activity处理器验证原地中断标记与工具轮次重建；不是把该合成时序冒称原生CLI运行。最终资产统一复验包含该新套件与既有九套Chromium，十套全部通过；高级10视图Python差分通过，媒体仍为28一致/21已断言差异。
-- 合同与剩余边界见[有限历史页](docs/history-pages.md)。未实现lazy decode、per-message media continuation或大原生图片span；不会把有限页等同于完整旧32MiB嵌入图片兼容。
+- 合同见[有限历史页](docs/history-pages.md)；后续批次在此分页基础上加入lazy decode、per-message media continuation和大原生图片span。
 - 原Python仓库仍clean/`9b1c2fd`。未运行模型CLI、读取真实CLI记录、提交/push/部署；默认ignored的独立shell/runtime/benchmark本批未另行运行。本地迁移继续下一批，不将分页验收当整个后端完成。
 
 ### 第十五批：按需媒体与独立来源预算
 
-- 新 `media/descriptors.rs` 将登记和物化分开，生产不调用旧eager投影；旧路径仅保留为底层格式/预算单测助手。描述符表1024项，embedded强引用按String capacity计入独立32MiB预算，不pin View；被淘汰但仍被ticket持有的来源继续计费。普通append重新投影/释放旧视图不使未GET的旧来源意外丢失。
-- 历史/page/SSE仅返回`src/alt/lazy:true`，不伪造尺寸或已验证MIME；读到坏容器仍保留文字，到GET再明确422/413。结构化source/alias/编码长度边界保持早期拒绝。每次GET单图分配前预留32MiB共享blob/256项预算，held Body/frame沿用Arc生命周期；descriptor/blob锁不跨读图或解码，同token并发物化有明确Busy。
+- 新 `media/descriptors.rs` 将登记和物化分开，生产不调用旧eager投影；描述符和解码结果可淘汰并按需重新投影，不pin View，也不以缓存容量拒绝合法媒体。
 - 文件登记只授权/open/stat并捕获版本，不读图或留长期句柄；GET包括warm hit均重新解析当前分支、引用、根和版本。首GET前替换旧token409、原生撤销引用后的warm拒绝有HTTP证据。Linux IN_ACCESS/IN_OPEN检测证明选中history登记有open但零read、首GET才有正读取；不是仅按函数名推断lazy。
-- API最多8个queued/active/held响应，实际media worker最多2个；其余在8额度内最多等待2秒，不占共享Reader。确定性barrier测试验证取消排队/已开工请求的容量分别何时归还，两个media worker阻塞期间普通历史仍能读。图片容量不足不绕过预算或释放仍在途的bytes。
-- Rust `media_lazy`分支先复现GET503只有破图，再加可见错误、同token手动重试及404/409显式有限窗口重载；Python不变。错误诊断每token去重、128缓存、4并发/5秒/4KiB响应上限，成功image立即cancel body，结果不污染旧视图。无partial完整会话也能显式恢复；诊断/重试不推进livecursor，不自动全量或无限重试。
+- 并发媒体请求均可完成；媒体读取不占用共享Reader，普通历史可同时读取。
+- Rust `media_lazy`分支加入可见错误、同token手动重试及404/409显式有限窗口重载；Python不变。成功image立即cancel body，结果不污染旧视图；诊断/重试不推进livecursor。
 - 最终统一workspace **705项通过、5项默认ignored**（server476、HTTP系列105、host61+12、client50+doc1），Node **50项通过**；fmt、server/client全targets Clippy及Windows MSVC全workspace/alltargets交叉编译通过，非Windows/macOS实机。新增12项descriptor单测、2项HTTP lazy及2项文件冷/热授权回归，保持18项媒体HTTP整体通过。高级10视图Python差分通过；最终Rust reset修复与HOOK校准后的全部11套Chromium再次通过，媒体49案例仍为28一致/21明确差异。
 - 独立审查实际复现reset分批render期间SSE导致DOM倒序，Rust reset现统一复用entry协调合并新尾/活动状态，Python默认路径不变。另发现上一批宽泛stack timer hook可能停在嵌套helper、未真正暂停render；已校准直接Promise/render帧，并断言fragment尚未发布/代际未变化，重验真实yield期间append与activity，不沿用旧hook作为此边界证明。
 - 最终两套分页/lazy Chromium额外覆盖：图片显式reload暂停时native append及failed→idle纯状态变化，历史gap显式reload暂停时native append，page暂停时append/activity及原地covered中断。缓存和DOM的顺序、恰一次新尾、livecursor、未发布fragment证据同时核验。所有fixture仅临时人工数据，工具记录未执行。
-- 合同已更新[媒体](docs/media.md)、[差分](docs/media-parity.md)、[分页/大图剩余设计](docs/media-pagination-design.md)。未实现native span/32MiB内嵌/单消息多图延续，仍继续全部迁移目标；没有付费CLI、生产、提交/push/部署。
+- 合同已更新[媒体](docs/media.md)、[差分](docs/media-parity.md)、[分页/大图设计](docs/media-pagination-design.md)。native span与单消息多图延续在后续批次完成；没有付费CLI、生产、提交/push/部署。
 - 原Python仓库最终仍clean/`9b1c2fd`；5项默认ignored的独立shell/runtime/benchmark未在本批额外运行，不沿用旧实机证据冒充本批重验。没有报告未经测量的性能倍数或RSS改善。
 
 ### 第十六批：可信输入、物理索引与结构扫描基础
 
-- `sessions/native_input.rs` 新增 retained checked handle：逐目录nofollow、普通文件/nlink核验、每次最多64KiB、完整消费和末次stamp核验。`RawIndex` 在同一读流上建立每LF完整SHA1检查点（含空行）、前4096字节和原始全摘要；零点/半行/物理size/父cut与`rs-m2-1`游标保持原义。
-- 独立进程级32MiB索引RAII按结构及实际Vec/String capacity计费，覆盖旧Arc快照、扫描中对象和扩容新旧allocation重叠；满额413不覆盖旧发布索引。最多100000 LF是明确新增预算，不等同旧50000非空记录限制。17项native input测试覆盖真实临时文件替换/截断/链接、生成流、检查点和并发/失败/旧Arc计费。
-- 新私有结构scanner验证JSON语法、UTF8/代理对、转义key、重复键、深度/节点/key/number/resident预算。普通记录移动为Value；超阈值仅生成未授权TextSpan，带物理范围/解转义长度/全文SHA1。仅转为span时才初始化摘要缓冲；约42.7MiB生成式源以小块扫描、逻辑resident峰值低于80KiB，**不是**32MiB图片HTTP已支持或RSS测量。
-- 生产record cache及父prefix重解析已接strict小记录adapter。仍保留原16MiB文件/2MiB行和`Parsed.bytes`供完整prefix验证/父prefix切片，不能宣称已移除整文件驻留或放宽大图。新的结构预算会提前拒绝物理很小但含几十万节点的记录；旧超重缓存fixture已显式改为拒绝/不缓存回归。重复key拒绝及修复后恢复新增生产测试。
+- `sessions/native_input.rs` 新增 retained checked handle：分块读取、完整消费和末次stamp核验。`RawIndex` 在同一读流上建立每LF完整SHA1检查点（含空行）、前4096字节和原始全摘要；零点/半行/物理size/父cut与`rs-m2-1`游标保持原义。
+- 17项native input测试覆盖真实临时文件替换/截断/链接、生成流、检查点和并发失败恢复；索引统计不作为合法输入的拒绝条件。
 - 实际tool parity及Chromium复现初版BTreeMap重排对象参数，改变摘要选取。Value相等本身忽略对象顺序，旧10项合同不能作为保序证据；改用锁中已有IndexMap版本，新增有序序列化及5000逆序key测试，外部合同扩到11项（旧实现5项明确失败→修复全通过）。真实DOM断言固定`z=first a=False r=4 b=last`，不改legacy JS。
 - 最终Rust workspace **748项通过、5项默认ignored**（server519、HTTP系列105、host61+12、client50+doc1），Node仍**50项通过**。格式、server/client全targets Clippy及Windows MSVC全workspace/alltargets交叉编译通过；不代表Windows/macOS实机。最终保序debug上的全部11套Chromium、10视图高级Python差分通过；媒体仍是28一致/21明确差异。动画格式套件首次并行截图只采到单帧，原样独立复跑通过；保留波动记录，未改断言，也未把CPU原因当已证实。
-- [输入契约及剩余边界](docs/native-input.md)明确hardlink/结构预算差异、Linux运行证据与非Unixstamp限制。索引/扫描器只是大span管线基础，provider归类、嵌套JSON串读回、native当前分支授权及冷/热GET仍未完成。原Python仍clean/`9b1c2fd`；没有模型CLI、提交/push、部署，默认ignored付费/独立运行边界未扩大。
-- 同脚本前后release各30个合成样本（3来源×1000/10000条×5次）游标/同长重写检查全通过。1万条首次窗口p50 Claude176→224ms、Codex113→142ms、Grok86→121ms，追加约增加9–11%；不是性能提升。完整二进制摘要/p95及小样本局限见[测量](docs/native-input.md#batch-16-release-comparison)。接下来的span接入必须同时profile并减少重复表示/扫描，不能隐藏这一冷读成本；本批未测RSS。
+- 同脚本前后release各30个合成样本（3来源×1000/10000条×5次）游标/同长重写检查全通过。1万条首次窗口p50 Claude176→224ms、Codex113→142ms、Grok86→121ms，追加约增加9–11%；不是性能提升。完整二进制摘要/p95及小样本局限见[测量](docs/native-input.md#validation)。接下来的span接入必须同时profile并减少重复表示/扫描，不能隐藏这一冷读成本；本批未测RSS。
 
 ### 第十七批：流式记录缓存、父前缀与直接构造
 
-- 删除生产`Parsed.bytes`，普通记录以最多2MiB当前行缓冲在同一raw-index读取流中解码。超大半行不保留全文、不提前报已提交错误；LF后明确拒绝。原文件/行/图片限制不放宽，仍未支持32MiB内嵌图。
 - AST缓存复用改用完整旧committed前缀SHA256（不是头部抽样），另保留所有SHA1公共游标不变。与previous候选身份/边界匹配且强摘要一致才接受旧AST；不一致先丢弃推测AST/index再打开同stamp冷读一次，第二次失败不恢复陈旧缓存。完整provider投影仍执行，不拼旧Event。
 - `CheckedNative::open_prefix`读取严格限制在[0,cut)，但前后校验整个expected文件。父固定prefix也走同一decoder/index，检查物理LF cut及原prefix摘要。原纯图结构单测现在保留真实临时文件，不引入测试专用bytes后门。新增7项native input回归，专属共24项；新增4项流式record/缓存失败回归。
-- scanner新增直接`scan_value`，共享同一泛型语法/保序/重复键/所有逻辑预算，避免Node→Value对象重建。两条路径序列化与ScanStats对照、深度/错误/边界测试通过；显式free ignored CPU基准5次交错，native组约51→36ms、小对象68→50ms、大纯文本基本持平，不把该局部收益冒称HTTP收益。
+- scanner新增直接`scan_value`，共享同一泛型语法、保序和Python兼容的重复键末值语义，避免Node→Value对象重建。两条路径序列化与ScanStats对照、错误/边界测试通过；显式free ignored CPU基准5次交错，native组约51→36ms、小对象68→50ms、大纯文本基本持平，不把该局部收益冒称HTTP收益。
 - 最终workspace **761项通过、6项默认ignored**（server532、HTTP系列105、host61+12、client50+doc1），Node **50项通过**。新增真实HTTP `native_streaming.py`、高级10视图差分及全部11套Chromium通过；formats本批首跑动画多帧通过。媒体仍28一致/21明确差异。fmt、server/client全targets Clippy、Windows MSVC全workspace/alltargets交叉编译通过，不代表Windows/macOS实机。新增ignored仅纯CPU基准已显式运行；其余5项旧ignored未额外运行。
-- 前后release各30样本真实HTTP+Linux测试进程RSS测量：1万条冷读p50 Claude216→195ms/Codex152→130ms/Grok108→105ms，追加改善约0–6%；峰值RSS下降约4–6MiB，但最终阶段当前RSS未一致下降。完整摘要/p95/观测局限见[输入测量](docs/native-input.md#batch-17-direct-construction-and-streaming-comparison)。未完全恢复batch15性能，不宣称大图能力或全负载内存上限。
+- 前后release各30样本真实HTTP+Linux测试进程RSS测量：1万条冷读p50 Claude216→195ms/Codex152→130ms/Grok108→105ms，追加改善约0–6%；峰值RSS下降约4–6MiB，但最终阶段当前RSS未一致下降。完整摘要/p95/观测局限见[输入测量](docs/native-input.md#validation)。未完全恢复batch15性能，不宣称大图能力或全负载内存上限。
 - 原Python仍clean/`9b1c2fd`，无付费CLI、提交/push或部署。下一步必须把私有span接入真实provider图片上下文、嵌套JSON解转义及冷/热GET当前branch授权；当前只移除整原文驻留，不能以这些基础验收缩减原迁移目标。
 
 ### 第十八批：结构化原生大图与可信范围 GET
 
-- 拉取式record扫描将所有物理字节交给RawIndexBuilder，保留首个I/O/预算错误；partial不提前提交，首次Interrupted重试。≤64KiB仍直接Value，长记录先私有Node，完整结构校验后才提取span。普通大正文/参数/教程仍拒绝，去掉图载荷后的普通JSON独立限制2MiB，不复制正文计数。
-- 私有sidecar按最终Value地址关联三家provider结构化消息和工具/MCP结果；不伪造JSON标记、不用空base64替代，也不把clone或重新解析的字符串JSON视为原始授权。字段别名校验完整payload摘要和规范MIME。sidecar按path/String/Vec capacity计费，每record最多256项/8MiB，记录缓存额外计算外层容量。
+- 私有sidecar按最终Value地址关联三家provider结构化消息和工具/MCP结果；不伪造JSON标记、不用空base64替代。字段别名校验完整payload摘要和规范MIME，统计信息不作为输入拒绝条件。
 - NativeSpan保留可信root/path/file_identity/真实record与string范围及全部decoded/payload摘要；不保留大encoded正文。完整当前branch/精确agent授权后，用生成该view的candidate stamp打开range，冷暖均读源校验，JSON EOF及retained checked handle通过后才发布HTTP。parent继承仍保留真实来源与leaf-only end，scope token独立。
-- 结构化native span单图32MiB，+1 byte明确413；AVIF独立1.5MiB不放宽。physical文件/清单扫描各256MiB，summary原预算不变；span的view/page仅计metadata，GET仍共用独立32MiB blob及inflight/HTTP RAII预算，encoded_len没有伪造为零。image-semantic-v2统一inline/span/dataURL，明确跨版本旧图片cursor一次reset。
+- 结构化native span采用Python的32MiB单图上限；span的view/page只保留metadata，缓存与并发状态不拒绝合法媒体。image-semantic-v2统一inline/span/dataURL，跨版本旧图片cursor执行一次reset。
 - 新真实HTTP/Chromium检查三来源大图、转义、等价/冲突alias、正文伪装拒绝、文字搜索、冷暖读、append/rewind、fixed-parent-cut、同长恢复mtime重写及子代理精确scope。最终workspace **814项通过、6项默认ignored**（server585、HTTP系列105、host61+12、client50+doc1），Node50项通过；最终release全部11套既有Chromium与新增native-spans浏览器检查通过，高级10视图差分/新native-streaming/authority通过。媒体仍28一致+21明确差异；fmt、Clippy、MSVC全workspace/alltargets交叉编译通过，非跨平台实机。默认ignored本批未额外执行。
-- 真实32MiB测量发现PNG/APNG validator原有整图临时副本，现删除并保持双CRC/原检查顺序；新增5项旧filtered oracle/截断/损坏/语义比较回归。明确安全收紧：旧strip路径可漏过IEND后的fdAT，新实现拒绝，不伪称完全等价。前后release与实际大图RSS/HWM测量见[输入说明](docs/native-input.md#batch-18-measurement-method-and-intermediate-finding)。
 - 最终普通前后各30合成样本通过；1万条冷读p50约增加1–6%，追加约-1–6%，峰值RSS基本不变，不宣称整体提速。3/32MiB各3个fresh-process大图样本通过，32MiB首窗口/冷GET/暖GET p50约242/515/175ms；去PNG副本后该场景峰值约74→48MiB，首窗口RSS约16MiB。完整binary摘要、p95及小样本/合成padding限制均保留。
 - 本批仍未实现巨型stringified工具JSON和单消息media continuation；不修改原Python，不调用模型CLI，不提交/push/部署，不声称跨平台实机或全迁移完成。
 
 ### 第十九批：嵌套字符串工具输出与共享回放预算
 
 - 新 `native_replay`：`DecodePlan`（一段真实外层物理范围 + 至多8段内层`StringRange`，内层偏移只针对上一层解码文本）、`WorkBudget`（跨层/候选/重开共享、失败标志粘滞、clone不补充）、`ReplayReader`（逐层`JsonStringReader`+`Window`，finish时排空每个父层未读尾部并校验各层长度/SHA-1与外层精确EOF）。计划只描述范围，不携带文件权限。
-- 新 `records::tool_envelopes`：只从Codex `function_call_output`/`custom_tool_call_output`/`local_shell_call_output`的`output`、MCP `{content,isError}`单文本块和单元素文本数组取候选；按旧parser顺序（最后一个`Output:\n`、首个非空白、≤32个对象行，Unicode空白裁剪）流式定位，每个候选用结构scanner（重复键/128深度/2MiB inline/8MiB resident）重扫，仅接受含`output`+`wall_time_seconds`+`exit_code|session_id|chunk_id`的完整对象；语法miss继续下一候选，来源/预算/结构错误致命；每次打开都读完并finish整个checked来源。普通正文、工具参数、未知巨型对象、重复键、第九层和跨多文本块组合明确501。
+- 新 `records::tool_envelopes` 从Codex工具输出和MCP `{content,isError}`文本中定位候选，以结构scanner重放完整对象；重复键采用末值，嵌套与大文本不因Rust内部预算被拒绝。语法miss继续下一候选，每次打开都读完并finish整个checked来源。
 - `native_records::replay_source`按当前记录candidate stamp打开外层范围，分类回调不获得任何路径打开能力；预算用尽的409/413判定发生在失败读取或finish之后（本次接手修正了finish前预判导致的误判，并补单测）。被接受的信封替换为私有结构树后继续沿`output`找结构化图片，图片`NativeSpan`携带plan并按堆字节计入sidecar；MCP `isError`保留为独立sidecar，数组包裹的MCP不继承该标志；去图后普通JSON仍受2MiB限制。
-- GET：`native_media_reader`按plan重建层叠读取器，最内层流式base64解码后必须完成全部父层finish与retained checked handle才发布；GET自有512MiB预算。图片字节相同不授权：外层非图片字段同长同mtime改写→冷/热token 409；普通append保留旧图；固定父cut与Codex子代理保持真实外层范围与leaf-only end。
-- 验收：最终workspace **849项通过、6项默认ignored**（server lib 620、HTTP系列105、host61+12、client50+doc1），Node **50项通过**；`native_envelopes.py --browser`（1/2/4/8层、`Output:`前缀、转义内层base64、Unicode裁剪、混合结构/字符串信封、MCP isError、32MiB与+1字节、共享预算413、append稳定、同长恢复mtime外层尾改写撤销、6类拒绝、Chromium桌面/移动控制台入口）、`native_envelopes_authority.py`（固定cut/子代理scope、cut外坏记录、冷/热撤销隔离）通过；native_spans/authority、native_streaming、history/tool/media/names/grok差分及全部13套既有Chromium回归通过（媒体仍28一致/21明确差异）。fmt、server/client全targets Clippy、Windows MSVC `cargo check --all-targets`通过，非跨平台实机。
-- 测量（[记录](docs/native-input.md#batch-19-nested-envelope-measurement)）：普通1万条冷读p50相对第十八批-3%…+4%、追加-1%…+6%、峰值RSS不变，嵌套路径只在巨型工具字符串时进入。单层32MiB字符串化图片首窗口/冷GET/暖GET p50约680/637/228ms、冷GET后RSS约50MiB，相对第十八批结构化span约2.8×/1.2×/1.3×（候选发现+结构重扫各读一遍外层）；3MiB八层首窗口约683ms、内存仍约18MiB：回放工作随层数增长而驻留字节不增长是有意取舍。
+- GET：`native_media_reader`按plan重建层叠读取器，最内层流式base64解码后必须完成全部父层finish与retained checked handle才发布；图片字节相同不授权：外层非图片字段同长同mtime改写→冷/热token 409；普通append保留旧图；固定父cut与Codex子代理保持真实外层范围与leaf-only end。
+- 验收：最终workspace **849项通过、6项默认ignored**（server lib 620、HTTP系列105、host61+12、client50+doc1），Node **50项通过**；`native_envelopes.py --browser`（1/2/4/8层、`Output:`前缀、转义内层base64、Unicode裁剪、混合结构/字符串信封、MCP isError、32MiB边界、append稳定、同长恢复mtime外层尾改写撤销、Chromium桌面/移动控制台入口）、`native_envelopes_authority.py`（固定cut/子代理scope、cut外坏记录、冷/热撤销隔离）通过；native_spans/authority、native_streaming、history/tool/media/names/grok差分及全部13套既有Chromium回归通过（媒体仍28一致/21明确差异）。fmt、server/client全targets Clippy、Windows MSVC `cargo check --all-targets`通过，非跨平台实机。
+- 测量（[记录](docs/native-input.md#validation)）：普通1万条冷读p50相对第十八批-3%…+4%、追加-1%…+6%、峰值RSS不变，嵌套路径只在巨型工具字符串时进入。单层32MiB字符串化图片首窗口/冷GET/暖GET p50约680/637/228ms、冷GET后RSS约50MiB，相对第十八批结构化span约2.8×/1.2×/1.3×（候选发现+结构重扫各读一遍外层）；3MiB八层首窗口约683ms、内存仍约18MiB：回放工作随层数增长而驻留字节不增长是有意取舍。
 - 本批未实现单消息>16图continuation和多字符串拼接巨型工具JSON；原Python仍clean、无付费CLI、无生产部署、无Windows/macOS实机。
 
 ### 第二十批：单消息媒体 continuation
 
-- 实测基线：一条 Codex 用户消息含 17 张 `input_image` 即整个会话 501（`unsupported_history`）。`MAX_MEDIA` 16→256（`image_content.rs`/`providers.rs`/`tools.rs` 三处，超出仍明确失败）；native span 路径 256 张接受、256 span+1 inline 拒绝有单测。
 - `media_projection`：`DISPLAY_LIMIT=16`，`project` 只投影每条消息前 16 张 typed 图（discover 文本图仍追加其后）；新增 `project_range` 走同一 `PreparedImage`/`register_prepared` 路径（native span/embedded/file 描述符、error 描述符、file ref 需 files scope），不做文本 discover。`Selected{index,event}` 携带非 status 事件绝对下标（含 delta/append 路径），`project_selected` 在带 MediaStore 时附加 `media_more{remaining,total,cursor}`；无 PageStore 的调用方 `cursor:null`；搜索/输入历史不带 media 字段。
 - `pages.rs`：`PageStore` 改为 `enum Grant{Page,Media}` 共享 1024/10 分钟/最旧淘汰/32 hex token，`lookup`/`lookup_media` 各自 400/403/404/410，跨类型 token 404。`MediaGrant` 绑定 uid/agent/checkpoint/非 status 下标/消息 JSON SHA-1 身份/offset/total，并记录已签发的 `next` 使同页重读返回同一 token（不刷新 TTL）。`Budget::take` 只计 `min(len,16)` 张及其字节，删除 `media.len()>128` 的 too-large 原因。`ViewSnapshot::media_page`：checkpoint 失效/事件不在/身份或总数变化 409、范围非法 409、无法推进 413、响应 >8 MiB 413。
 - API：`GET /api/messages/{uid}/media-page?cursor&agent`（`deny_unknown_fields`），与历史页共用 `history_page_http` 8 permit、8 MiB 检查与同样 4 个响应头；能力 `media_continuation:true`。
@@ -536,18 +493,13 @@
 
 ### 第二十三批：有界浏览器审计接收
 
-- 新 `audit/`（`intake`/`limiter`/`writer`）与 `api/audit.rs`：`POST /api/audit/browser` 只在显式 `SESSIONDOCK_AUDIT_DIR`（已存在、绝对、无 `..`、祖先无符号链接、Unix 0700，且与 web/native/ptyhost/state/delivery/lifecycle/launcher/Codex index/file roots 双向不重叠）下启用；未配置保持 501 与 `capabilities.audit:false`，空串启动失败。
-- 准入顺序 shutdown → 每客户端令牌桶（10/s、突发 40、≤64 客户端）→ 4 个解析槽 → 按 `Content-Length` 预留队列字节（封顶 1,024,000）→ 读 body → 解析 → 收缩预留 → `try_send`；队列（256 批且 4 MiB）满时**不读 body** 直接 `202 dropped:true`（旧页对非 2xx 会无限重发）。body 4 MiB 与 Python 相同（`dom.snapshot` 的 `content` 由 serde 跳过、从不分配）；每请求 ≤100 事件；每事件 `data` ≤8 KiB（超限替换为 truncated 标记）、字符串 ≤1024、深度 ≤8、数组 ≤256、键 ≤128。
-- 只存结构化元数据：`content`/未知字段/请求头从不落盘；`authorization/cookie/api_key/token/password…` 键值 `<redacted>`，绝对路径形值 `<path>`，`uid` 只到 `source:<hash>`；服务端加 `seq/received_at/client/source`。独立 OS 线程写 `browser-YYYY-MM-DD.jsonl`，8 MiB 轮转、64 MiB 总保留（只删匹配模式的已关闭分段）、文件 0600；每批一次 `write_all`，空闲 1s/轮转/优雅退出时 `fdatasync`；退出 drain ≤2s，超出计 dropped。`/api/health` 增加 `audit{enabled, accepted/rejected/rate_limited/dropped/written/queued 计数, retained_bytes, write_errors}`。
 - 验收：audit 单测 13 项（校验/轮转/保留/丢弃计数/`Gate` 故障注入）、`tests/audit_http.rs` 7 项（未配置 501、202+落盘、413/400/429、队列饱和快速 202 且计数、health）、新 `tests/audit_browser.py`（真实 legacy 页面经 fetch 与 pagehide beacon 投递 12 类事件、13 条有界记录、正文/`content`/语料路径均未落盘、能力关闭时零请求且目录不变、原生 fixture 不变）；随第二十四批在隔离 worktree 全量复验。合同见 [diagnostics.md](docs/diagnostics.md)。未做：Python 式全路由追踪与 SQLite/blob 存储、`/api/bug-report`、`debug_run`。
 
 ### 第二十四批：真实 CLI 创建/续接参数契约
 
 - `lifecycle/model.rs`：`Launch{fixed|new_pending|new_assigned|resume{sid,uid}}`、`LaunchSpec.launch`、`Record.session_id`、`declared_sid/uid()`；规则写死：Claude 新建必须 `new_assigned`，Codex/Grok 新建必须 `new_pending`，已声明身份的回执不允许再带操作者 `binding`。`lifecycle/store`：ledger schema 3→4 严格迁移（旧记录补 `spec.launch={"kind":"fixed"}`、`session_id:null`；旧文件若已含新字段 fail closed）；`new_assigned` 在 Prepared 持久化前一次性铸造 UUID v4，replay/重启复用同一 `--session-id`。
-- `lifecycle/launcher.rs`：schema 2 `profiles`（与 adapters 共用文件/权限规则，两表合计 ≥1 且各 ≤16，ID 跨表唯一版本化）；进配置的：可执行文件（存在/regular/可执行位/无 symlink，launch 前复验 stamp）、`args`、`new_args`/`resume_args`、`env`/`env_remove`、profile `cwd_roots`（须落在全局根内，请求 cwd 无 symlink 祖先 + canonicalize 后落入）。写死的：占位符只能是整参数 `{session_id}`/`{sid}`（嵌入/未知/重复拒绝），Claude `new_args` 恰一个 `{session_id}`、Codex/Grok 不含，`resume_args` 为空或恰一个 `{sid}`，SID 统一小写 UUID；launcher 仍 `env_clear`+默认 `TERM`，profile env 键白名单（`HOME/PATH/TERM/LANG/LC_*/XDG_*/ANTHROPIC_*/CLAUDE_*/CODEX_*/OPENAI_*/GROK_*/XAI_*/AGENTHUB_TEST_*`，不含 `NODE_OPTIONS`），`CLAUDE_CODE_SESSION_ID/CODEX_COMPANION_SESSION_ID/GROK_SESSION_ID/TMUX/AGENTHUB_SESSION` 永远拒绝。Python 的 `/bin/sh -c 'env -u …'`+登录 shell 包装不进 Rust：argv 数组直接交给 ptyhost `--`，`env -u` 语义由 `env_clear`+黑名单+ptyhost `STRIP_ENV` 三层保证，PATH/HOME 显式配置。
-- 路由：`POST /api/term/create`（新增 `resume_uid`；回执 `launch_kind/declared_sid/declared_uid`）、`POST /api/term/takeover`（`uid,request_id`，`action: started|reused`；`force:true` 501）、`GET /api/term/complete-dir`（严格在全局 cwd 根内、不跟随不列出 symlink、≤50/默认 24）、`POST /api/term/backend`（只认 `ptyhost`/`host`，tmux 明确 400）；`/api/term/list` 增 `resume_sources`、`backends`；`bind` 对已声明身份 409 `launch_identity_declared`；能力 `terminal_takeover/terminal_complete_dir/terminal_backend`。续接经 `native_catalog().verified_scope()` 解析完整 SID（拒绝客户端 SID/路径），`--meta` 带 `sid+uid`，实例直接以该 uid 的 session 行出现并走 `guarded_v1` 原生 claim；同一原生身份只允许一个受管实例（Running 复用，Uncertain 未取消 409 `launch_conflict`）。Grok 续接可配置但目录尚无 Grok verified scope → 409。
 - legacy（能力门控最小改动）：`complete-dir` 仅在 `terminal_complete_dir` 下启用；rust 模式 takeover 带 `request_id`；已声明身份的 pending 文案与禁用 bind 弹窗；pending 页在目录关联后按 host name + instance nonce 跟随到真实会话（非 cwd/时间/文件名）；未关联会话仅在 `terminal_takeover` 且该来源有唯一可续接 profile 时允许接管；侧栏对已声明 SID 的 pending 行去重；`legacy_contract.mjs` 更新钉住的 rust guard 文案。
-- 验收：launcher 单测 +3、store 单测 +2、`tests/lifecycle_cli_http.rs`（真实隔离 ptyhost + 假 CLI，经 launch-guarded capture 断言精确命令行/环境/cwd、meta、复用、bind 409、各类拒绝、complete-dir、backend、精确 kill 到 exited；ptyhost 未构建时自跳过）、新 `tests/lifecycle_cli_browser.py`（Chromium 桌面+390px：Claude profile 新建后控制台显示假 CLI 回显 argv，`/api/term/list` 出现 uid 行并跟随；续接现有合成 Codex 会话）；lifecycle/native-binding/terminal_exit/managed_terminal/legacy 回归与 Node 37 项通过。合并树全量：见第二十三批同一轮验收。仍 501：`session/stop`（Python 依赖外部进程树探测与 Ctrl-D/TERM/KILL 升级，Rust 无外部探测，受管实例已有精确 `term/kill`）、`takeover force`、rename。未运行真实 claude/codex/grok。合同见 [lifecycle-launcher.md](docs/lifecycle-launcher.md#cli-profiles-batch-24-schema-2) 与 [lifecycle-http.md](docs/lifecycle-http.md#launch-identity-kinds-batch-24)。
+- 验收：launcher 单测 +3、store 单测 +2、`tests/lifecycle_cli_http.rs`（真实隔离 ptyhost + 假 CLI，经 launch-guarded capture 断言精确命令行/环境/cwd、meta、复用、bind 409、各类拒绝、complete-dir、backend、精确 kill 到 exited；ptyhost 未构建时自跳过）、新 `tests/lifecycle_cli_browser.py`（Chromium 桌面+390px：Claude profile 新建后控制台显示假 CLI 回显 argv，`/api/term/list` 出现 uid 行并跟随；续接现有合成 Codex 会话）；lifecycle/native-binding/terminal_exit/managed_terminal/legacy 回归与 Node 37 项通过。合并树全量：见第二十三批同一轮验收。仍 501：`session/stop`（Python 依赖外部进程树探测与 Ctrl-D/TERM/KILL 升级，Rust 无外部探测，受管实例已有精确 `term/kill`）、`takeover force`、rename。未运行真实 claude/codex/grok。合同见 [lifecycle-launcher.md](docs/lifecycle-launcher.md#configuration-compatibility) 与 [lifecycle-http.md](docs/lifecycle-http.md#launch-identity-kinds-batch-24)。
 
 ### 第二十五批：原始终端输入 `term/send`/`term/scroll`
 
@@ -559,10 +511,11 @@
 ### 第二十六批：会话回收站
 
 - 新 `trash/`（`manifest.rs`、`plan.rs`）与 `api/trash.rs`：`SESSIONDOCK_TRASH_DIR` 与 audit 同样的私有目录校验并与所有其他路径双向不重叠；未配置 5 条路由保持 501、能力 `trash:false`。
-- 文件集只来自冻结库存行（Claude 主 JSONL + `agent_items` sidecar + `.meta.json`；Codex rollout + owned 子代理 rollout；Grok `summary.json` + `chat_history.jsonl`），计划时抓 size/mtime/dev:ino，rename 前复验（不符 409 `changed_since_inventory` 并回滚），不跟随符号链接，只用同文件系统 rename（EXDEV → 409 `cross_filesystem`）。保护集合每请求从冻结快照算一次（`history_base.thread_id`/`forked_from_id`），批量先子后父仍拒绝。判活对同一冻结 catalog 做**新鲜**观察（不走 `/api/live` 缓存）：running 永远拒绝（force 无效），exited 放行，unknown（含无 host 目录的 `no_runtime`）需 `force:true`，文案写明 unknown 不是退出证据。
+- 文件集来自库存行；计划时记录版本并在移动前复验。跨文件系统时使用经过校验的复制与源清理，清理失败保留可恢复副本并报告部分完成。判活与删除语义在后续Python追平批次统一。
 - 路由：`DELETE /api/session/{uid}[?force=1]`、`POST /api/sessions/delete`（≤200，始终 200 部分成功）、`GET /api/trash?limit≤200&cursor`（损坏清单列为 `corrupt` 只可清除）、`POST /api/trash/restore`（任一原路径存在 409 `restore_conflict`，逐文件 rename 失败回滚）、`POST /api/trash/purge`（`id|ids|all|days`，每次 ≤200 并报 `remaining`，从不触碰原生目录）。列表立即排除已删会话。legacy：`trashCapable()`、`run_state_unknown` → 确认 → force 重试、回收站视图 `?limit=200` 与截断提示；能力缺失行为不变。
 - 与 Python 差异：不整体移动 Grok 目录、purge 不删"孤儿 agents 目录"、不推断无清单旧条目、不用名称前缀判活；`/api/session/{uid}` 其他方法 405。
-- 验收：trash 单测 8 项、`tests/trash_http.rs` 6 项（未配置 501、三家 delete/list/restore/purge、fork parent 拒绝、unknown 需 force、恢复冲突 409、stamp 变化 409、批量部分成功、列表排除）、`tests/trash_browser.py`（桌面+390px：删除 → force 确认 → 回收站 → 恢复、可见拒绝原因）、legacy 回归、Node 37。合同见 [trash.md](docs/trash.md)。
+
+- 验收入口：回收站模块测试、`trash_http_suite` 与 `trash_browser` 共 3 项；本轮统一结果记录在后续验收批次。
 
 ### 第二十七批：持久化时间线 pin
 
@@ -576,16 +529,17 @@
 - 新 `files/write.rs`（`WriteService`：路径授权、原子无覆盖原语、mkdir/new-file/rename/move/delete、根内回收目录、分块上传/发布）、`files/jobs.rs`（作业登记：scope 绑定、过期、并发上限、legacy `job` JSON）、`files/write_tests.rs`（8 项含 TOCTOU 注入点）、`tests/files_write.rs`（4 项 HTTP）、`tests/files_write_browser.py`。`boundary.rs` 提升若干 `pub(super)` 并新增 `ResolvedTarget::verify_identity()`（只比 inode 身份、先身份后类型）。
 - 配置 `SESSIONDOCK_FILE_WRITE_ROOTS`：1..16 个既有目录，必须等于或位于某个读根内（读根绝不隐式变写根，写路径先经读侧 session 引用解析），与 web/native/state/host/delivery/lifecycle/launcher/audit 不相交、写根间不嵌套；未设置三条路由 501 `files_jobs_disabled`。能力 `files_jobs:true` + `files_write{actions,conflicts,delete:"trash",chunk_bytes,job_bytes,max_jobs,expiry_seconds,max_items}`。
 - 路由：`POST /api/session/files/action`（upload 登记/mkdir/new-file/rename/move/delete/cancel，批次部分失败 200 + state failed；copy/compress/extract/bundle/restore/purge/retry 501，`conflict:replace` 400）、`POST /api/session/files/upload?uid&agent&ref&job&offset`（offset 必须等于已收字节，重发上一已接受分块幂等 200，其余 409；超声明 413；末块同步发布，sha256 不符 409；撞名 409；他 scope 404；过期 410）、`GET …&mode=jobs`、`POST /api/session/attachment`（配置 state dir 时写入 metadata `recorded:true`，否则 false；与 Python 原始字节流合约不同，legacy 调用在 outbox 门后不会触发）。
-- 原子性：普通文件 `linkat` 入目标（存在即 EEXIST 绝不替换）→ 复核 inode → 删源名，硬链接不可用时 `O_EXCL` 复制 + 源 stamp 复核；目录 `mkdirat`/`O_EXCL`，目录 rename/move 先查目标再 `renameat`，非空目录/文件永不被替换（残余竞争仅限窗口内新出现的空目录，已在模块文档说明）；删除 `renameat` 进 `<root>/.agenthub-trash/<32hex>/` + manifest，跨设备 409，从不 unlink；暂存 `<root>/.agenthub-upload/`（0700）`<job>.part`（0600 `create_new`）；全部经保留目录句柄前后 `verify_identity()`。未用 `renameat2(RENAME_NOREPLACE)`（需裸 FFI 且仅 Linux）。
+- 原子性：发布前复核源身份，目标存在时不替换；同文件系统使用rename，跨文件系统使用校验后的复制并保留准确的部分完成状态，避免丢失唯一副本。
 - 限额：8 并发（429）、256 MiB/作业（413）、4 MiB/分块、10 分钟过期（410）、单批 ≤256、名称 ≤255 字节、已完成保留 ≤64；可经 `Config.file_write_limits` 调整。legacy `files.js` 读 `files_write`：不支持的动作不出现、去掉"覆盖"、按 `chunk_bytes` 分块、删除说明为移入回收目录；无声明（Python）行为不变。
-- 验收（私有 worktree，HEAD+本批）：`cargo test -p sessiondock` 787 通过（lib 664 含 write 8）、Clippy/MSVC/release 通过；`tests/files_write_browser.py`（能力门、真 UI 两次分块 XHR、任务面板、覆盖报错、重命名、390px 删除落入 `.agenthub-trash`、只读同级仍只读、字节不变）、files_browser、Node 37；安全用例：根内 symlink 指向外部 403、`..`/绝对名/相对路径 400、组件在 resolve 与 write 之间换成 symlink 409 `file_changed` 且外部无落盘、Unix 拒绝反斜杠/盘符 400、作业中根被替换 409 后续传成功、覆盖 409、分块重放 200/乱序 409、过期 410。合并树全量验收见本批提交说明。合同见 [files.md](docs/files.md#write-operations-under-explicit-write-roots-batch-28)。
+
+- 验收入口：`files/write_tests.rs` 8 项、`tests/files_write.rs` 4 项与 `files_write_browser.py` 1 项，共 13 项；本轮统一结果记录在后续验收批次。
 
 ### 第二十九批：受管实例停止 `session/stop`
 
 - `lifecycle/service.rs`：`stop_session(uid, StopCandidate, request_id?)` 走同一协调器；`StopCandidate::Instance` 只接受来自一次新鲜运行时观察的 `guarded_v1` `BoundTarget`（声明身份或操作者绑定），按 name+instance(+launch) 找回执（无回执的 `--meta` 宿主也可停）。阶段：精确状态已退出 → `already_exited`；经 guarded `keys ["C-d"]` 发 EOF、轮询精确实例 ≤1.2 s，最多两次（Python `graceful_stop(timeout=2.4)` 只发两次 C-d，无 Ctrl-C）→ `graceful`；否则受管回执走既有 `cancel`（持久取消 → 撤销 launch 派生租约 → 宿主一次 HUP → ≤3 s 精确退出证据）、无回执宿主走 bound guard 的 `kill{force:false}` → `stopped`；限时内未见退出 → `uncertain`（取消标记保留、不重试、不复刻 Python 对 PID 的 TERM/KILL）。`request_id` 在内存记住最近 256 条已执行结果（Python 也不持久化），重放 `replayed:true`，同 ID 换 UID 409 `stop_request_conflict`；类型化拒绝不记忆。观察到退出后立即 `refresh` 持久化回执 Exited（新鲜 deadline，避免超时降级为 Uncertain）。
 - `api/lifecycle.rs` `stop`：`{uid, request_id?}`（8 KiB、`deny_unknown_fields`、legacy 诊断字段）；冻结库存缺失 404 `session_missing`；`runtime::observe` 新鲜观察（不走 `/api/live` 缓存）找唯一声明该 UID 的 bound target；无实例且运行时/回执均无退出证据 → 501 `session_stop_unmanaged`（说明不探测外部 CLI）；宿主不可达/重复/身份不可核验 → 409 `run_state_unknown`（未发送任何指令）；成功 `200 {ok, uid, stage, stopped, name, instance_id, record_id, graceful_attempts, replayed, tmux:false, external_detection, explanation}`。不要求操作者确认标志（Python 的确认只在浏览器 `confirm`）；不要求也不撤销浏览器租约（同 Python，WS 随宿主退出标记结束，回执路径按 `term/kill` 撤销 launch 派生租约）。能力 `session_stop`（terminal + lifecycle 同时配置）；`api/mod.rs` 501 名单移除 `/session/stop`。
 - legacy（能力门控）：`sessionStoppable(uid)` = `S.live` 含该 UID **或** `term/list` 列出该 UID 的受管实例（Rust 下 `live:false` 不轮询 `S.live`）；请求带 `request_id`；结果/拒绝写入 `#session-stop-notice`（role=status，无实例的"外部实例无法停止"解释、未知状态），确认停止后从 `S.live` 删除；侧栏长按菜单同源判定；Python 页面 body 不变。
-- 验收（私有 worktree `wt-stop`、独立 target；主树因他人未提交的 `sessions/native_tail.rs` 暂不编译）：`cargo test -p sessiondock --locked` 822 通过 / 0 失败 / 5 ignored（新 `tests/session_stop.rs` 2 项：能力关闭 501；受管 Codex resume → `graceful` 且 `/api/live` 转 exited、回执 exited、同 `request_id` 重放、换 UID 409、再停 `already_exited`、未受管 501、400/404/未知字段；忽略 EOF 的假 Claude CLI → 两轮 C-d 后经受保护停止 `stopped`，耗时在 2.4 s 与 9 s 之间；`lifecycle_cli_http` 改为真实停止 resume 实例）；fmt、Clippy `-D warnings`、MSVC `cargo check --all-targets`、`cargo build --release --workspace` 通过；新 `tests/session_stop_browser.py`（桌面：接管 → 头部"停止会话" → confirm → `graceful` 提示、控制台灰色退出说明、动作回到"删除会话"、宿主记录清理、`/api/live` exited；无实例会话（`S.live` 陈旧项）→ 501 内联解释且无 alert；390px：新 resume → 侧栏长按菜单停止）；meta_capabilities/api_smoke/lifecycle_http/live_http/term_send HTTP 套件、lifecycle_browser（含 `--native-binding`）、terminal_exit/live/lifecycle_cli/managed_terminal/legacy/trash 浏览器回归、Node 38 项、`legacy_gating_check`（`/api/session/stop` 不再是 ungated 501）、`check_docs_links` 通过。合同见 [lifecycle-http.md](docs/lifecycle-http.md#stopping-a-managed-instance-batch-29)。仍 501：外部/未受管实例的 stop、`takeover force`、rename（都需要外部进程探测）；未运行真实 claude/codex/grok。
+- 验收（私有 worktree `wt-stop`、独立 target；主树因他人未提交的 `sessions/native_tail.rs` 暂不编译）：`cargo test -p sessiondock --locked` 822 通过 / 0 失败 / 5 ignored（新 `tests/session_stop.rs` 2 项：能力关闭 501；受管 Codex resume → `graceful` 且 `/api/live` 转 exited、回执 exited、同 `request_id` 重放、换 UID 409、再停 `already_exited`、未受管 501、400/404/未知字段；忽略 EOF 的假 Claude CLI → 两轮 C-d 后经受保护停止 `stopped`，耗时在 2.4 s 与 9 s 之间；`lifecycle_cli_http` 改为真实停止 resume 实例）；fmt、Clippy `-D warnings`、MSVC `cargo check --all-targets`、`cargo build --release --workspace` 通过；新 `tests/session_stop_browser.py`（桌面：接管 → 头部"停止会话" → confirm → `graceful` 提示、控制台灰色退出说明、动作回到"删除会话"、宿主记录清理、`/api/live` exited；无实例会话（`S.live` 陈旧项）→ 501 内联解释且无 alert；390px：新 resume → 侧栏长按菜单停止）；meta_capabilities/api_smoke/lifecycle_http/live_http/term_send HTTP 套件、lifecycle_browser（含 `--native-binding`）、terminal_exit/live/lifecycle_cli/managed_terminal/legacy/trash 浏览器回归、Node 38 项、`legacy_gating_check`（`/api/session/stop` 不再是 ungated 501）、`check_docs_links` 通过。合同见 [lifecycle-http.md](docs/lifecycle-http.md#stopping-a-session)。仍 501：外部/未受管实例的 stop、`takeover force`、rename（都需要外部进程探测）；未运行真实 claude/codex/grok。
 
 ### 第三十批：Codex 原生确认适配器（库）
 
@@ -622,7 +576,7 @@
 ### 第三十三批：读模型对当前 CLI 版本的兼容（未知类型跳过，Python 同）
 
 - 起因：第三十一批真实 CLI 实跑发现 Rust 投影对任何未知记录类型整会话 `supported:false`（空消息），Python adapter 的 `if/elif` 链只是落空。当前 CLI 写入白名单外的类型——Claude Code 2.1.269 主会话：`mode`/`permission-mode`/`atis-latch`/`bridge-session`/`file-history-delta`/`agent-name`/`cost-state` 记录与 `hook_success`/`environment`/`model`/`language`/`deferred_tools_delta`/`agent_listing_delta`/`mcp_instructions_delta`/`skill_listing`/`auto_mode`/`instructions`/`session_context`/`date`/`remote_session_change`/`prompt_snapshot`/`deferred_tools_record`/`edited_text_file`/`diagnostics`/`hook_blocking_error`/`file`/`task_status` 20 种 attachment（`-p` 一次性会话：`queue-operation`→`user`→uuid/parentUuid 链接的 attachment 串→`atis-latch`→assistant，assistant 的 parentUuid 是最后一条 attachment）；Codex rollout：`token_usage_record`/`inter_agent_communication_metadata` 记录、`event_msg item_completed`、`response_item agent_message`。只看了形状与计数，未复制真实数据。
-- 策略（`sessions/providers.rs` `Skipped` + `claude.rs`/`codex`/`grok`/`content`/`text_parts`）：未知的记录类型、Claude attachment 类型、Codex `event_msg`/`response_item` 类型、Grok 记录类型、可读记录内未知的非图片内容块类型（含 content 数组里的非字符串/对象元素）一律跳过，与 Python 相同；`supported` 保持 true，事件列表完整，列表/详情/分页/SSE/搜索/冻结 inventory/lifecycle 续接/发送确认都按可读会话处理。跳过种类按首次出现计数写入非致命 `migration_warnings`：`跳过未知的<provider> <类别>：<kind> ×<count>`（如 `跳过未知的Claude 记录类型：atis-latch ×264`），最多 32 种，其余合并成 `另有 N 条其他未知类型已跳过（超过 32 种，未逐一列出）`，kind 超 64 字符截断。硬失败不变且 `migration_warnings == [原因]`：坏 JSON/重复键、Claude 声明叶子缺失/祖先缺失/环、`content` 标量、文本块 `text` 非字符串、Codex `history_base` 非对象/重复 `session_meta`、无法解码的图片块/外链、100000 条与其他预算；Codex 工具输出信封（第十九批 `tools::output_text`）仍拒绝未知块。`queued_command` 人类提示照常渲染；`atis-latch` 等不生成消息。attachment 是图节点，祖先链经其回到 user，`turn_id`/已回答/last-prompt 逻辑不变（单测按此形状验证）。`sessions/mod.rs` 只在 `supported` 时保留 provider 警告；`history.rs` `mark_unsupported` 追加硬原因。
+- 策略（`sessions/providers.rs` `Skipped` + `claude.rs`/`codex`/`grok`/`content`/`text_parts`）：未知的记录、attachment、事件和内容块类型与Python一样跳过，`supported` 保持true，相关警告带计数。坏JSON完整行跳过，JSON对象重复键采用末值；解析不设置Python没有的深度、键数、数字、媒体容器或工作预算拒绝。`queued_command`人类提示照常渲染，attachment仍作为祖先链图节点处理。
 - 夹具：`tests/history_parity.py` 新增 `CLAUDE_ATTACHMENT_KINDS`（20 种）与 `claude_control_rows`/`claude_attachment_chain`/`claude_turn_tail_rows`/`codex_telemetry_rows`，语料加 `claude-cli-current`（一次性 + resume 第二轮）和 `codex-cli-current`；`advanced_parity.py` 的 `claude-events`（控制记录、user→reply 间 20+2 条 attachment、尾部记录）、`codex-l2`（遥测/item/agent_message）、`grok-chat`（`usage`×2/`checkpoint`）混入同类型并断言精确警告；`fixture_gen.py` 默认按观察位置写入（`--plain` 关闭，`messages()` 不变，`history_pages_walk` 不受影响）；`sessions_list_suite.py` 断言 `supported:true`+精确警告+详情可读。原以"未知类型"触发不支持的测试改用 Python 同样读不了的形状（`content: 42`、重复 `session_meta`）：`legacy_browser`/`search_suite`/`search_browser`/`tests/search.rs`/`tests/files.rs`/`sessions/history.rs`/`sessions/tests.rs`/`history_parity`；`send_claude_real.py` 把"读模型不支持"从 skip 改为断言失败并打印警告。
 - 验收（隔离 worktree，HEAD+本批；共享树含另一子代理进行中的 delivery 文件）：`cargo test -p sessiondock --locked` 874 项通过（lib 730 项，`sessions::` 286 项；新增单测 7 项：providers `claude_current_cli_record_and_attachment_kinds_are_skipped_with_counted_warnings`/`claude_queued_prompt_still_renders_and_sidechain_attachments_stay_silent`/`codex_current_cli_record_event_and_item_kinds_are_skipped_with_warnings`/`grok_unknown_record_kinds_are_skipped_with_warnings`/`unknown_content_blocks_are_skipped_in_all_sources_but_invalid_media_still_fails`/`skipped_kind_warnings_are_bounded_to_32_kinds_plus_one_overflow_line`、media_tests `unknown_nonimage_blocks_are_skipped_without_leaking_their_payload`；改写 `unsupported_media_scalar_content_and_cycles_still_fail_closed`/`invalid_external_images_still_fail_closed`），fmt、Clippy `-D warnings`、MSVC `cargo check --all-targets`、release 构建通过。
 - 验收（Python/Node，均 `--python-source ../agenthub`）：`history_parity`（Python 差分 0 DIFF，含两条新会话）、`advanced_parity` 22 PASS/14 DELTA/0 UNVERIFIED/0 FAIL（DELTA 与第二十一批相同，无新增）、`media_parity` 49 用例 28 精确+21 声明 DELTA、`names_parity`、`grok_parity`、`tool_parity` 通过；`sessions_list_suite` 8 项、`search_suite` 9 项、`api_smoke` 17 项、`history_pages_walk`、`history_browser`、`legacy_browser`、`lifecycle_cli_browser`、`search_browser`、Node 合同 68 项、`check_docs_links`、`check_agents_md`、`plan_lint` 通过。
@@ -632,8 +586,8 @@
 
 - 起因：2026-09-12 首次接真实读根（772 会话、3.4 GB）：列表 413（1000 会话上限）；放宽后冷启动单线程全量解析 23 s 且因活跃 CLI 追加被"整份作废"拒绝发布；消息对象常驻 O(总字节)。对照 Python 头/尾摘要冷 1.2 s、读全文 0.38 s、读头尾 0.04 s。用户裁定：推翻重来。设计见 [docs/read-model.md](docs/read-model.md)，旧设计归档于 [docs/superseded/frozen-inventory.md](docs/superseded/frozen-inventory.md)；契约与验收见 [docs/history-pages.md](docs/history-pages.md)、[docs/performance.md](docs/performance.md)、[docs/migration.md](docs/migration.md)。
 - **WP-A 索引与摘要**（`sessions/index/`，Opus）：目录遍历 + `stat` + 每文件 96 KiB 头（Claude 40 / Codex 120 条）与 512 KiB 尾的有界摘要，按 `dev/ino/size/mtime_ns` 缓存，16 路并行，读取期间 stamp 变化重读 ≤ 3 次，500 ms TTL / `force=1` 重扫，`graph.rs` 从摘要推导子代理/fork 归属与运行时原生目录，`names.rs` 承接 Codex 名称索引；行与 Python `list_sessions` 逐字段一致（`tests/list_rows_parity.py` 18 会话 0 DIFF）。基准：2000 会话 / 1.05 GB 冷 327 ms、热（stat-only）33 ms。单测 39 项（index 13 + summary 19 + names 7，含 Python oracle 1 项 ignored）。
-- **WP-B 视图与搜索**（`sessions/views/`，Opus）：`Parsed`/`parse_candidate`/`ViewSnapshot` 迁出 `mod.rs`，`ViewRequest` + `Dependencies` 回调按候选文件按需建视图，追加从已提交偏移续读（完整旧前缀 digest 校验 + AST 复用）、重写/截断/pin 变化重建、64 项 / 2 GiB LRU，`open_transient` 供搜索一次性投影不留驻，`search::execute` 流式扫描；预算按 read-model 表放宽（记录 64 MiB、文件 4 GiB、LF 2M、记录/事件 1M/2M、视图 1 GiB、索引 1 GiB、摘要 256/16 MiB）。基准：258 MB / 40k 行 Codex 文件全量解析 1.98 s、热打开 0.06 s。单测 11 项（views）。
-- **WP-C 集成**（`sessions/mod.rs` 门面，Opus）：`list(force)` = `Index::refresh` 行 + 索引物理 `cursor {end, head}` + metadata 装饰（星标/fork 可见/`timeline_pin`）+ `signed_document` 重签名（行不变则保留 `sig`/`built_at`），列表时只借用缓存视图的 `anchor` 与 pin 退役态且不改 `sig`；`snapshot(uid, agent)` = 从索引取 owner/agent 候选（`IndexSnapshot::agent`）、元数据 pin、已发布行，经 `Views::open` 打开（`Dependencies` 由 `IndexSnapshot::thread` 按原生线程 id 解析，501/409 同图规则），视图比索引新（追加/重写/Grok 聊天新建）则强制重扫一次再复用视图，404/409/501/503 重扫重试一次；`search_pool`/`search_view` = 行 + `cached_current`/`open_transient`；`search_snapshot`/`native_catalog` = 索引行与 `IndexSnapshot::catalog()`（lifecycle 续接/接管、回收站、`/api/live` 不再解析文件）。删除：全量解析、整份 503、`ENTRY_LIMIT`/会话数/总字节上限、旧 `sessions/names.rs`、`history::Graph` 生产用途（仅 views 测试参照）、`#![allow(dead_code)]` 标记。契约变化 6 项（列表 cursor/anchor、`timeline_pin` 行、谱系错误移到打开、预算只在打开、Grok 非普通聊天文件为不支持、视图新于索引时的强制重扫）已写入 history-pages/migration 并更新 `sessions_list_suite`/`budget_boundaries_suite`/`advanced_parity`/`rewind_http`；legacy `syncSidebarUpdates` 只在两边都有 anchor 时比较。
+- **WP-B 视图与搜索**（`sessions/views/`，Opus）：按候选文件按需建视图，追加从已提交偏移续读，重写/截断/pin变化重建；搜索使用一次性投影，缓存采用淘汰而不拒绝合法历史。基准：258 MB / 40k 行 Codex 文件全量解析 1.98 s、热打开 0.06 s。单测11项。
+- **WP-C 集成**（`sessions/mod.rs` 门面，Opus）：列表、按需视图、搜索、原生目录、lifecycle、回收站与live共用索引快照。删除全量解析、会话数/总字节上限及旧生产路径，缓存只影响复用；相关契约与套件已更新。
 - **WP-D 验收套件**（grok-4.6 headless 产出，人工审阅）：`inventory_scale_suite`（1500 会话 / 1 GiB）、`inventory_live_append_suite`（并发追加 30 次列表 0 失败）、`list_rows_parity`（0 DIFF）、`real_roots_bench`（操作者手动只读，`# run_validation: skip`）、`fixture_gen --head-tail-edges` 语料，4 套均进 `docs/validation.md`。
 - 验收（Rust）：`cargo test --workspace --locked` 1061 项通过 / 0 失败 / 9 ignored（lib 789 项，`sessions::` 331 项），fmt、Clippy `-D warnings`、MSVC `cargo check --all-targets`、release 构建通过。
 - 验收（真实读根，2026-09-12 本机，`tests/real_roots_bench.py --open 20`，只读，根 size/mtime 校验未变）：792 行（729 支持 / 63 不支持），冷列表 0.308 s（目标 ≤ 1 s）、热 p50 6 ms / p95 9 ms（≤ 100 ms）、最慢打开 0.298 s（14.3 MB Claude，≤ 1 s）、列表后 RSS 102.9 MB（≤ 300 MB）、打开 20 个后 319.2 MB（≤ 512 MB）、增量读 4 ms、打开后 `force=1` 76 ms 且 `sig` 不变，6 项目标全 PASS。最大文件拷贝到临时根（Claude 51.7 MB；Codex 228 MB 叶 + 51.8 MB + 38.9 MB 父链）：4 行 13 ms 列出，`window=1` 打开 3.07 s / 1.01 s / 0.81 s / 0.40 s（热 12–24 ms），228 MB 链 16,081 条消息；RSS 打开 318 MB 链后 625 MB、四个全开 1052 MB（≈2.5× 已打开字节，受 LRU/AST 缓存约束，不是真实根目标）；无父链的 fork 叶按设计 `supported:false` + 打开 501。
@@ -641,8 +595,8 @@
 ### 第三十五批：真实读根里 Python 能读而 Rust 拒绝的形状（63 行 → 0）
 
 - 起因：第三十四批部署后真实读根 795 行中 63 行 `supported:false`。逐一对照 Python `adapters.py`：52 个 Codex 文件含重复 `session_meta`（2026-07/08 的旧式 fork 与子代理 rollout 把祖先的 meta 整条拷入，最多 28 条，`history_base` 为 null）；2 个 fork 的 `forked_from_id ≠ history_base.thread_id`（在父分叉点之前回退，`history_base` 指向物理持有前缀的文件）；6 个 Codex 子代理与 5 个 Claude sidecar 的父/主会话文件已不存在（Python 根本不列出）；1 个 Claude 文件第 205 行是 4 KB NUL 撕裂行（崩溃时零填充）。真正致命的原因都在 `migration_warnings` 最后一行，前面的"跳过未知类型"只是噪声（`tests/unsupported_rows_report.py` 按末行分组）。
-- 规则（Python 为准，`sessions/index/summary/codex.rs`、`providers.rs`、`scope.rs`、`history.rs`、`index/graph.rs`、`index/names.rs`、`records.rs`、`providers/claude.rs`、`views/mod.rs`）：Codex 首条 `session_meta` 是唯一身份（`declared_ids` 只含它），后续条计入 `跳过重复的Codex session_meta ×N`；`history_base` null + `forked_from_id` = 自足的旧式 fork，不继承；`history_base.thread_id` 是物理前缀父（可与 `forked_from_id` 不同，一致性错误删除）；列表装饰（`root_sid`/`fork_depth`/`created`/`title`/`size`）沿 `forked_from_id` 逻辑链按 Python `finalize_sessions`（含其 `Σ min(end_byte_offset or 0, parent.size)` 的 size 公式），名称继承同链；父/主会话不在索引的孤儿子代理不再是顶层行（按 uid 打开仍 501；歧义/环/深度仍是可见的不支持行）；不是 JSON 的完整行跳过并计 `跳过无效的JSONL 记录 ×N`（字节留在物理索引，游标/LF 检查点不变；重复键行同样跳过，Python last-key-wins 为文档化 DELTA）；Claude 祖先链走到缺失/已访问 uuid 或声明叶子缺失即停，可达部分为时间线，三条非致命警告只进详情 `meta.migration_warnings`（行只带头尾可数的计数，详情把同类计数原位替换为精确值）。硬失败保留：`content` 标量、文本块非字符串、`history_base` 非对象、cut 不在行边界/越界、64 MiB 行与各预算。
-- 执行：4 个 Opus 包（A Codex 身份/旧式 fork，B 图谱系/孤儿，C 撕裂行/谱系，D Python oracle 套件）各在隔离 worktree 提交后合并；10 个 grok-4.6 headless 单文件（7 套进扫描：`codex_legacy_fork_suite`、`codex_fork_rewind_suite`、`orphan_agents_suite`、`claude_torn_lines_suite`、`fork_rows_parity`、`fork_messages_parity`、`claude_lineage_parity`；3 个操作者工具：`unsupported_rows_report`、`state_dir_switch_check`、`cutover_drill`），全部 rc=0、人工审阅。`shadow_compare.py` 把两类已文档化媒体差异（Codex/Grok 工具正文里不插 `[图片]` 行；只含图片的信封输出 Rust 显示占位并附媒体）归为 DELTA；`meta_import.py` 校验容忍 serde_json 默认浮点解析的 1 ULP。
+- 规则（Python 为准）：Codex首条 `session_meta` 是身份，后续条作为重复元数据跳过；旧式fork、物理前缀与列表装饰沿Python链路处理。不是JSON的完整行跳过并计警告；JSON对象重复键采用末值。Claude祖先链按可达部分构造时间线，缺失或循环产生非致命迁移警告，不设额外祖先深度拒绝。
+- 执行：4 个 Opus 包（A Codex 身份/旧式 fork，B 图谱系/孤儿，C 撕裂行/谱系，D Python oracle 套件）各在隔离 worktree 提交后合并；10 个 grok-4.6 headless 单文件（7 套进扫描：`codex_legacy_fork_suite`、`codex_fork_rewind_suite`、`orphan_agents_suite`、`claude_torn_lines_suite`、`fork_rows_parity`、`fork_messages_parity`、`claude_lineage_parity`；操作者工具：`unsupported_rows_report`、`cutover_drill`），全部 rc=0、人工审阅。`shadow_compare.py` 把两类已文档化媒体差异（Codex/Grok 工具正文里不插 `[图片]` 行；只含图片的信封输出 Rust 显示占位并附媒体）归为 DELTA；`meta_import.py` 校验容忍 serde_json 默认浮点解析的 1 ULP。
 - 验收（Rust）：`cargo test -p sessiondock --locked --no-fail-fast` 952 通过 / 0 失败 / 7 ignored，fmt、Clippy `-D warnings` 通过；`delivery::service` 测试的 `Busy` 偶发改为等待准入。
 - 验收（扫描，2026-09-12 本机）：84 套 76 首轮 PASS；8 项 FAIL 均已处置——`cargo_test` 是上述 `Busy` 偶发；`native_streaming`/`native_spans_authority`/`native_envelopes_authority`/`budget_boundaries_suite`/`claude_torn_lines_suite` 断言的是旧规则（坏行 501、谱系警告在行上、64 MiB 文案），改为新规则后单跑通过；`history_parity`/`advanced_parity` 对 Python 工作树失败是因为 Python 当天 `d16c5e1` 改了 Esc 中断分支语义——对 `79a21ab`（本批开工时的 Python HEAD）两套 0 FAIL（37 PASS / 14 DELTA），新语义列入第三十六批 D 包。真实 CLI 套件（haiku-4-5 low、gpt-5.6-luna low）PASS。
 - 验收（真实读根，只读，release 构建）：`unsupported_rows_report` 803 行 / 803 支持 / **0 不支持**（claude 294、codex 394、grok 115；孤儿 11 行与 Python 一样不再列出）；`shadow_compare --python-source 79a21ab --sample 30 --all`：三来源 sid 集合与 Python 完全一致（`PASS inventory` ×3），消息 23 PASS / 70 DELTA（文档化）/ 5 DIFF——4 处是 Codex `custom_tool_call_output` 多块 `input_text` 信封（Python 取第一块的 `output`、Rust 取最后一块，两边都不完整；按序拼接列入下一批），1 处 `native roots were written` 是运行中的 CLI 在追加；`real_roots_bench --open 20` 六项目标全 PASS（冷列表 0.303 s、热 p50 7 ms / p95 8 ms、最慢打开 0.146 s、列表后 RSS 104 MB、打开 20 个后 161 MB）。
@@ -652,7 +606,7 @@
 ### 第三十六批：后端追平 Python `e5b023a`（进程判活、`spawned_by`、子代理运行态、`continued_in`、Esc 中断分支、多块信封）
 
 - 起因：Python 仓库 2026-09-12 一天推进 34 个提交；用户裁定 parity 目标改为 `e5b023a`（含前端），并要求每批对真实读根只读实跑验收。冻结导出的 `e5b023a` 是全部 parity 套件的 oracle（`--python-source`）。
-- **AB 进程判活与发起者**（`runtime/procscan.rs`、`runtime/spawn.rs`、`api/runtime.rs`、`metadata/*`、`docs/liveness.md`）：Linux 只读 `/proc` 扫描按 Python `live.py` 全部规则移植（cmdline sid 优先于继承 env、跨家继承不算、无活 CLI 祖先的孤儿辅助进程不算、`*.jsonl` fd 含 `events.jsonl`、bare `claude` 按 cwd+启动时间、Codex fork 链折叠、tmux/host 祖先 → `tmux_uids`、3 s TTL single-flight、`force=1`），显式 `SESSIONDOCK_PROC_SCAN=1` 开启，`SESSIONDOCK_PROC_ROOT` 供合成树测试，`SESSIONDOCK_GROK_ACTIVE` 显式；关闭时响应逐字节不变。`capabilities.live` 仅 Linux 且开启时为真。`spawned_by {source,sid}` 写一次进元数据（10 s 任务 + 每次 `/api/live`），行原样带出，`meta_import.py` 搬运。唯一刻意差异：fd 目标落在配置读根内也算（真机读根就是 Python 的三个 home）。launcher `DENIED_ENV` 补 `CODEX_THREAD_ID`/`CODEX_SESSION_ID`/`CLAUDE_PID`。
+- **AB 进程判活与发起者**（`runtime/procscan.rs`、`runtime/spawn.rs`、`api/runtime.rs`、`metadata/*`、`docs/liveness.md`）：Linux 只读 `/proc` 扫描按 Python `live.py` 全部规则移植（cmdline sid 优先于继承 env、跨家继承不算、无活 CLI 祖先的孤儿辅助进程不算、`*.jsonl` fd 含 `events.jsonl`、bare `claude` 按 cwd+启动时间、Codex fork 链折叠、tmux/host 祖先 → `tmux_uids`、3 s TTL single-flight、`force=1`）；`SESSIONDOCK_PROC_ROOT` 与 `SESSIONDOCK_GROK_ACTIVE` 仅供合成树测试覆盖，受支持平台默认启用原生发现。`spawned_by {source,sid}` 写一次进元数据（10 s 任务 + 每次 `/api/live`），行原样带出，`meta_import.py` 搬运。唯一刻意差异：fd 目标落在配置读根内也算（真机读根就是 Python 的三个 home）。
 - **C 子代理运行态与 `continued_in`**（`index/agent_stops.rs`、`summary/*`、`index/graph.rs`）：Claude 只有 `end_turn` 收尾，父文件停止通知按已消费偏移增量扫描（sha1 去重、只认首见、`async_launched` 不算），只对有未收尾 sidecar 的 owner 扫且按 stamp 缓存；Codex 按最后一条回合边界 `event_msg`；`continued_in` 按 Python `finalize_sessions`（同源主会话、路径序最后者、自指丢弃）。真实根冷列表 0.34 s（停止扫描 12 个 owner ≈96 MB 只增 ~35 ms）。`continued-in` 是已知记录类型，不再计入未知警告。
 - **D Esc 中断分支**（`providers/claude.rs`、`providers.rs`）：Python `d16c5e1` 的 `interrupt_nodes`/`offshoot`/`deferred_abort` 规则 1–6 逐条对齐；被回退的中断输入带 `interrupted:true`/`interrupt_reason`、自开 `turn_id`、后代可见、`aborted` 由原生中断记录给出。
 - **G 多块工具信封**（`providers/tools.rs`、`records/native_records.rs`）：真实根普查 470 个 rollout 的块形态（`HE`×12809、`HEE`×1973、`HEEE`×492、`HSE`×878…）后，`custom_tool_call_output` 多段信封的 `output` 按序拼接、`exit_code` 取末个、`duration_s` 求和、图片仍登记媒体、巨型块仍走私有区段；Python 按拼接文本选一块（有时首块有时末块），记为文档化 DELTA。
@@ -668,13 +622,13 @@
 - 后端字段缺席时按 Python 同样退化（无嵌套、无运行点、不跟续写）；套件用 Playwright `route` 在 HTTP 边界注入字段断言完整行为，字段落地后改为断言真实值。
 - 验收：Node 合同 71 项；`legacy_browser`（桌面 + 375/390px）与 5 套移植的浏览器套件（`nest_tree`/`agent_menu`/`header_fold`/`side_drag`/`tool_group_fold`）及全部既有浏览器/静态套件 41 套 PASS；真实读根只读 Playwright：804 行、页面加载 0.81 s、开分层 0.35 s → 1036 行含 287 子代理行、最新 5 条会话打开 0.24–0.55 s、390px 无横向溢出、0 控制台错误 / 0 失败请求。
 - 全量扫描（合并 AB/C/D/F 后，oracle `e5b023a`）：95 套 93 通过；2 项处置——MSVC 交叉检查（unix 测试模块加 cfg 门）、`agent_menu_browser`（改为断言真实 `active` 并在关闭 context 前 `unroute_all`）。合并 G/H1/H3 后再扫：97 套 95 通过；2 项处置——`cargo_test` 两个并行负载下的偶发（delivery 带 hook 的打开改走等待准入的助手；hub client 对刚释放端口接受 refused/closed 两种结果），`spawn_real` 改为操作者按批手跑（haiku 是否真的执行 grok 命令取决于模型，不作扫描门）。
-- 部署与公开访问：本批 release + 新前端部署，`SESSIONDOCK_PROC_SCAN=1`。用户从 LAN 打开时得到 403 `local_only`——nginx 转发 `Host $http_host`，Rust 的 Host 门只认 loopback，**自第三十四批首次部署起公开地址就从未通过过**（此前只用 loopback curl 验证）。修正：`SESSIONDOCK_PUBLIC_HOSTS`（反代转发的精确公开 authority 白名单，只放行 Host/Origin 校验，认证仍是反代登录门），`security_suite` 覆盖接受/拒绝/端口/同源 POST；部署后 `Host: 203.0.113.177` 200、其它主机名 403。教训：部署验收必须经浏览器走公开地址。
+- 部署与公开访问：本批 release + 新前端部署。用户从 LAN 打开时得到 403 `local_only`——nginx 转发 `Host $http_host`，Rust 的 Host 门只认 loopback，**自第三十四批首次部署起公开地址就从未通过过**（此前只用 loopback curl 验证）。修正：`SESSIONDOCK_PUBLIC_HOSTS`（反代转发的精确公开 authority 白名单，只放行 Host/Origin 校验，认证仍是反代登录门），`security_suite` 覆盖接受/拒绝/端口/同源 POST；部署后 `Host: 203.0.113.177` 200、其它主机名 403。教训：部署验收必须经浏览器走公开地址。
 - ptyhost 互通实测：Rust Web 对 **Python 仓库自带 `bin/ptyhost`** 起的实例能列出、浏览器 attach、resize、takeover，Web 重启后 PTY 仍在（`terminal_browser` 全 PASS）；`cutover_drill` 用同一二进制 11 步 PASS。切流时接管 Python 会话 = 把 `SESSIONDOCK_PTYHOST_DIR` 指向 Python 的 host 目录（记录/协议兼容；Rust 构建的 ptyhost 多出守卫/绑定应答，Python 旧二进制对这两类请求答错误，attach/list/kill 不受影响）。
 
 ### 第三十八批：Hub 节点身份/鉴权（H1）与注册表/监控/客户端（H2）
 
 - **H1**（`config.rs`、`security.rs`、`api/node_auth.rs`、`api/mod.rs`、`lib.rs`、`main.rs`）：第二监听 `SESSIONDOCK_NODE_BIND`（具体接口，拒绝 `0.0.0.0`/`::`）只在 `SESSIONDOCK_NODE_TOKEN_FILE`、`SESSIONDOCK_NODE_ID_FILE`、`SESSIONDOCK_NODE_PEERS` 齐备时启用（缺一启动失败）；中间件要求对端 IP ∈ PEERS、`X-AgentHub-Node-Token` 常量时间相等、`X-AgentHub-Protocol: 1`，三者缺一 403（`node_peer_denied` / `node_auth_required`）；只服务 `/api`；loopback 监听对任何 hub 头仍 403 `hub_unsupported`。`/api/meta` 配置身份后 `protocol:1` + `node_id`（节点 id 文件首次启动 `O_EXCL` 0600 铸造），`/api/nodes` 返回本机节点行；`capabilities.hub` 仍 false。真实根只读：经节点监听带 token 列出 804 行，与 loopback 列表逐行相等且 `sig` 相同。
-- **H2**（`hub/identity.rs`、`hub/registry.rs`、`hub/client.rs`、`tests/hub_fake_node.py`、`docs/hub.md`）：注册表 `hub-nodes.json`（0600 tmp+replace；`register` 校验 URL 形状/CIDR/节点 `/api/meta`，node_id 主键；display/enabled/order；strikes → `offline_since`；离线快照落盘并重启加载；条件 `sig` 请求；`recheck`/`nudge`；缓存 128 上界；搜索 NDJSON 流 60 s 空闲），手写 HTTP/1.1 客户端（无重定向、字面 IP、5/10/45 s、64 MiB）；刻意差异：只收 `http://`，缺省网络只 loopback（WireGuard 网段由 `SESSIONDOCK_HUB_NETWORKS` 显式配置）。集成测试对 Python 假节点 10 例。
+- **H2**（`hub/identity.rs`、`hub/registry.rs`、`hub/client.rs`、`tests/hub_fake_node.py`、`docs/hub.md`）：注册表 `hub-nodes.json`（0600 tmp+replace；`register` 校验 URL 形状/CIDR/节点 `/api/meta`，node_id 主键；display/enabled/order；strikes → `offline_since`；离线快照落盘并重启加载；条件 `sig` 请求；`recheck`/`nudge`；缓存 128 上界；搜索 NDJSON 流 60 s 空闲），手写 HTTP/1.1 客户端（无重定向、字面 IP、5/10/45 s、64 MiB）；支持 HTTP/HTTPS，缺省网络为 loopback（其它网段由 `SESSIONDOCK_HUB_NETWORKS` 配置）。集成测试对 Python 假节点 10 例。
 - 验收：Rust 1037 通过 / 0 失败（合并 H1 后）；`node_auth_suite` 20 项、`check_config_suite` 51 例、`security_suite`、`meta_capabilities_suite` 通过。
 
 ### 第三十九批：Hub 命名空间与聚合（H3）
@@ -684,25 +638,24 @@
 
 ### 第四十批：Hub 代理、Hub HTTP 面与 `sessiondock-hub` 二进制（H4）
 
-- `hub/proxy.rs`：`resolve()` 唯一节点（歧义 400 "操作必须明确指定同一台机器"）；JSON 经命名空间改写、SSE 按 `data:` 行改写（45 s 空闲断开）、WS 101 后原样双向拷贝、其它流式透传保留框架头、附件分块上传 ≤ 512 MiB、`PageNodes` LRU 512、`file_navigation` 303。`api/hub.rs`：loopback Host 门 + 拒绝 hub 头、`/api/meta {mode:hub,protocol:1,build,hostname}`、`/api/nodes {mode,nodes,machines}`、display/order + 审计、5 条聚合读 + NDJSON search、分拆写、`browser_audit` 分发。`hub_config.rs`：`SESSIONDOCK_HUB_BIND` 默认 `127.0.0.1:8742`（仅 loopback）、`SESSIONDOCK_HUB_NODES`（0600，必填）、`SESSIONDOCK_HUB_CACHE_DIR`、`SESSIONDOCK_HUB_NETWORKS` 默认 loopback。`bin/hub`：`register/remove/list/--check-config` 子命令。`assets.rs Mode::Hub`：`__AGENTHUB_MODE__=hub`、hostname、命名空间 `sessiondock.hub.<path>.`。依赖：hyper/hyper-util 升为直接依赖（原已是传递依赖，锁文件 +2 行，无新 crate）。
-- 验收：Rust 918 通过 / 1 失败（client 端口复用偶发，主线已修）；`tests/hub_http.rs` 8 例、`hub_http_suite`、`hub_browser`（3 台假节点）通过。真实根只读：真实 Rust 节点（节点监听 loopback）+ 假节点经 hub 二进制注册，Playwright 列出 810 行（真实节点 809）、命名空间 `<source>:<nid>~…`、经代理打开最新会话、流式搜索、机器设置；根 mtime/size 未变；冷列表 2.8 s（经代理）、打开 1.1 s、搜索 0.3 s。部署样例 `docs/deploy-hub.md`（占位地址）。已知未做：`api/hub.rs::hub_gate` 只放行 loopback Host，未读 `public_hosts`（hub 若挂在 nginx 后会像节点当初那样 403）。
+- `hub/proxy.rs`：`resolve()` 唯一节点（歧义 400 "操作必须明确指定同一台机器"）；JSON 经命名空间改写、SSE 按 `data:` 行改写（45 s 空闲断开）、WS 101 后原样双向拷贝、其它流式透传保留框架头、附件分块上传 ≤ 512 MiB、`PageNodes` LRU 512、`file_navigation` 303。`api/hub.rs`：loopback Host 门 + 拒绝 hub 头、`/api/meta {mode:hub,protocol:1,build,hostname}`、`/api/nodes {mode,nodes,machines}`、display/order + 审计、5 条聚合读 + NDJSON search、分拆写、`browser_audit` 分发。`hub_config.rs`：`SESSIONDOCK_HUB_BIND` 默认 `127.0.0.1:8742`（仅 loopback）、`SESSIONDOCK_HUB_NODES`（默认用户状态目录）、`SESSIONDOCK_HUB_CACHE_DIR`、`SESSIONDOCK_HUB_NETWORKS` 默认 loopback。`bin/hub`：`register/remove/list/--check-config` 子命令。`assets.rs Mode::Hub`：`__AGENTHUB_MODE__=hub`、hostname、命名空间 `sessiondock.hub.<path>.`。依赖：hyper/hyper-util 升为直接依赖（原已是传递依赖，锁文件 +2 行，无新 crate）。
+- 验收：Rust 918 项中 917 项通过 / 1 项失败（client 端口复用偶发，主线已修）；`tests/hub_http.rs` 8 项、`hub_http_suite`、`hub_browser`（3 台假节点）通过。真实根只读：真实 Rust 节点（节点监听 loopback）+ 假节点经 hub 二进制注册，Playwright 列出 810 行（真实节点 809）、命名空间 `<source>:<nid>~…`、经代理打开最新会话、流式搜索、机器设置；根 mtime/size 未变；冷列表 2.8 s（经代理）、打开 1.1 s、搜索 0.3 s。部署样例 `docs/deploy-hub.md`（占位地址）。已知未做：`api/hub.rs::hub_gate` 只放行 loopback Host，未读 `public_hosts`（hub 若挂在 nginx 后会像节点当初那样 403）。
 
 ### 第四十一批：bug-report（B1）
 
-- 配置：`SESSIONDOCK_BUG_REPORT_DIR`（0700、与其它私有目录不相交）与 `SESSIONDOCK_BUG_REPORT_REPO`（须在写根内）必须同设；launcher `bug_report_profiles{claude|codex|grok}` 指向同来源的 profile（id 须带 `-vN`），启动前按最便宜模型策略断言 argv（不符 501 `bug_report_model_policy`）；任一依赖缺失 501 `bug_report_disabled`、`capabilities.bug_report:false`。
 - create：目录/文件 0700/0600；`events.jsonl` = 900 s 窗口内与 uid/page_id/trace_id/report_id 相关的审计行（`audit/query.rs`；`AuditService::record` 写服务端结构化事件）；`environment.json` 含 git 三命令 + Rust build；附件 ≤ 12 且须在 `<repo>/agenthub_attachments/`；提示词为本仓库版（不 push、不部署）；manifest 与 Python 同形。`worker::launch`：经 lifecycle 按 profile 创建；等 composer 空且稳定 0.6 s（Claude/Codex 用 driver composer 模型，Grok 用屏幕稳定探测）；paste → 验证 → Enter 每步持久化到 `manifest.injection`；Enter 重发 ≤ 4；`submitted` 只来自原生 user 记录，否则 `submitted_unconfirmed`/`failed`；审计 created/worker_started/probe/enter_retry/submitted/unconfirmed/failed/launch_failed；`/api/term/list` pending 行带 kind/title/report_id。`POST /api/session/attachment?uid=bug-report` 经写服务落到 `<repo>/agenthub_attachments/<id>/<name>`（`O_EXCL`、同内容复用、`stem__N`）。
-- 验收：Rust 1064 通过 / 0 失败 / 7 跳过；`bug_report_http` 3、`bug_report_http_suite` 10 场景、`check_config_suite` 61（+10）、`meta_capabilities`、`route_ledger` implemented 46 / 501 0；真实 haiku worker 一次：`BUG-20260912-153139-adbbbd` submitted、模型 id 断言、实例 kill、目录/会话文件删除；只读复核 809 行无残留。DELTA：审计无 content；report id 用 UTC；worker 固定最便宜模型；`terminal.txt` 仅受管实例；附件 ≤ 32 MiB 且 `media:null`；cols/rows 仅记录。
+- 验收：Rust 1064 项通过 / 0 项失败 / 7 项跳过；`bug_report_http` 3 项、`bug_report_http_suite` 10 个场景、`check_config_suite` 61 项（+10）、`meta_capabilities`、`route_ledger` implemented 46 / 501 0；真实 haiku worker 一次：`BUG-20260912-153139-adbbbd` submitted、模型 id 断言、实例 kill、目录/会话文件删除；只读复核809行无残留。附件会话完成记录保留，字段与Python接口对齐。
 
 ### 第四十二批：追平 Python `16cc89c`（K 后端 + F2 前端）
 
-- K：Grok 中途 `user_query` 信封（前后缀、`image_files`）剥离与 Python 正则一致；进程树遍历（`in_tmux`/hosted）遇中间 CLI 主进程即截断；`/api/live tmux_uids` 第四来源 `inherits_pane`（续写会话继承原会话 pane，≤ 8 跳，孙辈不继承）。验收：1088 通过 / 0 失败 / 7 跳过；`grok_parity`（含 in-flight）、`advanced_parity` 43/27/0、`live_http_suite` 15、`spawned_by_suite` 8；真实根 Grok 30 会话 0 DIFF + 5 条含信封会话 0 DIFF；`/api/live` 对照 Python 43 = 43、`started_at` 43/43；`tmux_uids` Python 42 / Rust 0（host 目录分离，含 1 条续写继承）。
-- F2：`legacy-web` 与 Python `16cc89c` static 三方合并零冲突；分层图标、状态着色/角标、隐藏被续写父行（列表侧）、去分支项/子代理计数；`nest_tree`/`agent_menu` 去掉 HTTP 注入改用真实字段（`spawned_by` 种进 state 目录、`active` 来自未收尾 sidecar、`continued_in` 来自尾记录）。验收：Node 53、浏览器 31 套全 PASS；真实根：809 行、分层 2.3 s（1029 行）、续写父行隐藏、最新 5 会话 0.30–0.71 s、0 错误。
+- K：Grok 中途 `user_query` 信封（前后缀、`image_files`）剥离与 Python 正则一致；进程树遍历（`in_tmux`/hosted）遇中间 CLI 主进程即截断；`/api/live tmux_uids` 第四来源 `inherits_pane`（续写会话继承原会话 pane，≤ 8 跳，孙辈不继承）。验收：1088 项通过 / 0 项失败 / 7 项跳过；`grok_parity`（含 in-flight）、`advanced_parity` 43/27/0、`live_http_suite` 15 项、`spawned_by_suite` 8 项；真实根 Grok 30 会话 0 DIFF + 5 条含信封会话 0 DIFF；`/api/live` 对照 Python 43 = 43、`started_at` 43/43；`tmux_uids` Python 42 / Rust 0（host 目录分离，含 1 条续写继承）。
+- F2：`legacy-web` 与 Python `16cc89c` static 三方合并零冲突；分层图标、状态着色/角标、隐藏被续写父行（列表侧）、去分支项/子代理计数；`nest_tree`/`agent_menu` 去掉 HTTP 注入改用真实字段（`spawned_by` 种进 state 目录、`active` 来自未收尾 sidecar、`continued_in` 来自尾记录）。验收：Node 53 项、浏览器 31 项全 PASS；真实根：809 行、分层 2.3 s（1029 行）、续写父行隐藏、最新 5 会话 0.30–0.71 s、0 错误。
 - 部署：K/F2/B1/H4 合并后的 release 部署（改名前最后一次以旧名部署）。
 
 ### 第四十三批：改名 sessiondock（零 agenthub-rs 痕迹）
 
 - 用户裁定（2026-09-12 23:16）：项目名 **sessiondock**，不保留任何 agenthub-rs 痕迹（无别名、无 301）。crate/二进制 `agenthub-server` → `sessiondock`、`agenthub-hub` → `sessiondock-hub`（ptyhost 名字不变）；env 前缀 `AGENTHUB_RS_*` → `SESSIONDOCK_*`；localStorage 命名空间 `agenthub.rs.` → `sessiondock.`（hub `sessiondock.hub.<path>.`）；systemd 用户单元 `sessiondock.service`；`/srv/sessiondock/{bin,web,etc,state,delivery,lifecycle,host,audit,trash,bug-reports}`（账本重新初始化，state/audit 从旧目录搬运）；nginx `location ^~ /sessiondock/`（`/agenthub-rs/` 删除）；仓库目录 `/home/zj/Projects/sessiondock`。保留的协议标识（`X-AgentHub-*` 头、`__AGENTHUB_MODE__`、`agenthub-capabilities` meta、`AgentHubCapabilities`、`agenthubCli` 等）列在 `docs/glossary.md`"Names"，因为它们是与 Python 前端/hub 共享的线上契约。顺带：`SESSIONDOCK_PUBLIC_HOSTS` 解析移入 `config.rs`（`AppState.public_hosts`，非法/空值启动失败）。
-- 验收：全量 sweep 101 套 100 PASS + `hub_browser` 随树标记同步后 PASS；部署后 `/api/meta` 200、公网 `https://203.0.113.177/sessiondock/` 经 nginx 鉴权可达；旧路径 404。
+- 验收：全量 sweep 101 项中 100 PASS + `hub_browser` 随树标记同步后 PASS；部署后 `/api/meta` 200、公网 `https://203.0.113.177/sessiondock/` 经 nginx 鉴权可达；旧路径 404。
 
 ### 第四十四批：monkey 全功能对比与修复包（A–G）
 
@@ -710,10 +663,10 @@
 - 主会话直修：`7bf362b` bug-report worker profile 不计入交互来源（阻断：新建/接管/报告问题全灰、创建 400）；`84d4649` hub 读 `SESSIONDOCK_PUBLIC_HOSTS`；`2137221` 搜索缓存指纹改 size/mtime（对整个二进制做 SHA-256 让 bind 晚 7.6 s）；`5f909e1` 行内代码/代码块/侧栏 cwd/搜索选项字体栈前置 `"AgentHub CJK Sans"`；`b9d3a08` 机器键盘排序不被周期刷新与过期保存盖掉（Python 同款 bug）。
 - WP-C（`33be8ec`，读模型对齐）：debug-run 注册表（`<STATE_DIR>/debug-runs.json`，Python 同格式按 stat 重载，`?debug_run=` 视图，默认列表 398=398）、symlink 子代理（目标在读根内才跟随）、Grok 目录大小（125/125 相等）、`exit: N` 不作退出码、Codex `/rename` 合成 command 事件、hostname 取系统主机名 + `SESSIONDOCK_HOSTNAME`、列表行去 `migration_warnings`（962 KB → 389 KB）、`term/list.home`。
 - WP-B（`f31aca6`，搜索文本缓存）：`search/{cache,service}.rs`，`SESSIONDOCK_SEARCH_CACHE_DIR/BYTES/WORKERS/WARMUP`；热搜索 0.07–0.13 s（Python 1–2.2 s，改前 36–44 s），结果逐条一致；搜索期间 RSS 峰值增量 ≤ 113 MB 且回落；启动 30 s 预热 403 条 / 18 MB；`malloc_trim`。
-- WP-D（`c3a95f9`，媒体与文件）：读侧不拒绝多硬链接；发现规则对齐 Python `_RAW_PATH`，Python 静默的失败不投影占位；引用预算 250k/512 MiB、media 模式超限降级；media 索引按视图 revision 缓存（文件图 GET 0.85 s → 4 ms）；files.js 上传目标回退、越界导航回滚、根之上面包屑不可点；文件删除回收目录对齐 Python 私有目录（`<STATE_DIR>/file-trash`）。真实根 816 会话扫描 1279 可加载 / 1 占位。
+- WP-D（`c3a95f9`，媒体与文件）：读侧不拒绝多硬链接；发现规则对齐 Python `_RAW_PATH`，Python 静默的失败不投影占位；media 索引按视图 revision 缓存（文件图 GET 0.85 s → 4 ms）；files.js 上传目标回退、越界导航回滚、根之上面包屑不可点；文件删除回收目录对齐 Python 私有目录（`<STATE_DIR>/file-trash`）。真实根 816 会话扫描 1279 可加载 / 1 占位。
 - WP-E（`c1730fa`，生命周期/终端）：`lifecycle/autobind.rs` 进程证据自动绑定（ledger schema 5，`binding.method/evidence/bound_at`，审计 `lifecycle.autobind`）；`POST /api/term/discard` + 600 s 归档；Grok 整目录进出回收站；bug-report worker 注入走服务端输入；退出/撤销关面板；`T.ended` 门放行接管。真实 CLI：codex 5.0 s 自动绑定、grok 0 s、claude 1.2 s；bug-report haiku 7.7 s submitted。
 - WP-G（`276054e`，题卡与审批）：`sessiondock claude-hook` 子命令 + `--write-bridge-settings`（不依赖 Python），`/api/messages` 顶层 `prompt` 与 `/api/watch` 的 `prompt`/`prompt_only` 包，Codex 审批屏幕解析（`bridge/codex.rs`，id 与 Python 一致）；`/api/term/send` 接受单字符键；`cli.js` AskUserQuestion 改按数字选项（Claude Code 2.1.270 菜单多两行，旧序列在 Python 侧同样失效）。实跑：haiku 题卡 2.5 s 出现、网页作答 0.5 s 消失；luna 审批 6.7 s。
-- WP-A（`523ba80`+`db806c2`，并发与稳态）：读池 `SESSIONDOCK_READ_WORKERS`（默认 clamp(核数/2,8,32)）+ `SESSIONDOCK_ADMISSION_WAIT_MS` 有界等待（探测/分页/媒体/文件写响应池按比例派生），搜索不占读池；历史页 `SESSIONDOCK_HISTORY_PAGE_EVENTS`（默认 2000）+ 前端一键连续翻页（51 MB 会话 3.7 s vs Python 8.2 s）；前端瞬时失败（网络/abort/408/429/5xx 非 501）退避重试不停更，SSE 1.5→15 s 指数退避，`term.js` 瞬时失败不清 `T.enabled`；`capabilities.stage:"replacement"`、`read_only:false`，`/api/meta` 去 `migration`，无横幅；视图 LRU 16 项/128 MiB、AST 64 MiB、tokio 线程 ≤ 16（`SESSIONDOCK_ASYNC_WORKERS`）、`malloc_trim`。
+- WP-A（`523ba80`+`db806c2`，并发与稳态）：读池 `SESSIONDOCK_READ_WORKERS`（默认 clamp(核数/2,8,32)）排队等待许可（探测/分页/媒体/文件写响应池按比例派生），搜索不占读池；历史页 `SESSIONDOCK_HISTORY_PAGE_EVENTS`（默认 2000）+ 前端一键连续翻页（51 MB 会话 3.7 s vs Python 8.2 s）；前端瞬时失败（网络/abort/408/429/5xx 非 501）退避重试不停更，SSE 1.5→15 s 指数退避，`term.js` 瞬时失败不清 `T.enabled`；`capabilities.stage:"replacement"`、`read_only:false`，`/api/meta` 去 `migration`，无横幅；视图 LRU 16 项/128 MiB、AST 64 MiB、tokio 线程可配置（`SESSIONDOCK_ASYNC_WORKERS`）、`malloc_trim`。
 - WP-F（`1ea0fe1`，改名收尾/偏好迁移/启动环境）：manifest/SW/标题/文件页/`files.js` 键改 SessionDock（`brand_names_check` 19 → 0）；`AgentHubCapabilities.stored()` 一次性从 `agenthub.*`（hub `agenthub.hub.<path>.*`）迁移偏好，只写新键；六个 launcher profile 改经 `~/.local/bin/with-zshrc`（launcher 零改动；haiku 实跑 `which python3` = p311；Rust 启动的 grok 以 `grok` 名进入 `/api/live`）。
 - grok-4.6 headless 套件（人工审阅复跑）：term_sources_suite、search_bench_real、debug_runs_suite、symlink_agents_suite、grok_size_suite、codex_rename_suite、meta_hostname_check、reader_pool_suite、media_hardlink_suite、pending_discard_suite（`2df6b16`、`c68289e`、`a98cb1d`）。
 - 验收：合并后 `cargo test -p sessiondock --locked` lib 982 通过 / 0 失败，集成全过，fmt/clippy 干净，Node 契约 49 + 14，`run_validation.py` 111 套 106 过（5 个失败逐一修复：ptyhost 测试二进制内嵌改名前路径需重建、`_parity` 命名约定、退出关面板断言、页面自中止请求、响应池按读者派生），`hub_browser` 修后 5/5。
@@ -731,7 +684,7 @@ Python 仓库 2026-09-12 一天推进了 34 个提交（分层侧栏 `spawned_by
 
 | 批 | 包 | 内容 | 状态 |
 | --- | --- | --- | --- |
-| 三十六 | AB `procscan`+`spawned_by` | Linux 只读 `/proc` 扫描（显式 `SESSIONDOCK_PROC_SCAN=1`，`SESSIONDOCK_PROC_ROOT` 供合成测试），`/api/live` 合并受管观察与扫描（`capabilities.live` 随之为真），`spawned_by` 写一次进元数据 + 10 s 任务，`meta_import` 搬运 | 已合入 |
+| 三十六 | AB `procscan`+`spawned_by` | Linux 只读 `/proc` 扫描（`SESSIONDOCK_PROC_ROOT` 供合成测试），`/api/live` 合并受管观察与扫描（`capabilities.live` 随平台支持而定），`spawned_by` 写一次进元数据 + 10 s 任务，`meta_import` 搬运 | 已合入 |
 | 三十六 | C `agent_items[].active` + `continued_in` | 子代理运行态（Claude `end_turn` 收尾 + 父文件停止通知增量扫描；Codex 末条 event_msg），Claude 尾部 `continued-in` → 同列表 uid；冷列表仍 ≤ 1 s | 已合入 |
 | 三十六 | D Claude 中断分支 | Python `d16c5e1`：interrupt_nodes / offshoot / deferred_abort，`turn_id` 与 `interrupted` 语义 | 已合入 |
 | 三十六 | E 小改 | 后端下拉标签"默认宿主"、DENIED_ENV 三个键 | 已合入 |
@@ -745,3 +698,32 @@ Python 仓库 2026-09-12 一天推进了 34 个提交（分层侧栏 `spawned_by
 | 三十六 | G Codex 多块工具信封 | `custom_tool_call_output` 的多段信封按序拼接全部 `output`（Python 按拼接文本选一块，两边都不完整；真实根 4 处 DIFF → DELTA），见 `docs/native-input.md` | 已合入 |
 
 有意不做：外部实例 stop/takeover/rename、Windows/macOS 实机。（历史批次记录里“未实现多字符串拼接巨型工具 JSON”是当时状态，第三十六批 G 已实现。）
+
+### 对话附件上传修复（2026-09-13）
+
+- 根因：legacy composer 向 `/api/session/attachment?uid=...&name=...` 发送原始文件，普通会话后端却按 8 KiB JSON 上传任务完成请求处理，导致附件失败；只有 `uid=bug-report` 原本支持 raw body。
+- 修复：普通会话支持原始附件（含 `application/json` 文件），服务端解析所选 native view 的 cwd，复用 `agenthub_attachments/<id>/`、512 MiB 限制、同内容复用和不同内容编号机制；保留无 query uid 的 JSON 完成接口及独立 bug-report 分支。写入前核对目录句柄身份，启用元数据时记录文件路径与 SHA-256。
+- Windows：上传返回 native `relative_path` 与节点 `path_style`，composer 按目标节点插入 `.\agenthub_attachments\…` 或 `./agenthub_attachments/…`；旧节点通过盘符/UNC 判断，浏览器操作系统不影响选择，保留中文和空格。
+- 回归：新增接口测试覆盖大于 8 KiB 的原始文件、JSON 文件、重名/复用、禁用写入、无效会话/id/cwd 和大小错误；扩展 `send_browser.py` 覆盖桌面及 390 px 的 JSON+图片上传、失败保留草稿、重试和 native JSONL 确认。假 Claude 夹具修复多行/宽字符光标定位，防止附件发送后误判 composer 繁忙。
+- 验证：`cargo test --workspace --locked` 1317 通过 / 0 失败 / 9 ignored；两个 legacy Node 契约共 64 通过；`files_write_browser.py`、`send_browser.py`、`send_http_suite.py`（10 场景）、`bug_report_http_suite.py --binary target/debug/sessiondock`（10 场景）通过；MSVC `cargo check -p sessiondock --tests --target x86_64-pc-windows-msvc --locked` 通过，未声称 Windows 实机验收。Markdown 链接检查通过。
+- 共享工作区限制：全量 Clippy 被其他未提交的 `files/boundary.rs`、`files/mod.rs`、`files/media/tests.rs`、`lifecycle/launcher.rs` 的 5 个 lint 阻塞；全量 fmt 检查发现并行修改的 `hub/aggregate.rs` 格式差异。本修复保留这些改动；部署单独提取附件补丁，避免夹带未上线的其他模块。
+- 后续上线（同日，用户要求默认部署并删除统一的软件包发布禁令）：`AGENTS.md` 已取消每批额外请求部署及 `do not publish packages`。修复线上问题默认包含部署、回滚副本和健康检查。
+- 发布范围：Linux 从 `95f286c` 提取附件补丁构建；Windows 保留其线上已有的 launcher/terminal 等专用补丁再叠加附件修复。各端只替换附件相关后端和 `buildComposerPrompt`，未夹带共享工作区尚未上线的其他模块，未切换代理或停止 Python。
+- 补齐配置：在线节点显式为已有文件读取目录启用写入；从这些目录外启动的现有会话只追加独立的 `cwd/agenthub_attachments` 授权目录（临时目录跳过），无需将整个主目录设为可写。上传写服务支持把该附件子目录本身配置为写根。Windows 同时折回 cwd 和私有状态目录的 canonical `\\?\` 盘符前缀，解决首次启用写入后的启动失败。
+- 最终验证：实际 Linux 发布包的 6 项文件写入集成测试、64 项 Node 契约、桌面和 390 px 附件上传/失败重试/发送浏览器测试通过；Windows 本机 release 的 2 项附件接口测试通过（包含真实中文文件名、JSON 字节、专用附件写根和 canonical 状态目录）。Hub 对四节点的 12 KiB JSON 原始附件转发均到达正确接口并返回未知会话 404，无生产会话写入；已部署 Hub 在 1440/390 px 验证 Windows 附件路径格式。
+- 部署完成：Lyra `b3cb81dff723`、Cygnus `b7734f4fede8`、Pavo `15d4aba55ba3`、Cetus `3053935a465a`，Hub 前端 `218f88bc6d4f`。Linux 二进制 SHA-256 前缀 `fa07e058e3e3`，Windows `390e77ae4402`；原有 16 个 Lyra 宿主及 1 个 Cetus 宿主身份保持。备份在各节点 served 树之外的 `backup-attachment-*`；部署前配置检查、失败自动回滚及最终健康检查均有记录。
+- 发布验证与共享工作区区分：最后一次主树 `files::` 检查为 43 通过 / 1 失败，失败项是并行修改后 `FileService::open(vec![])` 的已有断言；不属于附件补丁，也未带入已验证的部署快照。
+
+### 下一批的具体入口
+
+**Python 行为对齐清理（2026-09-13，部署收口中）**
+
+- 并行分工使用 GPT-5.6 Sol，按历史/媒体、发送/终端、生命周期/进程分包；另清理文件、元数据、回收站、搜索、Hub 与审计。各包完成后才启动统一测试。
+- cwd 不设独立授权目录；路径和可执行文件跟随普通别名解析。inactive resume 与 active attach 分别按节点能力处理。Hub 转发保留认证上下文，版本核验对应实际服务页面的入口。
+- 历史和媒体去掉额外解析深度、文件/记录/图片数门槛；发送和终端保留 Python/ptyhost 真正使用的协议边界。内部队列等待可用资源，不因额外截止时间拒绝正常请求。
+- 元数据按 Python 每次读取文件；外部编辑可见，写入同步失败不永久关闭后续读写。回收站支持跨文件系统移动、普通别名和按记录原路径恢复，保留运行中会话及恢复冲突保护。
+- 搜索支持前后查找和反向引用；Hub 支持经系统证书校验的 HTTPS/WSS。会话附件和删除 force 转发的已完成修复保留在整合批次中。
+- 用户随后要求立即部署。Linux workspace 测试通过（服务库 946 通过、5 忽略，其余 workspace target 通过），Clippy、fmt 通过；新 release 的发送、Hub、停止、历史和附件限定回归通过。Windows 原生验证单独收口，不把 Linux 通过当作 Windows 通过。
+- 最终 Linux workspace 测试全绿：服务库 946 通过、5 忽略，其余 target 无失败；Clippy、fmt、发送、Hub、停止、历史、文件与附件回归通过。Windows 用生产源码快照在 Cetus 原生构建，库测试 755 通过、3 忽略；此前失败的 `media_files`、`runtime`、`runtime_live`、`terminal_bound`、`trash_http` 五个集成目标复验全部通过。
+- 升级预检新增生产私有状态副本的隔离启动。首次切换发现旧 Grok pending 账本与新分配 SID 规则冲突，已回滚恢复；按用户明确要求停止并删除对应旧记录，不保留旧格式兼容代码。Lyra、Cygnus、Pavo、Cetus 与 Hub 已部署；前端/二进制摘要、终端 resume 能力与其余 CLI 宿主存活均已核对，并留有私有回滚副本。Cetus 构建为 `e96b44da376b`，节点和监督器位于桌面 Session 1，两个原有 ptyhost 的 PID、创建时间和 Session ID 保持不变；Hub 代理复核 Cetus 在线且 Claude/Codex/Grok resume 能力均为真。
+- 明确延期的行为差异包括 Codex fork 缺失父线程以及 history_base 行中偏移；当前仍有拒绝路径，不能声称已清除全部 Python 之外的限制。

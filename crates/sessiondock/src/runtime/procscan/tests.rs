@@ -82,7 +82,7 @@ impl FakeProc {
 
     pub fn scan(&self) -> Scan {
         scan(
-            Arc::new(ProcTree::open(self.root.clone(), ScanLimits::default())),
+            Arc::new(ProcTree::open(self.root.clone())),
             None,
             &SessionRoots::default(),
         )
@@ -146,10 +146,7 @@ fn command_names_families_and_session_ids_follow_python() {
 #[test]
 fn bare_claude_matches_only_nearby_session_in_same_cwd() {
     let temp = tempfile::tempdir().unwrap();
-    let tree = Arc::new(ProcTree::open(
-        temp.path().join("proc"),
-        ScanLimits::default(),
-    ));
+    let tree = Arc::new(ProcTree::open(temp.path().join("proc")));
     let started = 1_786_268_640.0_f64;
     let mut scan = Scan {
         sids: BTreeMap::new(),
@@ -380,10 +377,7 @@ fn command_line_sid_beats_inherited_env_and_families_do_not_cross() {
 #[test]
 fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
     let temp = tempfile::tempdir().unwrap();
-    let tree = Arc::new(ProcTree::open(
-        temp.path().join("proc"),
-        ScanLimits::default(),
-    ));
+    let tree = Arc::new(ProcTree::open(temp.path().join("proc")));
     let codex = |uid: &str, sid: &str, parent: &str| SessionRow {
         uid: format!("codex:{uid}"),
         source: "codex".into(),
@@ -538,7 +532,7 @@ fn explicit_grok_active_file_marks_sessions_live_without_a_pid() {
     let temp = tempfile::tempdir().unwrap();
     let proc = FakeProc::new(&temp.path().join("proc"));
     proc.add(1, "systemd", 0, "/sbin/init", &[], &[]);
-    let tree = || Arc::new(ProcTree::open(proc.root.clone(), ScanLimits::default()));
+    let tree = || Arc::new(ProcTree::open(proc.root.clone()));
     let list = temp.path().join("active.json");
     fs::write(
         &list,
@@ -576,7 +570,7 @@ fn explicit_grok_active_file_marks_sessions_live_without_a_pid() {
 
 fn scan_with(proc: &FakeProc, grok_active: Option<&Path>) -> Scan {
     scan(
-        Arc::new(ProcTree::open(proc.root.clone(), ScanLimits::default())),
+        Arc::new(ProcTree::open(proc.root.clone())),
         grok_active,
         &SessionRoots::default(),
     )
@@ -596,7 +590,7 @@ fn tmux_and_host_ancestry_are_bounded_walks() {
     proc.add(601, "sh", 600, "sh -c claude", &[], &[]);
     proc.add(602, "claude", 601, "claude", &[], &[]);
     proc.add(700, "claude", 1, "claude", &[], &[]);
-    let tree = ProcTree::open(proc.root.clone(), ScanLimits::default());
+    let tree = ProcTree::open(proc.root.clone());
     assert!(tree.in_tmux(&[502]));
     assert!(tree.in_tmux(&[-502]));
     assert!(!tree.in_tmux(&[602, 700]));
@@ -618,7 +612,7 @@ fn tmux_and_host_ancestry_are_bounded_walks() {
         deep.add(20 + level, "sh", parent, "sh", &[], &[]);
         parent = 20 + level;
     }
-    let tree = ProcTree::open(deep.root.clone(), ScanLimits::default());
+    let tree = ProcTree::open(deep.root.clone());
     assert_eq!(tree.cli_ancestor(20 + 10), Some(10));
     assert_eq!(tree.cli_ancestor(20 + 12), None);
 }
@@ -654,7 +648,7 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
     proc.add(12, "bash", 11, "bash /tmp/tool.sh", &[], &[]);
     proc.add(13, "grok", 12, "grok -p do the task", &[], &[]);
     proc.add(14, "node", 13, "node codebase-memory", &[], &[]);
-    let tree = ProcTree::open(proc.root.clone(), ScanLimits::default());
+    let tree = ProcTree::open(proc.root.clone());
     assert!(tree.is_cli_process(11) && tree.is_cli_process(13));
     assert!(!tree.is_cli_process(10) && !tree.is_cli_process(12) && !tree.is_cli_process(999));
     let pane = BTreeSet::from([10]);
@@ -678,45 +672,6 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
     assert!(tree.in_tmux(&[13, 11]));
 }
 
-/// Oversized files are cut at the cap, never a failure; an id past the cap is lost.
-#[test]
-fn oversized_cmdline_and_environ_are_capped_without_failing() {
-    let temp = tempfile::tempdir().unwrap();
-    let proc = FakeProc::new(temp.path());
-    proc.add(1, "systemd", 0, "/sbin/init", &[], &[]);
-    let padding = "x".repeat(300);
-    proc.add(
-        100,
-        "claude",
-        1,
-        &format!("claude --resume {SID_RUNNING} {padding} --session-id {SID_STOPPED}"),
-        &[("PAD", &padding), ("CLAUDE_CODE_SESSION_ID", SID_CLAUDE)],
-        &[],
-    );
-    let limits = ScanLimits {
-        cmdline_bytes: 128,
-        environ_bytes: 64,
-        fd_entries: 1,
-        processes: 1 << 20,
-    };
-    let scan = scan(
-        Arc::new(ProcTree::open(proc.root.clone(), limits)),
-        None,
-        &SessionRoots::default(),
-    );
-    assert_eq!(scan.sids.keys().collect::<Vec<_>>(), [SID_RUNNING]);
-    assert!(!scan.sids.contains_key(SID_CLAUDE));
-    // Uncapped: both command-line ids; the env id is not on the command line
-    // of this resumed CLI and therefore not counted.
-    let full = proc.scan();
-    assert_eq!(
-        full.sids.keys().collect::<Vec<_>>(),
-        [SID_RUNNING, SID_STOPPED]
-    );
-    let tree = ProcTree::open(proc.root.clone(), limits);
-    assert!(tree.spawn_env(100).is_empty());
-}
-
 /// Python `SnapshotTests`: the TTL runs from completion, waiters share one
 /// scan, `force` bypasses the TTL.
 #[tokio::test]
@@ -732,11 +687,10 @@ async fn snapshot_ttl_single_flight_and_force() {
         &[],
         &[],
     );
-    let scanner = Arc::new(ProcScanner::with_limits(
+    let scanner = Arc::new(ProcScanner::with_ttl(
         proc.root.clone(),
         None,
         SessionRoots::default(),
-        ScanLimits::default(),
         Duration::from_millis(400),
     ));
     assert!(scanner.last().is_none());
@@ -811,11 +765,7 @@ fn open_jsonl_under_a_configured_root_counts_like_a_home_marker() {
         ],
     );
     let roots = SessionRoots::new([codex_root.as_path(), Path::new("/")]);
-    let scan = scan(
-        Arc::new(ProcTree::open(proc.root.clone(), ScanLimits::default())),
-        None,
-        &roots,
-    );
+    let scan = scan(Arc::new(ProcTree::open(proc.root.clone())), None, &roots);
     assert_eq!(
         scan.paths.keys().cloned().collect::<Vec<_>>(),
         [marker.to_owned(), inside.to_string_lossy().into_owned()]

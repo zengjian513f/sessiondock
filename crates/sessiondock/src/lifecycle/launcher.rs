@@ -1,4 +1,4 @@
-//! Explicit adapter allowlist and one-authority process spawn. No discovery,
+//! Configured adapters and one-authority process spawn. No discovery,
 //! native identity binding, readiness claim, automatic retry or Drop termination.
 
 use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt};
@@ -6,14 +6,10 @@ use cap_std::{
     ambient_authority,
     fs::{Dir, Metadata, OpenOptions},
 };
-use serde::{
-    Deserialize, Deserializer,
-    de::{self, MapAccess, Visitor},
-};
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::OsString,
-    io::Read,
     path::{Component, Path, PathBuf},
     process::Child,
     sync::Arc,
@@ -25,16 +21,8 @@ use super::{
 };
 use std::process::{Command, Stdio};
 
-pub const MAX_CONFIG_BYTES: usize = 64 * 1024;
-const MAX_ENTRIES: usize = 16;
-const MAX_ARGS: usize = 64;
-const MAX_ARG_BYTES: usize = 4096;
-const MAX_ENV: usize = 64;
-const MAX_ENV_VALUE_BYTES: usize = 8192;
-const MAX_ENV_REMOVE: usize = 16;
 pub const MAX_COMPLETIONS: usize = 50;
 pub const DEFAULT_COMPLETIONS: usize = 24;
-const MAX_SCANNED_ENTRIES: usize = 4096;
 
 /// Fixed argv placeholders. They must be a whole argument; the server never
 /// splices a SID into a longer string or a shell command line.
@@ -46,95 +34,27 @@ pub const SID_PLACEHOLDER: &str = "{sid}";
 /// (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CLAUDE_PID`, Python
 /// `SPAWN_ENV_KEYS`) are refused too: a web-created session must not be
 /// recorded as the child of whatever session started this service.
-pub const DENIED_ENV: [&str; 8] = [
+pub const DENIED_ENV: [&str; 6] = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_COMPANION_SESSION_ID",
     "GROK_SESSION_ID",
     "CODEX_THREAD_ID",
     "CODEX_SESSION_ID",
     "CLAUDE_PID",
-    "TMUX",
-    "AGENTHUB_SESSION",
 ];
-/// Explicit allowlist for CLI-profile environment additions: exact names or
-/// reviewed prefixes. Legacy adapters keep the older syntax-only rule.
-const ALLOWED_ENV_NAMES: [&str; 42] = [
-    "HOME",
-    "PATH",
-    "TERM",
-    "COLORTERM",
-    "LANG",
-    "LANGUAGE",
-    "SHELL",
-    "USER",
-    "LOGNAME",
-    "TMPDIR",
-    "EDITOR",
-    "VISUAL",
-    "PAGER",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "ALL_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-    "all_proxy",
-    // Windows: the cleared environment must carry the system locations the
-    // loader, Winsock and the Node-based CLIs read; spelled as Windows sets
-    // them (its own variable names are case-insensitive, `Command` folds
-    // duplicates, so a profile lists each once).
-    "SystemRoot",
-    "SYSTEMROOT",
-    "windir",
-    "SystemDrive",
-    "USERPROFILE",
-    "APPDATA",
-    "LOCALAPPDATA",
-    "TEMP",
-    "TMP",
-    "COMSPEC",
-    "PATHEXT",
-    "HOMEDRIVE",
-    "HOMEPATH",
-    "USERNAME",
-    "PROGRAMDATA",
-    "ProgramData",
-    "ProgramFiles",
-    "ProgramW6432",
-];
-/// The one Windows variable whose name is not a plain identifier.
-const PROGRAM_FILES_X86: &str = "ProgramFiles(x86)";
-const ALLOWED_ENV_PREFIXES: [&str; 9] = [
-    "LC_",
-    "XDG_",
-    "ANTHROPIC_",
-    "CLAUDE_",
-    "CODEX_",
-    "OPENAI_",
-    "GROK_",
-    "XAI_",
-    "AGENTHUB_TEST_",
-];
-
 fn default_schema() -> u32 {
     1
 }
 
 /// Private administrator configuration; intentionally not Debug or Serialize.
 /// Schema 1 carries only fixed-argv `adapters`; schema 2 additionally allows
-/// per-source CLI `profiles`. Unknown fields fail closed in both.
+/// per-source CLI `profiles`.
 #[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_schema")]
     pub schema: u32,
     pub host_binary: PathBuf,
     pub host_dir: PathBuf,
-    pub cwd_roots: Vec<PathBuf>,
     #[serde(default)]
     pub adapters: Vec<Adapter>,
     #[serde(default)]
@@ -149,7 +69,7 @@ pub struct Config {
 /// Python `bug_report.WORKER_SOURCES` mapped to launch profiles. Absent
 /// sources cannot run a worker (`503` at the route, like a missing CLI).
 #[derive(Clone, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct BugReportProfiles {
     pub claude: Option<String>,
     pub codex: Option<String>,
@@ -208,14 +128,11 @@ pub fn bug_report_policy(source: Source, argv: &[String]) -> bool {
     }
 }
 
-/// One real CLI installation. `args` is the fixed prefix; `new_args` /
-/// `resume_args` are argv templates whose only substitutions are the whole
-/// arguments `{session_id}` (Claude new, server UUID) and `{sid}` (resume).
-/// Per-source rules are fixed in code, not configurable: Claude `new_args`
-/// must contain `{session_id}` exactly once, Codex/Grok must not; an empty
-/// `resume_args` means resume is unsupported for this profile.
+/// One real CLI installation. `args` is the fixed prefix. Legacy `new_args`
+/// and `resume_args` may contain whole-argument `{session_id}` / `{sid}`
+/// substitutions; when absent, Python's source-specific identity arguments
+/// are appended automatically.
 #[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CliProfile {
     pub id: String,
     pub source: Source,
@@ -226,17 +143,15 @@ pub struct CliProfile {
     pub new_args: Vec<String>,
     #[serde(default)]
     pub resume_args: Vec<String>,
-    #[serde(default, deserialize_with = "unique_environment")]
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// Names guaranteed absent from the launcher-built environment (beyond
-    /// the always-denied session identity variables), e.g. the default TERM.
+    /// Names removed from the inherited environment, e.g. `TERM`. Python's
+    /// lineage variables are removed separately for every CLI launch.
     #[serde(default)]
     pub env_remove: Vec<String>,
-    /// Explicit roots for this profile; each must lie inside a global cwd root.
-    pub cwd_roots: Vec<PathBuf>,
 }
 
-/// Public catalog row for HTTP selection: which allowlisted IDs exist, their
+/// Public catalog row for HTTP selection: which configured IDs exist, their
 /// source, whether they are real CLI profiles, whether they can resume, and
 /// whether they are reserved for the bug-report worker (`worker`): a worker
 /// profile is launched by id from `bug_report::worker` only and never counts
@@ -271,43 +186,20 @@ pub fn entries(config: &Config) -> Vec<Entry> {
             id: profile.id.clone(),
             source: profile.source,
             profile: true,
-            resume: !profile.resume_args.is_empty(),
+            resume: true,
             worker: config.bug_report_profiles.get(profile.source) == Some(profile.id.as_str()),
         }))
         .collect()
 }
 
 #[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Adapter {
     pub id: String,
     pub source: Source,
     pub executable: PathBuf,
     pub args: Vec<String>,
-    #[serde(deserialize_with = "unique_environment")]
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
-}
-
-fn unique_environment<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<BTreeMap<String, String>, D::Error> {
-    struct Unique;
-    impl<'de> Visitor<'de> for Unique {
-        type Value = BTreeMap<String, String>;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            formatter.write_str("an explicit environment object with unique keys")
-        }
-        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
-            let mut result = BTreeMap::new();
-            while let Some((key, value)) = map.next_entry::<String, String>()? {
-                if result.len() == MAX_ENV || result.insert(key, value).is_some() {
-                    return Err(de::Error::custom("duplicate or excessive environment keys"));
-                }
-            }
-            Ok(result)
-        }
-    }
-    deserializer.deserialize_map(Unique)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -341,25 +233,11 @@ pub struct LaunchFailure {
     pub error: Error,
 }
 
-/// Read one explicit private file through no-follow directory/file handles.
-/// Serde rejects duplicate struct fields; the environment visitor rejects map
-/// duplicates. Parse errors are deliberately replaced by a static error code.
+/// Read the configured launcher file with the same ordinary path semantics as
+/// Python's JSON configuration load. Parse errors are replaced by a static
+/// error code so configuration contents never leak through the API.
 pub fn read_config(path: &Path) -> Result<Config, Error> {
-    let mut opened = CheckedFile::open(path, FileKind::Config)?;
-    if opened.stamp.len > MAX_CONFIG_BYTES as u64 {
-        return Err(Error::InvalidConfig);
-    }
-    let mut bytes = Vec::new();
-    opened
-        .file
-        .by_ref()
-        .take(MAX_CONFIG_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| Error::ConfigUnavailable)?;
-    opened.verify()?;
-    if bytes.len() > MAX_CONFIG_BYTES {
-        return Err(Error::InvalidConfig);
-    }
+    let bytes = std::fs::read(path).map_err(|_| Error::ConfigUnavailable)?;
     let config: Config = serde_json::from_slice(&bytes).map_err(|_| Error::InvalidConfig)?;
     config_bounds(&config)?;
     Ok(config)
@@ -372,13 +250,11 @@ struct CheckedAdapter {
 struct CheckedProfile {
     config: CliProfile,
     executable: CheckedFile,
-    cwd_roots: Vec<CheckedDirectory>,
 }
 
 pub struct Launcher {
     host_binary: CheckedFile,
     host_directory: CheckedDirectory,
-    cwd_roots: Vec<CheckedDirectory>,
     adapters: BTreeMap<String, CheckedAdapter>,
     profiles: BTreeMap<String, CheckedProfile>,
     entries: Vec<Entry>,
@@ -404,7 +280,6 @@ pub fn bug_report_profiles(config: &Config) -> Vec<BugReportProfile> {
                 id: id.to_owned(),
                 source,
                 argv,
-                cwd_roots: profile.cwd_roots.clone(),
             })
         })
         .collect()
@@ -419,7 +294,6 @@ pub struct BugReportProfile {
     /// Executable first, then the fixed args and the new-session template
     /// with its `{session_id}` placeholder unsubstituted.
     pub argv: Vec<String>,
-    pub cwd_roots: Vec<PathBuf>,
 }
 
 impl BugReportProfile {
@@ -432,65 +306,28 @@ impl BugReportProfile {
 impl Launcher {
     pub fn new(config: Config) -> Result<Self, Error> {
         config_bounds(&config)?;
-        if config.host_dir.parent().is_none()
-            || config.cwd_roots.iter().any(|path| path.parent().is_none())
-        {
+        if config.host_dir.parent().is_none() {
             return Err(Error::UnsafePath);
         }
         let entries = entries(&config);
         // Executables may be symlinks (npm/volta shims, WinGet links, `which`
         // results): resolve them like Python's `shutil.which`, then apply the
         // no-follow identity checks to the real file.
-        let host_binary = CheckedFile::open(
-            &resolved_executable(&config.host_binary)?,
-            FileKind::Executable,
-        )?;
-        let host_directory = CheckedDirectory::open(&config.host_dir, true)?;
-        let mut cwd_roots = Vec::new();
-        for path in config.cwd_roots {
-            if overlap(&path, &config.host_dir)
-                || cwd_roots
-                    .iter()
-                    .any(|root: &CheckedDirectory| overlap(&path, &root.path))
-            {
-                return Err(Error::UnsafePath);
-            }
-            cwd_roots.push(CheckedDirectory::open(&path, false)?);
-        }
+        let host_binary = CheckedFile::open(&resolved_executable(&config.host_binary)?)?;
+        let host_directory = CheckedDirectory::open(&config.host_dir)?;
         let mut adapters = BTreeMap::new();
         for config in config.adapters {
-            let executable = CheckedFile::open(
-                &resolved_executable(&config.executable)?,
-                FileKind::Executable,
-            )?;
+            let executable = CheckedFile::open(&resolved_executable(&config.executable)?)?;
             adapters.insert(config.id.clone(), CheckedAdapter { config, executable });
         }
         let mut profiles = BTreeMap::new();
         for config in config.profiles {
-            let executable = CheckedFile::open(
-                &resolved_executable(&config.executable)?,
-                FileKind::Executable,
-            )?;
-            let mut roots = Vec::new();
-            for path in &config.cwd_roots {
-                if !cwd_roots.iter().any(|root| path.starts_with(&root.path)) {
-                    return Err(Error::UnsafePath);
-                }
-                roots.push(CheckedDirectory::open(path, false)?);
-            }
-            profiles.insert(
-                config.id.clone(),
-                CheckedProfile {
-                    config,
-                    executable,
-                    cwd_roots: roots,
-                },
-            );
+            let executable = CheckedFile::open(&resolved_executable(&config.executable)?)?;
+            profiles.insert(config.id.clone(), CheckedProfile { config, executable });
         }
         Ok(Self {
             host_binary,
             host_directory,
-            cwd_roots,
             adapters,
             profiles,
             entries,
@@ -508,23 +345,21 @@ impl Launcher {
     /// work. Constructor snapshots alone cannot authorize a later changed path.
     pub fn validate_spec(&self, spec: &LaunchSpec) -> Result<(), Error> {
         spec.validate().map_err(|_| Error::InvalidSpec)?;
-        let (source, executable, roots, kind_allowed) =
+        let (source, executable, kind_allowed) =
             if let Some(adapter) = self.adapters.get(spec.adapter_id()) {
                 (
                     adapter.config.source,
                     &adapter.executable,
-                    &self.cwd_roots,
                     *spec.launch() == Launch::Fixed,
                 )
             } else if let Some(profile) = self.profiles.get(spec.adapter_id()) {
                 (
                     profile.config.source,
                     &profile.executable,
-                    &profile.cwd_roots,
                     match spec.launch() {
                         Launch::Fixed => false,
                         Launch::NewPending | Launch::NewAssigned => true,
-                        Launch::Resume { .. } => !profile.config.resume_args.is_empty(),
+                        Launch::Resume { .. } => true,
                     },
                 )
             } else {
@@ -539,13 +374,7 @@ impl Launcher {
         self.host_binary.verify()?;
         self.host_directory.verify()?;
         executable.verify()?;
-        let root = roots
-            .iter()
-            .find(|root| spec.cwd().starts_with(&root.path))
-            .ok_or(Error::InvalidSpec)?;
-        root.verify()?;
-        CheckedDirectory::open(spec.cwd(), false)?.verify()?;
-        root.verify()?;
+        CheckedDirectory::open(spec.cwd())?.verify()?;
         Ok(())
     }
 
@@ -558,7 +387,7 @@ impl Launcher {
             if *spec.launch() != Launch::Fixed {
                 return Err(Error::InvalidSpec);
             }
-            let mut argv = vec![adapter.config.executable.as_os_str().to_owned()];
+            let mut argv = vec![adapter.executable.path.as_os_str().to_owned()];
             argv.extend(adapter.config.args.iter().map(OsString::from));
             return Ok(argv);
         }
@@ -566,27 +395,42 @@ impl Launcher {
             .profiles
             .get(spec.adapter_id())
             .ok_or(Error::AdapterUnavailable)?;
-        let (template, placeholder, value): (&[String], &str, Option<&str>) = match spec.launch() {
-            Launch::Fixed => return Err(Error::InvalidSpec),
-            Launch::NewPending => (&profile.config.new_args, SESSION_ID_PLACEHOLDER, None),
-            Launch::NewAssigned => (
-                &profile.config.new_args,
-                SESSION_ID_PLACEHOLDER,
-                Some(record.session_id().ok_or(Error::InvalidSpec)?),
-            ),
-            Launch::Resume { sid, .. } => {
-                if profile.config.resume_args.is_empty() {
-                    return Err(Error::InvalidSpec);
+        let (configured, defaults, placeholder, value): (&[String], &[&str], &str, Option<&str>) =
+            match spec.launch() {
+                Launch::Fixed => return Err(Error::InvalidSpec),
+                Launch::NewPending => (&profile.config.new_args, &[], SESSION_ID_PLACEHOLDER, None),
+                Launch::NewAssigned => (
+                    &profile.config.new_args,
+                    &["--session-id", SESSION_ID_PLACEHOLDER],
+                    SESSION_ID_PLACEHOLDER,
+                    Some(record.session_id().ok_or(Error::InvalidSpec)?),
+                ),
+                Launch::Resume { sid, .. } => {
+                    let defaults: &[&str] = match spec.source() {
+                        Source::Codex => &["resume", SID_PLACEHOLDER],
+                        Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
+                    };
+                    (
+                        &profile.config.resume_args,
+                        defaults,
+                        SID_PLACEHOLDER,
+                        Some(sid),
+                    )
                 }
-                (&profile.config.resume_args, SID_PLACEHOLDER, Some(sid))
-            }
-        };
+            };
         if value.is_some_and(|value| !model::native_sid(value)) {
             return Err(Error::InvalidSpec);
         }
-        let mut argv = vec![profile.config.executable.as_os_str().to_owned()];
+        let mut argv = vec![profile.executable.path.as_os_str().to_owned()];
         argv.extend(profile.config.args.iter().map(OsString::from));
-        for arg in template {
+        let has_placeholder = configured.iter().any(|arg| arg == placeholder);
+        for arg in configured.iter().map(String::as_str).chain(
+            (!has_placeholder)
+                .then_some(defaults)
+                .into_iter()
+                .flatten()
+                .copied(),
+        ) {
             if arg == placeholder {
                 argv.push(OsString::from(value.ok_or(Error::InvalidSpec)?));
             } else {
@@ -611,88 +455,55 @@ impl Launcher {
         metadata
     }
 
-    /// Bounded shell-style completion strictly inside the global cwd roots.
-    /// Symlinked entries are never followed (nor listed), parents outside every
-    /// root yield nothing, and each result is `<typed parent><name>/`.
+    /// Python-compatible shell-style completion for any absolute directory.
     pub fn complete_directories(&self, text: &str, limit: usize) -> Result<Vec<String>, Error> {
-        if text.len() > model::MAX_CWD_BYTES || text.chars().any(char::is_control) {
+        if text.chars().count() > 4096 {
             return Err(Error::InvalidSpec);
         }
         let limit = limit.clamp(1, MAX_COMPLETIONS);
-        let text = text.trim();
+        let display = text.trim();
+        if display.is_empty()
+            || (display.starts_with('~') && display != "~" && !display.starts_with("~/"))
+        {
+            return Ok(Vec::new());
+        }
+        let Some(expanded) = model::expand_user(Path::new(display)) else {
+            return Ok(Vec::new());
+        };
+        if display == "~" {
+            return Ok(if expanded.is_dir() {
+                vec!["~/".into()]
+            } else {
+                Vec::new()
+            });
+        }
+        if !expanded.is_absolute() {
+            return Ok(Vec::new());
+        }
+        let (parent, prefix, display_parent) = if display.ends_with('/') {
+            (expanded.as_path(), "", display.to_owned())
+        } else {
+            let Some(parent) = expanded.parent() else {
+                return Ok(Vec::new());
+            };
+            let Some(prefix) = expanded.file_name().and_then(|name| name.to_str()) else {
+                return Ok(Vec::new());
+            };
+            let split = display.rfind('/').map_or(0, |index| index + 1);
+            (parent, prefix, display[..split].to_owned())
+        };
         let mut rows = BTreeSet::new();
-        for root in &self.cwd_roots {
-            let root_text = root.path.to_str().ok_or(Error::UnsafePath)?;
-            let root_slash = format!("{root_text}/");
-            if text.is_empty() || (text.len() < root_slash.len() && root_slash.starts_with(text)) {
-                rows.insert(root_slash);
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            return Ok(Vec::new());
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if !name.starts_with(prefix) || (name.starts_with('.') && !prefix.starts_with('.')) {
                 continue;
             }
-            if !text.starts_with(&root_slash) {
-                continue;
-            }
-            let (parent, prefix) = match text.rfind('/') {
-                Some(index) => (&text[..=index], &text[index + 1..]),
-                None => continue,
-            };
-            let relative = &parent[root_slash.len()..];
-            let parts: Vec<&str> = relative
-                .split('/')
-                .filter(|part| !part.is_empty())
-                .collect();
-            // The prefix only filters entry names of the listed parent; the
-            // parent itself must be a normalized chain of plain components.
-            if relative.len() != parts.iter().map(|part| part.len() + 1).sum::<usize>()
-                || parts.iter().any(|part| *part == "." || *part == "..")
-            {
-                continue;
-            }
-            root.verify()?;
-            let mut directory = root.directory.clone();
-            let mut reachable = true;
-            for part in parts {
-                let metadata = match directory.symlink_metadata(part) {
-                    Ok(metadata) => metadata,
-                    Err(_) => {
-                        reachable = false;
-                        break;
-                    }
-                };
-                if ordinary(&metadata, true).is_err() {
-                    reachable = false;
-                    break;
-                }
-                match directory.open_dir_nofollow(part) {
-                    Ok(child) => directory = Arc::new(child),
-                    Err(_) => {
-                        reachable = false;
-                        break;
-                    }
-                }
-            }
-            if !reachable {
-                continue;
-            }
-            let Ok(entries) = directory.entries() else {
-                continue;
-            };
-            for entry in entries.take(MAX_SCANNED_ENTRIES) {
-                let Ok(entry) = entry else { continue };
-                let name = entry.file_name();
-                let Some(name) = name.to_str() else { continue };
-                if !name.starts_with(prefix) || (name.starts_with('.') && !prefix.starts_with('.'))
-                {
-                    continue;
-                }
-                // file_type never follows symlinks: a link is skipped even when
-                // it points inside the root, so no completion escapes a root.
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if !kind.is_dir() || kind.is_symlink() {
-                    continue;
-                }
-                rows.insert(format!("{parent}{name}/"));
+            if entry.path().is_dir() {
+                rows.insert(format!("{display_parent}{name}/"));
             }
         }
         let mut rows: Vec<String> = rows.into_iter().collect();
@@ -746,13 +557,13 @@ impl Launcher {
         }
     }
 
-    /// The platform-independent host command line: explicit environment,
+    /// The platform-independent host command line: inherited service environment
+    /// with explicit profile overrides and stale session identities removed,
     /// authorized cwd, null stdio, the host arguments, then the CLI argv.
     /// Only how the child is detached from this process differs per platform.
     fn command(&self, record: &Record, argv: &[OsString]) -> Command {
         let metadata = Self::metadata(record);
         let mut command = Command::new(&self.host_binary.path);
-        command.env_clear().env("TERM", "xterm-256color");
         if let Some(adapter) = self.adapters.get(record.spec().adapter_id()) {
             command.envs(&adapter.config.env);
         } else if let Some(profile) = self.profiles.get(record.spec().adapter_id()) {
@@ -820,164 +631,73 @@ fn spawn_detached(_command: Command) -> std::io::Result<Child> {
     ))
 }
 
-fn versioned_id(id: &str) -> bool {
-    let version = id.rsplit_once("-v").or_else(|| id.rsplit_once("_v"));
-    model::identifier(id, 1, model::MAX_ADAPTER_BYTES)
-        && version.is_some_and(|(prefix, version)| {
-            !prefix.is_empty()
-                && !version.is_empty()
-                && version.len() <= 6
-                && !version.starts_with('0')
-                && version.bytes().all(|b| b.is_ascii_digit())
-        })
-}
 fn env_name(key: &str) -> bool {
-    key == PROGRAM_FILES_X86
-        || !key.is_empty()
-            && key.len() <= 128
-            && key.bytes().enumerate().all(|(i, byte)| {
-                byte == b'_' || byte.is_ascii_alphabetic() || (i > 0 && byte.is_ascii_digit())
-            })
+    // These are the constraints of a process environment, not shell variable
+    // syntax: Python also accepts names such as PSModulePath and ProgramFiles(x86).
+    !key.is_empty() && !key.contains(['=', '\0'])
 }
 fn allowed_profile_env(key: &str) -> bool {
-    !DENIED_ENV.contains(&key)
-        && (key == PROGRAM_FILES_X86
-            || ALLOWED_ENV_NAMES.contains(&key)
-            || ALLOWED_ENV_PREFIXES
-                .iter()
-                .any(|prefix| key.starts_with(prefix) && key.len() > prefix.len()))
+    env_name(key) && !DENIED_ENV.contains(&key)
 }
-/// Every argument is either an exact whole placeholder or contains no
-/// placeholder text at all; any other `{name}`-shaped argument is rejected.
-fn placeholder_count(args: &[String], placeholder: Option<&str>) -> Result<usize, Error> {
-    let mut count = 0;
+fn check_args(args: &[String]) -> Result<(), Error> {
     for arg in args {
-        if placeholder == Some(arg.as_str()) {
-            count += 1;
-        } else if arg.contains(SESSION_ID_PLACEHOLDER)
-            || arg.contains(SID_PLACEHOLDER)
-            || (arg.len() > 2
-                && arg.starts_with('{')
-                && arg.ends_with('}')
-                && arg[1..arg.len() - 1]
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b == b'_'))
-        {
+        if arg.contains('\0') {
             return Err(Error::InvalidConfig);
         }
-    }
-    Ok(count)
-}
-fn check_args(args: &[String], size: &mut usize) -> Result<(), Error> {
-    for arg in args {
-        if arg.len() > MAX_ARG_BYTES || arg.contains('\0') {
-            return Err(Error::InvalidConfig);
-        }
-        *size += arg.len();
     }
     Ok(())
 }
-fn check_env(env: &BTreeMap<String, String>, size: &mut usize) -> Result<(), Error> {
-    if env.len() > MAX_ENV {
-        return Err(Error::InvalidConfig);
-    }
+fn check_env(env: &BTreeMap<String, String>) -> Result<(), Error> {
     for (key, value) in env {
-        if !env_name(key) || value.len() > MAX_ENV_VALUE_BYTES || value.contains('\0') {
+        if !env_name(key) || value.contains('\0') {
             return Err(Error::InvalidConfig);
         }
-        *size += key.len() + value.len();
     }
     Ok(())
 }
 
 fn config_bounds(config: &Config) -> Result<(), Error> {
-    if !(1..=MAX_ENTRIES).contains(&config.cwd_roots.len())
-        || config.adapters.len() > MAX_ENTRIES
-        || config.profiles.len() > MAX_ENTRIES
-        || config.adapters.is_empty() && config.profiles.is_empty()
-        || !matches!(config.schema, 1 | 2)
-        || (config.schema == 1 && !config.profiles.is_empty())
-    {
+    if config.adapters.is_empty() && config.profiles.is_empty() {
         return Err(Error::InvalidConfig);
     }
-    let mut size = path_text(&config.host_binary)?.len() + path_text(&config.host_dir)?.len();
-    for root in &config.cwd_roots {
-        size += path_text(root)?.len();
-    }
+    path_text(&config.host_binary)?;
+    path_text(&config.host_dir)?;
     let mut identifiers = BTreeSet::new();
     for adapter in &config.adapters {
-        if !versioned_id(&adapter.id)
-            || !identifiers.insert(&adapter.id)
-            || adapter.args.len() > MAX_ARGS
-        {
+        if adapter.id.is_empty() || !identifiers.insert(&adapter.id) {
             return Err(Error::InvalidConfig);
         }
-        size += adapter.id.len() + path_text(&adapter.executable)?.len();
-        check_args(&adapter.args, &mut size)?;
-        check_env(&adapter.env, &mut size)?;
+        path_text(&adapter.executable)?;
+        check_args(&adapter.args)?;
+        check_env(&adapter.env)?;
     }
     for profile in &config.profiles {
-        if !versioned_id(&profile.id)
-            || !identifiers.insert(&profile.id)
-            || profile.args.len() + profile.new_args.len() + profile.resume_args.len() > MAX_ARGS
-            || profile.env_remove.len() > MAX_ENV_REMOVE
-            || !(1..=MAX_ENTRIES).contains(&profile.cwd_roots.len())
-        {
+        if profile.id.is_empty() || !identifiers.insert(&profile.id) {
             return Err(Error::InvalidConfig);
         }
-        size += profile.id.len() + path_text(&profile.executable)?.len();
+        path_text(&profile.executable)?;
         for args in [&profile.args, &profile.new_args, &profile.resume_args] {
-            check_args(args, &mut size)?;
+            check_args(args)?;
         }
-        check_env(&profile.env, &mut size)?;
+        check_env(&profile.env)?;
         if profile.env.keys().any(|key| !allowed_profile_env(key)) {
             return Err(Error::InvalidConfig);
         }
-        let mut removed = BTreeSet::new();
         for name in &profile.env_remove {
-            if !env_name(name) || profile.env.contains_key(name) || !removed.insert(name) {
+            if !env_name(name) {
                 return Err(Error::InvalidConfig);
-            }
-            size += name.len();
-        }
-        // Fixed per-source contract: only Claude receives an upfront SID; a
-        // resume template names `{sid}` exactly once or is absent entirely.
-        placeholder_count(&profile.args, None)?;
-        let resume_placeholders = placeholder_count(&profile.resume_args, Some(SID_PLACEHOLDER))?;
-        if placeholder_count(&profile.new_args, Some(SESSION_ID_PLACEHOLDER))?
-            != usize::from(profile.source == Source::Claude)
-            || (!profile.resume_args.is_empty() && resume_placeholders != 1)
-        {
-            return Err(Error::InvalidConfig);
-        }
-        let mut roots = BTreeSet::new();
-        for root in &profile.cwd_roots {
-            size += path_text(root)?.len();
-            if root.parent().is_none()
-                || !config
-                    .cwd_roots
-                    .iter()
-                    .any(|global| root.starts_with(global))
-                || !roots.insert(root)
-            {
-                return Err(Error::UnsafePath);
             }
         }
     }
     for source in [Source::Claude, Source::Codex, Source::Grok] {
-        if let Some(id) = config.bug_report_profiles.get(source) {
-            size += id.len();
-            if !config
+        if let Some(id) = config.bug_report_profiles.get(source)
+            && !config
                 .profiles
                 .iter()
                 .any(|profile| profile.id == id && profile.source == source)
-            {
-                return Err(Error::InvalidConfig);
-            }
+        {
+            return Err(Error::InvalidConfig);
         }
-    }
-    if size > MAX_CONFIG_BYTES {
-        return Err(Error::InvalidConfig);
     }
     Ok(())
 }
@@ -985,8 +705,7 @@ fn config_bounds(config: &Config) -> Result<(), Error> {
 fn path_text(path: &Path) -> Result<&str, Error> {
     let text = path.to_str().ok_or(Error::UnsafePath)?;
     if !path.is_absolute()
-        || text.len() > model::MAX_CWD_BYTES
-        || text.chars().any(char::is_control)
+        || text.contains('\0')
         || path
             .components()
             .any(|part| matches!(part, Component::CurDir | Component::ParentDir))
@@ -996,15 +715,12 @@ fn path_text(path: &Path) -> Result<&str, Error> {
     }
     Ok(text)
 }
-fn overlap(first: &Path, second: &Path) -> bool {
-    first.starts_with(second) || second.starts_with(first)
-}
 fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
 /// The real file behind a configured executable path (symlinks followed).
 fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
-    path.canonicalize().map_err(|_| Error::UnsafePath)
+    model::plain_canonical(path).ok_or(Error::UnsafePath)
 }
 
 fn ordinary(metadata: &Metadata, directory: bool) -> Result<(), Error> {
@@ -1031,11 +747,9 @@ struct CheckedDirectory {
     path: PathBuf,
     directory: Arc<Dir>,
     edges: Vec<Edge>,
-    #[cfg_attr(not(unix), allow(dead_code))] // Only Unix has a mode to check.
-    private: bool,
 }
 impl CheckedDirectory {
-    fn open(path: &Path, private: bool) -> Result<Self, Error> {
+    fn open(path: &Path) -> Result<Self, Error> {
         path_text(path)?;
         let mut base = PathBuf::new();
         let mut names = Vec::new();
@@ -1076,7 +790,6 @@ impl CheckedDirectory {
             path: path.to_owned(),
             directory,
             edges,
-            private,
         };
         result.verify()?;
         Ok(result)
@@ -1094,19 +807,10 @@ impl CheckedDirectory {
         }
         let metadata = self.directory.dir_metadata().map_err(|_| Error::Changed)?;
         ordinary(&metadata, true)?;
-        #[cfg(unix)]
-        if self.private && cap_std::fs::MetadataExt::mode(&metadata) & 0o777 != 0o700 {
-            return Err(Error::UnsafePermissions);
-        }
         Ok(())
     }
 }
 
-#[derive(Clone, Copy)]
-enum FileKind {
-    Executable,
-    Config,
-}
 #[derive(PartialEq, Eq)]
 struct Stamp {
     identity: (u64, u64),
@@ -1133,18 +837,17 @@ struct CheckedFile {
     name: OsString,
     file: cap_std::fs::File,
     stamp: Stamp,
-    kind: FileKind,
 }
 impl CheckedFile {
-    fn open(path: &Path, kind: FileKind) -> Result<Self, Error> {
+    fn open(path: &Path) -> Result<Self, Error> {
         path_text(path)?;
         let name = path.file_name().ok_or(Error::UnsafePath)?.to_owned();
-        let parent = CheckedDirectory::open(path.parent().ok_or(Error::UnsafePath)?, false)?;
+        let parent = CheckedDirectory::open(path.parent().ok_or(Error::UnsafePath)?)?;
         let before = parent
             .directory
             .symlink_metadata(&name)
             .map_err(|_| Error::UnsafePath)?;
-        Self::check(&before, kind)?;
+        Self::check(&before)?;
         let mut options = OpenOptions::new();
         options.read(true).follow(FollowSymlinks::No).nonblock(true);
         let file = parent
@@ -1152,7 +855,7 @@ impl CheckedFile {
             .open_with(&name, &options)
             .map_err(|_| Error::UnsafePath)?;
         let after = file.metadata().map_err(|_| Error::UnsafePath)?;
-        Self::check(&after, kind)?;
+        Self::check(&after)?;
         if stamp(&before) != stamp(&after) {
             return Err(Error::Changed);
         }
@@ -1162,22 +865,16 @@ impl CheckedFile {
             name,
             file,
             stamp: stamp(&after),
-            kind,
         };
         result.verify()?;
         Ok(result)
     }
-    fn check(metadata: &Metadata, kind: FileKind) -> Result<(), Error> {
+    fn check(metadata: &Metadata) -> Result<(), Error> {
         ordinary(metadata, false)?;
-        if matches!(kind, FileKind::Config) && metadata.nlink() != 1 {
-            return Err(Error::UnsafePermissions);
-        }
         #[cfg(unix)]
         {
             let mode = cap_std::fs::MetadataExt::mode(metadata);
-            if (matches!(kind, FileKind::Config) && mode & 0o777 != 0o600)
-                || (matches!(kind, FileKind::Executable) && mode & 0o111 == 0)
-            {
+            if mode & 0o111 == 0 {
                 return Err(Error::UnsafePermissions);
             }
         }
@@ -1192,7 +889,7 @@ impl CheckedFile {
                 .symlink_metadata(&self.name)
                 .map_err(|_| Error::Changed)?,
         ] {
-            Self::check(&metadata, self.kind)?;
+            Self::check(&metadata)?;
             if stamp(&metadata) != self.stamp {
                 return Err(Error::Changed);
             }
@@ -1206,50 +903,28 @@ impl CheckedFile {
 mod tests;
 
 #[cfg(test)]
-mod env_allowlist_tests {
+mod environment_tests {
     use super::{allowed_profile_env, env_name};
 
     #[test]
-    fn windows_system_variables_are_allowed_by_exact_name_only() {
-        for name in [
-            "SystemRoot",
-            "SYSTEMROOT",
-            "windir",
-            "SystemDrive",
-            "USERPROFILE",
-            "APPDATA",
-            "LOCALAPPDATA",
-            "TEMP",
-            "TMP",
-            "COMSPEC",
-            "PATHEXT",
-            "HOMEDRIVE",
-            "HOMEPATH",
-            "USERNAME",
-            "PROGRAMDATA",
-            "ProgramData",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramW6432",
-        ] {
-            assert!(env_name(name), "{name}");
-            assert!(allowed_profile_env(name), "{name}");
-        }
-        // The parenthesised spelling is one exact name, not a syntax relaxation.
-        for name in [
-            "ProgramFiles(x64)",
-            "programfiles(x86)",
-            "ProgramFiles(x86)=",
-            "SYSTEMROOT ",
-            "systemroot",
+    fn configured_environment_accepts_operator_names_but_strips_session_identity() {
+        for key in [
             "NODE_OPTIONS",
             "PSModulePath",
-            "TMUX",
-            "AGENTHUB_SESSION",
+            "SystemRoot",
+            "ProgramFiles(x86)",
+            "1VAR",
+            "custom.name",
         ] {
-            assert!(!allowed_profile_env(name), "{name}");
+            assert!(env_name(key));
+            assert!(allowed_profile_env(key));
         }
-        assert!(!env_name("ProgramFiles(x64)"));
-        assert!(!env_name("Program Files"));
+        for key in ["", "BAD=KEY", "BAD\0KEY"] {
+            assert!(!env_name(key));
+            assert!(!allowed_profile_env(key));
+        }
+        for key in super::DENIED_ENV {
+            assert!(!allowed_profile_env(key));
+        }
     }
 }

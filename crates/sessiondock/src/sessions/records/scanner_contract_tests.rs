@@ -11,9 +11,6 @@ const CHUNKS: [usize; 4] = [1, 2, 7, 64 * 1024];
 fn strict_limits() -> Limits {
     Limits {
         inline_string_bytes: 2 * 1024 * 1024,
-        resident_bytes: 8 * 1024 * 1024,
-        depth: 128,
-        ..Limits::default()
     }
 }
 
@@ -374,38 +371,24 @@ fn every_truncated_prefix_matches_serde_acceptance_and_value() {
 }
 
 #[test]
-fn nested_containers_match_serde_within_the_shared_depth_budget() {
+fn nested_containers_match_serde_without_a_service_depth_quota() {
     for depth in [0, 1, 2, 16, 63, 64, 100] {
         let array = format!("{}null{}", "[".repeat(depth), "]".repeat(depth));
         assert_exact(array.as_bytes(), &format!("array depth {depth}"));
         let object = format!("{}true{}", "{\"k\":".repeat(depth), "}".repeat(depth));
         assert_exact(object.as_bytes(), &format!("object depth {depth}"));
     }
-    let too_deep = format!("{}null{}", "[".repeat(129), "]".repeat(129));
-    assert_both_reject(too_deep.as_bytes(), "beyond both depth budgets");
 }
 
 #[test]
-fn duplicate_keys_are_an_explicit_fail_closed_difference_from_serde() {
+fn duplicate_keys_match_serde_last_value_wins_behavior() {
     for bytes in [
         br#"{"a":1,"a":2}"#.as_slice(),
         br#"{"a":1,"\u0061":2}"#,
         br#"{"nested":[{"x":null,"x":false}]}"#,
         br#"{"":1,"":1}"#,
     ] {
-        assert!(serde_json::from_slice::<Value>(bytes).is_ok());
-        for chunk in CHUNKS {
-            let error = scan(
-                Chunked {
-                    remaining: bytes,
-                    chunk,
-                },
-                strict_limits(),
-            )
-            .err()
-            .expect("duplicate key must fail closed");
-            assert_eq!(error.kind, ErrorKind::DuplicateKey);
-        }
+        assert_exact(bytes, "duplicate key");
     }
     // Key identity is scoped to one object, not globally to the whole document.
     assert_exact(

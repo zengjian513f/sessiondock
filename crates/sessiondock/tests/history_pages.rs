@@ -69,12 +69,10 @@ impl Fixture {
             },
             // Batch 44 WP-A: the default page is 2000 events and pools queue
             // for up to 10 s; this suite walks 200-event pages against the
-            // original 4-reader / 8-response sizing with immediate rejection
-            // (`wait: ZERO`) so the eight-slot admission test stays exact.
+            // original 4-reader / 8-response sizing with queued admission
             pools: sessiondock::config::Pools {
                 history_page_events: 200,
                 read_workers: 4,
-                wait: std::time::Duration::ZERO,
                 ..Default::default()
             },
             ..Default::default()
@@ -570,7 +568,7 @@ async fn page_tokens_are_parameter_checked_and_bound_to_owner_and_exact_agent() 
 }
 
 #[tokio::test]
-async fn held_page_responses_and_retained_frames_keep_all_eight_admission_slots() {
+async fn held_page_responses_queue_the_ninth_request_until_a_retained_frame_is_released() {
     let mut f = Fixture::new();
     f.claude("slow-consumers", &claude_rows("slow-consumers", 1500, 1));
     let app = f.app();
@@ -591,9 +589,16 @@ async fn held_page_responses_and_retained_frames_keep_all_eight_admission_slots(
         assert!(policy.contains("private") && policy.contains("no-store"));
         held.push(response);
     }
-    assert_eq!(
-        get(&app, &uri).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
+    let mut queued = tokio::spawn({
+        let app = app.clone();
+        let uri = uri.clone();
+        async move { get(&app, &uri).await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err(),
+        "the ninth response waits while all admission slots are retained"
     );
     let mut response_body = held.pop().unwrap().into_body();
     let frame = response_body
@@ -605,13 +610,19 @@ async fn held_page_responses_and_retained_frames_keep_all_eight_admission_slots(
         .unwrap();
     assert!(!frame.is_empty());
     drop(response_body);
-    assert_eq!(
-        get(&app, &uri).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE,
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err(),
         "retained data still owns admission after Body drop"
     );
     drop(frame);
-    let recovered = ok(&app, &uri).await;
+    let recovered_response = tokio::time::timeout(Duration::from_secs(2), queued)
+        .await
+        .expect("queued response completes after an admission slot is released")
+        .unwrap();
+    assert_eq!(recovered_response.status(), StatusCode::OK);
+    let recovered = body(recovered_response).await;
     assert_eq!(recovered["page"]["cursor"], cursor);
     assert!(!recovered["messages"].as_array().unwrap().is_empty());
     drop(held);

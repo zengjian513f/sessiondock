@@ -3,9 +3,8 @@
 
 GET /api/term/list still publishes sources/resume_sources for claude, codex and
 grok when each source has both an interactive profile and a cheapest-model
-worker named in bug_report_profiles. POST /api/term/create without adapter_id
-launches the interactive CLI (launch_kind new_pending for Codex). An explicit
-worker adapter_id is not silently remapped; an unknown adapter_id is 400.
+worker named in bug_report_profiles. POST /api/term/create selects the
+interactive CLI by source, matching Python; legacy adapter_id input is ignored.
 """
 from __future__ import annotations
 import argparse, json, os, subprocess, tempfile, time
@@ -77,7 +76,7 @@ def profile(pid, source, exe, work, home, extra):
         "id": pid, "source": source, "executable": str(exe.resolve()),
         "resume_args": extra["resume"],
         "env": {"PATH": "/usr/bin:/bin", "HOME": home},
-        "cwd_roots": [work],
+
     }
     if extra.get("args"):
         row["args"] = extra["args"]
@@ -103,24 +102,23 @@ def run(opener, base, work):
     kill(opener, base, rec)
     passed("POST /api/term/create no adapter_id launch_kind=new_pending")
 
-    rec, raw, code = call(opener, base, "POST", "/api/term/create",
-                          {"source": "codex", "cwd": work, "request_id": "term-sources-worker",
-                           "adapter_id": "codex-bug-report-v1"}, want=None)
-    if code == 200:
-        rec = wait_run(opener, base, rec)
-        kill(opener, base, rec)
-        passed("POST /api/term/create adapter_id=codex-bug-report-v1 HTTP 200 honoured")
-    elif code == 400 and rec.get("code") == "launch_adapter":
-        passed("POST /api/term/create adapter_id=codex-bug-report-v1 HTTP 400 launch_adapter")
-    else:
-        fail("explicit worker adapter", f"HTTP {code} {rec.get('code')}", raw)
+    rec, raw, _ = call(opener, base, "POST", "/api/term/create",
+                       {"source": "codex", "cwd": work, "request_id": "term-sources-worker",
+                        "adapter_id": "codex-bug-report-v1"})
+    if rec.get("launch_kind") != "new_pending":
+        fail("ignored worker adapter", rec, raw)
+    rec = wait_run(opener, base, rec)
+    kill(opener, base, rec)
+    passed("POST /api/term/create ignores worker adapter_id and selects interactive source")
 
-    err, raw, _ = call(opener, base, "POST", "/api/term/create",
+    rec, raw, _ = call(opener, base, "POST", "/api/term/create",
                        {"source": "codex", "cwd": work, "request_id": "term-sources-missing",
-                        "adapter_id": "missing-v1"}, want=400)
-    if err.get("code") != "launch_adapter":
-        fail("missing adapter", err.get("code"), raw)
-    passed("POST /api/term/create adapter_id=missing-v1 HTTP 400 launch_adapter")
+                        "adapter_id": "missing-v1"})
+    if rec.get("launch_kind") != "new_pending":
+        fail("ignored missing adapter", rec, raw)
+    rec = wait_run(opener, base, rec)
+    kill(opener, base, rec)
+    passed("POST /api/term/create ignores unknown adapter_id")
 
 
 def main():
@@ -166,7 +164,7 @@ def main():
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [work], "adapters": [], "profiles": profiles,
+            "adapters": [], "profiles": profiles,
             "bug_report_profiles": {
                 "claude": "claude-bug-report-v1",
                 "codex": "codex-bug-report-v1",

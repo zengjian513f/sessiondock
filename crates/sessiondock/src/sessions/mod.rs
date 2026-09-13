@@ -46,11 +46,6 @@ use sha1::{Digest, Sha1};
 
 pub(crate) use index::{CandidateRef, IndexSnapshot};
 
-/// Physical work budgets against pathological files — the single source for
-/// every per-file/per-view limit, mirroring the table in
-/// `docs/read-model.md` ("物理工作预算"). They cap the work one opened session
-/// may cost this process (413 for that session only); they are not resident
-/// memory promises, not RSS limits and never a reason to fail the list.
 /// Resident-memory hygiene (batch 44 WP-A). glibc keeps freed memory in
 /// per-thread arenas and rarely returns it on its own; with 256 runtime
 /// threads a dropped 300 MB projection stayed in RSS. `malloc_trim(0)` walks
@@ -76,39 +71,11 @@ pub mod memory {
 pub(crate) mod budgets {
     const KIB: usize = 1024;
     const MIB: usize = 1024 * KIB;
-    const GIB: usize = 1024 * MIB;
-    /// 单条原生记录（真实最长行 2.9 MB）。
-    pub const RECORD_BYTES: usize = 64 * MIB;
-    /// 单文件全量解析（真实最大文件 228 MB）；also the inherited fork prefix cap.
-    pub const FILE_BYTES: u64 = 4 * GIB as u64;
-    /// 每文件 LF 检查点（真实最多 36,124 行）。
-    pub const FILE_CHECKPOINTS: usize = 2_000_000;
-    /// 每视图解析记录 / 事件。
-    pub const VIEW_RECORDS: usize = 1_000_000;
-    pub const VIEW_EVENTS: usize = 2_000_000;
-    /// 视图序列化消息（228 MB 文件投影后约 50–100 MB）。
-    pub const VIEW_BYTES: usize = GIB;
-    /// 进程内索引容量（检查点与 digest 的记账上限，不是预分配）。
-    pub const INDEX_BYTES: usize = GIB;
     /// 视图缓存：LRU 条数 + 序列化消息合计字节（默认值；运行时以
     /// [`caches()`] 为准，第四十四批 WP-A 可用环境变量覆盖）。
     pub const VIEW_CACHE_ENTRIES: usize = 16;
     pub const VIEW_CACHE_BYTES: usize = 128 * MIB;
-    /// 非 Grok / Grok 摘要文件（Claude agent sidecar `meta.json`, Grok `summary.json`）。
-    pub const SUMMARY_BYTES: u64 = 256 * MIB as u64;
-    pub const GROK_SUMMARY_BYTES: u64 = 16 * MIB as u64;
-    // Derived from the rows above (not separately tabulated):
-    /// Strings above this stay private spans during the structural scan so
-    /// large images route through span authority (docs/native-input.md);
-    /// ordinary text spans are materialized afterwards up to RECORD_BYTES.
     pub const INLINE_STRING_BYTES: usize = 2 * MIB;
-    /// Conservative per-record AST weight, 4× the physical record (was 8 MiB
-    /// for 2 MiB records).
-    pub const RECORD_RESIDENT_BYTES: usize = 4 * RECORD_BYTES;
-    /// Structural node/key caps scaled with the record budget (32× the
-    /// scanner defaults that guarded 2 MiB records).
-    pub const RECORD_NODES: usize = 3_200_000;
-    pub const RECORD_KEYS: usize = 1_600_000;
     /// Reusable decoded-AST cache behind incremental append: one entry per
     /// cached view, weight-bounded like the view cache. Its weight is a
     /// conservative estimate of the resident `serde_json::Value` tree, so
@@ -154,9 +121,6 @@ pub(crate) mod budgets {
     }
 }
 
-const FILE_LIMIT: u64 = budgets::FILE_BYTES;
-const SUMMARY_LIMIT: u64 = budgets::SUMMARY_BYTES;
-const GROK_SUMMARY_LIMIT: u64 = budgets::GROK_SUMMARY_BYTES;
 const CURSOR_SCHEMA: &str = "rs-m2-1";
 /// How old the published list may be when a view is opened (batch 44 WP-A);
 /// `/api/sessions` keeps the index's own 500 ms window.
@@ -896,9 +860,6 @@ impl SessionStore {
         force: bool,
         ttl: std::time::Duration,
     ) -> Result<Prepared, SessionError> {
-        if agent.len() > 256 {
-            return Err(SessionError::new(400, "子代理参数过长"));
-        }
         // A view opens against a list up to OPEN_TTL old: new files, changed
         // ownership and duplicate SIDs still show up within seconds, while the
         // view itself re-`stat`s the files it displays (batch 44 WP-A).
@@ -1178,11 +1139,28 @@ pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha1::digest(bytes))
 }
 
+pub(crate) fn path_text(path: &Path) -> std::borrow::Cow<'_, str> {
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        // Python's `str(Path.resolve())` uses an ordinary drive/UNC spelling,
+        // while Rust canonicalize returns the Win32 verbatim `\\?\` form.
+        // UIDs are a hash of Python's spelling and must stay identical whether
+        // the caller passes a configured path or its canonicalized equivalent.
+        if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
+            return format!("\\\\{rest}").replace('/', "\\").into();
+        }
+        if let Some(rest) = text.strip_prefix("\\\\?\\") {
+            return rest.replace('/', "\\").into();
+        }
+        return text.replace('/', "\\").into();
+    }
+    #[cfg(not(windows))]
+    text
+}
+
 pub(crate) fn uid_for(source: &str, path: &Path) -> String {
-    format!(
-        "{source}:{}",
-        &hash(path.to_string_lossy().as_bytes())[..16]
-    )
+    format!("{source}:{}", &hash(path_text(path).as_bytes())[..16])
 }
 
 fn timestamp(nanos: u128) -> String {
@@ -1195,17 +1173,26 @@ fn timestamp(nanos: u128) -> String {
 }
 
 pub(crate) fn stamp(path: &Path) -> Result<FileStamp, SessionError> {
-    let metadata = fs::symlink_metadata(path)
+    let file =
+        fs::File::open(path).map_err(|_| SessionError::new(503, "已配置的会话文件暂时不可读取"))?;
+    file_stamp(&file)
+}
+
+pub(super) fn file_stamp(file: &fs::File) -> Result<FileStamp, SessionError> {
+    #[cfg(windows)]
+    let metadata = cap_std::fs::Metadata::from_file(file)
         .map_err(|_| SessionError::new(503, "已配置的会话文件暂时不可读取"))?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
-        return Err(SessionError::new(
-            403,
-            "会话输入必须是普通文件，不支持符号链接",
-        ));
+    #[cfg(not(windows))]
+    let metadata = file
+        .metadata()
+        .map_err(|_| SessionError::new(503, "已配置的会话文件暂时不可读取"))?;
+    if !metadata.is_file() {
+        return Err(SessionError::new(403, "会话输入必须是普通文件"));
     }
     Ok(metadata_stamp(&metadata))
 }
 
+#[cfg(not(windows))]
 fn metadata_stamp(metadata: &fs::Metadata) -> FileStamp {
     let modified = metadata
         .modified()
@@ -1213,7 +1200,6 @@ fn metadata_stamp(metadata: &fs::Metadata) -> FileStamp {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    #[cfg(unix)]
     let identity = {
         use std::os::unix::fs::MetadataExt;
         format!(
@@ -1224,15 +1210,10 @@ fn metadata_stamp(metadata: &fs::Metadata) -> FileStamp {
             metadata.ctime_nsec()
         )
     };
-    #[cfg(not(unix))]
-    let identity = format!("{:?}", metadata.created().ok());
-    #[cfg(unix)]
     let file_identity = {
         use std::os::unix::fs::MetadataExt;
         format!("{}:{}", metadata.dev(), metadata.ino())
     };
-    #[cfg(not(unix))]
-    let file_identity = identity.clone();
     FileStamp {
         size: metadata.len(),
         modified,
@@ -1241,33 +1222,27 @@ fn metadata_stamp(metadata: &fs::Metadata) -> FileStamp {
     }
 }
 
-pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError> {
-    if path.to_str().is_none() {
-        return Err(SessionError::new(
-            501,
-            "M1 尚不支持非 UTF-8 会话路径；不能用替换字符生成冲突 UID",
-        ));
+#[cfg(windows)]
+fn metadata_stamp(metadata: &cap_std::fs::Metadata) -> FileStamp {
+    use cap_fs_ext::MetadataExt;
+    let modified = metadata
+        .modified()
+        .ok()
+        .map(cap_std::time::SystemTime::into_std)
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    let file_identity = format!("{}:{}", metadata.dev(), metadata.ino());
+    FileStamp {
+        size: metadata.len(),
+        modified,
+        identity: file_identity.clone(),
+        file_identity,
     }
+}
+
+pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError> {
     if !path.starts_with(root) {
         return Err(SessionError::new(403, "会话输入路径越过已配置的数据源边界"));
-    }
-    let normalized = path
-        .canonicalize()
-        .map_err(|_| SessionError::new(503, "已索引的会话路径暂时不可解析"))?;
-    if normalized != path || !normalized.starts_with(root) {
-        return Err(SessionError::new(
-            403,
-            "会话路径或父目录已被替换为符号链接；拒绝跟随",
-        ));
-    }
-    // canonical equality alone cannot detect a link that points back to an
-    // identically named location. Explicitly reject every linked ancestor.
-    for ancestor in path.ancestors() {
-        let metadata = fs::symlink_metadata(ancestor)
-            .map_err(|_| SessionError::new(503, "无法确认会话路径的父目录"))?;
-        if metadata.file_type().is_symlink() {
-            return Err(SessionError::new(403, "会话输入路径不能经过符号链接"));
-        }
     }
     Ok(())
 }
@@ -1275,21 +1250,9 @@ pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError>
 pub(crate) fn restamp(candidate: &Candidate) -> Result<Candidate, SessionError> {
     let mut next = candidate.clone();
     next.stamps.clear();
-    // Only an actual NotFound for Grok's optional chat means an empty history.
-    // Check its existing parent first; permission/type/link failures are not
-    // absence and must not silently replace a transcript with an empty view.
     let has_data = if candidate.source == "grok" {
         trusted_path(&candidate.root, &candidate.path)?;
-        match fs::symlink_metadata(&candidate.data) {
-            Ok(_) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-            Err(_) => {
-                return Err(SessionError::new(
-                    503,
-                    "Grok 聊天文件无法检查，不能视为尚未创建",
-                ));
-            }
-        }
+        fs::metadata(&candidate.data).is_ok_and(|metadata| metadata.is_file())
     } else {
         true
     };
@@ -1300,12 +1263,6 @@ pub(crate) fn restamp(candidate: &Candidate) -> Result<Candidate, SessionError> 
     if let Some(summary) = &candidate.summary {
         trusted_path(&candidate.root, summary)?;
         let summary_stamp = stamp(summary)?;
-        if candidate.source == "grok" && summary_stamp.size > GROK_SUMMARY_LIMIT {
-            return Err(SessionError::new(
-                413,
-                "Grok summary.json 超过 16 MiB 元数据预算",
-            ));
-        }
         next.stamps.push(summary_stamp);
     }
     Ok(next)

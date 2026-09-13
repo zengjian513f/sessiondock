@@ -122,10 +122,21 @@ def run(opener, base, state, extra):
     passed("star list unstar (spawned_by untouched)")
     want(opener, base, STAR, 400, {"uid": "", "starred": True}, code="invalid_metadata_uid")
     want(opener, base, STAR, 404, {"uid": "codex:missing", "starred": True}, code="session_missing")
-    want(opener, base, STAR, 400, {"uid": "x" * 257, "starred": True}, code="invalid_metadata_uid")
+    want(opener, base, STAR, 404, {"uid": "x" * 257, "starred": True}, code="session_missing")
     passed("invalid uid 400/404")
-    want(opener, base, STAR, 413, data=json.dumps({"uid": uid, "starred": True, "padding": "x" * 9000}).encode())
-    passed("body over 8 KiB 413")
+    endpoint = urlsplit(base)
+    conn = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=10)
+    try:
+        conn.putrequest("POST", STAR)
+        conn.putheader("Content-Type", "application/json")
+        conn.putheader("Content-Length", str(4 * 1024 * 1024 + 1))
+        conn.endheaders()
+        response = conn.getresponse()
+        assert response.status == 413, response.status
+        response.read()
+    finally:
+        conn.close()
+    passed("Python metadata body over 4 MiB 413")
     extra_code, _, extra_raw = call(opener, base, STAR, {"uid": uid, "starred": True, "unknown_field": 1})
     if extra_code != 200:
         fail("unknown", f"HTTP {extra_code} (request types omit deny_unknown_fields)", extra_raw)

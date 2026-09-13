@@ -21,39 +21,27 @@ fn max_weight() -> usize {
 fn max_entries() -> usize {
     budgets::caches().ast_entries
 }
-/// Physical bytes of one ordinary record (docs/read-model.md: 单条原生记录).
-const LINE_LIMIT: usize = budgets::RECORD_BYTES;
 /// Strings longer than this become private spans during the structural scan.
 const SPAN_THRESHOLD: usize = budgets::INLINE_STRING_BYTES;
-const ROW_LIMIT: usize = budgets::VIEW_RECORDS;
 
 /// Structural limits shared by the small-record and streaming record paths.
-fn record_limits(physical_bytes: u64) -> scanner::Limits {
-    scanner::Limits {
-        inline_string_bytes: SPAN_THRESHOLD,
-        resident_bytes: budgets::RECORD_RESIDENT_BYTES,
-        physical_bytes,
-        depth: 128,
-        nodes: budgets::RECORD_NODES,
-        keys: budgets::RECORD_KEYS,
-        ..Default::default()
-    }
+fn record_limits() -> scanner::Limits {
+    scanner::Limits::native(SPAN_THRESHOLD)
 }
 
 /// Strict small-record adapter. The pull decoder separately handles private
 /// large spans; never replace them with public markers or empty strings here.
 pub(super) fn decode_record(line: &[u8]) -> Result<Value, scanner::ScanError> {
-    scanner::scan_value(line, record_limits(LINE_LIMIT as u64))
+    scanner::scan_value(line, record_limits())
 }
 
 /// A whole resident line (push path: tests and the empty Grok chat) has no
-/// file to read spans back from; strings up to the record budget stay inline.
+/// file to read spans back from; all strings from the actual line stay inline.
 fn decode_resident_record(line: &[u8]) -> Result<Value, scanner::ScanError> {
     scanner::scan_value(
         line,
         scanner::Limits {
-            inline_string_bytes: LINE_LIMIT,
-            ..record_limits(LINE_LIMIT as u64)
+            inline_string_bytes: line.len(),
         },
     )
 }
@@ -71,8 +59,7 @@ pub(crate) struct RecordCache {
     entries: BTreeMap<String, Entry>,
     weight: usize,
     clock: u64,
-    /// This cache's budget: the process-wide one by default; tests that
-    /// exercise the 64 MiB record / million-row limits raise it.
+    /// This cache's retention budget; oversized parsed records stay readable.
     max_weight: usize,
     max_entries: usize,
     #[cfg(test)]
@@ -183,7 +170,7 @@ impl RecordCache {
     ) -> Batch {
         let (batch, _) = self
             .decode_input(candidate, previous, |decoder, probe| {
-                scan_records(bytes, decoder, probe, super::FILE_LIMIT)
+                scan_records(bytes, decoder, probe)
             })
             .unwrap();
         assert_eq!(batch.committed, committed);
@@ -251,7 +238,6 @@ pub(super) struct Decoder {
     skip: u64,
     offset: u64,
     line: Vec<u8>,
-    oversized: bool,
     invalid: usize,
     error: Option<String>,
     #[cfg(test)]
@@ -278,7 +264,6 @@ impl Decoder {
             skip,
             offset: 0,
             line: Vec::new(),
-            oversized: false,
             invalid,
             error: None,
             #[cfg(test)]
@@ -300,32 +285,12 @@ impl Decoder {
                 continue;
             }
             let complete = piece.last() == Some(&b'\n');
-            if self.line.len().saturating_add(piece.len()) > LINE_LIMIT {
-                self.oversized = true;
-                self.line.clear();
-            }
-            if !self.oversized {
-                let length = self.line.len() + piece.len();
-                if length > self.line.capacity() {
-                    let capacity = length
-                        .max(self.line.capacity().saturating_mul(2))
-                        .min(LINE_LIMIT);
-                    if self
-                        .line
-                        .try_reserve_exact(capacity - self.line.len())
-                        .is_err()
-                    {
-                        self.error = Some("原生记录缓冲区分配失败".into());
-                        continue;
-                    }
-                }
-                self.line.extend_from_slice(piece);
-            }
-            if !complete {
+            if self.line.try_reserve(piece.len()).is_err() {
+                self.error = Some("原生记录缓冲区分配失败".into());
                 continue;
             }
-            if self.oversized {
-                self.error = Some("单条原生记录超过 64 MiB 上限".into());
+            self.line.extend_from_slice(piece);
+            if !complete {
                 continue;
             }
             if !self.line.iter().all(u8::is_ascii_whitespace) {
@@ -342,9 +307,6 @@ impl Decoder {
                         self.records.push((row, self.offset));
                     }
                     _ => self.invalid += 1,
-                }
-                if self.records.len() > ROW_LIMIT {
-                    self.error = Some("原生记录超过 1000000 条限制".into());
                 }
             }
             self.line.clear();
@@ -368,7 +330,6 @@ pub(super) fn scan_records(
     reader: impl std::io::Read,
     decoder: &mut Decoder,
     probe: Option<u64>,
-    maximum: u64,
 ) -> Result<RawIndex, SessionError> {
     struct Tee<'a, R> {
         reader: R,
@@ -382,13 +343,9 @@ pub(super) fn scan_records(
         }
     }
     let tee = Tee { reader, decoder };
-    let limits = super::native_input::IndexLimits {
-        max_bytes: maximum,
-        ..Default::default()
-    };
     match probe {
-        Some(end) => RawIndex::scan_with_probe(tee, limits, Some(end)),
-        None => RawIndex::scan(tee, limits),
+        Some(end) => RawIndex::scan_with_probe(tee, Some(end)),
+        None => RawIndex::scan(tee),
     }
 }
 fn same_file(old: &Candidate, new: &Candidate) -> bool {

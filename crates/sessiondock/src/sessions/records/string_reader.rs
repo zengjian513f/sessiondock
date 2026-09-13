@@ -5,7 +5,6 @@ use sha1::{Digest, Sha1};
 use std::io::{self, Read};
 
 const BUFFER: usize = 8192;
-const MAX_PHYSICAL: u64 = 256 * 1024 * 1024;
 
 fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid native JSON string")
@@ -43,10 +42,10 @@ impl<R: Read> JsonStringReader<R> {
         expected_sha1: [u8; 20],
         physical_limit: u64,
     ) -> io::Result<Self> {
-        if physical_limit > MAX_PHYSICAL || expected_decoded_len > physical_limit {
+        if expected_decoded_len > physical_limit {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "native JSON string exceeds operation budget",
+                "native JSON string exceeds its source range",
             ));
         }
         Ok(Self {
@@ -100,7 +99,7 @@ impl<R: Read> JsonStringReader<R> {
         if count as u64 > self.physical_limit - self.physical {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "native JSON string exceeds operation budget",
+                "native JSON string exceeds its source range",
             ));
         }
         self.physical += count as u64;

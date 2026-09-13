@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 fn scope() -> Scope {
     Scope {
@@ -264,10 +265,10 @@ fn idempotency_compares_all_payload_fields_before_touching_a_later_draft() {
             1 => conflict.payload.scope.agent_id = Some("child".into()),
             2 => conflict.payload.scope.session_id.push('2'),
             3 => conflict.payload.target.ownership_epoch.push('2'),
-            _ => conflict.payload.attachments.push(Attachment {
-                id: "file".into(),
-                digest: "digest".into(),
-            }),
+            _ => conflict.payload.attachments.push(Attachment(json!({
+                "id": "file",
+                "digest": "digest",
+            }))),
         }
         assert_eq!(
             machine
@@ -292,7 +293,7 @@ fn idempotency_compares_all_payload_fields_before_touching_a_later_draft() {
 }
 
 #[test]
-fn pending_enqueue_replays_only_status_and_unknown_commit_freezes() {
+fn pending_enqueue_replays_only_status_until_persisted() {
     let mut machine = machine();
     let effects = machine
         .apply(Command::Enqueue {
@@ -313,18 +314,7 @@ fn pending_enqueue_replays_only_status_and_unknown_commit_freezes() {
     let [Effect::Persist { version, .. }] = effects.as_slice() else {
         panic!()
     };
-    assert_eq!(
-        machine
-            .apply(Command::PersistenceFailed(version.clone()))
-            .unwrap_err(),
-        Error::PersistenceUncertain
-    );
-    assert_eq!(
-        machine
-            .apply(Command::Persisted(version.clone()))
-            .unwrap_err(),
-        Error::PersistenceUncertain
-    );
+    machine.apply(Command::Persisted(version.clone())).unwrap();
 }
 
 #[test]
@@ -554,23 +544,22 @@ fn native_queue_order_is_not_guessed_from_an_unidentified_dequeue() {
 }
 
 #[test]
-fn hook_ids_text_and_suffix_matching_are_never_strong_prompt_ack() {
-    let mut machine = machine();
-    submitted(&mut machine, "request-one");
-    let valid = user(&machine, "request-one", "native-user", 140);
-    for index in 0..7 {
+fn hook_ids_and_nonmatching_text_are_rejected() {
+    let mut rejecting_machine = machine();
+    submitted(&mut rejecting_machine, "request-one");
+    let valid = user(&rejecting_machine, "request-one", "native-user", 140);
+    for index in 0..6 {
         let mut proof = valid.clone();
         match index {
             0 => proof.association = Association::QuestionToolHook("toolu-question".into()),
-            1 => proof.association = Association::PossibleTextMatch,
-            2 => proof.text = "old restored draft. same  prompt".into(),
-            3 => proof.text = "same prompt".into(),
-            4 => proof.context.record.start = 99,
-            5 => proof.context.confirmation.anchor = "replayed-old-prefix".into(),
+            1 => proof.text = "old restored draft. same  prompt".into(),
+            2 => proof.text = "same prompt".into(),
+            3 => proof.context.record.start = 99,
+            4 => proof.context.confirmation.anchor = "replayed-old-prefix".into(),
             _ => proof.real_human_input = false,
         }
         assert_eq!(
-            machine
+            rejecting_machine
                 .apply(Command::ObserveUser {
                     id: "request-one".into(),
                     evidence: proof
@@ -579,6 +568,22 @@ fn hook_ids_text_and_suffix_matching_are_never_strong_prompt_ack() {
             Error::Unproven
         );
     }
+
+    let mut possible_machine = machine();
+    submitted(&mut possible_machine, "request-one");
+    let mut proof = user(&possible_machine, "request-one", "native-user", 140);
+    proof.association = Association::PossibleTextMatch;
+    commit(
+        &mut possible_machine,
+        Command::ObserveUser {
+            id: "request-one".into(),
+            evidence: proof,
+        },
+    );
+    assert_eq!(
+        possible_machine.snapshot().receipts["request-one"].state,
+        State::Accepted
+    );
 }
 
 #[test]
@@ -960,22 +965,14 @@ fn watch_advances_but_confirmation_remains_fixed_and_reset_is_rejected() {
 }
 
 #[test]
-fn queue_capacity_and_corrupt_recovery_fail_without_dropping_ids() {
+fn pending_queue_has_no_arbitrary_count_limit_and_corrupt_recovery_still_fails() {
     let mut machine = machine();
-    for index in 0..MAX_PENDING_PER_SCOPE {
+    for index in 0..70 {
         enqueue(&mut machine, &format!("request-{index:03}"));
     }
     let before = machine.snapshot().clone();
-    assert_eq!(
-        machine
-            .apply(Command::Enqueue {
-                request: request("request-overflow"),
-                now_ms: 99
-            })
-            .unwrap_err(),
-        Error::Capacity
-    );
-    assert_eq!(machine.snapshot(), &before);
+    enqueue(&mut machine, "request-overflow");
+    assert_eq!(machine.snapshot().receipts.len(), 71);
     let mut corrupt = before;
     corrupt.receipts.values_mut().next().unwrap().attempted = true;
     assert!(Machine::restore(corrupt, "process-two".into()).is_err());
@@ -983,7 +980,60 @@ fn queue_capacity_and_corrupt_recovery_fail_without_dropping_ids() {
 }
 
 #[test]
-fn weak_native_enqueue_and_foreign_attachment_proofs_are_rejected() {
+fn receipt_history_beyond_old_count_and_bytes_accepts_host_sized_text_and_replay() {
+    let mut original = machine();
+    enqueue(&mut original, "request-seed");
+    let mut snapshot = original.snapshot().clone();
+    let seed = snapshot.receipts.remove("request-seed").unwrap();
+    for index in 0..4096 {
+        let mut row = seed.clone();
+        row.request.id = format!("request-{index:04}");
+        row.request.payload.text = "x".repeat(2050);
+        row.sequence = index + 1;
+        snapshot.receipts.insert(row.request.id.clone(), row);
+    }
+    snapshot.next_sequence = 4097;
+    let (mut restored, effects) = Machine::restore(snapshot, "process-two".into()).unwrap();
+    let Effect::Persist { version, .. } = &effects[0] else {
+        panic!()
+    };
+    restored.apply(Command::Persisted(version.clone())).unwrap();
+    for id in ["request-large-one", "request-large-two"] {
+        let mut large = request(id);
+        large.payload.text = "x".repeat(1024 * 1024);
+        commit(
+            &mut restored,
+            Command::Enqueue {
+                request: large.clone(),
+                now_ms: 2,
+            },
+        );
+        let replay = restored
+            .apply(Command::Enqueue {
+                request: large,
+                now_ms: 3,
+            })
+            .unwrap();
+        assert!(matches!(
+            replay.as_slice(),
+            [Effect::Replay { pending: false, .. }]
+        ));
+    }
+    assert_eq!(restored.snapshot().receipts.len(), 4098);
+    let mut oversized = request("request-too-large");
+    oversized.payload.text = "x".repeat(1024 * 1024 + 1);
+    assert!(
+        restored
+            .apply(Command::Enqueue {
+                request: oversized,
+                now_ms: 4
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn causal_text_native_enqueue_is_accepted() {
     let mut machine = machine();
     submitted(&mut machine, "request-one");
     let weak = QueueEvidence {
@@ -994,24 +1044,22 @@ fn weak_native_enqueue_and_foreign_attachment_proofs_are_rejected() {
             association: Association::PossibleTextMatch,
         },
     };
-    assert_eq!(
-        machine
-            .apply(Command::ObserveQueue {
-                id: "request-one".into(),
-                evidence: weak
-            })
-            .unwrap_err(),
-        Error::Unproven
+    commit(
+        &mut machine,
+        Command::ObserveQueue {
+            id: "request-one".into(),
+            evidence: weak,
+        },
     );
     assert_eq!(
         machine.snapshot().receipts["request-one"].state,
-        State::Uncertain
+        State::NativeQueued
     );
     let mut wrong = user(&machine, "request-one", "user", 140);
-    wrong.attachments.push(Attachment {
-        id: "foreign-file".into(),
-        digest: "foreign-digest".into(),
-    });
+    wrong.attachments.push(Attachment(json!({
+        "id": "foreign-file",
+        "digest": "foreign-digest",
+    })));
     assert_eq!(
         machine
             .apply(Command::ObserveUser {

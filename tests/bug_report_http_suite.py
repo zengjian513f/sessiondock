@@ -201,6 +201,14 @@ def run(opener, base, root, repo):
                       raw=b"\x89PNG\x09", content_type="image/png")
     if other.get("name") != "截图__1.png":
         fail("attachment upload", "different content not numbered", raw)
+    # Exercise a large upload through the complete HTTP path. Python permits
+    # attachments up to 512 MiB.
+    large_bytes = b"attachment-body-parity\n" * (33 * 1024 * 1024 // 23 + 1)
+    large, raw = call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=large.bin",
+                      raw=large_bytes, content_type="application/octet-stream")
+    if large.get("ok") is not True or Path(large["path"]).read_bytes() != large_bytes:
+        fail("attachment upload", "large HTTP upload changed or truncated bytes", raw)
+    del large_bytes
     call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=a.png&id=07",
          raw=b"x", content_type="image/png", want=400)
     call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=a.png",
@@ -322,14 +330,14 @@ def main():
             return {"id": pid, "source": source, "executable": str(root / "bin" / exe), "args": args,
                     "new_args": ["--session-id", "{session_id}"] if source == "claude" else [],
                     "resume_args": ["--resume", "{sid}"] if source == "claude" else ["resume", "{sid}"],
-                    "env": env, "cwd_roots": [str(repo)]}
+                    "env": env}
 
         def launcher(name, profiles, bug):
             cfg = root / name
             cfg.touch(mode=0o600)
             cfg.write_text(json.dumps({
                 "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-                "cwd_roots": [str(root / "work")], "adapters": [], "profiles": profiles,
+                "adapters": [], "profiles": profiles,
                 "bug_report_profiles": bug}))
             cfg.chmod(0o600)
             return cfg

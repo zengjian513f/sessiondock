@@ -2,12 +2,11 @@
 //! checked native reader committed after a fixed submission boundary.
 //!
 //! It never reads the screen, never opens a file itself, never manufactures a
-//! native turn association, and never returns anything the Codex `Machine`
-//! would accept as a delivery acknowledgment: the only correlation it can
+//! native turn association. The correlation it can
 //! establish from a raw TUI rollout is `Correlation::PossibleTextMatch`, which
-//! `Machine::acknowledge` rejects by design (`docs/delivery.md`). The output is
-//! for keeping the receipt honest (`uncertain` with a visible possible match,
-//! watch-cursor advancement, bounded polling), not for acknowledging it.
+//! `Machine::acknowledge` accepts after validating the fixed cursor, real-user
+//! record, causal position and trimmed prompt as Python does. The output is
+//! can acknowledge the causal matching receipt or advance its watch cursor.
 //!
 //! Records come from `ViewSnapshot::native_tail`: the opened view that
 //! `SessionStore` parsed through `CheckedNative` + `RawIndex` + the strict
@@ -30,7 +29,6 @@ pub const TRACK_WINDOW_MS: u64 = 3_600_000;
 /// Python `_outbox_loop` wakes every 500 ms; the Rust inventory refresh shares
 /// the same 500 ms TTL, so polling faster observes nothing new.
 pub const POLL_INTERVAL_MS: u64 = 500;
-const MAX_TEXT_BYTES: usize = 256 * 1024;
 
 /// The fixed submission boundary persisted before Enter. It never moves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,8 +93,8 @@ pub struct MatchedRecord {
 /// Exactly one qualifying user record after the boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PossibleMatch {
-    /// `AckEvidence` with `Correlation::PossibleTextMatch`. The Machine refuses
-    /// it (`UnprovenAcknowledgment`); it is informational, never a proof.
+    /// `AckEvidence` with `Correlation::PossibleTextMatch`. The Machine applies
+    /// the fixed-boundary and one-record-per-receipt checks before accepting it.
     pub evidence: AckEvidence,
     pub record: MatchedRecord,
     /// A completion status for the matched record's own turn, seen after it.
@@ -107,7 +105,7 @@ pub struct PossibleMatch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Absence {
     /// Identical user text after the boundary whose timestamp precedes the
-    /// delivery time. Skipped, and it will make any later match ambiguous.
+    /// delivery time and was skipped.
     pub skipped_earlier: u32,
 }
 
@@ -116,13 +114,8 @@ pub enum Uncertainty {
     /// The fixed boundary no longer describes a committed prefix of the file:
     /// rewritten or truncated below it, or a changed logical view.
     CheckpointMismatch,
-    /// More than one user record after the boundary carries this text. A
-    /// later identical human input cannot be told from this delivery.
-    Ambiguous { candidates: u32 },
     /// The view is not the Codex main session named by the boundary/payload.
     ForeignScope,
-    /// Attachment identities cannot be verified from a rollout.
-    MediaUnsupported,
     /// Whitespace-only text can never be matched.
     UnmatchableText,
     /// The frozen view could not be interrogated (sanitized status only).
@@ -187,52 +180,42 @@ pub fn observe(snapshot: &ViewSnapshot, boundary: &Boundary, delivered: &Deliver
         head: tail.checkpoint.head.clone(),
         anchor: tail.checkpoint.anchor.clone(),
     });
-    if !delivered.media.is_empty() {
-        return uncertain(Uncertainty::MediaUnsupported, watch);
-    }
     let expected = delivered.text.trim();
-    if expected.is_empty() || expected.len() > MAX_TEXT_BYTES {
+    if expected.is_empty() {
         return uncertain(Uncertainty::UnmatchableText, watch);
     }
 
     // Codex trims both ends before writing the rollout; internal whitespace
-    // and newlines stay significant. Every identical human input after the
-    // boundary is a candidate, regardless of its timestamp: an earlier one
-    // makes a later one ambiguous instead of being silently skipped.
-    let candidates: Vec<&TailRecord> = tail
-        .records
-        .iter()
-        .filter(|record| is_user_input(&record.message))
-        .filter(|record| {
-            record.message["text"]
+    // and newlines stay significant. Python walks native rows in order,
+    // skips pre-delivery timestamps, and retires the first causal match.
+    let mut skipped_earlier = 0_u32;
+    let record = tail.records.iter().find(|record| {
+        if !is_user_input(&record.message)
+            || !record.message["text"]
                 .as_str()
                 .is_some_and(|text| text.trim() == expected)
-        })
-        .collect();
-    if candidates.len() > 1 {
-        return uncertain(
-            Uncertainty::Ambiguous {
-                candidates: u32::try_from(candidates.len()).unwrap_or(u32::MAX),
-            },
-            watch,
-        );
-    }
-    let Some(record) = candidates.first().copied() else {
+        {
+            return false;
+        }
+        if record.message["ts"]
+            .as_str()
+            .and_then(parse_rfc3339_ms)
+            .is_some_and(|recorded| recorded < boundary.delivered_ms)
+        {
+            skipped_earlier = skipped_earlier.saturating_add(1);
+            return false;
+        }
+        true
+    });
+    let Some(record) = record else {
         return Observation {
             sequence,
             watch,
-            outcome: Outcome::Absent(Absence { skipped_earlier: 0 }),
+            outcome: Outcome::Absent(Absence { skipped_earlier }),
         };
     };
     let recorded_ms = record.message["ts"].as_str().and_then(parse_rfc3339_ms);
     let timestamp = match recorded_ms {
-        Some(recorded) if recorded < boundary.delivered_ms => {
-            return Observation {
-                sequence,
-                watch,
-                outcome: Outcome::Absent(Absence { skipped_earlier: 1 }),
-            };
-        }
         Some(_) => TimestampCheck::Verified,
         None => TimestampCheck::Absent,
     };
@@ -266,7 +249,7 @@ pub fn observe(snapshot: &ViewSnapshot, boundary: &Boundary, delivered: &Deliver
         validated_confirmation: boundary.confirmation.clone(),
         record: acceptance,
         text: record.message["text"].as_str().unwrap_or("").to_owned(),
-        observed_media: Vec::new(),
+        observed_media: delivered.media.clone(),
         real_user_input: true,
         correlation: Correlation::PossibleTextMatch,
     };

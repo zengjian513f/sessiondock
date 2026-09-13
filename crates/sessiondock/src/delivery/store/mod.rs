@@ -11,30 +11,20 @@ use serde::{Deserialize, Serialize};
 use super::{claude, codex};
 
 pub const LEDGER_FILENAME: &str = "delivery-ledger.json";
-pub const LOCK_FILENAME: &str = ".delivery.lock";
-pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    DurabilityUnavailable,
     Io(&'static str, std::io::ErrorKind),
-    UnsafePath,
-    UnsafePermissions,
-    ForeignDirectory,
     AlreadyInitialized,
     MissingLedger,
-    WriterLocked,
     Changed,
     Invalid,
     UnsupportedSchema,
-    Limit,
     NotPersist,
     TokenMismatch,
     Conflict,
     PayloadConflict,
     InvalidRecovery,
-    /// The rename may have committed. Both reads and writes are frozen.
-    Uncertain,
 }
 
 impl std::fmt::Display for Error {
@@ -46,7 +36,6 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Document {
     format: String,
     schema: u32,
@@ -80,7 +69,6 @@ impl Document {
             match old {
                 Some((epoch, old_revision))
                     if !epoch.trim().is_empty()
-                        && epoch.len() <= 128
                         && old_revision.checked_add(1) == Some(revision) => {}
                 None if revision == 0 => {}
                 _ => return Err(Error::Invalid),
@@ -93,22 +81,22 @@ impl Document {
 struct State {
     document: Document,
     fingerprint: String,
-    frozen: bool,
     codex_ready: bool,
     claude_ready: bool,
 }
 
-/// A single-process handle additionally guarded by a cross-process OS lease.
-/// There must be exactly one live Machine per provider under this handle.
+/// A process-local handle for the two provider machines.
 pub struct DeliveryStore {
     disk: disk::Disk,
     state: Mutex<State>,
 }
 
 impl DeliveryStore {
-    /// Explicit first creation only. The existing directory must be empty;
-    /// even a preexisting lock or abandoned temp file requires manual recovery.
-    /// This never overwrites an initialized or partially initialized ledger.
+    pub(crate) fn directory(&self) -> &Path {
+        self.disk.directory()
+    }
+
+    /// Create the directory and first ledger when no ledger exists yet.
     pub fn initialize(
         directory: &Path,
         codex_epoch: String,
@@ -136,16 +124,50 @@ impl DeliveryStore {
             state: Mutex::new(State {
                 document,
                 fingerprint,
-                frozen: false,
                 codex_ready: true,
                 claude_ready: true,
             }),
         })
     }
 
-    /// Existing ledgers only; missing/corrupt/unknown data is never made empty.
-    /// The caller must restore both Machines with fresh, unique process epochs
-    /// and commit their recovery Persist proposals before normal commands.
+    /// Replace malformed or unsupported persisted data with the same empty
+    /// queues Python exposes when its queue file cannot be decoded.
+    pub(crate) fn reset(
+        directory: &Path,
+        codex_epoch: String,
+        claude_epoch: String,
+    ) -> Result<Self, Error> {
+        let document = Document {
+            format: "agenthub-delivery".into(),
+            schema: 1,
+            codex: codex::Machine::new(codex_epoch)
+                .map_err(|_| Error::Invalid)?
+                .snapshot()
+                .clone(),
+            claude: claude::Machine::new(claude_epoch)
+                .map_err(|_| Error::Invalid)?
+                .snapshot()
+                .clone(),
+            codex_previous: None,
+            claude_previous: None,
+        };
+        let bytes = json::encode(&document)?;
+        let disk = disk::Disk::replace(directory)?;
+        let previous = disk.read()?.map(|bytes| disk::hash(&bytes));
+        let fingerprint = disk.persist(&bytes, previous.as_deref())?;
+        Ok(Self {
+            disk,
+            state: Mutex::new(State {
+                document,
+                fingerprint,
+                codex_ready: true,
+                claude_ready: true,
+            }),
+        })
+    }
+
+    /// Decode an existing ledger. The engine handles Python-style empty/reset
+    /// fallback for missing, malformed or unsupported files.
     pub fn open(directory: &Path) -> Result<Self, Error> {
         let disk = disk::Disk::open(directory, false)?;
         let bytes = disk.read()?.ok_or(Error::MissingLedger)?;
@@ -155,7 +177,6 @@ impl DeliveryStore {
             state: Mutex::new(State {
                 document,
                 fingerprint: disk::hash(&bytes),
-                frozen: false,
                 codex_ready: false,
                 claude_ready: false,
             }),
@@ -163,8 +184,20 @@ impl DeliveryStore {
     }
 
     pub fn snapshots(&self) -> Result<(codex::Snapshot, claude::Snapshot), Error> {
-        let state = self.lock()?;
-        self.disk.verify(Some(&state.fingerprint))?;
+        let mut state = self.lock()?;
+        let bytes = self.disk.read()?.ok_or(Error::MissingLedger)?;
+        let fingerprint = disk::hash(&bytes);
+        if fingerprint != state.fingerprint {
+            let document = json::decode(&bytes)?;
+            let changed =
+                document.codex != state.document.codex || document.claude != state.document.claude;
+            state.document = document;
+            state.fingerprint = fingerprint;
+            if changed {
+                state.codex_ready = false;
+                state.claude_ready = false;
+            }
+        }
         Ok((state.document.codex.clone(), state.document.claude.clone()))
     }
 
@@ -273,11 +306,9 @@ impl DeliveryStore {
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, State>, Error> {
-        let state = self.state.lock().map_err(|_| Error::Uncertain)?;
-        if state.frozen {
-            return Err(Error::Uncertain);
-        }
-        Ok(state)
+        self.state
+            .lock()
+            .map_err(|_| Error::Io("lock delivery state", std::io::ErrorKind::Other))
     }
 
     fn persist(&self, state: &mut State, document: Document) -> Result<(), Error> {
@@ -288,12 +319,7 @@ impl DeliveryStore {
                 state.fingerprint = fingerprint;
                 Ok(())
             }
-            Err(error) => {
-                if error == Error::Uncertain {
-                    state.frozen = true;
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 }

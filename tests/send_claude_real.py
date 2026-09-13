@@ -139,9 +139,6 @@ def main():
     CLAUDE = shutil.which("claude")
     if not CLAUDE:
         skip("`claude` binary is not on PATH")
-    # The launcher refuses symlinked executables (~/.local/bin/claude usually
-    # links to a versioned binary): give it the physical path.
-    CLAUDE = os.path.realpath(CLAUDE)
     if not PTYHOST.is_file():
         skip("ptyhost is not built (cargo build -p ptyhost)")
 
@@ -175,7 +172,7 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST), "host_dir": str(host),
-            "cwd_roots": [str(work)], "adapters": [],
+            "adapters": [],
             "profiles": [{
                 "id": "claude-real-v1", "source": "claude", "executable": CLAUDE,
                 "args": ["--model", MODEL, "--effort", "low",
@@ -183,7 +180,7 @@ def main():
                 "new_args": ["--session-id", "{session_id}"],
                 "resume_args": ["--resume", "{sid}"],
                 "env": {**passthrough(), "HOME": str(work), "CLAUDE_CONFIG_DIR": str(config)},
-                "cwd_roots": [str(area)],
+
             }]}))
 
         for flag, directory in (("--initialize-lifecycle", ledger),

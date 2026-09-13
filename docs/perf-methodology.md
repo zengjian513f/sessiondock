@@ -58,13 +58,13 @@ whole-workload bound. `tests/rss_watch.py --pid PID` is the manual companion
 
 Reporting only RSS after a later phase can hide a temporary copy: the batch 18
 intermediate 32 MiB run was 48.297 MiB RSS vs 74.168 MiB HWM after cold GET.
-Logical AST-cache weights, scanner resident limits, and fixed buffer bounds
+Logical AST-cache weights, scanner resident statistics, and fixed buffer sizes
 are not allocator/RSS measurements.
 
 ## Saved binaries
 
 Compare the **same** script against saved pre-change and post-change release
-binaries under `target/agenthub-beforeNN` (example: `target/agenthub-before13`)
+new binaries under `target/sessiondock-beforeNN` (the historical batch-13 artifact was named `target/agenthub-before13`)
 and `target/release/sessiondock`. Keep them local/ignored; do not publish
 them or point a benchmark at production directories. Record both SHA-256
 values (`kind=benchmark` JSONL rows). Run old then new sequentially, never in
@@ -76,7 +76,7 @@ average exceeds CPUs/2).
 From the repository root, after a release build of the saved binaries:
 
 ```sh
-python3 tests/append_benchmark.py --binary target/agenthub-beforeNN \
+python3 tests/append_benchmark.py --binary target/sessiondock-beforeNN \
   --sizes 1000 10000 --samples 5 --rss
 python3 tests/append_benchmark.py --binary target/release/sessiondock \
   --sizes 1000 10000 --samples 5 --rss
@@ -84,7 +84,7 @@ python3 tests/native_spans_benchmark.py --binary target/release/sessiondock
 python3 tests/native_envelopes_benchmark.py --binary target/release/sessiondock
 python3 tests/native_envelopes_benchmark.py --binary target/release/sessiondock \
   --sizes-mib 3 --depth 8
-python3 tests/perf_compare.py --old target/agenthub-beforeNN \
+python3 tests/perf_compare.py --old target/sessiondock-beforeNN \
   --new target/release/sessiondock --sizes 1000 10000 --samples 5 --rss
 python3 tests/bench_summary.py compare OLD.jsonl NEW.jsonl
 python3 tests/bench_summary.py single FILE.jsonl
@@ -113,8 +113,8 @@ binary’s numbers as the final release.
 - Never claim speedups from parser micro-benchmarks. The ignored
   `scanner_cpu_benchmark` is parse/output-drop only, not HTTP or native I/O;
   `read_benchmark.py` is also not a parser-only timing.
-- Never report an HTTP 413 as a timing. Envelope two-layer 32 MiB is a
-  deliberate budget rejection; any non-200 aborts and is not a success sample.
+- Never report a non-200 response as a successful timing sample. A 413 is
+  expected only when one decoded image exceeds Python's 32 MiB item limit.
 
 No paid CLI, native homes, production services, or real history.
 
@@ -125,15 +125,15 @@ before/after pair, milliseconds, p50 (p95).
 
 | Batch | Provider | First window p50 (p95) | Append p50 (p95) | Rewrite p50 (p95) |
 | --- | --- | --- | --- | --- |
-| [16](native-input.md#batch-16-release-comparison) | Claude | 175.992 (194.543) → 224.096 (228.696) | 144.471 (151.349) → 157.983 (178.487) | 129.008 (134.905) → 156.363 (165.840) |
-| [16](native-input.md#batch-16-release-comparison) | Codex | 113.160 (138.681) → 141.774 (156.493) | 79.673 (89.002) → 88.260 (94.313) | 70.528 (76.365) → 99.981 (111.706) |
-| [16](native-input.md#batch-16-release-comparison) | Grok | 86.359 (106.515) → 120.901 (126.756) | 69.624 (76.329) → 75.927 (85.739) | 50.113 (50.721) → 64.839 (68.506) |
-| [17](native-input.md#batch-17-direct-construction-and-streaming-comparison) | Claude | 216.341 (220.233) → 194.745 (200.790) | 153.709 (162.934) → 148.882 (152.232) | 157.425 (167.482) → 148.642 (153.982) |
-| [17](native-input.md#batch-17-direct-construction-and-streaming-comparison) | Codex | 152.439 (159.904) → 130.126 (149.163) | 87.454 (90.496) → 82.182 (85.781) | 100.207 (110.676) → 88.294 (92.504) |
-| [17](native-input.md#batch-17-direct-construction-and-streaming-comparison) | Grok | 107.609 (114.264) → 104.505 (112.493) | 73.649 (76.041) → 73.376 (82.632) | 64.965 (66.927) → 60.574 (62.298) |
-| [18](native-input.md#final-batch-18-ordinary-history-comparison) | Claude | 199.602 (215.157) → 207.012 (224.286) | 149.273 (153.258) → 155.568 (178.932) | 150.848 (155.435) → 155.487 (159.173) |
-| [18](native-input.md#final-batch-18-ordinary-history-comparison) | Codex | 130.112 (131.634) → 137.247 (139.251) | 80.718 (87.385) → 85.310 (95.490) | 89.183 (95.818) → 95.520 (104.792) |
-| [18](native-input.md#final-batch-18-ordinary-history-comparison) | Grok | 99.751 (133.408) → 101.098 (118.646) | 72.772 (85.600) → 71.799 (74.052) | 62.820 (64.451) → 67.350 (68.605) |
-| [19](native-input.md#batch-19-nested-envelope-measurement) | Claude | 223.372 (240.961) → 216.777 (224.863) | 154.097 (162.379) → 157.408 (159.292) | 166.412 (171.977) → 166.443 (169.771) |
-| [19](native-input.md#batch-19-nested-envelope-measurement) | Codex | 141.161 (171.451) → 146.613 (179.956) | 84.405 (94.425) → 89.746 (119.956) | 105.090 (106.008) → 99.234 (105.763) |
-| [19](native-input.md#batch-19-nested-envelope-measurement) | Grok | 105.259 (120.568) → 102.955 (108.902) | 77.521 (80.297) → 76.384 (77.953) | 73.476 (74.142) → 72.889 (73.364) |
+| [16](native-input.md#validation) | Claude | 175.992 (194.543) → 224.096 (228.696) | 144.471 (151.349) → 157.983 (178.487) | 129.008 (134.905) → 156.363 (165.840) |
+| [16](native-input.md#validation) | Codex | 113.160 (138.681) → 141.774 (156.493) | 79.673 (89.002) → 88.260 (94.313) | 70.528 (76.365) → 99.981 (111.706) |
+| [16](native-input.md#validation) | Grok | 86.359 (106.515) → 120.901 (126.756) | 69.624 (76.329) → 75.927 (85.739) | 50.113 (50.721) → 64.839 (68.506) |
+| [17](native-input.md#validation) | Claude | 216.341 (220.233) → 194.745 (200.790) | 153.709 (162.934) → 148.882 (152.232) | 157.425 (167.482) → 148.642 (153.982) |
+| [17](native-input.md#validation) | Codex | 152.439 (159.904) → 130.126 (149.163) | 87.454 (90.496) → 82.182 (85.781) | 100.207 (110.676) → 88.294 (92.504) |
+| [17](native-input.md#validation) | Grok | 107.609 (114.264) → 104.505 (112.493) | 73.649 (76.041) → 73.376 (82.632) | 64.965 (66.927) → 60.574 (62.298) |
+| [18](native-input.md#validation) | Claude | 199.602 (215.157) → 207.012 (224.286) | 149.273 (153.258) → 155.568 (178.932) | 150.848 (155.435) → 155.487 (159.173) |
+| [18](native-input.md#validation) | Codex | 130.112 (131.634) → 137.247 (139.251) | 80.718 (87.385) → 85.310 (95.490) | 89.183 (95.818) → 95.520 (104.792) |
+| [18](native-input.md#validation) | Grok | 99.751 (133.408) → 101.098 (118.646) | 72.772 (85.600) → 71.799 (74.052) | 62.820 (64.451) → 67.350 (68.605) |
+| [19](native-input.md#validation) | Claude | 223.372 (240.961) → 216.777 (224.863) | 154.097 (162.379) → 157.408 (159.292) | 166.412 (171.977) → 166.443 (169.771) |
+| [19](native-input.md#validation) | Codex | 141.161 (171.451) → 146.613 (179.956) | 84.405 (94.425) → 89.746 (119.956) | 105.090 (106.008) → 99.234 (105.763) |
+| [19](native-input.md#validation) | Grok | 105.259 (120.568) → 102.955 (108.902) | 77.521 (80.297) → 76.384 (77.953) | 73.476 (74.142) → 72.889 (73.364) |

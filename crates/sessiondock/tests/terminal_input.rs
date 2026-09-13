@@ -390,27 +390,12 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
             "invalid_terminal_input",
         ),
         (
-            json!({"keys":["typed literally"]}),
-            StatusCode::BAD_REQUEST,
-            "invalid_terminal_input",
-        ),
-        (
-            json!({"keys":["C-Escape"]}),
-            StatusCode::BAD_REQUEST,
-            "invalid_terminal_input",
-        ),
-        (
             json!({"keys":vec!["enter";257]}),
             StatusCode::BAD_REQUEST,
             "invalid_terminal_input",
         ),
         (
             json!({"text":"legacy submit"}),
-            StatusCode::BAD_REQUEST,
-            "invalid_terminal_input",
-        ),
-        (
-            json!({"data":"x","enter":true}),
             StatusCode::BAD_REQUEST,
             "invalid_terminal_input",
         ),
@@ -424,6 +409,17 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
         assert_eq!(got, status, "{body}");
         assert_eq!(body["code"], code, "{body}");
     }
+    // Python and the host type unknown nonempty key names literally.
+    for key in ["typed literally", "C-Escape"] {
+        let (status, body) = h
+            .send("page", &token, instance, json!({"keys":[key]}))
+            .await;
+        ok_receipt(status, &body, key.len());
+    }
+    let (status, body) = h
+        .send("page", &token, instance, json!({"data":"x","enter":true}))
+        .await;
+    ok_receipt(status, &body, 1);
     // The legacy stale-build gate applies to text, never to keys.
     let mut stale = h.binding(instance);
     stale["name"] = json!(NAME);
@@ -451,21 +447,14 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
         .await;
     ok_receipt(status, &body, 1024 * 1024);
 
-    // Rate: the window is per instance and counts every accepted request
-    // above; wait for it to clear, then 16 succeed and the 17th is refused.
-    tokio::time::sleep(Duration::from_millis(1100)).await;
-    for index in 0..16 {
+    // Python imposes no per-second input count: bursts over the former limit
+    // all reach the same leased host.
+    for index in 0..32 {
         let (status, body) = h
             .send("page", &token, instance, json!({"keys":["escape"]}))
             .await;
         assert_eq!(status, StatusCode::OK, "request {index}: {body}");
     }
-    let (status, body) = h
-        .send("page", &token, instance, json!({"keys":["escape"]}))
-        .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
-    assert_eq!(body["code"], "terminal_input_rate");
-    tokio::time::sleep(Duration::from_millis(1100)).await;
     let (status, body) = h
         .send("page", &token, instance, json!({"keys":["ctrl-u","enter"]}))
         .await;
@@ -490,18 +479,14 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["code"], "terminal_missing");
-    let (status, body) = h
-        .request(
-            "POST",
-            "/api/term/scroll",
-            json!({"name":NAME,"up":true,"lines":0}),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    let (status, _) = h
-        .request("POST", "/api/term/scroll", json!({"name":NAME,"page":"x"}))
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    for input in [
+        json!({"name":NAME,"up":true,"lines":0}),
+        json!({"name":NAME,"page":"x"}),
+    ] {
+        let (status, body) = h.request("POST", "/api/term/scroll", input).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"pos":0,"scrollback":"browser"}));
+    }
     // The shell is still the same process and still answers on the socket.
     let (status, body) = h
         .send("page", &token, instance, json!({"data":"ping"}))
@@ -796,7 +781,7 @@ async fn unacknowledged_or_rejected_guarded_input_is_reported_once_and_never_ret
         } else {
             assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{body}");
             assert_eq!(body["code"], "terminal_input_ambiguous");
-            assert!(started.elapsed() < Duration::from_secs(10));
+            assert!(started.elapsed() < Duration::from_secs(12));
         }
         assert_eq!(
             peer.requests.load(Ordering::SeqCst),

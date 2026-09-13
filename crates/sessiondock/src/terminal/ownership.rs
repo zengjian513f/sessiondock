@@ -19,18 +19,14 @@ use subtle::ConstantTimeEq;
 use tokio::sync::watch;
 
 pub const RESERVATION_TTL: Duration = Duration::from_secs(15);
-pub const MAX_CAPACITY: usize = 4_096;
-pub const MAX_RETIRED_LAUNCHES: usize = 256;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OwnershipError {
     InvalidName,
     InvalidPage,
     InvalidToken,
-    InvalidCapacity,
     InvalidClock,
     EntropyUnavailable,
-    Capacity,
     NotOwner,
     /// HTTP input without any current lease for that terminal name.
     NoLease,
@@ -39,7 +35,6 @@ pub enum OwnershipError {
     AlreadyBound,
     BindingMismatch,
     LaunchRetired,
-    RetirementCapacity,
     ConnectionIdsExhausted,
     Unavailable,
 }
@@ -55,9 +50,7 @@ impl OwnershipError {
             | Self::AlreadyBound
             | Self::BindingMismatch
             | Self::LaunchRetired => 409,
-            Self::Capacity | Self::RetirementCapacity => 429,
-            Self::InvalidCapacity
-            | Self::InvalidClock
+            Self::InvalidClock
             | Self::EntropyUnavailable
             | Self::ConnectionIdsExhausted
             | Self::Unavailable => 503,
@@ -71,17 +64,14 @@ impl fmt::Display for OwnershipError {
             Self::InvalidName => "终端名称无效",
             Self::InvalidPage => "页面标识无效",
             Self::InvalidToken => "终端控制凭证格式无效",
-            Self::InvalidCapacity => "终端控制权容量配置无效",
             Self::InvalidClock => "终端控制权时钟不可用",
             Self::EntropyUnavailable => "安全随机数暂不可用",
-            Self::Capacity => "终端控制权预约达到容量限制",
             Self::NotOwner => "终端控制权已失效，请重新预约",
             Self::NoLease => "终端控制权已失效，请重新预约",
             Self::Revoked => "终端控制权已被其他页面接管或重新预约，本页输入已拒绝",
             Self::AlreadyBound => "终端控制权已绑定其他连接",
             Self::BindingMismatch => "终端租约的会话或实例绑定不匹配，不能降级为普通连接",
             Self::LaunchRetired => "该启动实例已撤销终端授权，不能重新预约",
-            Self::RetirementCapacity => "终端启动撤销记录达到容量限制，未撤销该实例",
             Self::ConnectionIdsExhausted => "终端连接标识已耗尽",
             Self::Unavailable => "终端控制权状态不可用",
         })
@@ -119,12 +109,7 @@ pub fn validate_name(name: &str) -> Result<(), OwnershipError> {
 }
 
 pub fn validate_page(page: &str) -> Result<(), OwnershipError> {
-    if page.is_empty()
-        || page.len() > 128
-        || !page
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
-    {
+    if page.is_empty() || page.chars().count() > 128 {
         return Err(OwnershipError::InvalidPage);
     }
     Ok(())
@@ -334,15 +319,6 @@ impl LeaseTarget {
             _ => false,
         }
     }
-
-    /// Rate-limit key: one window per exact host instance, never shared.
-    pub(super) fn instance_key(&self, name: &str) -> String {
-        match self {
-            Self::Raw => format!("{name}/raw"),
-            Self::Native(target) => format!("{name}/{}", target.instance_id()),
-            Self::Launch(target) => format!("{name}/{}", target.instance_id()),
-        }
-    }
 }
 
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
@@ -437,29 +413,21 @@ impl State {
 }
 
 pub struct Registry {
-    capacity: usize,
     clock: Arc<dyn Clock>,
     state: Mutex<State>,
 }
 
 impl Registry {
-    pub fn new(capacity: usize) -> Result<Self, OwnershipError> {
-        Self::with_clock(
-            capacity,
-            Arc::new(SystemClock {
-                origin: Instant::now(),
-            }),
-        )
+    pub fn new() -> Result<Self, OwnershipError> {
+        Self::with_clock(Arc::new(SystemClock {
+            origin: Instant::now(),
+        }))
     }
 
     /// A supplied clock must be cheap and non-blocking. It is sampled outside
     /// the mutex; monotonic regressions are clamped under the mutex.
-    pub fn with_clock(capacity: usize, clock: Arc<dyn Clock>) -> Result<Self, OwnershipError> {
-        if capacity == 0 || capacity > MAX_CAPACITY {
-            return Err(OwnershipError::InvalidCapacity);
-        }
+    pub fn with_clock(clock: Arc<dyn Clock>) -> Result<Self, OwnershipError> {
         Ok(Self {
-            capacity,
             clock,
             state: Mutex::new(State::default()),
         })
@@ -524,12 +492,7 @@ impl Registry {
         let key = LaunchKey::from(target);
         let removed = {
             let mut state = self.lock()?;
-            if !state.retired.contains(&key) {
-                if state.retired.len() >= MAX_RETIRED_LAUNCHES {
-                    return Err(OwnershipError::RetirementCapacity);
-                }
-                state.retired.insert(key);
-            }
+            state.retired.insert(key);
             let matches = state.leases.get(target.name()).is_some_and(|lease| {
                 lease.target.launch_key().as_ref() == Some(&LaunchKey::from(target))
             });
@@ -584,8 +547,6 @@ impl Registry {
                 if old.page != page && !force {
                     return Ok(ClaimResponse::Conflict(old.owner.clone()));
                 }
-            } else if state.leases.len() >= self.capacity {
-                return Err(OwnershipError::Capacity);
             }
             let deadline = now
                 .checked_add(RESERVATION_TTL)
@@ -845,13 +806,13 @@ mod tests {
         }
     }
 
-    fn setup(capacity: usize) -> (Arc<Registry>, Arc<FakeClock>) {
+    fn setup(_capacity: usize) -> (Arc<Registry>, Arc<FakeClock>) {
         let clock = Arc::new(FakeClock {
             wall: AtomicU64::new(1_700_000_000),
             ..Default::default()
         });
         (
-            Arc::new(Registry::with_clock(capacity, clock.clone()).unwrap()),
+            Arc::new(Registry::with_clock(clock.clone()).unwrap()),
             clock,
         )
     }
@@ -1211,10 +1172,7 @@ mod tests {
         assert_eq!(registry.expire().unwrap(), 0);
         assert!(registry.owner("term").unwrap().is_some());
         assert!(registry.is_current(&bound).unwrap());
-        assert_eq!(
-            registry.claim("other", "other-page", ip(2), false).err(),
-            Some(OwnershipError::Capacity)
-        );
+        claim(&registry, "other", "other-page", ip(2), false);
     }
 
     #[test]
@@ -1359,14 +1317,11 @@ mod tests {
     }
 
     #[test]
-    fn capacity_sweeps_expired_names_but_does_not_evict_live_reservations() {
+    fn expired_names_are_swept_without_limiting_live_reservations() {
         let (registry, clock) = setup(2);
         claim(&registry, "a", "page", ip(1), false);
         claim(&registry, "b", "page", ip(1), false);
-        assert_eq!(
-            registry.claim("c", "page", ip(1), false).err(),
-            Some(OwnershipError::Capacity)
-        );
+        claim(&registry, "c", "page", ip(1), false);
         assert!(registry.owner("a").unwrap().is_some());
         claim(&registry, "a", "other-page", ip(2), true);
         clock.set(15_000);
@@ -1451,11 +1406,13 @@ mod tests {
             assert!(validate_name(name).is_ok(), "{name:?}");
         }
         assert!(validate_name(&"a".repeat(128)).is_ok());
-        for page in ["", " page", "a.b", "a/b", "a\\b", "a\n", "中文"] {
-            assert_eq!(validate_page(page), Err(OwnershipError::InvalidPage));
+        assert_eq!(validate_page(""), Err(OwnershipError::InvalidPage));
+        for page in [" page", "a.b", "a/b", "a\\b", "a\n", "中文"] {
+            assert!(validate_page(page).is_ok(), "{page:?}");
         }
         assert!(validate_page("01234567-89ab-4def-aaaa-000000000000").is_ok());
         assert!(validate_page(&"a".repeat(128)).is_ok());
+        assert!(validate_page(&"界".repeat(128)).is_ok());
         assert_eq!(
             validate_page(&"a".repeat(129)),
             Err(OwnershipError::InvalidPage)
@@ -1478,19 +1435,6 @@ mod tests {
     }
 
     #[test]
-    fn capacity_configuration_is_bounded() {
-        assert_eq!(
-            Registry::new(0).err(),
-            Some(OwnershipError::InvalidCapacity)
-        );
-        assert_eq!(
-            Registry::new(MAX_CAPACITY + 1).err(),
-            Some(OwnershipError::InvalidCapacity)
-        );
-        assert!(Registry::new(MAX_CAPACITY).is_ok());
-    }
-
-    #[test]
     fn invalid_clock_and_connection_id_overflow_fail_closed() {
         struct BrokenClock;
         impl Clock for BrokenClock {
@@ -1501,7 +1445,7 @@ mod tests {
                 }
             }
         }
-        let broken = Registry::with_clock(1, Arc::new(BrokenClock)).unwrap();
+        let broken = Registry::with_clock(Arc::new(BrokenClock)).unwrap();
         assert_eq!(
             broken.claim("term", "page", ip(1), false).err(),
             Some(OwnershipError::InvalidClock)

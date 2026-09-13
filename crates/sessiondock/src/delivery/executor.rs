@@ -121,10 +121,12 @@ fn unlinked() -> Failure {
 impl TargetResolver for ManagedResolver {
     fn resolve<'a>(&'a self, uid: &'a str) -> BoxFuture<'a, Result<DeliveryTarget, Failure>> {
         Box::pin(async move {
-            let _permit =
-                self.probes.clone().try_acquire_owned().map_err(|_| {
-                    Failure::new(503, "runtime_busy", "受控进程观察繁忙，请稍后重试")
-                })?;
+            let _permit = self
+                .probes
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|_| Failure::new(503, "runtime_unavailable", "受控进程观察已关闭"))?;
             let catalog = self
                 .reader
                 .run(|store| store.native_catalog())
@@ -206,7 +208,6 @@ impl From<DriverError> for Failure {
 impl From<service::Error> for Failure {
     fn from(error: service::Error) -> Self {
         match error {
-            service::Error::Busy => Failure::new(503, "delivery_busy", "发送账本繁忙，请稍后重试"),
             service::Error::Closed => Failure::new(503, "delivery_closed", "发送账本服务已关闭"),
             service::Error::Engine(engine::Error::Frozen) => Failure::new(
                 503,
@@ -267,8 +268,10 @@ fn merge(body: &mut Value, extra: Value) {
 #[derive(Clone, Debug)]
 pub struct SendRequest {
     pub uid: String,
+    pub agent: String,
     pub name: String,
     pub text: String,
+    pub media: Vec<Value>,
     pub request_id: String,
     pub overwrite_draft: String,
     pub page_lease: Option<PageLease>,
@@ -303,6 +306,7 @@ struct Session {
     provider: Provider,
     uid: String,
     session_id: String,
+    agent_id: Option<String>,
 }
 
 impl Session {
@@ -310,7 +314,7 @@ impl Session {
         Scope {
             uid: self.uid.clone(),
             session_id: self.session_id.clone(),
-            agent_id: None,
+            agent_id: self.agent_id.clone(),
         }
     }
 }
@@ -400,8 +404,9 @@ impl DeliveryExecutor {
         }
         self.admission
             .clone()
-            .try_acquire_owned()
-            .map_err(|_| Failure::new(503, "delivery_busy", "发送执行器繁忙，请稍后重试"))
+            .acquire_owned()
+            .await
+            .map_err(|_| Failure::new(503, "shutdown", "服务正在关闭"))
     }
 
     /// Apply one Claude domain command. The outer error is a service failure;
@@ -457,11 +462,11 @@ impl DeliveryExecutor {
     /// fresh, restamped inventory history reads use. Only Claude and Codex
     /// main sessions are executor targets; Grok and child agents are typed
     /// `501`s.
-    async fn session(&self, uid: &str) -> Result<Session, Failure> {
+    async fn session(&self, uid: &str, agent: &str) -> Result<Session, Failure> {
         let scope = {
-            let uid = uid.to_owned();
+            let (uid, agent) = (uid.to_owned(), agent.to_owned());
             self.reader
-                .run(move |store| store.native_scope(&uid, ""))
+                .run(move |store| store.native_scope(&uid, &agent))
                 .await
                 .map_err(api_failure)?
         };
@@ -476,17 +481,11 @@ impl DeliveryExecutor {
                 ));
             }
         };
-        if scope.agent_id.is_some() {
-            return Err(Failure::new(
-                501,
-                "delivery_agent_unsupported",
-                "子代理视图不能发送；请选择主会话",
-            ));
-        }
         Ok(Session {
             provider,
             uid: scope.uid,
             session_id: scope.session_id,
+            agent_id: scope.agent_id,
         })
     }
 
@@ -496,7 +495,7 @@ impl DeliveryExecutor {
         uid: &str,
         from: Option<NativeFence>,
     ) -> Result<NativeInputRead, Failure> {
-        let session = self.session(uid).await?;
+        let session = self.session(uid, "").await?;
         if session.provider != Provider::Claude {
             return Err(Failure::new(
                 501,
@@ -635,7 +634,7 @@ impl DeliveryExecutor {
     }
 
     async fn send_inner(&self, request: SendRequest) -> Result<Reply, Failure> {
-        let request_id = validate_request_id(&request.request_id)?;
+        let request_id = normalize_request_id(&request.request_id)?;
         if request.text.trim().is_empty() {
             return Err(Failure::new(
                 400,
@@ -643,8 +642,8 @@ impl DeliveryExecutor {
                 "缺少 uid、终端名或消息正文",
             ));
         }
-        let session = self.session(&request.uid).await?;
-        let target = self.resolver.resolve(&request.uid).await?;
+        let session = self.session(&request.uid, &request.agent).await?;
+        let target = self.resolver.resolve(&session.uid).await?;
         if target.name != request.name {
             return Err(Failure::new(
                 409,
@@ -678,7 +677,12 @@ impl DeliveryExecutor {
             scope: scope.clone(),
             target: ledger_target,
             text: request.text.clone(),
-            attachments: Vec::new(),
+            attachments: request
+                .media
+                .iter()
+                .cloned()
+                .map(claude::Attachment)
+                .collect(),
         };
         let existing = {
             let id = request_id.clone();
@@ -956,7 +960,7 @@ impl DeliveryExecutor {
                     let evidence = Prepared {
                         target: payload.target.clone(),
                         observed_text: payload.text.clone(),
-                        observed_attachments: Vec::new(),
+                        observed_attachments: payload.attachments.clone(),
                         frame_token,
                     };
                     let applied = self
@@ -1120,7 +1124,7 @@ impl DeliveryExecutor {
             uid: session.uid.clone(),
             target: ledger_target,
             text: request.text.clone(),
-            media: Vec::new(),
+            media: request.media.iter().cloned().map(codex::MediaRef).collect(),
         };
         let existing = {
             let id = request_id.clone();
@@ -1330,7 +1334,7 @@ impl DeliveryExecutor {
                     let evidence = codex::PreparedEvidence {
                         target: payload.target.clone(),
                         observed_text: payload.text.clone(),
-                        observed_media: Vec::new(),
+                        observed_media: payload.media.clone(),
                         frame_token,
                     };
                     let applied = self
@@ -1393,7 +1397,7 @@ impl DeliveryExecutor {
         name: &str,
         page_lease: Option<PageLease>,
     ) -> Result<Reply, Failure> {
-        let session = self.session(uid).await?;
+        let session = self.session(uid, "").await?;
         let target = self.resolver.resolve(uid).await?;
         if target.name != name {
             return Err(Failure::new(
@@ -1444,7 +1448,7 @@ impl DeliveryExecutor {
         overwrite_draft: &str,
         page_lease: Option<PageLease>,
     ) -> Result<Reply, Failure> {
-        let session = self.session(uid).await?;
+        let session = self.session(uid, "").await?;
         match session.provider {
             Provider::Claude => {
                 self.retry_claude(session, id, overwrite_draft, page_lease)
@@ -1629,8 +1633,8 @@ impl DeliveryExecutor {
             Ok(permit) => permit,
             Err(failure) => return failure.reply(),
         };
-        let lock = self.scope_lock(uid);
-        let _scope = lock.lock().await;
+        // Dismissal is a serialized ledger transition, not a terminal write.
+        // It must stay available while that session's paste/Enter is pending.
         let _permit = permit;
         match self.discard_inner(uid, id).await {
             Ok(reply) => reply,
@@ -1639,7 +1643,7 @@ impl DeliveryExecutor {
     }
 
     async fn discard_inner(&self, uid: &str, id: &str) -> Result<Reply, Failure> {
-        let session = self.session(uid).await?;
+        let session = self.session(uid, "").await?;
         match session.provider {
             Provider::Claude => {
                 let scope = session.claude_scope();
@@ -1669,24 +1673,12 @@ impl DeliveryExecutor {
                 };
                 // Python `_discard_message` for Codex is idempotent: a row
                 // another tab already removed answers `ok` with the snapshot.
-                if let Some(receipt) = receipt
-                    .filter(|r| r.request.payload.uid == session.uid && r.visible_in_outbox())
+                if receipt
+                    .is_some_and(|r| r.request.payload.uid == session.uid && r.visible_in_outbox())
                 {
-                    if matches!(
-                        receipt.state,
-                        codex::State::PrepareInFlight | codex::State::EnterInFlight
-                    ) {
-                        return self
-                            .reply_with_outbox(
-                                409,
-                                json!({"error": "消息不存在或已经开始发送"}),
-                                &session,
-                            )
-                            .await;
-                    }
-                    // A pre-write row is discarded; an uncertain receipt is
-                    // only hidden (Python `9b1c2fd`): it never resends, and
-                    // the deduplication tombstone stays.
+                    // Python permits dismissing a row while paste/Enter is in
+                    // flight. Dismissal only hides it; the durable operation and
+                    // deduplication identity survive until its callback settles.
                     self.apply_codex(codex::Command::Dismiss {
                         request_id: id.to_owned(),
                         uid: session.uid.clone(),
@@ -1839,7 +1831,10 @@ impl DeliveryExecutor {
             return;
         };
         match adapter::observe(row, &scope, &from, &read) {
-            adapter::Observation::Accepted(evidence) => {
+            adapter::Observation::Accepted(mut evidence) => {
+                // Python confirms by the native text record. Media is outbox
+                // preview metadata; it has no separate native representation.
+                evidence.attachments = row.request.payload.attachments.clone();
                 if matches!(
                     self.try_apply(Command::ObserveUser {
                         id: id.clone(),
@@ -1879,9 +1874,8 @@ impl DeliveryExecutor {
     /// decides a cheap watch tick, a rate-limited replay from the fixed
     /// boundary, or expiry after the tracking window (the row keeps its state
     /// and is not retryable). Outcomes map to the domain as documented in
-    /// `docs/delivery-codex-executor.md`; only a record with its own turn ID,
-    /// after the boundary this executor captured before its own verified
-    /// Enter, becomes `OperationTurn` evidence.
+    /// `docs/delivery-codex-executor.md`; a causal matching native user record
+    /// after the boundary retires the receipt as in Python `send_queue.observe`.
     async fn observe_codex_row(&self, row: &codex::Receipt) {
         let id = row.request.request_id.clone();
         let uid = row.request.payload.uid.clone();
@@ -1936,7 +1930,7 @@ impl DeliveryExecutor {
         let delivered = Delivered {
             uid: uid.clone(),
             text: row.request.payload.text.clone(),
-            media: Vec::new(),
+            media: row.request.payload.media.clone(),
         };
         let watch_from = from.clone();
         let observation = {
@@ -1964,21 +1958,10 @@ impl DeliveryExecutor {
         };
         match observation.outcome {
             Outcome::Possible(found) => {
-                let turn_id = found.record.turn_id.clone().unwrap_or_default();
-                if turn_id.is_empty() {
-                    // The record declares no turn: nothing binds it to this
-                    // Enter, and a later `task_started` is never borrowed.
-                    return;
-                }
-                let mut evidence = found.evidence.clone();
-                evidence.correlation = codex::Correlation::OperationTurn {
-                    enter_operation: enter.clone(),
-                    turn_id,
-                };
                 let acknowledged = matches!(
                     self.try_apply_codex(codex::Command::NativeAck {
                         request_id: id.clone(),
-                        evidence,
+                        evidence: found.evidence.clone(),
                     })
                     .await,
                     Ok(Ok(_))
@@ -2158,27 +2141,27 @@ fn age_since(created_ms: u64) -> Duration {
     Duration::from_millis(now_ms().saturating_sub(created_ms))
 }
 
-/// Python truncates to 128 and mints a UUID when absent; the Rust domain needs
-/// 8–128 ASCII letters/digits/underscore/hyphen. Legacy sends UUIDs.
-pub fn validate_request_id(raw: &str) -> Result<String, Failure> {
+/// Match Python enqueue: mint a UUID for an empty ID, otherwise keep the
+/// first 128 Unicode characters, including whitespace and punctuation.
+/// Retry and discard use the returned ID exactly, without normalization.
+pub fn normalize_request_id(raw: &str) -> Result<String, Failure> {
     if raw.is_empty() {
         let mut bytes = [0_u8; 16];
         getrandom::fill(&mut bytes)
             .map_err(|_| Failure::new(503, "random_unavailable", "安全随机数暂不可用"))?;
-        return Ok(bytes.iter().map(|b| format!("{b:02x}")).collect());
-    }
-    if !(8..=128).contains(&raw.len())
-        || !raw
-            .bytes()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-')
-    {
-        return Err(Failure::new(
-            400,
-            "invalid_request_id",
-            "request_id 必须是 8–128 个 ASCII 字母、数字、下划线或连字符",
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+        return Ok(format!(
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
         ));
     }
-    Ok(raw.to_owned())
+    Ok(raw.chars().take(128).collect())
 }
 
 #[cfg(test)]

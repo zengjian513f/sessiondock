@@ -14,9 +14,9 @@ session reads, callers must use the bounded blocking reader executor.
 | Codex child | Inventory owner UID | Selected child's native `session_meta.payload.id` | Exact owned child ID |
 | Grok | — | — | Scope resolution returns 501 |
 
-Resolving a Codex child proves which native view was selected; it does not
-enable child delivery. The API must still enforce the delivery engine's
-unsupported-agent capability. Likewise, successful Claude scope selection is
+Resolving a child proves which native view was selected and is passed through
+to delivery rather than rejected by an application-level agent policy.
+Successful Claude scope selection is
 identity evidence, not permission to write to a terminal or run a CLI.
 
 ## Identity evidence and snapshot consistency

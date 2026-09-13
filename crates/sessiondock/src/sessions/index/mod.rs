@@ -23,12 +23,10 @@
 //!
 //! `refresh(false)` returns the previous snapshot within [`CHECK_TTL`] unless
 //! the Codex name index changed; `refresh(true)` rescans. A rescan is a
-//! directory walk (two levels for Claude/Grok, the dated tree for Codex, no
-//! symlink following — except a Claude `subagents/agent-*.jsonl` link whose
-//! canonical target is a regular file inside a configured root, the shape
-//! Claude Code writes when it continues a session: Python's `glob` lists it,
-//! so the agent is listed under the continued session too) plus one `stat`
-//! per file; only files whose stamp
+//! directory walk (the same recursive shapes Python scans) plus one `stat`
+//! per file. File symlinks and Claude project/session directory aliases are
+//! followed like Python's `glob`; recursive Codex directory aliases are not
+//! entered. Only files whose stamp
 //! (`dev/ino/size/mtime_ns`) changed are re-read, on a bounded pool of
 //! [`DEFAULT_WORKERS`] threads, each read bounded to the head/tail sizes in
 //! [`summary`]. A file whose stamp changes across the read is re-read up to
@@ -58,8 +56,7 @@
 //!   cycle, missing leaf) and content-block notes need the projection and
 //!   appear on the detail view only. Unknown-kind counts are exact for files the tail covers whole
 //!   (≤ 512 KiB) and partial otherwise; they count records regardless of the
-//!   active lineage. Per-file work budgets (record, LF, record count, file
-//!   size) are enforced when the session is opened, never by the list.
+//!   active lineage. Complete native files are opened on demand.
 //! - Python-parity corrections of the old rows: Codex main `updated` is the
 //!   file mtime (Python `_iso(st_mtime)`, whole seconds), a Codex rollout
 //!   without a user message is titled `(无标题) <stem[:16]>`, Claude titles
@@ -81,19 +78,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
+use cap_fs_ext::{DirExt, MetadataExt};
 use cap_std::ambient_authority;
-use cap_std::fs::{Dir, Metadata, OpenOptions};
+use cap_std::fs::{Dir, Metadata};
 use serde_json::{Value, json};
 
 use super::{NativeCatalogEntry, SessionError, SessionRoots, hash, uid_for};
 use agent_stops::{StopScan, Stops};
 use graph::CutCheck;
 use summary::claude::owner_path;
-use summary::{
-    DataFile, GROK_SUMMARY_LIMIT, HEAD_BYTES, Input, RowSummary, SIDECAR_LIMIT, SidecarBytes,
-    TAIL_BYTES,
-};
+use summary::{DataFile, HEAD_BYTES, Input, RowSummary, SidecarBytes, TAIL_BYTES};
 
 /// Rows younger than this are reused by `refresh(false)`.
 pub const CHECK_TTL: Duration = Duration::from_millis(500);
@@ -101,9 +95,6 @@ pub const CHECK_TTL: Duration = Duration::from_millis(500);
 pub const DEFAULT_WORKERS: usize = 16;
 /// Re-reads when a file's stamp changes across a summary read.
 pub const READ_ATTEMPTS: usize = 3;
-/// Codex trees are `YYYY/MM/DD`; anything deeper is not walked.
-const WALK_DEPTH_LIMIT: usize = 16;
-
 /// File version: `dev/ino/size/mtime_ns`. Equal stamps mean the cached
 /// summary is still the summary of these bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -149,8 +140,8 @@ pub struct CandidateRef {
     pub agent_id: Option<String>,
     /// Root owner uid of a healthy agent (the main session it is listed under).
     pub owner: Option<String>,
-    /// Why an agent has no owner: 409 ambiguous Codex id, 501 owner not
-    /// indexed (no row at all, like Python) or broken relation, 413 depth.
+    /// Why an agent has no owner: 409 ambiguous Codex id, or 501 when its owner
+    /// is not indexed (no row at all, like Python) or the relation is broken.
     /// Opening the agent's uid directly answers with this error.
     pub owner_error: Option<SessionError>,
     pub summary: Arc<RowSummary>,
@@ -268,9 +259,6 @@ impl IndexSnapshot {
         let mut chain = Vec::new();
         let mut seen = std::collections::BTreeSet::from([uid.to_owned()]);
         while let Some((sid, cut)) = graph::history_link(current)? {
-            if chain.len() >= graph::DEPTH_LIMIT {
-                return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-            }
             let parent = self.thread("codex", sid)?;
             if !seen.insert(parent.uid.clone()) {
                 return Err(SessionError::new(501, "分叉历史依赖存在循环"));
@@ -378,14 +366,13 @@ pub struct Index {
 
 impl Index {
     /// Roots are canonicalized once, like today's `SessionStore`; a missing
-    /// root or a name index without a Codex root is a configuration error
-    /// reported by every refresh, never an empty library.
+    /// native root is reported by every refresh rather than becoming an empty
+    /// library. A name index without a Codex root is simply unused.
     pub fn new(roots: SessionRoots, codex_index: Option<PathBuf>) -> Self {
         Self::with_workers(roots, codex_index, DEFAULT_WORKERS)
     }
 
     pub fn with_workers(roots: SessionRoots, codex_index: Option<PathBuf>, workers: usize) -> Self {
-        let index_without_root = codex_index.is_some() && roots.codex.is_none();
         let mut root_error = None;
         let mut freeze = |configured: Option<PathBuf>| {
             configured.map(|path| match path.canonicalize() {
@@ -401,9 +388,6 @@ impl Index {
             codex: freeze(roots.codex),
             grok: freeze(roots.grok),
         };
-        if index_without_root {
-            root_error = Some("Codex 名称索引必须同时配置 Codex 会话目录".to_owned());
-        }
         Self {
             roots,
             root_error,
@@ -708,12 +692,11 @@ impl Index {
                 .map_err(|_| SessionError::new(503, format!("{source} 数据源目录暂时不可枚举")))?;
             let mut walk = Walk {
                 root,
-                roots: &self.roots,
                 found: &mut found,
             };
             match source {
                 "claude" => walk.claude(&dir)?,
-                "codex" => walk.codex(&dir, PathBuf::new(), 0)?,
+                "codex" => walk.codex(&dir, PathBuf::new())?,
                 _ => walk.grok(&dir)?,
             }
         }
@@ -775,58 +758,16 @@ struct ReadOutcome {
 
 struct Walk<'a> {
     root: &'a Path,
-    /// Every canonical configured root: a subagent symlink may only be
-    /// followed when its target lies inside one of them.
-    roots: &'a SessionRoots,
     found: &'a mut Vec<Discovered>,
-}
-
-/// A symlinked `agent-*.jsonl` whose canonical target is a regular file
-/// inside one of `roots`: the target's stamp and the root it lies in.
-/// Anything else (dangling, a directory, outside every root) is skipped.
-fn linked_agent(
-    agents_path: &Path,
-    name: &str,
-    roots: &SessionRoots,
-) -> Option<(Stamp, PathBuf, PathBuf)> {
-    let target = std::fs::canonicalize(agents_path.join(name)).ok()?;
-    let root = [&roots.claude, &roots.codex, &roots.grok]
-        .into_iter()
-        .flatten()
-        .find(|root| target.starts_with(root))?;
-    let meta = std::fs::symlink_metadata(&target).ok()?;
-    if !meta.is_file() {
-        return None;
-    }
-    let stamp = Stamp::of(&Metadata::from_just_metadata(meta));
-    Some((stamp, target, root.clone()))
-}
-
-/// Symlink entries of `dir` (the `subagents` directory) by name.
-fn symlinks(dir: &Dir) -> Vec<String> {
-    let mut names = Vec::new();
-    let Ok(entries) = dir.entries() else {
-        return names;
-    };
-    for entry in entries {
-        let Ok(entry) = entry else { continue };
-        if entry.file_type().is_ok_and(|kind| kind.is_symlink())
-            && let Some(name) = utf8_name(&entry)
-        {
-            names.push(name);
-        }
-    }
-    names.sort();
-    names
 }
 
 fn utf8_name(entry: &cap_std::fs::DirEntry) -> Option<String> {
     entry.file_name().to_str().map(str::to_owned)
 }
 
-/// Directory children of `dir` (real directories only, never symlinks). An
+/// Directory children of `dir`, following ordinary directory aliases. An
 /// unreadable subdirectory hides only its own files, never the list.
-fn subdirectories(dir: &Dir) -> Vec<String> {
+fn subdirectories(dir: &Dir, path: &Path) -> Vec<String> {
     let mut names = Vec::new();
     let Ok(entries) = dir.entries() else {
         return names;
@@ -836,9 +777,12 @@ fn subdirectories(dir: &Dir) -> Vec<String> {
         let Ok(kind) = entry.file_type() else {
             continue;
         };
+        let Some(name) = utf8_name(&entry) else {
+            continue;
+        };
         if kind.is_dir()
-            && !kind.is_symlink()
-            && let Some(name) = utf8_name(&entry)
+            || kind.is_symlink()
+                && std::fs::metadata(path.join(&name)).is_ok_and(|meta| meta.is_dir())
         {
             names.push(name);
         }
@@ -847,8 +791,25 @@ fn subdirectories(dir: &Dir) -> Vec<String> {
     names
 }
 
-/// Regular files of `dir` with their stamps (symlinks are skipped).
-fn files(dir: &Dir) -> Vec<(String, Stamp)> {
+// Windows volume/file identities require metadata obtained from an open handle.
+// Unix stat already carries the identity and avoids opening every discovery entry.
+fn file_metadata(path: &Path) -> std::io::Result<Metadata> {
+    #[cfg(windows)]
+    {
+        let metadata = std::fs::metadata(path)?;
+        if !metadata.is_file() {
+            return Err(std::io::Error::other("expected a regular history file"));
+        }
+        Metadata::from_file(&std::fs::File::open(path)?)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::metadata(path).map(Metadata::from_just_metadata)
+    }
+}
+
+/// File entries with their target stamps, matching `Path.is_file()`/`stat()`.
+fn files(dir: &Dir, path: &Path) -> Vec<(String, Stamp)> {
     let mut found = Vec::new();
     let Ok(entries) = dir.entries() else {
         return found;
@@ -858,13 +819,13 @@ fn files(dir: &Dir) -> Vec<(String, Stamp)> {
         let Ok(kind) = entry.file_type() else {
             continue;
         };
-        if !kind.is_file() || kind.is_symlink() {
+        if !kind.is_file() && !kind.is_symlink() {
             continue;
         }
         let Some(name) = utf8_name(&entry) else {
             continue;
         };
-        let Ok(meta) = dir.symlink_metadata(&name) else {
+        let Ok(meta) = file_metadata(&path.join(&name)) else {
             continue;
         };
         if !meta.is_file() {
@@ -879,12 +840,12 @@ fn files(dir: &Dir) -> Vec<(String, Stamp)> {
 impl Walk<'_> {
     /// `<root>/<project>/<sid>.jsonl` and `<root>/<project>/<sid>/subagents/agent-*.jsonl`.
     fn claude(&mut self, root: &Dir) -> Result<(), SessionError> {
-        for project in subdirectories(root) {
-            let Ok(project_dir) = root.open_dir_nofollow(&project) else {
+        for project in subdirectories(root, self.root) {
+            let project_path = self.root.join(&project);
+            let Ok(project_dir) = Dir::open_ambient_dir(&project_path, ambient_authority()) else {
                 continue;
             };
-            let project_path = self.root.join(&project);
-            for (name, stamp) in files(&project_dir) {
+            for (name, stamp) in files(&project_dir, &project_path) {
                 if !name.ends_with(".jsonl") || stamp.size == 0 {
                     continue;
                 }
@@ -900,31 +861,21 @@ impl Walk<'_> {
                     agent_id: None,
                 });
             }
-            for session in subdirectories(&project_dir) {
-                let Ok(session_dir) = project_dir.open_dir_nofollow(&session) else {
+            for session in subdirectories(&project_dir, &project_path) {
+                let session_path = project_path.join(&session);
+                let Ok(agents_dir) =
+                    Dir::open_ambient_dir(session_path.join("subagents"), ambient_authority())
+                else {
                     continue;
                 };
-                let Ok(agents_dir) = session_dir.open_dir_nofollow("subagents") else {
-                    continue;
-                };
-                let listed = files(&agents_dir);
+                let agents_path = project_path.join(&session).join("subagents");
+                let listed = files(&agents_dir, &agents_path);
                 let sidecars: HashMap<&str, Stamp> = listed
                     .iter()
                     .filter(|(name, _)| name.ends_with(".meta.json"))
                     .map(|(name, stamp)| (name.as_str(), *stamp))
                     .collect();
-                let agents_path = project_path.join(&session).join("subagents");
-                // A continued session links the origin's sidecars into its
-                // own `subagents/`; the link is the identity (uid, owner),
-                // the canonical target inside a configured root the data.
-                let linked = symlinks(&agents_dir).into_iter().filter_map(|name| {
-                    let (stamp, target, root) = linked_agent(&agents_path, &name, self.roots)?;
-                    Some((name, stamp, Some((target, root))))
-                });
-                let own = listed
-                    .iter()
-                    .map(|(name, stamp)| (name.clone(), *stamp, None));
-                for (name, stamp, link) in own.chain(linked) {
+                for (name, stamp) in listed.iter().map(|(name, stamp)| (name.clone(), *stamp)) {
                     let Some(stem) = name.strip_suffix(".jsonl") else {
                         continue;
                     };
@@ -937,14 +888,10 @@ impl Walk<'_> {
                     let sidecar = format!("{stem}.meta.json");
                     let summary_stamp = sidecars.get(sidecar.as_str()).copied();
                     let path = agents_path.join(&name);
-                    let (data, root) = match link {
-                        Some((target, root)) => (target, root),
-                        None => (path.clone(), self.root.to_path_buf()),
-                    };
                     self.found.push(Discovered {
                         source: "claude",
-                        root,
-                        data,
+                        root: self.root.to_path_buf(),
+                        data: path.clone(),
                         path,
                         summary_path: summary_stamp.map(|_| agents_path.join(&sidecar)),
                         stamp: Some(stamp),
@@ -957,9 +904,10 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Every `*.jsonl` under the root (Python `rglob`), bounded depth.
-    fn codex(&mut self, dir: &Dir, relative: PathBuf, depth: usize) -> Result<(), SessionError> {
-        for (name, stamp) in files(dir) {
+    /// Every `*.jsonl` under the root, like Python `rglob`.
+    fn codex(&mut self, dir: &Dir, relative: PathBuf) -> Result<(), SessionError> {
+        let path = self.root.join(&relative);
+        for (name, stamp) in files(dir, &path) {
             if !name.ends_with(".jsonl") || stamp.size == 0 {
                 continue;
             }
@@ -975,49 +923,43 @@ impl Walk<'_> {
                 agent_id: None,
             });
         }
-        if depth >= WALK_DEPTH_LIMIT {
-            return Ok(());
-        }
-        for child in subdirectories(dir) {
+        for child in subdirectories(dir, &path) {
             let Ok(child_dir) = dir.open_dir_nofollow(&child) else {
                 continue;
             };
-            self.codex(&child_dir, relative.join(&child), depth + 1)?;
+            self.codex(&child_dir, relative.join(&child))?;
         }
         Ok(())
     }
 
     /// `<root>/<cwd>/<session>/summary.json` (+ optional `chat_history.jsonl`).
     fn grok(&mut self, root: &Dir) -> Result<(), SessionError> {
-        for project in subdirectories(root) {
+        for project in subdirectories(root, self.root) {
             let Ok(project_dir) = root.open_dir_nofollow(&project) else {
                 continue;
             };
-            for session in subdirectories(&project_dir) {
-                let Ok(session_dir) = project_dir.open_dir_nofollow(&session) else {
+            let project_path = self.root.join(&project);
+            for session in subdirectories(&project_dir, &project_path) {
+                let Ok(_session_dir) = project_dir.open_dir_nofollow(&session) else {
                     continue;
                 };
-                let Ok(summary) = session_dir.symlink_metadata("summary.json") else {
+                let path = self.root.join(&project).join(&session);
+                let Ok(summary) = file_metadata(&path.join("summary.json")) else {
                     continue;
                 };
                 if !summary.is_file() {
                     continue;
                 }
-                // Only a genuinely absent chat is an empty history. A link,
-                // directory or unstat-able entry is carried as present so the
-                // bounded read fails it into an unsupported row, never into a
-                // successful empty one.
-                let chat = match session_dir.symlink_metadata("chat_history.jsonl") {
-                    Ok(meta) => Some(Stamp::of(&meta)),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(_) => Some(Stamp {
-                        dev: 0,
-                        ino: 0,
-                        size: 0,
-                        mtime_ns: 0,
-                    }),
+                // Only a genuinely absent chat is an empty history.
+                let chat_path = path.join("chat_history.jsonl");
+                let chat = match std::fs::metadata(&chat_path) {
+                    Ok(metadata) if metadata.is_file() => {
+                        file_metadata(&chat_path).ok().map(|meta| Stamp::of(&meta))
+                    }
+                    // Python GrokAdapter.read uses Path.is_file(): a missing,
+                    // inaccessible, or non-file chat is an empty history.
+                    _ => None,
                 };
-                let path = self.root.join(&project).join(&session);
                 self.found.push(Discovered {
                     source: "grok",
                     root: self.root.to_path_buf(),
@@ -1038,9 +980,7 @@ impl Walk<'_> {
 /// file under the Grok session directory, recursively. Symlinked directories
 /// are not entered (`rglob` recurses with `follow_symlinks=False`), a
 /// symlinked file counts its target's size like `Path.is_file()`; the walk
-/// is bounded ([`DIR_SIZE_DEPTH`] levels, [`DIR_SIZE_ENTRIES`] entries) so a
-/// pathological tree cannot stall the list. `None` when the directory
-/// cannot be opened inside `root` without following a link.
+/// is not otherwise capped. `None` when the directory cannot be opened.
 pub(crate) fn directory_size(root: &Path, dir: &Path) -> Option<u64> {
     let relative = dir.strip_prefix(root).ok()?;
     let mut handle = Dir::open_ambient_dir(root, ambient_authority()).ok()?;
@@ -1051,34 +991,22 @@ pub(crate) fn directory_size(root: &Path, dir: &Path) -> Option<u64> {
         handle = handle.open_dir_nofollow(name).ok()?;
     }
     let mut total = 0;
-    let mut budget = DIR_SIZE_ENTRIES;
-    directory_size_in(&handle, 0, &mut total, &mut budget);
+    directory_size_in(&handle, &mut total);
     Some(total)
 }
 
-/// Depth and entry bounds of [`directory_size`]; real sessions hold ~15 files
-/// in one level.
-const DIR_SIZE_DEPTH: usize = 8;
-const DIR_SIZE_ENTRIES: usize = 100_000;
-
-fn directory_size_in(dir: &Dir, depth: usize, total: &mut u64, budget: &mut usize) {
+fn directory_size_in(dir: &Dir, total: &mut u64) {
     let Ok(entries) = dir.entries() else {
         return;
     };
     for entry in entries {
-        if *budget == 0 {
-            return;
-        }
-        *budget -= 1;
         let Ok(entry) = entry else { continue };
         let Ok(kind) = entry.file_type() else {
             continue;
         };
         if kind.is_dir() {
-            if depth + 1 < DIR_SIZE_DEPTH
-                && let Ok(child) = dir.open_dir_nofollow(entry.file_name())
-            {
-                directory_size_in(&child, depth + 1, total, budget);
+            if let Ok(child) = dir.open_dir_nofollow(entry.file_name()) {
+                directory_size_in(&child, total);
             }
             continue;
         }
@@ -1097,29 +1025,12 @@ fn directory_size_in(dir: &Dir, depth: usize, total: &mut u64, budget: &mut usiz
     }
 }
 
-/// Open `path` (inside `root`) without following any symlink, component by
-/// component. `NotFound` means the file vanished since discovery.
-fn open_nofollow(root: &Path, path: &Path) -> std::io::Result<cap_std::fs::File> {
-    let relative = path
-        .strip_prefix(root)
+/// Open an indexed path with the same link-following behavior as Python's
+/// `open()`. The path itself must still have been discovered below `root`.
+fn open_indexed(root: &Path, path: &Path) -> std::io::Result<std::fs::File> {
+    path.strip_prefix(root)
         .map_err(|_| std::io::Error::other("path outside root"))?;
-    let mut components = relative
-        .components()
-        .map(|component| match component {
-            Component::Normal(name) => Ok(name.to_owned()),
-            _ => Err(std::io::Error::other("non-normal path component")),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let leaf = components
-        .pop()
-        .ok_or_else(|| std::io::Error::other("empty path"))?;
-    let mut dir = Dir::open_ambient_dir(root, ambient_authority())?;
-    for name in components {
-        dir = dir.open_dir_nofollow(&name)?;
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).follow(FollowSymlinks::No);
-    let file = dir.open_with(&leaf, &options)?;
+    let file = std::fs::File::open(path)?;
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::other("not a regular file"));
     }
@@ -1144,9 +1055,9 @@ trait StampedSource {
     fn read_range(&mut self, start: u64, length: u64) -> std::io::Result<Vec<u8>>;
 }
 
-impl StampedSource for cap_std::fs::File {
+impl StampedSource for std::fs::File {
     fn stamp(&mut self) -> Option<Stamp> {
-        self.metadata().ok().map(|meta| Stamp::of(&meta))
+        Metadata::from_file(self).ok().map(|meta| Stamp::of(&meta))
     }
     fn read_range(&mut self, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
         read_exact_at(self, start, length)
@@ -1158,8 +1069,8 @@ enum OpenError {
     Unreadable,
 }
 
-fn open_source(root: &Path, path: &Path) -> Result<cap_std::fs::File, OpenError> {
-    match open_nofollow(root, path) {
+fn open_source(root: &Path, path: &Path) -> Result<std::fs::File, OpenError> {
+    match open_indexed(root, path) {
         Ok(file) => Ok(file),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(OpenError::Vanished),
         Err(_) => Err(OpenError::Unreadable),
@@ -1220,12 +1131,12 @@ fn read_data_from(open: &mut dyn FnMut() -> Result<Box<dyn StampedSource>, OpenE
 }
 
 fn read_exact_at(
-    file: &mut cap_std::fs::File,
+    file: &mut (impl Read + Seek),
     start: u64,
     length: u64,
 ) -> std::io::Result<Vec<u8>> {
     file.seek(SeekFrom::Start(start))?;
-    let mut buffer = Vec::with_capacity(length as usize);
+    let mut buffer = Vec::new();
     file.take(length).read_to_end(&mut buffer)?;
     Ok(buffer)
 }
@@ -1236,31 +1147,25 @@ enum SidecarRead {
     Failed(Option<Stamp>, String),
 }
 
-/// Whole-file read of a sidecar within `limit`.
-fn read_sidecar(root: &Path, path: &Path, limit: u64, label: &str) -> SidecarRead {
+/// Whole-file read of a sidecar, bounded by its observed source length.
+fn read_sidecar(root: &Path, path: &Path, label: &str) -> SidecarRead {
     let mut last = None;
     for _ in 0..READ_ATTEMPTS {
-        let mut file = match open_nofollow(root, path) {
+        let mut file = match open_indexed(root, path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return SidecarRead::Vanished;
             }
             Err(_) => return SidecarRead::Failed(None, format!("{label}暂时不可读取")),
         };
-        let Ok(before) = file.metadata() else {
+        let Ok(before) = Metadata::from_file(&file) else {
             return SidecarRead::Failed(None, format!("{label}暂时不可读取"));
         };
         let before = Stamp::of(&before);
-        if before.size > limit {
-            return SidecarRead::Failed(
-                Some(before),
-                format!("{label}超过 {} MiB 元数据预算", limit / (1024 * 1024)),
-            );
-        }
         let Ok(bytes) = read_exact_at(&mut file, 0, before.size) else {
             return SidecarRead::Failed(Some(before), format!("{label}暂时不可读取"));
         };
-        let Ok(after) = file.metadata() else {
+        let Ok(after) = Metadata::from_file(&file) else {
             return SidecarRead::Failed(Some(before), format!("{label}暂时不可读取"));
         };
         let after = Stamp::of(&after);
@@ -1299,12 +1204,12 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
     let mut transient = false;
     let sidecar = match &candidate.summary_path {
         Some(path) => {
-            let (limit, label) = if candidate.source == "grok" {
-                (GROK_SUMMARY_LIMIT, "Grok summary.json ")
+            let label = if candidate.source == "grok" {
+                "Grok summary.json "
             } else {
-                (SIDECAR_LIMIT, "子代理元数据 (meta.json) ")
+                "子代理元数据 (meta.json) "
             };
-            match read_sidecar(&candidate.root, path, limit, label) {
+            match read_sidecar(&candidate.root, path, label) {
                 SidecarRead::Vanished if candidate.source == "grok" => return None,
                 SidecarRead::Vanished => None,
                 SidecarRead::Bytes(bytes, stamp) => Some((Some(bytes), Some(stamp), None)),
@@ -1386,10 +1291,10 @@ fn check_cut(root: &Path, data: &Path, stamp: Stamp, cut: u64) -> CutCheck {
     if cut == 0 {
         return CutCheck::Boundary;
     }
-    let Ok(mut file) = open_nofollow(root, data) else {
+    let Ok(mut file) = open_indexed(root, data) else {
         return CutCheck::Unreadable;
     };
-    let Ok(meta) = file.metadata() else {
+    let Ok(meta) = Metadata::from_file(&file) else {
         return CutCheck::Unreadable;
     };
     if Stamp::of(&meta) != stamp {

@@ -20,7 +20,7 @@
 
 pub mod worker;
 
-// POSIX permission and symlink semantics (Python `test_bug_report.py`).
+// POSIX output permissions (Python `test_bug_report.py`).
 #[cfg(all(test, unix))]
 mod tests;
 
@@ -28,7 +28,7 @@ use std::{
     collections::BTreeMap,
     fs,
     io::{self, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -53,8 +53,6 @@ pub const DEFAULT_SOURCE: Source = Source::Codex;
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const STDOUT_TAIL: usize = 200_000;
 const STDERR_TAIL: usize = 40_000;
-/// Bundles remembered for pending-row decoration after a restart.
-const MAX_REMEMBERED_WORKERS: usize = 256;
 /// Python `audit._SECRET_KEYS` (underscores folded to dashes), the bundle
 /// documents' redaction list; the audit intake's wider list is not used
 /// here because a manifest legitimately names the worker `token`.
@@ -181,14 +179,11 @@ pub struct BugReportService {
     /// Lifecycle record id → report, for the sidebar's pending row
     /// decoration (Python's pending record `kind`/`title`/`report_id`).
     workers: Mutex<BTreeMap<String, WorkerNote>>,
-    injections: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl BugReportService {
-    /// `directory` and `repository` were validated by configuration (private
-    /// 0700, disjoint; repository inside a write root). Existing bundles that
-    /// name a worker are remembered so their pending rows keep the report
-    /// title after a restart; nothing is created here.
+    /// Existing bundles that name a worker are remembered so their pending
+    /// rows keep the report title after a restart; nothing is created here.
     pub fn open(
         directory: PathBuf,
         repository: PathBuf,
@@ -206,7 +201,7 @@ impl BugReportService {
             })
             .collect();
         names.sort();
-        for name in names.iter().rev().take(MAX_REMEMBERED_WORKERS) {
+        for name in names.iter().rev() {
             let Ok(text) = fs::read_to_string(directory.join(name).join("manifest.json")) else {
                 continue;
             };
@@ -232,7 +227,6 @@ impl BugReportService {
             build,
             profiles,
             workers: Mutex::new(workers),
-            injections: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
 
@@ -258,16 +252,6 @@ impl BugReportService {
 
     fn note_worker(&self, record_id: &str, report_id: &str) {
         let mut workers = self.workers.lock().unwrap_or_else(|p| p.into_inner());
-        while workers.len() >= MAX_REMEMBERED_WORKERS {
-            let Some(oldest) = workers
-                .iter()
-                .min_by(|a, b| a.1.report_id.cmp(&b.1.report_id))
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            workers.remove(&oldest);
-        }
         workers.insert(
             record_id.to_owned(),
             WorkerNote {
@@ -302,7 +286,7 @@ impl BugReportService {
 
     /// Python `resolve_attachments`: the composer-style list `[{path, number,
     /// name, kind, mime, size}]`; every path must already lie inside the
-    /// repository's attachment directory (no links, regular files only).
+    /// repository's attachment directory after resolving links.
     pub fn resolve_attachments(&self, items: &Value) -> Result<Vec<Attachment>, String> {
         let items = match items {
             Value::Null => return Ok(Vec::new()),
@@ -330,21 +314,13 @@ impl BugReportService {
             }
             let outside = || format!("第 {position} 个附件不在附件目录中或已不存在");
             let requested = Path::new(&raw);
-            // Python resolves the path (links followed) and then requires the
-            // resolved location inside the resolved root; a link that points
-            // outside is therefore rejected, and one that points inside the
-            // root is refused here as well (no link is ever accepted).
-            if !requested.is_absolute() || !requested.starts_with(&root) {
-                return Err(outside());
-            }
+            // Python resolves links and requires the resulting file to remain
+            // inside the resolved attachment root.
             let path = requested.canonicalize().map_err(|_| outside())?;
-            if !path.starts_with(&root) || path != requested {
+            if !path.starts_with(&root) {
                 return Err(outside());
             }
-            let metadata = fs::symlink_metadata(&path).map_err(|_| outside())?;
-            if metadata.file_type().is_symlink() {
-                return Err(outside());
-            }
+            let metadata = fs::metadata(&path).map_err(|_| outside())?;
             if !metadata.is_file() {
                 return Err(format!("第 {position} 个附件不是文件"));
             }
@@ -468,7 +444,6 @@ impl BugReportService {
                     build: &input.build,
                     data: created,
                 },
-                audit.limits().data_bytes,
                 now,
             )
             .unwrap_or_else(
@@ -884,40 +859,9 @@ fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
     }
 }
 
-/// Configuration check for `SESSIONDOCK_BUG_REPORT_DIR`: an existing absolute
-/// directory without relative jumps or symlinked ancestors, 0700 on Unix.
-/// Returns the canonical path for overlap comparisons.
+/// Prepare the bundle root as Python's `create` does.
 pub fn validate_directory(path: &Path) -> io::Result<PathBuf> {
-    let invalid = || {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SESSIONDOCK_BUG_REPORT_DIR requires an explicit existing absolute directory without relative jumps",
-        )
-    };
-    if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
-        return Err(invalid());
-    }
-    for ancestor in path.ancestors() {
-        let metadata = fs::symlink_metadata(ancestor).map_err(|_| invalid())?;
-        if metadata.file_type().is_symlink() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "bug-report directory and its ancestors must not be symlinks",
-            ));
-        }
-        if !metadata.is_dir() {
-            return Err(invalid());
-        }
-        #[cfg(unix)]
-        if ancestor == path {
-            use std::os::unix::fs::PermissionsExt;
-            if metadata.permissions().mode() & 0o777 != 0o700 {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "bug-report directory requires private owner-only permissions (0700)",
-                ));
-            }
-        }
-    }
-    path.canonicalize().map_err(|_| invalid())
+    fs::create_dir_all(path)?;
+    let _ = set_mode(path, 0o700);
+    path.canonicalize()
 }

@@ -130,7 +130,7 @@ def main():
             cfg.touch(mode=0o600)
             cfg.write_text(json.dumps({
                 "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-                "cwd_roots": [str(root / "work")],
+
                 "adapters": [{"id": "synthetic-shell-v1", "source": "codex",
                               "executable": str(Path("/bin/sh").resolve()), "args": ["-c", SHELL],
                               "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))

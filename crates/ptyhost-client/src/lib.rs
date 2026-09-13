@@ -100,8 +100,6 @@ pub enum Error {
     Timeout,
     #[error("host stream cannot be reused after a cancelled or failed write")]
     Closed,
-    #[error("host discovery exceeds configured entry limit")]
-    DiscoveryLimit,
     #[error("local host I/O failed: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -110,9 +108,10 @@ pub enum Error {
 pub struct Limits {
     pub max_line_bytes: usize,
     pub max_frame_bytes: usize,
-    pub max_directory_entries: usize,
     pub operation_timeout: Duration,
-    pub partial_frame_timeout: Duration,
+    /// Optional deadline for partial reads and writes after attach. Python
+    /// waits indefinitely after attach, so production uses `None`.
+    pub partial_frame_timeout: Option<Duration>,
 }
 
 impl Default for Limits {
@@ -121,9 +120,8 @@ impl Default for Limits {
             max_line_bytes: 4 * 1024 * 1024,
             // Replay may include the host's 32 MiB screen backlog plus history.
             max_frame_bytes: 64 * 1024 * 1024,
-            max_directory_entries: 10_000,
-            operation_timeout: Duration::from_secs(5),
-            partial_frame_timeout: Duration::from_secs(10),
+            operation_timeout: Duration::from_secs(10),
+            partial_frame_timeout: None,
         }
     }
 }
@@ -147,9 +145,10 @@ impl HostClient {
             || limits.max_frame_bytes == 0
             || limits.max_frame_bytes > u32::MAX as usize
             || limits.max_frame_bytes > usize::MAX - 5
-            || limits.max_directory_entries == 0
             || limits.operation_timeout.is_zero()
-            || limits.partial_frame_timeout.is_zero()
+            || limits
+                .partial_frame_timeout
+                .is_some_and(|timeout| timeout.is_zero())
         {
             return Err(Error::InvalidLimits);
         }
@@ -171,12 +170,7 @@ impl HostClient {
                 Err(error) => return Err(error.into()),
             };
             let mut rows = Vec::new();
-            let mut count = 0;
             while let Some(entry) = entries.next_entry().await? {
-                count += 1;
-                if count > self.limits.max_directory_entries {
-                    return Err(Error::DiscoveryLimit);
-                }
                 let path = entry.path();
                 if path.extension().is_none_or(|ext| ext != "json") {
                     continue;
@@ -361,7 +355,7 @@ impl HostClient {
                 inner: FrameWriter::new(
                     writer,
                     self.limits.max_frame_bytes,
-                    self.limits.operation_timeout,
+                    self.limits.partial_frame_timeout,
                 ),
             },
         })
@@ -497,8 +491,8 @@ pub struct AttachReader {
 }
 
 impl AttachReader {
-    /// Cancellation-safe. Idle hosts may remain silent indefinitely. A malformed,
-    /// truncated or stalled partial frame returns one error, then ends the reader.
+    /// Cancellation-safe. Idle and partial frames may remain silent indefinitely
+    /// unless the caller explicitly configures a partial-frame deadline.
     pub async fn next(&mut self) -> Result<Option<HostEvent>> {
         self.inner.next().await
     }

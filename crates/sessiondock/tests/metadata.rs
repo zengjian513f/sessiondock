@@ -197,7 +197,7 @@ async fn disabled_invalid_missing_and_stale_writes_fail_closed() {
         call(
             &app,
             "/api/session/star",
-            Some(json!({"uid":"codex:missing","starred":true,"padding":"x".repeat(9 * 1024)}))
+            Some(json!({"uid":"codex:missing","starred":true,"padding":"x".repeat(4 * 1024 * 1024 + 1)}))
         )
         .await
         .status(),
@@ -234,8 +234,8 @@ async fn disabled_invalid_missing_and_stale_writes_fail_closed() {
         StatusCode::CONFLICT
     );
     assert!(
-        sessiondock::app(config(root.path())).is_err(),
-        "second writer must fail"
+        sessiondock::app(config(root.path())).is_ok(),
+        "metadata has no exclusive writer lock"
     );
 }
 

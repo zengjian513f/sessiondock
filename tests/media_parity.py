@@ -151,13 +151,13 @@ def build(root):
             Case("tool-markdown", source, "tool", [{"type": "text", "text": "Explicit ![tool image](./png.png)"}]),
         ])
     cases.extend([
-        Case("remote", "claude", "user", [{"type": "image_url", "image_url": "https://media.example.invalid/never.png"}], "remote"),
-        Case("outside-root", "claude", "user", [{"type": "image_url", "image_url": str(root / "outside.png")}], "outside-root"),
-        Case("invalid-container", "claude", "user", [image("claude", "AAAA")], "invalid-container"),
-        Case("frame-limit", "claude", "user", [image("claude", base64.b64encode(excessive_gif(129)).decode(), "image/gif")], "frame-limit"),
+        Case("remote", "claude", "user", [{"type": "image_url", "image_url": "https://media.example.invalid/never.png"}]),
+        Case("outside-root", "claude", "user", [{"type": "image_url", "image_url": str(root / "outside.png")}]),
+        Case("invalid-container", "claude", "user", [image("claude", "AAAA")]),
+        Case("many-frame-gif", "claude", "user", [image("claude", base64.b64encode(excessive_gif(129)).decode(), "image/gif")]),
     ])
     if os.name != "nt":
-        cases.append(Case("symlink", "claude", "user", [{"type": "image_url", "image_url": str(files / "linked.png")}], "symlink"))
+        cases.append(Case("symlink", "claude", "user", [{"type": "image_url", "image_url": str(files / "linked.png")}]))
     for case in cases:
         sid = case.source + "-" + case.name
         if case.source == "claude":
@@ -232,37 +232,25 @@ def flatten(rows):
 def check_delta(case, python, rust, status):
     left, right = flatten(python), flatten(rust)
     delta = case.delta
-    if delta == "remote":
-        assert status == 501
-        assert len(left) == 1
-    elif delta in ("invalid-container", "frame-limit"):
-        assert status == 200, "bad image bytes must not discard readable history"
-        assert len(left) == 1
-        assert right == [{"error": {"invalid-container": 422, "frame-limit": 413}[delta]}]
-        assert [row["message"] for row in python] == [row["message"] for row in rust]
-    else:
-        assert status == 200
-        if delta in ("outside-root", "symlink"):
-            assert len(left) == 1 and "sha256" in left[0]
-            assert right == [{"error": 403}]
-        elif delta == "raw-gallery-ref":
-            assert len(python) == len(rust) == 1
-            assert python[0]["message"] == rust[0]["message"]
-            assert len(left) == len(right) == 2 and left[0] == right[0]
-            assert "ref" not in left[1] and right[1] == {**left[1], "ref": "./jpeg.jpeg"}
-        elif delta in ("path-field", "unknown-extension", "mcp-envelope", "codex-tool-media"):
-            assert left == [], (delta, left)
-            encodings = (("png","image/png",PNG),("jpeg","image/jpeg",JPEG),*FORMATS) if case.name == "tool-formats" else (("png","image/png",PNG),)
-            assert right == [{"sha256":digest(base64.b64decode(data)),"mime":mime} for _,mime,data in encodings], (delta,right)
-            assert len(rust) == 1
-            if delta in ("path-field", "unknown-extension"):
-                assert rust[0]["message"]["role"] == "user" and rust[0]["message"]["text"] == "[图片]"
-            else:
-                assert rust[0]["message"]["role"] == "tool_result"
-                assert rust[0]["message"]["call_id"] == "synthetic"
-                assert rust[0]["message"]["text"] == {"tool-formats":"Tool mixed text","mcp-tool":"MCP mixed text","mcp-envelope":"MCP envelope text"}[case.name]
+    assert status == 200
+    if delta == "raw-gallery-ref":
+        assert len(python) == len(rust) == 1
+        assert python[0]["message"] == rust[0]["message"]
+        assert len(left) == len(right) == 2 and left[0] == right[0]
+        assert "ref" not in left[1] and right[1] == {**left[1], "ref": "./jpeg.jpeg"}
+    elif delta in ("path-field", "unknown-extension", "mcp-envelope", "codex-tool-media"):
+        assert left == [], (delta, left)
+        encodings = (("png","image/png",PNG),("jpeg","image/jpeg",JPEG),*FORMATS) if case.name == "tool-formats" else (("png","image/png",PNG),)
+        assert right == [{"sha256":digest(base64.b64decode(data)),"mime":mime} for _,mime,data in encodings], (delta,right)
+        assert len(rust) == 1
+        if delta in ("path-field", "unknown-extension"):
+            assert rust[0]["message"]["role"] == "user" and rust[0]["message"]["text"] == "[图片]"
         else:
-            raise AssertionError("unclassified delta: " + str(delta))
+            assert rust[0]["message"]["role"] == "tool_result"
+            assert rust[0]["message"]["call_id"] == "synthetic"
+            assert rust[0]["message"]["text"] == {"tool-formats":"Tool mixed text","mcp-tool":"MCP mixed text","mcp-envelope":"MCP envelope text"}[case.name]
+    else:
+        raise AssertionError("unclassified delta: " + str(delta))
     assert python != rust or status != 200, "documented difference unexpectedly disappeared"
 
 
@@ -335,7 +323,7 @@ def main():
                     if status == 200:
                         for row in response["messages"]:
                             for item in row.get("media", []):
-                                if "src" in item:
+                                if "src" in item and not item.get("external"):
                                     assert item.get("lazy") is True
                                     assert not {"mime", "width", "height"}.intersection(item)
                     actual = signatures(response["messages"], rust_fetch) if status == 200 else []
@@ -378,8 +366,7 @@ def main():
             assert fresh_token != rust_token
             assert rust_fetch(fresh_token)[0] == base64.b64decode(GREEN)
             print("DELTA file-replacement: Python old token serves replacement; Rust old token409/new token exact replacement bytes")
-        # Absence of an explicit development root is a Rust authority decision,
-        # not missing history and not permission to copy Python's ambient read.
+        # Local reads stay available when no explicit file roots are configured.
         with isolated_server(corpus, args.binary) as (base, opener):
             with python_only():
                 native, _ = adapters["claude"].read(str(corpus.paths["claude-absolute-url"]))
@@ -388,13 +375,16 @@ def main():
             status, response = rust_response(opener, base, route(corpus,"claude-absolute-url"))
             assert status == 200 and response["messages"][0]["text"] == "[图片]"
             item = response["messages"][0]["media"][0]
-            assert "src" not in item and item["error"]["status"] == 501
-            print("DELTA no-file-roots: Python ambient local image; Rust200 retained text plus media.error501/no src")
+            assert item.get("lazy") is True and TOKEN.fullmatch(item["src"])
+            with opener.open(base + item["src"], timeout=5) as reply:
+                assert reply.status == 200
+                assert reply.read() == python_bytes
+            print("PASS no-file-roots: ambient local image bytes match Python")
         assert native_bytes(corpus.root) == before, "native fixture modified"
     if failures:
         raise SystemExit("Unexpected media differences: " + ", ".join(failures))
     same = sum(case.delta is None for case in cases)
-    print(f"PASS {len(cases)+2} synthetic differential cases: {same} exact semantic matches, {len(cases)-same+2} explicitly asserted deltas; no Python service/home/CLI/network")
+    print(f"PASS {len(cases)+2} synthetic differential cases: {same+1} exact semantic matches, {len(cases)-same+1} explicitly asserted deltas; no Python service/home/CLI/network")
 
 
 if __name__ == "__main__":

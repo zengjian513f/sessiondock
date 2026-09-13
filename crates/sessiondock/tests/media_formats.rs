@@ -204,45 +204,38 @@ async fn genuine_extended_formats_project_for_every_provider_and_serve_exact_pri
 }
 
 #[tokio::test]
-async fn corrupt_signatures_and_truncated_containers_are_explicit_and_never_leak_payloads() {
+async fn corrupt_signatures_and_truncated_containers_are_served_as_declared_bytes() {
     let mut fixture = Fixture::new();
+    let mut cases = Vec::new();
     for (name, mime, data) in FORMATS {
         let original = STANDARD.decode(data).unwrap();
         let mut corrupt = original.clone();
         corrupt[..4].fill(0);
+        cases.push((format!("bad-{name}"), mime, corrupt));
+        cases.push((
+            format!("short-{name}"),
+            mime,
+            original[..original.len() - 3].to_vec(),
+        ));
+    }
+    for (name, mime, data) in &cases {
         fixture.put(
             "claude",
-            &format!("bad-{name}"),
-            vec![block("claude", mime, &STANDARD.encode(corrupt))],
-        );
-        fixture.put(
-            "claude",
-            &format!("short-{name}"),
-            vec![block(
-                "claude",
-                mime,
-                &STANDARD.encode(&original[..original.len() - 3]),
-            )],
+            name,
+            vec![block("claude", mime, &STANDARD.encode(data))],
         );
     }
     let app = fixture.app();
-    for (name, _, data) in FORMATS {
-        for prefix in ["bad", "short"] {
-            let response = messages(&app, &format!("{prefix}-{name}")).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            let projected = value(response).await;
-            let image = &projected["messages"][0]["media"][0];
-            assert_eq!(image["lazy"], true);
-            let response = get(&app, image["src"].as_str().unwrap()).await;
-            assert_eq!(
-                response.status(),
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "{prefix}-{name}"
-            );
-            let body = value(response).await;
-            assert!(body.get("error").is_some());
-            assert!(!body.to_string().contains(data) && !body.to_string().contains("base64"));
-        }
+    for (name, mime, expected) in cases {
+        let response = messages(&app, &name).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let projected = value(response).await;
+        let image = &projected["messages"][0]["media"][0];
+        assert_eq!(image["lazy"], true);
+        let response = get(&app, image["src"].as_str().unwrap()).await;
+        assert_eq!(response.status(), StatusCode::OK, "{name}");
+        assert_eq!(response.headers()["content-type"], mime);
+        assert_eq!(bytes(response).await, expected);
     }
     fixture.unchanged();
 }
@@ -274,15 +267,16 @@ fn webp_frames(count: usize, canvas: u32) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn animation_frame_and_aggregate_canvas_pixel_limits_fail_closed() {
+async fn large_animation_and_canvas_variants_are_served_without_parser_quotas() {
     let mut fixture = Fixture::new();
-    for (name, mime, data) in [
+    let cases = [
         ("gif-frames", "image/gif", gif_frames(129, 3)),
         ("gif-pixels", "image/gif", gif_frames(65, 1024)),
         ("webp-frames", "image/webp", webp_frames(129, 3)),
         ("webp-pixels", "image/webp", webp_frames(65, 1024)),
         ("gif-canvas", "image/gif", gif_frames(1, 8193)),
-    ] {
+    ];
+    for (name, mime, data) in &cases {
         fixture.put(
             "claude",
             name,
@@ -290,77 +284,15 @@ async fn animation_frame_and_aggregate_canvas_pixel_limits_fail_closed() {
         );
     }
     let app = fixture.app();
-    for name in [
-        "gif-frames",
-        "gif-pixels",
-        "webp-frames",
-        "webp-pixels",
-        "gif-canvas",
-    ] {
+    for (name, mime, expected) in cases {
         let response = messages(&app, name).await;
         assert_eq!(response.status(), StatusCode::OK);
         let projected = value(response).await;
         let image = &projected["messages"][0]["media"][0];
         assert_eq!(image["lazy"], true);
         let response = get(&app, image["src"].as_str().unwrap()).await;
-        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{name}");
-        let body = value(response).await;
-        assert!(body.get("error").is_some());
-        assert!(!body.to_string().contains("base64"));
-    }
-    fixture.unchanged();
-}
-
-#[tokio::test]
-async fn animation_limits_accept_the_exact_frame_and_pixel_boundaries() {
-    let mut fixture = Fixture::new();
-    for (name, mime, data) in [
-        ("gif-max-frames", "image/gif", gif_frames(128, 3)),
-        ("gif-max-pixels", "image/gif", gif_frames(64, 1024)),
-        ("webp-max-frames", "image/webp", webp_frames(128, 3)),
-        ("webp-max-pixels", "image/webp", webp_frames(64, 1024)),
-    ] {
-        fixture.put(
-            "claude",
-            name,
-            vec![block("claude", mime, &STANDARD.encode(data))],
-        );
-    }
-    let app = fixture.app();
-    for name in [
-        "gif-max-frames",
-        "gif-max-pixels",
-        "webp-max-frames",
-        "webp-max-pixels",
-    ] {
-        let response = messages(&app, name).await;
         assert_eq!(response.status(), StatusCode::OK, "{name}");
-        let projected = value(response).await;
-        let images = projected["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|message| {
-                message
-                    .get("media")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0]["lazy"], true);
-        assert!(images[0].get("width").is_none() && images[0].get("height").is_none());
-        let response = get(&app, images[0]["src"].as_str().unwrap()).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let canvas = if name.ends_with("pixels") { 1024 } else { 3 };
-        let expected = match name {
-            "gif-max-frames" => gif_frames(128, canvas),
-            "gif-max-pixels" => gif_frames(64, canvas),
-            "webp-max-frames" => webp_frames(128, canvas.into()),
-            "webp-max-pixels" => webp_frames(64, canvas.into()),
-            _ => unreachable!(),
-        };
+        assert_eq!(response.headers()["content-type"], mime);
         assert_eq!(bytes(response).await, expected);
     }
     fixture.unchanged();

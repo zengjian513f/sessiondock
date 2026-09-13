@@ -26,13 +26,8 @@ use crate::{
     state::AppState,
 };
 
-/// Route body bound: the description (≤ 50000 chars), a browser snapshot
-/// (≤ 40 messages × 4000 chars) and the attachment list.
-pub const BODY_LIMIT: usize = 2 * 1024 * 1024;
-/// Raw upload bodies on `/session/attachment?uid=bug-report`; the JSON
-/// completion path keeps its own 8 KiB bound.
+/// Raw upload bodies on `/session/attachment?uid=...`.
 pub const ATTACHMENT_BODY_LIMIT: usize = WriteService::BUG_REPORT_ATTACHMENT_MAX_BYTES + 1;
-const JSON_ATTACHMENT_LIMIT: usize = 8 * 1024;
 
 fn disabled() -> ApiError {
     ApiError::new(
@@ -118,7 +113,7 @@ pub async fn report(
         ));
     }
     let source_text = {
-        let raw = text(&body["source"], 64);
+        let raw = text(&body["source"], usize::MAX);
         if raw.is_empty() {
             source_name(DEFAULT_SOURCE).to_owned()
         } else {
@@ -386,7 +381,8 @@ async fn terminal_capture(state: &AppState, ctx: &worker::WorkerContext, name: &
 /// `POST /api/session/attachment`: Python's raw upload for `uid=bug-report`
 /// (query `name`, optional `id`, the file as the body) writes into the
 /// repository's attachment directory through the write service; every other
-/// uid is the JSON upload-completion route of `api/files.rs`.
+/// native uid uses the conversation upload route of `api/files.rs`.
+/// Requests without a query uid retain the JSON upload-completion contract.
 pub async fn attachment(
     State(state): State<AppState>,
     request: Request,
@@ -394,18 +390,8 @@ pub async fn attachment(
     let query: std::collections::HashMap<String, String> =
         request.uri().query().map(url_form).unwrap_or_default();
     if query.get("uid").map(String::as_str) != Some(UPLOAD_UID) {
-        let oversized = request
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<usize>().ok())
-            .is_some_and(|length| length > JSON_ATTACHMENT_LIMIT);
-        if oversized {
-            return Err(ApiError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "body_too_large",
-                "附件记录请求体过大",
-            ));
+        if query.contains_key("uid") {
+            return super::files::upload_attachment(State(state), request).await;
         }
         let body = Json::<super::files::AttachmentRequest>::from_request(request, &state).await;
         return super::files::attachment(State(state), body).await;
@@ -418,7 +404,7 @@ pub async fn attachment(
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "files_jobs_disabled",
-            "文件写入未启用：报告附件需要显式的写入目录",
+            "文件写入服务未启用",
         )
     })?;
     let name = query
@@ -444,17 +430,6 @@ pub async fn attachment(
                 "code": "file_upload_too_large"}),
         ));
     }
-    let lease = state
-        .file_write_http
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "files_busy",
-                "文件写入繁忙，请稍后重试",
-            )
-        })?;
     let bytes = match to_bytes(
         request.into_body(),
         WriteService::BUG_REPORT_ATTACHMENT_MAX_BYTES,
@@ -472,7 +447,6 @@ pub async fn attachment(
     };
     let repository = ctx.service.repository().to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
-        let _lease = lease;
         writer.bug_report_upload(
             &repository,
             requested_id.as_deref().map(str::trim),

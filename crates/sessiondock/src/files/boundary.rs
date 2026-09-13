@@ -1,4 +1,4 @@
-use super::{FileError, ListOptions, MAX_DIRECTORY_ENTRIES, MAX_PATH_BYTES};
+use super::{FileError, ListOptions, MAX_PATH_BYTES};
 use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::{
     ambient_authority,
@@ -63,17 +63,12 @@ fn link(metadata: &Metadata) -> bool {
     metadata.is_symlink()
 }
 
-/// Read-side entry check: no symlink/reparse point, no device/pipe/socket,
-/// readable. A regular file with several hard links is an ordinary file for
-/// reading (Python's file manager and bug-report attachments link files into
-/// the project tree); the write side additionally requires `unshared`.
+/// Check an already resolved entry. A link here means the directory entry
+/// changed while its checked handle was opened. Regular hard-link aliases
+/// remain ordinary readable files.
 pub(super) fn ordinary(metadata: &Metadata) -> Result<(), FileError> {
     if link(metadata) {
-        return Err(FileError::new(
-            403,
-            "file_symlink_forbidden",
-            "开发文件服务不跟随符号链接或重解析点",
-        ));
+        return Err(FileError::changed());
     }
     if !metadata.is_dir() && !metadata.is_file() {
         return Err(FileError::new(
@@ -82,31 +77,29 @@ pub(super) fn ordinary(metadata: &Metadata) -> Result<(), FileError> {
             "只允许普通文件与目录，不读取设备、管道或套接字",
         ));
     }
-    #[cfg(unix)]
-    {
-        let mode = cap_std::fs::MetadataExt::mode(metadata);
-        if mode & 0o444 == 0 || (metadata.is_dir() && mode & 0o111 == 0) {
-            return Err(FileError::new(
-                403,
-                "file_forbidden",
-                "文件缺少读取权限，或目录缺少访问权限",
-            ));
-        }
-    }
     Ok(())
 }
-/// Write-side entry check: `ordinary` plus exactly one link for regular
-/// files, so a rename/move/delete never detaches one alias of shared data.
+/// Mutation checks the named entry itself; symlinks and hard-link aliases are
+/// valid rename/trash sources, just as Python's `path_for(...).lstat()`.
 pub(super) fn unshared(metadata: &Metadata) -> Result<(), FileError> {
-    ordinary(metadata)?;
-    if metadata.is_file() && metadata.nlink() != 1 {
-        return Err(FileError::new(
+    if metadata.is_symlink() || metadata.is_file() || metadata.is_dir() {
+        Ok(())
+    } else {
+        Err(FileError::new(
             403,
-            "file_hardlink_forbidden",
-            "写入服务不移动、改名或删除具有多个硬链接的文件",
-        ));
+            "file_special_forbidden",
+            "只允许普通文件、目录与符号链接",
+        ))
     }
-    Ok(())
+}
+
+/// A checked root for the target's OS volume, not a configured directory jail.
+pub(super) fn volume_root(path: &Path) -> Result<Arc<Root>, FileError> {
+    let root = path
+        .ancestors()
+        .last()
+        .ok_or_else(|| FileError::new(400, "file_path_invalid", "需要绝对路径"))?;
+    Root::open(root).map(Arc::new)
 }
 
 struct Edge {
@@ -137,20 +130,9 @@ pub(super) struct Root {
 impl Root {
     pub fn open(raw: &Path) -> Result<Self, FileError> {
         let text = raw.to_str().ok_or_else(|| {
-            FileError::new(
-                400,
-                "file_path_encoding",
-                "开发文件目录必须能表示为 UTF-8 路径",
-            )
+            FileError::new(400, "file_path_encoding", "文件目录必须能表示为 UTF-8 路径")
         })?;
         let path = absolute_navigation(text)?;
-        if path.parent().is_none() {
-            return Err(FileError::new(
-                403,
-                "file_root_too_broad",
-                "文件系统根目录不能作为开发文件授权目录",
-            ));
-        }
         let mut base = PathBuf::new();
         let mut names = Vec::new();
         for component in path.components() {
@@ -161,7 +143,7 @@ impl Root {
                     return Err(FileError::new(
                         400,
                         "file_path_invalid",
-                        "开发文件目录需要标准绝对路径",
+                        "文件目录需要标准绝对路径",
                     ));
                 }
             }
@@ -178,7 +160,7 @@ impl Root {
                 return Err(FileError::new(
                     400,
                     "file_root_not_directory",
-                    "开发文件授权入口必须是既有目录",
+                    "文件入口必须是既有目录",
                 ));
             }
             let child = Arc::new(directory.open_dir_nofollow(&name).map_err(FileError::io)?);
@@ -326,7 +308,7 @@ pub(super) fn open_target(root: Arc<Root>, path: PathBuf) -> Result<ResolvedTarg
     root.verify()?;
     let relative = path
         .strip_prefix(&root.path)
-        .map_err(|_| FileError::new(403, "file_outside_roots", "路径越出授权目录"))?;
+        .map_err(|_| FileError::new(400, "file_path_invalid", "路径与打开的文件系统卷不一致"))?;
     let names: Vec<_> = relative
         .components()
         .map(|component| match component {
@@ -400,102 +382,26 @@ pub(super) fn open_target(root: Arc<Root>, path: PathBuf) -> Result<ResolvedTarg
 }
 
 pub(super) fn validate_path_text(raw: &str) -> Result<(), FileError> {
-    if raw.is_empty()
-        || raw.len() > MAX_PATH_BYTES
-        || raw.chars().any(char::is_control)
-        || raw.contains("://")
-        || raw.starts_with('~')
-    {
+    if raw.is_empty() || raw.chars().count() > MAX_PATH_BYTES || raw.contains('\0') {
         return Err(FileError::new(
             400,
             "file_path_invalid",
-            "路径为空、过长或含不支持的字符；不展开 HOME 或 URL",
+            "路径为空、过长或包含空字符",
         ));
-    }
-    #[cfg(not(windows))]
-    if raw.contains('\\')
-        || (raw.as_bytes().get(1) == Some(&b':') && raw.as_bytes()[0].is_ascii_alphabetic())
-    {
-        return Err(FileError::new(
-            400,
-            "file_foreign_path",
-            "当前平台不接受 Windows 分隔符或驱动器路径",
-        ));
-    }
-    #[cfg(windows)]
-    {
-        if raw.starts_with(['/', '\\']) {
-            return Err(FileError::new(
-                400,
-                "file_path_invalid",
-                "Windows 仅接受显式盘符绝对路径，不接受 UNC/设备/隐式当前盘路径",
-            ));
-        }
-        for (index, component) in raw.split(['/', '\\']).enumerate() {
-            if index == 0 && component.len() == 2 && component.as_bytes()[1] == b':' {
-                continue;
-            }
-            if component.contains(':')
-                || (!matches!(component, "." | "..") && component.ends_with(['.', ' ']))
-            {
-                return Err(FileError::new(
-                    400,
-                    "file_path_invalid",
-                    "不接受 Windows 数据流或歧义路径组件",
-                ));
-            }
-            let stem = component
-                .split('.')
-                .next()
-                .unwrap_or("")
-                .to_ascii_uppercase();
-            if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-                || (stem.len() == 4
-                    && (stem.starts_with("COM") || stem.starts_with("LPT"))
-                    && stem.as_bytes()[3].is_ascii_digit())
-            {
-                return Err(FileError::new(
-                    400,
-                    "file_path_invalid",
-                    "不接受 Windows 保留设备名称",
-                ));
-            }
-        }
     }
     Ok(())
 }
-fn normalized(path: &Path) -> Result<PathBuf, FileError> {
-    let mut result = PathBuf::new();
-    let mut depth = 0;
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !result.pop() {
-                    return Err(FileError::new(
-                        403,
-                        "file_outside_roots",
-                        "路径越出文件系统根目录",
-                    ));
-                }
-            }
-            _ => {
-                result.push(component.as_os_str());
-                depth += 1;
-            }
-        }
-        if depth > 64 {
-            return Err(FileError::new(
-                413,
-                "file_path_depth",
-                "路径超过 64 层解析预算",
-            ));
-        }
-    }
-    Ok(result)
+
+pub(super) fn expand_user(raw: &str) -> PathBuf {
+    crate::lifecycle::model::expand_user(Path::new(raw)).unwrap_or_else(|| PathBuf::from(raw))
 }
+
 pub(super) fn absolute_navigation(raw: &str) -> Result<PathBuf, FileError> {
     validate_path_text(raw)?;
+    #[cfg(windows)]
+    let normalized = raw.replace('/', "\\");
+    #[cfg(windows)]
+    let raw = normalized.as_str();
     let path = Path::new(raw);
     if !path.is_absolute() {
         return Err(FileError::new(
@@ -504,29 +410,86 @@ pub(super) fn absolute_navigation(raw: &str) -> Result<PathBuf, FileError> {
             "目录导航需要绝对路径",
         ));
     }
-    normalized(path)
+    path.canonicalize().map_err(FileError::io)
 }
 pub(super) fn absolute_path(raw: &str, cwd: &str) -> Result<PathBuf, FileError> {
     validate_path_text(raw)?;
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        return normalized(path);
+    // Python excludes URLs when resolving an initial conversation reference.
+    // Granted directory navigation and mutations accept literal colon names.
+    if raw.contains("://") {
+        return Err(FileError::new(
+            400,
+            "file_path_invalid",
+            "文件引用不能是 URL",
+        ));
     }
-    let base = absolute_navigation(cwd).map_err(|_| {
-        FileError::new(
+    #[cfg(windows)]
+    let normalized = raw.replace('/', "\\");
+    #[cfg(windows)]
+    let raw = normalized.as_str();
+    let path = expand_user(raw);
+    if path.is_absolute() {
+        return path.canonicalize().map_err(FileError::io);
+    }
+    let base = Path::new(cwd);
+    if !base.is_absolute() {
+        return Err(FileError::new(
             400,
             "file_cwd_unavailable",
-            "相对引用需要有效的所选会话工作目录；不会使用服务进程目录",
-        )
-    })?;
-    normalized(&base.join(path))
+            "相对引用需要有效的所选会话工作目录",
+        ));
+    }
+    base.join(path).canonicalize().map_err(FileError::io)
+}
+
+/// Python `path_for`: normpath first, resolve parents, retain a final symlink.
+pub(super) fn mutation_path(raw: &str) -> Result<PathBuf, FileError> {
+    validate_path_text(raw)?;
+    #[cfg(windows)]
+    let normalized = raw.replace('/', "\\");
+    #[cfg(windows)]
+    let raw = normalized.as_str();
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return Err(FileError::new(
+            400,
+            "file_absolute_path_required",
+            "需要绝对路径",
+        ));
+    }
+    let mut normalized = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(part.as_os_str()),
+        }
+    }
+    let Some(name) = normalized.file_name() else {
+        return Ok(normalized);
+    };
+    Ok(normalized
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .map_err(FileError::io)?
+        .join(name))
 }
 pub(super) fn wire_path(path: &Path) -> Result<String, FileError> {
     let value = path
         .to_str()
         .ok_or_else(|| FileError::new(400, "file_path_encoding", "路径无法表示为 UTF-8"))?;
     #[cfg(windows)]
-    return Ok(value.replace('\\', "/"));
+    {
+        let value = value
+            .strip_prefix("\\\\?\\UNC\\")
+            .map(|rest| format!("//{rest}"))
+            .or_else(|| value.strip_prefix("\\\\?\\").map(str::to_owned))
+            .unwrap_or_else(|| value.to_owned());
+        return Ok(value.replace('\\', "/"));
+    }
     #[cfg(not(windows))]
     Ok(value.into())
 }
@@ -542,7 +505,6 @@ pub(super) fn modified(metadata: &Metadata) -> Option<f64> {
 
 pub(super) fn list(target: &ResolvedTarget, options: &ListOptions) -> Result<Value, FileError> {
     if !(1..=500).contains(&options.limit)
-        || options.offset > MAX_DIRECTORY_ENTRIES
         || !matches!(options.sort.as_str(), "name" | "size" | "modified" | "type")
         || !matches!(options.order.as_str(), "asc" | "desc")
     {
@@ -562,14 +524,7 @@ pub(super) fn list(target: &ResolvedTarget, options: &ListOptions) -> Result<Val
     };
     let mut rows = Vec::new();
     let mut errors = Vec::new();
-    for (count, entry) in directory.entries().map_err(FileError::io)?.enumerate() {
-        if count >= MAX_DIRECTORY_ENTRIES {
-            return Err(FileError::new(
-                413,
-                "file_directory_budget",
-                "目录超过 10000 项预算；未返回假完整列表，请选择较小目录",
-            ));
-        }
+    for entry in directory.entries().map_err(FileError::io)? {
         let entry = entry.map_err(FileError::io)?;
         let name = entry.file_name().into_string().map_err(|_| {
             FileError::new(
@@ -589,8 +544,18 @@ pub(super) fn list(target: &ResolvedTarget, options: &ListOptions) -> Result<Val
         match directory.symlink_metadata(&name) {
             Ok(metadata) => {
                 symlink = link(&metadata);
-                match ordinary(&metadata).and_then(|_| validate_path_text(&name)) {
-                    Ok(()) => { kind = if metadata.is_dir() { "directory" } else { "file" }; size = metadata.is_file().then_some(metadata.len()); timestamp = modified(&metadata); }
+                let metadata = if symlink {
+                    path.canonicalize()
+                        .map_err(FileError::io)
+                        .and_then(|resolved| {
+                            open_target(volume_root(&resolved)?, resolved)
+                                .map(|target| target.metadata)
+                        })
+                } else {
+                    Ok(metadata)
+                };
+                match metadata.and_then(|metadata| { ordinary(&metadata)?; Ok(metadata) }) {
+                    Ok(metadata) => { kind = if metadata.is_dir() { "directory" } else { "file" }; size = metadata.is_file().then_some(metadata.len()); timestamp = modified(&metadata); }
                     Err(error) => errors.push(json!({"name":name,"status":error.status,"code":error.code,"error":error.message})),
                 }
             }

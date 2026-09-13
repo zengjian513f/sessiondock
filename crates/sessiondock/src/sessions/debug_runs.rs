@@ -23,9 +23,6 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 pub const DEBUG_RUNS_FILENAME: &str = "debug-runs.json";
-/// Sanity bound on the registry file; Python has none (real files are ~200 KB).
-const BYTE_LIMIT: u64 = 64 * 1024 * 1024;
-
 /// `?debug_run=<id>` of a raw query string (Python `_debug_run`: the first
 /// 64 characters). Valid ids are `[A-Za-z0-9_-]`, so no percent-decoding
 /// is needed: an encoded or otherwise malformed id names no run.
@@ -312,7 +309,7 @@ impl DebugRuns {
             return cache.index.clone();
         }
         let index = match stamp {
-            Some(stamp) if stamp.size <= BYTE_LIMIT => fs::read(&self.path)
+            Some(_) => fs::read(&self.path)
                 .map(|bytes| parse(&bytes))
                 .unwrap_or_default(),
             _ => RunIndex::default(),

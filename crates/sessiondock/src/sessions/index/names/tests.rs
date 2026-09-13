@@ -3,6 +3,7 @@ use crate::sessions::index::summary::norm_ts;
 use crate::sessions::{MessageQuery, SessionRoots, SessionStore};
 use serde_json::json;
 use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn put(path: &Path, rows: &[Value]) {
@@ -92,38 +93,30 @@ fn file_order_empty_names_time_and_unicode() {
 }
 
 #[test]
-fn malformed_schema_and_all_budgets_fail_explicitly() {
-    for raw in [
-        b"{bad}\n".as_slice(),
-        b"[]\n",
-        b"{}\n{",
-        b"{\"id\":4,\"thread_name\":\"x\"}\n",
-        b"{\"id\":\"a\",\"thread_name\":true}\n",
-    ] {
-        assert_eq!(parse(raw).unwrap_err().status, 503);
-    }
-    assert_eq!(parse(&vec![b'\n'; LINE_LIMIT + 1]).unwrap_err().status, 413);
-    let bytes = (0..=NAME_LIMIT)
+fn malformed_rows_are_skipped_and_large_valid_indexes_are_readable() {
+    let names = parse(
+        b"{bad}\n[]\n{}\n{\"id\":4,\"thread_name\":\"x\"}\n{\"id\":\"a\",\"thread_name\":true}\n{\"id\":\"kept\",\"thread_name\":\"valid\"}\n{",
+    )
+    .unwrap();
+    assert_eq!(names.len(), 2);
+    assert_eq!(names["a"].title, "True");
+    assert_eq!(names["kept"].title, "valid");
+    assert!(parse(&vec![b'\n'; 50_001]).unwrap().is_empty());
+    let bytes = (0..=10_000)
         .map(|id| format!("{{\"id\":\"{id}\",\"thread_name\":\"x\"}}\n"))
         .collect::<String>();
-    assert_eq!(parse(bytes.as_bytes()).unwrap_err().status, 413);
+    assert_eq!(parse(bytes.as_bytes()).unwrap().len(), 10_001);
     for record in [
-        json!({"id":"x".repeat(ID_LIMIT+1),"thread_name":"x"}),
-        json!({"id":"x","thread_name":"x".repeat(TITLE_LIMIT+1)}),
+        json!({"id":"x".repeat(257),"thread_name":"x"}),
+        json!({"id":"x","thread_name":"x".repeat(16 * 1024 + 1)}),
     ] {
-        assert_eq!(
-            parse(record.to_string().as_bytes()).unwrap_err().status,
-            413
-        );
+        assert_eq!(parse(record.to_string().as_bytes()).unwrap().len(), 1);
     }
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("index.jsonl");
     let file = fs::File::create(&path).unwrap();
-    file.set_len(BYTE_LIMIT + 1).unwrap();
-    assert!(matches!(
-        load(&path, None),
-        Err(SessionError { status: 413, .. })
-    ));
+    file.set_len(4 * 1024 * 1024 + 1).unwrap();
+    assert!(load(&path, None).unwrap().names.is_empty());
 }
 
 #[test]
@@ -169,14 +162,13 @@ fn explicit_only_cache_identity_failures_and_recovery() {
     assert_eq!(batch["reset"], false);
     assert_eq!(batch["messages"], json!([]));
     fs::write(&path, "{bad}\n").unwrap();
-    assert_eq!(service.list(false).unwrap_err().status, 503);
-    assert!(matches!(
-        service.snapshot(&uid, ""),
-        Err(SessionError { status: 503, .. })
-    ));
-    assert!(service.search_snapshot().is_err());
+    let fallback = service.list(false).unwrap();
+    assert_eq!(row(&fallback, "root")["title"], "root native question");
+    assert!(service.snapshot(&uid, "").is_ok());
+    assert!(service.search_snapshot().is_ok());
     fs::remove_file(&path).unwrap();
-    assert_eq!(service.list(false).unwrap_err().status, 503);
+    let missing = service.list(false).unwrap();
+    assert_eq!(row(&missing, "root")["title"], "root native question");
     index(&path, "root", "recovered");
     assert_eq!(
         row(&service.list(false).unwrap(), "root")["title"],
@@ -286,17 +278,25 @@ fn inherited_title_follows_forked_from_id_not_history_base() {
 }
 
 #[test]
-fn constructor_requires_root_and_absolute_file() {
-    let service = SessionStore::with_metadata_and_names(
-        SessionRoots::default(),
-        None,
-        Some(PathBuf::from("/synthetic/index")),
+fn relative_and_missing_files_follow_python_fallbacks() {
+    assert!(
+        load(Path::new("relative/index"), None)
+            .unwrap()
+            .names
+            .is_empty()
     );
-    assert_eq!(service.list(false).unwrap_err().status, 400);
-    assert!(matches!(
-        load(Path::new("relative/index"), None),
-        Err(SessionError { status: 400, .. })
-    ));
+    let temp = tempfile::Builder::new()
+        .prefix("sessiondock-relative-names-")
+        .tempdir_in(".")
+        .unwrap();
+    let cwd = std::env::current_dir().unwrap();
+    let relative = temp.path().strip_prefix(&cwd).unwrap().join("index.jsonl");
+    assert!(!relative.is_absolute());
+    index(&relative, "id", "relative title");
+    assert_eq!(
+        load(&relative, None).unwrap().names["id"].title,
+        "relative title"
+    );
 }
 
 #[test]
@@ -328,7 +328,7 @@ fn same_size_atomic_replacement_invalidates_cache_and_open_handle() {
 
 #[cfg(unix)]
 #[test]
-fn rejects_symlinks_hardlinks_permissions_special_files_and_parent_replacement() {
+fn follows_symlinks_and_hardlinks_while_tracking_replacements() {
     use std::os::unix::{
         fs::{PermissionsExt, symlink},
         net::UnixListener,
@@ -338,10 +338,10 @@ fn rejects_symlinks_hardlinks_permissions_special_files_and_parent_replacement()
     index(&path, "id", "title");
     let link = temp.path().join("link");
     symlink(&path, &link).unwrap();
-    assert!(load(&link, None).is_err());
+    assert_eq!(load(&link, None).unwrap().names["id"].title, "title");
     fs::remove_file(&link).unwrap();
     fs::hard_link(&path, &link).unwrap();
-    assert!(load(&path, None).is_err());
+    assert_eq!(load(&path, None).unwrap().names["id"].title, "title");
     fs::remove_file(&link).unwrap();
     fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
     assert!(load(&path, None).is_err());
@@ -359,7 +359,10 @@ fn rejects_symlinks_hardlinks_permissions_special_files_and_parent_replacement()
     assert!(changed(&directory.join("index"), Some(&first)).unwrap());
     let parent_link = temp.path().join("parent-link");
     symlink(&directory, &parent_link).unwrap();
-    assert!(load(&parent_link.join("index"), None).is_err());
+    assert_eq!(
+        load(&parent_link.join("index"), None).unwrap().names["id"].title,
+        "two"
+    );
 }
 
 /// Python `CodexAdapter.read`: a renamed main session carries the local

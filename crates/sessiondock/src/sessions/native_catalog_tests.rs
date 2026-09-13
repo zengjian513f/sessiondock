@@ -214,6 +214,7 @@ fn catalog_refreshes_provenance_while_an_existing_snapshot_stays_immutable() {
     });
     let uid = uid_for("codex", &path);
     let snapshot = store.search_snapshot().unwrap();
+    fs::remove_file(&path).unwrap();
     write(&path, &[codex("native-replaced", "display-stable")]);
     assert_eq!(
         store

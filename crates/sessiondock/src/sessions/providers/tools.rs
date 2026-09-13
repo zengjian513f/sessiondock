@@ -335,8 +335,8 @@ pub(super) fn question(name: &str, value: &Value) -> Option<(String, Vec<Value>)
     ))
 }
 
-/// The native Codex result format accepts ordinary JSON data as well as text
-/// blocks. Known or unknown tagged non-text blocks remain an explicit 501.
+/// Python `_stringify` recursively joins arrays, takes a block's `text`, and
+/// serializes other objects. Image-shaped blocks retain the visible placeholder.
 fn output_text(value: &Value) -> Result<String, String> {
     match value {
         Value::Null => Ok(String::new()),
@@ -347,19 +347,11 @@ fn output_text(value: &Value) -> Result<String, String> {
             .collect::<Result<Vec<_>, _>>()
             .map(|parts| parts.join("\n")),
         Value::Object(_) => {
+            if super::image_content::image_shape(value) {
+                return Ok("[图片]".to_owned());
+            }
             if super::image_content::tool_wrapper(value) {
                 return output_text(&value["content"]);
-            }
-            if value.get("image_url").is_some() {
-                return Err("尚未迁移的工具输出媒体：image_url".to_owned());
-            }
-            if let Some(kind) = value.get("type")
-                && !matches!(
-                    kind.as_str(),
-                    Some("text" | "input_text" | "output_text" | "summary_text")
-                )
-            {
-                return Err(format!("尚未迁移的工具输出内容块/媒体类型：{kind}"));
             }
             if let Some(text) = value.get("text") {
                 output_text(text)
@@ -413,7 +405,6 @@ fn chunk_envelopes(value: &Value) -> Result<Option<Vec<(usize, Chunk<'_>)>>, Str
     let Some(parts) = value.as_array() else {
         return Ok(None);
     };
-    let mut budget = 64_usize * 1024 * 1024;
     let mut chunks = Vec::new();
     for (index, part) in parts.iter().enumerate() {
         if is_output_envelope(part) {
@@ -423,9 +414,6 @@ fn chunk_envelopes(value: &Value) -> Result<Option<Vec<(usize, Chunk<'_>)>>, Str
         let Some(text) = part.as_str().or_else(|| part["text"].as_str()) else {
             continue;
         };
-        budget = budget
-            .checked_sub(text.len())
-            .ok_or("Codex 工具输出信封超过解析预算")?;
         let text = text.trim();
         if !(text.starts_with('{') && text.ends_with('}'))
             || !text.contains("\"wall_time_seconds\"")
@@ -444,8 +432,8 @@ fn chunk_envelopes(value: &Value) -> Result<Option<Vec<(usize, Chunk<'_>)>>, Str
 
 /// Only this known Codex tool envelope establishes a JSON-string structure
 /// boundary. Ordinary content strings and JSON tutorials are never decoded.
-/// Search at most 64 text blocks / 32 JSON-object lines per block, with a shared 64 MiB
-/// scan+parse budget. Never build or parse every newline suffix of large output.
+/// Search all source candidates without block/line/aggregate-byte quotas.
+/// Candidate offsets borrow the original text rather than copying suffixes.
 fn output_envelope(value: &Value, raw: &str) -> Result<Option<Value>, String> {
     if is_output_envelope(value) {
         return Ok(Some(value.clone()));
@@ -454,42 +442,29 @@ fn output_envelope(value: &Value, raw: &str) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     let mut candidates = vec![raw];
-    let mut more_candidates = false;
     if let Some(parts) = value.as_array() {
-        let mut texts = parts
+        let texts = parts
             .iter()
             .filter_map(|part| part.as_str().or_else(|| part["text"].as_str()));
-        candidates.extend(texts.by_ref().take(63));
-        more_candidates = texts.next().is_some();
+        candidates.extend(texts);
     } else if let Some(text) = value["text"].as_str() {
         candidates.push(text);
     }
-    let mut budget = 64_usize * 1024 * 1024;
     for text in candidates {
-        budget = budget
-            .checked_sub(text.len())
-            .ok_or("Codex 工具输出信封超过解析预算")?;
         if !text.contains("\"wall_time_seconds\"") || !text.contains("\"output\"") {
             continue;
         }
         let marker = text.rfind("Output:\n").map(|index| index + 8);
-        let mut starts = Vec::with_capacity(34);
+        let mut starts = Vec::new();
         if let Some(marker) = marker {
             starts.push(marker);
         }
         starts.push(0);
         let mut offset = 0;
-        let mut object_lines = 0;
-        let mut more_lines = false;
         for line in text.split_inclusive('\n') {
             // Scan each line once, never trim/parse every growing suffix.
             if line.trim_start().starts_with('{') {
-                if object_lines >= 32 {
-                    more_lines = true;
-                    break;
-                }
                 starts.push(offset);
-                object_lines += 1;
             }
             offset += line.len();
         }
@@ -499,9 +474,6 @@ fn output_envelope(value: &Value, raw: &str) -> Result<Option<Value>, String> {
                 continue;
             }
             let candidate = &text[start..];
-            budget = budget
-                .checked_sub(candidate.len())
-                .ok_or("Codex 工具输出信封超过解析预算")?;
             let candidate = candidate.trim();
             if !candidate.starts_with('{') {
                 continue;
@@ -513,12 +485,6 @@ fn output_envelope(value: &Value, raw: &str) -> Result<Option<Value>, String> {
                 return Ok(Some(envelope));
             }
         }
-        if more_lines {
-            return Err("Codex 工具输出信封超过候选限制".into());
-        }
-    }
-    if more_candidates {
-        return Err("Codex 工具输出信封超过候选限制".into());
     }
     Ok(None)
 }
@@ -529,15 +495,11 @@ pub(super) fn sanitize_output_with_media(
 ) -> Result<(Value, Vec<crate::media::NativeImage>), String> {
     fn sanitize(
         value: &Value,
-        depth: usize,
         context: Option<&super::MediaContext<'_>>,
     ) -> Result<(Value, Vec<crate::media::NativeImage>), String> {
-        if depth > 8 {
-            return Err("Codex 工具输出信封嵌套超过 8 层限制".into());
-        }
         // Extract from the ORIGINAL borrowed structural envelope before clone.
         if is_output_envelope(value) {
-            let (output, media) = sanitize(&value["output"], depth + 1, context)?;
+            let (output, media) = sanitize(&value["output"], context)?;
             let mut envelope = value.clone();
             envelope["output"] = output;
             return Ok((envelope, media));
@@ -557,25 +519,22 @@ pub(super) fn sanitize_output_with_media(
                     // no span authority.
                     let (output, mut nested, mut envelope) = match chunks.next().unwrap().1 {
                         Chunk::Structural(value) => {
-                            let (output, nested) = sanitize(&value["output"], depth + 1, context)?;
+                            let (output, nested) = sanitize(&value["output"], context)?;
                             (output, nested, value.clone())
                         }
                         Chunk::Parsed(value) => {
-                            let (output, nested) = sanitize(&value["output"], depth + 1, None)?;
+                            let (output, nested) = sanitize(&value["output"], None)?;
                             (output, nested, value)
                         }
                     };
-                    if media.len() + nested.len() > super::image_content::MAX_MEDIA {
-                        return Err("单条消息内嵌图片超过 256 张限制".into());
-                    }
                     media.append(&mut nested);
                     envelope["output"] = output;
                     parts.push(envelope);
                     continue;
                 }
-                // Text blocks are text even with an image_url field (nothing
-                // to copy: they never enter the cleaned value); unknown block
-                // kinds stay the strict batch-19 failure.
+                // Text blocks need no copy because they never enter the
+                // cleaned chunk array. Other serializable parts follow
+                // Python `_stringify` rather than rejecting the tool result.
                 let text_block = matches!(
                     part["type"].as_str(),
                     Some("text" | "input_text" | "output_text" | "summary_text")
@@ -584,9 +543,6 @@ pub(super) fn sanitize_output_with_media(
                     continue;
                 }
                 if let Some(image) = super::image_content::native_image(part, context)? {
-                    if media.len() >= super::image_content::MAX_MEDIA {
-                        return Err("单条消息内嵌图片超过 256 张限制".into());
-                    }
                     media.push(image);
                 } else {
                     output_text(part)?;
@@ -598,23 +554,20 @@ pub(super) fn sanitize_output_with_media(
         let raw = output_text(&cleaned)?;
         if let Some(mut envelope) = output_envelope(&cleaned, &raw)? {
             // Parsed JSON strings have different trees and no span authority.
-            let (output, mut nested) = sanitize(&envelope["output"], depth + 1, None)?;
-            if media.len() + nested.len() > super::image_content::MAX_MEDIA {
-                return Err("单条消息内嵌图片超过 256 张限制".into());
-            }
+            let (output, mut nested) = sanitize(&envelope["output"], None)?;
             media.append(&mut nested);
             envelope["output"] = output;
             return Ok((envelope, media));
         }
         Ok((cleaned, media))
     }
-    sanitize(value, 0, context)
+    sanitize(value, context)
 }
 
 pub(super) fn output(value: &Value) -> Result<(String, Value), String> {
     if let Some(chunks) = chunk_envelopes(value)? {
-        // Unknown block kinds among the other parts stay the strict failure;
-        // text blocks need no copy since they never enter the text.
+        // Validate that every other part can be rendered using the same
+        // Python-compatible fallback; text blocks need no copy here.
         for part in value.as_array().into_iter().flatten() {
             if !is_output_envelope(part)
                 && !matches!(

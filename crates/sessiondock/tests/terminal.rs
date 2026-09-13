@@ -562,7 +562,7 @@ async fn same_page_reconnect_is_silent_and_binds_only_once() {
 }
 
 #[tokio::test]
-async fn claim_preserves_small_body_limit_status_without_echoing_payload() {
+async fn claim_accepts_large_ignored_fields_without_echoing_payload() {
     let host = FakeHost::new(ECHO).await;
     let server = Server::start(Some(host.directory.path())).await;
     let (status, body) = server
@@ -570,13 +570,12 @@ async fn claim_preserves_small_body_limit_status_without_echoing_payload() {
             "POST",
             "/api/term/claim",
             json!({
-        "name":NAME,"page":"page","_trace_id":"sensitive-test-marker".repeat(1024)}),
+        "name":NAME,"page":"page","_trace_id":"sensitive-test-marker".repeat(256 * 1024)}),
         )
         .await;
-    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(body["code"], "body_too_large");
+    assert_eq!(status, StatusCode::OK);
     assert!(!body.to_string().contains("sensitive-test-marker"));
-    server.claim("other-page", false).await;
+    server.claim("other-page", true).await;
 }
 
 #[tokio::test]
@@ -638,10 +637,10 @@ async fn claim_checks_missing_exited_and_timed_out_hosts_before_issuing_token() 
 }
 
 #[tokio::test]
-async fn malformed_control_and_host_frame_fail_closed_without_forwarding_input() {
+async fn browser_text_is_literal_input_and_malformed_host_frames_fail_closed() {
     let host = FakeHost::new(ECHO).await;
     let server = Server::start(Some(host.directory.path())).await;
-    for control in [
+    for text in [
         "not-json",
         "{\"t\":\"resize\",\"cols\":0,\"rows\":24}",
         "{\"t\":\"send\",\"text\":\"should not run\"}",
@@ -649,19 +648,19 @@ async fn malformed_control_and_host_frame_fail_closed_without_forwarding_input()
         let token = server.claim("page", false).await;
         let mut ws = server.connect("page", &token).await;
         next(&mut ws).await;
-        ws.send(Message::Text(control.into())).await.unwrap();
-        assert_eq!(closed(&mut ws).await.0, 1008);
+        ws.send(Message::Text(text.into())).await.unwrap();
+        assert_eq!(next(&mut ws).await, Message::Binary(text.as_bytes().into()));
     }
-    assert!(host.seen.lock().await.is_empty());
+    assert_eq!(host.seen.lock().await.len(), 3);
     let token = server.claim("page", false).await;
     let mut oversized = server.connect("page", &token).await;
     next(&mut oversized).await;
     oversized
-        .send(Message::Binary(vec![b'x'; 64 * 1024 + 1].into()))
+        .send(Message::Binary(vec![b'x'; 1024 * 1024 + 1].into()))
         .await
         .unwrap();
-    assert_eq!(closed(&mut oversized).await.0, 1009);
-    assert!(host.seen.lock().await.is_empty());
+    assert_eq!(closed(&mut oversized).await.0, 1011);
+    assert_eq!(host.seen.lock().await.len(), 3);
     host.set(INVALID_FRAME);
     let token = server.claim("page", false).await;
     let mut ws = server.connect("page", &token).await;
@@ -688,17 +687,19 @@ async fn web_shutdown_detaches_but_host_remains_available_for_next_server() {
 }
 
 #[tokio::test]
-async fn stalled_browser_is_disconnected_and_cannot_block_host_indefinitely() {
+async fn stalled_browser_waits_until_takeover_and_does_not_block_recovery() {
     let host = FakeHost::new(BURST).await;
     let server = Server::start(Some(host.directory.path())).await;
     let token = server.claim("slow-page", false).await;
     let mut ws = server.connect("slow-page", &token).await;
     assert_eq!(next(&mut ws).await, Message::Binary(READY.to_vec().into()));
-    // Stop consuming WS output. The host's bounded burst fills local socket
-    // buffers; bridge backpressure deadlines must close its host attachment.
-    host.wait_detached().await;
+    // Stop consuming WS output. Python has no fixed downstream backpressure
+    // deadline, so an otherwise healthy attachment remains active.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(host.active.load(Ordering::SeqCst), 1);
     host.set(ECHO);
-    let token = server.claim("new-page", false).await;
+    let token = server.claim("new-page", true).await;
+    host.wait_detached().await;
     let mut recovered = server.connect("new-page", &token).await;
     assert_eq!(
         next(&mut recovered).await,

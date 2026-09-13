@@ -3,7 +3,7 @@
 This contract now has an isolated Linux implementation: explicit launcher,
 bounded coordinator, create/status/cancel HTTP and launch-bound pending WS.
 `terminal_create` remains false by default; it is enabled only after opening
-the configured private ledger and launcher allowlist. Batch ten adds explicit
+the configured lifecycle ledger and CLI profiles. Batch ten adds explicit
 operator native binding below; no real model CLI launch contract, automatic
 process association or reliable-send queue is claimed.
 
@@ -31,15 +31,13 @@ because the browser supplies a UID. A name is an endpoint locator only.
 
 ## Creation coordinator
 
-1. Resolve a server-configured adapter and an explicitly authorized working
+1. Resolve a server-configured CLI and an absolute working
    directory. Browser requests cannot provide executable paths, shell snippets,
    arbitrary argv/environment, or credentials. Adapter versions/parameters and
    capability advertisements must reflect verified contracts, not old Python
    invocation patterns alone.
-   Treat `adapter_id` as an immutable, versioned allowlist entry. If executable
-   semantics or fixed launch parameters change, issue a new adapter identity or
-   extend the persisted specification with their fingerprint before integration;
-   do not reinterpret an existing request's adapter ID as a different command.
+   Legacy `adapter_id` input does not select a command; source selection follows
+   Python's fixed CLI table.
 2. Persist the canonical specification and generated launch/instance identities.
    The same request and specification return the prior receipt; a conflicting
    specification is rejected. Do not evict idempotency records silently when the
@@ -66,7 +64,7 @@ mere transport loss. Web shutdown/restart detaches from established hosts; it
 does not terminate their CLI sessions. Linux process groups alone do not prove
 survival of a service manager's cgroup stop policy; on Windows the host breaks
 away from the service's job object when that job allows it and otherwise stays
-inside it ([lifecycle-launcher.md](lifecycle-launcher.md#windows-wp-w)); macOS
+inside it ([lifecycle-launcher.md](lifecycle-launcher.md#validation)); macOS
 behavior requires its own runtime validation before advertising parity.
 
 ## Pending terminal and cancellation

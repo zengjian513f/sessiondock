@@ -525,7 +525,7 @@ function markStaleBuild(serverBuild = '') {
   document.body.classList.add('stale-build');
   const notice = el('div', 'version-stale');
   notice.setAttribute('role', 'alert');
-  notice.innerHTML = '<span>agenthub 已更新。当前页面已停止发送，请重新加载。</span>';
+  notice.innerHTML = '<span>SessionDock 已更新。当前页面已停止发送，请重新加载。</span>';
   const reload = el('button', 'btn', '重新加载');
   reload.type = 'button';
   reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
@@ -1598,13 +1598,14 @@ async function retryMigrationRead(uid, agent = null) {
   return task;
 }
 
-/** 服务端明确的 migration-error 事件：该视图不可恢复，暂停并保留快照。
- *  普通的连接中断（断网、代理断开、服务重启、503）不经过这里，由 es.onerror
- *  按 Python 同款的退避重开。 */
+/** 服务端明确的 migration-error 事件：不可恢复时暂停并保留快照。
+ *  原生文件并发增长等情况也会以 migration-error 携带 503；它仍是瞬时失败，
+ *  留给随后到来的 es.onerror 按 Python 同款的退避策略重开。 */
 function pauseMigrationWatch(es, uid, agent, error = null) {
   if (AgentHubCapabilities.config.backend !== 'rust' || _es !== es
       || _esUid !== uid || S.sel !== uid || S.agent !== agent) return false;
   if (!error) return false;
+  if (transientReadFailure(error)) return false;
   reportMigrationReadFailure(uid, agent, error);
   return true;
 }
@@ -2917,7 +2918,7 @@ function renderTimelinePinNotice(meta) {
   clear.type = 'button'; clear.className = 'btn';
   clear.id = 'timeline-pin-clear';
   clear.textContent = pin.retired ? '清除记录' : '取消固定';
-  clear.title = '只移除 agenthub 的显示固定，不会回滚 CLI';
+  clear.title = '只移除 SessionDock 的显示固定，不会回滚 CLI';
   clear.onclick = () => { clear.disabled = true; void pinTimeline(meta.uid, null).finally(() => { clear.disabled = false; }); };
   notice.append(text, clear);
   const heading = detail.querySelector(':scope > .dhead');
@@ -4594,9 +4595,7 @@ async function stopSession(m, button = null) {
 // Rust 回收站能力：文件进服务端显式配置的回收站目录，而不是 Python 的固定路径。
 const trashCapable = () => AgentHubCapabilities.config.backend === 'rust'
   && AgentHubCapabilities.config.trash === true;
-const trashLocationNote = () => trashCapable()
-  ? '文件会移入服务端回收站 (SESSIONDOCK_TRASH_DIR), 不会真删。'
-  : '文件会移入回收站 ~/.local/share/agenthub/trash/, 不会真删。';
+const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
 // 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
 function confirmForceDelete(count, detail) {
   return confirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`

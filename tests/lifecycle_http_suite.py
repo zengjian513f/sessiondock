@@ -98,15 +98,15 @@ def run(opener, base, root, work, claude_cwd):
         created.append(other)
         passed("create idempotent replay and second request_id")
 
-        for payload, code in (
-            ({**body, "request_id": "free-shell-bad-cwd", "cwd": str(root)}, "invalid_launch"),
-            ({"source": "codex", "cwd": work}, "invalid_launch_request"),
-            ({**body, "request_id": "free-shell-unk-adp", "adapter_id": "missing-v1"}, "launch_adapter"),
+        for payload in (
+            {**body, "request_id": "free-shell-home-cwd", "cwd": str(root)},
+            {"source": "codex", "cwd": work},
+            {**body, "request_id": "free-shell-unk-adp", "adapter_id": "missing-v1"},
         ):
-            err, raw = call(opener, base, "POST", "/api/term/create", payload, want=400)
-            if err.get("code") != code:
-                fail(code, err.get("code"), raw)
-        passed("create 400 invalid_launch / missing request_id / unknown adapter")
+            accepted, raw = call(opener, base, "POST", "/api/term/create", payload)
+            receipt_ok(accepted, raw, "fixed")
+            created.append(wait_run(opener, base, accepted))
+        passed("create accepts cwd, generated request_id and ignored adapter metadata")
 
         st, _ = call(opener, base, "GET", qstat(rec))
         if st.get("running") is not True:
@@ -146,14 +146,13 @@ def run(opener, base, root, work, claude_cwd):
             fail("bind unconfirmed", bind.get("code"), raw)
         passed("POST /api/term/bind without operator_confirmed 400")
 
-        # Outside roots: code 200 []; 400 invalid_path is oversize/control/unknown fields only.
         inside, raw = call(opener, base, "GET", "/api/term/complete-dir?path=" + quote(work + "/", safe="/"))
         if not any(str(item).endswith("claude-area/") for item in inside.get("directories") or []):
             fail("complete-dir inside", inside.get("directories"), raw)
-        outside, raw = call(opener, base, "GET", "/api/term/complete-dir?path=/etc/")
-        if outside.get("directories") != []:
-            fail("complete-dir outside", outside.get("directories"), raw)
-        passed("GET /api/term/complete-dir inside/outside roots")
+        outside, raw = call(opener, base, "GET", "/api/term/complete-dir?path=" + quote(str(root) + "/", safe="/"))
+        if not any(str(item).rstrip("/") == work for item in outside.get("directories") or []):
+            fail("complete-dir parent", outside.get("directories"), raw)
+        passed("GET /api/term/complete-dir traverses ordinary directories")
 
         tmux, raw = call(opener, base, "POST", "/api/term/backend", {"backend": "tmux"}, want=400)
         if tmux.get("code") != "backend_unsupported":
@@ -210,7 +209,7 @@ def main():
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [str(root / "work")],
+
             "adapters": [{"id": "synthetic-shell-v1", "source": "codex",
                           "executable": str(Path("/bin/sh").resolve()), "args": ["-c", SHELL],
                           "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}],
@@ -218,8 +217,7 @@ def main():
                           "args": ["--settings", "/synthetic/bridge-settings.json"],
                           "new_args": ["--session-id", "{session_id}"],
                           "resume_args": ["--resume", "{sid}"],
-                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home"},
-                          "cwd_roots": [str(root / "work" / "claude-area")]}]}))
+                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home"}}]}))
         cfg.chmod(0o600)
         init = subprocess.run([str(args.binary), "--initialize-lifecycle", str(root / "ledger")],
                               cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)

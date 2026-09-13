@@ -6,14 +6,12 @@ the Codex domain's evidence types. It is a pure library: no HTTP route, no
 scheduler, no PTY access, no screen parsing, no CLI launch, and no file access
 of its own. Nothing here makes a receipt `acknowledged`. Batch 32 wires it
 into the shared executor ([delivery-codex-executor.md](delivery-codex-executor.md)),
-which alone may upgrade a `Possible` match whose record carries its own turn
-ID to `Correlation::OperationTurn`, because the executor itself held the
-lease, verified the composer and pressed Enter after the fixed boundary.
+which submits the adapter's causal `PossibleTextMatch` evidence directly.
 
 The audited Python baseline is `send_queue.observe` plus the `_poll_outbox`
 loop in `server.py`; see [delivery.md](delivery.md) for that audit. This
-adapter keeps Python's text-and-time rule where it is sound and is stricter
-where Python can confuse a later identical human input with the delivery.
+adapter keeps Python's text-and-time rule behind the server-captured native
+cursor and terminal ownership checks.
 
 ## Where the records come from
 
@@ -46,24 +44,21 @@ unfinished trailing line is not committed and therefore not a record.
 
 | Outcome | When | Mapping to `delivery/codex.rs` |
 | --- | --- | --- |
-| `Possible(PossibleMatch)` | Exactly one real `user` record after the boundary whose text equals the delivered text after trimming only both ends, with a timestamp not earlier than `delivered_ms` (or no parsable timestamp). | `evidence: AckEvidence` with `Correlation::PossibleTextMatch`, `real_user_input: true`, `validated_confirmation` = the boundary cursor, `record: NativeAcceptance { source_identity, record_id: "codex-line:<start>-<end>", start, end, turn_id }`. `Machine::acknowledge` rejects it with `UnprovenAcknowledgment`; a unit test drives the real Machine to `Uncertain` and proves that. `completion: Option<CompletionEvidence>` carries a later `task_complete`/`turn_aborted` status of the record's own turn (`Succeeded`/`Failed`/`Stopped`), only usable after a stronger adapter has acknowledged. |
-| `Absent(Absence { skipped_earlier })` | Nothing qualifying after the boundary. `skipped_earlier` counts an identical user record whose timestamp precedes delivery: it is skipped like Python's `_causal`, and it will make any later match ambiguous. | Nothing to apply; the caller may `AdvanceWatch` to `watch`. |
+| `Possible(PossibleMatch)` | Exactly one real `user` record after the boundary whose text equals the delivered text after trimming only both ends, with a timestamp not earlier than `delivered_ms` (or no parsable timestamp). | `evidence: AckEvidence` with `Correlation::PossibleTextMatch`, `real_user_input: true`, `validated_confirmation` = the boundary cursor, `record: NativeAcceptance { source_identity, record_id: "codex-line:<start>-<end>", start, end, turn_id }`. `Machine::acknowledge` retires the receipt after the same boundary, media and one-record-per-receipt checks used for stronger evidence. `completion: Option<CompletionEvidence>` carries a later `task_complete`/`turn_aborted` status of the record's own turn (`Succeeded`/`Failed`/`Stopped`). |
+| `Absent(Absence { skipped_earlier })` | Nothing qualifying after the boundary. `skipped_earlier` counts identical user records whose timestamps precede delivery; they are skipped like Python's `_causal`. | Nothing to apply; the caller may `AdvanceWatch` to `watch`. |
 | `Uncertain(CheckpointMismatch)` | The file was rewritten or truncated below the boundary, or the logical view changed. | `NativeReset` at most; the confirmation fence never moves. |
-| `Uncertain(Ambiguous { candidates })` | More than one identical user record after the boundary (including one with an earlier timestamp). | Keep `Uncertain`; no evidence is emitted. |
 | `Uncertain(ForeignScope)` | The view is not the Codex main session named by the payload UID and the boundary's `source_identity`, or is a child agent view. | Nothing. |
-| `Uncertain(MediaUnsupported)`, `Uncertain(UnmatchableText)` | Attachments cannot be verified from a rollout; whitespace-only text can never match. | Nothing; the engine already refuses media submissions. |
+| `Uncertain(UnmatchableText)` | Whitespace-only text can never match. | Nothing. Opaque media preview metadata does not block text confirmation. |
 | `Uncertain(Unreadable { status })` | The frozen view refused the query (sanitized status only, no path or OS detail). | Nothing. |
 
 No `NativeRequestId` or `OperationTurn` correlation is ever produced **by the
-adapter**. The raw Codex TUI does not echo an AgentHub request ID and the
+adapter**. The raw Codex TUI does not echo a SessionDock request ID and the
 rollout does not bind a `task_started` to the Enter operation that caused it;
-selecting the next `task_started` or the matching prompt would manufacture
-exactly the association `docs/delivery.md` forbids. `turn_id` is copied from
+selecting the next `task_started` would manufacture an association. `turn_id` is copied from
 the record itself (`payload.turn_id` or
 `internal_chat_message_metadata_passthrough.turn_id`) when it declares one
-and is otherwise empty, which the Machine also rejects. Only the batch-32
-executor, which owns the verified Enter, may pair that record turn with its
-own persisted `enter_operation`.
+and is otherwise empty. The Machine accepts the adapter's causal
+`PossibleTextMatch`; a turn ID is only needed to associate later completion.
 
 "Real user input" follows the history projection: `response_item` messages
 with role `user` that are neither developer prompts, rebuilt instruction blocks
@@ -72,17 +67,17 @@ with role `user` that are neither developer prompts, rebuilt instruction blocks
 `event_msg` `user_message` telemetry, assistant output, tool calls, status
 events and inferred `/rename` events are not user records.
 
-## Deviations from Python `observe`, and why they are stricter
+## Comparison with Python `observe`
 
 | Python | Rust | Reason |
 | --- | --- | --- |
-| Matching text retires the row (`rows.pop`); the receipt is deleted. | The best case is `PossibleTextMatch`, which the domain refuses. The receipt stays `uncertain` with a visible possible match. | Text plus time does not bind the record to this Enter; an identical later human input is indistinguishable (`docs/delivery.md`). |
+| Matching text retires the first causal row (`rows.pop`); the receipt is deleted. | `PossibleTextMatch` acknowledges the first matching receipt after its fixed pre-injection cursor; a native record cannot acknowledge two receipts. | Matches Python's trimmed-text and causal-boundary behavior while preserving one-record-per-receipt ordering. |
 | Matches over the messages the current read returned, from the advancing watch cursor on ordinary ticks. | Always classifies the full range after the **fixed** confirmation boundary, and the boundary must revalidate as a committed checkpoint each time. | A watch-only read can miss an earlier duplicate; a moved or rewritten prefix must not be silently accepted. |
-| First record whose text matches and whose timestamp passes wins; earlier-timestamped duplicates are skipped and later ones confirm. | Every identical user record after the boundary is a candidate; two or more is `Ambiguous`, never a confirmation by the later copy. | An identical input that landed after the boundary is precisely the confusable case. |
+| First record whose text matches and whose timestamp passes wins; earlier-timestamped duplicates are skipped and later ones confirm. | Same, within the fixed validated confirmation range. | Parity. |
 | Accepts `user` and `command` roles. | Accepts projected `user` records only. | The Rust projection emits no native `command` role for Codex; inferred rename events are not native records. |
 | Absent/invalid timestamps pass `_causal`. | Same: `TimestampCheck::Absent` passes, but is reported. The projection normalizes valid stamps to RFC 3339 UTC milliseconds and nulls invalid ones. | Parity as documented; the physical boundary still applies. |
 | Boundary is a wall-clock `after_ts` plus a browser-supplied cursor. | Boundary is the server-validated `NativeCursor` captured from the frozen view plus the server's Enter clock. | Browser cursors and clocks are not evidence. |
-| Attachments are not compared. | Any media makes the observation `MediaUnsupported`. | Nothing in a rollout proves attachment identity; the engine refuses media sends anyway. |
+| Attachments are not compared. | Same: opaque media preview metadata is carried on the evidence while text remains the native confirmation key. | The composer already included uploaded paths in the submitted text, matching Python's delivery path. |
 
 Equal parts: trimming is both ends only (internal spaces and newlines stay
 significant), and the comparison is on the projected text, exactly as Python
@@ -119,8 +114,8 @@ watch cursor; a `Replay` tick observes even then.
 - `cargo test -p sessiondock --lib delivery::codex_adapter --locked`:
   twelve synthetic tests through the real `SessionStore` path in private
   temporary directories (exact match with physical range and completion,
-  Machine refusal of the possible match, end-trim only, UTF-8 multi-line,
-  earlier identical input → ambiguous, records at/before the boundary and
+  Machine acceptance of the causal possible match, end-trim only, UTF-8 multi-line,
+  earlier timestamped identical input skipped before the causal match, records at/before the boundary and
   unfinished tails ignored, rewrite/truncation → checkpoint mismatch,
   absent/invalid/earlier/numeric timestamps, inherited fork prefix excluded,
   protocol injections/telemetry/status not user input, foreign scope/media/
@@ -131,8 +126,8 @@ watch cursor; a `Replay` tick observes even then.
   `turn_context`, `task_started`, the `response_item` user message and the
   `user_message` event (plus `task_complete` on `finish`) to a real rollout
   file; the adapter classifies through the real reader path (possible match
-  with exact line range, ambiguity on a resubmitted identical prompt, a later
-  boundary, and truncation to/below a boundary). Linux only: it runs `/bin/sh`
+  with exact line range, causal selection on a resubmitted identical prompt,
+  a later boundary, and truncation to/below a boundary). Linux only: it runs `/bin/sh`
   and GNU `date`.
 
 The Claude executor work in the same batch added a Claude-specific read

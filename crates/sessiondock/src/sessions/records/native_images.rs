@@ -2,7 +2,7 @@
 //! native content blocks; a JSON value cannot manufacture a sidecar.
 use super::scanner::{Node, Text, TextSpan};
 use crate::media::NativeImage;
-use crate::native_replay::{CheckedReplay, DecodePlan, WorkBudget};
+use crate::native_replay::{CheckedReplay, DecodePlan};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
 use std::{
@@ -151,21 +151,21 @@ pub(crate) fn prepare(
         source,
         root,
         make_span,
-        |_, _| Err("原生工具重放来源未配置".into()),
+        |_| Err("原生工具重放来源未配置".into()),
         |_| Err("原生文本读回来源未配置".into()),
     )
 }
 
 /// `materialize` reads one remaining ordinary giant string back from the
-/// caller's checked source (docs/read-model.md: records up to 64 MiB open;
-/// a large string is still not image authority). It only ever sees
+/// caller's checked source, regardless of record size; a large string is
+/// still not image authority. It only ever sees
 /// top-level spans: nested envelope text addresses decoded layers, not file
 /// bytes, and stays an explicit failure.
 pub(crate) fn prepare_with_replay(
     source: &str,
     mut root: Node,
     mut make_span: impl FnMut(SpanImage) -> Result<NativeImage, String>,
-    mut open: impl FnMut(&DecodePlan, WorkBudget) -> Result<Box<dyn CheckedReplay>, String>,
+    mut open: impl FnMut(&DecodePlan) -> Result<Box<dyn CheckedReplay>, String>,
     mut materialize: impl FnMut(&TextSpan) -> Result<String, String>,
 ) -> Result<(Value, Vec<Sidecar>), String> {
     let route: &[&str] = match (source, kind(&root)) {
@@ -203,10 +203,8 @@ pub(crate) fn prepare_with_replay(
     {
         Walker {
             sidecars: &mut sidecars,
-            retained: 0,
             make: &mut make_span,
             open: &mut open,
-            budget: WorkBudget::new(512 * 1024 * 1024),
             codex: source == "codex",
         }
         .walk(node, &mut path, tool, 0, 0, None)?;
@@ -220,16 +218,14 @@ pub(crate) fn prepare_with_replay(
 
 struct Walker<'a, M, O> {
     sidecars: &'a mut Vec<Sidecar>,
-    retained: usize,
     make: &'a mut M,
     open: &'a mut O,
-    budget: WorkBudget,
     codex: bool,
 }
 impl<M, O> Walker<'_, M, O>
 where
     M: FnMut(SpanImage) -> Result<NativeImage, String>,
-    O: FnMut(&DecodePlan, WorkBudget) -> Result<Box<dyn CheckedReplay>, String>,
+    O: FnMut(&DecodePlan) -> Result<Box<dyn CheckedReplay>, String>,
 {
     fn walk(
         &mut self,
@@ -240,9 +236,6 @@ where
         envelopes: usize,
         origin: Option<(&DecodePlan, u64)>,
     ) -> Result<(), String> {
-        if depth > 64 {
-            return Err(invalid());
-        }
         // A multi-part Codex output (`[header, chunk, chunk, …]`) is not one
         // candidate: the array walk below visits each part as its own
         // reviewed position, so a giant chunk is decoded in place and a giant
@@ -253,18 +246,11 @@ where
             && !multipart
             && let Some(candidate) = super::tool_envelopes::candidate(node)?
         {
-            if envelopes >= 8 {
-                return Err("Codex 工具输出信封嵌套超过 8 层限制".into());
-            }
             let tool_error = candidate.tool_error;
-            let parsed =
-                super::tool_envelopes::parse(candidate.span, origin, &self.budget, self.open)?;
+            let parsed = super::tool_envelopes::parse(candidate.span, origin, self.open)?;
             let Some(parsed) = parsed else {
                 // Ordinary giant tool text: a top-level span is read back by
                 // the caller after the walk; nested text has no file range.
-                if origin.is_some() {
-                    return Err("嵌套工具输出中的巨型普通文本尚不支持".into());
-                }
                 return Ok(());
             };
             *node = parsed.root;
@@ -277,11 +263,21 @@ where
             }
             let origin = Some((&parsed.plan, parsed.candidate_start));
             self.walk(node, path, tool, depth, envelopes, origin)?;
-            // Anything still private inside a decoded layer cannot be
-            // materialized from file bytes; never leave it for the caller.
-            if node.has_span() {
-                return Err("嵌套工具输出中的巨型普通文本尚不支持".into());
-            }
+            // A nested span addresses decoded parent text. Replay its entire
+            // validated plan instead of treating it as a physical file offset.
+            node.materialize_spans(&mut |span| {
+                use std::io::Read;
+                let plan = super::tool_envelopes::extend(origin, span)?;
+                let mut reader = (self.open)(&plan)?;
+                let mut text = String::new();
+                let read = reader
+                    .read_to_string(&mut text)
+                    .map_err(|_| "嵌套原生文本读取或验证失败".to_owned());
+                let finished = reader.finish();
+                read?;
+                finished?;
+                Ok(text)
+            })?;
             return Ok(());
         }
         // A text block remains ordinary text even when a tutorial/extension adds
@@ -329,9 +325,6 @@ where
                 .iter()
                 .any(|key| get(node, key).is_some())
         {
-            if envelopes >= 8 {
-                return Err(invalid());
-            }
             Some(("output", true, envelopes + 1))
         } else {
             None
@@ -347,13 +340,6 @@ where
         Ok(())
     }
     fn push(&mut self, sidecar: Sidecar) -> Result<(), String> {
-        if self.sidecars.len() >= 256 {
-            return Err("单条原生记录的媒体位置超过 256 限制".into());
-        }
-        self.retained = self.retained.saturating_add(sidecar.retained_weight());
-        if self.retained > 8 * 1024 * 1024 {
-            return Err("单条原生记录的媒体位置超过 8 MiB 保留预算".into());
-        }
         self.sidecars.push(sidecar);
         Ok(())
     }
@@ -362,7 +348,6 @@ where
 struct Payload {
     path: Vec<String>,
     mime: String,
-    len: u64,
     hash: [u8; 20],
     offset: u64,
     span: bool,
@@ -412,19 +397,44 @@ fn payload(
     Ok(Payload {
         path,
         mime,
-        len: len - offset,
         hash,
         offset,
         span: is_span,
     })
 }
+
+fn strip_spanned_aliases(node: &mut Node) {
+    fn strip(object: &mut Node) {
+        let Node::Object(values) = object else {
+            return;
+        };
+        for key in ["data", "base64", "url", "image_url"] {
+            if matches!(values.get(key), Some(Node::String(Text::Span(_)))) {
+                values.shift_remove(key);
+            } else if matches!(key, "url" | "image_url")
+                && let Some(Node::Object(nested)) = values.get_mut(key)
+                && matches!(nested.get("url"), Some(Node::String(Text::Span(_))))
+            {
+                nested.shift_remove("url");
+            }
+        }
+    }
+    if let Node::Object(values) = node {
+        for key in ["source", "file"] {
+            if let Some(object) = values.get_mut(key) {
+                strip(object);
+            }
+        }
+    }
+    strip(node);
+}
+
 fn extract(
     node: &mut Node,
     make: &mut impl FnMut(SpanImage) -> Result<NativeImage, String>,
 ) -> Result<Option<NativeImage>, String> {
-    let mut payloads = Vec::new();
-    let mut reference = false;
-    for wrapper in [Some("source"), Some("file"), None] {
+    let mut selected = None;
+    'objects: for wrapper in [Some("source"), Some("file"), None] {
         let object = match wrapper {
             Some(key) => match get(node, key) {
                 Some(value) => value,
@@ -433,84 +443,106 @@ fn extract(
             None => &*node,
         };
         let Node::Object(values) = object else {
-            return Err(invalid());
+            continue;
         };
         let prefix: Vec<String> = wrapper.into_iter().map(str::to_owned).collect();
-        let mut declared = None;
-        // Match legacy behavior: MIME aliases only constrain a data/base64 source.
-        if values.contains_key("data") || values.contains_key("base64") {
-            for key in ["media_type", "mime_type", "mimeType"] {
-                if let Some(value) = values.get(key) {
-                    let candidate = mime(text(value).ok_or_else(invalid)?)?;
-                    if declared.as_ref().is_some_and(|old| old != &candidate) {
-                        return Err(invalid());
-                    }
-                    declared = Some(candidate);
-                }
-            }
-        }
-        for key in ["data", "base64", "url", "image_url"] {
-            let Some(mut value) = values.get(key) else {
-                continue;
-            };
+        // Python media.from_block uses `or` for aliases and returns after the
+        // first usable source. Later conflicting spellings are never a reason
+        // to reject the record.
+        let data = ["data", "base64"].into_iter().find_map(|key| {
+            values.get(key).and_then(|value| match value {
+                Node::String(Text::Inline(text)) if !text.is_empty() => Some((key, value)),
+                Node::String(Text::Span(span)) if span.decoded_len() != 0 => Some((key, value)),
+                _ => None,
+            })
+        });
+        if let Some((key, value)) = data {
+            let declared = ["media_type", "mime_type", "mimeType", "type"]
+                .into_iter()
+                .find_map(|key| {
+                    values
+                        .get(key)
+                        .and_then(text)
+                        .filter(|value| !value.is_empty())
+                })
+                .and_then(|value| mime(value).ok());
             let mut path = prefix.clone();
             path.push(key.into());
-            let url = matches!(key, "url" | "image_url");
-            if url && matches!(value, Node::Object(_)) {
-                value = get(value, "url").ok_or_else(invalid)?;
-                path.push("url".into());
+            if let Some(declared) = declared
+                && let Ok(payload) = payload(value, path, Some(&declared), false)
+            {
+                if payload.span {
+                    selected = Some(payload);
+                    break 'objects;
+                }
+                return Ok(None);
             }
-            if url && text(value).is_some_and(|s| !s.starts_with("data:")) {
-                reference = true;
+        }
+
+        let Some((key, mut value)) = ["url", "image_url"].into_iter().find_map(|key| {
+            values.get(key).and_then(|value| match value {
+                Node::String(Text::Inline(text)) if !text.is_empty() => Some((key, value)),
+                Node::String(Text::Span(span)) if span.decoded_len() != 0 => Some((key, value)),
+                Node::Object(_) => Some((key, value)),
+                _ => None,
+            })
+        }) else {
+            continue;
+        };
+        let mut path = prefix;
+        path.push(key.into());
+        if matches!(value, Node::Object(_)) {
+            let Some(nested) = get(value, "url") else {
                 continue;
-            }
-            payloads.push(payload(value, path, declared.as_deref(), url)?);
-        }
-        reference |= values.contains_key("path");
-    }
-    if !payloads.iter().any(|p| p.span) {
-        return Ok(None);
-    }
-    if reference {
-        return Err(invalid());
-    }
-    let first = payloads.first().ok_or_else(invalid)?;
-    if payloads
-        .iter()
-        .any(|p| p.mime != first.mime || p.len != first.len || p.hash != first.hash)
-    {
-        return Err(invalid());
-    }
-    let mut selected = None;
-    for payload in payloads {
-        let mut parent = &mut *node;
-        for key in &payload.path[..payload.path.len() - 1] {
-            let Node::Object(values) = parent else {
-                return Err(invalid());
             };
-            parent = values.get_mut(key).ok_or_else(invalid)?;
+            value = nested;
+            path.push("url".into());
         }
+        if matches!(value, Node::String(Text::Inline(_))) {
+            // The ordinary value projector applies the same remote, data URL,
+            // and local-path parsing once the record becomes serde_json.
+            return Ok(None);
+        }
+        if let Ok(payload) = payload(value, path, None, true) {
+            selected = Some(payload);
+            break 'objects;
+        }
+    }
+
+    let payload = match selected {
+        Some(payload) => payload,
+        None => return Ok(None),
+    };
+    let mut parent = &mut *node;
+    for key in &payload.path[..payload.path.len() - 1] {
         let Node::Object(values) = parent else {
             return Err(invalid());
         };
-        let removed = values
-            .shift_remove(payload.path.last().ok_or_else(invalid)?)
-            .ok_or_else(invalid)?;
-        if selected.is_none()
-            && let Node::String(Text::Span(span)) = removed
-        {
-            selected = Some(SpanImage {
-                mime: payload.mime,
-                span,
-                encoded_offset: payload.offset,
-                payload_sha1: payload.hash,
-                plan: None,
-            });
-        }
+        parent = values.get_mut(key).ok_or_else(invalid)?;
     }
+    let Node::Object(values) = parent else {
+        return Err(invalid());
+    };
+    let removed = values
+        .shift_remove(payload.path.last().ok_or_else(invalid)?)
+        .ok_or_else(invalid)?;
+    let Node::String(Text::Span(span)) = removed else {
+        return Ok(None);
+    };
+    // Later aliases are ignored by Python's first-match parser. Remove only
+    // their private scanner spans so they are neither materialized as public
+    // JSON nor treated as validation constraints.
+    strip_spanned_aliases(node);
     // The real block remains at the same path, with payload fields removed.
     // Only the private context can interpret it; there is no serialized marker.
-    make(selected.ok_or_else(invalid)?).map(Some)
+    make(SpanImage {
+        mime: payload.mime,
+        span,
+        encoded_offset: payload.offset,
+        payload_sha1: payload.hash,
+        plan: None,
+    })
+    .map(Some)
 }
 
 #[cfg(test)]

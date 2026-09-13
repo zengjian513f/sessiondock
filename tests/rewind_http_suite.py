@@ -162,9 +162,9 @@ def enabled(opener, base, corpus):
     prefs(rows, raw)
     if path.read_bytes() != native: fail("native", "pin rewrote native file")
     passed("star/visibility untouched by pin")
-    want(opener, base, RW, 413, data=json.dumps(
-        {"uid": uid, "target": "u4", "padding": "x" * 9000}).encode())
-    passed("body over 8 KiB 413")
+    want(opener, base, RW, 200, data=json.dumps(
+        {"uid": uid, "target": "u4", "padding": "x" * (5 * 1024 * 1024)}).encode())
+    passed("large ignored rewind field accepted")
     return uid
 
 

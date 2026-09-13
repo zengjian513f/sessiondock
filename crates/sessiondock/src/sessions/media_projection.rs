@@ -50,21 +50,13 @@ fn project_ranges(
     files: Option<&FileService>,
     discover: bool,
 ) -> Result<Vec<Vec<Value>>, SessionError> {
-    let native_count = selected.iter().map(|(_, range)| range.len()).sum::<usize>();
-    if native_count > media::MAX_ITEMS {
-        return Err(SessionError::new(413, "单次消息投影超过 256 张图片上限"));
-    }
-    let mut discovery_remaining = media::MAX_ITEMS;
     let discovered = selected
         .iter()
         .map(|(event, _)| {
-            if !discover || discovery_remaining == 0 {
+            if !discover {
                 return Vec::new();
             }
-            let mut items = media::discover(&event.message);
-            items.truncate(discovery_remaining);
-            discovery_remaining -= items.len();
-            items
+            media::discover(&event.message)
         })
         .collect::<Vec<_>>();
     let needs_files = selected.iter().any(|(event, range)| {
@@ -97,6 +89,10 @@ fn project_ranges(
     // optional file descriptors must not crowd out embedded source retention.
     for (index, (event, range)) in selected.iter().enumerate() {
         for (position, image) in event.media[range.clone()].iter().enumerate() {
+            if let Some(reference) = image.remote_ref() {
+                output[index][position] = media::remote_image(reference);
+                continue;
+            }
             if image.file_ref().is_some() {
                 continue;
             }
@@ -128,22 +124,23 @@ fn project_ranges(
             .iter()
             .map(|image| (image.reference.as_str(), Some(image.gallery), None));
         for (reference, gallery, native_position) in native.chain(text) {
+            if media::remote_reference(reference) {
+                let mut value = media::remote_image(reference);
+                decorate(
+                    &mut value,
+                    gallery
+                        .map(|gallery| (reference.to_owned(), gallery))
+                        .as_ref(),
+                );
+                output[index].push(value);
+                continue;
+            }
             let result = scope
                 .as_ref()
                 .expect("file request has scope result")
                 .as_ref()
                 .map_err(Clone::clone)
-                .and_then(|scope| PreparedImage::file(scope, reference))
-                .and_then(|image| {
-                    if prepared.len() >= media::MAX_ITEMS {
-                        return Err(FileError::new(
-                            413,
-                            "media_budget",
-                            "本次图片超过描述符数量预算；文字仍可查看",
-                        ));
-                    }
-                    Ok(image)
-                });
+                .and_then(|scope| PreparedImage::file(scope, reference));
             let position = native_position.unwrap_or_else(|| {
                 output[index].push(Value::Null);
                 output[index].len() - 1
@@ -178,9 +175,7 @@ fn project_ranges(
     }
     let projected = match media.register_prepared(&prepared) {
         Ok(value) => value,
-        Err(error @ (media::MediaError::Busy | media::MediaError::Limit))
-            if prepared.iter().any(PreparedImage::is_file) =>
-        {
+        Err(error @ media::MediaError::Limit) if prepared.iter().any(PreparedImage::is_file) => {
             let mut fallback =
                 vec![
                     media::failure(error.status(), "media_budget", &error.to_string());

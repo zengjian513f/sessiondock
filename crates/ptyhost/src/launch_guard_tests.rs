@@ -129,7 +129,7 @@ fn nested_guards_extra_fields_and_malformed_effects_fail_closed() {
         json!({"op":"send","text":null}),
         json!({"op":"send","text":"x","token":"nested"}),
         json!({"op":"resize","cols":0,"rows":20}),
-        json!({"op":"attach","cols":1000,"rows":1000}),
+        json!({"op":"attach","cols":65536,"rows":24}),
         json!({"op":"keys","keys":[null]}),
         json!({"op":"rename","to":"../escape"}),
         json!({"op":"rename","to":"CON.txt"}),

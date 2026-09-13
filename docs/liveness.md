@@ -1,41 +1,30 @@
 # External CLI liveness: the `/proc` scan and `spawned_by`
 
 Batch 36 (WP-AB) adds the Python `live.py` process scan next to the managed
-host observations of batch 22 ([processes.md](processes.md)). It is the only
-way `/api/live` becomes the complete set Python's frontend expects
-(`capabilities.live: true`); without it the endpoint keeps observing managed
-instances only and `live` stays false.
+host observations of batch 22 ([processes.md](processes.md)). On platforms with
+native process discovery, `/api/live` exposes the complete set Python's
+frontend expects (`capabilities.live: true`).
 
-## Switch and scope
+## Scope
 
-- `SESSIONDOCK_PROC_SCAN=1` enables the scan (Linux only). Unset or `0` keeps
-  today's behaviour exactly; any other value fails startup.
 - `SESSIONDOCK_PROC_ROOT=<dir>` (default `/proc`) is the process table to read;
-  tests point it at a synthetic tree (Python `PROC_FS`). It and
-  `SESSIONDOCK_GROK_ACTIVE` are rejected without the switch.
-- `SESSIONDOCK_GROK_ACTIVE=<file>` names Grok's own active-sessions file
-  (Python `GROK_ACTIVE`, `~/.grok/active_sessions.json`). It is never
-  discovered from a home directory and must stay outside every frontend,
-  native, host, state, delivery, lifecycle, launcher, audit, trash and file
-  access path. Entries name sessions live without a pid, stale ones included,
+  tests point it at a synthetic tree (Python `PROC_FS`).
+- Grok's active-sessions file defaults to Python's
+  `~/.grok/active_sessions.json`; `SESSIONDOCK_GROK_ACTIVE=<file>` provides a
+  test override. Entries name sessions live without a pid, stale ones included,
   exactly like Python.
-- On a non-Linux target with the switch on, `/api/live` reports
+- On a target without native process discovery, `/api/live` reports
   `scan: {status: "unsupported_platform"}`, `capabilities.live` stays false and
-  the managed observations are unchanged. Windows (WP-W) runs without the
-  scan: managed instances are verified through the process object
-  ([processes.md](processes.md)), but an externally started CLI is invisible,
-  so a session opened by hand in another window is not marked running and a
-  takeover from the page starts a second instance (Python's documented
-  limitation without psutil).
+  managed observations remain available. External checks return no PID evidence
+  and therefore never signal a process. Python uses psutil on Windows; Rust may
+  add the equivalent provider independently of the HTTP and lifecycle contract.
 
 The scan is read-only: it lists the table, reads `cmdline` of every process,
 and `environ`, `cwd` and `fd/*` links of the processes whose command line
 mentions `claude`, `codex` or `grok`; `stat` lines are read lazily for ancestry
 walks. It never signals, writes, follows a link outside the tree, or elevates
 privileges (another user's `environ`/`fd` are unreadable and simply skipped;
-`cmdline` is world-readable and Python reads it too). Bounds: 256 KiB per
-`cmdline`, 1 MiB per `environ`, 4096 fd entries per process, 2^20 processes;
-a truncated tail loses nothing in practice because the ids sit at the front.
+`cmdline` is world-readable and Python reads it too).
 
 Results are cached for 3 s counted from the moment a scan completes (a slow
 scan must not expire its own result), refreshes are single-flight (waiters
@@ -205,8 +194,7 @@ the Rust launcher `env_clear`s).
   and `test_server.py` PaneLinkingTests (origin keeps its pane, the continued
   session inherits it, the spawned grandchild has no console, the eight-hop
   bound, first listed origin wins) are ported verbatim.
-- `python3 tests/live_http_suite.py --binary … [--ptyhost …]` — scan off
-  unchanged (`capabilities.live: false`, no `scan` key), scan on over a
+- `python3 tests/live_http_suite.py --binary … [--ptyhost …]` — scan over a
   synthetic tree: uids/tmux_uids/started_at, envelope, cache hit and force
   miss, `spawned_by` on the rows and on disk, persistence across restart with
   an empty tree, `SESSIONDOCK_GROK_ACTIVE`, a `grok -p` under a tmux pane's
@@ -220,7 +208,7 @@ the Rust launcher `env_clear`s).
   root, an orphan helper and a tmux pane whose claude spawned a second
   headless Grok — `tmux_uids` names the claude only; expectations verified
   against `live.py`).
-- Real roots, read-only: the debug binary with the real roots and
-  `SESSIONDOCK_PROC_SCAN=1` on a loopback port versus the deployed Python
+- Real roots, read-only: the debug binary with the real roots on a loopback
+  port versus the deployed Python
   service's `/api/live`; the uid sets and the reasons for every difference are
   recorded in the batch ledger.

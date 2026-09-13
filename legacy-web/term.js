@@ -14,7 +14,7 @@ const T = {
   term: null,      // xterm 实例
   ws: null,
   name: null,      // 当前挂着的 tmux 会话名
-  uid: null,       // 对应的 agenthub 会话
+  uid: null,       // 对应的 SessionDock 会话
   views: new Map(), // 已打开过且仍存活的 tmux → xterm/WebSocket；切会话只隐藏
   ended: new Map(), // Rust only: explicit host exit, pinned to UID/instance.
   enabled: false,
@@ -1218,7 +1218,10 @@ function showNewSessionStage(info) {
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action" title="停止会话" aria-label="停止会话">${uiIcon('power')}</button>
       ${AgentHubCapabilities.config.backend === 'rust' && AgentHubCapabilities.allows('terminal_bind')
-        ? '<button class="session-menu-action" id="a-native-bind">关联原生会话</button><button class="session-menu-action" id="a-pending-release">释放本页控制台</button>' : ''}
+        ? `<button class="session-menu-action" id="a-native-bind" title="关联原生会话"
+            aria-label="关联原生会话">${uiIcon('link')}</button>
+          <button class="session-menu-action" id="a-pending-release" title="释放本页控制台"
+            aria-label="释放本页控制台">${uiIcon('log-out')}</button>` : ''}
       `, `
     <div class="dmeta"><span id="mcount-total">0 条消息</span>
       ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
@@ -2260,7 +2263,7 @@ function attachTerm(name) {
   return job;
 }
 
-async function attachOwnedTerm(view) {
+async function attachOwnedTerm(view, allowRefresh = true) {
   if (view.ended || view.retired) return false;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
@@ -2272,6 +2275,14 @@ async function attachOwnedTerm(view) {
   const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
   if (bound && ((!row?.uid && !launch) || !row.instance_id
       || (view.instanceId && view.instanceId !== row.instance_id))) {
+    // The pane list and the selected session are refreshed independently. A
+    // report dialog (or an SSE update) can leave an already-open view carrying
+    // the previous instance for one poll. Refresh the authoritative pane row
+    // once before exposing the transient mismatch to the user.
+    if (allowRefresh && typeof loadTermList === 'function' && !view.ended && !view.retired) {
+      await loadTermList();
+      if (T.views.get(name) === view) return attachOwnedTerm(view, false);
+    }
     ConsoleUI.errors.set(uid, '终端实例关联已失效，请刷新控制台状态。');
     renderTakeoverBtn();
     return false;
@@ -3169,8 +3180,13 @@ function removeComposerQuote(id, draft = composerDraft()) {
 
 function buildComposerPrompt(text, attachments = [], quotes = []) {
   const attachmentPath = attachment => {
-    const relative = String(attachment.relative_path || '').replace(/^\.\//, '');
-    return relative ? `./${relative}` : attachment.path;
+    // Use the destination node's convention, regardless of the browser OS.
+    // Older nodes omit path_style; their absolute path still identifies Windows.
+    const windows = attachment.path_style === 'windows'
+      || (!attachment.path_style && /^(?:[a-z]:[\\/]|\\\\|\/\/)/i.test(attachment.path || ''));
+    const relative = String(attachment.relative_path || '').replace(/^\.[\\/]/, '');
+    if (!relative) return attachment.path;
+    return windows ? `.\\${relative.replace(/\//g, '\\')}` : `./${relative}`;
   };
   const body = String(text || '');
   const quoted = quotes.map(x => String(x.text ?? x).trim()).filter(Boolean);

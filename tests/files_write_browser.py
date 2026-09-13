@@ -64,7 +64,7 @@ def main():
         (write / "existing.txt").write_text("already here")
         local = Path(temporary) / "local"
         local.mkdir()
-        payload = os.urandom(6 * 1024 * 1024 + 123)  # crosses the 4 MiB chunk boundary
+        payload = os.urandom(10 * 1024 * 1024 + 123)  # crosses the Python 8 MiB chunk boundary
         (local / "synthetic-upload.bin").write_bytes(payload)
         (local / "existing.txt").write_text("would overwrite")
         state = corpus.root / "state"
@@ -76,7 +76,7 @@ def main():
         readonly_before = {path: path.read_bytes() for path in (files / "readonly").rglob("*") if path.is_file()}
         with isolated_server(corpus, args.binary, state_dir=state, file_roots=(files,), file_write_roots=(write,)) as (base, opener), sync_playwright() as playwright:
             capabilities = get_json(opener, base, "/api/meta")["capabilities"]
-            assert capabilities["files_jobs"] is True and capabilities["files_write"]["chunk_bytes"] == 4 * 1024 * 1024, capabilities
+            assert capabilities["files_jobs"] is True and capabilities["files_write"]["chunk_bytes"] == 8 * 1024 * 1024, capabilities
             assert "delete" in capabilities["files_write"]["actions"], capabilities
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -102,7 +102,9 @@ def main():
                 # Unsupported operations are not offered on the Rust backend.
                 expect(manager.locator('[data-action="compress"]').first).to_be_disabled()
                 # Upload through the real file chooser, conflict dialog and chunked XHR.
-                upload_through_ui(manager, local / "synthetic-upload.bin")
+                with manager.expect_response(lambda response: "/api/session/files/upload?" in response.url) as first_chunk:
+                    upload_through_ui(manager, local / "synthetic-upload.bin")
+                assert first_chunk.value.status == 200, (first_chunk.value.status, first_chunk.value.text())
                 expect(manager.locator("#entries")).to_contain_text("synthetic-upload.bin", timeout=30000)
                 uploaded = write / "synthetic-upload.bin"
                 assert uploaded.read_bytes() == payload
@@ -156,12 +158,23 @@ def main():
                 manifest = json.loads((trashed[0].parent / "manifest.json").read_text())
                 assert manifest["path"] == str(write / "renamed-upload.bin") and manifest["uid"] == corpus.uid(sid)
                 assert not (write / "renamed-upload.bin").exists()
-                # Read-only sibling directory of the same read root stays read only.
+                # A sibling outside the compatibility write-root is writable after a valid grant.
                 readonly = context.new_page()
                 readonly.goto(base + "/files.html?" + urlencode({"uid": corpus.uid(sid), "ref": str(files / "readonly") + "/"}))
                 expect(readonly.locator("#entries")).to_contain_text("keep.txt")
-                expect(readonly.locator("#machine")).to_contain_text("只读")
-                expect(readonly.locator('[data-action="upload"]').first).to_be_disabled()
+                expect(readonly.locator("#machine")).not_to_contain_text("只读")
+                expect(readonly.locator('[data-action="upload"]').first).to_be_enabled()
+                upload_through_ui(readonly, local / "existing.txt")
+                expect(readonly.locator("#entries")).to_contain_text("existing.txt")
+                assert (files / "readonly/existing.txt").read_text() == "would overwrite"
+                close_tasks(readonly)
+                (local / "existing.txt").write_text("explicit replacement")
+                with readonly.expect_response(lambda response: "/api/session/files/upload?" in response.url) as replacement:
+                    upload_through_ui(readonly, local / "existing.txt", conflict="replace")
+                assert replacement.value.status == 200 and replacement.value.json()["job"]["state"] == "completed"
+                expect(readonly.locator("#tasks-list")).to_contain_text("已完成")
+                assert (files / "readonly/existing.txt").read_text() == "explicit replacement"
+                assert any(entry.name == "existing.txt" and entry.read_text() == "would overwrite" for entry in trash_files(state))
                 assert not [url for url in requests if "mode=thumbnail" in url], requests
                 assert not errors, errors
             finally:
@@ -170,7 +183,7 @@ def main():
         assert all(path.read_bytes() == content for path, content in native_before.items())
         assert all(path.read_bytes() == content for path, content in readonly_before.items())
         print("PASS files write browser: capability gate, chunked upload via UI, task panel, overwrite error, rename, "
-              "390px delete into the state-directory trash, read-only sibling unchanged, native/read-only bytes unchanged")
+              "390px delete into the state-directory trash, sibling outside configured write-root accepts upload, existing/native bytes unchanged")
 
 
 if __name__ == "__main__":

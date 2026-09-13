@@ -24,7 +24,7 @@ use crate::terminal::{ExpectedTarget, InputPayload, TerminalError, TerminalServi
 /// Page identity under which the executor claims a server-held lease. It is a
 /// registry page ID like any browser page, so a page holding the lease sees
 /// the ordinary conflict and can force it like any takeover.
-pub const SERVER_PAGE: &str = "agenthub-delivery-executor";
+pub const SERVER_PAGE: &str = "sessiondock-delivery-executor";
 
 /// Managed instance resolved by the executor from the runtime catalog. Never
 /// built from a display name, cwd, time or PID.
@@ -793,7 +793,7 @@ impl TerminalDriver for HostTerminalDriver {
                     &lease.page,
                     &lease.token,
                     lease.expected(),
-                    InputPayload::Keys(keys.to_vec()),
+                    InputPayload::Keys(keys.iter().copied().map(str::to_owned).collect()),
                 )
                 .await
                 .map(|_| ())

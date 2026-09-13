@@ -12,6 +12,7 @@ use tempfile::TempDir;
 struct Fixture {
     directory: TempDir,
     config: Config,
+    work: PathBuf,
 }
 impl Fixture {
     fn new() -> Self {
@@ -38,7 +39,6 @@ impl Fixture {
             schema: 1,
             host_binary: root.join("bin/host"),
             host_dir: root.join("host"),
-            cwd_roots: vec![root.join("work")],
             adapters: vec![Adapter {
                 id: "shell-v1".into(),
                 source: Source::Codex,
@@ -49,7 +49,12 @@ impl Fixture {
             profiles: vec![],
             bug_report_profiles: Default::default(),
         };
-        Self { directory, config }
+        let work = root.join("work");
+        Self {
+            directory,
+            config,
+            work,
+        }
     }
     fn spec(&self) -> LaunchSpec {
         LaunchSpec::new(
@@ -61,7 +66,7 @@ impl Fixture {
     }
     fn json(&self) -> serde_json::Value {
         serde_json::json!({"host_binary":self.config.host_binary,"host_dir":self.config.host_dir,
-            "cwd_roots":self.config.cwd_roots,"adapters":[{"id":"shell-v1","source":"codex",
+            "adapters":[{"id":"shell-v1","source":"codex",
                 "executable":self.config.adapters[0].executable,"args":[],"env":{}}]})
     }
     fn config_file(&self, bytes: &[u8]) -> PathBuf {
@@ -83,42 +88,38 @@ impl Fixture {
 }
 
 #[test]
-fn explicit_allowlist_accepts_only_its_source_adapter_and_cwd() {
+fn explicit_allowlist_accepts_only_its_source_and_adapter() {
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     assert_eq!(launcher.host_dir(), fixture.config.host_dir);
     assert!(launcher.validate_spec(&fixture.spec()).is_ok());
-    let child = fixture.config.cwd_roots[0].join("nested");
+    let child = fixture.work.join("nested");
     fs::create_dir(&child).unwrap();
     assert!(
         launcher
             .validate_spec(&LaunchSpec::new(Source::Codex, "shell-v1".into(), &child).unwrap())
             .is_ok()
     );
-    for (source, adapter, cwd) in [
-        (
-            Source::Claude,
-            "shell-v1",
-            fixture.config.cwd_roots[0].clone(),
-        ),
-        (
-            Source::Codex,
-            "unknown-v1",
-            fixture.config.cwd_roots[0].clone(),
-        ),
-        (
-            Source::Codex,
-            "shell-v1",
-            fixture.directory.path().join("other"),
-        ),
-    ] {
-        let spec = LaunchSpec::new(source, adapter.into(), &cwd).unwrap();
+    for (source, adapter) in [(Source::Claude, "shell-v1"), (Source::Codex, "unknown-v1")] {
+        let spec = LaunchSpec::new(
+            source,
+            adapter.into(),
+            &fixture.directory.path().join("other"),
+        )
+        .unwrap();
         assert!(launcher.validate_spec(&spec).is_err());
     }
+    let outside = LaunchSpec::new(
+        Source::Codex,
+        "shell-v1".into(),
+        &fixture.directory.path().join("other"),
+    )
+    .unwrap();
+    assert!(launcher.validate_spec(&outside).is_ok());
 }
 
 #[test]
-fn configuration_budgets_and_versioned_adapter_keys_fail_closed() {
+fn configuration_rejects_only_unusable_process_inputs() {
     let fixture = Fixture::new();
     let mutate = |change: fn(&mut Config)| {
         let mut config = fixture.config.clone();
@@ -126,54 +127,62 @@ fn configuration_budgets_and_versioned_adapter_keys_fail_closed() {
         assert!(Launcher::new(config).is_err());
     };
     for change in [
-        (|c: &mut Config| c.cwd_roots.clear()) as fn(&mut Config),
-        |c| c.cwd_roots = vec![c.cwd_roots[0].clone(); 17],
-        |c| c.adapters.clear(),
-        |c| c.adapters = vec![c.adapters[0].clone(); 17],
+        (|c: &mut Config| c.adapters.clear()) as fn(&mut Config),
         |c| c.adapters.push(c.adapters[0].clone()),
-        |c| c.adapters[0].id = "unversioned".into(),
-        |c| c.adapters[0].id = "shell-v0".into(),
-        |c| c.adapters[0].id = "shell-v01".into(),
-        |c| c.adapters[0].args = vec![String::new(); 65],
-        |c| c.adapters[0].args = vec!["x".repeat(4097)],
         |c| c.adapters[0].args = vec!["contains\0nul".into()],
         |c| {
             c.adapters[0].env.insert("BAD=KEY".into(), "x".into());
-        },
-        |c| {
-            c.adapters[0].env.insert("1BAD".into(), "x".into());
-        },
-        |c| {
-            c.adapters[0].env.insert("OK".into(), "x".repeat(8193));
         },
         |c| {
             c.adapters[0]
                 .env
                 .insert("OK".into(), "contains\0nul".into());
         },
-        |c| c.adapters[0].args = vec!["x".repeat(4096); 17],
     ] {
         mutate(change);
     }
 }
 
 #[test]
-fn constructor_rejects_symlinks_overlap_broad_roots_and_permissions() {
+fn operator_config_accepts_large_arguments_and_environment() {
     let fixture = Fixture::new();
-    let mut config = fixture.config.clone();
-    config.cwd_roots.push(config.cwd_roots[0].clone());
-    assert!(Launcher::new(config).is_err());
-    let mut config = fixture.config.clone();
-    config.cwd_roots = vec![fixture.directory.path().to_owned()];
-    assert!(Launcher::new(config).is_err());
-    let mut config = fixture.config.clone();
-    config.cwd_roots = vec![PathBuf::from("/")];
-    assert!(Launcher::new(config).is_err());
-    let alias = fixture.directory.path().join("alias");
-    symlink(&fixture.config.cwd_roots[0], &alias).unwrap();
-    let mut config = fixture.config.clone();
-    config.cwd_roots = vec![alias];
-    assert_eq!(Launcher::new(config).err(), Some(Error::UnsafePath));
+    let mut config = fixture.profiles();
+    let profile = config.profiles[1].clone();
+    config.profiles = (0..20)
+        .map(|index| {
+            let mut profile = profile.clone();
+            profile.id = format!("codex-{index}-v1");
+            profile.args = vec!["x".repeat(5000); 70];
+            profile.env = (0..80)
+                .map(|index| (format!("CUSTOM_{index}"), "v".repeat(9000)))
+                .collect();
+            profile.env_remove = (0..20).map(|index| format!("REMOVE_{index}")).collect();
+            profile
+        })
+        .collect();
+    assert!(Launcher::new(config).is_ok());
+
+    // This is a trusted on-disk operator file, not a host JSON control line.
+    let json = format!("{}{}", " ".repeat(128 * 1024), fixture.json());
+    assert!(read_config(&fixture.config_file(json.as_bytes())).is_ok());
+}
+
+#[test]
+fn unknown_fields_are_ignored_and_executables_remain_checked() {
+    let fixture = Fixture::new();
+    let mut json = fixture.json();
+    json["unknown_top_level"] = serde_json::json!(["relative", "/missing"]);
+    json["adapters"][0]["unknown_adapter_field"] = serde_json::json!(["ignored"]);
+    let launcher =
+        Launcher::new(read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap())
+            .unwrap();
+    let child = fixture.work.join("nested");
+    fs::create_dir(&child).unwrap();
+    let text = format!("{}/", fixture.work.display());
+    assert_eq!(
+        launcher.complete_directories(&text, 24).unwrap(),
+        vec![format!("{text}nested/")]
+    );
     // A symlinked executable resolves to the real file (Python `shutil.which`).
     let alias = fixture.directory.path().join("host-alias");
     symlink(&fixture.config.host_binary, &alias).unwrap();
@@ -181,11 +190,7 @@ fn constructor_rejects_symlinks_overlap_broad_roots_and_permissions() {
     config.host_binary = alias;
     assert!(Launcher::new(config).is_ok());
     fs::set_permissions(&fixture.config.host_dir, fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(
-        Launcher::new(fixture.config.clone()).err(),
-        Some(Error::UnsafePermissions)
-    );
-    fs::set_permissions(&fixture.config.host_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(Launcher::new(fixture.config.clone()).is_ok());
     fs::set_permissions(
         &fixture.config.adapters[0].executable,
         fs::Permissions::from_mode(0o600),
@@ -198,16 +203,19 @@ fn constructor_rejects_symlinks_overlap_broad_roots_and_permissions() {
 }
 
 #[test]
-fn relative_noncanonical_and_deserialized_cwd_cannot_bypass_checks() {
+fn cwd_validation_follows_python_resolve_without_a_configured_root() {
     let fixture = Fixture::new();
     for path in [
-        PathBuf::from("relative"),
         fixture.directory.path().join("work/../work"),
         PathBuf::from(format!("{}/work//", fixture.directory.path().display())),
     ] {
-        let mut config = fixture.config.clone();
-        config.cwd_roots = vec![path];
-        assert!(Launcher::new(config).is_err());
+        let spec = LaunchSpec::new(Source::Codex, "shell-v1".into(), &path).unwrap();
+        assert!(
+            Launcher::new(fixture.config.clone())
+                .unwrap()
+                .validate_spec(&spec)
+                .is_ok()
+        );
     }
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     let spec: LaunchSpec =
@@ -218,7 +226,58 @@ fn relative_noncanonical_and_deserialized_cwd_cannot_bypass_checks() {
 }
 
 #[test]
-fn launch_rechecks_executable_directory_and_cwd_identity() {
+fn executable_aliases_execute_the_checked_target_after_alias_retargeting() {
+    let fixture = Fixture::new();
+    let alias = fixture.directory.path().join("adapter-alias");
+    symlink(&fixture.config.adapters[0].executable, &alias).unwrap();
+    let mut config = fixture.config.clone();
+    config.adapters[0].executable = alias.clone();
+    let launcher = Launcher::new(config).unwrap();
+    let record = fixture.record(&fixture.spec());
+    fs::remove_file(&alias).unwrap();
+    symlink(&fixture.config.host_binary, &alias).unwrap();
+    launcher.validate_spec(record.spec()).unwrap();
+    assert_eq!(
+        launcher.argv(&record).unwrap()[0],
+        fixture.config.adapters[0].executable
+    );
+    // Replacing the resolved target itself is still caught by the held handle.
+    fs::remove_file(&fixture.config.adapters[0].executable).unwrap();
+    symlink(
+        &fixture.config.host_binary,
+        &fixture.config.adapters[0].executable,
+    )
+    .unwrap();
+    assert!(matches!(
+        launcher.validate_spec(record.spec()),
+        Err(Error::UnsafePath | Error::Changed)
+    ));
+}
+
+#[test]
+fn profile_executables_and_cwds_resolve_symlinked_ancestors() {
+    let fixture = Fixture::new();
+    let mut config = fixture.profiles();
+    let alias = fixture.directory.path().join("parent-alias");
+    symlink(fixture.directory.path(), &alias).unwrap();
+    config.profiles[1].executable = alias.join("bin/codex");
+    let spec = LaunchSpec::profile_new(
+        Source::Codex,
+        "codex-cli-v1".into(),
+        &alias.join("work/codex-area/nested"),
+    )
+    .unwrap();
+    let launcher = Launcher::new(config).unwrap();
+    launcher.validate_spec(&spec).unwrap();
+    let record = fixture.record(&spec);
+    assert_eq!(
+        launcher.argv(&record).unwrap()[0],
+        fixture.directory.path().join("bin/codex")
+    );
+}
+
+#[test]
+fn launch_rechecks_executable_and_current_cwd() {
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     fs::write(&fixture.config.host_binary, b"changed").unwrap();
@@ -227,16 +286,16 @@ fn launch_rechecks_executable_directory_and_cwd_identity() {
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     fs::rename(
-        &fixture.config.cwd_roots[0],
+        &fixture.work,
         fixture.directory.path().join("previous-work"),
     )
     .unwrap();
-    fs::create_dir(&fixture.config.cwd_roots[0]).unwrap();
-    assert_eq!(launcher.validate_spec(&fixture.spec()), Err(Error::Changed));
+    fs::create_dir(&fixture.work).unwrap();
+    assert!(launcher.validate_spec(&fixture.spec()).is_ok());
 
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
-    let nested = fixture.config.cwd_roots[0].join("nested");
+    let nested = fixture.work.join("nested");
     fs::create_dir(&nested).unwrap();
     let spec = LaunchSpec::new(Source::Codex, "shell-v1".into(), &nested).unwrap();
     fs::remove_dir(&nested).unwrap();
@@ -274,24 +333,34 @@ fn occupied_endpoint_returns_the_original_authority_without_spawning() {
 }
 
 #[test]
-fn explicit_private_config_is_bounded_strict_and_never_echoes_input() {
+fn ordinary_config_accepts_compatible_json_and_never_echoes_input() {
     let fixture = Fixture::new();
     let raw = fixture.json().to_string();
     let path = fixture.config_file(raw.as_bytes());
     assert!(Launcher::new(read_config(&path).unwrap()).is_ok());
-    for raw in [
+    for compatible in [
         raw.replace(
             "\"env\":{}",
             "\"env\":{\"PRIVATE_ENV\":\"one\",\"PRIVATE_ENV\":\"two\"}",
         ),
+        raw.replacen('{', "{\"secret-extra\":\"PRIVATE_SECRET\",", 1),
+        raw.replacen(
+            '{',
+            &format!("{{\"padding\":\"{}\",", "x".repeat(64 * 1024)),
+            1,
+        ),
+    ] {
+        let path = fixture.config_file(compatible.as_bytes());
+        assert!(read_config(&path).is_ok());
+    }
+    for invalid in [
         raw.replace(
             "\"id\":\"shell-v1\"",
             "\"id\":\"shell-v1\",\"id\":\"shell-v2\"",
         ),
-        raw.replacen('{', "{\"secret-extra\":\"PRIVATE_SECRET\",", 1),
-        " ".repeat(MAX_CONFIG_BYTES + 1),
+        " ".repeat(64 * 1024 + 1),
     ] {
-        let path = fixture.config_file(raw.as_bytes());
+        let path = fixture.config_file(invalid.as_bytes());
         let error = read_config(&path).err().unwrap();
         let rendered = format!("{error:?} {error}");
         assert!(
@@ -301,14 +370,13 @@ fn explicit_private_config_is_bounded_strict_and_never_echoes_input() {
     }
     let path = fixture.config_file(fixture.json().to_string().as_bytes());
     fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-    assert_eq!(read_config(&path).err(), Some(Error::UnsafePermissions));
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert!(read_config(&path).is_ok());
     let hardlink = fixture.directory.path().join("hardlink.json");
     fs::hard_link(&path, &hardlink).unwrap();
-    assert_eq!(read_config(&path).err(), Some(Error::UnsafePermissions));
+    assert!(read_config(&path).is_ok());
     let alias = fixture.directory.path().join("config-alias.json");
     symlink(&path, &alias).unwrap();
-    assert_eq!(read_config(&alias).err(), Some(Error::UnsafePath));
+    assert!(read_config(&alias).is_ok());
 }
 
 /// Explicit opt-in integration: both paths must be supplied, no repository,
@@ -330,6 +398,12 @@ fn explicit_free_shell_starts_with_receipt_identity_and_survives_launcher_drop()
     fixture.config.adapters[0]
         .env
         .insert("EXPLICIT_VALUE".into(), "configured".into());
+    fixture.config.adapters[0]
+        .env
+        .insert("HOME".into(), "/synthetic/shell-home".into());
+    fixture.config.adapters[0]
+        .env
+        .insert("TERM".into(), "xterm-256color".into());
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     let (mut store, authority) = fixture.authority();
     let record = authority.record().clone();
@@ -378,7 +452,7 @@ fn explicit_free_shell_starts_with_receipt_identity_and_survives_launcher_drop()
             if capture["text"]
                 .as_str()
                 .unwrap()
-                .contains("LAUNCH_ENV:configured:unset:xterm-256color")
+                .contains("LAUNCH_ENV:configured:/synthetic/shell-home:xterm-256color")
             {
                 break;
             }
@@ -413,7 +487,7 @@ const CLAUDE_UID: &str = "claude:0123456789abcdef";
 
 impl Fixture {
     /// Schema-2 configuration: the legacy free-shell adapter (grok) plus
-    /// synthetic claude/codex CLI profiles with narrower cwd roots.
+    /// synthetic Claude/Codex/Grok CLI profiles with legacy cwd-root fields.
     fn profiles(&self) -> Config {
         let root = self.directory.path();
         for name in ["claude", "codex", "grok"] {
@@ -447,7 +521,6 @@ impl Fixture {
                 resume_args: vec!["--resume".into(), "{sid}".into()],
                 env: BTreeMap::from([("HOME".to_string(), "/synthetic/home".to_string())]),
                 env_remove: vec!["TERM".into()],
-                cwd_roots: vec![root.join("work/claude-area")],
             },
             CliProfile {
                 id: "codex-cli-v1".into(),
@@ -463,7 +536,6 @@ impl Fixture {
                 resume_args: vec!["resume".into(), "{sid}".into()],
                 env: BTreeMap::new(),
                 env_remove: vec![],
-                cwd_roots: vec![root.join("work/codex-area")],
             },
             CliProfile {
                 id: "grok-cli-v1".into(),
@@ -474,7 +546,6 @@ impl Fixture {
                 resume_args: vec![],
                 env: BTreeMap::new(),
                 env_remove: vec![],
-                cwd_roots: vec![root.join("work")],
             },
         ];
         config
@@ -494,7 +565,7 @@ fn strings(argv: &[OsString]) -> Vec<String> {
 }
 
 #[test]
-fn profile_schema_placeholders_environment_and_roots_fail_closed() {
+fn profile_configuration_rejects_only_unusable_process_inputs() {
     let fixture = Fixture::new();
     let base = fixture.profiles();
     assert!(Launcher::new(base.clone()).is_ok());
@@ -504,37 +575,15 @@ fn profile_schema_placeholders_environment_and_roots_fail_closed() {
         assert!(Launcher::new(config).is_err());
     };
     for change in [
-        // Versioning: profiles require schema 2; adapters remain optional.
-        (|c: &mut Config| c.schema = 1) as fn(&mut Config),
-        |c| c.schema = 3,
-        |c| {
+        (|c: &mut Config| {
             c.adapters.clear();
             c.profiles.clear();
-        },
+        }) as fn(&mut Config),
         |c| c.profiles.push(c.profiles[0].clone()),
         |c| c.profiles[0].id = c.adapters[0].id.clone(),
-        |c| c.profiles[0].id = "claude-cli".into(),
-        |c| c.profiles = vec![c.profiles[0].clone(); 17],
-        // Executable identity and template injection.
         |c| c.profiles[0].executable = PathBuf::from("/nonexistent/synthetic/claude"),
         |c| c.profiles[0].executable = PathBuf::from("bin/claude"),
-        |c| c.profiles[0].new_args = vec!["--session-id".into()],
-        |c| c.profiles[0].new_args = vec!["--session-id={session_id}".into()],
-        |c| c.profiles[0].new_args = vec!["{session_id}".into(), "{session_id}".into()],
-        |c| c.profiles[0].new_args = vec!["{session_id}".into(), "{sid}".into()],
-        |c| c.profiles[0].resume_args = vec!["--resume".into()],
-        |c| c.profiles[0].resume_args = vec!["--resume={sid}".into()],
-        |c| c.profiles[0].resume_args = vec!["{sid}".into(), "{sid}".into()],
-        |c| c.profiles[0].resume_args = vec!["{session_id}".into()],
-        |c| c.profiles[0].resume_args = vec!["--resume".into(), "{sid} ".into()],
-        |c| c.profiles[0].resume_args = vec!["--resume".into(), "{unknown}".into()],
-        |c| c.profiles[0].args = vec!["{sid}".into()],
-        |c| c.profiles[0].args = vec!["prefix{session_id}".into()],
-        |c| c.profiles[1].new_args = vec!["--session-id".into(), "{session_id}".into()],
-        |c| c.profiles[2].new_args = vec!["{session_id}".into()],
-        |c| c.profiles[0].args = vec![String::new(); 63],
         |c| c.profiles[0].args = vec!["contains\0nul".into()],
-        // Environment allowlist and always-denied identity variables.
         |c| {
             c.profiles[0]
                 .env
@@ -550,38 +599,21 @@ fn profile_schema_placeholders_environment_and_roots_fail_closed() {
                 .env
                 .insert("GROK_SESSION_ID".into(), SID.into());
         },
-        |c| {
-            c.profiles[0].env.insert("TMUX".into(), "/tmp/x".into());
-        },
-        |c| {
-            c.profiles[0]
-                .env
-                .insert("LD_PRELOAD".into(), "/x.so".into());
-        },
-        |c| {
-            c.profiles[0]
-                .env
-                .insert("SYNTHETIC_PRIVATE".into(), "x".into());
-        },
-        |c| c.profiles[0].env_remove = vec!["HOME".into()],
         |c| c.profiles[0].env_remove = vec!["BAD=NAME".into()],
-        |c| c.profiles[0].env_remove = vec!["TERM".into(), "TERM".into()],
-        |c| c.profiles[0].env_remove = vec!["X".into(); 17],
-        // Explicit cwd roots: nonempty, unique, inside a global root.
-        |c| c.profiles[0].cwd_roots.clear(),
-        |c| c.profiles[0].cwd_roots = vec![c.profiles[0].cwd_roots[0].clone(); 2],
-        |c| c.profiles[0].cwd_roots = vec![c.host_dir.clone()],
-        |c| c.profiles[0].cwd_roots = vec![c.host_dir.parent().unwrap().join("other")],
-        |c| c.profiles[0].cwd_roots = vec![PathBuf::from("/")],
-        |c| c.profiles[0].cwd_roots = vec![c.cwd_roots[0].join("missing")],
     ] {
         mutate(change);
     }
-    let alias = fixture.directory.path().join("work/claude-alias");
-    symlink(fixture.directory.path().join("work/claude-area"), &alias).unwrap();
-    let mut config = base.clone();
-    config.profiles[0].cwd_roots = vec![alias];
-    assert_eq!(Launcher::new(config).err(), Some(Error::UnsafePath));
+
+    let mut compatible = base.clone();
+    compatible.schema = 99;
+    compatible.profiles[0].new_args = vec!["literal-{session_id}".into()];
+    compatible.profiles[0].resume_args.clear();
+    compatible.profiles[0].env_remove = vec!["TERM".into(), "TERM".into(), "HOME".into()];
+    compatible.profiles[0]
+        .env
+        .insert("TMUX".into(), "/tmp/x".into());
+    assert!(Launcher::new(compatible).is_ok());
+
     fs::set_permissions(
         &base.profiles[0].executable,
         fs::Permissions::from_mode(0o600),
@@ -596,11 +628,11 @@ fn profile_schema_placeholders_environment_and_roots_fail_closed() {
         fs::Permissions::from_mode(0o700),
     )
     .unwrap();
-    // JSON: unknown fields, schema-1 profiles and duplicate keys fail closed.
+    // Unknown fields and schema values are ignored.
     let mut json = serde_json::json!({"schema":2,"host_binary":base.host_binary,"host_dir":base.host_dir,
-        "cwd_roots":base.cwd_roots,"adapters":[],"profiles":[{"id":"codex-cli-v1","source":"codex",
+        "unknown_top_level":["relative","/missing"],"adapters":[],"profiles":[{"id":"codex-cli-v1","source":"codex",
         "executable":base.profiles[1].executable,"args":[],"new_args":[],"resume_args":["resume","{sid}"],
-        "env":{},"env_remove":[],"cwd_roots":[base.profiles[1].cwd_roots[0]]}]});
+        "env":{},"env_remove":[],"unknown_profile_field":["ignored"]}]});
     let launcher =
         Launcher::new(read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap())
             .unwrap();
@@ -615,22 +647,10 @@ fn profile_schema_placeholders_environment_and_roots_fail_closed() {
         }]
     );
     json["profiles"][0]["shell"] = serde_json::json!("/bin/sh -c");
-    assert_eq!(
-        read_config(&fixture.config_file(json.to_string().as_bytes())).err(),
-        Some(Error::InvalidConfig)
-    );
-    json["profiles"][0].as_object_mut().unwrap().remove("shell");
+    assert!(read_config(&fixture.config_file(json.to_string().as_bytes())).is_ok());
     json["schema"] = serde_json::json!(1);
-    assert_eq!(
-        read_config(&fixture.config_file(json.to_string().as_bytes())).err(),
-        Some(Error::InvalidConfig)
-    );
+    assert!(read_config(&fixture.config_file(json.to_string().as_bytes())).is_ok());
     json.as_object_mut().unwrap().remove("schema");
-    assert_eq!(
-        read_config(&fixture.config_file(json.to_string().as_bytes())).err(),
-        Some(Error::InvalidConfig)
-    );
-    // Legacy schema-1 shape (no schema field, adapters only) still loads.
     assert!(read_config(&fixture.config_file(fixture.json().to_string().as_bytes())).is_ok());
 }
 
@@ -668,7 +688,7 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             id: "grok-cli-v1".into(),
             source: Source::Grok,
             profile: true,
-            resume: false,
+            resume: true,
             worker: false,
         },
     ];
@@ -783,26 +803,33 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             .err(),
         Some(Error::InvalidSpec)
     );
-    // Grok profile: pending new session is fine, resume unsupported here.
-    launcher
-        .validate_spec(&LaunchSpec::profile_new(Source::Grok, "grok-cli-v1".into(), &work).unwrap())
-        .unwrap();
+    // Grok receives a new SID and supports the same `--resume` form as Python.
+    let grok_new = LaunchSpec::profile_new(Source::Grok, "grok-cli-v1".into(), &work).unwrap();
+    launcher.validate_spec(&grok_new).unwrap();
+    fs::remove_dir_all(root.join("ledger")).unwrap();
+    fs::create_dir(root.join("ledger")).unwrap();
+    fs::set_permissions(root.join("ledger"), fs::Permissions::from_mode(0o700)).unwrap();
+    let grok_record = fixture.record(&grok_new);
+    let grok_sid = grok_record.session_id().unwrap();
     assert_eq!(
-        launcher
-            .validate_spec(
-                &LaunchSpec::resume(
-                    Source::Grok,
-                    "grok-cli-v1".into(),
-                    &work,
-                    SID.into(),
-                    "grok:0123456789abcdef".into()
-                )
-                .unwrap()
-            )
-            .err(),
-        Some(Error::InvalidSpec)
+        strings(&launcher.argv(&grok_record).unwrap()),
+        [
+            root.join("bin/grok").to_string_lossy().into_owned(),
+            "--session-id".into(),
+            grok_sid.into()
+        ]
     );
-    // Source/ID disagreement and cwd outside the profile's narrower roots.
+    let grok_resume = LaunchSpec::resume(
+        Source::Grok,
+        "grok-cli-v1".into(),
+        &work,
+        SID.into(),
+        "grok:0123456789abcdef".into(),
+    )
+    .unwrap();
+    launcher.validate_spec(&grok_resume).unwrap();
+
+    // Source/ID disagreement remains invalid; cwd is unrestricted.
     assert_eq!(
         launcher
             .validate_spec(
@@ -811,22 +838,16 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             .err(),
         Some(Error::AdapterUnavailable)
     );
-    assert_eq!(
-        launcher
-            .validate_spec(
-                &LaunchSpec::profile_new(Source::Claude, "claude-cli-v1".into(), &codex).unwrap()
-            )
-            .err(),
-        Some(Error::InvalidSpec)
-    );
-    assert_eq!(
-        launcher
-            .validate_spec(
-                &LaunchSpec::profile_new(Source::Claude, "claude-cli-v1".into(), &work).unwrap()
-            )
-            .err(),
-        Some(Error::InvalidSpec)
-    );
+    launcher
+        .validate_spec(
+            &LaunchSpec::profile_new(Source::Claude, "claude-cli-v1".into(), &codex).unwrap(),
+        )
+        .unwrap();
+    launcher
+        .validate_spec(
+            &LaunchSpec::profile_new(Source::Claude, "claude-cli-v1".into(), &work).unwrap(),
+        )
+        .unwrap();
     assert_eq!(
         launcher
             .validate_spec(
@@ -835,19 +856,16 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             .err(),
         Some(Error::AdapterUnavailable)
     );
-    // A symlinked cwd inside the profile root still fails fresh ancestry checks.
+    // Constructors resolve a symlinked cwd before it is persisted.
     let alias = root.join("work/claude-area/alias");
     symlink(root.join("work/codex-area"), &alias).unwrap();
-    let escaped: LaunchSpec = serde_json::from_value(
-        serde_json::json!({"source":"claude","adapter_id":"claude-cli-v1",
-        "cwd":alias,"launch":{"kind":"new_assigned"}}),
-    )
-    .unwrap();
-    assert!(launcher.validate_spec(&escaped).is_err());
+    let linked = LaunchSpec::profile_new(Source::Claude, "claude-cli-v1".into(), &alias).unwrap();
+    assert_eq!(linked.cwd(), root.join("work/codex-area"));
+    launcher.validate_spec(&linked).unwrap();
 }
 
 #[test]
-fn directory_completion_is_bounded_inside_roots_and_skips_symlinks() {
+fn directory_completion_matches_python() {
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.profiles()).unwrap();
     let root = fixture.directory.path();
@@ -855,13 +873,13 @@ fn directory_completion_is_bounded_inside_roots_and_skips_symlinks() {
     let work_text = work.to_str().unwrap().to_owned();
     fs::create_dir(work.join(".hidden")).unwrap();
     fs::create_dir(work.join("Beta")).unwrap();
+    fs::create_dir(work.join("Beta/child")).unwrap();
+    fs::create_dir(root.join("other/child")).unwrap();
     fs::write(work.join("codex-file"), b"not a directory").unwrap();
     symlink(root.join("other"), work.join("escape-link")).unwrap();
     symlink(work.join("Beta"), work.join("inside-link")).unwrap();
     let complete = |text: &str| launcher.complete_directories(text, 24).unwrap();
-    // Empty or partial root text suggests the roots themselves, nothing else.
-    assert_eq!(complete(""), vec![format!("{work_text}/")]);
-    assert_eq!(complete("/"), vec![format!("{work_text}/")]);
+    assert!(complete("").is_empty());
     assert_eq!(
         complete(&work_text[..work_text.len() - 2]),
         vec![format!("{work_text}/")]
@@ -873,6 +891,8 @@ fn directory_completion_is_bounded_inside_roots_and_skips_symlinks() {
             format!("{work_text}/Beta/"),
             format!("{work_text}/claude-area/"),
             format!("{work_text}/codex-area/"),
+            format!("{work_text}/escape-link/"),
+            format!("{work_text}/inside-link/"),
         ]
     );
     assert_eq!(
@@ -885,7 +905,7 @@ fn directory_completion_is_bounded_inside_roots_and_skips_symlinks() {
     );
     assert_eq!(
         complete(&format!("{work_text}/.")),
-        vec![format!("{work_text}/.hidden/")]
+        vec![format!("{work_text}/work/")]
     );
     assert_eq!(
         launcher
@@ -893,37 +913,39 @@ fn directory_completion_is_bounded_inside_roots_and_skips_symlinks() {
             .unwrap(),
         vec![format!("{work_text}/Beta/")]
     );
-    // Symlinks (even those pointing inside), files, parents outside every
-    // root, traversal and relative forms yield nothing and reveal nothing.
-    for text in [
-        format!("{work_text}/escape"),
-        format!("{work_text}/inside"),
-        format!("{work_text}/escape-link/"),
-        format!("{work_text}/inside-link/"),
-        format!("{work_text}/../"),
-        format!("{work_text}/./"),
-        format!("{work_text}//"),
-        format!("{work_text}/codex-area/../"),
-        format!("{work_text}/codex-area/.."),
-        format!("{work_text}/missing/"),
-        root.join("other").to_str().unwrap().to_owned() + "/",
-        root.join("host").to_str().unwrap().to_owned() + "/",
-        "/etc/".into(),
-        "relative/path".into(),
-        "~/".into(),
-    ] {
+    assert_eq!(
+        complete(&format!("{work_text}/inside")),
+        vec![format!("{work_text}/inside-link/")]
+    );
+    assert_eq!(
+        complete(&format!("{work_text}/inside-link/")),
+        vec![format!("{work_text}/inside-link/child/")]
+    );
+    for suffix in ["./", "/", "codex-area/../"] {
+        let text = format!("{work_text}/{suffix}");
+        assert!(complete(&text).contains(&format!("{text}Beta/")), "{text}");
+    }
+    assert_eq!(
+        complete(&format!("{work_text}/escape-link/")),
+        vec![format!("{work_text}/escape-link/child/")]
+    );
+    assert_eq!(
+        complete(&(root.join("other").to_string_lossy().into_owned() + "/")),
+        vec![format!("{}/other/child/", root.display())]
+    );
+    for text in [format!("{work_text}/missing/"), "relative/path".into()] {
         assert!(complete(&text).is_empty(), "{text}");
     }
     assert_eq!(
         launcher.complete_directories(&"x".repeat(4097), 24).err(),
         Some(Error::InvalidSpec)
     );
-    assert_eq!(
-        launcher.complete_directories("a\nb", 24).err(),
-        Some(Error::InvalidSpec)
+    assert!(
+        launcher
+            .complete_directories("a\nb", 24)
+            .unwrap()
+            .is_empty()
     );
-    // The launcher-level completion covers the global roots; profile roots
-    // narrow only the launch itself.
     assert!(complete(&format!("{work_text}/claude-area/")).is_empty());
 }
 
@@ -1026,4 +1048,24 @@ fn bug_report_policy_accepts_a_login_shell_wrapper_argv() {
     assert_eq!(resolved.len(), 1);
     assert_eq!(resolved[0].argv[1], "claude");
     assert!(resolved[0].policy_ok());
+}
+
+#[test]
+fn existing_tab_named_working_directory_can_be_launched_and_completed() {
+    let fixture = Fixture::new();
+    let cwd = fixture.work.join("project\tname");
+    fs::create_dir(&cwd).unwrap();
+    let launcher = Launcher::new(fixture.config.clone()).unwrap();
+    let spec = LaunchSpec::new(Source::Codex, "shell-v1".into(), &cwd).unwrap();
+    launcher.validate_spec(&spec).unwrap();
+    let mut store = LifecycleStore::initialize(&fixture.directory.path().join("ledger")).unwrap();
+    store.create("tab-cwd-request", &spec).unwrap();
+    drop(store);
+    let mut reopened = LifecycleStore::open(&fixture.directory.path().join("ledger")).unwrap();
+    assert_eq!(reopened.list(0, 1).unwrap()[0].spec().cwd(), cwd);
+    let prefix = format!("{}/project\t", fixture.work.display());
+    assert_eq!(
+        launcher.complete_directories(&prefix, 50).unwrap(),
+        vec![format!("{}/", cwd.display())]
+    );
 }

@@ -320,9 +320,7 @@ def build_claude(corpus):
         claude_row(sid, "assistant", "a1", "u1", "Answer under a missing ancestor"),
     ], ["Question under a missing ancestor", "Answer under a missing ancestor"])
 
-    # Batch 35 declared DELTA: a line with a duplicated key. json.loads keeps
-    # the last value; Rust skips the whole line as an invalid JSONL record.
-    # The record is a leaf nothing references, so only that reply differs.
+    # A duplicated key follows Python json.loads and keeps the last value.
     sid = "claude-dupkey"
     duplicate = ('{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"%s","cwd":"/synthetic/history",'
                  '"timestamp":"2026-09-11T10:00:00Z","isSidechain":false,'
@@ -333,7 +331,7 @@ def build_claude(corpus):
         claude_row(sid, "user", "u0", None, "Dup key root question"),
         claude_row(sid, "assistant", "a0", "u0", "Dup key root answer"),
         claude_row(sid, "user", "u1", "a0", "Dup key question"),
-        duplicate], ["Dup key root question", "Dup key root answer", "Dup key question"])
+        duplicate], ["Dup key root question", "Dup key root answer", "Dup key question", "Duplicate key last wins"])
 
 
 def verify_claude(report, corpus, base, opener, adapters, rows):
@@ -443,18 +441,16 @@ def verify_claude(report, corpus, base, opener, adapters, rows):
     response = fetch_supported(opener, base, sid, corpus.uid(sid), "window=1")
     shown = [(row["role"], row["text"]) for row in response["messages"]]
     assert rows[sid].get("supported") is True and "migration_warnings" not in rows[sid], rows[sid]
-    assert response["meta"].get("supported") is True and response["meta"].get("migration_warnings") == ["跳过无效的JSONL 记录 ×1"], response["meta"]
+    assert response["meta"].get("supported") is True and response["meta"].get("migration_warnings") == [], response["meta"]
     assert [text for _, text in shown] == corpus.expected[sid], shown
-    assert response["end"] == corpus.paths[sid].stat().st_size, "the skipped line keeps its bytes in the physical cursor"
+    assert response["end"] == corpus.paths[sid].stat().st_size
     if adapters:
         messages, _, end = python_read(adapters, "claude", corpus.paths[sid])
         python_shown = [(row["role"], row["text"]) for row in messages]
-        assert python_shown == shown + [("assistant", "Duplicate key last wins")] and end == response["end"], python_shown
-        report.delta(f"claude {sid}: duplicate-key line — Python json.loads is last-key-wins and shows {len(python_shown)} messages "
-                     f"(last {python_shown[-1][1]!r}); Rust skips the line as an invalid JSONL record, shows {len(shown)} messages with "
-                     f"{response['meta']['migration_warnings']} and the same EOF cursor")
+        assert python_shown == shown and end == response["end"], (python_shown, shown)
+        report.ok(f"claude {sid}: duplicate-key object follows Python last-key-wins")
     else:
-        report.delta(f"claude {sid}: duplicate-key line skipped by Rust ({response['meta']['migration_warnings']}); Python would keep the last value")
+        report.ok(f"claude {sid}: duplicate-key object uses the last value")
 
 
 # --------------------------------------------------------------------------

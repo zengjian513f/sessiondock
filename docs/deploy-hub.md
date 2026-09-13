@@ -1,5 +1,9 @@
 # 部署 `sessiondock-hub`（多机 Hub，仅样例）
 
+实际节点身份、两套 WireGuard 的边界和路由核对方法见
+[网络拓扑](network-topology.md)。尤其不要把另一套网络的中转站
+`192.168.2.10` 当作 Cetus。
+
 本文只给 systemd 单元与 nginx 位置的**形状**，用占位符代替一切地址、路径与凭据。它不是生产授权：
 切生产流量、动 `deploy/*`、接旧 Hub 都是单独的、需用户授权的步骤（[replacement-checklist.md](replacement-checklist.md)）。
 Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后面（和节点侧一样）。
@@ -20,11 +24,11 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 | 变量 | 说明 |
 | --- | --- |
 | `SESSIONDOCK_HUB_BIND` | Hub 监听，必须 loopback；默认 `127.0.0.1:8742` |
-| `SESSIONDOCK_HUB_NODES` | `hub-nodes.json` 注册表（0600），绝对路径；必填 |
+| `SESSIONDOCK_HUB_NODES` | `hub-nodes.json` 注册表；默认 `~/.local/share/sessiondock/hub-nodes.json`，接受普通文件路径 |
 | `SESSIONDOCK_HUB_CACHE_DIR` | 离线会话快照目录；缺省是注册表旁的 `hub-cache` |
-| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR（严格）；缺省 `127.0.0.0/8,::1/128`，私网段须显式配 |
+| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR；默认 `127.0.0.0/8,::1/128,10.0.0.0/24`，与 Python 一致 |
 | `SESSIONDOCK_WEB_DIR` | 前端快照（hub 模式），默认 `legacy-web` |
-| `SESSIONDOCK_AUDIT_DIR` | 记 `hub.node.*.changed`（可选，0700 私有目录） |
+| `SESSIONDOCK_AUDIT_DIR` | 记 `hub.node.*.changed`（可选，按需创建目录） |
 
 ## 注册（服务器端）
 

@@ -290,6 +290,7 @@ fn term_list_body_reports_capabilities_per_machine_and_unions_sources() {
             NID_A,
             json!({"enabled": true, "unavailable_reason": "", "home": "/home/u/a",
             "sources": {"claude": true, "codex": false}, "sessions": [{"name": "a~t"}], "pending": [],
+            "resume_sources": {"claude": true, "codex": false},
             "backend": "tmux", "backends": [{"name": "tmux"}]}),
             None,
         ),
@@ -333,11 +334,13 @@ fn term_list_body_reports_capabilities_per_machine_and_unions_sources() {
     assert_eq!(
         body["capabilities"][NID_A],
         json!({"enabled": true, "unavailable_reason": "", "sources": {"claude": true, "codex": false},
+               "resume_sources": {"claude": true, "codex": false},
                "home": "/home/u/a", "backend": "tmux", "backends": [{"name": "tmux"}]})
     );
     assert_eq!(
         body["capabilities"][NID_B],
         json!({"enabled": false, "unavailable_reason": "节点暂时离线", "sources": {}, "home": "",
+               "resume_sources": {},
                "backend": "ptyhost", "backends": []})
     );
     // `sources.get(source, False) or available`: a later true wins, a later false does not erase.

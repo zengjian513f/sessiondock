@@ -1,4 +1,4 @@
-//! Dedicated writer thread: JSONL segments, size rotation, byte retention.
+//! Dedicated writer thread: daily JSONL files with fourteen-day retention.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -22,6 +22,7 @@ const IDLE_SYNC: Duration = Duration::from_secs(1);
 /// waits slightly longer so a normal drain always completes first.
 const DRAIN_DEADLINE: Duration = Duration::from_millis(1500);
 const ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
+const RETENTION_DAYS: u64 = 14;
 const PREFIX: &str = "browser-";
 const SUFFIX: &str = ".jsonl";
 
@@ -29,7 +30,6 @@ struct Segment {
     file: File,
     path: PathBuf,
     date: String,
-    index: u32,
     bytes: u64,
 }
 
@@ -126,15 +126,11 @@ impl Writer {
         self.leave_queue(&batch);
         let length = batch.bytes.len() as u64;
         let today = utc_date(SystemTime::now());
-        let rotate = self.segment.as_ref().is_none_or(|segment| {
-            segment.date != today || segment.bytes + length > self.shared.limits.file_bytes
-        });
-        let result = if rotate {
-            self.rotate(&today, length)
-        } else {
-            Ok(())
-        }
-        .and_then(|()| {
+        let rotate = self
+            .segment
+            .as_ref()
+            .is_none_or(|segment| segment.date != today);
+        let result = if rotate { self.rotate(&today) } else { Ok(()) }.and_then(|()| {
             let segment = self.segment.as_mut().expect("rotation opened a segment");
             segment.file.write_all(&batch.bytes)?;
             segment.bytes += length;
@@ -196,19 +192,12 @@ impl Writer {
         }
     }
 
-    /// Closes the current segment (if any) and opens the one for `date` that
-    /// still has room for `incoming` bytes; then enforces retention.
-    fn rotate(&mut self, date: &str, incoming: u64) -> io::Result<()> {
+    /// Closes the current daily segment, opens today's file and applies
+    /// Python's fourteen-day retention window.
+    fn rotate(&mut self, date: &str) -> io::Result<()> {
         self.sync();
-        let previous = self.segment.take();
-        let index = match previous {
-            Some(segment) if segment.date == date => segment.index + 1,
-            _ => match latest_index(&self.directory, date) {
-                Some((index, size)) if size + incoming <= self.shared.limits.file_bytes => index,
-                Some((index, _)) => index + 1,
-                None => 0,
-            },
-        };
+        self.segment.take();
+        let index = latest_index(&self.directory, date).map_or(0, |(index, _)| index);
         let path = self.directory.join(segment_name(date, index));
         let mut options = OpenOptions::new();
         options.create(true).append(true);
@@ -229,28 +218,25 @@ impl Writer {
             file,
             path,
             date: date.to_owned(),
-            index,
             bytes: metadata.len(),
         });
         self.enforce_retention();
         Ok(())
     }
 
-    /// Runs at every rotation, when the fresh active segment is still empty.
-    /// Closed segments are pruned down to `retained_bytes - file_bytes` so the
-    /// active segment can fill completely without the total exceeding the cap.
+    /// Delete matching segments older than Python's retention window.
     fn enforce_retention(&mut self) {
         let mut segments = list_segments(&self.directory);
         segments.sort();
         let mut total: u64 = segments.iter().map(|segment| segment.size).sum();
         let active = self.segment.as_ref().map(|segment| segment.path.clone());
-        let limits = &self.shared.limits;
-        let budget = limits.retained_bytes.saturating_sub(limits.file_bytes);
+        let cutoff = utc_date(
+            SystemTime::now()
+                .checked_sub(Duration::from_secs(RETENTION_DAYS * 24 * 3600))
+                .unwrap_or(SystemTime::UNIX_EPOCH),
+        );
         for segment in &segments {
-            if total <= budget {
-                break;
-            }
-            if active.as_ref() == Some(&segment.path) {
+            if segment.date >= cutoff || active.as_ref() == Some(&segment.path) {
                 continue;
             }
             match fs::remove_file(&segment.path) {

@@ -129,19 +129,15 @@ fn descriptor(item: &Value) -> &str {
 }
 
 #[tokio::test]
-async fn history_and_search_preserve_text_while_get_alone_rejects_bad_bytes_or_pixel_budgets() {
+async fn history_and_search_preserve_text_while_get_validates_only_base64_and_item_size() {
     let mut oversized = STANDARD.decode(GIF).unwrap();
     oversized[6..8].copy_from_slice(&8193u16.to_le_bytes());
     let oversized = STANDARD.encode(oversized);
     let cases = [
         ("####", "image/png", StatusCode::UNPROCESSABLE_ENTITY),
-        ("AAAA", "image/png", StatusCode::UNPROCESSABLE_ENTITY),
-        (PNG, "image/jpeg", StatusCode::UNPROCESSABLE_ENTITY),
-        (
-            oversized.as_str(),
-            "image/gif",
-            StatusCode::PAYLOAD_TOO_LARGE,
-        ),
+        ("AAAA", "image/png", StatusCode::OK),
+        (PNG, "image/jpeg", StatusCode::OK),
+        (oversized.as_str(), "image/gif", StatusCode::OK),
         (PNG, "image/png", StatusCode::OK),
     ];
     let fixture = Fixture::new(
@@ -170,10 +166,10 @@ async fn history_and_search_preserve_text_while_get_alone_rejects_bad_bytes_or_p
             let response = get(&fixture.app, src).await;
             assert_eq!(response.status(), *expected, "image {i}");
             if *expected == StatusCode::OK {
-                assert_eq!(response.headers()["content-type"], "image/png");
+                assert_eq!(response.headers()["content-type"], cases[i].1);
                 assert_eq!(
-                    &to_bytes(response.into_body(), 1024).await.unwrap()[..],
-                    STANDARD.decode(PNG).unwrap()
+                    &to_bytes(response.into_body(), usize::MAX).await.unwrap()[..],
+                    STANDARD.decode(cases[i].0).unwrap()
                 );
             } else {
                 let error = json_body(response).await;
@@ -196,7 +192,7 @@ async fn history_and_search_preserve_text_while_get_alone_rejects_bad_bytes_or_p
 }
 
 #[tokio::test]
-async fn windows_pages_and_watch_register_invalid_images_without_materializing_them() {
+async fn windows_pages_and_watch_register_decoded_images_without_materializing_them() {
     let fixture = Fixture::new(
         (0..1500)
             .map(|i| {
@@ -227,8 +223,11 @@ async fn windows_pages_and_watch_register_invalid_images_without_materializing_t
     let images = descriptors(&page);
     assert_eq!(images.len(), 1);
     let response = get(&fixture.app, descriptor(images[0])).await;
-    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    drop(response);
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        &to_bytes(response.into_body(), usize::MAX).await.unwrap()[..],
+        [0, 0, 0]
+    );
 
     let response = get(&fixture.app, &format!("/api/watch?uid={uid}")).await;
     assert_eq!(response.status(), StatusCode::OK);

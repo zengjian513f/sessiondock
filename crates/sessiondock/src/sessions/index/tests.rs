@@ -828,7 +828,7 @@ fn codex_name_index_enriches_rows_and_forks_inherit_named_roots() {
         by_uid(renamed.sessions())[&corpus.uid("codex-parent")]["title"],
         "Renamed"
     );
-    // An index without a Codex root is a configuration error, like today.
+    // Without a Codex root the optional names file is simply unused.
     let broken = Index::new(
         SessionRoots {
             codex: None,
@@ -836,7 +836,14 @@ fn codex_name_index_enriches_rows_and_forks_inherit_named_roots() {
         },
         Some(names),
     );
-    assert_eq!(broken.refresh(true).unwrap_err().status, 400);
+    assert!(
+        broken
+            .refresh(true)
+            .unwrap()
+            .sessions()
+            .iter()
+            .all(|row| row["source"] != "codex")
+    );
 }
 
 #[test]
@@ -891,8 +898,8 @@ fn warm_refresh_is_stat_only_and_only_changed_files_are_reread() {
 /// origin's sidecars into the continuation's `subagents/`; Python's `glob`
 /// lists the link, so the agent belongs to both sessions. The link is the
 /// identity (uid, owner by directory), the canonical in-root target is the
-/// data; a link to a file outside every root, a dangling one or a link to a
-/// directory stays skipped, and main transcripts never follow links.
+/// data. Regular-file aliases use ordinary Python path handling; dangling
+/// aliases and directory targets stay skipped.
 #[cfg(unix)]
 #[test]
 fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session() {
@@ -933,7 +940,8 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
         &linked.join("agent-a1.meta.json"),
         br#"{"agentType":"worker","description":"WP-C worker"}"#,
     );
-    // Not followed: outside every root, dangling, a directory, a main file.
+    // External regular files and main-file aliases are followed; dangling
+    // aliases and directory targets are skipped.
     let outside = root.join("outside-agent.jsonl");
     write(&outside, &agent);
     std::os::unix::fs::symlink(&outside, linked.join("agent-outside.jsonl")).unwrap();
@@ -973,6 +981,8 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
         vec![
             "claude/proj/continued.jsonl",
             "claude/proj/continued/subagents/agent-a1.jsonl",
+            "claude/proj/continued/subagents/agent-outside.jsonl",
+            "claude/proj/linked-main.jsonl",
             "claude/proj/origin.jsonl",
             "claude/proj/origin/subagents/agent-a1.jsonl",
         ]
@@ -980,23 +990,18 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
     let rows = by_uid(snapshot.sessions());
     let continued = &rows[&uid_for("claude", &claude.join("proj/continued.jsonl"))];
     let origin = &rows[&uid_for("claude", &claude.join("proj/origin.jsonl"))];
-    for row in [continued, origin] {
-        let items = row["agent_items"].as_array().unwrap();
-        assert_eq!(items.len(), 1, "{}", row["title"]);
-        assert_eq!(items[0]["id"], "a1");
-        assert_eq!(items[0]["title"], "WP-C worker");
-        assert_eq!(items[0]["supported"], true);
-    }
+    let origin_items = origin["agent_items"].as_array().unwrap();
+    assert_eq!(origin_items.len(), 1);
+    assert_eq!(origin_items[0]["id"], "a1");
+    let continued_items = continued["agent_items"].as_array().unwrap();
+    assert_eq!(continued_items.len(), 2);
+    assert_eq!(continued_items[0]["id"], "a1");
+    assert_eq!(continued_items[1]["id"], "outside");
+    assert!(continued_items.iter().all(|item| item["supported"] == true));
     let via_link = snapshot
         .candidate(&uid_for("claude", &linked.join("agent-a1.jsonl")))
         .unwrap();
-    assert_eq!(
-        via_link.data,
-        claude
-            .join("proj/origin/subagents/agent-a1.jsonl")
-            .canonicalize()
-            .unwrap()
-    );
+    assert_eq!(via_link.data, linked.join("agent-a1.jsonl"));
     assert_eq!(via_link.root, claude.canonicalize().unwrap());
     assert_eq!(
         via_link.owner.as_deref(),
@@ -1032,7 +1037,7 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
 }
 
 #[test]
-fn discovery_skips_symlinks_zero_bytes_and_unrelated_files_and_reports_bad_roots() {
+fn discovery_follows_python_file_and_project_aliases_and_skips_unrelated_files() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     let claude = root.join("claude");
@@ -1102,23 +1107,32 @@ fn discovery_skips_symlinks_zero_bytes_and_unrelated_files_and_reports_bad_roots
         .map(|candidate| {
             candidate
                 .path
-                .strip_prefix(root)
+                .strip_prefix(root.canonicalize().unwrap())
                 .unwrap()
                 .to_string_lossy()
-                .into_owned()
+                .replace('\\', "/")
         })
         .collect();
     paths.sort();
-    assert_eq!(
-        paths,
-        vec![
-            "claude/proj/session.jsonl",
-            "claude/proj/session/subagents/agent-a1.jsonl",
-            "codex/2026/09/11/rollout-a.jsonl",
-            "codex/flat.jsonl",
-            "grok/cwd/with-summary",
-        ]
-    );
+    #[cfg(unix)]
+    let expected = vec![
+        "claude/linked-project/hidden.jsonl",
+        "claude/proj/linked.jsonl",
+        "claude/proj/session.jsonl",
+        "claude/proj/session/subagents/agent-a1.jsonl",
+        "codex/2026/09/11/rollout-a.jsonl",
+        "codex/flat.jsonl",
+        "grok/cwd/with-summary",
+    ];
+    #[cfg(not(unix))]
+    let expected = vec![
+        "claude/proj/session.jsonl",
+        "claude/proj/session/subagents/agent-a1.jsonl",
+        "codex/2026/09/11/rollout-a.jsonl",
+        "codex/flat.jsonl",
+        "grok/cwd/with-summary",
+    ];
+    assert_eq!(paths, expected);
     let grok_row = snapshot
         .candidate(&uid_for("grok", &grok.join("cwd/with-summary")))
         .unwrap();
@@ -1126,6 +1140,13 @@ fn discovery_skips_symlinks_zero_bytes_and_unrelated_files_and_reports_bad_roots
         grok_row.stamp.is_some_and(|stamp| stamp.size == 0),
         "a zero-byte Grok chat exists"
     );
+    #[cfg(unix)]
+    assert_eq!(
+        snapshot.sessions().len(),
+        6,
+        "the sidecar is folded into its owner"
+    );
+    #[cfg(not(unix))]
     assert_eq!(
         snapshot.sessions().len(),
         4,

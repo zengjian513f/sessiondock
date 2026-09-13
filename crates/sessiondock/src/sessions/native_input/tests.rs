@@ -1,5 +1,72 @@
 use super::*;
+use sha1::{Digest, Sha1};
 use std::io::{Cursor, Write};
+use std::path::PathBuf;
+use std::time::{Duration, UNIX_EPOCH};
+
+struct Fixture {
+    _temp: tempfile::TempDir,
+    root: PathBuf,
+    path: PathBuf,
+    stamp: FileStamp,
+}
+impl Fixture {
+    fn new(bytes: &[u8]) -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("native")).unwrap();
+        let path = root.join("native/synthetic.jsonl");
+        std::fs::write(&path, bytes).unwrap();
+        let stamp = stamp(&path).unwrap();
+        Self {
+            _temp: temp,
+            root,
+            path,
+            stamp,
+        }
+    }
+    fn open(&self) -> CheckedNative {
+        CheckedNative::open(&self.root, &self.path, &self.stamp).unwrap()
+    }
+}
+fn advance_modified(fixture: &Fixture) {
+    let seconds = (fixture.stamp.modified / 1_000_000_000) as u64 + 2;
+    std::fs::File::options()
+        .write(true)
+        .open(&fixture.path)
+        .unwrap()
+        .set_modified(UNIX_EPOCH + Duration::from_secs(seconds))
+        .unwrap();
+}
+fn scan(bytes: &[u8]) -> RawIndex {
+    RawIndex::scan(bytes).unwrap()
+}
+fn hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha1::digest(bytes))
+}
+fn assert_index(index: &RawIndex, bytes: &[u8]) {
+    assert_eq!(index.length(), bytes.len() as u64);
+    assert_eq!(
+        index.committed(),
+        bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index as u64 + 1)
+    );
+    assert_eq!(index.head_bytes(), &bytes[..bytes.len().min(HEAD)]);
+    assert_eq!(index.digest(), hash(bytes));
+    assert!(index.is_checkpoint(0));
+    assert_eq!(index.prefix_hash(0), Some(hash(b"")));
+    for end in 1..=bytes.len() {
+        assert_eq!(index.is_checkpoint(end as u64), bytes[end - 1] == b'\n');
+        if bytes[end - 1] == b'\n' {
+            assert_eq!(index.prefix_hash(end as u64), Some(hash(&bytes[..end])));
+        } else {
+            assert!(index.prefix_hash(end as u64).is_none());
+        }
+    }
+    assert!(!index.is_checkpoint(bytes.len() as u64 + 1));
+}
 
 #[test]
 fn checked_ranges_seek_once_and_never_expose_prefix_or_suffix_bytes() {
@@ -30,43 +97,34 @@ fn checked_ranges_seek_once_and_never_expose_prefix_or_suffix_bytes() {
                 .err()
                 .unwrap()
                 .status,
-            413
+            409
         );
     }
 }
 
 #[test]
-fn range_operation_limit_is_independent_of_large_file_total_size() {
+fn large_sparse_ranges_remain_bounded_by_actual_file_size() {
     let fixture = Fixture::new(b"x");
+    let offset = 6 * 1024 * 1024 * 1024;
     let file = std::fs::OpenOptions::new()
         .write(true)
         .open(&fixture.path)
         .unwrap();
-    file.set_len(MAX_BYTES + 3).unwrap();
+    file.set_len(offset + 3).unwrap();
     let expected = stamp(&fixture.path).unwrap();
-    assert_eq!(
-        CheckedNative::open_range(&fixture.root, &fixture.path, &expected, 0, MAX_BYTES + 1)
-            .err()
-            .unwrap()
-            .status,
-        413
+    assert!(
+        CheckedNative::open_range(&fixture.root, &fixture.path, &expected, 0, offset + 1).is_ok()
     );
-    let mut range = CheckedNative::open_range(
-        &fixture.root,
-        &fixture.path,
-        &expected,
-        MAX_BYTES,
-        MAX_BYTES + 3,
-    )
-    .unwrap();
+    let mut range =
+        CheckedNative::open_range(&fixture.root, &fixture.path, &expected, offset, offset + 3)
+            .unwrap();
     let mut output = Vec::new();
     range.read_to_end(&mut output).unwrap();
     assert_eq!(output, [0; 3]);
     range.finish().unwrap();
-    // Exact maximum is admitted without reading a huge sparse fixture here.
+    // A wide range can be authorized without materializing the sparse fixture.
     assert!(
-        CheckedNative::open_range(&fixture.root, &fixture.path, &expected, 1, MAX_BYTES + 1)
-            .is_ok()
+        CheckedNative::open_range(&fixture.root, &fixture.path, &expected, 1, offset + 1).is_ok()
     );
 }
 
@@ -83,6 +141,8 @@ fn changes_outside_range_still_invalidate_finish_and_stale_reopen() {
             .unwrap();
         file.seek(SeekFrom::Start(offset)).unwrap();
         file.write_all(b"Z").unwrap();
+        drop(file);
+        advance_modified(&fixture);
         assert!(range.finish().is_err());
         assert!(
             CheckedNative::open_range(&fixture.root, &fixture.path, &fixture.stamp, 6, 13).is_err()
@@ -94,9 +154,9 @@ fn changes_outside_range_still_invalidate_finish_and_stale_reopen() {
 fn pushed_index_matches_read_scan_at_every_boundary_and_probe() {
     let bytes = "\n\r\n中文😀\nlast\npartial".as_bytes();
     for probe in (0..=bytes.len() as u64 + 1).map(Some).chain([None]) {
-        let scanned = RawIndex::scan_with_probe(bytes, IndexLimits::default(), probe).unwrap();
+        let scanned = RawIndex::scan_with_probe(bytes, probe).unwrap();
         for chunk in [1, 2, 3, 7, CHUNK] {
-            let mut builder = RawIndexBuilder::new(IndexLimits::default(), probe).unwrap();
+            let mut builder = RawIndexBuilder::new(probe).unwrap();
             builder.push(&[]).unwrap();
             for piece in bytes.chunks(chunk) {
                 builder.push(piece).unwrap();
@@ -107,100 +167,6 @@ fn pushed_index_matches_read_scan_at_every_boundary_and_probe() {
             assert_eq!(index.probe_digest(), scanned.probe_digest());
         }
     }
-}
-
-#[test]
-fn builder_errors_are_sticky_and_drop_releases_all_retained_capacity() {
-    let pool = Arc::new(IndexBudget::new(64 * 1024));
-    let mut builder = RawIndexBuilder::with_budget(
-        IndexLimits {
-            max_bytes: 4,
-            max_checkpoints: 2,
-        },
-        Some(0),
-        pool.clone(),
-    )
-    .unwrap();
-    builder.push(b"a\n").unwrap();
-    assert!(pool.used.load(Ordering::Acquire) > 0);
-    assert_eq!(builder.push(b"b\nx").unwrap_err().status, 413);
-    assert!(builder.push(&[]).is_err());
-    assert!(builder.finish().is_err());
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-    let mut builder = RawIndexBuilder::with_budget(
-        IndexLimits {
-            max_bytes: 100,
-            max_checkpoints: 1,
-        },
-        None,
-        pool.clone(),
-    )
-    .unwrap();
-    assert_eq!(builder.push(b"\n\n").unwrap_err().status, 413);
-    assert!(builder.finish().is_err());
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-    let mut builder =
-        RawIndexBuilder::with_budget(IndexLimits::default(), None, pool.clone()).unwrap();
-    builder.push(b"abc\n").unwrap();
-    let index = Arc::new(builder.finish().unwrap());
-    assert_eq!(pool.used.load(Ordering::Acquire), index.retained_bytes());
-    drop(index);
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-}
-
-struct Fixture {
-    _temp: tempfile::TempDir,
-    root: PathBuf,
-    path: PathBuf,
-    stamp: FileStamp,
-}
-impl Fixture {
-    fn new(bytes: &[u8]) -> Self {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().canonicalize().unwrap();
-        std::fs::create_dir(root.join("native")).unwrap();
-        let path = root.join("native/synthetic.jsonl");
-        std::fs::write(&path, bytes).unwrap();
-        let stamp = stamp(&path).unwrap();
-        Self {
-            _temp: temp,
-            root,
-            path,
-            stamp,
-        }
-    }
-    fn open(&self) -> CheckedNative {
-        CheckedNative::open(&self.root, &self.path, &self.stamp, self.stamp.size).unwrap()
-    }
-}
-fn scan(bytes: &[u8]) -> RawIndex {
-    RawIndex::scan(bytes, IndexLimits::default()).unwrap()
-}
-fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha1::digest(bytes))
-}
-fn assert_index(index: &RawIndex, bytes: &[u8]) {
-    assert_eq!(index.length(), bytes.len() as u64);
-    assert_eq!(
-        index.committed(),
-        bytes
-            .iter()
-            .rposition(|b| *b == b'\n')
-            .map_or(0, |i| i as u64 + 1)
-    );
-    assert_eq!(index.head_bytes(), &bytes[..bytes.len().min(HEAD)]);
-    assert_eq!(index.digest(), hash(bytes));
-    assert!(index.is_checkpoint(0));
-    assert_eq!(index.prefix_hash(0), Some(hash(b"")));
-    for end in 1..=bytes.len() {
-        assert_eq!(index.is_checkpoint(end as u64), bytes[end - 1] == b'\n');
-        if bytes[end - 1] == b'\n' {
-            assert_eq!(index.prefix_hash(end as u64), Some(hash(&bytes[..end])));
-        } else {
-            assert!(index.prefix_hash(end as u64).is_none());
-        }
-    }
-    assert!(!index.is_checkpoint(bytes.len() as u64 + 1));
 }
 
 #[test]
@@ -231,12 +197,7 @@ fn checked_reader_caps_each_read_and_finishes_only_complete_verified_input() {
 }
 
 #[test]
-fn checked_open_enforces_exact_budget_and_empty_input() {
-    let fixture = Fixture::new(b"abc\n");
-    let error = CheckedNative::open(&fixture.root, &fixture.path, &fixture.stamp, 3)
-        .err()
-        .unwrap();
-    assert_eq!(error.status, 413);
+fn checked_open_accepts_empty_input() {
     let empty = Fixture::new(b"");
     let mut reader = empty.open();
     assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
@@ -274,15 +235,7 @@ fn checked_prefix_reads_only_its_range_and_finish_requires_that_range() {
         .err()
         .unwrap()
         .status,
-        413
-    );
-    // Prefix support must not turn open(limit) into silent truncation.
-    assert_eq!(
-        CheckedNative::open(&fixture.root, &fixture.path, &fixture.stamp, 5)
-            .err()
-            .unwrap()
-            .status,
-        413
+        409
     );
     assert_eq!(std::fs::read(&fixture.path).unwrap(), content);
 }
@@ -308,6 +261,7 @@ fn prefix_verification_still_covers_current_identity_of_the_unread_suffix() {
                 .write_all(b"later\n")
                 .unwrap();
         }
+        advance_modified(&fixture);
         assert!(reader.verify().is_err());
         assert!(reader.finish().is_err());
         assert_eq!(
@@ -349,7 +303,7 @@ fn stale_stamp_rejects_changed_or_replaced_file_before_open() {
                 .write_all(b"appended\n")
                 .unwrap();
         }
-        let error = CheckedNative::open(&fixture.root, &fixture.path, &fixture.stamp, 1024)
+        let error = CheckedNative::open(&fixture.root, &fixture.path, &fixture.stamp)
             .err()
             .unwrap();
         assert_eq!(error.status, 503);
@@ -373,6 +327,7 @@ fn modification_during_read_cannot_pass_finish_or_eof_verification() {
             "rewrite" => std::fs::write(&fixture.path, b"NEW initial complete content\n").unwrap(),
             _ => std::fs::write(&fixture.path, b"x").unwrap(),
         }
+        advance_modified(&fixture);
         assert!(reader.verify().is_err(), "{change}");
         let mut buffer = [0; CHUNK];
         loop {
@@ -418,7 +373,7 @@ fn leaf_or_parent_replacement_is_rejected_even_with_retained_open_handle() {
 
 #[cfg(unix)]
 #[test]
-fn links_special_files_and_out_of_root_paths_never_open() {
+fn links_follow_python_open_semantics_but_special_and_unindexed_paths_fail() {
     use std::os::unix::{fs::symlink, net::UnixListener};
     let fixture = Fixture::new(b"private native bytes\n");
     for path in [
@@ -434,33 +389,26 @@ fn links_special_files_and_out_of_root_paths_never_open() {
             )
             .unwrap();
         }
-        let error = CheckedNative::open(&fixture.root, &path, &fixture.stamp, 1024)
-            .err()
-            .unwrap();
-        assert_eq!(error.status, 403);
+        let mut reader = CheckedNative::open(&fixture.root, &path, &fixture.stamp).unwrap();
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        reader.finish().unwrap();
+        assert_eq!(bytes, b"private native bytes\n");
     }
     let hard = fixture.root.join("hard");
     std::fs::hard_link(&fixture.path, &hard).unwrap();
     let updated = stamp(&fixture.path).unwrap();
-    let error = CheckedNative::open(&fixture.root, &fixture.path, &updated, 1024)
-        .err()
-        .unwrap();
-    assert_eq!(
-        error.status, 403,
-        "nlink=1 is an explicit new safety boundary"
-    );
+    let mut reader = CheckedNative::open(&fixture.root, &fixture.path, &updated).unwrap();
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).unwrap();
+    reader.finish().unwrap();
+    assert_eq!(bytes, b"private native bytes\n");
     let socket = fixture.root.join("socket");
     let _listener = UnixListener::bind(&socket).unwrap();
-    assert_eq!(
-        CheckedNative::open(&fixture.root, &socket, &fixture.stamp, 1024)
-            .err()
-            .unwrap()
-            .status,
-        403
-    );
+    assert!(CheckedNative::open(&fixture.root, &socket, &fixture.stamp).is_err());
     let other = Fixture::new(b"outside\n");
     assert_eq!(
-        CheckedNative::open(&fixture.root, &other.path, &other.stamp, 1024)
+        CheckedNative::open(&fixture.root, &other.path, &other.stamp)
             .err()
             .unwrap()
             .status,
@@ -506,13 +454,10 @@ fn arbitrary_chunk_boundaries_produce_identical_full_prefix_hashes() {
         bytes[end - 1] = b'\n';
     }
     for limit in [1, 3, 4095, CHUNK - 1, CHUNK] {
-        let index = RawIndex::scan(
-            SmallReads {
-                bytes: &bytes,
-                limit,
-            },
-            IndexLimits::default(),
-        )
+        let index = RawIndex::scan(SmallReads {
+            bytes: &bytes,
+            limit,
+        })
         .unwrap();
         assert_index(&index, &bytes);
     }
@@ -540,8 +485,7 @@ fn sha256_probe_accepts_only_zero_and_complete_lf_boundaries() {
     ] {
         let committed = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         for end in (0..=bytes.len() as u64 + 1).chain([u64::MAX]) {
-            let index =
-                RawIndex::scan_with_probe(bytes, IndexLimits::default(), Some(end)).unwrap();
+            let index = RawIndex::scan_with_probe(bytes, Some(end)).unwrap();
             assert_index(&index, bytes);
             let expected: [u8; 32] = Sha256::digest(&bytes[..committed]).into();
             assert_eq!(index.committed_digest(), expected);
@@ -576,8 +520,7 @@ fn sha256_probe_and_committed_hash_cross_chunks_without_including_partial_tail()
                 bytes: &bytes,
                 limit,
             };
-            let index = RawIndex::scan_with_probe(reader, IndexLimits::default(), Some(end as u64))
-                .unwrap();
+            let index = RawIndex::scan_with_probe(reader, Some(end as u64)).unwrap();
             assert_eq!(
                 index.probe_digest(),
                 Some(Sha256::digest(&bytes[..end]).into())
@@ -598,29 +541,17 @@ fn strong_old_prefix_probe_distinguishes_append_rewrite_and_truncate() {
     let previous = scan(&old);
     let mut appended = old.clone();
     appended.extend_from_slice(b" completed\nnew line\n");
-    let current = RawIndex::scan_with_probe(
-        appended.as_slice(),
-        IndexLimits::default(),
-        Some(previous.committed()),
-    )
-    .unwrap();
+    let current =
+        RawIndex::scan_with_probe(appended.as_slice(), Some(previous.committed())).unwrap();
     assert_eq!(current.probe_digest(), Some(previous.committed_digest()));
     assert_ne!(current.committed_digest(), previous.committed_digest());
     appended[6000] = b'b';
-    let rewritten = RawIndex::scan_with_probe(
-        appended.as_slice(),
-        IndexLimits::default(),
-        Some(previous.committed()),
-    )
-    .unwrap();
+    let rewritten =
+        RawIndex::scan_with_probe(appended.as_slice(), Some(previous.committed())).unwrap();
     assert_eq!(rewritten.head_bytes(), previous.head_bytes());
     assert_ne!(rewritten.probe_digest(), Some(previous.committed_digest()));
-    let truncated = RawIndex::scan_with_probe(
-        &appended[..4000],
-        IndexLimits::default(),
-        Some(previous.committed()),
-    )
-    .unwrap();
+    let truncated =
+        RawIndex::scan_with_probe(&appended[..4000], Some(previous.committed())).unwrap();
     assert_eq!(truncated.probe_digest(), None);
 }
 
@@ -628,252 +559,17 @@ fn strong_old_prefix_probe_distinguishes_append_rewrite_and_truncate() {
 fn checked_prefix_and_one_pass_probe_hash_the_same_real_file_boundary() {
     let fixture = Fixture::new(b"one\n\nthree\npartial");
     let mut full = fixture.open();
-    let indexed = RawIndex::scan_with_probe(&mut full, IndexLimits::default(), Some(5)).unwrap();
+    let indexed = RawIndex::scan_with_probe(&mut full, Some(5)).unwrap();
     full.finish().unwrap();
     let mut prefix =
         CheckedNative::open_prefix(&fixture.root, &fixture.path, &fixture.stamp, 5).unwrap();
-    let prefix_index = RawIndex::scan(&mut prefix, IndexLimits::default()).unwrap();
+    let prefix_index = RawIndex::scan(&mut prefix).unwrap();
     prefix.finish().unwrap();
     assert_eq!(
         indexed.probe_digest(),
         Some(prefix_index.committed_digest())
     );
     assert_eq!(indexed.prefix_hash(5), prefix_index.prefix_hash(5));
-}
-
-#[test]
-fn physical_bytes_and_every_lf_have_exact_explicit_budgets() {
-    let limits = IndexLimits {
-        max_bytes: 4,
-        max_checkpoints: 2,
-    };
-    assert_index(
-        &RawIndex::scan(b"\n\na!".as_slice(), limits).unwrap(),
-        b"\n\na!",
-    );
-    assert_eq!(
-        RawIndex::scan(b"\n\na!!".as_slice(), limits)
-            .err()
-            .unwrap()
-            .status,
-        413
-    );
-    assert_eq!(
-        RawIndex::scan(b"\n\n\n".as_slice(), limits)
-            .err()
-            .unwrap()
-            .status,
-        413
-    );
-    assert!(
-        RawIndex::scan(
-            b"".as_slice(),
-            IndexLimits {
-                max_bytes: 0,
-                max_checkpoints: 0
-            }
-        )
-        .is_ok()
-    );
-    assert_eq!(
-        RawIndex::scan(
-            b"x".as_slice(),
-            IndexLimits {
-                max_bytes: 0,
-                max_checkpoints: 0
-            }
-        )
-        .err()
-        .unwrap()
-        .status,
-        413
-    );
-    assert_eq!(
-        RawIndex::scan(
-            b"".as_slice(),
-            IndexLimits {
-                max_bytes: MAX_BYTES + 1,
-                ..Default::default()
-            }
-        )
-        .err()
-        .unwrap()
-        .status,
-        413
-    );
-    assert_eq!(
-        RawIndex::scan(
-            b"".as_slice(),
-            IndexLimits {
-                max_checkpoints: MAX_CHECKPOINTS + 1,
-                ..Default::default()
-            }
-        )
-        .err()
-        .unwrap()
-        .status,
-        413
-    );
-    let index = scan(&vec![b'\n'; MAX_CHECKPOINTS]);
-    assert_eq!(index.checkpoints.len(), MAX_CHECKPOINTS);
-    assert!(index.checkpoints.capacity() <= MAX_CHECKPOINTS);
-    assert_eq!(
-        RawIndex::scan(
-            vec![b'\n'; MAX_CHECKPOINTS + 1].as_slice(),
-            IndexLimits::default()
-        )
-        .err()
-        .unwrap()
-        .status,
-        413
-    );
-}
-
-#[test]
-fn retained_weight_counts_spare_capacity_instead_of_only_visible_checkpoints() {
-    let empty = scan(b"");
-    assert_eq!(
-        empty.retained_bytes(),
-        std::mem::size_of::<RawIndex>() + empty.digest.capacity()
-    );
-    let index = scan(b"x\n");
-    assert!(index.checkpoints.capacity() > index.checkpoints.len());
-    let expected = std::mem::size_of::<RawIndex>()
-        + index.head.capacity()
-        + index.digest.capacity()
-        + index.checkpoints.capacity() * std::mem::size_of::<Checkpoint>();
-    assert_eq!(index.retained_bytes(), expected);
-    let maximum = scan(&vec![b'\n'; MAX_CHECKPOINTS]);
-    assert_eq!(
-        maximum.retained_bytes(),
-        std::mem::size_of::<RawIndex>()
-            + maximum.head.capacity()
-            + maximum.digest.capacity()
-            + maximum.checkpoints.capacity() * std::mem::size_of::<Checkpoint>()
-    );
-    assert!(
-        maximum.retained_bytes() < MAX_CHECKPOINTS * std::mem::size_of::<Checkpoint>() + 64 * 1024
-    );
-}
-
-#[test]
-fn global_index_budget_is_shared_but_retained_arcs_and_failures_have_private_test_accounting() {
-    let first = scan(b"first\n");
-    let second = scan(b"second\n");
-    assert!(Arc::ptr_eq(&first._charge.budget, &second._charge.budget));
-    assert_eq!(first._charge.budget.maximum, INDEX_BYTES);
-
-    let empty_weight = std::mem::size_of::<RawIndex>() + 40;
-    let pool = Arc::new(IndexBudget::new(empty_weight));
-    let original = Arc::new(
-        RawIndex::scan_with_budget(b"".as_slice(), IndexLimits::default(), pool.clone()).unwrap(),
-    );
-    assert_eq!(pool.used.load(Ordering::Acquire), original.retained_bytes());
-    let held_snapshot = original.clone();
-    drop(original);
-    assert_eq!(
-        RawIndex::scan_with_budget(b"".as_slice(), IndexLimits::default(), pool.clone())
-            .err()
-            .unwrap()
-            .status,
-        413
-    );
-    assert_eq!(pool.used.load(Ordering::Acquire), empty_weight);
-    drop(held_snapshot);
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-    drop(RawIndex::scan_with_budget(b"".as_slice(), IndexLimits::default(), pool.clone()).unwrap());
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-}
-
-#[test]
-fn vector_growth_reserves_transient_old_and_new_capacity_then_failure_releases_everything() {
-    // The final 32-entry capacity would fit, but growing 16 -> 32 entries must
-    // reserve both backing allocations while the old entries are moved.
-    let maximum =
-        std::mem::size_of::<RawIndex>() + 17 + 32 * std::mem::size_of::<Checkpoint>() + 40;
-    let pool = Arc::new(IndexBudget::new(maximum));
-    assert_eq!(
-        RawIndex::scan_with_budget([b'\n'; 17].as_slice(), IndexLimits::default(), pool.clone())
-            .err()
-            .unwrap()
-            .status,
-        413
-    );
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-    let success =
-        RawIndex::scan_with_budget(b"\n".as_slice(), IndexLimits::default(), pool.clone()).unwrap();
-    assert_eq!(pool.used.load(Ordering::Acquire), success.retained_bytes());
-    drop(success);
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-}
-
-#[test]
-fn in_progress_scan_is_charged_and_read_error_cannot_leak_the_reservation() {
-    struct FailingRead {
-        pool: Arc<IndexBudget>,
-        initial: bool,
-    }
-    impl Read for FailingRead {
-        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
-            if self.initial {
-                self.initial = false;
-                assert_eq!(
-                    self.pool.used.load(Ordering::Acquire),
-                    std::mem::size_of::<RawIndex>()
-                );
-                output[0] = b'\n';
-                return Ok(1);
-            }
-            assert!(self.pool.used.load(Ordering::Acquire) > std::mem::size_of::<RawIndex>());
-            Err(io::Error::other("PRIVATE_IO_DETAILS"))
-        }
-    }
-    let pool = Arc::new(IndexBudget::new(4096));
-    let result = RawIndex::scan_with_budget(
-        FailingRead {
-            pool: pool.clone(),
-            initial: true,
-        },
-        IndexLimits::default(),
-        pool.clone(),
-    );
-    assert_eq!(result.err().unwrap().status, 503);
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
-}
-
-#[test]
-fn concurrent_index_admission_never_exceeds_atomic_budget() {
-    let empty_weight = std::mem::size_of::<RawIndex>() + 40;
-    let pool = Arc::new(IndexBudget::new(2 * empty_weight));
-    let ready = Arc::new(std::sync::Barrier::new(5));
-    let release = Arc::new(std::sync::Barrier::new(5));
-    let accepted = Arc::new(AtomicUsize::new(0));
-    std::thread::scope(|scope| {
-        for _ in 0..4 {
-            let pool = pool.clone();
-            let ready = ready.clone();
-            let release = release.clone();
-            let accepted = accepted.clone();
-            scope.spawn(move || {
-                let result =
-                    RawIndex::scan_with_budget(b"".as_slice(), IndexLimits::default(), pool);
-                match &result {
-                    Ok(_) => {
-                        accepted.fetch_add(1, Ordering::AcqRel);
-                    }
-                    Err(error) => assert_eq!(error.status, 413),
-                }
-                ready.wait();
-                release.wait();
-                drop(result);
-            });
-        }
-        ready.wait();
-        assert_eq!(accepted.load(Ordering::Acquire), 2);
-        assert_eq!(pool.used.load(Ordering::Acquire), 2 * empty_weight);
-        release.wait();
-    });
-    assert_eq!(pool.used.load(Ordering::Acquire), 0);
 }
 
 #[test]
@@ -899,15 +595,14 @@ fn large_generated_stream_never_requests_or_retains_a_full_raw_body() {
         remaining: 48 * 1024 * 1024,
         calls: 0,
     };
-    let index = RawIndex::scan(&mut generated, IndexLimits::default()).unwrap();
+    let index = RawIndex::scan(&mut generated).unwrap();
     assert_eq!(index.length(), 48 * 1024 * 1024);
     assert_eq!(index.committed(), 0);
     assert_eq!(index.head.len(), HEAD);
     assert!(index.checkpoints.is_empty());
     assert!(generated.calls > 700);
 
-    // The same nonresident scan also runs against a real checked sparse file;
-    // this reader's explicit test limit does not change production's 16 MiB.
+    // The same nonresident scan also runs against a real checked sparse file.
     let mut fixture = Fixture::new(b"");
     std::fs::OpenOptions::new()
         .write(true)
@@ -917,7 +612,7 @@ fn large_generated_stream_never_requests_or_retains_a_full_raw_body() {
         .unwrap();
     fixture.stamp = stamp(&fixture.path).unwrap();
     let mut reader = fixture.open();
-    let index = RawIndex::scan(&mut reader, IndexLimits::default()).unwrap();
+    let index = RawIndex::scan(&mut reader).unwrap();
     reader.finish().unwrap();
     assert_eq!(index.length(), 48 * 1024 * 1024);
     assert_eq!(index.committed(), 0);
@@ -929,7 +624,7 @@ fn large_generated_stream_never_requests_or_retains_a_full_raw_body() {
 fn checked_file_scan_and_generic_read_errors_do_not_publish_partial_indices() {
     let fixture = Fixture::new(b"first\n\nlast-partial");
     let mut reader = fixture.open();
-    let index = RawIndex::scan(&mut reader, IndexLimits::default()).unwrap();
+    let index = RawIndex::scan(&mut reader).unwrap();
     reader.finish().unwrap();
     assert_index(&index, b"first\n\nlast-partial");
     struct Broken {
@@ -945,12 +640,9 @@ fn checked_file_scan_and_generic_read_errors_do_not_publish_partial_indices() {
             }
         }
     }
-    let error = RawIndex::scan(
-        Broken {
-            prefix: Cursor::new(b"valid\n"),
-        },
-        IndexLimits::default(),
-    )
+    let error = RawIndex::scan(Broken {
+        prefix: Cursor::new(b"valid\n"),
+    })
     .err()
     .unwrap();
     assert_eq!(error.status, 503);

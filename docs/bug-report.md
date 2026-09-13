@@ -14,8 +14,8 @@ dependency is configured.
 
 | Setting | Meaning |
 | --- | --- |
-| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/agenthub/bug-reports`). Existing absolute directory, `0700`, no symlinked ancestors, disjoint in both directions from every other configured path. |
-| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `agenthub_attachments/`. Existing directory equal to or inside an `SESSIONDOCK_FILE_WRITE_ROOTS` entry (so report attachments go through the file write service) and therefore outside every private/native path. |
+| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/agenthub/bug-reports`). Created as needed and chmodded to `0700` on Unix. |
+| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `agenthub_attachments/`. Ordinary filesystem paths are accepted. |
 | launcher `bug_report_profiles` | `{"claude": id, "codex": id, "grok": id}` naming ordinary `profiles` entries of that source (any subset; an unknown id or a wrong source fails the launcher configuration). |
 
 The two variables are all-or-nothing (`--check-config` prints
@@ -84,9 +84,10 @@ become `<redacted>` at every level; paths are kept.
 
 ### Attachments
 
-`resolve_attachments` follows Python: at most 12 items, each `path` an
-existing regular file below `<repo>/agenthub_attachments/` (no symlinks, no
-component outside), `number` from the item or the position, `mime` ≤ 100 chars,
+`resolve_attachments` follows Python: at most 12 items, each `path` resolving
+to an existing regular file below `<repo>/agenthub_attachments/` (a symlink is
+accepted when its resolved target remains below that root), `number` from the
+item or the position, `mime` ≤ 100 chars,
 `kind` ∈ image/video/audio else `file`, `name` ≤ 200 chars, `relative_path`
 relative to the repository. The prompt lists them as `附件N: ./<relative_path>`.
 
@@ -97,8 +98,9 @@ file write service into `<repo>/agenthub_attachments/<id>/<name>` (`id` is
 Python `_attachment_name`; identical content is reused, a clash becomes
 `stem__N.suffix`; nothing is ever overwritten). Response: Python's `{ok, name,
 original_name, path, relative_path, attachment_id, mime, kind, size, reused,
-media: null}`. Bound: 32 MiB per file (`413`), Python allows 512 MB. Every
-other `uid` keeps the JSON upload-completion contract of `docs/files.md`.
+media: null}`. Bound: 512 MiB per file (`413`), matching Python. Every
+other session `uid` uses the conversation attachment upload contract of
+[files.md](files.md).
 
 ## The worker (`bug_report/worker.rs`)
 
@@ -124,7 +126,7 @@ other `uid` keeps the JSON upload-completion contract of `docs/files.md`.
    keys; Python's `tmux send-keys` needed no page console either). No browser
    lease is claimed, so a page that opened the console from the toast keeps
    it and watches the prompt arrive; `manifest.injection.origin` records
-   `agenthub-bug-report`. The frame is rechecked, `paste_started_at` is
+   `sessiondock-bug-report`. The frame is rechecked, `paste_started_at` is
    persisted, the prompt is pasted (bracketed), the paste is verified on
    screen — the composer shows the exact text, the TUI's collapsed-paste
    placeholder (`[Pasted text #1 +N lines]`, `[Pasted Content …]`), or, when
@@ -140,7 +142,7 @@ other `uid` keeps the JSON upload-completion contract of `docs/files.md`.
    result is the manifest's `composer_cleared`, diagnostic only.
 5. Confirmation comes from a native `user` record, never from the screen:
    Claude — the declared session id resolved through the published list rows;
-   Codex/Grok — the newest (≤ 4) sessions of that source whose cwd is the
+   Codex/Grok — sessions of that source whose cwd is the
    repository and that were created since the launch. A `user` text containing
    the report id (or, for a declared session, a collapsed-paste placeholder as
    its first input) is `submitted` with `confirmed_from: {uid, method:
@@ -149,8 +151,7 @@ other `uid` keeps the JSON upload-completion contract of `docs/files.md`.
    any failed step is `failed` with `error`. Audit: `bug_report.worker_submitted`,
    `bug_report.worker_unconfirmed` (warning), `bug_report.worker_failed` (error).
 
-At most two injections run at once; the lifecycle service still bounds the
-instances themselves.
+Each launched worker starts its own injection task, as in Python.
 
 ### Prompt
 
@@ -181,8 +182,8 @@ window's dates line by line (≤ 100 000 rows).
 - `submitted` means a native `user` record carries the prompt (Python: the
   composer cleared); a Codex/Grok worker whose rollout cannot be found is
   `submitted_unconfirmed`.
-- Report attachments: ≤ 32 MiB per upload (Python 512 MB); no media preview
-  token in the upload response (`media: null`).
+- Report attachments: ≤ 512 MiB per upload; no media preview token in the
+  upload response (`media: null`).
 - `cols`/`rows` are recorded in the manifest only; the PTY size follows the
   console that attaches.
 

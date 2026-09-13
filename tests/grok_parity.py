@@ -165,9 +165,10 @@ def parity(corpus, cases, base, opener, python_source):
         listed = get_json(opener, base, "/api/sessions?force=1")
         row = next(r for r in listed["sessions"] if r["uid"] == uid(path))
         assert row.get("supported") is False and row.get("migration_warnings"), row
-    with summary.open("wb") as output:
-        output.truncate(16 * 1024 * 1024 + 1)  # budgets::GROK_SUMMARY_BYTES + 1
-    expect_error(opener, base, "/api/messages/" + uid(path), 413)
+    large = dict(json.loads(original))
+    large["padding"] = "x" * (16 * 1024 * 1024 + 1)
+    summary.write_text(json.dumps(large), encoding="utf-8")
+    assert api(opener, base, uid(path))["meta"]["title"] == "Summary only visible"
     summary.write_bytes(original)
     assert api(opener, base, uid(path))["meta"]["chat_exists"] is False
 
@@ -250,7 +251,7 @@ def main():
             if args.browser:
                 browser_check(corpus, cases, base)
         assert all(path.read_bytes() == old for path, old in unchanged.items()), "reads modified synthetic native history"
-    print("PASS Grok synthetic metadata: summary-only/empty, UID, timestamps/title/cwd/model, bounded size, incremental cursor, corruption/recovery, in-flight user_query envelopes"
+    print("PASS Grok synthetic metadata: summary-only/empty, UID, timestamps/title/cwd/model, large valid summary, incremental cursor, corruption/recovery, in-flight user_query envelopes"
           + (", Python adapter parity" if args.python_source else "")
           + (", desktop/mobile Chromium and existence/title/body SSE" if args.browser else ""))
 

@@ -4,7 +4,7 @@
 
 第一阶段默认链路：`legacy-web/` → Axum API → 有界 blocking 工作池 →
 `sessions` 原生记录解析 / 版本缓存；详情增量通过 SSE 返回。
-静态资源在启动时读取为有大小限制的快照，HTML 注入模式、build 与能力；
+静态资源在启动时读取为内存快照，HTML 注入模式、build 与能力；
 请求不访问静态目录中的动态路径。无需 Node.js 服务或前端构建。
 
 `ptyhost-client` 是独立的异步本地协议库；仅配置隔离host目录时，HTTP才接入
@@ -22,7 +22,7 @@ Vue `web/` 仅保留第二阶段骨架。
 第八批新增独立 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库。
 前者在没有SID/UID时验证真实启动实例，后者在持久化Prepared/Starting后才返回
 一次性授权，并将崩溃后的Starting恢复为Uncertain。第九批已接显式版本化
-launcher、8请求有界coordinator和pending HTTP/WS；独立child reaper保留
+launcher、排队 coordinator 和 pending HTTP/WS；独立 child reaper 保留
 进程句柄，Web退出不杀host。取消先保存意图、退休输入租约，再一次guarded kill，
 未确认退出仍是Uncertain；4002退休通知不冒充进程退出。
 native BoundTarget不接受launch身份替代，详见
@@ -35,10 +35,10 @@ native BoundTarget不接受launch身份替代，详见
 pending租约不升级，衍生native租约仍受launch退休及持久取消约束。
 
 读工作池 `SESSIONDOCK_READ_WORKERS`（默认 `clamp(核数/2, 8, 32)`）个 blocking
-worker，准入排队至多 `SESSIONDOCK_ADMISSION_WAIT_MS`（默认 10 s）再 503；探测、
+worker；请求排队直到取得许可或自身取消。探测、
 历史页/媒体/文件写/生命周期响应池按比例派生（表见
 [performance.md](performance.md#并发预算第四十四批-wp-a)）；搜索不占读池。
-32 条 SSE 上限；同一文件版本复用解析结果。`/api/meta` 声明 `stage:"replacement"`、
+同一文件版本复用解析结果。`/api/meta` 声明 `stage:"replacement"`、
 `read_only:false`——这是 Python 服务的替代品，前端没有常驻横幅。
 `observe::WatchHub` 为每个 `(uid,agent)` 共享一次500ms版本读取，最多2个后台
 工作准入；Tokio watch只保留最新不可变快照，每个浏览器按自己的checkpoint
@@ -70,11 +70,11 @@ checkpoint仍核对投影。
 
 - 搜索对完整语义正文匹配（按 `updated` 倒序），不对原始 JSONL 匹配；正文来自
   按文件版本持久化的搜索文本缓存（[read-model.md](read-model.md#搜索)：
-  显式 `SESSIONDOCK_SEARCH_CACHE_DIR`，0700，LRU 上限），只有版本变了的会话才重新投影，
+  显式 `SESSIONDOCK_SEARCH_CACHE_DIR`，LRU 上限），只有版本变了的会话才重新投影，
   投影不留驻；不可读视图产生显式部分失败（并按版本缓存），不能把跳过的会话算作
   完整搜索成功。
-- 2个搜索准入（第三路最多等 10 s 后 503 `search_busy`）、搜索自己的解析预算
-  （`SESSIONDOCK_SEARCH_WORKERS`，不占普通读池）、8个NDJSON队列槽、8MiB结果上限；
+- 搜索请求等待自己的准入许可和解析 worker
+  （`SESSIONDOCK_SEARCH_WORKERS`，不占普通读池）；
   取消响应会取消工作并释放阻塞发送，blocking permit保持到实际工作结束。JSON大对象
   序列化也在worker。
 - Rust regex只接受有界非回溯方言，lookaround/backreference明确400；全词边界
@@ -84,14 +84,13 @@ checkpoint仍核对投影。
 
 ## 后续实现原则
 
-第五批文件读取使用显式根与语义引用的交集，不复用native输入目录作为文件授权。
-路径解析保留目录能力句柄，读响应保留已检查文件；2个文件准入，按HTTP消费者
+文件读取由当前会话引用或已签发路径引用确定目标；兼容配置中的 file roots
+不充当授权边界。路径解析保留目录能力句柄，读响应保留已检查文件；按 HTTP 消费者
 需求每次只在blocking任务读取64KiB。未轮询Body不开始读，取消后尚未结束的
 读取继续持有permit，避免慢下载挤占普通历史worker。文件作业与缩略图另行实现。
 
-第四批新增可选 `MetadataStore`：单writer OS锁、私有目录、版本化不可变快照，
-仅在原子持久化完成后发布。列表、详情、搜索和SSE从同一元数据版本装饰读模型；
-偏好变化不修改消息anchor。健康检查和读取会暴露不确定提交，不能自动重试写入。
+第四批新增可选 `MetadataStore`：每次操作重读当前文件，并以原子替换持久化。
+列表、详情、搜索和 SSE 从同一元数据版本装饰读模型；偏好变化不修改消息 anchor。
 legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有消息正文；子代理名称
 更新已经过无列表刷新、无reload的实际SSE/DOM回归。
 

@@ -93,9 +93,11 @@ def run(opener, base, uid, other, cwd):
     passed("unknown uid")
     n += 1
 
-    err, raw = call(opener, base, "POST", "/api/session/stop", {"uid": uid}, want=501)
-    if err.get("code") != "session_stop_unmanaged":
-        fail("unmanaged", err.get("code"), raw)
+    stopped, raw = call(opener, base, "POST", "/api/session/stop", {"uid": uid})
+    if (stopped.get("ok") is not True or stopped.get("stopped") is not False
+            or stopped.get("tmux") is not False
+            or stopped.get("external_detection") != "proc_scan"):
+        fail("unmanaged", stopped, raw)
     listed, raw = call(opener, base, "GET", "/api/term/list")
     if has_uid(listed, uid):
         fail("unmanaged", "term/list still has the uid", raw)
@@ -103,10 +105,10 @@ def run(opener, base, uid, other, cwd):
     n += 1
 
     for payload in ({}, {"uid": "x", "bogus": 1}):
-        err, raw = call(opener, base, "POST", "/api/session/stop", payload, want=400)
-        if payload == {} and err.get("code") != "invalid_stop_request":
-            fail("bad body", err.get("code"), raw)
-    passed("bad body")
+        err, raw = call(opener, base, "POST", "/api/session/stop", payload, want=404)
+        if err.get("code") != "session_missing":
+            fail("missing session", err.get("code"), raw)
+    passed("missing uid and unknown fields follow Python lookup")
     n += 1
 
     rec, raw = call(opener, base, "POST", "/api/term/create",
@@ -118,8 +120,8 @@ def run(opener, base, uid, other, cwd):
     elapsed = time.monotonic() - started
     if (stopped.get("ok") is not True or stopped.get("stage") != "graceful"
             or stopped.get("stopped") is not True or stopped.get("graceful_attempts") != 1
-            or stopped.get("replayed") is not False or stopped.get("tmux") is not False
-            or stopped.get("external_detection") != "not_implemented"
+            or stopped.get("tmux") is not False
+            or stopped.get("external_detection") != "proc_scan"
             or stopped.get("uid") != uid or not stopped.get("name") or not stopped.get("instance_id")
             or elapsed >= 2.4):
         fail("graceful", f"elapsed={elapsed:.3f}s body={stopped}", raw)
@@ -127,19 +129,22 @@ def run(opener, base, uid, other, cwd):
     n += 1
 
     replay, raw = call(opener, base, "POST", "/api/session/stop", stop_body)
-    if replay.get("replayed") is not True or replay.get("stage") != "graceful":
-        fail("replay", replay, raw)
-    conflict, raw = call(opener, base, "POST", "/api/session/stop",
-                         {"uid": other, "request_id": "stop-req-1"}, want=409)
-    if conflict.get("code") != "stop_request_conflict":
-        fail("replay", conflict.get("code"), raw)
-    passed("replay")
+    if (replay.get("ok") is not True or replay.get("stopped") is not False
+            or replay.get("tmux") is not False
+            or replay.get("external_detection") != "proc_scan"):
+        fail("repeat stop", replay, raw)
+    other_stop, raw = call(opener, base, "POST", "/api/session/stop",
+                           {"uid": other, "request_id": "stop-req-1"})
+    if other_stop.get("ok") is not True or other_stop.get("stopped") is not False:
+        fail("ignored request_id", other_stop, raw)
+    passed("request_id ignored")
     n += 1
 
     again, raw = call(opener, base, "POST", "/api/session/stop", {"uid": uid})
-    if again.get("stage") != "already_exited" or again.get("graceful_attempts") != 0:
-        fail("already exited", again, raw)
-    passed("already exited")
+    if (again.get("ok") is not True or again.get("stopped") is not False
+            or again.get("tmux") is not False):
+        fail("already stopped", again, raw)
+    passed("already stopped")
     n += 1
 
     deadline, last, raw = time.monotonic() + 10, {}, b""
@@ -183,11 +188,10 @@ def main():
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [cwd], "adapters": [],
+            "adapters": [],
             "profiles": [{"id": "codex-cli-v1", "source": "codex", "executable": str(fake.resolve()),
                           "args": [], "new_args": [], "resume_args": ["resume", "{sid}"],
-                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/codex-home"},
-                          "cwd_roots": [cwd]}]}))
+                          "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/codex-home"}}]}))
         cfg.chmod(0o600)
         init = subprocess.run([str(args.binary), "--initialize-lifecycle", str(root / "ledger")],
                               cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)

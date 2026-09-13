@@ -1,5 +1,5 @@
 //! Opaque media transport. File tokens require current native-scope authorization.
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use axum::{
     body::{Body, Bytes},
@@ -44,17 +44,13 @@ where
 {
     // The caller already owns one of the HTTP response permits: admitted
     // requests wait here behind two media workers. Waiting never owns a Reader.
-    let job = tokio::time::timeout(Duration::from_secs(2), jobs.acquire_owned())
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "media_busy",
-                "图片处理繁忙，请稍后重试",
-            )
-        })?;
+    let job = jobs.acquire_owned().await.map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "media_busy",
+            "图片处理繁忙，请稍后重试",
+        )
+    })?;
     reader
         .run(move |store| {
             let _job = job;
@@ -86,15 +82,7 @@ pub async fn get(
             "服务正在关闭",
         ));
     }
-    let permit = Arc::new(
-        crate::state::admit(
-            &state.media_http,
-            state.admission_wait,
-            "media_busy",
-            "图片读取繁忙，请稍后重试",
-        )
-        .await?,
-    );
+    let permit = Arc::new(crate::state::admit(&state.media_http, "media_busy").await?);
     let media = state.media.clone();
     let files = state.files.clone();
     let blob = read_media(
@@ -113,8 +101,6 @@ pub async fn get(
                 // the retained checked native handle pass final verification.
                 if result.is_ok() {
                     reader.finish()?;
-                } else if let Some(error) = reader.failure() {
-                    return Err(error);
                 }
                 result
             } else if let Some((uid, agent)) = ticket.scope() {
@@ -167,13 +153,13 @@ pub async fn get(
 mod tests {
     use super::*;
     use crate::sessions::SessionRoots;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn cancelled_media_workers_keep_both_budgets_and_leave_history_capacity() {
         let reader = Reader {
             store: Arc::new(SessionStore::new(SessionRoots::default())),
             workers: Arc::new(Semaphore::new(4)),
-            wait: Duration::from_secs(10),
         };
         let jobs = Arc::new(Semaphore::new(2));
         let responses = Arc::new(Semaphore::new(8));

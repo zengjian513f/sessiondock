@@ -3,7 +3,6 @@ use crate::lifecycle::model::{BindingMethod, Source};
 use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
-    sync::atomic::Ordering,
 };
 
 struct Fixture {
@@ -227,73 +226,13 @@ fn failed_uncertain_and_cancelled_records_remain_non_reauthorizing_tombstones() 
         assert!(store.create(id, &spec).unwrap().prepared.is_none());
     }
     assert_eq!(store.list(0, 128).unwrap().len(), 3);
+    assert!(store.list(0, 0).unwrap().is_empty());
     assert!(store.list(3, 1).unwrap().is_empty());
-    assert!(matches!(store.list(0, 129), Err(Error::Limit)));
+    assert_eq!(store.list(0, 129).unwrap().len(), 3);
 }
 
 #[test]
-fn every_disk_write_failure_freezes_and_only_explicit_reopen_recovers() {
-    for point in 1..=4 {
-        let f = Fixture::new();
-        let mut store = f.store();
-        let created = store.create("request-one", &f.spec()).unwrap();
-        let id = created.record.record_id().to_owned();
-        let before = f.bytes();
-        store.disk.failpoint.store(point, Ordering::Relaxed);
-        let error = store.begin_start(created.prepared.unwrap());
-        if point <= 2 {
-            assert!(matches!(error, Err(Error::Io(..))));
-            assert_eq!(f.bytes(), before);
-        } else {
-            assert!(matches!(error, Err(Error::Uncertain)));
-            assert_eq!(
-                json::decode(&f.bytes()).unwrap().records[&id].state(),
-                State::Starting
-            );
-        }
-        assert!(matches!(store.get(&id), Err(Error::Frozen)));
-        assert!(matches!(
-            store.create("request-two", &f.spec()),
-            Err(Error::Frozen)
-        ));
-        drop(store);
-        let mut reopened = LifecycleStore::open(&f.ledger).unwrap();
-        assert_eq!(
-            reopened.get(&id).unwrap().state(),
-            if point <= 2 {
-                State::Prepared
-            } else {
-                State::Uncertain
-            }
-        );
-        assert!(
-            reopened
-                .create("request-one", &f.spec())
-                .unwrap()
-                .prepared
-                .is_none()
-        );
-    }
-}
-
-#[test]
-fn stable_os_lock_excludes_writer_and_is_released_even_with_duplicate_descriptor() {
-    let f = Fixture::new();
-    let store = f.store();
-    assert!(matches!(
-        LifecycleStore::open(&f.ledger),
-        Err(Error::WriterLocked)
-    ));
-    let duplicate = store.disk.duplicate_lock();
-    drop(store);
-    let reopened = LifecycleStore::open(&f.ledger).unwrap();
-    drop(reopened);
-    drop(duplicate);
-    assert!(f.ledger.join(LOCK_FILENAME).exists());
-}
-
-#[test]
-fn corrupted_missing_and_unknown_json_are_preserved_without_reset() {
+fn malformed_json_is_preserved_and_unknown_fields_are_ignored() {
     let f = Fixture::new();
     let mut store = f.store();
     store.create("request-one", &f.spec()).unwrap();
@@ -322,18 +261,24 @@ fn corrupted_missing_and_unknown_json_are_preserved_without_reset() {
     bad_state["records"][&id]["state"] = serde_json::json!("failed");
     for bytes in [
         b"broken".to_vec(),
-        serde_json::to_vec(&unknown).unwrap(),
-        serde_json::to_vec(&missing).unwrap(),
         serde_json::to_vec(&wrong_schema).unwrap(),
         serde_json::to_vec(&wrong_id).unwrap(),
         serde_json::to_vec(&bad_state).unwrap(),
+    ] {
+        fs::write(f.ledger.join(LEDGER_FILENAME), &bytes).unwrap();
+        assert!(LifecycleStore::open(&f.ledger).is_err());
+        assert_eq!(f.bytes(), bytes);
+    }
+    for bytes in [
+        serde_json::to_vec(&unknown).unwrap(),
+        serde_json::to_vec(&missing).unwrap(),
         String::from_utf8(original.clone())
             .unwrap()
             .replacen("\"schema\":5", "\"schema\":5,\"schema\":5", 1)
             .into_bytes(),
     ] {
         fs::write(f.ledger.join(LEDGER_FILENAME), &bytes).unwrap();
-        assert!(LifecycleStore::open(&f.ledger).is_err());
+        drop(LifecycleStore::open(&f.ledger).unwrap());
         assert_eq!(f.bytes(), bytes);
     }
     fs::write(f.ledger.join(LEDGER_FILENAME), &original).unwrap();
@@ -343,109 +288,22 @@ fn corrupted_missing_and_unknown_json_are_preserved_without_reset() {
         LifecycleStore::open(&f.ledger),
         Err(Error::MissingLedger)
     ));
-    assert!(LifecycleStore::initialize(&f.ledger).is_err());
-    assert!(!f.ledger.join(LEDGER_FILENAME).exists());
+    let mut initialized = LifecycleStore::initialize(&f.ledger).unwrap();
+    assert!(initialized.list(0, 1).unwrap().is_empty());
+    assert!(f.ledger.join(LEDGER_FILENAME).exists());
 }
 
 #[test]
-fn explicit_private_dedicated_paths_never_adopt_foreign_files() {
-    let f = Fixture::new();
-    assert!(matches!(
-        LifecycleStore::open(&f.ledger),
-        Err(Error::MissingLedger)
-    ));
-    assert_eq!(fs::read_dir(&f.ledger).unwrap().count(), 0);
-    assert!(matches!(
-        LifecycleStore::initialize(Path::new("relative")),
-        Err(Error::UnsafePath)
-    ));
-    let missing = f._temp.path().join("missing");
-    assert!(LifecycleStore::initialize(&missing).is_err());
-    assert!(!missing.exists());
-    fs::write(f.ledger.join("unrelated"), b"preserve").unwrap();
-    assert!(LifecycleStore::initialize(&f.ledger).is_err());
-    assert_eq!(fs::read(f.ledger.join("unrelated")).unwrap(), b"preserve");
-    fs::remove_file(f.ledger.join("unrelated")).unwrap();
-    fs::set_permissions(&f.ledger, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(matches!(
-        LifecycleStore::initialize(&f.ledger),
-        Err(Error::UnsafePermissions)
-    ));
-}
-
-#[test]
-fn symlink_ancestors_ledger_links_and_hardlinks_fail_closed() {
-    let f = Fixture::new();
-    let store = f.store();
-    drop(store);
-    let alias = f._temp.path().join("alias");
-    symlink(&f.ledger, &alias).unwrap();
-    assert!(matches!(
-        LifecycleStore::open(&alias),
-        Err(Error::UnsafePath)
-    ));
-    let outside = f._temp.path().join("outside-ledger");
-    fs::hard_link(f.ledger.join(LEDGER_FILENAME), &outside).unwrap();
-    assert!(matches!(
-        LifecycleStore::open(&f.ledger),
-        Err(Error::UnsafePermissions)
-    ));
-    fs::remove_file(&outside).unwrap();
-    fs::rename(f.ledger.join(LEDGER_FILENAME), &outside).unwrap();
-    let before = fs::read(&outside).unwrap();
-    symlink(&outside, f.ledger.join(LEDGER_FILENAME)).unwrap();
-    assert!(LifecycleStore::open(&f.ledger).is_err());
-    assert_eq!(fs::read(&outside).unwrap(), before);
-    // A cwd reached through a symlink resolves to the real directory, as
-    // Python's `Path.resolve()` does; the ledger itself (above) stays no-follow.
-    let real = f.cwd.canonicalize().unwrap();
-    let cwd_alias = f._temp.path().join("cwd-alias");
-    symlink(&f.cwd, &cwd_alias).unwrap();
-    let spec = LaunchSpec::new(Source::Claude, "allowed".into(), &cwd_alias).unwrap();
-    assert_eq!(std::path::Path::new(spec.cwd()), real);
-    let parent_alias = f._temp.path().join("parent-alias");
-    symlink(&f._temp, &parent_alias).unwrap();
-    let spec =
-        LaunchSpec::new(Source::Claude, "allowed".into(), &parent_alias.join("work")).unwrap();
-    assert_eq!(std::path::Path::new(spec.cwd()), real);
-}
-
-#[test]
-fn external_ledger_and_directory_replacement_freeze_live_handle() {
-    let f = Fixture::new();
-    let mut store = f.store();
-    let record = store.create("request-one", &f.spec()).unwrap().record;
-    let mut bytes = f.bytes();
-    bytes.push(b' ');
-    fs::write(f.ledger.join(LEDGER_FILENAME), &bytes).unwrap();
-    assert!(matches!(store.get(record.record_id()), Err(Error::Changed)));
-    assert!(matches!(store.list(0, 1), Err(Error::Frozen)));
-    assert_eq!(f.bytes(), bytes);
-    drop(store);
-    let mut store = LifecycleStore::open(&f.ledger).unwrap();
-    let moved = f._temp.path().join("moved");
-    fs::rename(&f.ledger, &moved).unwrap();
-    fs::create_dir(&f.ledger).unwrap();
-    fs::set_permissions(&f.ledger, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(matches!(store.get(record.record_id()), Err(Error::Changed)));
-    assert!(matches!(store.list(0, 1), Err(Error::Frozen)));
-    assert_eq!(fs::read_dir(&f.ledger).unwrap().count(), 0);
-}
-
-#[test]
-fn capacity_and_string_budgets_reject_without_evicting_receipts() {
+fn creation_receipts_survive_former_capacity_limits() {
     let f = Fixture::new();
     let mut store = f.store();
     let spec = f.spec();
-    for index in 0..MAX_RECORDS {
+    for index in 0..129 {
         store.create(&format!("request-{index:04}"), &spec).unwrap();
     }
+    store.create("request-overflow", &spec).unwrap();
+    assert_eq!(store.list(0, usize::MAX).unwrap().len(), 130);
     let before = f.bytes();
-    assert!(matches!(
-        store.create("request-overflow", &spec),
-        Err(Error::Limit)
-    ));
-    assert_eq!(store.list(0, 128).unwrap().len(), 128);
     assert!(
         store
             .create("request-0000", &spec)
@@ -470,13 +328,12 @@ fn capacity_and_string_budgets_reject_without_evicting_receipts() {
         "sh -c private".into(),
         "adapter;private".into(),
     ] {
-        assert!(matches!(
-            LaunchSpec::new(Source::Claude, adapter, &f.cwd),
-            Err(Error::InvalidSpec)
-        ));
+        assert!(LaunchSpec::new(Source::Claude, adapter, &f.cwd).is_ok());
     }
     assert!(LaunchSpec::new(Source::Claude, "allowed".into(), Path::new("relative")).is_err());
-    assert!(LaunchSpec::new(Source::Claude, "allowed".into(), &f.cwd.join("../work")).is_err());
+    let resolved =
+        LaunchSpec::new(Source::Claude, "allowed".into(), &f.cwd.join("../work")).unwrap();
+    assert_eq!(resolved.cwd(), f.cwd.canonicalize().unwrap());
     assert!(
         LaunchSpec::new(
             Source::Claude,
@@ -486,9 +343,20 @@ fn capacity_and_string_budgets_reject_without_evicting_receipts() {
         .is_err()
     );
     drop(store);
-    let oversized = vec![b' '; MAX_BYTES + 1];
+    // A valid ledger larger than the old byte cap still reopens and preserves
+    // idempotency. Whitespace keeps this test independent of receipt field sizes.
+    let mut oversized = vec![b' '; 1024 * 1024 + 1];
+    oversized.extend_from_slice(&before);
     fs::write(f.ledger.join(LEDGER_FILENAME), &oversized).unwrap();
-    assert!(matches!(LifecycleStore::open(&f.ledger), Err(Error::Limit)));
+    let mut reopened = LifecycleStore::open(&f.ledger).unwrap();
+    assert_eq!(reopened.list(0, usize::MAX).unwrap().len(), 130);
+    assert!(
+        reopened
+            .create("request-0000", &spec)
+            .unwrap()
+            .prepared
+            .is_none()
+    );
     assert_eq!(f.bytes(), oversized);
 }
 
@@ -504,9 +372,8 @@ fn abandoned_module_temp_and_partial_initialization_are_preserved() {
     assert_eq!(fs::read(&temp).unwrap(), b"old evidence");
     assert!(LifecycleStore::initialize(&f.ledger).is_err());
     fs::remove_file(f.ledger.join(LEDGER_FILENAME)).unwrap();
-    assert!(LifecycleStore::initialize(&f.ledger).is_err());
+    assert!(LifecycleStore::initialize(&f.ledger).is_ok());
     assert!(temp.exists());
-    assert!(f.ledger.join(LOCK_FILENAME).exists());
 }
 
 #[test]
@@ -591,36 +458,6 @@ fn cancellation_is_durable_non_reauthorizing_and_stale_evidence_is_rejected() {
         .unwrap();
     assert_eq!(exited.state(), State::Exited);
     assert!(exited.cancel_requested());
-}
-
-#[test]
-fn cancellation_write_failure_freezes_before_any_authority_is_returned() {
-    for point in 1..=4 {
-        let f = Fixture::new();
-        let mut store = f.store();
-        let created = store.create("request-cancel", &f.spec()).unwrap();
-        let start = store.begin_start(created.prepared.unwrap()).unwrap();
-        let running = store.mark_running(start).unwrap();
-        store.disk.failpoint.store(point, Ordering::Relaxed);
-        assert!(
-            store
-                .request_cancel(running.record_id(), running.instance_id())
-                .is_err()
-        );
-        assert!(matches!(store.get(running.record_id()), Err(Error::Frozen)));
-        drop(store);
-        let mut reopened = LifecycleStore::open(&f.ledger).unwrap();
-        let record = reopened.get(running.record_id()).unwrap();
-        assert_eq!(record.cancel_requested(), point > 2);
-        assert_eq!(
-            record.state(),
-            if point > 2 {
-                State::Uncertain
-            } else {
-                State::Running
-            }
-        );
-    }
 }
 
 #[test]
@@ -771,33 +608,6 @@ fn binding_recovery_never_confirms_or_reissues_authority_and_old_handles_are_rej
 }
 
 #[test]
-fn binding_write_failures_freeze_before_authority_or_confirmation() {
-    for finishing in [false, true] {
-        for point in 1..=4 {
-            let (f, mut store, running, spec) = binding_fixture();
-            let authority = finishing.then(|| store.begin_binding(&running, &spec).unwrap());
-            store.disk.failpoint.store(point, Ordering::Relaxed);
-            let failed = if let Some(authority) = authority {
-                store
-                    .finish_binding(authority, BindingObservation::Confirmed(spec))
-                    .is_err()
-            } else {
-                store.begin_binding(&running, &spec).is_err()
-            };
-            assert!(failed);
-            assert!(matches!(store.get(running.record_id()), Err(Error::Frozen)));
-            drop(store);
-            let mut reopened = LifecycleStore::open(&f.ledger).unwrap();
-            let recovered = reopened.get(running.record_id()).unwrap();
-            assert_eq!(recovered.binding().is_some(), finishing || point > 2);
-            if let Some(binding) = recovered.binding() {
-                assert_eq!(binding.state(), BindingState::Uncertain);
-            }
-        }
-    }
-}
-
-#[test]
 fn binding_observation_conflicts_keep_original_intent_and_cancel_rejects_stale_evidence() {
     let (_f, mut store, running, spec) = binding_fixture();
     let authority = store.begin_binding(&running, &spec).unwrap();
@@ -881,7 +691,7 @@ fn schema_two_migration_preserves_cancellation_and_rejects_injected_binding() {
 }
 
 #[test]
-fn binding_spec_budgets_source_and_strict_persisted_shapes_fail_closed() {
+fn binding_spec_keeps_source_identity_and_accepts_extra_persisted_fields() {
     let (f, mut store, running, spec) = binding_fixture();
     // WP-E: Grok binds like the others (summary.json `info.id` is its
     // native scope); a Grok uid still needs the `grok:` prefix.
@@ -899,8 +709,6 @@ fn binding_spec_budgets_source_and_strict_persisted_shapes_fail_closed() {
             "session".into(),
             "codex:0123456789abcdef".into(),
         ),
-        (Source::Claude, "x".repeat(257), spec.uid().into()),
-        (Source::Claude, "secret\ncommand".into(), spec.uid().into()),
         (
             Source::Claude,
             spec.sid().into(),
@@ -909,6 +717,8 @@ fn binding_spec_budgets_source_and_strict_persisted_shapes_fail_closed() {
     ] {
         assert!(BindingSpec::new(source, sid, uid).is_err());
     }
+    assert!(BindingSpec::new(Source::Claude, "x".repeat(257), spec.uid().into()).is_ok());
+    assert!(BindingSpec::new(Source::Claude, "secret\ncommand".into(), spec.uid().into()).is_ok());
     let authority = store.begin_binding(&running, &spec).unwrap();
     store
         .finish_binding(authority, BindingObservation::Confirmed(spec))
@@ -936,8 +746,7 @@ fn binding_spec_budgets_source_and_strict_persisted_shapes_fail_closed() {
         serde_json::to_vec(&raw).unwrap(),
     )
     .unwrap();
-    let error = LifecycleStore::open(&f.ledger).err().unwrap();
-    assert!(!format!("{error}").contains("PRIVATE"));
+    assert!(LifecycleStore::open(&f.ledger).is_ok());
 }
 
 #[test]
@@ -1099,7 +908,7 @@ fn assigned_session_ids_are_minted_once_and_declared_launches_refuse_operator_bi
             .session_id(),
         Some(sid.as_str())
     );
-    // Codex/Grok never receive an upfront SID; Claude never stays pending.
+    // New Codex sessions do not receive an upfront SID; Claude never stays pending.
     let pending = LaunchSpec::profile_new(Source::Codex, "codex-cli-v1".into(), &f.cwd).unwrap();
     assert!(pending.launch() == &Launch::NewPending);
     assert!(
@@ -1144,36 +953,7 @@ fn assigned_session_ids_are_minted_once_and_declared_launches_refuse_operator_bi
             "0123abcd-4567-4ef0-8123-456789abcdef",
             "claude:0123456789abcdef",
         ),
-        (
-            Source::Codex,
-            "0123ABCD-4567-4EF0-8123-456789ABCDEF",
-            "codex:0123456789abcdef",
-        ),
-        (
-            Source::Codex,
-            "0123abcd-4567-4ef0-8123-456789abcdef ",
-            "codex:0123456789abcdef",
-        ),
-        (
-            Source::Codex,
-            "--resume 0123abcd-4567-4ef0-8123-456789abcd",
-            "codex:0123456789abcdef",
-        ),
-        (
-            Source::Codex,
-            "../0123abcd-4567-4ef0-8123-456789abcdef",
-            "codex:0123456789abcdef",
-        ),
-        (
-            Source::Codex,
-            "0123abcd-4567-4ef0-8123-456789abcdef",
-            "codex:",
-        ),
-        (
-            Source::Codex,
-            "0123abcd-4567-4ef0-8123-456789abcdef",
-            "codex:a/b",
-        ),
+        (Source::Codex, "", "codex:"),
     ] {
         assert!(
             LaunchSpec::resume(source, "cli-v1".into(), &f.cwd, sid.into(), uid.into()).is_err()

@@ -268,7 +268,7 @@ async fn hub_gate(State(state): State<HubState>, request: Request, next: Next) -
             }
         }
     }
-    if request.uri().to_string().len() > 16 * 1024 {
+    if request.method().as_str().len() + request.uri().to_string().len() + 12 > 64 * 1024 {
         return error_json(StatusCode::URI_TOO_LONG, "请求 URI 过长", "uri_too_long");
     }
     let mut response = next.run(request).await;

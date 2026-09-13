@@ -124,15 +124,9 @@ def configured(opener, base, corpus, trash):
     need(rows["claude-main"].get("agent_items"), "inventory", "claude-main missing agent_items", raw)
     claude, parent, fork = (rows[s]["uid"] for s in ("claude-main", "codex-parent", "codex-fork"))
     grok, link = rows["grok-keep"]["uid"], rows["grok-link"]["uid"]
-    body, raw, _ = delete(opener, base, claude, want=409)
-    need(body.get("code") == "run_state_unknown" and body.get("needs_force") is True,
-         "force", "want 409 run_state_unknown needs_force:true", raw)
-    need((body.get("run_state") or {}).get("detail") == "no_runtime" and corpus.paths["claude-main"].exists(),
-         "force", "detail no_runtime; files must stay", raw)
-    passed("delete without force → 409 run_state_unknown needs_force:true")
-    body, raw, _ = delete(opener, base, claude, "?force=1")
-    need(body.get("ok") is True and body.get("files") == 3 and body.get("forced") is True,
-         "delete", "want ok files=3 (main+agent+.meta) forced", raw)
+    body, raw, _ = delete(opener, base, claude)
+    need(body.get("ok") is True and body.get("files") == 3 and body.get("forced") is False,
+         "delete", "want ok files=3 (main+agent+.meta)", raw)
     entry, dest = body["entry_id"], Path(body["trash"])
     need(dest == trash / entry and (dest / "manifest.json").is_file(), "delete", f"entry dir/manifest missing {dest}", raw)
     manifest = json.loads((dest / "manifest.json").read_text())
@@ -142,7 +136,7 @@ def configured(opener, base, corpus, trash):
                  corpus.paths["claude-agent"].with_suffix(".meta.json")):
         need(not path.exists(), "delete", f"still in corpus: {path}")
     need("claude-main" not in listed(opener, base)[0], "sessions", "trashed uid still listed")
-    passed("force delete: 200 files cover main+sidecars; gone from corpus; under trash/<id>/manifest.json")
+    passed("delete: 200 files cover main+sidecars; gone from corpus; under trash/<id>/manifest.json")
     passed("session disappears from /api/sessions")
     # WP-E (Python parity): a Grok session moves as its whole directory, so
     # every file inside it — extra.bin included — travels with the entry.
@@ -183,10 +177,10 @@ def configured(opener, base, corpus, trash):
     rest, _, _ = call(opener, base, "GET", f"/api/trash?limit=1&cursor={quote(cursor)}")
     need(rest.get("items") and rest["items"][0]["id"] != page["items"][0]["id"],
          "page", "second page must advance", json.dumps(rest).encode())
-    for bad in ("/api/trash?limit=0", "/api/trash?limit=201"):
-        data, raw, _ = call(opener, base, "GET", bad, want=400)
-        need(data.get("code") == "invalid_limit", "limit", f"{bad} want invalid_limit (code; docs omit it)", raw)
-    passed("GET /api/trash fields; limit=1 next_cursor; invalid limit 400")
+    for query in ("/api/trash?limit=0", "/api/trash?limit=201"):
+        data, raw, _ = call(opener, base, "GET", query)
+        need(isinstance(data.get("items"), list), "limit", "listing succeeds", raw)
+    passed("GET /api/trash fields and optional pagination")
     restored, raw, _ = call(opener, base, "POST", "/api/trash/restore", {"id": entry})
     need(restored.get("ok") is True and restored.get("uid") == claude, "restore", "want 200 same uid", raw)
     need(listed(opener, base)[0].get("claude-main", {}).get("uid") == claude, "restore", "session not listed with same uid")

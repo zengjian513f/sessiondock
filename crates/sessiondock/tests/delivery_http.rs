@@ -300,7 +300,7 @@ async fn ok(app: &Router, uri: &str) -> Value {
 }
 
 #[tokio::test]
-async fn exact_parent_and_child_outbox_projections_preserve_native_and_ledger_files() {
+async fn outbox_uses_uid_and_ignores_the_legacy_agent_selector() {
     let (_gate, f) = fixture().await;
     let original = f.inputs();
     let prepared = prepare_app(f.config(), CancellationToken::new())
@@ -315,7 +315,7 @@ async fn exact_parent_and_child_outbox_projections_preserve_native_and_ledger_fi
     let child = ok(&prepared.router, &f.uri("claude", Some(AGENT))).await;
     assert_eq!(
         child["outbox"],
-        json!([{"id":"claude-child-request","uid":f.claude_uid,"text":"CHILD_ONLY_PRIVATE_PROMPT","media":[],"created":1234,"state":"persisted","attempts":0,"server":true}])
+        json!([{"id":"claude-main-request","uid":f.claude_uid,"text":"MAIN_ONLY_PRIVATE_PROMPT","media":[],"created":1234,"state":"persisted","attempts":0,"server":true}])
     );
     let codex = ok(&prepared.router, &f.uri("codex", None)).await;
     assert_eq!(codex["outbox"].as_array().unwrap().len(), 1);
@@ -328,7 +328,7 @@ async fn exact_parent_and_child_outbox_projections_preserve_native_and_ledger_fi
         assert!(projected["outbox_version"]["revision"].is_u64());
         assert!(projected["outbox"][0].get("afterTs").is_none());
     }
-    assert!(!child.to_string().contains("MAIN_ONLY_PRIVATE_PROMPT"));
+    assert!(!child.to_string().contains("CHILD_ONLY_PRIVATE_PROMPT"));
     assert!(!main.to_string().contains("CHILD_ONLY_PRIVATE_PROMPT"));
     let meta = body(get(&prepared.router, "/api/meta").await).await;
     assert_eq!(meta["capabilities"]["outbox_read"], true);
@@ -361,7 +361,7 @@ async fn exact_parent_and_child_outbox_projections_preserve_native_and_ledger_fi
 }
 
 #[tokio::test]
-async fn bad_queries_unknown_uids_and_short_or_foreign_agents_are_errors_not_empty_queues() {
+async fn outbox_query_matches_python_first_uid_and_ignores_other_fields() {
     let (_gate, f) = fixture().await;
     let prepared = prepare_app(f.config(), CancellationToken::new())
         .await
@@ -369,48 +369,42 @@ async fn bad_queries_unknown_uids_and_short_or_foreign_agents_are_errors_not_emp
     for uri in [
         "/api/session/outbox".into(),
         "/api/session/outbox?uid=".into(),
+        "/api/session/outbox?uid=claude:0000000000000000".into(),
+        format!("/api/session/outbox?uid={}", "x".repeat(257)),
+        f.uri("grok", None),
+    ] {
+        let response = get(&prepared.router, &uri).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let snapshot = body(response).await;
+        assert_eq!(snapshot["outbox"], json!([]));
+        assert_eq!(snapshot["outbox_version"]["epoch"], "none");
+        f.sanitized(&snapshot);
+    }
+
+    for uri in [
         format!("{}&unknown=1", f.uri("claude", None)),
         format!("{}&uid=duplicate", f.uri("claude", None)),
         format!("{}&agent={}", f.uri("claude", None), "x".repeat(257)),
-        format!("/api/session/outbox?uid={}", "x".repeat(257)),
-    ] {
-        let response = get(&prepared.router, &uri).await;
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
-        let error = body(response).await;
-        f.sanitized(&error);
-        assert!(error.get("outbox").is_none());
-    }
-    for uri in [
-        "/api/session/outbox?uid=claude:0000000000000000".into(),
-        f.uri("claude", Some("helper")),
-        f.uri("claude", Some("other-full-agent-id")),
         f.uri("claude", Some("..%2F..%2Fescape")),
+        f.uri("codex", Some(CODEX_CHILD)),
     ] {
         let response = get(&prepared.router, &uri).await;
-        assert!(
-            response.status().is_client_error(),
-            "{uri}: {}",
-            response.status()
-        );
-        let error = body(response).await;
-        f.sanitized(&error);
-        assert!(error.get("outbox").is_none());
-        assert!(!error.to_string().contains("PRIVATE_PROMPT"));
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let snapshot = body(response).await;
+        assert!(snapshot["outbox"].is_array());
+        f.sanitized(&snapshot);
     }
-    for uri in [f.uri("grok", None), f.uri("codex", Some(CODEX_CHILD))] {
-        let response = get(&prepared.router, &uri).await;
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED, "{uri}");
-        f.sanitized(&body(response).await);
-    }
-    // Hidden child files are not independent public session UIDs. The supported
-    // lookup form is owner UID + exact agent ID (which is rejected with 501 above).
+    // Python keys outbox rows by the supplied UID. An unrepresented child UID
+    // therefore has the same empty unsupported-source snapshot as any miss.
     let response = get(
         &prepared.router,
         &format!("/api/session/outbox?uid={}", f.codex_child_uid),
     )
     .await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    f.sanitized(&body(response).await);
+    assert_eq!(response.status(), StatusCode::OK);
+    let snapshot = body(response).await;
+    assert_eq!(snapshot["outbox"], json!([]));
+    f.sanitized(&snapshot);
     prepared
         .delivery
         .as_ref()
@@ -421,7 +415,7 @@ async fn bad_queries_unknown_uids_and_short_or_foreign_agents_are_errors_not_emp
 }
 
 #[tokio::test]
-async fn missing_and_conflicting_native_session_identity_do_not_fall_back_to_filename_scope() {
+async fn missing_and_conflicting_native_identity_return_python_empty_outbox() {
     let (_gate, f) = fixture().await;
     for records in [
         vec![
@@ -438,13 +432,12 @@ async fn missing_and_conflicting_native_session_identity_do_not_fall_back_to_fil
             .unwrap();
         for agent in [None, Some(AGENT)] {
             let response = get(&prepared.router, &f.uri("claude", agent)).await;
-            assert!(
-                !response.status().is_success(),
-                "identity failure returned success"
-            );
-            let error = body(response).await;
-            f.sanitized(&error);
-            assert!(error.get("outbox").is_none());
+            assert_eq!(response.status(), StatusCode::OK);
+            let snapshot = body(response).await;
+            f.sanitized(&snapshot);
+            assert_eq!(snapshot["outbox"], json!([]));
+            assert_eq!(snapshot["outbox_version"]["epoch"], "none");
+            assert_eq!(snapshot["outbox_version"]["revision"], 0);
         }
         prepared
             .delivery
@@ -464,8 +457,10 @@ async fn missing_and_conflicting_native_session_identity_do_not_fall_back_to_fil
         .await
         .unwrap();
     let response = get(&prepared.router, &f.uri("codex", None)).await;
-    assert!(!response.status().is_success());
-    assert!(body(response).await.get("outbox").is_none());
+    assert_eq!(response.status(), StatusCode::OK);
+    let snapshot = body(response).await;
+    assert_eq!(snapshot["outbox"], json!([]));
+    assert_eq!(snapshot["outbox_version"]["epoch"], "none");
     prepared
         .delivery
         .as_ref()
@@ -476,7 +471,7 @@ async fn missing_and_conflicting_native_session_identity_do_not_fall_back_to_fil
 }
 
 #[tokio::test]
-async fn disabled_read_and_uninitialized_or_locked_ledgers_fail_without_initialization() {
+async fn disabled_read_stays_disabled_while_missing_and_shared_ledgers_open_normally() {
     let (_gate, f) = fixture().await;
     let mut config = f.config();
     config.delivery_dir = None;
@@ -494,16 +489,20 @@ async fn disabled_read_and_uninitialized_or_locked_ledgers_fail_without_initiali
     fs::set_permissions(&empty, fs::Permissions::from_mode(0o700)).unwrap();
     let mut config = f.config();
     config.delivery_dir = Some(empty.clone());
-    assert!(prepare_app(config, CancellationToken::new()).await.is_err());
-    assert_eq!(fs::read_dir(empty).unwrap().count(), 0);
+    let initialized = prepare_app(config, CancellationToken::new()).await.unwrap();
+    assert!(empty.join(store::LEDGER_FILENAME).is_file());
+    initialized.delivery.unwrap().shutdown().await.unwrap();
     let prepared = prepare_app(f.config(), CancellationToken::new())
         .await
         .unwrap();
-    assert!(
-        prepare_app(f.config(), CancellationToken::new())
-            .await
-            .is_err()
+    let shared = prepare_app(f.config(), CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        ok(&shared.router, &f.uri("claude", None)).await["outbox"],
+        ok(&prepared.router, &f.uri("claude", None)).await["outbox"]
     );
+    shared.delivery.unwrap().shutdown().await.unwrap();
     prepared
         .delivery
         .as_ref()
@@ -545,7 +544,7 @@ async fn restart_changes_both_epochs_and_shutdown_releases_lock_with_router_stil
 }
 
 #[tokio::test]
-async fn frozen_ledger_returns_sanitized_error_and_preserves_external_bytes() {
+async fn syntactic_external_ledger_edit_reloads_and_preserves_external_bytes() {
     let (_gate, f) = fixture().await;
     let prepared = prepare_app(f.config(), CancellationToken::new())
         .await
@@ -556,19 +555,17 @@ async fn frozen_ledger_returns_sanitized_error_and_preserves_external_bytes() {
     fs::write(&path, &bytes).unwrap();
     for source in ["claude", "codex"] {
         let response = get(&prepared.router, &f.uri(source, None)).await;
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let error = body(response).await;
-        assert_eq!(error["code"], "delivery_unavailable");
-        assert!(error.get("outbox").is_none());
-        f.sanitized(&error);
-        assert!(!error.to_string().contains("PRIVATE_PROMPT"));
+        assert_eq!(response.status(), StatusCode::OK);
+        let snapshot = body(response).await;
+        assert!(snapshot["outbox"].is_array());
+        f.sanitized(&snapshot);
     }
     assert_eq!(fs::read(path).unwrap(), bytes);
     prepared.delivery.unwrap().shutdown().await.unwrap();
 }
 
 #[tokio::test]
-async fn eight_unconsumed_response_bodies_hold_admission_until_finish_or_drop() {
+async fn unconsumed_response_bodies_do_not_reject_more_reads() {
     let (_gate, f) = fixture().await;
     let prepared = prepare_app(f.config(), CancellationToken::new())
         .await
@@ -580,18 +577,15 @@ async fn eight_unconsumed_response_bodies_hold_admission_until_finish_or_drop() 
         assert_eq!(response.status(), StatusCode::OK);
         responses.push(response);
     }
-    let busy = get(&prepared.router, &uri).await;
-    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body(busy).await["code"], "delivery_busy");
+    let ninth = get(&prepared.router, &uri).await;
+    assert_eq!(ninth.status(), StatusCode::OK);
+    responses.push(ninth);
     // A partially consumed multi-frame stream must still own its response guard.
     let response = responses.pop().unwrap();
     let mut partial = response.into_body();
     let frame = partial.frame().await.unwrap().unwrap().into_data().unwrap();
     assert_eq!(frame.len(), 32 * 1024);
-    assert_eq!(
-        get(&prepared.router, &uri).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(get(&prepared.router, &uri).await.status(), StatusCode::OK);
     drop(partial);
     let replacement = get(&prepared.router, &uri).await;
     assert_eq!(replacement.status(), StatusCode::OK);

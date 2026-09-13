@@ -3,9 +3,9 @@
 //! Wire contract (compatible with the Python `_browser_audit` handler):
 //! the body is one JSON object `{page_id|_page_id, uid, _build, _trace_id,
 //! events:[{event, ts, uid, trace_id, request_id, connection_id, severity,
-//! build, data, content}]}`. `content` and unknown keys are skipped by serde
-//! without being allocated. Invalid events are skipped, not fatal, exactly as
-//! in Python; only a structurally malformed body is rejected.
+//! build, data, content}]}`. `content` and unknown keys are not retained.
+//! Invalid events are skipped, not fatal, exactly as in Python; only a
+//! structurally malformed body is rejected.
 
 use std::{
     net::IpAddr,
@@ -17,20 +17,12 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 pub const EVENT_NAME_MAX: usize = 160;
-pub const CLIENT_TS_MAX: usize = 64;
 pub const UID_MAX: usize = 512;
 pub const ID_MAX: usize = 128;
 pub const SEVERITY_MAX: usize = 24;
-/// Characters kept per string value inside `data`.
-pub const STRING_MAX_CHARS: usize = 1024;
-pub const DATA_DEPTH_MAX: usize = 8;
-pub const ARRAY_MAX: usize = 256;
-pub const OBJECT_KEYS_MAX: usize = 128;
-/// Envelope bytes per event beyond the bounded `data` object: every id field
-/// at its maximum plus JSON punctuation and server-added fields.
-pub const EVENT_OVERHEAD: usize = 2048;
+pub const DATA_DEPTH_MAX: usize = 12;
 
-const SECRET_KEYS: [&str; 15] = [
+const SECRET_KEYS: [&str; 11] = [
     "authorization",
     "proxy-authorization",
     "cookie",
@@ -42,10 +34,6 @@ const SECRET_KEYS: [&str; 15] = [
     "secret",
     "access-token",
     "refresh-token",
-    "token",
-    "bearer",
-    "credential",
-    "credentials",
 ];
 
 /// Structural rejections. Codes mirror the Python responses: a bad body is
@@ -80,39 +68,17 @@ struct RawBatch {
     _build: Option<Value>,
     #[serde(default)]
     _trace_id: Option<Value>,
-    events: Vec<RawEvent>,
+    events: Vec<Value>,
 }
 
-#[derive(Deserialize)]
-struct RawEvent {
-    #[serde(default)]
-    event: Option<Value>,
-    #[serde(default)]
-    ts: Option<Value>,
-    #[serde(default)]
-    uid: Option<Value>,
-    #[serde(default)]
-    trace_id: Option<Value>,
-    #[serde(default)]
-    request_id: Option<Value>,
-    #[serde(default)]
-    connection_id: Option<Value>,
-    #[serde(default)]
-    severity: Option<Value>,
-    #[serde(default)]
-    build: Option<Value>,
-    #[serde(default)]
-    data: Option<Value>,
-}
-
-/// Optional string field: absent/null becomes empty, any other type or an
-/// over-long value is an error.
-fn text(value: &Option<Value>, max: usize) -> Result<&str, ()> {
-    match value {
-        None | Some(Value::Null) => Ok(""),
-        Some(Value::String(text)) if text.len() <= max => Ok(text),
-        _ => Err(()),
-    }
+fn text(value: Option<&Value>, max: usize) -> String {
+    let text = match value {
+        None | Some(Value::Null | Value::Bool(false)) => String::new(),
+        Some(Value::Bool(true)) => "True".to_owned(),
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+    };
+    text.chars().take(max).collect()
 }
 
 pub fn valid_event_name(name: &str) -> bool {
@@ -127,7 +93,6 @@ pub fn prepare(
     body: &[u8],
     client: IpAddr,
     max_events: usize,
-    data_bytes: usize,
     sequence: &AtomicU64,
     now: SystemTime,
 ) -> Result<Prepared, Rejection> {
@@ -136,27 +101,27 @@ pub fn prepare(
     if raw.events.len() > max_events {
         return Err(Rejection::TooManyEvents);
     }
-    let invalid = |_| Rejection::Malformed("批次字段类型或长度无效");
-    let page_id = match text(&raw.page_id, ID_MAX).map_err(invalid)? {
-        "" => text(&raw._page_id, ID_MAX).map_err(invalid)?,
-        page => page,
+    let page = text(raw.page_id.as_ref(), ID_MAX);
+    let page_id = if page.is_empty() {
+        text(raw._page_id.as_ref(), ID_MAX)
+    } else {
+        page
     };
-    let batch_uid = text(&raw.uid, UID_MAX).map_err(invalid)?;
-    let batch_build = text(&raw._build, ID_MAX).map_err(invalid)?;
-    let batch_trace = text(&raw._trace_id, ID_MAX).map_err(invalid)?;
+    let batch_uid = text(raw.uid.as_ref(), UID_MAX);
+    let batch_build = text(raw._build.as_ref(), ID_MAX);
+    let batch_trace = text(raw._trace_id.as_ref(), ID_MAX);
     let received_at = rfc3339(now);
     let client = client.to_string();
     let mut bytes = Vec::new();
     let mut events = 0u32;
     let mut skipped = 0usize;
     let batch = Envelope {
-        page_id,
-        uid: batch_uid,
-        build: batch_build,
-        trace_id: batch_trace,
+        page_id: &page_id,
+        uid: &batch_uid,
+        build: &batch_build,
+        trace_id: &batch_trace,
         received_at: &received_at,
         client: &client,
-        data_bytes,
     };
     for item in &raw.events {
         let Some(mut record) = record(item, &batch) else {
@@ -185,41 +150,41 @@ struct Envelope<'a> {
     trace_id: &'a str,
     received_at: &'a str,
     client: &'a str,
-    data_bytes: usize,
 }
 
-fn record(item: &RawEvent, batch: &Envelope<'_>) -> Option<Value> {
-    let name = match &item.event {
-        Some(Value::String(name)) if valid_event_name(name) => name.as_str(),
-        _ => return None,
+fn record(item: &Value, batch: &Envelope<'_>) -> Option<Value> {
+    let item = item.as_object()?;
+    let name = text(item.get("event"), EVENT_NAME_MAX);
+    if !valid_event_name(&name) {
+        return None;
+    }
+    let client_ts = item.get("ts").cloned().unwrap_or(Value::Null);
+    let own_uid = text(item.get("uid"), UID_MAX);
+    let uid = if own_uid.is_empty() {
+        batch.uid
+    } else {
+        &own_uid
     };
-    let client_ts = match &item.ts {
-        None | Some(Value::Null) => Value::Null,
-        Some(Value::String(ts)) if ts.len() <= CLIENT_TS_MAX => Value::String(ts.clone()),
-        _ => return None,
+    let own_trace = text(item.get("trace_id"), ID_MAX);
+    let trace_id = if own_trace.is_empty() {
+        batch.trace_id
+    } else {
+        &own_trace
     };
-    let uid = match text(&item.uid, UID_MAX).ok()? {
-        "" => batch.uid,
-        uid => uid,
-    };
-    let trace_id = match text(&item.trace_id, ID_MAX).ok()? {
-        "" => batch.trace_id,
-        trace => trace,
-    };
-    let request_id = text(&item.request_id, ID_MAX).ok()?;
-    let connection_id = text(&item.connection_id, ID_MAX).ok()?;
+    let request_id = text(item.get("request_id"), ID_MAX);
+    let connection_id = text(item.get("connection_id"), ID_MAX);
     let build = match batch.build {
-        "" => text(&item.build, ID_MAX).ok()?,
-        build => build,
+        "" => text(item.get("build"), ID_MAX),
+        build => build.to_owned(),
     };
-    let severity = match text(&item.severity, SEVERITY_MAX).ok()? {
-        "" => "info",
-        severity => severity,
+    let severity = match text(item.get("severity"), SEVERITY_MAX) {
+        value if value.is_empty() => "info".to_owned(),
+        value => value,
     };
-    let data = match &item.data {
+    let data = match item.get("data") {
         None | Some(Value::Null) => Value::Object(Map::new()),
-        Some(data @ Value::Object(_)) => bounded_data(data, batch.data_bytes),
-        _ => return None,
+        Some(data @ Value::Object(_)) => sanitize(data, 0),
+        _ => Value::Object(Map::new()),
     };
     Some(json!({
         "seq": 0,
@@ -239,55 +204,24 @@ fn record(item: &RawEvent, batch: &Envelope<'_>) -> Option<Value> {
     }))
 }
 
-/// Sanitizes then enforces the serialized budget; an over-budget object is
-/// replaced by a marker that keeps only its top-level key names.
-pub fn bounded_data(data: &Value, data_bytes: usize) -> Value {
-    let clean = sanitize(data, 0);
-    let size = serde_json::to_vec(&clean)
-        .map(|bytes| bytes.len())
-        .unwrap_or(usize::MAX);
-    if size <= data_bytes {
-        return clean;
-    }
-    let keys: Vec<&str> = clean
-        .as_object()
-        .map(|map| map.keys().take(32).map(String::as_str).collect())
-        .unwrap_or_default();
-    json!({"truncated": true, "bytes": size, "keys": keys})
-}
-
-/// Structured metadata only: redacts secret-looking keys, replaces absolute
-/// filesystem paths, and bounds strings, arrays, objects and nesting depth.
+/// Python `audit.sanitize`: redact secret keys and stop recursion after depth 12.
 pub fn sanitize(value: &Value, depth: usize) -> Value {
     if depth > DATA_DEPTH_MAX {
         return Value::String("<depth-limit>".into());
     }
     match value {
-        Value::String(text) => Value::String(bounded_string(text)),
         Value::Array(items) => {
-            let mut clean: Vec<Value> = items
-                .iter()
-                .take(ARRAY_MAX)
-                .map(|item| sanitize(item, depth + 1))
-                .collect();
-            if items.len() > ARRAY_MAX {
-                clean.push(json!({"truncated": true, "items": items.len()}));
-            }
-            Value::Array(clean)
+            Value::Array(items.iter().map(|item| sanitize(item, depth + 1)).collect())
         }
         Value::Object(map) => {
             let mut clean = Map::new();
-            for (key, item) in map.iter().take(OBJECT_KEYS_MAX) {
-                let key: String = key.chars().take(ID_MAX).collect();
-                let item = if secret_key(&key) {
+            for (key, item) in map {
+                let item = if secret_key(key) {
                     Value::String("<redacted>".into())
                 } else {
                     sanitize(item, depth + 1)
                 };
-                clean.insert(key, item);
-            }
-            if map.len() > OBJECT_KEYS_MAX {
-                clean.insert("<truncated-keys>".into(), json!(map.len()));
+                clean.insert(key.clone(), item);
             }
             Value::Object(clean)
         }
@@ -307,30 +241,6 @@ fn secret_key(key: &str) -> bool {
         })
         .collect();
     SECRET_KEYS.contains(&folded.as_str())
-}
-
-fn bounded_string(text: &str) -> String {
-    if looks_like_absolute_path(text) {
-        return "<path>".into();
-    }
-    let mut chars = text.char_indices();
-    match chars.nth(STRING_MAX_CHARS) {
-        None => text.to_owned(),
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-    }
-}
-
-/// Whole-value heuristic for POSIX, home-relative, drive-letter and UNC paths.
-/// A bare `/` or a page URL such as `/?sid=…` is not a filesystem path.
-pub fn looks_like_absolute_path(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    match bytes {
-        [b'/', next, ..] => !matches!(next, b'/' | b'?' | b'#' | b' '),
-        [b'~', b'/', ..] => true,
-        [b'\\', b'\\', ..] => true,
-        [drive, b':', b'\\' | b'/', ..] => drive.is_ascii_alphabetic(),
-        _ => false,
-    }
 }
 
 fn rfc3339(now: SystemTime) -> String {

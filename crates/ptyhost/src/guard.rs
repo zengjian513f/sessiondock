@@ -49,11 +49,10 @@ fn fields(value: &Value, allowed: &[&str]) -> bool {
 fn optional_bool(value: &Value, key: &str) -> bool {
     value.get(key).is_none_or(Value::is_boolean)
 }
-fn dimension(value: &Value, key: &str) -> Option<u64> {
-    value
-        .get(key)?
-        .as_u64()
-        .filter(|number| (1..=1000).contains(number))
+fn dimension(value: &Value, key: &str) -> Option<u16> {
+    u16::try_from(value.get(key)?.as_u64()?)
+        .ok()
+        .filter(|number| *number != 0)
 }
 fn name(value: &str) -> bool {
     if value.is_empty()
@@ -112,7 +111,7 @@ fn operation(request: &Value) -> bool {
                 },
             ) && dimension(request, "cols")
                 .zip(dimension(request, "rows"))
-                .is_some_and(|(cols, rows)| cols * rows <= 250_000)
+                .is_some()
                 && optional_bool(request, "replay")
         }
         "capture" => {
@@ -224,16 +223,29 @@ pub fn prepare_with_binding<'a>(
 /// Launch identity deliberately needs no native SID/UID. It is an independent
 /// immutable identity domain and never creates or upgrades native association.
 fn prepare_launch<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'a>, &'static str> {
-    if !fields(request, &[
-        "op", "token", "expected_instance_id", "expected_source", "expected_launch_id", "request",
-    ]) || request.get("token").is_some_and(|token| !token.is_string()) {
+    if !fields(
+        request,
+        &[
+            "op",
+            "token",
+            "expected_instance_id",
+            "expected_source",
+            "expected_launch_id",
+            "request",
+        ],
+    ) || request.get("token").is_some_and(|token| !token.is_string())
+    {
         return Err(LAUNCH_ERROR);
     }
-    let instance = request["expected_instance_id"].as_str().ok_or(LAUNCH_ERROR)?;
+    let instance = request["expected_instance_id"]
+        .as_str()
+        .ok_or(LAUNCH_ERROR)?;
     let source = request["expected_source"].as_str().ok_or(LAUNCH_ERROR)?;
     let launch = request["expected_launch_id"].as_str().ok_or(LAUNCH_ERROR)?;
-    if instance.len() < 16 || !identifier(instance, 128)
-        || launch.len() < 16 || !identifier(launch, 128)
+    if instance.len() < 16
+        || !identifier(instance, 128)
+        || launch.len() < 16
+        || !identifier(launch, 128)
         || !matches!(source, "claude" | "codex" | "grok")
         || metadata["instance_id"] != instance
         || metadata["source"] != source
@@ -245,7 +257,11 @@ fn prepare_launch<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'
     Ok(Prepared {
         request: &request["request"],
         instance: None,
-        launch: Some(LaunchIdentity { instance, source, launch }),
+        launch: Some(LaunchIdentity {
+            instance,
+            source,
+            launch,
+        }),
     })
 }
 
@@ -326,7 +342,7 @@ mod tests {
             json!({"op":"send","text":null}),
             json!({"op":"send","text":"x","token":"nested"}),
             json!({"op":"resize","cols":0,"rows":20}),
-            json!({"op":"attach","cols":1000,"rows":1000}),
+            json!({"op":"attach","cols":65536,"rows":24}),
             json!({"op":"keys","keys":[null]}),
             json!({"op":"rename","to":"../escape"}),
             json!({"op":"rename","to":"CON.txt"}),
@@ -350,6 +366,8 @@ mod tests {
             json!({"op":"keys","keys":["Enter"]}),
             json!({"op":"resize","cols":120,"rows":40}),
             json!({"op":"attach","cols":120,"rows":40,"replay":true}),
+            json!({"op":"resize","cols":65535,"rows":65535}),
+            json!({"op":"attach","cols":65535,"rows":65535,"replay":true}),
             json!({"op":"capture","kind":"scrollback","lines":100}),
             json!({"op":"rename","to":"synthetic-new-name"}),
             json!({"op":"kill","force":false}),

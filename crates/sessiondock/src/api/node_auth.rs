@@ -77,7 +77,17 @@ fn auth_required() -> ApiError {
     )
 }
 
-pub async fn node_auth(State(state): State<AppState>, request: Request, next: Next) -> Response {
+/// Only the authenticated node listener may mint this marker. The hub already
+/// checked its page build; a node serves a different asset/capability snapshot.
+/// Browser-supplied protocol headers alone must never bypass the local gate.
+#[derive(Clone, Copy)]
+pub struct AuthenticatedHub(());
+
+pub async fn node_auth(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     let Some(identity) = &state.node else {
         return peer_denied().into_response();
     };
@@ -88,6 +98,7 @@ pub async fn node_auth(State(state): State<AppState>, request: Request, next: Ne
     if let Err(error) = identity.accepts(peer, request.headers()) {
         return error.into_response();
     }
+    request.extensions_mut().insert(AuthenticatedHub(()));
     security::api_policy(request, next).await
 }
 

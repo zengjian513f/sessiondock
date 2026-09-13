@@ -13,9 +13,6 @@ pub(super) fn native_image(
     NativeImage::from_block(value)
 }
 
-pub(super) const MAX_MEDIA: usize = 256;
-const MAX_DEPTH: usize = 64;
-
 pub(super) fn image_shape(value: &Value) -> bool {
     matches!(
         value["type"].as_str(),
@@ -33,9 +30,6 @@ pub(super) fn image_shape(value: &Value) -> bool {
 }
 
 fn push(media: &mut Vec<NativeImage>, image: NativeImage) -> Result<(), String> {
-    if media.len() >= MAX_MEDIA {
-        return Err("单条消息内嵌图片超过 256 张限制".into());
-    }
     media.push(image);
     Ok(())
 }
@@ -45,9 +39,24 @@ pub(super) fn parts_with_media(
     context: Option<&MediaContext<'_>>,
     skipped: &mut Skipped,
 ) -> Result<(String, Vec<NativeImage>), String> {
+    let had_image = contains_image(value);
     let (value, media) = sanitize_with_media(value, context)?;
     let text = super::text_parts(&value, skipped)?;
-    Ok((placeholder(text, &media), media))
+    Ok((
+        if text.is_empty() && had_image {
+            "[图片]".into()
+        } else {
+            placeholder(text, &media)
+        },
+        media,
+    ))
+}
+
+fn contains_image(value: &Value) -> bool {
+    image_shape(value)
+        || value
+            .as_array()
+            .is_some_and(|items| items.iter().any(contains_image))
 }
 
 pub(super) fn placeholder(text: String, media: &[NativeImage]) -> String {
@@ -63,7 +72,7 @@ fn sanitize_with_media(
     context: Option<&MediaContext<'_>>,
 ) -> Result<(Value, Vec<NativeImage>), String> {
     let mut media = Vec::new();
-    let cleaned = clean(value, &mut media, 0, context)?.unwrap_or_else(|| Value::Array(Vec::new()));
+    let cleaned = clean(value, &mut media, context)?.unwrap_or_else(|| Value::Array(Vec::new()));
     Ok((cleaned, media))
 }
 
@@ -97,8 +106,9 @@ pub(super) fn sanitize_tool_with_media(
     if !tool_wrapper_with_media(value, context) {
         return sanitize_with_media(value, context);
     }
+    let had_image = contains_image(&value["content"]);
     let (mut content, media) = sanitize_with_media(&value["content"], context)?;
-    if content.as_array().is_some_and(Vec::is_empty) && !media.is_empty() {
+    if content.as_array().is_some_and(Vec::is_empty) && (!media.is_empty() || had_image) {
         // Retain the recognized MCP wrapper after removing its image-only
         // content. An ordinary business {content:[]} is still not a wrapper.
         content = serde_json::json!([{"type":"text","text":""}]);
@@ -114,12 +124,8 @@ pub(super) fn sanitize_tool_with_media(
 fn clean(
     value: &Value,
     media: &mut Vec<NativeImage>,
-    depth: usize,
     context: Option<&MediaContext<'_>>,
 ) -> Result<Option<Value>, String> {
-    if depth > MAX_DEPTH {
-        return Err("原生媒体内容嵌套超过 64 层限制".into());
-    }
     // Only native block boundaries carry media authority. Text (including JSON
     // tutorials and literal data URLs) and arbitrary object fields are data.
     if matches!(
@@ -134,12 +140,15 @@ fn clean(
         // public message adds one placeholder only if no real text remains.
         return Ok(None);
     }
+    if image_shape(value) {
+        return Ok(None);
+    }
     match value {
         Value::Array(items) => {
             let before = media.len();
             let cleaned = items
                 .iter()
-                .map(|item| clean(item, media, depth + 1, context))
+                .map(|item| clean(item, media, context))
                 .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
                 .flatten()
@@ -152,42 +161,4 @@ fn clean(
         }
         _ => Ok(Some(value.clone())),
     }
-}
-
-/// Claude emits an event per native content block, including each image. Keep
-/// that count/order while retaining the existing contiguous-run image budget.
-pub(super) fn validate_claude(events: &[super::Event]) -> Result<(), String> {
-    let mut previous: Option<&super::Event> = None;
-    let mut count = 0;
-    for event in events {
-        let same = previous.is_some_and(|previous| {
-            if previous.end != event.end {
-                return false;
-            }
-            let role = event.message["role"].as_str().unwrap_or("");
-            if !matches!(
-                role,
-                "user" | "assistant" | "user·subagent" | "assistant·subagent"
-            ) {
-                return false;
-            }
-            let previous = previous.message.as_object().expect("message object");
-            let current = event.message.as_object().expect("message object");
-            previous.keys().filter(|key| key.as_str() != "text").count()
-                == current.keys().filter(|key| key.as_str() != "text").count()
-                && previous
-                    .iter()
-                    .filter(|(key, _)| key.as_str() != "text")
-                    .all(|(key, value)| current.get(key) == Some(value))
-        });
-        if !same {
-            count = 0;
-        }
-        count += event.media.len();
-        if count > MAX_MEDIA {
-            return Err("单条消息内嵌图片超过 256 张限制".into());
-        }
-        previous = Some(event);
-    }
-    Ok(())
 }

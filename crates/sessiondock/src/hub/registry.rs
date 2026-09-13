@@ -52,10 +52,8 @@ pub const NODE_PALETTE: [&str; 8] = [
 ];
 /// Paths whose last good answer is served while the node is offline.
 pub const CACHED_PATHS: [&str; 2] = ["/api/sessions", "/api/term/list"];
-/// Networks a node may be registered from when none are configured: loopback
-/// only. Python's `--node-networks` default also admitted one private /24;
-/// the private WireGuard range is explicit configuration here (fail closed).
-pub const DEFAULT_NETWORKS: &str = "127.0.0.0/8,::1/128";
+/// Python's default node networks: loopback plus the deployment WireGuard /24.
+pub const DEFAULT_NETWORKS: &str = "127.0.0.0/8,::1/128,10.0.0.0/24";
 const NAME_LIMIT: usize = 80;
 const CACHE_LIMIT: usize = 128;
 const CHECK_CONCURRENCY: usize = 16;
@@ -201,6 +199,12 @@ impl From<io::Error> for RegistryError {
 
 fn invalid(message: impl Into<String>) -> RegistryError {
     RegistryError::Invalid(message.into())
+}
+
+fn is_https(value: &str) -> bool {
+    value
+        .split_once("://")
+        .is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
 }
 
 /// `Registry.register` input; `id`, when given, must equal the node's own id.
@@ -518,15 +522,16 @@ impl Registry {
         !self.offline(&node.id)
     }
 
-    /// `http://<literal IP>[:port]` with no path, credentials, query or
+    /// `http(s)://<literal IP>[:port]` with no path, credentials, query or
     /// fragment, inside one of the allowed networks. Literal IPs eliminate DNS
     /// rebinding and make the allowlist auditable.
     pub fn validate_url(&self, value: &str) -> Result<SocketAddr, RegistryError> {
-        const SHAPE: &str = "节点地址必须是 http://私网IP:端口，不含路径或凭据";
+        const SHAPE: &str = "节点地址必须是 http(s)://私网IP:端口，不含路径或凭据";
         let Some((scheme, rest)) = value.split_once("://") else {
             return Err(invalid(SHAPE));
         };
-        if !scheme.eq_ignore_ascii_case("http") {
+        let tls = scheme.eq_ignore_ascii_case("https");
+        if !scheme.eq_ignore_ascii_case("http") && !tls {
             return Err(invalid(SHAPE));
         }
         let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
@@ -567,7 +572,13 @@ impl Registry {
                 .ok()
                 .filter(|port| *port >= 1)
                 .ok_or_else(|| invalid("invalid port"))?,
-            None => 80,
+            None => {
+                if tls {
+                    443
+                } else {
+                    80
+                }
+            }
         };
         Ok(SocketAddr::new(address, port))
     }
@@ -577,6 +588,7 @@ impl Registry {
         Ok(Target {
             addr: self.validate_url(&node.url)?,
             token: node.token.clone(),
+            tls: is_https(&node.url),
         })
     }
 
@@ -638,6 +650,7 @@ impl Registry {
         let target = Target {
             addr,
             token: token.clone(),
+            tls: is_https(&url),
         };
         let (status, meta) = client
             .json(&target, "GET", "/api/meta", None, client.timeout)

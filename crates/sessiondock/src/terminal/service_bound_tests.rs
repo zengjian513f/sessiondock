@@ -204,7 +204,6 @@ async fn bound_claim_reprobes_and_raw_prepare_wrong_uid_and_force_downgrade_are_
         &prepared.guard,
         &mut writer,
         HostInput::Data(Bytes::from_static(b"ok")),
-        Duration::from_secs(1),
     )
     .await
     .unwrap_or_else(|_| panic!("current lease write failed"));
@@ -329,7 +328,6 @@ async fn force_bound_claim_waits_before_fresh_probe_and_old_cleanup_does_not_rem
         &old.guard,
         &mut writer,
         HostInput::Data(Bytes::from_static(b"stale write")),
-        Duration::from_secs(1),
     )
     .await
     .err()

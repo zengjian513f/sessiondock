@@ -9,7 +9,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use sessiondock::{config::Config, sessions::SessionRoots};
-use std::{collections::BTreeMap, fs, path::PathBuf};
+use std::{collections::BTreeMap, fs, path::PathBuf, time::Duration};
 use tower::ServiceExt;
 
 // Actual solid-color 2x3 PNG and 3x2 JPEG, also decoded by media_browser.py.
@@ -175,7 +175,7 @@ async fn three_providers_project_image_only_and_mixed_tool_results_as_private_op
     let caps = value(get(&app, "/api/meta").await).await;
     assert_eq!(caps["capabilities"]["media"], true);
     assert_eq!(caps["capabilities"]["media_lazy"], true);
-    assert_eq!(caps["capabilities"]["media_remote"], false);
+    assert_eq!(caps["capabilities"]["media_remote"], true);
     for source in ["claude", "codex", "grok"] {
         let projected = messages(&app, &format!("{source}-media")).await;
         assert!(!projected.to_string().contains(PNG));
@@ -269,13 +269,10 @@ async fn media_route_accepts_only_opaque_get_head_and_never_interprets_paths_or_
 }
 
 #[tokio::test]
-async fn eight_media_response_permits_survive_unconsumed_bodies_and_retained_data_frames() {
+async fn a_queued_media_response_completes_after_a_retained_frame_is_released() {
     let fixture = Fixture::new();
-    // Batch 44 WP-A sizes the response pools from the read workers; pin
-    // four readers so the media pool is the eight permits counted here.
     let mut config = fixture.config();
     config.pools.read_workers = 4;
-    assert_eq!(config.pools.responses(), 8);
     let app = sessiondock::app(config).unwrap();
     let projected = messages(&app, "claude-media").await;
     let src = media(&projected)[0]["src"].as_str().unwrap();
@@ -285,33 +282,36 @@ async fn eight_media_response_permits_survive_unconsumed_bodies_and_retained_dat
         assert_eq!(response.status(), StatusCode::OK);
         held.push(response);
     }
-    assert_eq!(
-        get(&app, src).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
+    let mut queued = tokio::spawn({
+        let app = app.clone();
+        let src = src.to_owned();
+        async move { get(&app, &src).await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err(),
+        "the next response waits while all response slots are retained"
     );
     let mut body = held.pop().unwrap().into_body();
     let data = body.frame().await.unwrap().unwrap().into_data().unwrap();
     assert_eq!(&data[..], STANDARD.decode(PNG).unwrap());
     drop(body);
-    assert_eq!(
-        get(&app, src).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE,
-        "yielding a frame cannot prematurely free its response budget"
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err(),
+        "the retained frame continues to own its response slot"
     );
     drop(data);
-    let restored = get(&app, src).await;
-    assert_eq!(restored.status(), StatusCode::OK);
-    held.push(restored);
-    assert_eq!(
-        get(&app, src).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
-    drop(held.pop());
-    let consumed = get(&app, src).await;
+    let consumed = tokio::time::timeout(Duration::from_secs(2), queued)
+        .await
+        .expect("queued media response completes after its slot is released")
+        .unwrap();
     assert_eq!(consumed.status(), StatusCode::OK);
     assert_eq!(bytes(consumed).await, STANDARD.decode(PNG).unwrap());
-    assert_eq!(get(&app, src).await.status(), StatusCode::OK);
     drop(held);
+    assert_eq!(get(&app, src).await.status(), StatusCode::OK);
     fixture.unchanged();
 }
 
@@ -356,20 +356,19 @@ async fn evicted_tokens_return_404_and_selected_history_reprojection_restores_th
 }
 
 #[tokio::test]
-async fn invalid_images_and_unsupported_remote_or_file_sources_are_explicit_and_never_leak_payloads()
- {
+async fn decoded_bytes_local_files_and_remote_urls_are_projected() {
     let mut fixture = Fixture::new();
     let cases = [
         ("invalid-image", image("AAAA", "image/png"), StatusCode::OK),
         (
             "unsupported-svg",
             image("PHN2Zy8+", "image/svg+xml"),
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::OK,
         ),
         (
             "remote-image",
             json!({"type":"image_url","image_url":"https://media.example.invalid/private-image.png"}),
-            StatusCode::NOT_IMPLEMENTED,
+            StatusCode::OK,
         ),
         (
             "file-image",
@@ -397,20 +396,29 @@ async fn invalid_images_and_unsupported_remote_or_file_sources_are_explicit_and_
         if sid == "file-image" {
             let items = media(&body);
             assert_eq!(items.len(), 1);
-            assert_eq!(items[0]["error"]["code"], "media_files_disabled");
-            assert_eq!(items[0]["error"]["status"], 501);
-            assert!(items[0].get("src").is_none());
+            assert_eq!(items[0]["lazy"], true);
             assert_eq!(body["messages"][0]["text"], "[图片]");
+            let response = get(&app, items[0]["src"].as_str().unwrap()).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(bytes(response).await, b"PRIVATE_MUST_NOT_BE_READ");
         } else if sid == "invalid-image" {
             let items = media(&body);
             assert_eq!(items.len(), 1);
             assert_eq!(items[0]["lazy"], true);
             assert_eq!(body["messages"][0]["text"], "[图片]");
             let response = get(&app, items[0]["src"].as_str().unwrap()).await;
-            assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-            let error = value(response).await;
-            assert!(error.get("error").is_some());
-            assert!(!error.to_string().contains("AAAA"));
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(bytes(response).await, [0, 0, 0]);
+        } else if sid == "remote-image" {
+            let items = media(&body);
+            assert_eq!(items.len(), 1);
+            assert_eq!(
+                items[0]["src"],
+                "https://media.example.invalid/private-image.png"
+            );
+            assert_eq!(items[0]["external"], true);
+        } else if sid == "unsupported-svg" {
+            assert!(media(&body).is_empty(), "{body}");
         } else {
             assert!(body.get("error").is_some());
         }
@@ -418,7 +426,6 @@ async fn invalid_images_and_unsupported_remote_or_file_sources_are_explicit_and_
             "AAAA",
             "PHN2Zy8+",
             "PRIVATE_MUST_NOT_BE_READ",
-            "private-image.png",
             "private-never-read.png",
         ] {
             assert!(!body.to_string().contains(private), "{sid}: leaked input");

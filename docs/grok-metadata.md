@@ -63,21 +63,16 @@ lines use the existing cursor protocol; an unfinished JSONL tail is uncommitted.
 Deleting a previously consumed chat requires a cursor reset. UID, fork and
 agent ownership semantics remain unchanged.
 
-## Explicit differences and limits
+## Metadata sources and differences
 
-- `size` is Python's `_dir_size`: every regular file under the session
-  directory, recursively (symlinked directories are not entered, a
-  symlinked file counts its target inside the sandbox), bounded to 8 levels
-  and 100 000 entries; nothing in the attachment subtrees is parsed. The
-  additive `chat_exists` stays; `size_scope` is gone (batch 44 WP-C).
-- Summary JSON is limited to 1 MiB; the existing 16 MiB chat-file and 64 MiB
-  inventory limits still apply. Only the two directory levels are enumerated,
-  subject to the existing bounded entry and session counts.
-- Malformed summary JSON, invalid summary field shapes, unreadable inputs,
-  symlinked inputs and nonordinary files fail explicitly. Python historically
-  accepts some malformed summaries as empty metadata; Rust deliberately does
-  not conceal a broken input as an empty history. Only an actual `NotFound`
-  for the optional chat counts as absence.
+- `size` is Python's `_dir_size`: regular files under the session directory
+  are included recursively. The additive `chat_exists` stays; `size_scope` is
+  gone (batch 44 WP-C).
+- Summary and chat inputs have no additional Rust-only size, depth or entry
+  gates.
+- A malformed summary contributes no metadata, matching Python. Readable
+  symlinked files are handled through their targets. A missing optional chat
+  counts as absence.
 - The existing Grok message parser preserves a record's `timestamp` as `ts`,
   whereas Python's Grok message reader omits that field. This metadata change
   does not change that behavior. The new parity test excludes message `ts`

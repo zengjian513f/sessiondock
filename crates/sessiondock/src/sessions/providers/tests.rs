@@ -505,16 +505,19 @@ fn codex_abort_only_marks_the_last_progress_for_matching_turn() {
 }
 
 #[test]
-fn unsupported_media_and_scalar_content_still_fail_closed() {
-    // Batch 33 keeps every failure the reference adapter also cannot read
-    // (or that the plan lists as a deliberate safety delta); only unknown
-    // *kinds* became skips. Batch 35 moved broken Claude lineage (missing
-    // ancestor, cycle, declared leaf without a record) to warnings; see the
-    // batch-35 block at the end of this file.
-    for records in [
-        vec![
+fn unknown_media_is_nonfatal_but_python_unreadable_scalar_content_still_fails() {
+    let (meta, _events, error) = parse(
+        "claude",
+        Path::new("synthetic.jsonl"),
+        &rows(vec![
             json!({"type": "user", "message": {"content": [{"type": "image", "source": {"data": "synthetic"}}]}}),
-        ],
+        ]),
+        None,
+        "",
+    );
+    assert!(error.is_none(), "{error:?}");
+    assert!(meta.is_object());
+    for records in [
         vec![json!({"type": "user", "message": {"content": 42}})],
         vec![json!({"type": "user", "message": {"content": [{"type": "text", "text": 42}]}})],
     ] {
@@ -527,7 +530,7 @@ fn unsupported_media_and_scalar_content_still_fail_closed() {
         );
         assert!(error.is_some());
         assert!(events.is_empty());
-        assert!(meta.get("migration_warnings").is_none());
+        assert!(meta.is_object());
     }
 }
 
@@ -887,14 +890,8 @@ fn unknown_content_blocks_are_skipped_in_all_sources_but_invalid_media_still_fai
     assert_eq!(conversation(&messages), vec![("assistant", "answer")]);
     assert_eq!(messages.last().unwrap()["role"], "tool_result");
     assert_eq!(messages.last().unwrap()["text"], "out");
-    assert_eq!(
-        warnings(&meta),
-        vec![
-            "跳过未知的内容块类型：citation ×1",
-            "跳过未知的内容块类型：resource ×1"
-        ]
-    );
-    // Image-shaped blocks that do not decode are still hard failures.
+    assert_eq!(warnings(&meta), vec!["跳过未知的内容块类型：resource ×1"]);
+    // External image-shaped blocks follow the same non-fatal projection path.
     for source in ["claude", "codex", "grok"] {
         let bad = json!({"type": "image_url", "image_url": "https://example.invalid/x.png"});
         let records = rows(vec![match source {
@@ -904,10 +901,10 @@ fn unknown_content_blocks_are_skipped_in_all_sources_but_invalid_media_still_fai
             }
             _ => json!({"type": "user", "content": [bad]}),
         }]);
-        let (meta, events, error) = parse(source, Path::new("synthetic.jsonl"), &records, None, "");
-        assert!(error.is_some(), "{source}");
-        assert!(events.is_empty());
-        assert!(meta.get("migration_warnings").is_none());
+        let (meta, _events, error) =
+            parse(source, Path::new("synthetic.jsonl"), &records, None, "");
+        assert!(error.is_none(), "{source}: {error:?}");
+        assert!(meta.is_object());
     }
 }
 

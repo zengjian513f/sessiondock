@@ -1,5 +1,4 @@
-//! Explicit-directory, single-writer development metadata. No home discovery,
-//! Python migration, CLI calls, session-file mutations or implicit mkdir.
+//! SessionDock preferences with Python-style reads and atomic publication.
 
 mod disk;
 mod model;
@@ -11,14 +10,11 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, MAX_ATTACHMENTS, MetadataSnapshot, PendingRewind, SCHEMA_VERSION,
-    SpawnedBy, StopState, TimelinePin, fork_parent_uids,
+    ActivityStop, Attachment, MetadataSnapshot, PendingRewind, SCHEMA_VERSION, SpawnedBy,
+    StopState, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
-pub const LOCK_FILENAME: &str = ".metadata.lock";
-pub const MAX_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_RECORDS: usize = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct MetadataError {
@@ -40,7 +36,7 @@ impl MetadataError {
         Self::new(
             503,
             "metadata_commit_uncertain",
-            "元数据替换后的持久化状态不确定；已停止读写，请重启核验磁盘状态，勿盲目重试",
+            "元数据已替换，但持久化同步未完成；重新读取可确认当前状态",
         )
     }
 }
@@ -55,7 +51,6 @@ impl std::error::Error for MetadataError {}
 struct State {
     snapshot: Arc<MetadataSnapshot>,
     fingerprint: Option<String>,
-    uncertain: bool,
 }
 
 pub struct MetadataStore {
@@ -64,8 +59,7 @@ pub struct MetadataStore {
 }
 
 impl MetadataStore {
-    /// Requires an existing dedicated directory. Files from the Python state
-    /// directory, credentials, native sessions and unrelated entries are rejected.
+    /// Open the configured metadata directory, creating it when needed.
     pub fn open(directory: &Path) -> Result<Self, MetadataError> {
         let disk = disk::Disk::open(directory)?;
         let (snapshot, fingerprint) = disk.load()?;
@@ -74,7 +68,6 @@ impl MetadataStore {
             state: Mutex::new(State {
                 snapshot: Arc::new(snapshot),
                 fingerprint,
-                uncertain: false,
             }),
         })
     }
@@ -86,15 +79,14 @@ impl MetadataStore {
     }
 
     pub fn snapshot(&self) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        let state = self.state.lock().map_err(|_| {
-            MetadataError::new(
-                503,
-                "metadata_lock_poisoned",
-                "元数据内存状态不可用，请重启核验",
-            )
-        })?;
-        if state.uncertain {
-            return Err(MetadataError::uncertain());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (snapshot, fingerprint) = self.disk.load()?;
+        if state.fingerprint != fingerprint {
+            state.snapshot = Arc::new(snapshot);
+            state.fingerprint = fingerprint;
         }
         Ok(state.snapshot.clone())
     }
@@ -103,34 +95,27 @@ impl MetadataStore {
         &self,
         transform: impl FnOnce(&MetadataSnapshot) -> Result<MetadataSnapshot, MetadataError>,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        let mut state = self.state.lock().map_err(|_| {
-            MetadataError::new(
-                503,
-                "metadata_lock_poisoned",
-                "元数据内存状态不可用，请重启核验",
-            )
-        })?;
-        if state.uncertain {
-            return Err(MetadataError::uncertain());
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (snapshot, fingerprint) = self.disk.load()?;
+        if state.fingerprint != fingerprint {
+            state.snapshot = Arc::new(snapshot);
+            state.fingerprint = fingerprint;
         }
         let next = transform(&state.snapshot)?;
         if next.revision() == state.snapshot.revision() {
-            self.disk.verify(state.fingerprint.as_deref())?;
             return Ok(state.snapshot.clone());
         }
-        match self.disk.persist(&next, state.fingerprint.as_deref()) {
+        match self.disk.persist(&next) {
             Ok(fingerprint) => {
                 // Publish only after every durability step has succeeded.
                 state.snapshot = Arc::new(next);
                 state.fingerprint = Some(fingerprint);
                 Ok(state.snapshot.clone())
             }
-            Err(error) => {
-                if error.code == "metadata_commit_uncertain" {
-                    state.uncertain = true
-                }
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 

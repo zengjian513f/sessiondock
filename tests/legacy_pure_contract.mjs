@@ -234,6 +234,16 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.match(reason({HUB_MODE: true, Nodes: {list: [node], errors: new Map([['term', [{node_id: nid, error: 'down'}]]]), capabilities: {}}}, uid),
     /box 终端列表请求失败：down/);
   assert.match(reason({HUB_MODE: true, Nodes: {list: [node], errors: new Map(), capabilities: {}}}, uid), /控制台状态尚未返回/);
+  const hubReason = (resume, extra = {}) => reason({HUB_MODE: true,
+    T: {listLoaded: true, listError: '', enabled: true, ended: new Map(), pending: [], resume_sources: {}, sources: {codex: true}},
+    Nodes: {list: [node], errors: new Map(), capabilities: {[nid]: {enabled: true, sources: {codex: true}, resume_sources: {codex: resume}}}},
+    linkedTermSession: () => null, ...extra}, uid);
+  assert.equal(hubReason(true), '');
+  assert.match(hubReason(false), /不能按名称猜测关联/);
+  assert.match(hubReason(undefined), /不能按名称猜测关联/);
+  assert.match(hubReason(false, {T: {listLoaded: true, enabled: true, resume_sources: {codex: true}}}), /不能按名称猜测关联/);
+  assert.equal(hubReason(true, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {}}}), '');
+  assert.equal(hubReason(false, {T: {listLoaded: true, ended: new Map([[uid, {reason: '已退出'}]]), resume_sources: {codex: true}}}), '已退出');
   assert.equal(reason({T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]])}}, 'u'), '已退出');
   assert.equal(reason({AgentHubCapabilities: {config: {backend: 'python'}, allows: () => true},
     T: {listLoaded: true, enabled: true, ended: new Map([['u', {reason: '已退出'}]]), sources: {codex: true}},
@@ -345,4 +355,28 @@ test('liveStatusTitle says unknown without the live capability and tmux/direct w
   const python = fn('liveStatusTitle', {AgentHubCapabilities: {config: {}, allows: () => true}});
   assert.equal(python(false), '运行中');
   assert.equal(python(true), '运行于 tmux');
+});
+
+test('composer attachment paths follow the destination node, including Windows drives and UNC', () => {
+  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
+  const prompt = fn('buildComposerPrompt', {}, term);
+  for (const path of [String.raw`C:\work\agenthub_attachments\1\截图 a.png`,
+    'D:/work/agenthub_attachments/1/截图 a.png',
+    String.raw`\\server\share\agenthub_attachments\1\截图 a.png`,
+    String.raw`\\?\C:\work\agenthub_attachments\1\截图 a.png`,
+    '//server/share/agenthub_attachments/1/截图 a.png']) {
+    for (const relative_path of ['agenthub_attachments/1/截图 a.png',
+      String.raw`agenthub_attachments\1\截图 a.png`, String.raw`.\agenthub_attachments\1\截图 a.png`]) {
+      assert.equal(prompt('查看', [{path, relative_path}], []),
+        '查看\n\n附件1: ' + String.raw`.\agenthub_attachments\1\截图 a.png`);
+    }
+  }
+  assert.equal(prompt('', [{path_style: 'windows', relative_path: 'agenthub_attachments/2/a.json'}]),
+    '附件1: ' + String.raw`.\agenthub_attachments\2\a.json`);
+  assert.equal(prompt('', [{path_style: 'posix', path: '/work/a', relative_path: './agenthub_attachments/1/a b.txt'}]),
+    '附件1: ./agenthub_attachments/1/a b.txt');
+  assert.equal(prompt('', [{path: '/work/a', relative_path: String.raw`dir/a\b.txt`}]),
+    '附件1: ' + String.raw`./dir/a\b.txt`);
+  assert.equal(prompt('', [{path: String.raw`C:\work\a b.txt`}]), '附件1: ' + String.raw`C:\work\a b.txt`);
+  assert.equal(prompt('unchanged'), 'unchanged');
 });

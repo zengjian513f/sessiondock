@@ -538,7 +538,9 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
         try:
             for _ in range(150):
                 if process.poll() is not None:
-                    raise AssertionError(f"isolated Rust server exited early ({process.returncode})")
+                    log.seek(0)
+                    details = log.read(8192).decode("utf-8", "replace")
+                    raise AssertionError(f"isolated Rust server exited early ({process.returncode}): {details}")
                 try:
                     get_json(opener, base, "/api/health")
                     break

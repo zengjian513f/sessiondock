@@ -61,13 +61,18 @@ pub(crate) struct FrameReader<R> {
     reader: R,
     buffer: Vec<u8>,
     max_frame: usize,
-    frame_timeout: Duration,
+    frame_timeout: Option<Duration>,
     deadline: Option<Instant>,
     ended: bool,
 }
 
 impl<R: AsyncRead + Unpin> FrameReader<R> {
-    pub fn new(reader: R, buffer: Vec<u8>, max_frame: usize, frame_timeout: Duration) -> Self {
+    pub fn new(
+        reader: R,
+        buffer: Vec<u8>,
+        max_frame: usize,
+        frame_timeout: Option<Duration>,
+    ) -> Self {
         Self {
             reader,
             buffer,
@@ -78,7 +83,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
         }
     }
 
-    /// Idle output has no timeout. A partial frame has a fixed deadline, preserved
+    /// Idle output has no timeout. An optional partial-frame deadline is preserved
     /// across cancellation. `read` is cancellation-safe; partial data stays in self.
     pub async fn next(&mut self) -> Result<Option<HostEvent>> {
         if self.ended {
@@ -94,7 +99,7 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
     async fn next_inner(&mut self) -> Result<Option<HostEvent>> {
         loop {
             if !self.buffer.is_empty() && self.deadline.is_none() {
-                self.deadline = Some(Instant::now() + self.frame_timeout);
+                self.deadline = self.frame_timeout.map(|timeout| Instant::now() + timeout);
             }
             if self.buffer.len() >= HEADER_BYTES {
                 let kind = self.buffer[0];
@@ -164,12 +169,12 @@ impl<R: AsyncRead + Unpin> FrameReader<R> {
 pub(crate) struct FrameWriter<W> {
     writer: W,
     max_frame: usize,
-    write_timeout: Duration,
+    write_timeout: Option<Duration>,
     interrupted: bool,
 }
 
 impl<W: AsyncWrite + Unpin> FrameWriter<W> {
-    pub fn new(writer: W, max_frame: usize, write_timeout: Duration) -> Self {
+    pub fn new(writer: W, max_frame: usize, write_timeout: Option<Duration>) -> Self {
         Self {
             writer,
             max_frame,
@@ -201,22 +206,31 @@ impl<W: AsyncWrite + Unpin> FrameWriter<W> {
         // Cancellation may interrupt write_all in the middle of a frame. Leave
         // this set until the entire write completes, prohibiting corrupt reuse.
         self.interrupted = true;
-        timeout(self.write_timeout, async {
+        let write = async {
             self.writer.write_all(&frame).await?;
             self.writer.flush().await?;
             Ok::<_, io::Error>(())
-        })
-        .await
-        .map_err(|_| Error::Timeout)??;
+        };
+        if let Some(deadline) = self.write_timeout {
+            timeout(deadline, write)
+                .await
+                .map_err(|_| Error::Timeout)??;
+        } else {
+            write.await?;
+        }
         self.interrupted = false;
         Ok(())
     }
 
     pub async fn shutdown(&mut self) -> Result<()> {
         self.interrupted = true;
-        timeout(self.write_timeout, self.writer.shutdown())
-            .await
-            .map_err(|_| Error::Timeout)??;
+        if let Some(deadline) = self.write_timeout {
+            timeout(deadline, self.writer.shutdown())
+                .await
+                .map_err(|_| Error::Timeout)??;
+        } else {
+            self.writer.shutdown().await?;
+        }
         Ok(())
     }
 }
@@ -226,10 +240,33 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn json_line_bound_counts_escaping_and_rejects_before_writing() {
+        let limit = 4 * 1024 * 1024;
+        let text = "\"".repeat(1024 * 1024);
+        let request = serde_json::json!({"op":"send", "text":text});
+        let mut output = Vec::new();
+        send_json(&mut output, &request, limit).await.unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&output).unwrap(), request);
+
+        // Each decoded control byte needs six JSON bytes. 1 MiB decoded does
+        // not promise a valid host line, even though common text fits easily.
+        let request = serde_json::json!({"op":"send", "text":"\u{1}".repeat(1024 * 1024)});
+        let mut output = Vec::new();
+        assert!(matches!(
+            send_json(&mut output, &request, limit).await,
+            Err(Error::LineTooLarge)
+        ));
+        assert!(
+            output.is_empty(),
+            "no partial host command on an oversized line"
+        );
+    }
+
+    #[tokio::test]
     async fn cancelled_partial_write_cannot_be_followed_by_another_frame() {
         // One byte of capacity guarantees a partial header followed by Pending.
         let (stream, _silent_peer) = tokio::io::duplex(1);
-        let mut writer = FrameWriter::new(stream, 1024, Duration::from_secs(5));
+        let mut writer = FrameWriter::new(stream, 1024, Some(Duration::from_secs(5)));
         let result = timeout(Duration::from_millis(20), writer.data(b"original")).await;
         assert!(result.is_err());
         assert!(matches!(writer.data(b"later").await, Err(Error::Closed)));
@@ -238,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn write_timeout_is_ambiguous_and_poisoned_writer_is_not_reused() {
         let (stream, _silent_peer) = tokio::io::duplex(1);
-        let mut writer = FrameWriter::new(stream, 1024, Duration::from_millis(20));
+        let mut writer = FrameWriter::new(stream, 1024, Some(Duration::from_millis(20)));
         assert!(matches!(
             writer.data(b"original").await,
             Err(Error::Timeout)

@@ -100,7 +100,7 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST), "host_dir": str(host),
-            "cwd_roots": [str(work)], "adapters": [],
+            "adapters": [],
             "profiles": [{
                 "id": "codex-real-v1", "source": "codex", "executable": codex,
                 # Python's TUI arguments plus the cheapest model and an approval
@@ -112,7 +112,7 @@ def main():
                 "new_args": [],
                 "resume_args": ["resume", "{sid}"],
                 "env": cli_env(home, area),
-                "cwd_roots": [str(area)],
+
             }]}))
         for flag, directory in (("--initialize-lifecycle", ledger), ("--initialize-delivery", delivery)):
             with socket.socket() as occupied:

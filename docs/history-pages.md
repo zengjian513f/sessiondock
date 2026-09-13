@@ -71,9 +71,8 @@ the timeline is the reachable part) and content-block notes surface in the
 detail `meta.migration_warnings` when the session is opened, the row lists
 like Python's;
 unknown-kind warning counts on files larger than 512 KiB come from the head
-and tail only; per-file budgets (64 MiB record, 4 GiB file, 2,000,000 LF,
-1,000,000 records) are enforced on open, never by the list; there is no
-session count, total-byte or directory-entry cap.
+and tail only. There is no fixed file/record/checkpoint/event count quota on
+open, nor a session count, total-byte or directory-entry cap on the list.
 
 ## Opening a session: on-demand views
 
@@ -117,9 +116,9 @@ Per-session codes (they concern this one session; the list is unaffected):
 | --- | --- | --- |
 | 404 | uid unknown, agent not an `agent_items` entry, or an agent uid opened directly (`子代理必须通过所属主会话访问`) | refresh the list |
 | 409 | ambiguous native id among indexed files (`父线程 ID 在已配置索引中存在歧义`, duplicate Codex agent id), Claude sidecar `sessionId` ≠ owner's | show the reason; it clears when the duplicate goes away |
-| 501 `unsupported_history` | the projection failed closed: corrupt line, scalar `content`, missing Claude ancestor/cycle, Codex parent unindexed / subagent file / bad `history_base`, record-count budget | show the reason |
+| 501 `unsupported_history` | the projection failed closed: corrupt line, scalar `content`, missing Claude ancestor/cycle, Codex parent unindexed / subagent file / bad `history_base` | show the reason |
 | 503 | the file (or a parent prefix) changed while it was being read (`会话在读取期间变化，请重试`) | retry; the next open extends from the new stamp |
-| 413 | this file exceeds a physical work budget (4 GiB file, 64 MiB line, 2,000,000 LF, 1 GiB view, 8 MiB page) | not retryable; the session is pathological |
+| 413 | one decoded image exceeds Python's 32 MiB media limit | inspect that image; ordinary history has no fixed file/record/page-size rejection |
 
 An open within the index TTL that fails with 404/409/501/503 triggers one
 forced rescan and retry, so SSE-only clients discover new parent/agent files
@@ -129,11 +128,10 @@ the file grew, and one event per changed view revision (row metadata changes
 count as a revision, so an append can produce a message event followed by a
 metadata-only event once the list row catches up).
 
-Budgets (the table in [read-model.md](read-model.md#物理工作预算防病态文件不是功能上限)
-and the `budgets` block at the top of `sessions/mod.rs`): 64 MiB per record,
-4 GiB per file and per inherited prefix chain, 2,000,000 LF checkpoints,
-1,000,000 records / 2,000,000 events per view, 1 GiB serialized messages per
-view, a 64-view / 2 GiB LRU, 256 MiB / 16 MiB sidecar summaries.
+History capacity follows the actual stamped input, without service file,
+record, index or projected-message byte quotas. The default view LRU uses
+16 entries / 128 MiB accounting and the AST cache uses 64 MiB; these affect
+retention, not whether history can be read. See [read-model.md](read-model.md).
 
 ## Finite history pages (batch 14)
 
@@ -196,12 +194,12 @@ bounded reload. It does not silently clear history or request unbounded history
 after a stale, evicted or expired grant. Responses from an old view/reset are
 discarded. Explicit reload must also avoid overwriting concurrent live updates.
 
-### Page budgets and remaining limits
+### Page grouping targets
 
 - Each page selects at most `SESSIONDOCK_HISTORY_PAGE_EVENTS` events (default
   2000, 1–10000; batch 44 WP-A, was a fixed 200), 128 typed native image
   references and 24 MiB estimated embedded compressed-image bytes — so a
-  page is “as much as fits in 8 MiB”, and the 51 MB / 7,426-message real
+  page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
   windows use the same media/byte budget and at most 600 events.
 - The legacy gap button chains pages: one click keeps requesting the next
@@ -210,11 +208,12 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   still passes the same validation and the same view/cursor checks; the
   chain stops on any failure and reports it on the fresh gap. Browser tests
   set `HISTORY_PAGE_CHAIN=false` to drive one page per click.
-- Serialized JSON responses are at most 8 MiB. Selection reserves 64 KiB for
-  metadata/envelopes and a conservative per-image descriptor allowance; the
-  fully projected response is checked again. A later oversized event does not
-  invalidate already selected progress. A page starting with an unsplittable
-  oversized event explicitly returns 413, never an empty continuation loop.
+- 8 MiB JSON is a soft page target. Selection reserves 64 KiB for metadata
+  and a conservative per-image descriptor allowance. A later oversized event
+  ends the current page without discarding progress; a page starting with it
+  returns that one event even above the JSON or image-byte target. The next
+  cursor advances normally, so large messages cannot strand the history gap.
+  Final response serialization validates structure without restoring a size cap.
 - Page requests/responses share an independent permit pool (`Pools::responses`,
   2× the read workers; queued within the bounded admission wait, then 503
   `history_page_busy`). A cancelled request keeps its permit until its
@@ -222,17 +221,17 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   holds its permit until release. This is in addition to the existing shared
   blocking-reader admission.
 - Complete current-view file-reference authority remains independent of the
-  selected display page. Existing media authorization and blob budgets apply.
+  selected display page. Existing media authorization and blob-cache eviction
+  apply.
 
 Batch 15 adds lazy media materialization to the selected page; see [media.md](media.md).
 Batch 20 shares this grant store with per-message media continuation
-(`media_more` / `GET /api/messages/{uid}/media-page`): a message inlines at most
-16 typed images and the window/page budgets count only that prefix.
-Pagination still does **not** make parsing incremental by native span,
-split a single oversized text message, or enable 32 MiB inline images. The
-per-record/file/view and per-message image limits remain. An explicit
-non-windowed messages request retains the old bounded-by-view behavior; the
-capability-gated legacy gap button no longer uses it. See
+(`media_more` / `GET /api/messages/{uid}/media-page`): a message initially
+displays at most 16 typed images and continuation exposes the rest. Page byte,
+image and event targets only group transport responses; they do not reject a
+valid record or cap a message's underlying media. An explicit non-windowed
+messages request retains the existing view behavior; the capability-gated
+legacy gap button no longer uses it. See
 [remaining media design](media-pagination-design.md).
 
 ## Isolated checks
