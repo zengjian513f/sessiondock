@@ -1,14 +1,16 @@
 # SessionDock
 
-独立演进的 Rust 后端，第一阶段接现有 legacy 前端。当前已实现受限的原生
-会话只读链路，**不是完整功能替代品，不兼容旧 Hub 节点协议**。
-Vue 3 / TypeScript 重构留到第二阶段，已有 `web/` 骨架暂不扩展。
+独立演进的 Rust 会话服务，包含本地节点、多机 Hub、受管终端、可靠发送、文件与
+媒体能力。当前生产前端位于 `legacy-web/`；`web/` 中保留的 Vue 3 / TypeScript
+骨架是否继续迁移，作为独立产品决策记录在 `TODO.md`。
 
-完整代码评审、路线和验收状态见
-[BACKEND_MIRGRATION_PLAN.md](BACKEND_MIRGRATION_PLAN.md)；全部合同文档索引见
-[docs/README.md](docs/README.md)，术语见 [docs/glossary.md](docs/glossary.md)，
-模块地图见 [docs/module-map.md](docs/module-map.md)，能力开关见
-[docs/capabilities.md](docs/capabilities.md)。
+未完成工作见 [TODO.md](TODO.md)；全部当前合同文档索引见
+[docs/README.md](docs/README.md)，路由清单见
+[docs/route-ledger.md](docs/route-ledger.md)，术语见
+[docs/glossary.md](docs/glossary.md)，模块地图见
+[docs/module-map.md](docs/module-map.md)，能力开关见
+[docs/capabilities.md](docs/capabilities.md)。Python → Rust 的批次过程仅保留在
+`MIGRATION_HISTORY.md`，不作为当前设计或状态来源。
 
 ## 目录
 
@@ -22,7 +24,7 @@ web/                 第二阶段 Vue / TypeScript 骨架，当前非默认
 reference/
   legacy-web/        原前端的冻结快照，仅作迁移参考
 tests/               legacy 契约、隔离浏览器和可选 Python fixture 差分
-docs/                架构边界和迁移记录
+docs/                当前架构、协议、运维和验证合同
 ```
 
 ## 开发

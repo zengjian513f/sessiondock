@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Summarize migration progress from BACKEND_MIRGRATION_PLAN.md.
+"""Summarize the archived Python-to-Rust migration history.
 
 Reads section 6 milestone checkboxes (M0–M8 and 第二阶段) and section 7
 batch headings. Checkboxes outside section 6 are ignored. Default plan path
 is resolved from this script, not the process cwd.
 """
 # run_validation: skip
+# Historical utility only; current work lives in TODO.md.
 from __future__ import annotations
 
 import argparse
@@ -15,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PLAN = ROOT / "BACKEND_MIRGRATION_PLAN.md"
+DEFAULT_PLAN = ROOT / "MIGRATION_HISTORY.md"
 CHECK_RE = re.compile(r"^-\s+\[([ xX])\]\s*(.*)$")
 HEADING_RE = re.compile(r"^###\s+(.+?)\s*$")
 BATCH_RE = re.compile(r"^第[一二三四五六七八九十百零〇两\d]+批")
@@ -144,7 +145,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--plan", type=Path, default=DEFAULT_PLAN,
-        help="plan markdown (default: repo-root BACKEND_MIRGRATION_PLAN.md)",
+        help="historical migration markdown (default: repo-root MIGRATION_HISTORY.md)",
     )
     args = parser.parse_args()
     plan = args.plan if args.plan.is_absolute() else Path.cwd() / args.plan

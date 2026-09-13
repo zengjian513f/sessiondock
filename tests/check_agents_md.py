@@ -24,7 +24,7 @@ DOCS = ROOT / "docs"
 HUBS = (
     ROOT / "README.md",
     AGENTS,
-    ROOT / "BACKEND_MIRGRATION_PLAN.md",
+    ROOT / "TODO.md",
     DOCS / "README.md",
 )
 TEST_RE = re.compile(r"tests/[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:py|mjs|rs)")

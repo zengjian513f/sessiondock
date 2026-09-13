@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Cross-check numeric budgets in docs against Rust source constants.
 
-Uses budget_table.scan() then scans docs/*.md, README.md, AGENTS.md and
-BACKEND_MIRGRATION_PLAN.md. Reports unmatched figures and uncited constants.
+Uses budget_table.scan() then scans docs/*.md, README.md, AGENTS.md and TODO.md.
+Reports unmatched figures and uncited constants; archived migration prose is excluded.
 Exit 0 unless --strict.
 """
 # run_validation: skip
@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from budget_table import HELPERS, ROOT, scan  # noqa: E402
 
-DOCS = ("README.md", "AGENTS.md", "BACKEND_MIRGRATION_PLAN.md")
+DOCS = ("README.md", "AGENTS.md", "TODO.md")
 FIGURE_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*(MiB|KiB|GiB|MB|KB|ms|s|秒|项|条|张|层|个|events?|items?|grants?)"
     r"(?![A-Za-z])")

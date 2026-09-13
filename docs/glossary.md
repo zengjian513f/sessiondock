@@ -10,7 +10,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Identifiers
 
-**UID.** Local list key `source:sha1(path)[:16]`; Hub node namespaces must not mix UUIDs. It is an opaque inventory key; host metadata associates it with its source. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**UID.** Local list key `source:sha1(path)[:16]`; Hub node namespaces must not mix UUIDs. It is an opaque inventory key; host metadata associates it with its source. See [history pages](history-pages.md).
 
 **SID.** Native session id from the record (`sessionId` / `session_meta.payload.id`), listed beside `uid/source/sid`. Display `sid`, filenames and cursor hashes are not native identity. See [native scope](delivery-scope.md#trusted-native-scope-selection).
 
@@ -32,17 +32,17 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 **Message.** Public JSON built from those events for HTTP/SSE. Codex/Grok may group a content array into one message; Claude can emit one visible event per block. See [media grouping](media.md#recognition-and-grouping).
 
-**counted:false.** Excludes an event from `message_total`. Status records form activity, not body; page indices still include `counted:false`. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**counted:false.** Excludes an event from `message_total`. Status records form activity, not body; page indices still include `counted:false`. See [history pages](history-pages.md).
 
 ## Cursors
 
-**Byte cursor (`start`/`end`/`head`).** UTF-8 offsets in the selected leaf file, not message indexes. Public `end` is that file's committed EOF; `head` lives on `version`. Unfinished JSONL lines are not consumed. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**Byte cursor (`start`/`end`/`head`).** UTF-8 offsets in the selected leaf file, not message indexes. Public `end` is that file's committed EOF; `head` lives on `version`. Unfinished JSONL lines are not consumed. See [history pages](history-pages.md).
 
 **Semantic anchor.** Cursor field binding view identity, the fixed inherited prefix and already displayed events (`rs-m1-2` / `rs-m2-1`). A branch switch or parent-prefix rewrite resets even on a leaf-only append. See [read model](read-model.md).
 
 **Checkpoint.** Physical LF offset/digest (`RawIndex`) and the live byte/semantic snapshot a grant pins. Gap-page tokens stay separate from the live append checkpoint. See [physical input](native-input.md#native-input-and-structural-scanning).
 
-**Reset.** Required on truncate, replace, same-size rewrite, or semantic fork/prefix mismatch. SSE then sends a bounded window, not an unbounded replay. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**Reset.** Required on truncate, replace, same-size rewrite, or semantic fork/prefix mismatch. SSE then sends a bounded window, not an unbounded replay. See [history pages](history-pages.md).
 
 **Append.** Ordinary new leaf bytes: incremental messages, old page grants and unchanged native spans may be kept. Not an incremental timeline parser; last-prompt/abort can still rewrite older events and reset. See [append cache](append-cache.md#semantics-deliberately-recalculated).
 
@@ -77,19 +77,19 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Topology
 
-**Fixed parent prefix (`history_base`).** Codex `{thread_id, end_byte_offset}` cut: only `[0, cut)` is inherited, reparsed on a complete JSONL boundary. Missing/inconsistent `history_base` on a fork is unsupported; the leaf byte cursor stays separate. See [§3.2](../BACKEND_MIRGRATION_PLAN.md#32-会话消息与游标).
+**Fixed parent prefix (`history_base`).** Codex `{thread_id, end_byte_offset}` cut: only `[0, cut)` is inherited, reparsed on a complete JSONL boundary. Missing/inconsistent `history_base` on a fork is unsupported; the leaf byte cursor stays separate. See [history pages](history-pages.md).
 
-**Fork.** A distinct native session that inherits a parent prefix. Forks keep their own SID/UID; they are not subagents. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
+**Fork.** A distinct native session that inherits a parent prefix. Forks keep their own SID/UID; they are not subagents. See [history pages](history-pages.md).
 
 **Subagent.** Child agent owned through inventory (`?agent=`), not by joining paths. `forked_from_id` on a subagent is ownership, not necessarily history; subagents cannot be the main native bind. See [native scope](delivery-scope.md#trusted-native-scope-selection).
 
-**Sidechain.** Claude side branch in the main view; it does not choose the main leaf. Compact/rewind/sidechain chains are covered by advanced parity, not by guessing hidden Python trees. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
+**Sidechain.** Claude side branch in the main view; it does not choose the main leaf. Compact/rewind/sidechain chains are covered by advanced parity, not by guessing hidden Python trees. See [read model](read-model.md).
 
-**Compaction.** Claude compact events that rejoin across the tree and hide finished abandoned branches (two compact forms). Codex also filters compacted/internal context. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
+**Compaction.** Claude compact events that rejoin across the tree and hide finished abandoned branches (two compact forms). Codex also filters compacted/internal context. See [read model](read-model.md).
 
-**Rewind.** Native branch signal already on disk; live CLI-screen rewind and durable pin are not opened as writes. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [migration batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
+**Rewind.** Native branch signal already on disk; live CLI-screen rewind and durable pin are not opened as writes. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [history pages](history-pages.md).
 
-**Last-prompt.** Claude record that cuts the active leaf. An append-only last-prompt can withdraw older displayed events and reset. See [batch 2](../BACKEND_MIRGRATION_PLAN.md#第二批已实现的链路).
+**Last-prompt.** Claude record that cuts the active leaf. An append-only last-prompt can withdraw older displayed events and reset. See [read model](read-model.md).
 
 ## Host and terminals
 
@@ -131,7 +131,7 @@ Contract terms from repository docs and code comments only; not a product spec.
 
 ## Flags and parity
 
-**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [§3.1](../BACKEND_MIRGRATION_PLAN.md#31-浏览器与静态资源).
+**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
 
 **DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [media parity](media-parity.md).
 

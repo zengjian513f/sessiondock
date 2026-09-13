@@ -2,9 +2,9 @@
 
 How this repository times native-history and native-media HTTP work, and how
 results must be reported. These scripts emit **observations**, not pass/fail
-thresholds; cursor/rewrite/image assertions are the only gates. Plan
-[§5](../BACKEND_MIRGRATION_PLAN.md#5-性能评审代码证据与待测项) is static
-analysis, not a production conclusion. The smaller [read smoke](performance.md)
+thresholds; cursor/rewrite/image assertions are the only gates. Historical
+static analysis is not a production conclusion; current measurements live in
+[performance.md](performance.md). The smaller read smoke described there
 (`tests/read_benchmark.py`) is a separate list/window/delta check and is not
 the native-history comparison.
 

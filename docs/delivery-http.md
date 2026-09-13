@@ -30,4 +30,4 @@ CLI acceptance.
 
 Synthetic HTTP and browser suites cover sends, retry identity, attachments,
 parent/child scopes, confirmation, outbox projection, cancellation and shutdown.
-The migration ledger records the consolidated validation and deployment result.
+The release record carries the consolidated validation and deployment result.

@@ -26,7 +26,7 @@ The request ID identifies a submission and its full payload. An identical retry 
 
 ## Validation
 
-Use the consolidated workspace, HTTP, differential and browser suites after implementation is complete. Ordinary suites use synthetic histories and fake CLIs. Real CLI tests use isolated configuration and the models required by AGENTS.md. Record current results in the migration ledger.
+Use the consolidated workspace, HTTP, differential and browser suites after implementation is complete. Ordinary suites use synthetic histories and fake CLIs. Real CLI tests use isolated configuration and the models required by AGENTS.md. Record current results in the release or change record; put only unfinished follow-up work in `TODO.md`.
 
 ## Claude: independent pure queue/turn domain
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-check HTTP route inventory from the Rust router, plan ledger, and legacy-web."""
+"""Cross-check HTTP route inventory from the Rust router, route ledger, and legacy-web."""
 # run_validation: skip
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ ROUTER = ROOT / "crates/sessiondock/src/api/mod.rs"
 # hub serves is proxied to one node, so only these need cross-checking.
 HUB_ROUTER = ROOT / "crates/sessiondock/src/api/hub.rs"
 HUB_ROUTE_RE = re.compile(r'\(\s*"(?:GET|POST|DELETE|ANY)"\s*,\s*"([^"]+)"\s*\)')
-PLAN = ROOT / "BACKEND_MIRGRATION_PLAN.md"
+LEDGER = ROOT / "docs/route-ledger.md"
 LEGACY = ROOT / "legacy-web"
 UID_EXPR = "${encodeURIComponent(uid)}"
 ROUTE_RE = re.compile(r'\.route\(\s*"([^"]+)"\s*,\s*(?:get|post|put|delete|patch|any)\s*\(')
 LIST_RE = re.compile(r"for path in \[([^\]]+)\]")
-SECTION_RE = re.compile(r"^## 4\. 路由迁移账本\n(.*?)(?=^## )", re.M | re.S)
+SECTION_RE = re.compile(r"^# HTTP route ledger\n(.*)", re.M | re.S)
 TICK_RE = re.compile(r"`(/api/[^`]+)`")
 
 
@@ -81,7 +81,7 @@ def hub_inventory(text: str) -> set[str]:
     return routes
 
 
-def plan_inventory(text: str) -> dict[str, tuple[str, str]]:
+def ledger_inventory(text: str) -> dict[str, tuple[str, str]]:
     section = SECTION_RE.search(text)
     found: dict[str, tuple[str, str]] = {}
     if not section:
@@ -90,12 +90,12 @@ def plan_inventory(text: str) -> dict[str, tuple[str, str]]:
         if not line.startswith("|"):
             continue
         cols = [col.strip() for col in line.strip().strip("|").split("|")]
-        if len(cols) < 3 or cols[0] in {"路由组", "---"} or cols[0].startswith("---"):
+        if len(cols) < 3 or cols[0] in {"Area", "---"} or cols[0].startswith("---"):
             continue
-        group, iface, stage = cols[0], cols[1], cols[-1]
+        group, iface, status = cols[0], cols[1], cols[-1]
         for token in TICK_RE.findall(iface):
             path = api_path(token)
-            found.setdefault(path, (group, stage))
+            found.setdefault(path, (group, status))
     return found
 
 
@@ -158,35 +158,35 @@ def find_row(rows: list[dict], path: str, loose: bool = False) -> dict | None:
 def build() -> dict:
     rust = rust_inventory(ROUTER.read_text(encoding="utf-8"))
     hub = hub_inventory(HUB_ROUTER.read_text(encoding="utf-8")) if HUB_ROUTER.exists() else set()
-    plan = plan_inventory(PLAN.read_text(encoding="utf-8"))
+    ledger = ledger_inventory(LEDGER.read_text(encoding="utf-8"))
     legacy = legacy_uses(LEGACY)
     rows: list[dict] = []
     for path, status in rust.items():
         rows.append(
-            {"route": path, "rust": status, "plan_stage": "-", "group": "-", "legacy": []}
+            {"route": path, "rust": status, "ledger_status": "-", "group": "-", "legacy": []}
         )
     # Hub-only routes (settings-page writes, aggregates the node never serves).
     for path in sorted(hub - set(rust)):
-        rows.append({"route": path, "rust": "hub", "plan_stage": "M8", "group": "Hub", "legacy": []})
-    for path, (group, stage) in plan.items():
+        rows.append({"route": path, "rust": "hub", "ledger_status": "hub mode", "group": "Hub", "legacy": []})
+    for path, (group, status) in ledger.items():
         row = find_row(rows, path, loose=False)
         if row is None:
-            row = {"route": path, "rust": "missing", "plan_stage": "-", "group": "-", "legacy": []}
+            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "legacy": []}
             rows.append(row)
-        row["plan_stage"] = stage
+        row["ledger_status"] = status
         row["group"] = group
     for path, files in legacy.items():
         row = find_row(rows, path, loose=True)
         if row is None:
-            row = {"route": path, "rust": "missing", "plan_stage": "-", "group": "-", "legacy": []}
+            row = {"route": path, "rust": "missing", "ledger_status": "-", "group": "-", "legacy": []}
             rows.append(row)
         row["legacy"] = sorted(set(row["legacy"]) | files)
     rows.sort(key=lambda row: row["route"])
     summary = {
         "implemented": sum(row["rust"] == "implemented" for row in rows),
         "501": sum(row["rust"] == "501" for row in rows),
-        "in plan but absent from router": sum(
-            row["plan_stage"] != "-" and row["rust"] == "missing" for row in rows
+        "in ledger but absent from router": sum(
+            row["ledger_status"] != "-" and row["rust"] == "missing" for row in rows
         ),
         "used by legacy but absent from router": sum(
             bool(row["legacy"]) and row["rust"] == "missing" for row in rows
@@ -197,17 +197,17 @@ def build() -> dict:
 
 def render_table(data: dict) -> str:
     lines = [
-        "| Route | Rust | Plan stage | Used by legacy |",
+        "| Route | Rust | Ledger status | Used by legacy |",
         "| --- | --- | --- | --- |",
     ]
     for row in data["routes"]:
         files = ", ".join(row["legacy"]) if row["legacy"] else "-"
-        lines.append(f"| {row['route']} | {row['rust']} | {row['plan_stage']} | {files} |")
+        lines.append(f"| {row['route']} | {row['rust']} | {row['ledger_status']} | {files} |")
     summary = data["summary"]
     lines.append("")
     lines.append(f"implemented: {summary['implemented']}")
     lines.append(f"501: {summary['501']}")
-    lines.append(f"in plan but absent from router: {summary['in plan but absent from router']}")
+    lines.append(f"in ledger but absent from router: {summary['in ledger but absent from router']}")
     lines.append(
         "used by legacy but absent from router: "
         f"{summary['used by legacy but absent from router']}"
