@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="agenthub-build" content="__AGENTHUB_ASSET_VERSION__">
+<meta name="agenthub-mode" content="__AGENTHUB_MODE__">
+<meta name="theme-color" content="#245de8">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="SessionDock">
+<title>__AGENTHUB_HOSTNAME__ · 会话管理</title>
+<script defer src="capabilities.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script>
+  // 在样式表加载前确定明暗，避免刷新时先闪出另一套颜色。
+  (() => {
+    let choice = 'system';
+    let namespace = '';
+    try {
+      const caps = JSON.parse(document.querySelector('meta[name="agenthub-capabilities"]')?.content || '{}');
+      namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
+        ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
+    } catch {}
+    const python = document.querySelector('meta[name="agenthub-mode"]')?.content === 'hub'
+      ? `agenthub.hub.${location.pathname}.` : 'agenthub.';
+    const prefix = namespace || python;
+    try {
+      // capabilities.js has not loaded yet: same one-time fallback to the
+      // Python key as AgentHubCapabilities.stored (batch 44 WP-F).
+      let saved = localStorage.getItem(prefix + 'theme');
+      if (saved === null && namespace && python !== prefix) {
+        saved = localStorage.getItem(python + 'theme');
+        if (saved !== null) localStorage.setItem(prefix + 'theme', saved);
+      }
+      choice = JSON.parse(saved) || 'system';
+    } catch {}
+    document.documentElement.dataset.theme = choice === 'system'
+      ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : choice;
+  })();
+</script>
+<link rel="stylesheet" href="typography.css?v=__AGENTHUB_ASSET_VERSION__">
+<script defer src="typography.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<link rel="stylesheet" href="vendor/xterm.css">
+<link rel="stylesheet" href="vendor/katex/katex.min.css">
+<link rel="preload" href="fonts/UbuntuSansMono.ttf" as="font" type="font/ttf" crossorigin>
+<link rel="stylesheet" href="style.css?v=__AGENTHUB_ASSET_VERSION__">
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<script defer src="pwa-install.js?v=__AGENTHUB_ASSET_VERSION__"
+  data-app-name="SessionDock" data-storage-key="sessiondock.pwa-install-dismissed"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🗂</text></svg>">
+</head>
+<body>
+<svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+  <!-- Transparent, single-colour brand marks. Keep their native 24px viewBox so
+       dark/light themes only need to change currentColor, never the artwork. -->
+  <symbol id="i-claude" viewBox="0 0 24 24">
+    <path fill="currentColor" d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/>
+  </symbol>
+  <symbol id="i-codex" viewBox="0 0 24 24">
+    <path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/>
+  </symbol>
+  <symbol id="i-grok" viewBox="0 0 24 24">
+    <path fill="currentColor" fill-rule="evenodd" d="M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815"/>
+  </symbol>
+  <symbol id="i-terminal" viewBox="0 0 16 16">
+    <rect x="1.5" y="2" width="13" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/>
+    <path d="M4 5l2.3 2L4 9m4 1h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 16 16">
+    <path d="M2.5 4h11M6 4V2h4v2m2 0l-.6 9.5h-6.8L4 4m2.5 2.5v4.5m3-4.5v4.5" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-power" viewBox="0 0 16 16">
+    <path d="M8 1.5v6M4.2 3.8a5.5 5.5 0 107.6 0" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-eye-off" viewBox="0 0 16 16">
+    <path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+    <path d="m2 2 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-fork" viewBox="0 0 16 16">
+    <circle cx="4" cy="3.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <circle cx="4" cy="12.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <circle cx="12" cy="5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <path d="M4 5.2v5.6M12 6.7c0 2.6-2.6 3.3-5.4 3.6-1.3.1-2.1.4-2.6 1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-tree" viewBox="0 0 16 16">
+    <rect x="5.5" y="1.5" width="5" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <rect x="1.5" y="11" width="5" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <rect x="9.5" y="11" width="5" height="3.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.3"/>
+    <path d="M8 5v3M4 11V8h8v3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16">
+    <path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16">
+    <path d="M13.5 5.8A5.8 5.8 0 003 4.1L2 6.5h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M2.5 10.2A5.8 5.8 0 0013 11.9l1-2.4h-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-star" viewBox="0 0 16 16">
+    <path d="M8 1.5l2.02 4.1 4.53.66-3.28 3.19.77 4.51L8 11.84l-4.04 2.12.77-4.51-3.28-3.19 4.53-.66z"
+      fill="none" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-star-filled" viewBox="0 0 16 16">
+    <path d="M8 1.5l2.02 4.1 4.53.66-3.28 3.19.77 4.51L8 11.84l-4.04 2.12.77-4.51-3.28-3.19 4.53-.66z"
+      fill="currentColor"/>
+  </symbol>
+  <symbol id="i-chat" viewBox="0 0 16 16">
+    <path d="M2 2.5h12v8.3H7l-3.7 2.7v-2.7H2z" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/>
+  </symbol>
+  <symbol id="i-process" viewBox="0 0 16 16">
+    <path d="M4 3.2v9.6M7 3h6M7 8h4M7 13h6" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+    <circle cx="4" cy="3" r="1.3" fill="currentColor"/>
+    <circle cx="4" cy="8" r="1.3" fill="currentColor"/>
+    <circle cx="4" cy="13" r="1.3" fill="currentColor"/>
+  </symbol>
+  <symbol id="i-settings" viewBox="0 0 16 16">
+    <path d="M6.8 1.7h2.4l.5 1.7 1.2.7 1.7-.4 1.2 2.1-1.2 1.3v1.4l1.2 1.3-1.2 2.1-1.7-.4-1.2.7-.5 1.7H6.8l-.5-1.7-1.2-.7-1.7.4-1.2-2.1 1.2-1.3V7.1L2.2 5.8l1.2-2.1 1.7.4 1.2-.7z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+    <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  </symbol>
+  <symbol id="i-bug" viewBox="0 0 16 16">
+    <path d="M5.1 4.3h5.8c1 0 1.8.8 1.8 1.8v3.2A4.7 4.7 0 018 14a4.7 4.7 0 01-4.7-4.7V6.1c0-1 .8-1.8 1.8-1.8Z" fill="none" stroke="currentColor" stroke-width="1.25"/>
+    <path d="M6 4.2V3a2 2 0 014 0v1.2M8 6v7.5M3.3 7H1.5m1.8 3H1.5m11.2-3h1.8m-1.8 3h1.8" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+  </symbol>
+  <symbol id="i-sidebar" viewBox="0 0 16 16">
+    <rect x="1.5" y="2" width="13" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.35"/>
+    <path d="M5.4 2.5v11" fill="none" stroke="currentColor" stroke-width="1.35"/>
+  </symbol>
+</svg>
+
+<div id="app">
+  <header>
+    <div class="brand">
+      <span class="brand-name" title="__AGENTHUB_HOSTNAME__">__AGENTHUB_HOSTNAME__</span>
+      <button class="btn" id="side-toggle" title="收起会话列表" aria-label="收起会话列表" aria-expanded="true">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-sidebar"/></svg>
+      </button>
+      <div class="seg" id="session-scope" role="radiogroup" aria-label="会话范围">
+        <button type="button" id="livecount" role="radio" aria-checked="false" tabindex="-1" title="只显示活跃会话"><b id="session-active">0</b></button>
+        <button type="button" id="allcount" role="radio" aria-checked="true" tabindex="0" class="on" title="显示全部会话"><b id="session-total">0</b></button>
+      </div>
+    </div>
+    <div class="header-filters">
+      <div class="node-picker" id="node-picker" hidden>
+        <button type="button" class="btn node-pick" id="node-pick" title="选择机器" aria-label="选择机器"
+                aria-haspopup="true" aria-expanded="false" aria-controls="node-chips">
+          <span class="node-pick-label"></span><i aria-hidden="true">⌄</i>
+        </button>
+        <div class="seg" id="node-chips" role="group" aria-label="机器筛选"></div>
+      </div>
+      <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
+      <div class="seg" id="view" role="group" aria-label="列表视图">
+        <button data-v="tree" class="on" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
+        <button data-v="date" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
+      </div>
+      <div class="seg" id="nest">
+        <button type="button" id="nest-toggle" aria-pressed="false" title="分层显示：子代理和由会话发起的会话缩进在发起者之下" aria-label="分层显示"><svg class="ui-icon" aria-hidden="true"><use href="#i-tree"/></svg><span class="mobile-label">分层</span></button>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn hidden" id="new-session" title="新建会话" aria-label="新建会话">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
+      </button>
+      <button class="btn" id="reload" title="重新扫描磁盘" aria-label="重新扫描磁盘">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-refresh"/></svg>
+      </button>
+      <button class="btn" id="trash" title="回收站" aria-label="回收站">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-trash"/></svg>
+      </button>
+      <button class="btn" id="report-bug" data-report-bug
+        title="报告问题" aria-label="报告问题">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-bug"/></svg>
+      </button>
+      <button class="btn" id="settings" title="设置" aria-label="设置">
+        <svg class="ui-icon" aria-hidden="true"><use href="#i-settings"/></svg>
+      </button>
+      <div class="header-more" id="header-more" hidden>
+        <button type="button" class="btn" id="header-more-btn" title="更多操作" aria-label="更多操作"
+                aria-haspopup="menu" aria-expanded="false" aria-controls="header-menu"><span aria-hidden="true">⋯</span></button>
+        <div id="header-menu" class="header-menu" hidden role="menu" aria-label="更多操作"></div>
+      </div>
+    </div>
+  </header>
+  <div id="backend-notice" hidden role="status"></div>
+  <div id="node-notice" hidden role="status"></div>
+  <div id="prog"><div class="bar"></div><span class="txt"></span></div>
+  <main>
+    <div id="left">
+      <div class="side-search">
+        <div class="qbox">
+          <input id="q" autocomplete="off" placeholder="搜索标题…  Enter 搜索对话正文">
+          <div class="opts" id="opts">
+            <button data-o="case" title="大小写敏感">Aa</button>
+            <button data-o="word" title="全词匹配">ab|</button>
+            <button data-o="regex" title="正则表达式">.*</button>
+          </div>
+        </div>
+        <div id="stat" role="status">加载中…</div>
+        <div class="side-tools" id="side-tools" hidden>
+          <span id="side-picked"></span>
+          <button type="button" class="btn" id="side-pick-all">全选</button>
+          <button type="button" class="btn danger" id="side-pick-delete" disabled>删除</button>
+          <button type="button" class="btn" id="side-pick-cancel">取消</button>
+        </div>
+        <div id="search-progress" role="status" aria-live="polite">
+          <div class="search-progress-head"><span>全文搜索</span><b>准备中…</b><button type="button" class="btn" id="search-cancel">取消</button></div>
+          <div class="search-progress-track" role="progressbar" aria-label="会话扫描进度" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+          <div class="search-progress-nodes"></div>
+        </div>
+      </div>
+      <div id="side"><div class="spin">正在扫描会话…</div></div>
+    </div>
+    <div id="drag" title="拖动调整宽度，双击复位"></div>
+      <div id="right">
+      <div id="detail"><div class="empty">从左侧选择一个会话</div></div>
+      <div id="composer" class="hidden">
+        <div id="compose-items" aria-live="polite"></div>
+        <div class="composer-row">
+          <div class="attach-picker">
+            <button class="btn" id="cadd" type="button" title="添加附件或引用" aria-label="添加附件或引用" aria-expanded="false">
+              <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg>
+            </button>
+            <div class="attach-menu hidden" id="attach-menu" role="menu">
+              <button type="button" data-attach="image" role="menuitem"><span>▧</span>图片</button>
+              <button type="button" data-attach="video" role="menuitem"><span>▶</span>视频</button>
+              <button type="button" data-attach="audio" role="menuitem"><span>♪</span>音频</button>
+              <button type="button" data-attach="file" role="menuitem"><span>⌑</span>文件</button>
+              <button type="button" data-attach="quote" role="menuitem"><span>❝</span>引用文字</button>
+            </div>
+            <input id="cfile" type="file" multiple hidden>
+          </div>
+          <div class="composer-input-wrap">
+            <div id="input-history" class="input-history hidden" role="listbox"
+              aria-label="输入历史"></div>
+            <textarea id="cinput" rows="1" enterkeyhint="enter" placeholder="输入内容"
+              aria-controls="input-history" aria-expanded="false"></textarea>
+          </div>
+          <div class="cbtns">
+            <button class="btn" id="cesc"
+              title="单击向 CLI 发送 Esc；Claude 中双击进入原生回滚选择"
+              aria-label="单击发送 Esc；Claude 中双击进入回滚选择">Esc</button>
+            <button class="btn go" id="csend">发送</button>
+          </div>
+        </div>
+      </div>
+      <div id="termpane" class="hidden">
+        <div class="term-resizer" id="tgrip" title="拖动终端上边界调整高度"></div>
+        <span id="term-ctrl-lock" role="status">Ctrl（下一键）</span>
+        <div id="xterm"></div>
+        <div class="term-keys" aria-label="终端快捷键">
+          <button data-term-modifier="ctrl" title="Ctrl（下一键生效）" aria-label="Ctrl，下一键生效" aria-pressed="false">Ctrl</button>
+          <button data-term-key="Escape" title="Escape" aria-label="Escape">Esc</button>
+          <button data-term-key="Tab" title="Tab" aria-label="Tab">Tab</button>
+          <button data-term-key="Left" title="方向键左" aria-label="方向键左">←</button>
+          <button data-term-key="Up" title="方向键上" aria-label="方向键上">↑</button>
+          <button data-term-key="Down" title="方向键下" aria-label="方向键下">↓</button>
+          <button data-term-key="Right" title="方向键右" aria-label="方向键右">→</button>
+          <button data-term-key="PPage" title="Page Up" aria-label="Page Up">Pg↑</button>
+          <button data-term-key="NPage" title="Page Down" aria-label="Page Down">Pg↓</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="item-menu" class="ctx-menu" hidden role="menu" aria-label="会话操作">
+  <button type="button" role="menuitem" data-act="stop" hidden>停止会话</button>
+  <button type="button" role="menuitem" data-act="hide" hidden>隐藏父会话</button>
+  <button type="button" role="menuitem" data-act="delete">删除会话</button>
+  <button type="button" role="menuitem" data-act="pick">多选…</button>
+</div>
+<dialog id="native-bind-dialog" class="app-dialog" aria-labelledby="native-bind-title">
+  <form id="native-bind-form" class="settings-form">
+    <div class="modal-head"><h2 id="native-bind-title">确认原生会话关联</h2>
+      <button type="button" class="modal-close" aria-label="关闭">×</button></div>
+    <p>这是一次性关联，不能改绑。记录存在不代表它属于当前终端；请先人工核对，不能只凭目录或时间。</p>
+    <label for="native-bind-uid">原生主会话</label>
+    <select id="native-bind-uid" required style="display:block;width:100%;margin:8px 0;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2);color:var(--text);font:inherit"></select>
+    <label><input id="native-bind-confirm" type="checkbox" required>我已核对，确认此终端属于所选原生会话。</label>
+    <p>现有 pending 连接会保留，不自动升级为原生控制台，也不启用可靠发送。</p>
+    <div id="native-bind-error" role="alert"></div>
+    <div class="modal-actions"><button type="button" class="btn modal-cancel">取消</button>
+      <button type="submit" class="btn go" id="native-bind-go">确认关联</button></div>
+  </form>
+</dialog>
+<dialog id="new-session-dialog" aria-labelledby="new-session-title">
+  <form id="new-session-form">
+    <div class="modal-head">
+      <div><h2 id="new-session-title">新建会话</h2></div>
+      <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="new-row">
+      <label id="new-node-label" hidden><span>机器</span><select id="new-node"></select></label>
+      <fieldset class="new-source">
+        <legend class="visually-hidden">会话类型</legend>
+        <label><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg>Claude</span></label>
+        <label><input type="radio" name="new-source" value="codex"><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg>Codex</span></label>
+        <label><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg>Grok</span></label>
+      </fieldset>
+    </div>
+    <div class="new-cwd-combobox">
+      <div class="new-cwd-field">
+        <label class="new-cwd-label" for="new-cwd">启动目录</label>
+        <input id="new-cwd" name="cwd" autocomplete="off" spellcheck="false"
+          role="combobox" aria-autocomplete="list" aria-haspopup="listbox"
+          aria-controls="new-cwd-options" aria-expanded="true"
+          placeholder="/home/user/Projects/project">
+      </div>
+      <div id="new-cwd-picker">
+        <div class="new-cwd-picker-head">
+          <span id="new-cwd-options-title">最近使用</span>
+          <span>↑↓ 选择 · Tab 补全</span>
+        </div>
+        <div id="new-cwd-options" role="listbox" aria-labelledby="new-cwd-options-title"></div>
+      </div>
+      <div id="new-cwd-completion-status" class="visually-hidden" role="status" aria-live="polite"></div>
+    </div>
+    <div class="modal-actions">
+      <div id="new-session-error" role="alert"></div>
+      <button type="button" class="btn modal-cancel">取消</button>
+      <button type="submit" class="btn go" id="new-session-go">创建并打开</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="bug-report-dialog" class="app-dialog" aria-labelledby="bug-report-title">
+  <form id="bug-report-form" class="report-form">
+    <div class="modal-head">
+      <div><h2 id="bug-report-title">报告问题</h2><p>会自动收集当前会话链路，并启动一条处理会话排查</p></div>
+      <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <fieldset class="new-source report-source" id="bug-report-source">
+      <legend>处理会话类型</legend>
+      <label><input type="radio" name="bug-report-source" value="claude"><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg>Claude</span></label>
+      <label><input type="radio" name="bug-report-source" value="codex" checked><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg>Codex</span></label>
+      <label><input type="radio" name="bug-report-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg>Grok</span></label>
+    </fieldset>
+    <label class="report-label" for="bug-report-description">发生了什么</label>
+    <textarea id="bug-report-description" rows="6" maxlength="50000"
+      placeholder="描述操作步骤、预期结果和实际现象，可直接粘贴截图或拖入文件。当前页面、消息状态与终端画面会自动附上。"></textarea>
+    <div id="bug-report-items" class="report-items" aria-live="polite"></div>
+    <div class="report-attach-row">
+      <div class="attach-picker">
+        <button class="btn" id="bug-report-add" type="button" title="添加附件" aria-expanded="false">
+          <svg class="ui-icon" aria-hidden="true"><use href="#i-plus"/></svg><span>附件</span>
+        </button>
+        <div class="attach-menu hidden" id="bug-report-attach-menu" role="menu">
+          <button type="button" data-attach="image" role="menuitem"><span>▧</span>图片</button>
+          <button type="button" data-attach="video" role="menuitem"><span>▶</span>视频</button>
+          <button type="button" data-attach="audio" role="menuitem"><span>♪</span>音频</button>
+          <button type="button" data-attach="file" role="menuitem"><span>⌑</span>文件</button>
+        </div>
+        <input id="bug-report-file" type="file" multiple hidden>
+      </div>
+      <span class="report-attach-hint">截图可直接粘贴或拖入；点附件卡片可在描述中插入 [附件N]。</span>
+    </div>
+    <div class="report-capture-note">
+      将保存当前页面 DOM、收发事件、服务端发送账本、tmux 画面和最近 15 分钟审计记录。
+      附件与对话附件走同一上传方式，保存在仓库的 agenthub_attachments/ 下并随诊断包留档。
+      不保存 Cookie、鉴权头或 API Key；启动处理会话会产生所选 CLI 的模型用量。
+      修复验证通过后会自动 commit、push 到 GitHub，并同步到中央 Hub 和其他机器。
+    </div>
+    <div id="bug-report-error" role="alert"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn modal-cancel">取消</button>
+      <button type="submit" class="btn go" id="bug-report-go">保存并启动处理会话</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="trash-dialog" class="app-dialog" aria-labelledby="trash-title">
+  <div class="trash-panel">
+    <div class="modal-head">
+      <div><h2 id="trash-title">回收站</h2><p id="trash-sub">删除的会话文件保留在磁盘上，可以恢复或彻底清除</p></div>
+      <button type="button" class="modal-close" id="trash-close" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div id="trash-note" role="status" aria-live="polite"></div>
+    <div id="trash-list" class="trash-list"><div class="trash-empty">正在读取回收站…</div></div>
+    <div class="modal-actions">
+      <button type="button" class="btn" id="trash-reload">刷新</button>
+      <button type="button" class="btn danger" id="trash-purge-all">清空回收站</button>
+      <button type="button" class="btn go" id="trash-done">完成</button>
+    </div>
+  </div>
+</dialog>
+<dialog id="settings-dialog" class="app-dialog" aria-labelledby="settings-title">
+  <form method="dialog" class="settings-form">
+    <div class="modal-head">
+      <div><h2 id="settings-title">设置</h2><p id="settings-sub">界面偏好保存在浏览器</p></div>
+      <button type="submit" class="modal-close" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-tabs" role="tablist" aria-label="设置分类">
+      <button type="button" class="settings-tab on" role="tab" aria-selected="true"
+              aria-controls="settings-appearance" data-tab="appearance">外观</button>
+      <button type="button" class="settings-tab" role="tab" aria-selected="false"
+              aria-controls="settings-machines" data-tab="machines">机器</button>
+    </div>
+    <div id="settings-appearance" class="settings-pane" role="tabpanel">
+    <label class="setting-row" for="setting-font">
+      <span><b>等宽字体</b><small>终端与工具输出共同使用</small></span>
+      <select id="setting-font">
+        <option value="ubuntu">Ubuntu Sans Mono（26.04 默认）</option>
+        <option value="cascadia">Cascadia Mono（内置）</option>
+        <option value="system">系统等宽字体</option>
+        <option value="consolas">Consolas / Consola</option>
+      </select>
+    </label>
+    <label class="setting-row" for="setting-theme">
+      <span><b>颜色方案</b><small>可跟随操作系统自动切换</small></span>
+      <select id="setting-theme">
+        <option value="system">跟随系统</option>
+        <option value="light">浅色</option>
+        <option value="dark">深色</option>
+      </select>
+    </label>
+    <label class="setting-row" for="setting-tool-icons">
+      <span><b>工具图标</b><small>Claude / Dario · Codex / Sam · Grok / Elon</small></span>
+      <select id="setting-tool-icons">
+        <option value="brand">原版图标</option>
+        <option value="boss">老板头像</option>
+      </select>
+    </label>
+    <a class="avatar-credits" href="avatars/credits.html" target="_blank" rel="noopener">头像来源与许可</a>
+    <label class="setting-row" for="setting-cache">
+      <span><b>历史缓存</b><small>tmux 对话固定驻留，不计入此上限</small></span>
+      <select id="setting-cache">
+        <option value="64">64 MB</option>
+        <option value="128">128 MB</option>
+        <option value="256">256 MB</option>
+        <option value="512">512 MB</option>
+        <option value="1024">1 GB</option>
+        <option value="0">不限制</option>
+      </select>
+    </label>
+    <div class="setting-row">
+      <span><b>桌面应用</b><small>安装后以独立窗口运行，不显示浏览器地址栏</small></span>
+      <button type="button" class="btn" data-pwa-install-button>安装到桌面</button>
+    </div>
+    </div>
+    <div id="settings-machines" class="settings-pane" role="tabpanel" hidden>
+      <p class="setting-group-title">机器<small>保存在中央服务端，所有浏览器一致。接入和移除机器仍在服务器上操作</small></p>
+      <div id="machine-rows"></div>
+      <p id="machine-note" class="setting-note" hidden role="status" aria-live="polite"></p>
+    </div>
+    <div class="modal-actions"><button type="submit" class="btn go">完成</button></div>
+  </form>
+</dialog>
+<div id="bug-report-toast" class="bug-report-toast hidden" role="status" aria-live="polite"></div>
+<div id="console-toast" class="bug-report-toast" hidden role="status" aria-live="polite"></div>
+<!-- 列表是首屏核心，必须先执行；终端和公式库较大，延后加载且不能阻塞扫描。 -->
+<script defer src="cli.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="nodes.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="app.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="vendor/xterm.js"></script>
+<script defer src="vendor/addon-fit.js"></script>
+<script defer src="vendor/addon-unicode11.js"></script>
+<script defer src="vendor/addon-webgl.js"></script>
+<script defer src="term.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="vendor/katex/katex.min.js"></script>
+<script defer src="vendor/katex/auto-render.min.js" onload="refreshFormulae()"></script>
+<script>
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js').catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

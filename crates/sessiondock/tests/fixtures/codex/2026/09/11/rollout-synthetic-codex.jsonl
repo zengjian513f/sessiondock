@@ -1,0 +1,8 @@
+{"type":"session_meta","timestamp":"2026-09-11T11:00:00.000Z","payload":{"id":"synthetic-codex","session_id":"synthetic-codex","timestamp":"2026-09-11T11:00:00.000Z","cwd":"/workspace/demo","thread_source":"user"}}
+{"type":"turn_context","timestamp":"2026-09-11T11:00:00.100Z","payload":{"model":"synthetic-model"}}
+{"type":"event_msg","timestamp":"2026-09-11T11:00:01.000Z","payload":{"type":"task_started","turn_id":"codex-turn-1"}}
+{"type":"response_item","timestamp":"2026-09-11T11:00:01.100Z","payload":{"type":"message","role":"user","turn_id":"codex-turn-1","content":[{"type":"input_text","text":"展示 Codex 原生格式的人工会话。"}]}}
+{"type":"response_item","timestamp":"2026-09-11T11:00:02.000Z","payload":{"type":"function_call","name":"exec_command","call_id":"codex-call-1","turn_id":"codex-turn-1","arguments":"{\"cmd\":\"pwd\"}"}}
+{"type":"response_item","timestamp":"2026-09-11T11:00:02.500Z","payload":{"type":"function_call_output","call_id":"codex-call-1","turn_id":"codex-turn-1","output":"/workspace/demo"}}
+{"type":"response_item","timestamp":"2026-09-11T11:00:03.000Z","payload":{"type":"message","role":"assistant","phase":"final_answer","turn_id":"codex-turn-1","content":[{"type":"output_text","text":"Codex 人工样例读取正常，未启动任何付费 CLI。"}]}}
+{"type":"event_msg","timestamp":"2026-09-11T11:00:03.100Z","payload":{"type":"task_complete","turn_id":"codex-turn-1","duration_ms":2100}}

@@ -1,0 +1,14 @@
+# Allowlist for tests/check_commit_hygiene.py — one glob or regex per line, matched
+# against "path" or "path:kind". Only synthetic test inputs and documentation
+# placeholders belong here; never a real address or credential.
+# Tests that assert non-loopback addresses are rejected:
+crates/*/src/**/*tests*.rs:non-loopback-ip
+crates/sessiondock/src/terminal/*.rs:non-loopback-ip
+crates/sessiondock/src/config.rs:non-loopback-ip
+crates/ptyhost-client/tests/*.rs:non-loopback-ip
+# Redaction tests use synthetic personal-looking paths on purpose:
+crates/sessiondock/src/audit/tests.rs:personal-path
+# UI placeholder text and the repository path in the delegation doc:
+legacy-web/index.html:personal-path
+reference/legacy-web/index.html:personal-path
+docs/delegation.md:personal-path

@@ -1,0 +1,55 @@
+[package]
+name = "sessiondock"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "SessionDock HTTP service"
+
+# The multi-machine hub (batch 40): same crate, own binary, own configuration.
+[[bin]]
+name = "sessiondock-hub"
+path = "src/bin/sessiondock-hub.rs"
+
+[dependencies]
+base64 = "0.22"
+# Raw WebSocket pass-through after the 101 (`hyper::upgrade` + `TokioIo`);
+# both are already in the lock file through axum.
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+avif-parse = { version = "2", default-features = false }
+html-escape = "0.2"
+regex = "1"
+getrandom = "0.3"
+subtle = "2"
+futures-util = { version = "0.3", features = ["sink"] }
+ptyhost-client = { path = "../ptyhost-client" }
+cap-std = "4"
+cap-fs-ext = "4"
+# Batch 44 WP-A: glibc arena cap and trim so evicted views really leave RSS.
+libc = "0.2"
+axum.workspace = true
+serde.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+indexmap.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+chrono.workspace = true
+mime_guess.workspace = true
+async-stream.workspace = true
+tokio-util.workspace = true
+
+# WP-W: process identity on Windows (OpenProcess + GetProcessTimes,
+# token user SID for the owner check). Query-only rights, no enumeration.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tower.workspace = true
+tempfile.workspace = true
+http-body-util = "0.1"
+tokio-tungstenite = "0.29"
