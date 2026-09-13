@@ -115,7 +115,9 @@ launch, readiness, cancellation and recovery behavior above this synchronous sto
 Schema 3 adds required nullable `binding` with an immutable private source/SID/UID
 spec and Intent/Confirmed/Uncertain state; schema 5 adds its method, evidence
 and confirmation time. Old schemas migrate with no binding;
-open downgrades historical Intent/Confirmed to Uncertain. Binding authority is
+open downgrades historical Intent to Uncertain and preserves Confirmed as a
+durable association receipt; current host state is required separately for
+control. Binding authority is
 handle- and revision-bound, conflicting specs never overwrite intent, and every
 confirmation requires typed exact-record observation. The
 [binding contract](lifecycle-binding.md) documents explicit operator authority,

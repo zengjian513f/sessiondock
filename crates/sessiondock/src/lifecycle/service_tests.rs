@@ -942,7 +942,7 @@ async fn binding_confirmation_rejects_unsupported_scope_capability_and_stale_ins
 }
 
 #[tokio::test]
-async fn previously_confirmed_binding_becomes_uncertain_on_offline_status() {
+async fn offline_status_keeps_association_but_revokes_live_authority() {
     let (_gate, f) = fixture().await;
     let record = f.seed("request-binding-offline", State::Running);
     let peer = Peer::new(&f, &record).await;
@@ -957,7 +957,7 @@ async fn previously_confirmed_binding_becomes_uncertain_on_offline_status() {
     peer.info_fail.store(true, Ordering::SeqCst);
     let offline = service.get(record.record_id().into()).await.unwrap();
     assert_eq!(offline.state(), State::Uncertain);
-    assert_eq!(offline.binding().unwrap().state(), BindingState::Uncertain);
+    assert_eq!(offline.binding().unwrap().state(), BindingState::Confirmed);
     assert!(offline.binding().unwrap().spec() == confirmed.binding().unwrap().spec());
     assert!(matches!(
         service.authorize_native(&target).await,

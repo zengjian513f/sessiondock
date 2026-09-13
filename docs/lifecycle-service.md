@@ -109,8 +109,10 @@ a strictly valid schema-1 ledger migrates it with `cancel_requested:false` and a
 durable commit, preserving every request/spec/identity. Mixed old/new fields,
 unknown schemas and malformed histories fail closed; no record is discarded.
 Migration/recovery write failures return errors and release the failed open's lock.
-Current schema 3 additionally migrates old records with `binding:null` and recovers
-historical binding confirmation as Uncertain until fresh guarded Info matches.
+Current schema 5 migrates older records with `binding:null` where needed. An
+in-flight binding Intent recovers as Uncertain; a completed confirmation remains
+a durable association while live terminal authority still requires fresh guarded
+Info.
 
 For a launched instance, `request_cancel` first durably sets CancelRequested and
 returns a handle-bound, non-Clone authority for that exact revision. The service
