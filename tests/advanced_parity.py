@@ -1375,7 +1375,7 @@ def main():
                       "records are skipped like Python with counted migration_warnings; claude-events/codex-l2/grok-chat stay supported")
         assert all(path.read_bytes() == old for path, old in before.items()), "reads modified synthetic native history"
     print(f"SUMMARY {len(report.passes)} PASS, {len(report.deltas)} DELTA, {len(report.unverified_lines)} UNVERIFIED, {len(report.failures)} FAIL"
-          + ("" if adapters else " (Rust-only run: pass --python-source ../agenthub for the differential half)"))
+          + ("" if adapters else " (Rust-only run: pass --python-source ../sessiondock for the differential half)"))
     if report.failures:
         raise SystemExit("Unexpected Rust/Python differences: " + "; ".join(report.failures[:20]))
 

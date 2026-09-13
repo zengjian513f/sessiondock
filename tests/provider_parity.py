@@ -96,12 +96,12 @@ def fixture_paths() -> dict[str, Path]:
 def load_adapters(source: Path, *, fixture_root: Path = FIXTURES,
                   codex_paths: dict[str, Path] | None = None):
     source = source.resolve(strict=True)
-    if not (source / "agenthub/adapters.py").is_file():
+    if not (source / "sessiondock/adapters.py").is_file():
         raise RuntimeError("--python-source must select the Python source checkout")
     sys.path.insert(0, str(source))
-    adapters = importlib.import_module("agenthub.adapters")
-    if Path(adapters.__file__).resolve() != (source / "agenthub/adapters.py").resolve():
-        raise RuntimeError("a different agenthub package was already imported")
+    adapters = importlib.import_module("sessiondock.adapters")
+    if Path(adapters.__file__).resolve() != (source / "sessiondock/adapters.py").resolve():
+        raise RuntimeError("a different sessiondock package was already imported")
     # Import only defines these paths; before any adapter method can use one,
     # replace every discovery root with this tool's fixed synthetic fixture tree.
     fixture_root = fixture_root.resolve(strict=True)

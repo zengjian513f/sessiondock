@@ -69,7 +69,7 @@ fn fixture(root: &std::path::Path) -> FakeProc {
         200,
         "ptyhost",
         4856,
-        "ptyhost run --name agenthub-grok-cccccccc -- grok",
+        "ptyhost run --name sessiondock-grok-cccccccc -- grok",
         &[
             ("CLAUDE_CODE_SESSION_ID", SID_CLAUDE),
             ("CLAUDE_PID", "100"),
@@ -111,7 +111,7 @@ fn fixture(root: &std::path::Path) -> FakeProc {
         400,
         "ptyhost",
         4856,
-        "ptyhost run --name agenthub-claude-eeeeeeee -- claude",
+        "ptyhost run --name sessiondock-claude-eeeeeeee -- claude",
         &[],
         &[],
     );
@@ -127,7 +127,7 @@ fn fixture(root: &std::path::Path) -> FakeProc {
         500,
         "tmux: server",
         1,
-        "tmux -L agenthub",
+        "tmux -L sessiondock",
         &[
             ("CLAUDE_CODE_SESSION_ID", SID_CLAUDE),
             ("CLAUDE_PID", "100"),

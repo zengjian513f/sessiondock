@@ -43,7 +43,7 @@ test('local media tokens render without granting remote image requests', () => {
 });
 
 test('a page without capabilities retains the Python behavior', () => {
-  const {AgentHubCapabilities: caps} = contextWithCapabilities();
+  const {SessionDockCapabilities: caps} = contextWithCapabilities();
   assert.equal(caps.declared, false);
   assert.equal(caps.namespace, '');
   for (const name of ['audit', 'live', 'outbox', 'files', 'search', 'terminal', 'watch']) {
@@ -67,11 +67,11 @@ test('per-image errors are escaped visible explanations, never image requests', 
 });
 
 test('Rust terminal lookup requires a unique full UID and instance, never a name fallback', () => {
-  const T = {list: [{name: 'agenthub-codex-abcdefgh', uid: 'codex:other', instance_id: 'instance'}], pending: [], uid: 'codex:wanted', name: 'agenthub-codex-abcdefgh'};
+  const T = {list: [{name: 'sessiondock-codex-abcdefgh', uid: 'codex:other', instance_id: 'instance'}], pending: [], uid: 'codex:wanted', name: 'sessiondock-codex-abcdefgh'};
   const context = contextWithCapabilities(disabled, {T, sessionTermMeta: () => ({sid: 'abcdefgh-more', source: 'codex'})});
   const linked = loadFunction(context, 'linkedTermSession', read('term.js'));
   assert.equal(linked('codex:wanted', {followReplacement: true}), null);
-  assert.equal(linked('tmux:agenthub-codex-abcdefgh'), null);
+  assert.equal(linked('tmux:sessiondock-codex-abcdefgh'), null);
   T.list[0].uid = 'codex:wanted';
   assert.equal(linked('codex:wanted').name, T.name);
   T.list.push({...T.list[0], name: 'duplicate'});
@@ -80,7 +80,7 @@ test('Rust terminal lookup requires a unique full UID and instance, never a name
   delete T.list[0].instance_id;
   assert.equal(linked('codex:wanted'), null);
   const python = contextWithCapabilities(undefined, {T, sessionTermMeta: context.sessionTermMeta});
-  assert.equal(loadFunction(python, 'linkedTermSession', read('term.js'))('tmux:agenthub-codex-abcdefgh').name, T.name);
+  assert.equal(loadFunction(python, 'linkedTermSession', read('term.js'))('tmux:sessiondock-codex-abcdefgh').name, T.name);
 });
 
 test('terminal ownership force retry retains the exact captured binding', async () => {
@@ -316,18 +316,18 @@ test('pending composer attachments carry the exact Rust launch receipt identity'
 });
 
 test('explicit false gates only the declared capability and namespaces Rust storage', () => {
-  const {AgentHubCapabilities: caps} = contextWithCapabilities(disabled);
+  const {SessionDockCapabilities: caps} = contextWithCapabilities(disabled);
   assert.equal(caps.namespace, 'sessiondock.');
   assert.equal(caps.allows('audit'), false);
   assert.equal(caps.allows('watch'), true);
   assert.ok(Object.isFrozen(caps.config));
   assert.equal(contextWithCapabilities({storage_namespace: 'isolated.'})
-    .AgentHubCapabilities.namespace, 'isolated.');
+    .SessionDockCapabilities.namespace, 'isolated.');
 });
 
 test('malformed capability metadata fails closed for background work', () => {
   for (const input of ['{bad', 'null', '[]', '"text"']) {
-    const {AgentHubCapabilities: caps} = contextWithCapabilities(input);
+    const {SessionDockCapabilities: caps} = contextWithCapabilities(input);
     assert.equal(caps.config.configuration_error, true);
     for (const key of ['audit', 'live', 'outbox', 'search', 'files']) assert.equal(caps.allows(key), false);
   }
@@ -428,8 +428,6 @@ test('unknown live status cannot switch to an empty active-only view', () => {
   assert.match(messages[0], /运行状态未知/);
 });
 
-// Batch 44 WP-F: preferences saved by the Python page under `agenthub.*`
-// (same origin) are read once when the Rust key is missing and copied forward.
 function fakeStorage(initial = {}) {
   const map = new Map(Object.entries(initial));
   return {
@@ -440,72 +438,59 @@ function fakeStorage(initial = {}) {
   };
 }
 
-test('a missing Rust key falls back once to the Python key and is copied forward', () => {
-  const localStorage = fakeStorage({'agenthub.theme': '"dark"', 'agenthub.font': '"cascadia"',
-    'agenthub.width': '420', 'sessiondock.width': '300', 'agenthub.unread': '[["claude:a",{"count":2}]]'});
-  const {AgentHubCapabilities: caps} = contextWithCapabilities(disabled, {localStorage});
+test('preferences use only the configured SessionDock namespace', () => {
+  const localStorage = fakeStorage({'sessiondock.theme': '"dark"', 'sessiondock.font': '"cascadia"',
+    'sessiondock.width': '300', 'sessiondock.unread': '[["claude:a",{"count":2}]]'});
+  const {SessionDockCapabilities: caps} = contextWithCapabilities(disabled, {localStorage});
   assert.equal(caps.stored('theme'), '"dark"');
-  assert.equal(localStorage.getItem('sessiondock.theme'), '"dark"', 'copied to the Rust key');
-  assert.equal(localStorage.getItem('agenthub.theme'), '"dark"', 'the Python key is left alone');
-  assert.equal(caps.stored('width'), '300', 'an existing Rust key wins over the Python one');
-  assert.equal(caps.stored('unread'), '[["claude:a",{"count":2}]]', 'runtime keys migrate too');
+  assert.equal(caps.stored('width'), '300');
+  assert.equal(caps.stored('unread'), '[["claude:a",{"count":2}]]');
   assert.equal(caps.stored('missing'), null);
   assert.deepEqual(localStorage.keys().filter(key => key.endsWith('missing')), []);
-  // The explicit prefix form used by nodes.js/app.js (STORAGE_PREFIX) and typography.js.
   assert.equal(caps.stored('font', 'sessiondock.'), '"cascadia"');
-  assert.equal(localStorage.getItem('sessiondock.font'), '"cascadia"');
-  // app.js store.get parses through the same path; a later set only writes the Rust key.
-  assert.match(appSource, /const v = AgentHubCapabilities\.stored\(k, STORAGE_PREFIX\);/);
+  assert.match(appSource, /const v = SessionDockCapabilities\.stored\(k, STORAGE_PREFIX\);/);
   assert.match(appSource, /set: \(k, v\) => localStorage\.setItem\(STORAGE_PREFIX \+ k, JSON\.stringify\(v\)\)/);
-  assert.match(read('typography.js'), /AgentHubCapabilities\.stored\('font', prefix\)/);
-  assert.match(read('nodes.js'), /AgentHubCapabilities\.stored\('nodesOff', STORAGE_PREFIX\)/);
+  assert.match(read('typography.js'), /SessionDockCapabilities\.stored\('font', prefix\)/);
+  assert.match(read('nodes.js'), /SessionDockCapabilities\.stored\('nodesOff', STORAGE_PREFIX\)/);
 });
 
-test('a Python page and an explicit namespace never read or write foreign keys', () => {
-  const python = fakeStorage({'agenthub.theme': '"dark"'});
-  const {AgentHubCapabilities: caps} = contextWithCapabilities(undefined, {localStorage: python});
-  assert.equal(caps.namespace, '');
-  assert.equal(caps.stored('theme', 'agenthub.'), '"dark"');
-  assert.deepEqual(python.keys(), ['agenthub.theme'], 'nothing copied on a Python page');
-  const isolated = fakeStorage({'agenthub.theme': '"dark"'});
-  const custom = contextWithCapabilities({storage_namespace: 'isolated.'}, {localStorage: isolated}).AgentHubCapabilities;
-  assert.equal(custom.stored('theme'), '"dark"', 'any Rust namespace migrates from agenthub.');
-  assert.deepEqual(isolated.keys(), ['agenthub.theme', 'isolated.theme']);
+test('an explicit namespace never reads another namespace', () => {
+  const localStorage = fakeStorage({'sessiondock.theme': '"dark"', 'custom.theme': '"light"'});
+  const custom = contextWithCapabilities({storage_namespace: 'custom.'}, {localStorage}).SessionDockCapabilities;
+  assert.equal(custom.stored('theme'), '"light"');
+  assert.deepEqual(localStorage.keys(), ['custom.theme', 'sessiondock.theme']);
 });
 
-test('hub pages migrate from the Python hub prefix of the same path', () => {
-  const localStorage = fakeStorage({'agenthub.hub./hub/.nodesOff': '["n1"]', 'agenthub.nodesOff': '["wrong"]'});
+test('hub pages use the configured prefix of the same path', () => {
+  const localStorage = fakeStorage({'sessiondock.hub./hub/.nodesOff': '["n1"]', 'sessiondock.nodesOff': '["wrong"]'});
   const meta = {content: JSON.stringify({backend: 'rust', hub: true, storage_namespace: 'sessiondock.hub./hub/.'})};
   const context = vm.createContext({localStorage, location: {pathname: '/hub/'},
-    document: {querySelector: selector => selector.includes('agenthub-mode') ? {content: 'hub'} : meta}});
+    document: {querySelector: selector => selector.includes('sessiondock-mode') ? {content: 'hub'} : meta}});
   vm.runInContext(capabilitiesSource, context);
-  assert.equal(context.AgentHubCapabilities.stored('nodesOff'), '["n1"]');
+  assert.equal(context.SessionDockCapabilities.stored('nodesOff'), '["n1"]');
   assert.equal(localStorage.getItem('sessiondock.hub./hub/.nodesOff'), '["n1"]');
 });
 
-test('files pages key their preferences under the namespace and migrate both older spellings', () => {
+test('files pages key their preferences under the namespace', () => {
   const source = read('files.js');
-  assert.match(source, /const storageKey = key => \(namespace \? namespace \+ 'files-' : 'agenthub-files-'\) \+ key;/);
-  assert.match(source, /const legacyKeys = key => namespace \? \[namespace \+ 'agenthub-files-' \+ key, 'agenthub-files-' \+ key\] : \[\];/);
-  assert.doesNotMatch(source, /restore\('agenthub-files|store\('agenthub-files/);
+  assert.match(source, /const storageKey = key => namespace \+ 'files-' \+ key;/);
   for (const key of ['view', 'clipboard']) assert.match(source, new RegExp(`store\\('${key}'`));
   assert.match(source, /const historyKey = 'history:' \+ context\.toString\(\);/);
 });
 
-test('the installable shell is SessionDock and its cache never collides with Python', () => {
+test('the installable shell is SessionDock', () => {
   const manifest = JSON.parse(read('manifest.webmanifest'));
   assert.equal(manifest.name, 'SessionDock');
   assert.equal(manifest.short_name, 'SessionDock');
   const worker = read('service-worker.js');
   assert.match(worker, /const CACHE_PREFIX = 'sessiondock-shell-';/);
   assert.match(worker, /SessionDock 当前离线/);
-  assert.doesNotMatch(worker.replace(/^\s*\/\/.*$/gm, ''), /AgentHub|agenthub/, 'only the comment names the Python cache');
   const index = read('index.html');
   assert.match(index, /<meta name="apple-mobile-web-app-title" content="SessionDock">/);
   assert.match(index, /data-app-name="SessionDock" data-storage-key="sessiondock\.pwa-install-dismissed"/);
-  assert.match(index, /localStorage\.getItem\(python \+ 'theme'\)/, 'the theme bootstrap migrates before capabilities.js loads');
-  for (const page of ['files.html', 'file.html']) assert.doesNotMatch(read(page), /<title>[^<]*AgentHub/);
-  assert.doesNotMatch(read('file.js') + read('files.js'), /· AgentHub'/);
+  assert.match(index, /localStorage\.getItem\(prefix \+ 'theme'\)/);
+  for (const page of ['files.html', 'file.html']) assert.doesNotMatch(read(page), /<title>[^<]*SessionDock/);
+  assert.doesNotMatch(read('file.js') + read('files.js'), /· SessionDock'/);
 });
 
 test('all pages load the optional contract before their consumers', () => {
@@ -514,22 +499,22 @@ test('all pages load the optional contract before their consumers', () => {
     assert.equal(html.match(/src="capabilities\.js/g).length, 1);
     assert.ok(html.indexOf('src="capabilities.js') < html.indexOf('src="typography.js'));
   }
-  assert.match(read('nodes.js'), /const STORAGE_PREFIX = AgentHubCapabilities\.namespace/);
+  assert.match(read('nodes.js'), /const STORAGE_PREFIX = SessionDockCapabilities\.namespace/);
   assert.match(read('index.html'), /id="backend-notice" hidden role="status"/);
   assert.match(appSource, /#session-active'\)\.textContent = known \? active : '\?'/);
 });
 
 test('file resolution is gated and Python console availability remains unchanged', () => {
-  assert.match(read('file.js'), /if \(!AgentHubCapabilities\.allows\('files'\)\) throw new Error/);
-  assert.match(read('files.js'), /if \(!AgentHubCapabilities\.allows\('files'\)\) throw new Error/);
-  assert.match(appSource, /if \(!AgentHubCapabilities\.allows\('files'\)\) throw new Error/);
+  assert.match(read('file.js'), /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
+  assert.match(read('files.js'), /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
+  assert.match(appSource, /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
   const baseline = readFileSync(new URL('../reference/legacy-web/nodes.js', import.meta.url), 'utf8');
   const start = 'function consoleUnavailableReason';
-  const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (AgentHubCapabilities.config.backend === 'rust' && !linked\n      && !(AgentHubCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
+  const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (SessionDockCapabilities.config.backend === 'rust' && !linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
-  const exitGuard = "  if (AgentHubCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // WP-E: like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && AgentHubCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // WP-E: like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
   assert.ok(read('nodes.js').includes(exitGuard));
-  const pendingGuard = "  if (AgentHubCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
+  const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
   assert.equal(compatible.slice(compatible.indexOf(start)), baseline.slice(baseline.indexOf(start)));
@@ -654,7 +639,7 @@ test('a plain stream error never pauses; a rejected stream is probed and reopene
   const python = migrationContext({EventSource: FakeEventSource, window: {EventSource: true},
     AUDIT_PAGE_ID: 'fixture', browserAuditEvent: () => {}, appUrl: value => value,
     setTimeout: (callback, delay) => {timers.push({callback, delay}); return timers.length;}}, undefined);
-  python.AgentHubCapabilities = contextWithCapabilities().AgentHubCapabilities;
+  python.SessionDockCapabilities = contextWithCapabilities().SessionDockCapabilities;
   loadFunction(python, 'watchSession')('codex:fixture', null);
   sources.at(-1).onerror();
   assert.equal(timers.at(-1).delay, 1500);
@@ -832,7 +817,7 @@ test('Python pages do not gain migration pausing or change their retry policy', 
   const context = migrationContext({}, undefined);
   // Passing undefined selects the helper default, so explicitly use the real
   // no-meta contract here to exercise the inherited Python path.
-  context.AgentHubCapabilities = contextWithCapabilities().AgentHubCapabilities;
+  context.SessionDockCapabilities = contextWithCapabilities().SessionDockCapabilities;
   assert.equal(context.reportMigrationReadFailure('codex:fixture', null, new Error('network')), null);
   assert.equal(context.migrationReadPaused('codex:fixture', null), false);
   assert.equal(context.pauseMigrationWatch({}, 'codex:fixture', null), false);

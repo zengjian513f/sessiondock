@@ -4,7 +4,7 @@
 Reads only JSON record files for isolated test debugging. Never connects,
 never writes, and never prints tokens, endpoint addresses, argv, environment,
 or unknown field values. Refuse $HOME/.local/share and paths containing
-agenthub/host unless --i-know-this-is-a-development-dir is passed.
+sessiondock/host unless --i-know-this-is-a-development-dir is passed.
 """
 # run_validation: skip
 from __future__ import annotations
@@ -52,7 +52,7 @@ def blocked(path: Path) -> bool:
     except OSError:
         pass
     for text in texts:
-        if "agenthub/host" in text.replace("\\", "/"):
+        if "sessiondock/host" in text.replace("\\", "/"):
             return True
         absn = os.path.abspath(text)
         if absn == share or absn.startswith(prefix):
@@ -151,7 +151,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     directory = Path(args.dir)
     if blocked(directory) and not args.dev_dir:
-        die("refusing $HOME/.local/share or agenthub/host; "
+        die("refusing $HOME/.local/share or sessiondock/host; "
             "pass --i-know-this-is-a-development-dir")
     if not directory.is_dir():
         die(f"not a directory: {args.dir}")

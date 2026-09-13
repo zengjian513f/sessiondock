@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "AgentHub",
-  "short_name": "AgentHub",
+  "name": "SessionDock",
+  "short_name": "SessionDock",
   "description": "Claude、Codex 与 Grok 会话管理中心",
   "lang": "zh-CN",
   "start_url": "./",

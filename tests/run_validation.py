@@ -196,7 +196,7 @@ def main(argv=None):
     parser.add_argument("--timeout-scale", type=float, default=1.0)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--binary", default="target/release/sessiondock")
-    parser.add_argument("--python-source", default="../agenthub")
+    parser.add_argument("--python-source", default="../sessiondock")
     parser.add_argument("--json", type=Path, metavar="PATH")
     parser.add_argument("--rerun-failed", type=Path, metavar="PATH")
     parser.add_argument("--dry-run", action="store_true")

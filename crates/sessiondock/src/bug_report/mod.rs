@@ -43,8 +43,8 @@ use crate::{
 
 /// Python `EVENT_WINDOW_SECONDS`.
 pub const EVENT_WINDOW_SECONDS: u64 = 15 * 60;
-/// Python `ATTACHMENT_DIR`: composer uploads under the worker cwd.
-pub const ATTACHMENT_DIR: &str = "agenthub_attachments";
+/// Composer uploads under the worker cwd.
+pub const ATTACHMENT_DIR: &str = "sessiondock_attachments";
 /// Python `BUG_REPORT_UPLOAD_UID`.
 pub const UPLOAD_UID: &str = "bug-report";
 pub const ATTACHMENT_MAX_COUNT: usize = 12;

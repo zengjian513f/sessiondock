@@ -452,7 +452,7 @@ async fn text_references_python_would_drop_project_no_placeholder_while_referenc
         "codex",
         "missing",
         vec![text(
-            "附件1: ./agenthub_attachments/1/image.png\n\n![](assets/27055012/report.jpg)\n\nsee ./a (a directory, not an image)",
+            "附件1: ./sessiondock_attachments/1/image.png\n\n![](assets/27055012/report.jpg)\n\nsee ./a (a directory, not an image)",
         )],
     );
     fixture.put(
@@ -494,7 +494,7 @@ async fn text_references_python_would_drop_project_no_placeholder_while_referenc
         row["text"]
             .as_str()
             .unwrap()
-            .contains("agenthub_attachments/1/image.png")
+            .contains("sessiondock_attachments/1/image.png")
     );
     let projected = messages(&app, "outside", "").await;
     let images = media(&projected);

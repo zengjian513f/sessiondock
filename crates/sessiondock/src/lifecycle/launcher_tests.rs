@@ -382,7 +382,7 @@ fn ordinary_config_accepts_compatible_json_and_never_echoes_input() {
 /// Explicit opt-in integration: both paths must be supplied, no repository,
 /// HOME or PATH discovery, and no paid CLI may be used for the shell path.
 #[test]
-#[ignore = "set SESSIONDOCK_TEST_PTYHOST_BINARY and AGENTHUB_TEST_FREE_SHELL_BINARY explicitly"]
+#[ignore = "set SESSIONDOCK_TEST_PTYHOST_BINARY and SESSIONDOCK_TEST_FREE_SHELL_BINARY explicitly"]
 fn explicit_free_shell_starts_with_receipt_identity_and_survives_launcher_drop() {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
@@ -391,7 +391,7 @@ fn explicit_free_shell_starts_with_receipt_identity_and_survives_launcher_drop()
         std::env::var_os("SESSIONDOCK_TEST_PTYHOST_BINARY").expect("explicit test host binary"),
     );
     fixture.config.adapters[0].executable = PathBuf::from(
-        std::env::var_os("AGENTHUB_TEST_FREE_SHELL_BINARY").expect("explicit free shell binary"),
+        std::env::var_os("SESSIONDOCK_TEST_FREE_SHELL_BINARY").expect("explicit free shell binary"),
     );
     fixture.config.adapters[0].args = vec!["-c".into(),
         "printf 'LAUNCH_ENV:%s:%s:%s\\n' \"${EXPLICIT_VALUE-unset}\" \"${HOME-unset}\" \"${TERM-unset}\"; while IFS= read -r line; do case \"$line\" in quit) exit 0;; *) printf 'RECEIVED:%s\\n' \"$line\";; esac; done".into()];

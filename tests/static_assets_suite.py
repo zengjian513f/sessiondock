@@ -21,7 +21,7 @@ from history_parity import BINARY as DEBUG_BINARY, REPO, build_corpus, get_json,
 
 BINARY = next(p for p in (REPO / "target/release/sessiondock", DEBUG_BINARY) if p.is_file())
 BODY_CAP = 2 * 1024 * 1024
-PLACEHOLDER = re.compile(r"__AGENTHUB_[A-Z0-9_]+__")
+PLACEHOLDER = re.compile(r"__SESSIONDOCK_[A-Z0-9_]+__")
 TYPES = (("/app.js", "javascript"), ("/style.css", "text/css"),
          ("/manifest.webmanifest", "manifest"), ("/fonts/CascadiaMono.woff2", "woff2"),
          ("/icons/icon.svg", "svg"))
@@ -62,12 +62,12 @@ def run(base, opener):
         fail("/", f"HTTP {status}", body)
     page = body.decode("utf-8", "replace")
     leftover = PLACEHOLDER.findall(page)
-    mode = meta_content(page, "agenthub-mode")
+    mode = meta_content(page, "sessiondock-mode")
     if leftover or mode != "local":
         fail("html", f"unreplaced={leftover} mode={mode!r}", body)
     passed("html placeholders/mode")
 
-    raw_caps = meta_content(page, "agenthub-capabilities")
+    raw_caps = meta_content(page, "sessiondock-capabilities")
     try:
         caps = json.loads(raw_caps)
     except json.JSONDecodeError as err:
@@ -85,7 +85,7 @@ def run(base, opener):
     if not derived:
         fail("asset version", "no versioned asset URL in HTML", body)
     version = derived.group(2)
-    if meta_content(page, "agenthub-build") != version:
+    if meta_content(page, "sessiondock-build") != version:
         fail("asset version", f"build meta != URL v={version!r}", body)
     mismatched = [item for item in re.findall(r"[?&]v=([^\"'&]+)", page) if item != version]
     if mismatched:

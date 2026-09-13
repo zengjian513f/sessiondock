@@ -24,8 +24,8 @@ STATE = ROOT / "crates/sessiondock/src/state.rs"
 # static declaration in state.rs; both sources count as declared.
 LIB = ROOT / "crates/sessiondock/src/lib.rs"
 FUNC_RE = re.compile(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(")
-CONFIG_RE = re.compile(r"AgentHubCapabilities\.config\.([A-Za-z_][\w]*)")
-ALLOWS_RE = re.compile(r"AgentHubCapabilities\.allows\(\s*['\"]([A-Za-z_][\w]*)['\"]\s*\)")
+CONFIG_RE = re.compile(r"SessionDockCapabilities\.config\.([A-Za-z_][\w]*)")
+ALLOWS_RE = re.compile(r"SessionDockCapabilities\.allows\(\s*['\"]([A-Za-z_][\w]*)['\"]\s*\)")
 CAP_BODY_RE = re.compile(r"pub fn capabilities\(\) -> Value \{(.+?)^\}", re.M | re.S)
 CAP_KEY_RE = re.compile(r'"([A-Za-z_][\w]*)"\s*:')
 LOG_RE = re.compile(r"console\.log\(")

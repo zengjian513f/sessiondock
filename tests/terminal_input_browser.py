@@ -130,7 +130,7 @@ def main():
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                 page.goto(base, wait_until="networkidle")
-                capabilities = page.evaluate("AgentHubCapabilities.config")
+                capabilities = page.evaluate("SessionDockCapabilities.config")
                 assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
                 open_console(page, uid)
                 expect(page.locator("#composer")).to_be_hidden()

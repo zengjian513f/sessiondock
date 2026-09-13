@@ -29,8 +29,8 @@ def under(a, b):
 def blocked(p):
     h = Path.home()
     return any(under(p, b) for b in (
-        h / ".local/share/agenthub", h / ".claude", h / ".codex", h / ".grok",
-        REPO.parent / "agenthub"))
+        h / ".local/share/sessiondock", h / ".claude", h / ".codex", h / ".grok",
+        REPO.parent / "sessiondock"))
 
 def path_items(env):
     for k, v in env.items():
@@ -156,7 +156,7 @@ def chk_priv(env):
 
 def chk_pydata(env):
     fail, h = False, Path.home()
-    pydata, clis = h / ".local/share/agenthub", (h / ".claude", h / ".codex", h / ".grok")
+    pydata, clis = h / ".local/share/sessiondock", (h / ".claude", h / ".codex", h / ".grok")
     for k in PRIV:
         if k not in env:
             continue

@@ -4,7 +4,7 @@
 `prompt_only` packets, and the "cleared once the native answer is recorded"
 rule. Synthetic Claude/Codex fixtures, loopback only, no CLI, no Chromium.
 
-Python reference: `agenthub/claude_bridge.py` (hook file semantics) and
+Python reference: `sessiondock/claude_bridge.py` (hook file semantics) and
 `server._claude_prompt` / `_session_prompt` (JSON shape, clearing rule).
 """
 from __future__ import annotations

@@ -63,7 +63,7 @@ pub struct Config {
     pub bug_report_dir: Option<PathBuf>,
     /// The repository a bug-report worker investigates (Python
     /// `PROJECT_ROOT`): the worker's cwd and the parent of
-    /// `agenthub_attachments/`.
+    /// `sessiondock_attachments/`.
     pub bug_report_repo: Option<PathBuf>,
     /// Exact public authorities an authenticating reverse proxy forwards
     /// (`Host $http_host`); the Host gate accepts them beside loopback and
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn pool_budgets_default_by_parallelism_and_parse_positive_env() {
-        const CHILD: &str = "AGENTHUB_TEST_POOLS_CONFIG_CHILD";
+        const CHILD: &str = "SESSIONDOCK_TEST_POOLS_CONFIG_CHILD";
         if let Some(expected) = env::var_os(CHILD) {
             match Config::from_env() {
                 Ok(config) => {

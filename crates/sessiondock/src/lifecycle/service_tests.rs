@@ -1057,7 +1057,7 @@ async fn explicit_free_shell_creation_survives_response_drop_and_shutdown_then_c
         std::env::var_os("SESSIONDOCK_TEST_PTYHOST_BINARY").expect("explicit built ptyhost binary"),
     );
     f.config.adapters[0].executable = PathBuf::from(
-        std::env::var_os("AGENTHUB_TEST_FREE_SHELL_BINARY").expect("explicit free shell binary"),
+        std::env::var_os("SESSIONDOCK_TEST_FREE_SHELL_BINARY").expect("explicit free shell binary"),
     );
     f.config.adapters[0].args = vec!["-c".into(), "read synthetic_line".into()];
     let service = f.open(ServiceLimits::default()).await;

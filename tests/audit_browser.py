@@ -105,7 +105,7 @@ def main():
                         if response.url == base + AUDIT_ROUTE else None)
                     page.goto(base, wait_until="networkidle")
                     expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
-                    page_id = page.evaluate("window.__agenthubPageId")
+                    page_id = page.evaluate("window.__sessiondockPageId")
                     assert page_id and len(page_id) <= 128, page_id
                     uid = corpus.uid("claude-branch")
                     page.locator(f'#side .item[data-uid="{uid}"]').click()

@@ -38,7 +38,7 @@ printf 'SERVICE_INHERITED [%s]\\n' "$SESSIONDOCK_TEST_INHERITED"
 printf 'SERVICE_OVERRIDE [%s]\\n' "$SESSIONDOCK_TEST_OVERRIDE"
 printf 'SERVICE_REMOVE [%s]\\n' "$SESSIONDOCK_TEST_REMOVE"
 printf 'SERVICE_HOME [%s]\\n' "$HOME"
-printf 'SERVICE_HOST [%s]\\n' "$AGENTHUB_SESSION"
+printf 'SERVICE_HOST [%s]\\n' "$SESSIONDOCK_SESSION"
 service-env-tool
 """ + FREE_SHELL
 # The fake Claude writes one synthetic record for its assigned session ID only
@@ -63,9 +63,9 @@ while IFS= read -r line; do
   case "$line" in
     quit) exit 0 ;;
     *)
-      if [ -n "$sid" ] && [ ! -f "$AGENTHUB_TEST_CLAUDE_ROOT/project-history/$sid.jsonl" ]; then
-        mkdir -p "$AGENTHUB_TEST_CLAUDE_ROOT/project-history"
-        printf '{"type":"user","uuid":"%s-u1","parentUuid":null,"sessionId":"%s","cwd":"%s","timestamp":"2026-09-12T10:00:00Z","isSidechain":false,"message":{"role":"user","content":"%s"}}\\n' "$sid" "$sid" "$(pwd -P)" "$line" > "$AGENTHUB_TEST_CLAUDE_ROOT/project-history/$sid.jsonl"
+      if [ -n "$sid" ] && [ ! -f "$SESSIONDOCK_TEST_CLAUDE_ROOT/project-history/$sid.jsonl" ]; then
+        mkdir -p "$SESSIONDOCK_TEST_CLAUDE_ROOT/project-history"
+        printf '{"type":"user","uuid":"%s-u1","parentUuid":null,"sessionId":"%s","cwd":"%s","timestamp":"2026-09-12T10:00:00Z","isSidechain":false,"message":{"role":"user","content":"%s"}}\\n' "$sid" "$sid" "$(pwd -P)" "$line" > "$SESSIONDOCK_TEST_CLAUDE_ROOT/project-history/$sid.jsonl"
       fi
       printf 'RS_INPUT_OK\\n' ;;
   esac
@@ -179,7 +179,7 @@ def main():
             "SESSIONDOCK_TEST_REMOVE": "service-value",
         }
         for key in ["CLAUDE_CODE_SESSION_ID", "CODEX_COMPANION_SESSION_ID", "GROK_SESSION_ID",
-                    "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDE_PID", "TMUX", "AGENTHUB_SESSION"]:
+                    "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CLAUDE_PID", "TMUX", "SESSIONDOCK_SESSION"]:
             service_env[key] = "stale-parent-identity"
         server_wrapper.write_text(
             "#!/bin/sh\n" + "".join(f"export {key}={shlex.quote(value)}\n" for key, value in service_env.items())
@@ -204,7 +204,7 @@ def main():
                  "args": [str(root / "bin/fake-claude"), "--settings", SETTINGS], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": "/synthetic/claude-home", "TERM": "xterm-256color",
-                         "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}},
+                         "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}},
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-codex"),
                  "args": ["--enable", "default_mode_request_user_input", "-c", "suppress_unstable_features_warning=true"],
                  "resume_args": ["resume", "{sid}"],

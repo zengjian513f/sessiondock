@@ -104,7 +104,7 @@ impl Fixture {
         ] {
             directory(path);
         }
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         let script = bin.join("fake_codex_cli.py");
         file(&script, FAKE_CLI.as_bytes(), 0o600);
         let wrapper = format!(
@@ -113,7 +113,7 @@ impl Fixture {
             script.display()
         );
         let env = json!({"PATH":"/usr/bin:/bin","HOME":root.join("home"),
-            "AGENTHUB_TEST_CODEX_ROOT":codex_root,"LANG":"C.UTF-8"});
+            "SESSIONDOCK_TEST_CODEX_ROOT":codex_root,"LANG":"C.UTF-8"});
         let mut profiles = Vec::new();
         for (profile, sid) in SIDS {
             let executable = bin.join(format!("fake-{profile}"));
@@ -518,7 +518,7 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     assert_eq!(media["item"]["media"][0]["token"], "abc");
     wait_confirmed(&app, &uid, "codex-send-0002", Duration::from_secs(10)).await;
     let (status, unlinked) = post(&router, "/api/session/send",
-        json!({"uid":uid,"name":"agenthub-codex-other","text":"x","request_id":"codex-send-0003","_build":app.build})).await;
+        json!({"uid":uid,"name":"sessiondock-codex-other","text":"x","request_id":"codex-send-0003","_build":app.build})).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(unlinked["code"], "terminal_unlinked");
     assert!(
@@ -854,7 +854,7 @@ async fn codex_send_routes_are_501_without_the_ledger_or_transport() {
     directory(&web);
     file(
         &web.join("index.html"),
-        b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",
+        b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",
         0o600,
     );
     let codex = root.join("codex");

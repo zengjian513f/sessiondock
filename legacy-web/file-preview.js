@@ -9,11 +9,11 @@
   function highlight(root) {
     for (const code of root.querySelectorAll('pre > code')) {
       const language = code.dataset.language || code.className.match(/language-([^ ]+)/)?.[1] || '';
-      const result = window.agenthubHighlight?.(code.textContent, language, code.dataset.path || '');
+      const result = window.sessiondockHighlight?.(code.textContent, language, code.dataset.path || '');
       if (result?.html) code.innerHTML = result.html;
     }
   }
-  addEventListener('agenthub-highlight-ready', () => highlight(document));
+  addEventListener('sessiondock-highlight-ready', () => highlight(document));
 
   function textPreview(host, info, resolveLink, toolbarHost = null) {
     const markdown = /\.(md|markdown|mdown)$/i.test(info.name);
@@ -104,5 +104,5 @@
       return localURL(decodeURIComponent(url.pathname), image, url.hash);
     } catch { return ''; }
   }
-  window.AgentHubFilePreview = {textPreview, documentLink};
+  window.SessionDockFilePreview = {textPreview, documentLink};
 })();

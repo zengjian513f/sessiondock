@@ -60,9 +60,9 @@ class Injector:
 def check_page(page, nodes, hub):
     a, b, vega = nodes
     page.wait_for_function('S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]')
-    assert page.evaluate("AgentHubCapabilities.namespace") == "sessiondock.hub./."
+    assert page.evaluate("SessionDockCapabilities.namespace") == "sessiondock.hub./."
     assert page.evaluate("STORAGE_PREFIX") == "sessiondock.hub./."
-    assert page.evaluate("document.querySelector('meta[name=agenthub-mode]').content") == "hub"
+    assert page.evaluate("document.querySelector('meta[name=sessiondock-mode]').content") == "hub"
     assert "SessionDock" in page.title()
     side = page.locator("#side").inner_text()
     assert all(name in side for name in ("NodeA", "NodeB", "Vega")), side

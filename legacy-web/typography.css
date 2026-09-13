@@ -1,5 +1,5 @@
 @font-face {
-  font-family: "AgentHub Cascadia Mono";
+  font-family: "SessionDock Cascadia Mono";
   src: url("fonts/CascadiaMono.woff2") format("woff2-variations");
   font-weight: 200 700; font-style: normal; font-display: swap;
 }
@@ -8,7 +8,7 @@
  * 字面尺寸；xterm 自己按 Unicode 为汉字分配两个单元格，不需要缩小西文
  * 轮廓来凑字体度量上的 1:2。字体文件本身不作修改。 */
 @font-face {
-  font-family: "AgentHub Ubuntu Sans Mono";
+  font-family: "SessionDock Ubuntu Sans Mono";
   src: url("fonts/UbuntuSansMono.ttf") format("truetype-variations");
   font-weight: 100 700; font-style: normal; font-display: swap;
 }
@@ -17,7 +17,7 @@
  * 西文和中文，避免 Cascadia 的 8.22px 西文格与 Noto 的 14.03px 汉字
  * 拼成并非 1:2 的网格。没有安装这两套字体的平台会继续走下面的混合回退。 */
 @font-face {
-  font-family: "AgentHub CJK Mono Grid";
+  font-family: "SessionDock CJK Mono Grid";
   src: local("Sarasa Mono SC"), local("Noto Sans Mono CJK SC");
   font-weight: 200 700; font-style: normal; font-display: swap;
 }
@@ -25,7 +25,7 @@
 /* 等宽西文字体通常没有汉字。把 CJK 单独路由到无衬线字体，避免 Windows
  * 最后用 generic monospace 的宋体补字；unicode-range 让拉丁字母继续走用户所选字体。 */
 @font-face {
-  font-family: "AgentHub CJK Sans";
+  font-family: "SessionDock CJK Sans";
   src: local("Sarasa Mono SC"), local("Noto Sans Mono CJK SC"),
        local("Microsoft YaHei UI"), local("Microsoft YaHei"),
        local("PingFang SC"), local("Noto Sans CJK SC"),
@@ -36,8 +36,8 @@
 }
 
 :root {
-  --terminal-font: "AgentHub CJK Sans", "AgentHub Ubuntu Sans Mono", "Ubuntu Sans Mono",
-    "AgentHub Cascadia Mono", "Cascadia Mono", "Adwaita Mono", "Ubuntu Mono",
+  --terminal-font: "SessionDock CJK Sans", "SessionDock Ubuntu Sans Mono", "Ubuntu Sans Mono",
+    "SessionDock Cascadia Mono", "Cascadia Mono", "Adwaita Mono", "Ubuntu Mono",
     Consola, Consolas, sans-serif;
   --reading-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
 }

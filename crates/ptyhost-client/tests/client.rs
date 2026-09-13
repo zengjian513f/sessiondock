@@ -9,7 +9,7 @@ use tempfile::TempDir;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-const NAME: &str = "agenthub-fake";
+const NAME: &str = "sessiondock-fake";
 const TOKEN: &str = "TEST_ONLY_LOCAL_HOST_TOKEN";
 
 fn record(name: &str, port: u16) -> Value {

@@ -16,7 +16,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Document, Error> {
     let mut raw = strict_value(bytes)?;
     let schema = raw.get("schema").and_then(Value::as_u64);
     let legacy = matches!(schema, Some(1..=4));
-    if raw.get("format").and_then(Value::as_str) != Some("agenthub-lifecycle")
+    if raw.get("format").and_then(Value::as_str) != Some("sessiondock-lifecycle")
         || !matches!(schema, Some(1..=5))
     {
         return Err(Error::UnsupportedSchema);

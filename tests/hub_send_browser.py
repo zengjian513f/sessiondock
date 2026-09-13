@@ -62,7 +62,7 @@ def prepare(root):
              "args": ["--settings", SETTINGS, "--reply"], "new_args": ["--session-id", "{session_id}"],
              "resume_args": ["--resume", "{sid}"],
              "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                     "LANG": "C.UTF-8", "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
+                     "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
     initialize("--initialize-lifecycle", root / "ledger")
     initialize("--initialize-delivery", root / "delivery")
     return config
@@ -157,7 +157,7 @@ def check_browser(browser, root, config):
                 "/api/term/send": {"name": "missing", "data": "probe", "page": "test", "token": "0" * 64,
                                    "instance_id": "missing"},
             }
-            auth = {"X-AgentHub-Protocol": "1", "X-AgentHub-Node-Token": node.token}
+            auth = {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": node.token}
             for path, body in bodies.items():
                 body = {**body, "_build": build}
                 response = ctx.request.post(local + path, data=body)
@@ -165,7 +165,7 @@ def check_browser(browser, root, config):
                 spoofed = ctx.request.post(local + path, data=body, headers=auth)
                 assert spoofed.status == 403 and spoofed.json().get("code") == "hub_unsupported", (path, spoofed.text())
                 denied = ctx.request.post(f"http://127.0.0.1:{node.port}" + path, data=body,
-                                          headers={"X-AgentHub-Protocol": "1"})
+                                          headers={"X-SessionDock-Protocol": "1"})
                 assert denied.status == 403
                 through = ctx.request.post(f"http://127.0.0.1:{node.port}" + path, data=body, headers=auth)
                 assert not through.json().get("reload") and through.json().get("code") != "stale_build", (path, through.text())
@@ -179,7 +179,7 @@ def check_browser(browser, root, config):
                 print("hub send diagnostics:", page.evaluate("""() => ({
                     selected: S.sel, composerUid, name: takenOver(S.sel),
                     lease: termSendLease(takenOver(S.sel)),
-                    outbox: AgentHubCapabilities.allows('outbox'),
+                    outbox: SessionDockCapabilities.allows('outbox'),
                     input: document.querySelector('#cinput')?.value,
                     disabled: document.querySelector('#csend')?.disabled,
                     staleBuildShown,

@@ -181,7 +181,7 @@ impl IntoResponse for JsonBytes {
         );
         response
             .headers_mut()
-            .insert("x-agenthub-decoded-length", length.into());
+            .insert("x-sessiondock-decoded-length", length.into());
         response
     }
 }

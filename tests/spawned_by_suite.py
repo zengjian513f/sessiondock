@@ -197,7 +197,7 @@ def build(root):
     proc_pid(proc, 500, "bash", ["bash"], 1,
              env=(("CLAUDE_CODE_SESSION_ID", ORPHAN),), cwd="/tmp")
     # Q's pane: tmux server → shell → claude Q → tool shell → grok -p G2.
-    proc_pid(proc, 600, "tmux: server", ["tmux", "-L", "agenthub"], 1, cwd="/work/q")
+    proc_pid(proc, 600, "tmux: server", ["tmux", "-L", "sessiondock"], 1, cwd="/work/q")
     proc_pid(proc, 601, "bash", ["bash"], 600, cwd="/work/q")
     proc_pid(proc, 700, "claude", ["claude", "--session-id", Q_SID], 601, cwd="/work/q")
     proc_pid(proc, 701, "bash", ["bash", "/tmp/claude-1000/q/tool.sh"], 700,

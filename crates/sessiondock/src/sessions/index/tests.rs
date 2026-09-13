@@ -2122,7 +2122,7 @@ fn documented_row_fields_are_exactly_todays_set() {
 // Python oracle: the exact corpus and comparison rules of
 // tests/list_rows_parity.py, applied to the index rows directly (the script
 // itself needs the HTTP server wired by WP-C). Run with
-// `AGENTHUB_PYTHON_SOURCE=../agenthub cargo test -p sessiondock --lib
+// `SESSIONDOCK_PYTHON_SOURCE=../sessiondock cargo test -p sessiondock --lib
 // sessions::index::tests::python -- --ignored --nocapture`.
 // ---------------------------------------------------------------------------
 
@@ -2158,10 +2158,10 @@ fn instant(value: &Value) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 #[test]
-#[ignore = "Python oracle: needs python3 and AGENTHUB_PYTHON_SOURCE (the Python checkout)"]
+#[ignore = "Python oracle: needs python3 and SESSIONDOCK_PYTHON_SOURCE (the Python checkout)"]
 fn python_list_sessions_rows_match_field_by_field() {
-    let Ok(source) = std::env::var("AGENTHUB_PYTHON_SOURCE") else {
-        eprintln!("AGENTHUB_PYTHON_SOURCE not set; nothing compared");
+    let Ok(source) = std::env::var("SESSIONDOCK_PYTHON_SOURCE") else {
+        eprintln!("SESSIONDOCK_PYTHON_SOURCE not set; nothing compared");
         return;
     };
     let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");

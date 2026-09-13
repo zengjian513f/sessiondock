@@ -59,8 +59,8 @@ def host(root,instance,*,uid="codex:0123456789abcdef",tty_file=None):
     if tty_file is not None:
         tty_file=Path(tty_file)
         assert tty_file.resolve().is_relative_to(root.resolve())
-        environment["AGENTHUB_TEST_TTY_FILE"]=str(tty_file)
-        script='tty > "$AGENTHUB_TEST_TTY_FILE"\n'+script
+        environment["SESSIONDOCK_TEST_TTY_FILE"]=str(tty_file)
+        script='tty > "$SESSIONDOCK_TEST_TTY_FILE"\n'+script
     metadata={"source":"codex","sid":"synthetic-native-sid","uid":uid,"instance_id":instance}
     process=subprocess.Popen([str(REPO/"target/debug/ptyhost"),"--dir",str(root/"host"),"run","--name",name,
         "--cwd",str(root/"work"),"--cols","80","--rows","24","--meta",json.dumps(metadata),"--",shutil.which("sh"),"-c",script],

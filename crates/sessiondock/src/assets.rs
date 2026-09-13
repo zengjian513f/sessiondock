@@ -2,7 +2,7 @@
 //! In-root aliases are resolved at load. HTML pages receive mode, hostname, build and
 //! capabilities; other assets use the build ETag. GET and HEAD only; `files.html`
 //! with `open=1` redirects to `file.html`. This is not a dynamic static-file server.
-//! The hub binary serves the same snapshot in `Mode::Hub` (`__AGENTHUB_MODE__`
+//! The hub binary serves the same snapshot in `Mode::Hub` (`__SESSIONDOCK_MODE__`
 //! `hub`, hostname `SessionDock`, storage namespace `sessiondock.hub.<path>.`).
 use std::{collections::BTreeMap, fs, io, path::Path};
 
@@ -28,11 +28,11 @@ pub enum Mode {
     Hub,
 }
 
-/// The hub page brand (Python used `HOSTNAME = "AgentHub"`; the SessionDock hub carries its own name).
+/// The hub page brand (Python used `HOSTNAME = "SessionDock"`; the SessionDock hub carries its own name).
 pub const HUB_HOSTNAME: &str = "SessionDock";
 /// The page's localStorage prefix in hub mode; the served path is appended
 /// in the browser (`sessiondock.hub.<location.pathname>.`), as Python's
-/// `agenthub.hub.<path>.` distinguishes hubs mounted at different paths.
+/// `sessiondock.hub.<path>.` distinguishes hubs mounted at different paths.
 pub const HUB_STORAGE_NAMESPACE: &str = "sessiondock.hub.";
 
 struct Asset {
@@ -125,7 +125,7 @@ impl Assets {
             Mode::Hub => ("hub", HUB_HOSTNAME),
         };
         let mut injection = format!(
-            "<meta name=\"agenthub-mode\" content=\"{mode_name}\">\n<meta name=\"agenthub-capabilities\" content=\"{}\">",
+            "<meta name=\"sessiondock-mode\" content=\"{mode_name}\">\n<meta name=\"sessiondock-capabilities\" content=\"{}\">",
             escape_html(&capabilities.to_string())
         );
         if mode == Mode::Hub {
@@ -133,20 +133,20 @@ impl Assets {
             // cannot know the mount path, so the page completes the prefix
             // before the theme script and capabilities.js read it.
             injection.push_str(&format!(
-                "\n<script>(()=>{{const m=document.querySelector('meta[name=\"agenthub-capabilities\"]');try{{const c=JSON.parse(m.content);c.storage_namespace={}+location.pathname+'.';m.content=JSON.stringify(c);}}catch{{}}}})();</script>",
+                "\n<script>(()=>{{const m=document.querySelector('meta[name=\"sessiondock-capabilities\"]');try{{const c=JSON.parse(m.content);c.storage_namespace={}+location.pathname+'.';m.content=JSON.stringify(c);}}catch{{}}}})();</script>",
                 serde_json::Value::String(HUB_STORAGE_NAMESPACE.to_string())
             ));
         }
-        let marker = format!("<meta name=\"agenthub-mode\" content=\"{mode_name}\">");
+        let marker = format!("<meta name=\"sessiondock-mode\" content=\"{mode_name}\">");
         let entries = raw
             .into_iter()
             .map(|(path, mut data)| {
                 let html = matches!(path.as_str(), "/index.html" | "/files.html" | "/file.html");
                 if html {
                     data = String::from_utf8_lossy(&data)
-                        .replace("__AGENTHUB_MODE__", mode_name)
-                        .replace("__AGENTHUB_HOSTNAME__", &escape_html(hostname))
-                        .replace("__AGENTHUB_ASSET_VERSION__", &build)
+                        .replace("__SESSIONDOCK_MODE__", mode_name)
+                        .replace("__SESSIONDOCK_HOSTNAME__", &escape_html(hostname))
+                        .replace("__SESSIONDOCK_ASSET_VERSION__", &build)
                         .replace(&marker, &injection)
                         .into_bytes();
                 }

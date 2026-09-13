@@ -276,7 +276,7 @@ impl Session {
             cmd.env("TERM", "xterm-256color");
         }
         cmd.env("COLORTERM", "truecolor");
-        cmd.env("AGENTHUB_SESSION", &name);
+        cmd.env("SESSIONDOCK_SESSION", &name);
 
         let child = pty
             .slave

@@ -56,7 +56,7 @@ function element(tag, className = '', textContent = '') {
 }
 
 function renderContext(config = {backend: 'rust', media_continuation: true, media_lazy: true}) {
-  const context = vm.createContext({AgentHubCapabilities: {config, allows: () => true}, HUB_MODE: false,
+  const context = vm.createContext({SessionDockCapabilities: {config, allows: () => true}, HUB_MODE: false,
     URL, URLSearchParams, TextDecoder, Uint8Array, appUrl: x => x, esc: x => String(x ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]))});
   for (const name of RENDER) load(context, name);
   return context;

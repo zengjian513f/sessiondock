@@ -83,7 +83,7 @@ def value(row, key):
 
 def bind(python_source, root):
     inst = load_adapters(python_source, fixture_root=root)
-    mod = sys.modules["agenthub.adapters"]
+    mod = sys.modules["sessiondock.adapters"]
     mod.media.register_path = lambda *a, **k: None
     for name, methods in (("claude", ("list_sessions",)), ("grok", ("list_sessions",)),
                           ("codex", ("list_sessions", "scan_sessions", "_find_session_path"))):
@@ -142,7 +142,7 @@ def edges(corpus, python_source):
                    "forked_from_id": "codex-edge-parent", "history_mode": "paginated",
                    "history_base": {"thread_id": "codex-edge-parent", "end_byte_offset": cut}}),
         codex_message("user", "fork q")], [])
-    text = (python_source / "agenthub/adapters.py").read_text(encoding="utf-8")
+    text = (python_source / "sessiondock/adapters.py").read_text(encoding="utf-8")
     block = text[text.find("class CodexAdapter"):text.find("class GrokAdapter")]
     if "ai-title" in block or "aiTitle" in block:
         sid = "codex-tail-rename"

@@ -9,7 +9,7 @@
     return url.href;
   };
   try {
-    if (!AgentHubCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
+    if (!SessionDockCapabilities.allows('files')) throw new Error('Rust 后端尚未实现文件解析与文件操作。');
     if (context.get('open') === '1') {
       const response = await fetch(new URL('api/session/resolve-files', base), {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -57,7 +57,7 @@
     download.href = api({download:1}); download.hidden = false;
     host.replaceChildren();
     if (info.preview === 'text') {
-      AgentHubFilePreview.textPreview(host, info, (ref, image) => AgentHubFilePreview.documentLink(ref, info,
+      SessionDockFilePreview.textPreview(host, info, (ref, image) => SessionDockFilePreview.documentLink(ref, info,
         (path, media, hash) => {
           if (context.has('path')) {
             if (media) return api({path,mode:'preview'}) + hash;

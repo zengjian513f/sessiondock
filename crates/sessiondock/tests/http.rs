@@ -138,12 +138,12 @@ async fn static_snapshot_replaces_templates_and_prevents_traversal() {
                 .to_vec(),
         )
         .unwrap();
-        assert!(!html.contains("__AGENTHUB_"));
+        assert!(!html.contains("__SESSIONDOCK_"));
         assert!(!html.contains("<script>not executable</script>"));
         assert!(html.contains(meta["build"].as_str().unwrap()));
-        assert!(html.contains("agenthub-capabilities"));
+        assert!(html.contains("sessiondock-capabilities"));
         assert!(
-            html.find("agenthub-capabilities").unwrap()
+            html.find("sessiondock-capabilities").unwrap()
                 < html.find("<script>").unwrap_or(html.len())
         );
     }
@@ -204,8 +204,8 @@ async fn request_security_rejects_rebinding_cross_site_hub_bypass_and_oversize()
         ("origin", "https://attacker.example"),
         ("origin", "null"),
         ("sec-fetch-site", "cross-site"),
-        ("x-agenthub-protocol", "1"),
-        ("x-agenthub-node-token", "not-a-real-token"),
+        ("x-sessiondock-protocol", "1"),
+        ("x-sessiondock-node-token", "not-a-real-token"),
     ] {
         let mut req = request("/api/meta");
         req.headers_mut().insert(

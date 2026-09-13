@@ -30,7 +30,7 @@ def main():
             page.add_script_tag(content='''
                 const HUB_MODE = true, nid = 'a'.repeat(32), uid = `claude:${nid}~synthetic`;
                 const nid2 = 'b'.repeat(32), uid2 = `claude:${nid2}~synthetic`;
-                const AgentHubCapabilities = {config:{backend:'rust'}, allows:()=>true};
+                const SessionDockCapabilities = {config:{backend:'rust'}, allows:()=>true};
                 const T = {enabled:true,listLoaded:true,listError:'',resume_sources:{},ended:new Map(),pending:[]};
                 const Nodes = {list:[{id:nid,name:'Lyra fixture'},{id:nid2,name:'Other fixture'}],errors:new Map(),capabilities:{}};
                 const ConsoleUI = {errors:new Map(),busy:new Set()}, SOURCES = {claude:{name:'Claude'}};

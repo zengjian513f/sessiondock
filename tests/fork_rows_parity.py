@@ -119,7 +119,7 @@ def build(root):
 
 def bind(python_source, root):
     inst = load_adapters(python_source, fixture_root=root)
-    cls = sys.modules["agenthub.adapters"].CodexAdapter
+    cls = sys.modules["sessiondock.adapters"].CodexAdapter
     inst["codex"].list_sessions = cls.list_sessions.__get__(inst["codex"])
     inst["codex"].scan_sessions = cls.scan_sessions.__get__(inst["codex"])
     return inst
@@ -197,7 +197,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "agenthub")
+    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
     args = parser.parse_args(argv)
     if args.fixtures_only is not None:
         root = args.fixtures_only.expanduser().resolve()

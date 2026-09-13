@@ -125,12 +125,12 @@ def run(host, port):
     if got == 403:
         fail("origin accepted", "matching Origin rejected", raw)
     passed("origin accepted")
-    for header in ("x-agenthub-protocol", "x-agenthub-node-token"):
+    for header in ("x-sessiondock-protocol", "x-sessiondock-node-token"):
         assert_err(host, port, "hub headers", "GET", "/api/health", 403, "hub_unsupported",
                    {header: "1"})
     # Batch 38 H1: hub traffic has its own listener; on loopback a well-formed
     # credential pair is still refused before any handler, on every route.
-    pair = {"x-agenthub-protocol": "1", "x-agenthub-node-token": "a" * 48}
+    pair = {"x-sessiondock-protocol": "1", "x-sessiondock-node-token": "a" * 48}
     for path in ("/api/meta", "/api/sessions", "/api/nodes", "/"):
         got, raw = call(host, port, "GET", path, pair)
         if got != 403 or code_of(raw) != "hub_unsupported":

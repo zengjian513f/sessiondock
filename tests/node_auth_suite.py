@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP contract of the node listener (batch 38 H1): `SESSIONDOCK_NODE_BIND`
-with token file, id file and peer networks; `X-AgentHub-Node-Token` +
-`X-AgentHub-Protocol: 1` from an allowed peer, 403 otherwise; the loopback
+with token file, id file and peer networks; `X-SessionDock-Node-Token` +
+`X-SessionDock-Protocol: 1` from an allowed peer, 403 otherwise; the loopback
 listener keeps refusing hub headers; the node listener serves `/api` only.
 
 Both listeners bind 127.0.0.1 (the only address a test can bind) with
@@ -27,7 +27,7 @@ RELEASE = REPO / "target/release/sessiondock"
 DEBUG = REPO / "target/debug/sessiondock"
 BINARY = RELEASE if RELEASE.is_file() else DEBUG
 TOKEN = "suite-t0ken.suite-t0ken.suite-t0ken.suite-t0ken~"
-GOOD = {"X-AgentHub-Protocol": "1", "X-AgentHub-Node-Token": TOKEN}
+GOOD = {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": TOKEN}
 AUTH_403 = {"error": "node authentication required", "code": "node_auth_required"}
 PEER_403 = {"error": "forbidden", "code": "node_peer_denied"}
 
@@ -195,7 +195,7 @@ def run(binary: Path, root: Path):
                {"mode": "local", "nodes": [{"id": node_id, "name": meta["hostname"], "online": True}]})
         passed("nodes-loopback")
 
-        for header in ("X-AgentHub-Protocol", "X-AgentHub-Node-Token"):
+        for header in ("X-SessionDock-Protocol", "X-SessionDock-Node-Token"):
             expect("loopback-hub-headers", loop, "/api/sessions", 403, code="hub_unsupported",
                    headers={header: GOOD[header]})
         expect("loopback-hub-headers", loop, "/api/sessions", 403, code="hub_unsupported", headers=GOOD)
@@ -203,11 +203,11 @@ def run(binary: Path, root: Path):
 
         cases = {
             "node-no-headers": {},
-            "node-protocol-only": {"X-AgentHub-Protocol": "1"},
-            "node-token-only": {"X-AgentHub-Node-Token": TOKEN},
-            "node-wrong-protocol": {"X-AgentHub-Protocol": "99", "X-AgentHub-Node-Token": TOKEN},
-            "node-wrong-token": {"X-AgentHub-Protocol": "1", "X-AgentHub-Node-Token": TOKEN[:-1] + "-"},
-            "node-short-token": {"X-AgentHub-Protocol": "1", "X-AgentHub-Node-Token": TOKEN[:-1]},
+            "node-protocol-only": {"X-SessionDock-Protocol": "1"},
+            "node-token-only": {"X-SessionDock-Node-Token": TOKEN},
+            "node-wrong-protocol": {"X-SessionDock-Protocol": "99", "X-SessionDock-Node-Token": TOKEN},
+            "node-wrong-token": {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": TOKEN[:-1] + "-"},
+            "node-short-token": {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": TOKEN[:-1]},
         }
         for name, headers in cases.items():
             expect(name, node_port, "/api/sessions", 403, AUTH_403, headers=headers)

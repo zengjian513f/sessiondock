@@ -186,7 +186,7 @@ def main():
         for path in (work, area, host, ledger, delivery, web):
             path.mkdir(mode=0o700, parents=True)
         (web / "index.html").write_text(
-            '<!doctype html><meta name="agenthub-mode" content="local"><title>x</title>')
+            '<!doctype html><meta name="sessiondock-mode" content="local"><title>x</title>')
         home, copied = isolated_home(tmp, area)
         if not copied:
             skip("no ~/.codex/auth.json to reuse (not logged in)")

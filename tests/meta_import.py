@@ -22,7 +22,7 @@ KNOWN = {"starred", "starred_at", "fork_parent_visible", "activity_stopped_at",
          "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by"}
 ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "spawned_by")
 SPAWN_SOURCE_MAX, SPAWN_SID_MAX = 32, 256
-HOME_SHARE = Path.home() / ".local" / "share" / "agenthub"
+HOME_SHARE = Path.home() / ".local" / "share" / "sessiondock"
 
 
 def die(msg, code=1):
@@ -126,7 +126,7 @@ def check_safety(meta, out):
     if dest.is_relative_to(meta_dir):
         die("out-dir is the python-meta directory or inside it")
     if dest.is_relative_to(share):
-        die("out-dir is $HOME/.local/share/agenthub or inside it")
+        die("out-dir is $HOME/.local/share/sessiondock or inside it")
     if (dest / "session-metadata.json").exists() or (dest / ".metadata.lock").exists():
         die("out-dir already contains session-metadata.json or .metadata.lock; remove it or choose another directory")
     if (dest / "debug-runs.json").exists():

@@ -1,7 +1,7 @@
 //! Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub
 //! traffic): the TCP peer must lie inside `SESSIONDOCK_NODE_PEERS`, the request
-//! must state `X-AgentHub-Protocol: 1` and present the configured credential in
-//! `X-AgentHub-Node-Token` (constant-time comparison). Anything else is 403
+//! must state `X-SessionDock-Protocol: 1` and present the configured credential in
+//! `X-SessionDock-Node-Token` (constant-time comparison). Anything else is 403
 //! before a handler runs. There is no Host gate — the hub addresses the private
 //! interface — and no browser, so proxy headers never identify a peer; the
 //! shared `api_policy` still refuses cross-site requests.
@@ -41,13 +41,13 @@ impl NodeIdentity {
             return Err(peer_denied());
         }
         let protocol = headers
-            .get("x-agenthub-protocol")
+            .get("x-sessiondock-protocol")
             .and_then(|value| value.to_str().ok());
         if protocol != Some(&hub::PROTOCOL.to_string()) {
             return Err(auth_required());
         }
         let token = headers
-            .get("x-agenthub-node-token")
+            .get("x-sessiondock-node-token")
             .and_then(|value| value.to_str().ok())
             .unwrap_or_default();
         if !self.token.verify(token) {
@@ -133,8 +133,8 @@ mod tests {
     fn peer_outside_the_networks_is_refused_before_the_credential() {
         let identity = identity();
         let good = headers(&[
-            ("x-agenthub-protocol", "1"),
-            ("x-agenthub-node-token", &"s3cret-".repeat(8)),
+            ("x-sessiondock-protocol", "1"),
+            ("x-sessiondock-node-token", &"s3cret-".repeat(8)),
         ]);
         for peer in [
             None,
@@ -173,19 +173,19 @@ mod tests {
         let token = "s3cret-".repeat(8);
         let cases: [&[(&str, &str)]; 6] = [
             &[],
-            &[("x-agenthub-protocol", "1")],
-            &[("x-agenthub-node-token", &token)],
+            &[("x-sessiondock-protocol", "1")],
+            &[("x-sessiondock-node-token", &token)],
             &[
-                ("x-agenthub-protocol", "99"),
-                ("x-agenthub-node-token", &token),
+                ("x-sessiondock-protocol", "99"),
+                ("x-sessiondock-node-token", &token),
             ],
             &[
-                ("x-agenthub-protocol", "1"),
-                ("x-agenthub-node-token", &"s3cret-".repeat(7)),
+                ("x-sessiondock-protocol", "1"),
+                ("x-sessiondock-node-token", &"s3cret-".repeat(7)),
             ],
             &[
-                ("x-agenthub-protocol", "1"),
-                ("x-agenthub-node-token", &"S3CRET-".repeat(8)),
+                ("x-sessiondock-protocol", "1"),
+                ("x-sessiondock-node-token", &"S3CRET-".repeat(8)),
             ],
         ];
         for (index, case) in cases.iter().enumerate() {
@@ -205,8 +205,8 @@ mod tests {
                 .accepts(
                     peer,
                     &headers(&[
-                        ("x-agenthub-protocol", "1"),
-                        ("x-agenthub-node-token", &token)
+                        ("x-sessiondock-protocol", "1"),
+                        ("x-sessiondock-node-token", &token)
                     ])
                 )
                 .is_ok()

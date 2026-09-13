@@ -32,7 +32,7 @@ from provider_parity import load_adapters  # noqa: E402
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
-PYTHON_SOURCE = REPO.parent / "agenthub"
+PYTHON_SOURCE = REPO.parent / "sessiondock"
 CASES = ("interrupted-sibling", "fast-escape", "two-level-offshoot", "deferred-abort")
 
 
