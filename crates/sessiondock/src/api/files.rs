@@ -661,10 +661,16 @@ fn pending_attachment_cwd(
     query: &AttachmentQuery,
     record: &crate::lifecycle::model::Record,
 ) -> Result<String, ApiError> {
-    if !query.agent.is_empty()
-        || query.record_id != record.record_id()
-        || query.instance_id != record.instance_id()
-        || query.uid.strip_prefix("tmux:") != Some(record.host_name())
+    let receipt_identity = !query.record_id.is_empty() || !query.instance_id.is_empty();
+    if !query.agent.is_empty() || query.uid.strip_prefix("tmux:") != Some(record.host_name()) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "launch_identity",
+            "创建回执与附件目标实例不匹配",
+        ));
+    }
+    if receipt_identity
+        && (query.record_id != record.record_id() || query.instance_id != record.instance_id())
     {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -692,14 +698,29 @@ async fn pending_attachment_scope(
     if !query.uid.starts_with("tmux:") {
         return Ok(None);
     }
-    if query.record_id.is_empty() || query.instance_id.is_empty() {
+    if query.record_id.is_empty() != query.instance_id.is_empty() {
         return Err(invalid());
     }
     let lifecycle = super::lifecycle::enabled(state)?;
-    let record = lifecycle
-        .get(query.record_id.clone())
-        .await
-        .map_err(super::lifecycle::failure)?;
+    let record = if query.record_id.is_empty() {
+        // Python pages (and an older Hub shell cached in a browser) send only
+        // the server-generated pending host UID. Host names are unique ledger
+        // identities; resolve them on the server instead of treating the raw
+        // UID as a client-supplied cwd grant.
+        let name = query.uid.strip_prefix("tmux:").unwrap_or_default();
+        lifecycle
+            .list(0, usize::MAX)
+            .await
+            .map_err(super::lifecycle::failure)?
+            .into_iter()
+            .find(|record| record.host_name() == name && !record.discarded())
+            .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "session_error", "会话不存在"))?
+    } else {
+        lifecycle
+            .get(query.record_id.clone())
+            .await
+            .map_err(super::lifecycle::failure)?
+    };
     pending_attachment_cwd(query, &record).map(Some)
 }
 
@@ -925,6 +946,11 @@ mod attachment_scope_tests {
 
         assert_eq!(
             pending_attachment_cwd(&valid, &created.record).unwrap(),
+            cwd.to_string_lossy()
+        );
+        let compatible = query(valid.uid.clone(), String::new(), String::new());
+        assert_eq!(
+            pending_attachment_cwd(&compatible, &created.record).unwrap(),
             cwd.to_string_lossy()
         );
 

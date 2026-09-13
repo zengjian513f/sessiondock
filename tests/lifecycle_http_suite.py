@@ -97,7 +97,11 @@ def run(opener, base, root, work, claude_cwd):
         target = Path(work) / uploaded["relative_path"]
         if target.read_bytes() != b"pending attachment bytes" or uploaded.get("recorded") is not False:
             fail("pending attachment", uploaded)
-        passed("POST /api/session/attachment pending receipt identity and wrong-instance refusal")
+        compatible = upload(opener, base, {"uid": attachment_query["uid"],
+                            "name": "旧页面附件.txt"}, b"legacy pending attachment")
+        if (Path(work) / compatible["relative_path"]).read_bytes() != b"legacy pending attachment":
+            fail("legacy pending attachment", compatible)
+        passed("POST /api/session/attachment pending UID compatibility, receipt identity and wrong-instance refusal")
 
         listed, raw = call(opener, base, "GET", "/api/term/list")
         pending, backends = listed.get("pending") or [], listed.get("backends") or []
