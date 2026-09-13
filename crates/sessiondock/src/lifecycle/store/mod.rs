@@ -197,7 +197,9 @@ impl LifecycleStore {
             owner,
         })
     }
-    /// Starting always recovers to durable Uncertain before the handle is ready.
+    /// Starting and in-flight binding intents recover to durable Uncertain before
+    /// the handle is ready. A completed binding is an association receipt, not
+    /// live control authority, so current-schema confirmations survive restart.
     /// Prepared remains a receipt only; this method never reissues spawn authority.
     pub fn open(directory: &Path) -> Result<Self, Error> {
         let disk = disk::Disk::open(directory, false)?;
@@ -212,9 +214,14 @@ impl LifecycleStore {
         if store.document.legacy
             || store.document.records.values().any(|r| {
                 matches!(r.state, State::Starting | State::CancelRequested)
-                    || r.binding
-                        .as_ref()
-                        .is_some_and(|binding| binding.state != BindingState::Uncertain)
+                    || r.binding.as_ref().is_some_and(|binding| {
+                        binding.state == BindingState::Intent
+                            || (!r.cancel_requested
+                                && binding.state == BindingState::Uncertain
+                                && binding.method == BindingMethod::Process
+                                && binding.evidence.is_some()
+                                && binding.bound_at.is_some())
+                    })
             })
         {
             let mut recovered = store.document.clone();
@@ -229,11 +236,31 @@ impl LifecycleStore {
                     record.state = State::Uncertain;
                     changed = true;
                 }
-                if let Some(binding) = &mut record.binding
-                    && binding.state != BindingState::Uncertain
-                {
-                    binding.state = BindingState::Uncertain;
-                    changed = true;
+                if let Some(binding) = &mut record.binding {
+                    if store.document.legacy && binding.state != BindingState::Uncertain {
+                        binding.state = BindingState::Uncertain;
+                        changed = true;
+                    } else if record.cancel_requested
+                        && binding.state != BindingState::Uncertain
+                    {
+                        binding.state = BindingState::Uncertain;
+                        changed = true;
+                    } else if binding.state == BindingState::Intent {
+                        binding.state = BindingState::Uncertain;
+                        changed = true;
+                    } else if !record.cancel_requested
+                        && binding.state == BindingState::Uncertain
+                        && binding.method == BindingMethod::Process
+                        && binding.evidence.is_some()
+                        && binding.bound_at.is_some()
+                    {
+                        // Schema-5 Web recovery used to erase every Confirmed
+                        // state. Process evidence plus its guarded confirmation
+                        // timestamp restores that historical association without
+                        // granting live host authority.
+                        binding.state = BindingState::Confirmed;
+                        changed = true;
+                    }
                 }
                 if changed {
                     record.revision = recovered.revision;
@@ -574,13 +601,13 @@ impl LifecycleStore {
             BindingObservation::Conflict => true,
             BindingObservation::Unavailable => false,
         };
-        // A missing observation after the exact instance exited (its host
-        // record is gone) is not evidence against the binding it confirmed:
-        // the Exited + Confirmed pair stays as the durable exit receipt (WP-E).
-        let retained_exit_receipt = current.state == State::Exited
-            && binding.state == BindingState::Confirmed
+        // Host reachability is current liveness/control evidence, not evidence
+        // against an association already confirmed by guarded Info. Keeping the
+        // association cannot authorize input: service authorization separately
+        // requires a fresh Running observation and a fresh guarded target.
+        let retained_confirmation = binding.state == BindingState::Confirmed
             && matches!(evidence.observation, BindingObservation::Unavailable);
-        let state = if retained_exit_receipt
+        let state = if retained_confirmation
             || (!conflict && matches!(evidence.observation, BindingObservation::Confirmed(_)))
         {
             BindingState::Confirmed
@@ -671,11 +698,10 @@ impl LifecycleStore {
         if matches!(state, State::Exited | State::Failed) && record.finished_at.is_none() {
             record.finished_at = Some(now_unix());
         }
-        // An observed exit of the exact instance keeps a confirmed binding:
-        // that is the durable exit receipt the runtime folds into `exited`
-        // (WP-E; before, every exit downgraded it and the receipt never
-        // applied). Uncertainty and cancellation still downgrade.
-        if matches!(state, State::Uncertain | State::CancelRequested)
+        // Association and liveness are separate. An unavailable host changes
+        // the lifecycle state but does not erase a completed binding; explicit
+        // cancellation still revokes it.
+        if state == State::CancelRequested
             && let Some(binding) = &mut record.binding
         {
             binding.state = BindingState::Uncertain;
