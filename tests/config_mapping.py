@@ -6,7 +6,7 @@ from pathlib import Path
 import env_reference
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = ROOT.parent / "agenthub"
+PY = ROOT.parent / "sessiondock"
 MODS = ("server.py", "term.py", "term_host.py", "files.py", "media.py",
         "audit.py", "trash.py", "session_meta.py")
 HEAD = ("Python knob", "Source", "Purpose (from help/comment)", "Rust variable", "Status")
@@ -22,20 +22,20 @@ MAP = {
     "ALLOW": ("—", "no equivalent (Rust deliberately loopback-only)"),
     "--terminal": ("SESSIONDOCK_PTYHOST_DIR", PTY),
     "--terminal-backend": ("SESSIONDOCK_PTYHOST_DIR", PTY),
-    "AGENTHUB_TERM_BACKEND": ("SESSIONDOCK_PTYHOST_DIR", PTY),
+    "SESSIONDOCK_TERM_BACKEND": ("SESSIONDOCK_PTYHOST_DIR", PTY),
     "--node-token-file": ("SESSIONDOCK_NODE_TOKEN_FILE", "node listener credential (batch 38 H1; with NODE_BIND/NODE_ID_FILE/NODE_PEERS)"),
     "--node-id-file": ("SESSIONDOCK_NODE_ID_FILE", "node identity file, minted O_EXCL 0600 on first start (batch 38 H1)"),
-    "AGENTHUB_HOST_BIN": ("—", "no equivalent (Rust does not discover a host binary)"),
-    "AGENTHUB_HOST_ENV_WRAPPER": ("—", "no equivalent (login-shell wrapper not reproduced)"),
-    "AGENTHUB_HOST_SCOPE": ("—", "no equivalent (Rust does not spawn systemd scopes)"),
+    "SESSIONDOCK_HOST_BIN": ("—", "no equivalent (Rust does not discover a host binary)"),
+    "SESSIONDOCK_HOST_ENV_WRAPPER": ("—", "no equivalent (login-shell wrapper not reproduced)"),
+    "SESSIONDOCK_HOST_SCOPE": ("—", "no equivalent (Rust does not spawn systemd scopes)"),
     "PATH": ("—", OSN), "PATHEXT": ("—", OSN),
     "XDG_RUNTIME_DIR": ("—", OSN), "DBUS_SESSION_BUS_ADDRESS": ("—", OSN),
 }
 FALL = {
     "PORT": "run.sh --port", "ALLOW": "run.sh --allow",
     "--host": "bind host", "--port": "bind port",
-    "AGENTHUB_HOST_ENV_WRAPPER": "optional login-shell wrapper around ptyhost",
-    "AGENTHUB_HOST_SCOPE": "set 0 to disable systemd-run scope",
+    "SESSIONDOCK_HOST_ENV_WRAPPER": "optional login-shell wrapper around ptyhost",
+    "SESSIONDOCK_HOST_SCOPE": "set 0 to disable systemd-run scope",
     "XDG_RUNTIME_DIR": "user runtime dir for systemd-run probe",
     "DBUS_SESSION_BUS_ADDRESS": "session bus for systemd-run probe",
     "PATH": "executable search path", "PATHEXT": "Windows executable suffixes",
@@ -130,7 +130,7 @@ def scan(text, source, shell=False):
 def python_knobs():
     rows = scan(read(PY / "run.sh"), "run.sh", True)
     for name in MODS:
-        rows.extend(scan(read(PY / "agenthub" / name), name))
+        rows.extend(scan(read(PY / "sessiondock" / name), name))
     return rows
 
 def collect_rows():

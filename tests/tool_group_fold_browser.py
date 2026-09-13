@@ -85,7 +85,7 @@ EVAL = """() => {
     media_more:{remaining:2, total:3, cursor:'b'.repeat(32)}}], null, {openTail:false});
   const resultMediaKept = media.querySelectorAll('.tool-entry .media-gallery img').length === 1
     && media.querySelectorAll('.tool-entry .media-more[data-media-cursor]').length
-      === (AgentHubCapabilities.config.media_continuation === true ? 1 : 0);
+      === (SessionDockCapabilities.config.media_continuation === true ? 1 : 0);
   return {firstIsSingle, twoBecomeOpenGroup, nextBatchJoinsTail,
           nonToolSealsGroup, openBeforeIdle, idleSealsGroup,
           foldedAtRest, openedByUser, staysOpenOnAppend, innerKept,

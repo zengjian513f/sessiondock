@@ -18,11 +18,11 @@ SENSITIVE = ("token", "secret", "credential", "endpoint", "socket", "argv", "env
 IDENTITY = {"sid", "uid", "session_id"}
 KINDS = {
     "lifecycle": ("lifecycle-ledger.json", ".lifecycle.lock", ".lifecycle-tmp-",
-                  {1, 2, 3, 4}, "agenthub-lifecycle",
+                  {1, 2, 3, 4}, "sessiondock-lifecycle",
                   ("record_id", "state", "source", "launch", "sid/uid",
                    "instance", "created", "updated", "binding")),
     "delivery": ("delivery-ledger.json", ".delivery.lock", ".delivery-tmp-",
-                 {1}, "agenthub-delivery",
+                 {1}, "sessiondock-delivery",
                  ("request_id", "provider", "state", "revision", "epoch")),
 }
 

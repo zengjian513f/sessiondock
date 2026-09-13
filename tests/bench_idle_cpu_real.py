@@ -11,7 +11,7 @@ def cpu(pid):
         parts = f.read().split(")")[-1].split()
     return (int(parts[11]) + int(parts[12])) / 100.0  # utime+stime in seconds (CLK_TCK=100)
 rs_pid = subprocess.check_output(["pgrep", "-x", "sessiondock"]).split()[0].decode()
-py_pid = subprocess.check_output(["pgrep", "-f", "agenthub.server --host"]).split()[0].decode()
+py_pid = subprocess.check_output(["pgrep", "-f", "sessiondock.server --host"]).split()[0].decode()
 import json, urllib.request
 op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 live = json.load(op.open("http://127.0.0.1:8710/api/live"))["uids"]

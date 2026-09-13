@@ -12,7 +12,7 @@ blank cells of the input row, and a `model · cwd` status footer as the last
 line (a `Working (… esc to interrupt)` status while a turn is running). It
 runs a tiny raw-mode line editor (printable input, bracketed paste, C-u/C-k
 clear, Backspace, Enter) and for every submitted line appends the real
-rollout shape to the resumed rollout under `$AGENTHUB_TEST_CODEX_ROOT`:
+rollout shape to the resumed rollout under `$SESSIONDOCK_TEST_CODEX_ROOT`:
 
   turn_context {model, effort, turn_id}
   event_msg task_started {turn_id}
@@ -110,7 +110,7 @@ class Fake:
         self.submitted = 0
         self.turns = 0
         self.frame = 0
-        self.path = find_rollout(os.environ.get("AGENTHUB_TEST_CODEX_ROOT", ""), self.sid)
+        self.path = find_rollout(os.environ.get("SESSIONDOCK_TEST_CODEX_ROOT", ""), self.sid)
         self.out = sys.stdout
 
     def write(self, text):

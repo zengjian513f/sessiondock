@@ -96,8 +96,8 @@ async fn json_round_trip_sends_node_headers_and_reads_content_length_body() {
         headers.contains(&format!("Host: {addr}").as_str()),
         "{headers:?}"
     );
-    assert!(headers.contains(&format!("X-AgentHub-Node-Token: {}", "t".repeat(40)).as_str()));
-    assert!(headers.contains(&"X-AgentHub-Protocol: 1"));
+    assert!(headers.contains(&format!("X-SessionDock-Node-Token: {}", "t".repeat(40)).as_str()));
+    assert!(headers.contains(&"X-SessionDock-Protocol: 1"));
     assert!(headers.contains(&"Accept-Encoding: identity"));
     assert!(headers.contains(&"Connection: close"));
     assert!(

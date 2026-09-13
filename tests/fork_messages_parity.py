@@ -122,7 +122,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "agenthub")
+    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
     args = parser.parse_args()
     if args.fixtures_only is not None:
         root = args.fixtures_only.expanduser().resolve()

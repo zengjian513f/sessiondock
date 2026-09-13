@@ -87,7 +87,7 @@ impl Fixture {
         ] {
             directory(path);
         }
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         let script = bin.join("fake_claude_cli.py");
         file(&script, FAKE_CLI.as_bytes(), 0o600);
         let wrapper = format!(
@@ -99,7 +99,7 @@ impl Fixture {
             file(&bin.join(name), wrapper.as_bytes(), 0o700);
         }
         let env = json!({"PATH":"/usr/bin:/bin","HOME":root.join("home"),
-            "AGENTHUB_TEST_CLAUDE_ROOT":claude_root,"LANG":"C.UTF-8"});
+            "SESSIONDOCK_TEST_CLAUDE_ROOT":claude_root,"LANG":"C.UTF-8"});
         directory(&root.join("home"));
         let launcher = root.join("launcher.json");
         let (executable, args, resume_args) = match profile {
@@ -483,7 +483,7 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
 
     // Wrong terminal name and unknown session follow the Python codes.
     let (status, unlinked) = post(&router, "/api/session/send",
-        json!({"uid":uid,"name":"agenthub-claude-other","text":"x","request_id":"send-request-0003","_build":app.build})).await;
+        json!({"uid":uid,"name":"sessiondock-claude-other","text":"x","request_id":"send-request-0003","_build":app.build})).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(unlinked["code"], "terminal_unlinked");
     let (status, unknown) = post(&router, "/api/session/send",
@@ -740,7 +740,7 @@ async fn send_routes_are_501_without_the_ledger_or_transport() {
     directory(&web);
     file(
         &web.join("index.html"),
-        b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",
+        b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",
         0o600,
     );
     let claude = root.join("claude");

@@ -268,7 +268,7 @@ def run_cases(hub, a, b):
     build = meta["build"]
     status, headers, page = hub.request("GET", "/")
     text = page.decode()
-    for needle in ('<meta name="agenthub-mode" content="hub">', "SessionDock · 会话管理", "sessiondock.hub.",
+    for needle in ('<meta name="sessiondock-mode" content="hub">', "SessionDock · 会话管理", "sessiondock.hub.",
                    "location.pathname"):
         if needle not in text:
             fail("page", f"missing {needle!r}")
@@ -285,7 +285,7 @@ def run_cases(hub, a, b):
     passed("meta, page in hub mode with the namespace script, nodes without credentials")
 
     for headers, method, path in [({"Host": "example.lan"}, "GET", "/api/meta"),
-                                  ({"X-AgentHub-Protocol": "1"}, "GET", "/api/meta"),
+                                  ({"X-SessionDock-Protocol": "1"}, "GET", "/api/meta"),
                                   ({"Origin": "https://other.invalid"}, "POST", "/api/term/attach")]:
         status, _ = hub.json(method, path, {} if method == "POST" else None, headers)
         if status != 403:

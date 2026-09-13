@@ -69,7 +69,7 @@ def check_pages(opener, base, host):
         fail("index.html title", f"missing {needle!r}", index[:400])
     passed("index.html title")
     files = fetch_text(opener, base, "/files.html")
-    if "__AGENTHUB_HOSTNAME__" not in Path(REPO / "legacy-web" / "files.html").read_text(encoding="utf-8"):
+    if "__SESSIONDOCK_HOSTNAME__" not in Path(REPO / "legacy-web" / "files.html").read_text(encoding="utf-8"):
         print("PASS files.html hostname (skipped: served page has no hostname placeholder)", flush=True)
         global CHECKS
         CHECKS += 1

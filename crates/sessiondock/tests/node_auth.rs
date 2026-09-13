@@ -97,8 +97,8 @@ async fn body(response: Response) -> Value {
 
 fn good() -> [(&'static str, &'static str); 2] {
     [
-        ("x-agenthub-protocol", "1"),
-        ("x-agenthub-node-token", TOKEN),
+        ("x-sessiondock-protocol", "1"),
+        ("x-sessiondock-node-token", TOKEN),
     ]
 }
 
@@ -150,19 +150,19 @@ async fn node_router_requires_peer_protocol_and_token_each() {
     let same_length = TOKEN.replace('~', "-");
     let cases: [&[(&str, &str)]; 6] = [
         &[],
-        &[("x-agenthub-protocol", "1")],
-        &[("x-agenthub-node-token", TOKEN)],
+        &[("x-sessiondock-protocol", "1")],
+        &[("x-sessiondock-node-token", TOKEN)],
         &[
-            ("x-agenthub-protocol", "2"),
-            ("x-agenthub-node-token", TOKEN),
+            ("x-sessiondock-protocol", "2"),
+            ("x-sessiondock-node-token", TOKEN),
         ],
         &[
-            ("x-agenthub-protocol", "1"),
-            ("x-agenthub-node-token", &wrong_length),
+            ("x-sessiondock-protocol", "1"),
+            ("x-sessiondock-node-token", &wrong_length),
         ],
         &[
-            ("x-agenthub-protocol", "1"),
-            ("x-agenthub-node-token", &same_length),
+            ("x-sessiondock-protocol", "1"),
+            ("x-sessiondock-node-token", &same_length),
         ],
     ];
     for (index, case) in cases.iter().enumerate() {
@@ -237,8 +237,8 @@ async fn node_router_requires_peer_protocol_and_token_each() {
 
     // The loopback listener keeps refusing hub headers, right token included.
     for headers in [
-        &[("x-agenthub-protocol", "1")][..],
-        &[("x-agenthub-node-token", TOKEN)][..],
+        &[("x-sessiondock-protocol", "1")][..],
+        &[("x-sessiondock-node-token", TOKEN)][..],
         &good()[..],
     ] {
         let response = send(&loopback, request_loopback("/api/sessions", headers)).await;

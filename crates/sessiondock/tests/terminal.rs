@@ -33,7 +33,7 @@ use tokio_tungstenite::{
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
-const NAME: &str = "agenthub-synthetic-terminal";
+const NAME: &str = "sessiondock-synthetic-terminal";
 const HOST_TOKEN: &str = "SYNTHETIC_HOST_SECRET_NEVER_PUBLIC";
 const READY: &[u8] = b"synthetic ready\r\n";
 const ECHO: u8 = 0;

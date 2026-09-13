@@ -73,7 +73,7 @@ pub fn node_id(path: &Path) -> io::Result<String> {
     Ok(value)
 }
 
-/// The shared hub credential a node expects in `X-AgentHub-Node-Token`.
+/// The shared hub credential a node expects in `X-SessionDock-Node-Token`.
 /// Never printed: `Debug` redacts it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct NodeToken(String);

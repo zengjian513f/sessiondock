@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from provider_parity import load_adapters
 
 SOURCES = ("claude", "codex", "grok")
-PYTHON_SOURCE = Path(__file__).resolve().parents[2] / "agenthub"
+PYTHON_SOURCE = Path(__file__).resolve().parents[2] / "sessiondock"
 HOME_ROOTS = {
     "claude": Path.home() / ".claude" / "projects",
     "codex": Path.home() / ".codex" / "sessions",
@@ -69,7 +69,7 @@ def same_ts(a, b):
 
 def bind_adapters(python_source, roots, fixture_root):
     inst = load_adapters(python_source, fixture_root=fixture_root)
-    mod = sys.modules["agenthub.adapters"]
+    mod = sys.modules["sessiondock.adapters"]
     for src, path in roots.items():
         setattr(mod, src.upper() + "_ROOT", path.resolve(strict=True))
     mod.media.register_path = lambda *a, **k: None
@@ -176,7 +176,7 @@ def main(argv=None):
             print(f"  {src}: {path}", flush=True)
         raise SystemExit(2)
     py_src = args.python_source if args.python_source.is_absolute() else Path.cwd() / args.python_source
-    if not (py_src / "agenthub/adapters.py").is_file():
+    if not (py_src / "sessiondock/adapters.py").is_file():
         die(f"FAIL python-source: missing adapters.py under {py_src}")
     roots = {src: path for src, path in HOME_ROOTS.items() if path.is_dir()}
     if not roots:

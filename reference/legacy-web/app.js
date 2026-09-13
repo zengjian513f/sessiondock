@@ -1,7 +1,7 @@
 'use strict';
 
 const SOURCES = Object.freeze(Object.fromEntries(
-  Object.values(AGENTHUB_CLIS).map(cli => [cli.source, {
+  Object.values(SESSIONDOCK_CLIS).map(cli => [cli.source, {
     name: cli.name, icon: cli.icon, color: cli.color,
   }])));
 
@@ -24,7 +24,7 @@ function loadQueuedMessages() {
   const fromVersion = +store.get('queuedMessagesVersion', 1) || 1;
   if (fromVersion !== QUEUED_MESSAGES_VERSION) {
     const migrated = valid.flatMap(([uid, items]) => {
-      const kept = agenthubCli(uid)?.migrateQueuedMessages(
+      const kept = sessiondockCli(uid)?.migrateQueuedMessages(
         items, fromVersion, QUEUED_MESSAGES_VERSION) || [];
       return kept.length ? [[uid, kept]] : [];
     });
@@ -35,7 +35,7 @@ function loadQueuedMessages() {
   return valid;
 }
 
-const FONT_CHOICES = AgentHubTypography.choices;
+const FONT_CHOICES = SessionDockTypography.choices;
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 
 function applyTheme(choice = store.get('theme', 'system'), persist = false) {
@@ -103,7 +103,7 @@ const MOBILE = matchMedia('(max-width: 720px)');
 // 顶栏和会话头按三级宽度排版：窄屏 ≤720，中屏 721–1199，宽屏 ≥1200。断点与 style.css 一致。
 const MEDIUM = matchMedia('(max-width: 1199px)');
 function layoutTier() { return MOBILE.matches ? 'narrow' : MEDIUM.matches ? 'medium' : 'wide'; }
-// 页面既可挂在站点根目录，也可由反代放到 /agenthub/ 之类的子路径。
+// 页面既可挂在站点根目录，也可由反代放到 /sessiondock/ 之类的子路径。
 const APP_BASE = new URL('.', location.href);
 const DEBUG_RUN = /^[A-Za-z0-9_-]{1,64}$/.test(
   new URLSearchParams(location.search).get('debug_run') || '')
@@ -123,13 +123,13 @@ const appUrl = path => {
   if (HUB_MODE && url.pathname.endsWith('/api/term/complete-dir')) url.searchParams.set('node', newNodeId());
   return url.toString();
 };
-const BUILD_ID = document.querySelector('meta[name="agenthub-build"]')?.content || '';
+const BUILD_ID = document.querySelector('meta[name="sessiondock-build"]')?.content || '';
 // One ephemeral page identity joins HTTP, SSE, terminal and final DOM receipts.
 // It intentionally is not persisted: duplicated/restored tabs must remain distinct.
 const AUDIT_PAGE_ID = globalThis.crypto?.randomUUID?.()
   || [...globalThis.crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
-window.__agenthubPageId = AUDIT_PAGE_ID;
+window.__sessiondockPageId = AUDIT_PAGE_ID;
 
 let browserAuditQueue = [];
 let browserAuditTimer = 0;
@@ -207,8 +207,8 @@ async function flushBrowserAudit() {
     const response = await fetch(appUrl('api/audit/browser'), {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json', 'X-AgentHub-Page': AUDIT_PAGE_ID,
-        'X-AgentHub-Build': BUILD_ID,
+        'Content-Type': 'application/json', 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID,
       },
       body: auditPayload(events),
     });
@@ -517,7 +517,7 @@ function markStaleBuild(serverBuild = '') {
   document.body.classList.add('stale-build');
   const notice = el('div', 'version-stale');
   notice.setAttribute('role', 'alert');
-  notice.innerHTML = '<span>agenthub 已更新。当前页面已停止发送，请重新加载。</span>';
+  notice.innerHTML = '<span>sessiondock 已更新。当前页面已停止发送，请重新加载。</span>';
   const reload = el('button', 'btn', '重新加载');
   reload.type = 'button';
   reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
@@ -815,7 +815,7 @@ function queuedAfterTimestamp(uid) {
 function queuePendingUserMessage(uid, text, media = []) {
   text = String(text || '');
   if (!uid || !text.trim()) return null;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli) return null;
   const created = Date.now();
   const item = cli.createQueuedMessage({
@@ -872,7 +872,7 @@ function acceptServerOutboxVersion(uid, version) {
 }
 
 function syncServerOutbox(uid, items, version = null, { retireMissing = false } = {}) {
-  if (!['claude', 'codex'].includes(agenthubCli(uid)?.source)
+  if (!['claude', 'codex'].includes(sessiondockCli(uid)?.source)
       || !Array.isArray(items)) return false;
   if (staleServerOutbox(uid, version)) {
     browserAuditEvent('outbox.snapshot_rejected', {version, reason: 'stale'}, items, {uid});
@@ -977,7 +977,7 @@ async function retryClientQueuedMessage(uid, id) {
 function reconcileQueuedMessages(uid, messages) {
   const items = queuedMessages(uid).slice();
   if (!items.length) return false;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli) return false;
   let changed = false;
   for (const message of messages || []) {
@@ -1040,7 +1040,7 @@ function reconcileQueuedMessages(uid, messages) {
  *  新输入。服务端已经确认旧输入后 outbox 会消失；若当前活动时间线出现了
  *  因果更晚的另一条 user/command，它不是“仍待确认”，而是已被新分支取代。 */
 function retireSupersededClaudeMessages(uid, ids, messages) {
-  if (agenthubCli(uid)?.source !== 'claude' || !ids?.size) return false;
+  if (sessiondockCli(uid)?.source !== 'claude' || !ids?.size) return false;
   const laterInputs = (messages || []).filter(message =>
     ['user', 'command'].includes(message?.role)
     && Number.isFinite(Date.parse(message.ts || '')));
@@ -1063,7 +1063,7 @@ function expireQueuedMessages(now = Date.now()) {
   let changed = false;
   let selectedChanged = false;
   for (const [uid, current] of S.queued) {
-    const cli = agenthubCli(uid);
+    const cli = sessiondockCli(uid);
     if (!cli || !Array.isArray(current)) continue;
     const hasNativeHistory = cache.has(viewKey(uid));
     const settled = current.map(item => cli.settleQueuedMessage(
@@ -1152,8 +1152,8 @@ async function fetchMessages(uid, opts = {}) {
   try {
     r = await fetch(appUrl(url), {
       signal: opts.signal,
-      headers: {'X-AgentHub-Trace': traceId, 'X-AgentHub-Page': AUDIT_PAGE_ID,
-        'X-AgentHub-Build': BUILD_ID},
+      headers: {'X-SessionDock-Trace': traceId, 'X-SessionDock-Page': AUDIT_PAGE_ID,
+        'X-SessionDock-Build': BUILD_ID},
     });
   } catch (error) {
     browserAuditEvent('http.request.failed', {
@@ -1172,7 +1172,7 @@ async function fetchMessages(uid, opts = {}) {
   // Content-Length 仍可能是压缩后大小。优先用服务端给出的同口径长度；
   // 连到旧服务端时，压缩响应改显示不定进度，也不伪造一个较小的分母。
   const contentTotal = +r.headers.get('Content-Length') || 0;
-  const decodedTotal = +r.headers.get('X-AgentHub-Decoded-Length') || 0;
+  const decodedTotal = +r.headers.get('X-SessionDock-Decoded-Length') || 0;
   const encoded = !!r.headers.get('Content-Encoding');
   const total = decodedTotal || (encoded ? 0 : contentTotal);
   const reader = r.body.getReader();
@@ -1640,7 +1640,7 @@ function watchSession(uid, agent = S.agent) {
   const es = new EventSource(appUrl('api/watch?' + p));
   _es = es;
   _esUid = uid;
-  es.__agenthubConnectionId = connectionId;
+  es.__sessiondockConnectionId = connectionId;
   let received = 0;
   browserAuditEvent('sse.connecting', {start: e.end, agent: agent || ''}, null,
     {uid, connectionId});
@@ -1692,7 +1692,7 @@ function closeWatch() {
   clearTimeout(_esRetry);
   if (_es) {
     browserAuditEvent('sse.closed_by_page', {ready_state: _es.readyState}, null,
-      {uid: _esUid, connectionId: _es.__agenthubConnectionId || ''});
+      {uid: _esUid, connectionId: _es.__sessiondockConnectionId || ''});
     _es.close(); _es = null; _esUid = null;
   }
 }
@@ -1900,7 +1900,7 @@ function showSessionCount() {
 
 const pendingUid = name => `tmux:${name}`;
 
-/** agenthub 自己启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
+/** sessiondock 自己启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
 function pendingTmuxSessions() {
   if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
   return T.pending.flatMap(t => {
@@ -2268,7 +2268,7 @@ async function deleteSessions(uids, button = null) {
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
     + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。` : '')
     + (pending.length && recorded.length ? '\n' : '')
-    + (recorded.length ? '文件会移入回收站 ~/.local/share/agenthub/trash/, 不会真删。' : '')
+    + (recorded.length ? '文件会移入回收站 ~/.local/share/sessiondock/trash/, 不会真删。' : '')
     + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
     return null;
   sessionDeleteBusy = true;
@@ -3913,7 +3913,7 @@ async function requestSessionDelete(uid) {
 }
 
 async function del(m) {
-  if (!confirm(`删除会话「${m.title}」?\n\n文件会移入回收站 ~/.local/share/agenthub/trash/, 不会真删。`)) return;
+  if (!confirm(`删除会话「${m.title}」?\n\n文件会移入回收站 ~/.local/share/sessiondock/trash/, 不会真删。`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   const { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok) {
@@ -5174,7 +5174,7 @@ function questionNode(m) {
           ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
     </section>`).join('');
   if (live) {
-    const cli = agenthubCli(m.uid);
+    const cli = sessiondockCli(m.uid);
     const cliName = cli?.name || 'CLI';
     const waiting = promptState === 'waiting';
     const direct = waiting && rows.length === 1 && !rows[0].multiple
@@ -5288,7 +5288,7 @@ function renderQueuedMessages(uid = S.sel) {
   const box = $('#msgs');
   if (!box || S.agent || uid !== S.sel) return;
   for (const item of queuedMessages(uid)) {
-    const cli = agenthubCli(uid);
+    const cli = sessiondockCli(uid);
     const queuedMessage = {role: 'user', text: item.text, media: item.media,
       counted: false, ts: item.created_iso || item.created_at || item.ts};
     const node = stampMessageTime(msgNode(queuedMessage), [queuedMessage]);
@@ -5374,7 +5374,7 @@ function renderConversationTail(activity, uid = S.sel) {
   // 冲突被丢弃；随后正文 reset 已把它放进完整缓存，但队尾重画过去只看
   // 增量，乐观副本便会永久残留。Claude 有本地副本时，每次画队尾都用
   // 已接受的完整缓存兜底对账一次。通常只有一条、几千项，且仅发送期间执行。
-  if (agenthubCli(uid)?.source === 'claude'
+  if (sessiondockCli(uid)?.source === 'claude'
       && queuedMessages(uid).length && entry?.msgs?.length) {
     reconcileQueuedMessages(uid, entry.msgs);
   }
@@ -5423,7 +5423,7 @@ const clipText = t => t.length > CLIP ? t.slice(0, CLIP) + '\n… (点下方按�
 
 let syntaxLoading = false;
 function ensureSyntax() {
-  if (syntaxLoading || window.agenthubHighlight) return;
+  if (syntaxLoading || window.sessiondockHighlight) return;
   syntaxLoading = true;
   const script = document.createElement('script');
   script.type = 'module';
@@ -5446,14 +5446,14 @@ function paintSyntax(root = document) {
     + '.tool-diff-line > code[data-code-path]:not([data-syntax-done])');
   const nodes = [...new Set([...blocks, ...summaries, ...tools, ...diffLines])];
   if (!nodes.length) return;
-  if (!window.agenthubHighlight) { ensureSyntax(); return; }
+  if (!window.sessiondockHighlight) { ensureSyntax(); return; }
   for (const code of nodes) {
     code.dataset.syntaxDone = '1';
-    const result = code.matches('code.tool-command') && window.agenthubHighlightShellCommand
-      ? window.agenthubHighlightShellCommand(code.textContent)
-      : (code.matches('pre.tool-out') && window.agenthubHighlightSegments
-          ? window.agenthubHighlightSegments(code.textContent, code.dataset.codePath || '')
-          : window.agenthubHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
+    const result = code.matches('code.tool-command') && window.sessiondockHighlightShellCommand
+      ? window.sessiondockHighlightShellCommand(code.textContent)
+      : (code.matches('pre.tool-out') && window.sessiondockHighlightSegments
+          ? window.sessiondockHighlightSegments(code.textContent, code.dataset.codePath || '')
+          : window.sessiondockHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
     if (!result?.html) continue;
     code.innerHTML = result.html;
     code.classList.add('hljs');
@@ -5469,7 +5469,7 @@ function paintSyntax(root = document) {
   }
 }
 
-addEventListener('agenthub-highlight-ready', () => paintSyntax(document));
+addEventListener('sessiondock-highlight-ready', () => paintSyntax(document));
 
 // 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
 function md(text, full, media = [], context = {}) {
@@ -6111,7 +6111,7 @@ function renderOpts() {
 $('#reload').onclick = () => { cancelSearch(true); loadSessions(true); };
 
 /* ---------- 回收站 ---------- */
-// 删除只是把会话文件移进 ~/.local/share/agenthub/trash/，这里是它唯一的出口：
+// 删除只是把会话文件移进 ~/.local/share/sessiondock/trash/，这里是它唯一的出口：
 // 看还剩什么、放回原处、或者真的删掉。
 let trashItems = [];
 let trashBusy = false;

@@ -127,7 +127,7 @@ def server(binary, roots):
 
 def bind_adapters(python_source, roots):
     inst = load_adapters(python_source, fixture_root=python_source)
-    mod = sys.modules["agenthub.adapters"]
+    mod = sys.modules["sessiondock.adapters"]
     for src, path in roots.items():
         setattr(mod, src.upper() + "_ROOT", path.resolve(strict=True))
     mod.media.register_path = lambda *a, **k: None

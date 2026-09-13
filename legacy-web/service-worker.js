@@ -1,5 +1,5 @@
 // SessionDock's own Cache Storage name: a same-origin Python deployment keeps
-// its `agenthub-shell-*` caches and neither side's activate step deletes the other's.
+// its `sessiondock-shell-*` caches and neither side's activate step deletes the other's.
 const CACHE_PREFIX = 'sessiondock-shell-';
 const CACHE_NAME = `${CACHE_PREFIX}v1`;
 const APP_SHELL = [

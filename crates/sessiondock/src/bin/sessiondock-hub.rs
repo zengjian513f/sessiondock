@@ -1,4 +1,4 @@
-//! The multi-machine hub (Python `python3 -m agenthub.hub`), batch 40 H4.
+//! The multi-machine hub (Python `python3 -m sessiondock.hub`), batch 40 H4.
 //! Loopback only, behind the authenticated reverse proxy; it owns no session
 //! root, host, ledger or state directory — only its registry, cache and page.
 //! Registration is a server-side operation like Python's `Registry` class:

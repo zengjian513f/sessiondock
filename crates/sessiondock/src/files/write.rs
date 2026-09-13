@@ -1904,7 +1904,7 @@ impl WriteService {
     }
 
     /// Python `_upload_attachment` for the `bug-report` scope: one raw body
-    /// into `<repository>/agenthub_attachments/<id>/<name>` where the
+    /// into `<repository>/sessiondock_attachments/<id>/<name>` where the
     /// repository lies inside a write root. The batch directory is the
     /// requested id or the next free number; the file keeps its name, reuses
     /// an identical existing file, or takes `stem__N.suffix`; nothing is ever
@@ -1948,7 +1948,7 @@ impl WriteService {
         let attachment_dir = crate::bug_report::ATTACHMENT_DIR;
         let attachment_path = repository.join(attachment_dir);
         let root = self.root_for(&attachment_path)?;
-        // An operator may authorize only cwd/agenthub_attachments, without
+        // An operator may authorize only cwd/sessiondock_attachments, without
         // making the rest of a home/project directory writable.
         let (checked_repository, attachments) = if repository.starts_with(&root.path) {
             let checked = boundary::open_target(root.clone(), repository.clone())?;

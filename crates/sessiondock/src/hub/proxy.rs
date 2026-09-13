@@ -55,9 +55,9 @@ pub const BUILD_CHECKED_PATHS: [&str; 4] = [
 /// Browser headers passed through to the node; `X-Real-IP` is added.
 pub const FORWARDED_HEADERS: [&str; 5] = [
     "Content-Type",
-    "X-AgentHub-Page",
-    "X-AgentHub-Trace",
-    "X-AgentHub-Build",
+    "X-SessionDock-Page",
+    "X-SessionDock-Trace",
+    "X-SessionDock-Build",
     "Range",
 ];
 /// Node headers a streamed (non-JSON, non-SSE) answer keeps.
@@ -646,7 +646,7 @@ pub fn json_response(status: StatusCode, value: &Value) -> Response {
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json; charset=utf-8"),
     );
-    headers.insert("x-agenthub-decoded-length", HeaderValue::from(length));
+    headers.insert("x-sessiondock-decoded-length", HeaderValue::from(length));
     response
 }
 

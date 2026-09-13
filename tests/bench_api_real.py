@@ -58,7 +58,7 @@ uid = urllib.parse.quote(median["uid"], safe="")
 row("GET /api/messages median append=1", f"/api/messages/{uid}?append=1")
 
 print("\n== 搜索（各 1 次）")
-for q, opts in [("ddp_guard", ""), ("guard", "&word=1"), ("agenthub.*rust", "&regex=1")]:
+for q, opts in [("ddp_guard", ""), ("guard", "&word=1"), ("sessiondock.*rust", "&regex=1")]:
     row(f"GET /api/search q={q}{opts}", f"/api/search?q={urllib.parse.quote(q)}&limit=60{opts}", n=1)
 
 print("\n== 并发：8 个并行 GET /api/sessions 的总墙钟与状态码")

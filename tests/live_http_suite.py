@@ -293,7 +293,7 @@ def write_tree(proc_root: Path, paths):
     proc.add(500, "claude", 101, f"claude -p --session-id {SID_E}",
              {"CLAUDE_CODE_SESSION_ID": SID_A, "CLAUDE_PID": "100"}, start_ticks=4_000)
     # F: inside a tmux whose server was first started from A: the server is a boundary.
-    proc.add(600, "tmux: server", 1, "tmux -L agenthub", {"CLAUDE_CODE_SESSION_ID": SID_A, "CLAUDE_PID": "100"})
+    proc.add(600, "tmux: server", 1, "tmux -L sessiondock", {"CLAUDE_CODE_SESSION_ID": SID_A, "CLAUDE_PID": "100"})
     proc.add(601, "bash", 600, "bash")
     proc.add(602, "claude", 601, f"claude --session-id {SID_F}", start_ticks=5_000)
     # H: headless grok -p spawned by F's tool shell inside F's pane. It is live and

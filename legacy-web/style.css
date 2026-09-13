@@ -251,7 +251,7 @@ header {
 .opts button {
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
   border-radius: 5px; padding: 3px 6px; font-size: 12px;
-  font-family: "AgentHub CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.4;
+  font-family: "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.4;
 }
 .opts button:hover { background: var(--hover); color: var(--text); }
 .opts button.on { background: var(--accent); color: #fff; }
@@ -814,7 +814,7 @@ body.dragging { cursor: col-resize; user-select: none; }
 .item .cwd {
   display: flex; align-items: baseline; gap: 4px;
   font-size: 11px; color: var(--muted); margin-top: 1px;
-  font-family: "AgentHub CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-family: "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 .cwd-machine { flex: none; white-space: nowrap; }
 .cwd-path { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--cwd-color, var(--muted)); }
@@ -1435,7 +1435,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .mb pre {
   position: relative; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
   padding: 9px 11px; overflow-x: auto; margin: 8px 0;
-  font: 12px/1.5 "AgentHub CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 12px/1.5 "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre; }
 :where(.mb pre, .tool-entry > pre)[data-code-language]::before {
@@ -1458,7 +1458,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .hljs-strong { font-weight: 700; }
 .mb code:not(pre code) {
   background: var(--panel-2); padding: 1px 5px; border-radius: 4px;
-  font: 12px "AgentHub CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 12px "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
 }
 .mb p { margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
 .mb a:not(.media-link) { color: var(--accent); text-underline-offset: 2px; }

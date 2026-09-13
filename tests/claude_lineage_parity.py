@@ -135,7 +135,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR",
                         help="write the synthetic corpus into DIR, print file paths, exit 0")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "agenthub")
+    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
     args = parser.parse_args()
     if args.fixtures_only is not None:
         args.fixtures_only.mkdir(parents=True, exist_ok=True)

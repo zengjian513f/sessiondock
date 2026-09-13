@@ -206,7 +206,7 @@ where
     headers.insert(header::CONTENT_LENGTH, length.into());
     headers.insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
     headers.insert("x-content-type-options", "nosniff".parse().unwrap());
-    headers.insert("x-agenthub-decoded-length", length.into());
+    headers.insert("x-sessiondock-decoded-length", length.into());
     Ok(response)
 }
 pub async fn history_page(

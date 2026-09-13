@@ -68,7 +68,7 @@ def main():
                 expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
                 expect(page.locator("#session-active")).to_have_text("0" if sys.platform.startswith("linux") else "?")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
-                assert page.evaluate("AgentHubCapabilities.namespace") == "sessiondock."
+                assert page.evaluate("SessionDockCapabilities.namespace") == "sessiondock."
                 assert page.evaluate("T.enabled") is False
 
                 for source, answer in [

@@ -221,7 +221,7 @@ async fn only_info_confirms_running_or_exited_and_global_view_stays_partial() {
 #[tokio::test]
 async fn empty_meta_and_legacy_eight_character_host_names_never_guess() {
     let directory = tempfile::tempdir().unwrap();
-    let peer = host(&directory, "agenthub-codex-complete", json!({}), false).await;
+    let peer = host(&directory, "sessiondock-codex-complete", json!({}), false).await;
     let snapshot = runtime(&directory)
         .observe(&NativeCatalog::from_rows(&rows()))
         .await

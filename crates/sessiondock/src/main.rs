@@ -150,7 +150,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     eprintln!("SessionDock: http://{}", listener.local_addr()?);
     if let Some(node_listener) = &node_listener {
         eprintln!(
-            "SessionDock node listener: http://{} (X-AgentHub-Node-Token + X-AgentHub-Protocol: 1 from configured peers only)",
+            "SessionDock node listener: http://{} (X-SessionDock-Node-Token + X-SessionDock-Protocol: 1 from configured peers only)",
             node_listener.local_addr()?
         );
     }

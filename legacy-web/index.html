@@ -3,50 +3,44 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
-<meta name="agenthub-build" content="__AGENTHUB_ASSET_VERSION__">
-<meta name="agenthub-mode" content="__AGENTHUB_MODE__">
+<meta name="sessiondock-build" content="__SESSIONDOCK_ASSET_VERSION__">
+<meta name="sessiondock-mode" content="__SESSIONDOCK_MODE__">
 <meta name="theme-color" content="#245de8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="SessionDock">
-<title>__AGENTHUB_HOSTNAME__ · 会话管理</title>
-<script defer src="capabilities.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<title>__SESSIONDOCK_HOSTNAME__ · 会话管理</title>
+<script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script>
   // 在样式表加载前确定明暗，避免刷新时先闪出另一套颜色。
   (() => {
     let choice = 'system';
     let namespace = '';
     try {
-      const caps = JSON.parse(document.querySelector('meta[name="agenthub-capabilities"]')?.content || '{}');
+      const caps = JSON.parse(document.querySelector('meta[name="sessiondock-capabilities"]')?.content || '{}');
       namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
         ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
     } catch {}
-    const python = document.querySelector('meta[name="agenthub-mode"]')?.content === 'hub'
-      ? `agenthub.hub.${location.pathname}.` : 'agenthub.';
-    const prefix = namespace || python;
+    const current = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub'
+      ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';
+    const prefix = namespace || current;
     try {
-      // capabilities.js has not loaded yet: same one-time fallback to the
-      // Python key as AgentHubCapabilities.stored (batch 44 WP-F).
-      let saved = localStorage.getItem(prefix + 'theme');
-      if (saved === null && namespace && python !== prefix) {
-        saved = localStorage.getItem(python + 'theme');
-        if (saved !== null) localStorage.setItem(prefix + 'theme', saved);
-      }
+      const saved = localStorage.getItem(prefix + 'theme');
       choice = JSON.parse(saved) || 'system';
     } catch {}
     document.documentElement.dataset.theme = choice === 'system'
       ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : choice;
   })();
 </script>
-<link rel="stylesheet" href="typography.css?v=__AGENTHUB_ASSET_VERSION__">
-<script defer src="typography.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
+<script defer src="typography.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <link rel="stylesheet" href="vendor/xterm.css">
 <link rel="stylesheet" href="vendor/katex/katex.min.css">
 <link rel="preload" href="fonts/UbuntuSansMono.ttf" as="font" type="font/ttf" crossorigin>
-<link rel="stylesheet" href="style.css?v=__AGENTHUB_ASSET_VERSION__">
+<link rel="stylesheet" href="style.css?v=__SESSIONDOCK_ASSET_VERSION__">
 <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<script defer src="pwa-install.js?v=__AGENTHUB_ASSET_VERSION__"
+<script defer src="pwa-install.js?v=__SESSIONDOCK_ASSET_VERSION__"
   data-app-name="SessionDock" data-storage-key="sessiondock.pwa-install-dismissed"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🗂</text></svg>">
 </head>
@@ -136,7 +130,7 @@
 <div id="app">
   <header>
     <div class="brand">
-      <span class="brand-name" title="__AGENTHUB_HOSTNAME__">__AGENTHUB_HOSTNAME__</span>
+      <span class="brand-name" title="__SESSIONDOCK_HOSTNAME__">__SESSIONDOCK_HOSTNAME__</span>
       <button class="btn" id="side-toggle" title="收起会话列表" aria-label="收起会话列表" aria-expanded="true">
         <svg class="ui-icon" aria-hidden="true"><use href="#i-sidebar"/></svg>
       </button>
@@ -451,14 +445,14 @@
 <div id="bug-report-toast" class="bug-report-toast hidden" role="status" aria-live="polite"></div>
 <div id="console-toast" class="bug-report-toast" hidden role="status" aria-live="polite"></div>
 <!-- 列表是首屏核心，必须先执行；终端和公式库较大，延后加载且不能阻塞扫描。 -->
-<script defer src="cli.js?v=__AGENTHUB_ASSET_VERSION__"></script>
-<script defer src="nodes.js?v=__AGENTHUB_ASSET_VERSION__"></script>
-<script defer src="app.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="cli.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="nodes.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="app.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/xterm.js"></script>
 <script defer src="vendor/addon-fit.js"></script>
 <script defer src="vendor/addon-unicode11.js"></script>
 <script defer src="vendor/addon-webgl.js"></script>
-<script defer src="term.js?v=__AGENTHUB_ASSET_VERSION__"></script>
+<script defer src="term.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/katex/katex.min.js"></script>
 <script defer src="vendor/katex/auto-render.min.js" onload="refreshFormulae()"></script>
 <script>

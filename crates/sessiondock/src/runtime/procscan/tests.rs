@@ -583,7 +583,7 @@ fn tmux_and_host_ancestry_are_bounded_walks() {
     let temp = tempfile::tempdir().unwrap();
     let proc = FakeProc::new(temp.path());
     proc.add(1, "systemd", 0, "/sbin/init", &[], &[]);
-    proc.add(500, "tmux: server", 1, "tmux -L agenthub", &[], &[]);
+    proc.add(500, "tmux: server", 1, "tmux -L sessiondock", &[], &[]);
     proc.add(501, "bash", 500, "bash", &[], &[]);
     proc.add(502, "claude", 501, "claude", &[], &[]);
     proc.add(600, "ptyhost", 1, "ptyhost run", &[], &[]);
@@ -635,7 +635,7 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
         &[],
         &[],
     );
-    proc.add(5, "tmux: server", 4856, "tmux -L agenthub", &[], &[]);
+    proc.add(5, "tmux: server", 4856, "tmux -L sessiondock", &[], &[]);
     proc.add(10, "sh", 5, "sh -c claude", &[], &[]);
     proc.add(
         11,

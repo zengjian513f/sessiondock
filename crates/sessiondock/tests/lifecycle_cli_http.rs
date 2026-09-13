@@ -29,11 +29,11 @@ use tower::ServiceExt;
 const CODEX_SID: &str = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
 const SETTINGS: &str = "/synthetic/bridge-settings.json";
 const FAKE_CLI: &str = r#"#!/bin/sh
-printf 'FAKE_%s_ARGV' "$AGENTHUB_TEST_LABEL"
+printf 'FAKE_%s_ARGV' "$SESSIONDOCK_TEST_LABEL"
 for arg in "$@"; do printf ' [%s]' "$arg"; done
 printf '\nFAKE_%s_ENV HOME=[%s] TERM=[%s] CLAUDE_CODE_SESSION_ID=[%s] CODEX_COMPANION_SESSION_ID=[%s] GROK_SESSION_ID=[%s] TMUX=[%s] MARK=[%s]\n' \
-  "$AGENTHUB_TEST_LABEL" "$HOME" "$TERM" "$CLAUDE_CODE_SESSION_ID" "$CODEX_COMPANION_SESSION_ID" "$GROK_SESSION_ID" "$TMUX" "$AGENTHUB_TEST_MARK"
-printf 'FAKE_%s_CWD [%s]\n' "$AGENTHUB_TEST_LABEL" "$(pwd -P)"
+  "$SESSIONDOCK_TEST_LABEL" "$HOME" "$TERM" "$CLAUDE_CODE_SESSION_ID" "$CODEX_COMPANION_SESSION_ID" "$GROK_SESSION_ID" "$TMUX" "$SESSIONDOCK_TEST_MARK"
+printf 'FAKE_%s_CWD [%s]\n' "$SESSIONDOCK_TEST_LABEL" "$(pwd -P)"
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; *) printf "RS_UNKNOWN\n" ;; esac; done'
 "#;
 
@@ -100,7 +100,7 @@ impl Fixture {
         ] {
             directory(path);
         }
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         for name in ["fake-claude", "fake-codex"] {
             file(&bin.join(name), FAKE_CLI.as_bytes(), 0o700);
         }
@@ -127,14 +127,14 @@ impl Fixture {
              "args":["--settings",SETTINGS],
              "new_args":["--session-id","{session_id}"],
              "resume_args":["--resume","{sid}"],
-             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","AGENTHUB_TEST_LABEL":"CLAUDE","AGENTHUB_TEST_MARK":"claude-profile"},
+             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","SESSIONDOCK_TEST_LABEL":"CLAUDE","SESSIONDOCK_TEST_MARK":"claude-profile"},
              "env_remove":["TERM"],
              },
             {"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
              "args":["--enable","default_mode_request_user_input","-c","suppress_unstable_features_warning=true"],
              "new_args":[],
              "resume_args":["resume","{sid}"],
-             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","TERM":"xterm-256color","AGENTHUB_TEST_LABEL":"CODEX","AGENTHUB_TEST_MARK":"codex-profile"},
+             "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","TERM":"xterm-256color","SESSIONDOCK_TEST_LABEL":"CODEX","SESSIONDOCK_TEST_MARK":"codex-profile"},
              }
         ]});
         file(&launcher, config.to_string().as_bytes(), 0o600);

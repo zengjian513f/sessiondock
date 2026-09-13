@@ -337,7 +337,7 @@ impl Harness {
             workers: Arc::new(Semaphore::new(4)),
         };
         let resolver = Arc::new(FakeResolver {
-            target: synthetic_target("agenthub-claude-0d3c5a8e", &self.uid),
+            target: synthetic_target("sessiondock-claude-0d3c5a8e", &self.uid),
         });
         self.executor = Some(DeliveryExecutor::start(
             service.clone(),
@@ -380,7 +380,7 @@ impl Harness {
         SendRequest {
             uid: self.uid.clone(),
             agent: String::new(),
-            name: "agenthub-claude-0d3c5a8e".into(),
+            name: "sessiondock-claude-0d3c5a8e".into(),
             text: text.into(),
             media: Vec::new(),
             request_id: id.into(),
@@ -495,7 +495,7 @@ async fn draft_conflict_needs_consent_token_then_clears_and_sends() {
     harness.driver.state().buffer = "old draft".into();
     let probe = harness
         .exec()
-        .draft_status(&harness.uid, "agenthub-claude-0d3c5a8e", None)
+        .draft_status(&harness.uid, "sessiondock-claude-0d3c5a8e", None)
         .await;
     assert_eq!(probe.status, 200);
     assert_eq!(probe.body["draft_state"], "editing");
@@ -537,7 +537,7 @@ async fn draft_conflict_needs_consent_token_then_clears_and_sends() {
     );
     let probe = harness
         .exec()
-        .draft_status(&harness.uid, "agenthub-claude-0d3c5a8e", None)
+        .draft_status(&harness.uid, "sessiondock-claude-0d3c5a8e", None)
         .await;
     assert_eq!(probe.body, json!({"ok": true, "draft_state": "empty"}));
 }
@@ -556,7 +556,7 @@ async fn lease_held_elsewhere_is_the_documented_ownership_error() {
     assert!(harness.receipt("request-0004").await.is_none());
     let probe = harness
         .exec()
-        .draft_status(&harness.uid, "agenthub-claude-0d3c5a8e", None)
+        .draft_status(&harness.uid, "sessiondock-claude-0d3c5a8e", None)
         .await;
     assert_eq!(probe.status, 409);
     assert_eq!(probe.body["code"], "terminal_ownership");

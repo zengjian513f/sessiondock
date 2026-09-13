@@ -51,11 +51,11 @@ def python_only():
 
 def load_python(source, root):
     source = source.resolve(strict=True)
-    package_dir = source / "agenthub"
+    package_dir = source / "sessiondock"
     for name in ("adapters.py", "media.py"):
         if not (package_dir / name).is_file():
-            raise ValueError("--python-source must contain agenthub/adapters.py and media.py")
-    namespace = "_agenthub_synthetic_media_parity"
+            raise ValueError("--python-source must contain sessiondock/adapters.py and media.py")
+    namespace = "_sessiondock_synthetic_media_parity"
     package = types.ModuleType(namespace)
     package.__path__ = [str(package_dir)]
     sys.modules[namespace] = package

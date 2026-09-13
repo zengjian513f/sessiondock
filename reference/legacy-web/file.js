@@ -37,7 +37,7 @@
       const url = new URL('files.html', base); url.search = context.toString();
       location.replace(url); return;
     }
-    document.title = info.name + ' · AgentHub';
+    document.title = info.name + ' · SessionDock';
     document.getElementById('file-title').textContent = info.name;
     document.getElementById('file-title').title = info.name;
     document.querySelector('header').hidden = false;
@@ -45,7 +45,7 @@
     download.href = api({download:1}); download.hidden = false;
     host.replaceChildren();
     if (info.preview === 'text') {
-      AgentHubFilePreview.textPreview(host, info, (ref, image) => AgentHubFilePreview.documentLink(ref, info,
+      SessionDockFilePreview.textPreview(host, info, (ref, image) => SessionDockFilePreview.documentLink(ref, info,
         (path, media, hash) => {
           if (context.has('path')) {
             if (media) return api({path,mode:'preview'}) + hash;
@@ -63,7 +63,7 @@
       host.append(media);
     } else host.textContent = '此格式暂不支持预览，请下载后打开。';
   } catch (error) {
-    document.title = '无法打开文件 · AgentHub';
+    document.title = '无法打开文件 · SessionDock';
     document.getElementById('file-title').textContent = '无法打开文件';
     document.querySelector('header').hidden = false;
     const retry = document.getElementById('file-retry'); retry.hidden = false;

@@ -241,7 +241,7 @@ def browser(corpus, base, expected_native):
                     route.continue_()
             page.route("**/api/watch?*", watch_route)
             assert page.goto(base, wait_until="networkidle").status == 200
-            assert page.evaluate("AgentHubCapabilities.config.media_continuation===true"), "real backend must declare media_continuation"
+            assert page.evaluate("SessionDockCapabilities.config.media_continuation===true"), "real backend must declare media_continuation"
 
             def select(name, marker):
                 if page.viewport_size["width"] < 700 and page.locator(".mobile-back").is_visible():

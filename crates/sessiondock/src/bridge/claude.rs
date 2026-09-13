@@ -1,4 +1,4 @@
-//! Claude question cards (Python `agenthub/claude_bridge.py`).
+//! Claude question cards (Python `sessiondock/claude_bridge.py`).
 //!
 //! Claude Code shows an `AskUserQuestion` dialog in its TUI before the
 //! `tool_use` record reaches the transcript. The `sessiondock claude-hook`

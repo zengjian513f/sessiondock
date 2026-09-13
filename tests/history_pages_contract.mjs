@@ -24,7 +24,7 @@ function fixture(chain=false) {
     meta:{uid:'codex:fixture'},bytes:100,total:7,end:100,anchor:'old',version:{head:'old-head'},activity:null};
   const cache = new Map([['codex:fixture',entry]]), rendered=[];
   const gap = element('div','history-gap'), button=element('button','history-gap-load'); gap.appendChild(button);
-  const context = vm.createContext({AgentHubCapabilities:{config:{backend:'rust',history_pages:true}},
+  const context = vm.createContext({SessionDockCapabilities:{config:{backend:'rust',history_pages:true}},
     S:{sel:'codex:fixture',agent:null,cursors:new Map([['codex:fixture',{end:100,head:'old-head',anchor:'old'}]])},
     cache, inflight:{}, viewKey:(uid,agent)=>agent?`${uid}:${agent}`:uid,
     historyPageRequests:new Map(), AbortController, SYNC_STALL_MS:20000, HISTORY_PAGE_CHAIN:chain, HISTORY_PAGE_MAX_EVENTS:10000,
@@ -40,7 +40,7 @@ test('only exact Rust history_pages capability selects pages; Python keeps full-
   for (const config of [{},{backend:'python'},{backend:'rust'},{backend:'rust',history_pages:1},
     {backend:'rust',history_pages:false},{backend:'rust',history_pages:true}]) {
     const calls=[];
-    const context=vm.createContext({AgentHubCapabilities:{config},el:element,
+    const context=vm.createContext({SessionDockCapabilities:{config},el:element,
       loadHistoryPage:()=>calls.push('page'),loadFullHistory:()=>calls.push('full')});
     load(context,'historyPagesEnabled'); const gap=load(context,'historyGapNode')({uid:'u',agent:null,omitted:800});
     gap.children[0].onclick();

@@ -347,7 +347,7 @@ async fn page_meta_nodes_and_gate() {
     let html =
         String::from_utf8(to_bytes(page.into_body(), 32 << 20).await.unwrap().to_vec()).unwrap();
     assert!(
-        html.contains("<meta name=\"agenthub-mode\" content=\"hub\">"),
+        html.contains("<meta name=\"sessiondock-mode\" content=\"hub\">"),
         "hub mode meta"
     );
     assert!(
@@ -411,7 +411,7 @@ async fn page_meta_nodes_and_gate() {
         &hub.router,
         "GET",
         "/api/meta",
-        &[("X-AgentHub-Protocol", "1")],
+        &[("X-SessionDock-Protocol", "1")],
         None,
     )
     .await;

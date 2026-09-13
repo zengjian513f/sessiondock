@@ -63,8 +63,8 @@ impl Target {
     /// The three headers every hub→node request carries (`Registry.headers`).
     pub fn headers(&self) -> [(&'static str, String); 3] {
         [
-            ("X-AgentHub-Node-Token", self.token.clone()),
-            ("X-AgentHub-Protocol", PROTOCOL.to_string()),
+            ("X-SessionDock-Node-Token", self.token.clone()),
+            ("X-SessionDock-Protocol", PROTOCOL.to_string()),
             ("Accept-Encoding", "identity".to_string()),
         ]
     }

@@ -1,12 +1,12 @@
 'use strict';
 
 // 接管会话: 在服务端把它用 tmux resume 起来, 然后把终端嵌在会话详情底部。
-// 会话跑在 tmux 里, 所以关掉页面/重启 agenthub 都不会打断它。
+// 会话跑在 tmux 里, 所以关掉页面/重启 sessiondock 都不会打断它。
 const TERM_RENDER_BATCH_MS = 20;
 const TERM_RENDER_BATCH_MAX = 32 * 1024;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
-const TERM_PAGE_ID = window.__agenthubPageId || crypto.randomUUID?.()
+const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
   || [...crypto.getRandomValues(new Uint8Array(16))]
     .map(value => value.toString(16).padStart(2, '0')).join('');
 
@@ -14,7 +14,7 @@ const T = {
   term: null,      // xterm 实例
   ws: null,
   name: null,      // 当前挂着的 tmux 会话名
-  uid: null,       // 对应的 agenthub 会话
+  uid: null,       // 对应的 sessiondock 会话
   views: new Map(), // 已打开过且仍存活的 tmux → xterm/WebSocket；切会话只隐藏
   enabled: false,
   listLoaded: false,
@@ -113,9 +113,9 @@ async function prepareTerminalFont() {
   try {
     await document.fonts?.load(`${size}px ${configured}`, TERM_FONT_SAMPLE);
     const configuredRatio = terminalFontGridRatio(configured, size);
-    const keepUbuntuGlyphs = configured.includes('"AgentHub Ubuntu Sans Mono"');
+    const keepUbuntuGlyphs = configured.includes('"SessionDock Ubuntu Sans Mono"');
     if (!keepUbuntuGlyphs && Math.abs(configuredRatio - 2) > .025) {
-      const grid = '"AgentHub CJK Mono Grid"';
+      const grid = '"SessionDock CJK Mono Grid"';
       const faces = await document.fonts?.load(`${size}px ${grid}`, TERM_FONT_SAMPLE);
       const ratio = faces?.length ? terminalFontGridRatio(grid, size) : 0;
       if (Math.abs(ratio - 2) <= .025) resolved = `${grid}, ${configured}`;
@@ -435,7 +435,7 @@ function linkedTermSession(uid, { followReplacement = false } = {}) {
   // 优先保留普通会话的叶子名，再用 root_sid 追溯回同一 pane。
   const ids = [...new Set([session.sid, session.root_sid].filter(Boolean))];
   for (const sid of ids) {
-    const name = (session.node_id ? session.node_id + '~' : '') + `agenthub-${session.source}-${String(sid).slice(0, 8)}`;
+    const name = (session.node_id ? session.node_id + '~' : '') + `sessiondock-${session.source}-${String(sid).slice(0, 8)}`;
     const pane = panes.find(x => x.name === name);
     const result = linked(pane, name);
     if (result) return result;
@@ -535,8 +535,8 @@ async function post(url, body) {
   try {
     const r = await fetch(appUrl(url), {
       method: 'POST', headers: {
-        'Content-Type': 'application/json', 'X-AgentHub-Trace': traceId,
-        'X-AgentHub-Page': TERM_PAGE_ID, 'X-AgentHub-Build': BUILD_ID,
+        'Content-Type': 'application/json', 'X-SessionDock-Trace': traceId,
+        'X-SessionDock-Page': TERM_PAGE_ID, 'X-SessionDock-Build': BUILD_ID,
       },
       body: JSON.stringify(payload),
     });
@@ -608,7 +608,7 @@ function showBugReportToast(report, worker) {
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
 // 引用，以及同一个上传接口。处理会话的 cwd 固定为仓库根目录，因此上传
-// 先落到仓库的 agenthub_attachments/，与在该目录的会话里发送附件完全一致。
+// 先落到仓库的 sessiondock_attachments/，与在该目录的会话里发送附件完全一致。
 const BUG_REPORT_UPLOAD_UID = 'bug-report';
 // newComposerDraft 定义在下方的对话输入框段落，只能在运行时按需创建。
 let bugReportDraft = null;
@@ -1614,7 +1614,7 @@ function ensureTerm(name) {
   // xterm 的正常 scrollback。改造前遗留在默认 server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
-    if (T.list?.find(x => x.name === name)?.server === 'agenthub') return true;
+    if (T.list?.find(x => x.name === name)?.server === 'sessiondock') return true;
     wheelBy(e.deltaY);
     return false;
   });
@@ -2485,7 +2485,7 @@ function syncComposerMode() {
 
 async function prepareTerminalDraft(uid) {
   const name = takenOver(uid);
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!name || !['claude', 'codex'].includes(cli?.source) || uid.startsWith('tmux:')) {
     return { proceed: true, overwriteDraft: '' };
   }
@@ -2510,7 +2510,7 @@ async function prepareTerminalDraft(uid) {
 async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) {
   const name = takenOver(uid);
   if (!name) return false;
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   const serverQueued = !!text && ['claude', 'codex'].includes(cli?.source)
     && !uid.startsWith('tmux:');
   const queuedId = text && !serverQueued && typeof queuePendingUserMessage === 'function'
@@ -3032,14 +3032,14 @@ async function answerCliQuestion(uid, optionIndex) {
   if (rows?.length !== 1 || rows[0].multiple || !rows[0].options?.[optionIndex]) return false;
   // 不同 CLI 的菜单定位语义不同（Claude 用方向键，Codex 用数字直选），
   // 具体按键必须由各自实现决定，不能在公共交互层猜测当前光标位置。
-  const keys = agenthubCli(uid)?.questionAnswerKeys(prompt, optionIndex);
+  const keys = sessiondockCli(uid)?.questionAnswerKeys(prompt, optionIndex);
   if (!keys?.length) return false;
   return sendToSession(null, keys, uid);
 }
 
 async function answerCliQuestionForm(uid, optionIndexes) {
   const prompt = activeCliQuestion(uid);
-  const cli = agenthubCli(uid);
+  const cli = sessiondockCli(uid);
   if (!cli?.canAnswerQuestionForm(prompt)) return false;
   const groups = cli.questionFormAnswerKeyGroups(prompt, optionIndexes);
   if (!groups?.length) return false;
@@ -3056,7 +3056,7 @@ async function answerCliQuestionForm(uid, optionIndexes) {
 
 async function cancelCliQuestion(uid) {
   composerEscAt = -Infinity;
-  const keys = agenthubCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
+  const keys = sessiondockCli(uid)?.questionCancelKeys(activeCliQuestion(uid));
   return keys?.length ? sendToSession(null, keys, uid) : false;
 }
 
@@ -3072,7 +3072,7 @@ async function sendComposerEscape(now = performance.now()) {
   const draft = composerDraft(uid, false);
   const empty = !String($('#cinput')?.value || '').trim()
     && !(draft?.attachments?.length) && !(draft?.quotes?.some(q => q.text?.trim()));
-  const escape = agenthubCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
+  const escape = sessiondockCli(uid)?.repeatedEscape(now, composerEscAt, { busy, empty })
     || { rewind: false, nextAt: -Infinity };
   const rewind = escape.rewind;
   composerEscAt = escape.nextAt;

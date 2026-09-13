@@ -156,7 +156,7 @@ def main():
         for path in (work, area, host, ledger, delivery, web):
             path.mkdir(mode=0o700, parents=True)
         (web / "index.html").write_text(
-            '<!doctype html><meta name="agenthub-mode" content="local"><title>x</title>')
+            '<!doctype html><meta name="sessiondock-mode" content="local"><title>x</title>')
 
         trust_project(config, area)
         import uuid

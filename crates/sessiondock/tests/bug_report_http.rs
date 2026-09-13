@@ -94,7 +94,7 @@ impl Fixture {
         fs::create_dir_all(&repo).unwrap();
         fs::set_permissions(&work, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&repo, fs::Permissions::from_mode(0o755)).unwrap();
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         let script = bin.join("fake_claude_cli.py");
         file(&script, FAKE_CLI.as_bytes(), 0o600);
         let wrapper = format!(
@@ -104,7 +104,7 @@ impl Fixture {
         );
         file(&bin.join("fake-claude"), wrapper.as_bytes(), 0o700);
         let env = json!({"PATH":"/usr/bin:/bin","HOME":root.join("home"),
-            "AGENTHUB_TEST_CLAUDE_ROOT":claude_root,"LANG":"C.UTF-8"});
+            "SESSIONDOCK_TEST_CLAUDE_ROOT":claude_root,"LANG":"C.UTF-8"});
         directory(&root.join("home"));
         let profile = |id: &str, args: Value| {
             json!({"id":id,"source":"claude","executable":bin.join("fake-claude"),
@@ -410,7 +410,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert_eq!(fs::read_dir(&fixture.reports).unwrap().count(), 0);
 
-    // A raw upload lands under <repo>/agenthub_attachments/<id>/<name>.
+    // A raw upload lands under <repo>/sessiondock_attachments/<id>/<name>.
     let (status, upload) = request(
         &router,
         Method::POST,
@@ -426,19 +426,19 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
     assert_eq!(upload["mime"], "image/png");
     assert_eq!(
         upload["relative_path"],
-        "agenthub_attachments/1/屏幕截图.png"
+        "sessiondock_attachments/1/屏幕截图.png"
     );
     let shot = PathBuf::from(upload["path"].as_str().unwrap());
     assert_eq!(
         shot,
-        fixture.repo.join("agenthub_attachments/1/屏幕截图.png")
+        fixture.repo.join("sessiondock_attachments/1/屏幕截图.png")
     );
     assert_eq!(
         fs::read(&shot).unwrap(),
         vec![0x89, b'P', b'N', b'G', 1, 2, 3, 4]
     );
     assert_eq!(
-        fs::metadata(fixture.repo.join("agenthub_attachments"))
+        fs::metadata(fixture.repo.join("sessiondock_attachments"))
             .unwrap()
             .permissions()
             .mode()
@@ -499,7 +499,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
         "/api/bug-report",
         json!({"description": "点了按钮没反应，见 [附件1]", "uid": "claude:none",
             "page_id": "page-1", "source": "claude", "snapshot": {"data": {"selected": "claude:none"}},
-            "terminal_name": "agenthub-nope", "cols": 100, "rows": 30, "_build": meta["build"],
+            "terminal_name": "sessiondock-nope", "cols": 100, "rows": 30, "_build": meta["build"],
             "attachments": [{"path": shot, "number": 1, "name": "屏幕截图.png", "kind": "image",
                 "mime": "image/png", "size": 8, "attachment_id": "1"}]}),
     )
@@ -553,7 +553,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
         "unknown terminal name yields no capture"
     );
     let prompt = fs::read_to_string(path.join("worker-prompt.md")).unwrap();
-    assert!(prompt.contains("附件1: ./agenthub_attachments/1/屏幕截图.png"));
+    assert!(prompt.contains("附件1: ./sessiondock_attachments/1/屏幕截图.png"));
     assert!(prompt.contains("不要 push"));
     let events: Vec<Value> = fs::read_to_string(path.join("events.jsonl"))
         .unwrap()

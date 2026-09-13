@@ -366,7 +366,7 @@ fn page_nodes_lru_and_audit_grouping() {
 fn headers_display_ip_and_sse_rewrite() {
     let mut browser = HeaderMap::new();
     browser.insert("content-type", HeaderValue::from_static("application/json"));
-    browser.insert("x-agenthub-page", HeaderValue::from_static("p1"));
+    browser.insert("x-sessiondock-page", HeaderValue::from_static("p1"));
     browser.insert("range", HeaderValue::from_static("bytes=0-1"));
     browser.insert("cookie", HeaderValue::from_static("secret"));
     browser.insert("upgrade", HeaderValue::from_static("websocket"));
@@ -376,7 +376,7 @@ fn headers_display_ip_and_sse_rewrite() {
         plain,
         vec![
             ("Content-Type".to_string(), "application/json".to_string()),
-            ("X-AgentHub-Page".to_string(), "p1".to_string()),
+            ("X-SessionDock-Page".to_string(), "p1".to_string()),
             ("Range".to_string(), "bytes=0-1".to_string()),
             ("X-Real-IP".to_string(), "10.0.0.9".to_string()),
         ]
@@ -433,5 +433,5 @@ fn client_errors_map_like_python() {
         ProxyError::Invalid(NODE_RESPONSE_TOO_LARGE.into())
     );
     let response = json_response(StatusCode::OK, &json!({"ok": true}));
-    assert_eq!(response.headers()["x-agenthub-decoded-length"], "11");
+    assert_eq!(response.headers()["x-sessiondock-decoded-length"], "11");
 }

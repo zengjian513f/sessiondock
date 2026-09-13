@@ -16,7 +16,7 @@ pub(super) fn encode(document: &Document) -> Result<Vec<u8>, Error> {
 
 pub(super) fn decode(bytes: &[u8]) -> Result<Document, Error> {
     let raw = strict_value(bytes)?;
-    if raw.get("format").and_then(Value::as_str) != Some("agenthub-delivery")
+    if raw.get("format").and_then(Value::as_str) != Some("sessiondock-delivery")
         || raw.get("schema").and_then(Value::as_u64) != Some(1)
     {
         return Err(Error::UnsupportedSchema);

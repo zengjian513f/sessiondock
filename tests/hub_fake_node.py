@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # run_validation: skip
-"""A fake AgentHub node for hub tests: stdlib HTTP server, one synthetic session.
+"""A fake SessionDock node for hub tests: stdlib HTTP server, one synthetic session.
 
 Port of the Python project's `tests/hub_fixture.py NodeHandler` without any
 dependency on the Python package. Never starts a CLI or reads real sessions.
@@ -88,7 +88,7 @@ class NodeHandler(BaseHTTPRequestHandler):
     def _gate(self):
         """Fixture rule: a protocol header needs the right token; offline = 503."""
         s = self.state
-        if self.headers.get("X-AgentHub-Protocol") and self.headers.get("X-AgentHub-Node-Token") != s["token"]:
+        if self.headers.get("X-SessionDock-Protocol") and self.headers.get("X-SessionDock-Node-Token") != s["token"]:
             self._json({"error": "forbidden"}, 403)
             return False
         return True

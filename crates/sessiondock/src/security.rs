@@ -56,8 +56,8 @@ pub async fn local_only(State(state): State<AppState>, request: Request, next: N
     }
     // Never accept a protocol/token header as an authentication bypass: hub
     // traffic has its own listener, browsers never send these.
-    if request.headers().contains_key("x-agenthub-protocol")
-        || request.headers().contains_key("x-agenthub-node-token")
+    if request.headers().contains_key("x-sessiondock-protocol")
+        || request.headers().contains_key("x-sessiondock-node-token")
     {
         return ApiError::new(
             StatusCode::FORBIDDEN,

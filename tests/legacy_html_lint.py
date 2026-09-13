@@ -4,8 +4,8 @@
 legacy-web/*.html and reference/legacy-web/*.html: duplicate ids,
 <script src>/<link href> files missing under that tree (ignore http(s)
 and data: URLs), inline on* handlers, index.html placeholders
-__AGENTHUB_MODE__/__AGENTHUB_HOSTNAME__/__AGENTHUB_ASSET_VERSION__,
-<meta name="agenthub-capabilities">, <img> without alt, and
+__SESSIONDOCK_MODE__/__SESSIONDOCK_HOSTNAME__/__SESSIONDOCK_ASSET_VERSION__,
+<meta name="sessiondock-capabilities">, <img> without alt, and
 <a target="_blank"> without rel=noopener.
 CLI: legacy_html_lint.py [--json] [--strict]
 """
@@ -22,9 +22,9 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parents[1]
 TREES = (ROOT / "legacy-web", ROOT / "reference" / "legacy-web")
 PLACEHOLDERS = (
-    "__AGENTHUB_MODE__",
-    "__AGENTHUB_HOSTNAME__",
-    "__AGENTHUB_ASSET_VERSION__",
+    "__SESSIONDOCK_MODE__",
+    "__SESSIONDOCK_HOSTNAME__",
+    "__SESSIONDOCK_ASSET_VERSION__",
 )
 KINDS = (
     "duplicate-id", "missing-file", "inline-handler", "missing-placeholder",
@@ -85,7 +85,7 @@ class Page(HTMLParser):
         elif tag == "a" and amap.get("target", "").lower() == "_blank":
             if "noopener" not in amap.get("rel", "").lower().split():
                 self.blanks.append(line)
-        elif tag == "meta" and amap.get("name") == "agenthub-capabilities":
+        elif tag == "meta" and amap.get("name") == "sessiondock-capabilities":
             self.caps = line
         for key, _ in attrs:
             if key.startswith("on") and key[2:].isalpha():
@@ -124,7 +124,7 @@ def check_file(path: Path, tree: Path, out: list) -> None:
                 note(out, "missing-placeholder", path, 1, token)
     if page.caps is None:
         note(out, "missing-capabilities", path, 1,
-             'meta name="agenthub-capabilities"')
+             'meta name="sessiondock-capabilities"')
     for line in page.imgs:
         note(out, "img-alt", path, line, "<img> missing alt")
     for line in page.blanks:

@@ -214,9 +214,9 @@ function highlightSegments(source, rawPath = '') {
   return {html, language, languages: [...languages], detected: true, segmented: true};
 }
 
-window.agenthubLanguageForPath = languageForPath;
-window.agenthubHighlight = highlight;
-window.agenthubHighlightSegments = highlightSegments;
-window.agenthubHighlightShellCommand = shellCommandHighlight;
+window.sessiondockLanguageForPath = languageForPath;
+window.sessiondockHighlight = highlight;
+window.sessiondockHighlightSegments = highlightSegments;
+window.sessiondockHighlightShellCommand = shellCommandHighlight;
 
-dispatchEvent(new Event('agenthub-highlight-ready'));
+dispatchEvent(new Event('sessiondock-highlight-ready'));

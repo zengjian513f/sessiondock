@@ -1,12 +1,12 @@
 'use strict';
 
-const HUB_MODE = document.querySelector('meta[name="agenthub-mode"]')?.content === 'hub';
-const STORAGE_PREFIX = AgentHubCapabilities.namespace
-  || (HUB_MODE ? `agenthub.hub.${location.pathname}.` : 'agenthub.');
+const HUB_MODE = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub';
+const STORAGE_PREFIX = SessionDockCapabilities.namespace
+  || (HUB_MODE ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.');
 // list 只有启用的机器，别处都按它；machines 是设置页用的完整名单（含停用的），
 // 顺序就是注册表顺序，只由用户在设置页拖动决定，不随启用状态变
 const Nodes = {list: [], machines: [], off: new Set(), capabilities: {}, errors: new Map()};
-try { Nodes.off = new Set(JSON.parse(AgentHubCapabilities.stored('nodesOff', STORAGE_PREFIX)) || []); } catch {}
+try { Nodes.off = new Set(JSON.parse(SessionDockCapabilities.stored('nodesOff', STORAGE_PREFIX)) || []); } catch {}
 
 function nodeOf(uid) {
   return HUB_MODE ? String(uid || '').match(/^[^:]+:([a-f0-9]{32})~/)?.[1] || '' : '';
@@ -53,18 +53,18 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
     if (error) return `${node.name} 终端列表请求失败：${error.error || '服务器未返回原因'}。`;
     if (!cap) return `${node.name} 的控制台状态尚未返回，请稍后重试。`;
   }
-  if (AgentHubCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {
+  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {
     // WP-E: like Python, an exited instance leaves the button as "接管会话"
     // whenever the source has a resume-capable CLI profile (the click starts
     // a fresh `--resume`); only an unresumable source keeps the gray
     // explanation. The exited xterm is never reclaimed automatically.
     const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
     const resumable = !String(uid).startsWith('tmux:') && cap?.enabled
-      && AgentHubCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]
+      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]
       && !linkedTermSession(uid, {followReplacement: true});
     if (!resumable) return T.ended.get(uid).reason;
   }
-  if (AgentHubCapabilities.config.backend === 'rust') {
+  if (SessionDockCapabilities.config.backend === 'rust') {
     const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);
     if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';
   }
@@ -72,8 +72,8 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   const linked = linkedTermSession(uid, {followReplacement: true});
   // Rust: an unlinked session can only be resumed through an explicitly
   // configured resume-capable CLI profile; otherwise no name-based guessing.
-  if (AgentHubCapabilities.config.backend === 'rust' && !linked
-      && !(AgentHubCapabilities.allows('terminal_takeover')
+  if (SessionDockCapabilities.config.backend === 'rust' && !linked
+      && !(SessionDockCapabilities.allows('terminal_takeover')
         && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))
     return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';
   const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];

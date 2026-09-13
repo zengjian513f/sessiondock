@@ -66,7 +66,7 @@ impl Fixture {
         for path in [&lifecycle, &host, &cwd, &web, &binaries] {
             directory(path);
         }
-        file(&web.join("index.html"),b"<!doctype html><meta name=\"agenthub-mode\" content=\"local\"><title>synthetic</title>",0o600);
+        file(&web.join("index.html"),b"<!doctype html><meta name=\"sessiondock-mode\" content=\"local\"><title>synthetic</title>",0o600);
         // Not a shell script or runnable binary. These satisfy checked-file
         // allowlist validation but this suite never grants a new spawn authority.
         let host_binary = binaries.join("fake-host");

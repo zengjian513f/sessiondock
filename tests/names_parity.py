@@ -119,7 +119,7 @@ def parity(corpus, base, opener, index, rows, python_source):
     assert actual["unicode"]["title"] == "名称" * 55 + "…"
     if python_source:
         adapter = load_adapters(python_source, fixture_root=corpus.root, codex_paths=corpus.paths)["codex"]
-        module = importlib.import_module("agenthub.adapters")
+        module = importlib.import_module("sessiondock.adapters")
         module.CODEX_INDEX = index
         # Restore ONLY the name reader, after every native root and inherited
         # path lookup was sandboxed by the shared adapter-only helper.

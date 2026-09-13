@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No `AgentHub` brand residue in the served frontend (batch 44 WP-F, watcher F9/F10).
+"""No `SessionDock` brand residue in the served frontend (batch 44 WP-F, watcher F9/F10).
 
 Recursive static check over every HTML, JavaScript, CSS and manifest under
 `legacy-web/`, including generated notices/tooltips and nested credits pages:
@@ -25,20 +25,20 @@ WEB = ROOT / "legacy-web"
 
 # Exact contract identifiers (docs/glossary.md "Names"): removed before the scan.
 WHITELIST = [
-    "AgentHubCapabilities", "AgentHubTypography", "AgentHubFilePreview", "AgentHubCli", "agenthubLanguageForPath",
-    "agenthub-capabilities", "agenthub-mode", "agenthub-build", "agenthub-highlight-ready",
-    "__AGENTHUB_MODE__", "__AGENTHUB_HOSTNAME__", "__AGENTHUB_ASSET_VERSION__",
-    "AGENTHUB_CLIS", "agenthubCli", "agenthubHighlight", "__agenthubConnectionId", "__agenthubPageId",
-    "X-AgentHub-Protocol", "X-AgentHub-Node-Token", "X-AgentHub-Page", "X-AgentHub-Trace",
-    "X-AgentHub-Build", "X-AgentHub-Decoded-Length",
-    "AgentHub CJK Sans", "AgentHub CJK Mono Grid", "AgentHub Ubuntu Sans Mono", "AgentHub Cascadia Mono",
-    "application/x-agenthub-files",
+    "SessionDockCapabilities", "SessionDockTypography", "SessionDockFilePreview", "SessionDockCli", "sessiondockLanguageForPath",
+    "sessiondock-capabilities", "sessiondock-mode", "sessiondock-build", "sessiondock-highlight-ready",
+    "__SESSIONDOCK_MODE__", "__SESSIONDOCK_HOSTNAME__", "__SESSIONDOCK_ASSET_VERSION__",
+    "SESSIONDOCK_CLIS", "sessiondockCli", "sessiondockHighlight", "__sessiondockConnectionId", "__sessiondockPageId",
+    "X-SessionDock-Protocol", "X-SessionDock-Node-Token", "X-SessionDock-Page", "X-SessionDock-Trace",
+    "X-SessionDock-Build", "X-SessionDock-Decoded-Length",
+    "SessionDock CJK Sans", "SessionDock CJK Mono Grid", "SessionDock Ubuntu Sans Mono", "SessionDock Cascadia Mono",
+    "application/x-sessiondock-files",
     # One-time migration sources (docs/migration.md): read, copied forward, never written.
-    "agenthub.hub.", "'agenthub.'", "agenthub-files-", "agenthub-shell-",
+    "sessiondock.hub.", "'sessiondock.'", "sessiondock-files-", "sessiondock-shell-",
     # Python-side names quoted in comments/notices.
-    "/agenthub/", "AGENTHUB_TEST_", "AGENTHUB_SESSION",
+    "/sessiondock/", "SESSIONDOCK_TEST_", "SESSIONDOCK_SESSION",
     # Exact Python terminal identifiers used for interoperability, not UI prose.
-    "tmux:agenthub-", "`agenthub-${session.source}", "=== 'agenthub'",
+    "tmux:sessiondock-", "`sessiondock-${session.source}", "=== 'sessiondock'",
 ]
 # Scan the entire served textual frontend, including JS-generated tooltips,
 # nested credits pages and CSS; a shell-only scan misses ordinary UI copy.
@@ -103,9 +103,9 @@ def main():
                 failures.append(f"legacy-web/{script}: missing runtime title {needle}")
     if 'SessionDock 已更新。当前页面已停止发送，请重新加载。' not in (WEB / "app.js").read_text(encoding="utf-8"):
         failures.append("legacy-web/app.js: stale-page notice does not name SessionDock")
-    # Storage keys: files pages use `<namespace>files-*`, never `<namespace>agenthub-files-*`.
+    # Storage keys: files pages use `<namespace>files-*`, never `<namespace>sessiondock-files-*`.
     files_js = (WEB / "files.js").read_text(encoding="utf-8")
-    if "namespace + 'files-'" not in files_js or re.search(r"(?:store|restore)\('agenthub-files", files_js):
+    if "namespace + 'files-'" not in files_js or re.search(r"(?:store|restore)\('sessiondock-files", files_js):
         failures.append("legacy-web/files.js: preferences are not keyed as <namespace>files-*")
 
     if failures:
@@ -114,7 +114,7 @@ def main():
             print("  " + line)
         sys.exit(1)
     print(f"PASS brand names check: {scanned} legacy-web text files scanned; manifest/service worker/page titles/"
-          f"PWA identity and {len(extra_sources)} additional source files say SessionDock; the remaining `agenthub` spellings are the {len(WHITELIST)} "
+          f"PWA identity and {len(extra_sources)} additional source files say SessionDock; the remaining `sessiondock` spellings are the {len(WHITELIST)} "
           "whitelisted contract identifiers from docs/glossary.md")
 
 

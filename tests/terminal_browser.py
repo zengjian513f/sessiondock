@@ -160,9 +160,9 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     # A configured host directory enables the transport, not
                     # CLI creation or a native association for this raw host.
-                    assert page.evaluate("AgentHubCapabilities.allows('terminal')") is True
-                    assert page.evaluate("AgentHubCapabilities.allows('terminal_create')") is False
-                    assert page.evaluate("AgentHubCapabilities.allows('outbox')") is False
+                    assert page.evaluate("SessionDockCapabilities.allows('terminal')") is True
+                    assert page.evaluate("SessionDockCapabilities.allows('terminal_create')") is False
+                    assert page.evaluate("SessionDockCapabilities.allows('outbox')") is False
                     listing = page.evaluate("fetch('/api/term/list').then(response=>response.json())")
                     assert listing["enabled"] is False and listing["sessions"] == []
                     page.evaluate(INSTALL)

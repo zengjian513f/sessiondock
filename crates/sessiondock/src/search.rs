@@ -710,7 +710,7 @@ mod tests {
             "literal mode escapes the backslash"
         );
         assert!(!chunkable("a\nb", false));
-        assert!(chunkable("agenthub.*rust", true));
+        assert!(chunkable("sessiondock.*rust", true));
         assert!(chunkable("guard|ddp_?guard", true));
         for risky in [r"a\sb", "[^x]", "(?s)a.b", "^foo", "foo$", r"\n"] {
             assert!(!chunkable(risky, true), "{risky}");

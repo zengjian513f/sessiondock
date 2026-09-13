@@ -14,13 +14,13 @@ pub fn host_dir(explicit: Option<&str>) -> PathBuf {
     if let Some(dir) = explicit {
         return PathBuf::from(dir);
     }
-    if let Some(dir) = std::env::var_os("AGENTHUB_HOST_DIR") {
+    if let Some(dir) = std::env::var_os("SESSIONDOCK_HOST_DIR") {
         return PathBuf::from(dir);
     }
     home()
         .join(".local")
         .join("share")
-        .join("agenthub")
+        .join("sessiondock")
         .join("host")
 }
 

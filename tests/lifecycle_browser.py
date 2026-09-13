@@ -31,8 +31,8 @@ def main(bind_native=False):
         configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
             "host_dir":str(root/"host"),"adapters":[{
                 "id":"synthetic-shell-v1","source":"codex","executable":str(Path("/bin/sh").resolve()),
-                "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$AGENTHUB_TEST_START_LOG"\n'+SHELL_SCRIPT],
-                "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","AGENTHUB_TEST_START_LOG":str(root/"work/starts")}}]}))
+                "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$SESSIONDOCK_TEST_START_LOG"\n'+SHELL_SCRIPT],
+                "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","SESSIONDOCK_TEST_START_LOG":str(root/"work/starts")}}]}))
         initialized=subprocess.run([str(BINARY),"--initialize-lifecycle",str(root/"ledger")],
             cwd=REPO,env={"PATH":"/usr/bin:/bin"},capture_output=True,timeout=15)
         assert initialized.returncode==0,initialized.stderr.decode()
@@ -137,8 +137,8 @@ def main(bind_native=False):
                             page.set_viewport_size({"width":390,"height":844})
                             bounds=page.locator("#native-bind-dialog").bounding_box()
                             assert bounds and bounds["x"]>=0 and bounds["x"]+bounds["width"]<=391,bounds
-                            if os.environ.get("AGENTHUB_TEST_BIND_SCREENSHOT"):
-                                page.screenshot(path=os.environ["AGENTHUB_TEST_BIND_SCREENSHOT"])
+                            if os.environ.get("SESSIONDOCK_TEST_BIND_SCREENSHOT"):
+                                page.screenshot(path=os.environ["SESSIONDOCK_TEST_BIND_SCREENSHOT"])
                             page.locator("#native-bind-uid").select_option(native_uid)
                             page.locator("#native-bind-confirm").check()
                             with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/bind") as bound:

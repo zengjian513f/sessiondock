@@ -1,4 +1,4 @@
-//! Debug-run registry (Python `agenthub/debug_runs.py`): paid monkey/test
+//! Debug-run registry (Python `sessiondock/debug_runs.py`): paid monkey/test
 //! sessions registered under a run id stay out of the ordinary views, and
 //! `?debug_run=<id>` shows exactly that run.
 //!
@@ -329,8 +329,8 @@ mod tests {
         parse(
             json!({"version": 1, "runs": {
                 "run-a": {"root": "/tmp/run-a", "created": 1.0, "sessions": [
-                    {"source": "claude", "cwd": "/tmp/run-a/claude/s1", "sid": "sid-a1", "uid": "claude:a1", "name": "agenthub-monkey-claude-a1"},
-                    {"source": "codex", "cwd": "/tmp/run-a/codex/s1", "sid": "", "uid": "", "name": "agenthub-monkey-codex-a2"}
+                    {"source": "claude", "cwd": "/tmp/run-a/claude/s1", "sid": "sid-a1", "uid": "claude:a1", "name": "sessiondock-monkey-claude-a1"},
+                    {"source": "codex", "cwd": "/tmp/run-a/codex/s1", "sid": "", "uid": "", "name": "sessiondock-monkey-codex-a2"}
                 ]},
                 "run-b": {"root": "/tmp/run-b", "sessions": [
                     {"source": "claude", "cwd": "/elsewhere", "sid": "sid-b1", "uid": "", "name": ""}
@@ -364,7 +364,7 @@ mod tests {
         assert_eq!(index.run_for(&json!({"uid": "claude:a1"})), Some("run-a"));
         assert_eq!(index.run_for(&json!({"sid": "sid-b1"})), Some("run-b"));
         assert_eq!(
-            index.run_for(&json!({"name": "agenthub-monkey-codex-a2"})),
+            index.run_for(&json!({"name": "sessiondock-monkey-codex-a2"})),
             Some("run-a")
         );
         assert_eq!(

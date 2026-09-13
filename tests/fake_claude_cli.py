@@ -8,7 +8,7 @@ renders a Claude-like composer on the PTY (two rules and a `❯` row), runs a
 tiny raw-mode line editor (printable input, bracketed paste, C-u/C-k clear,
 Backspace, Enter), and for every submitted line appends a synthetic Claude
 `user` JSONL record (uuid, parentUuid chain, sessionId, message.content = the
-line) to `$AGENTHUB_TEST_CLAUDE_ROOT/project-history/<sid>.jsonl`. Options:
+line) to `$SESSIONDOCK_TEST_CLAUDE_ROOT/project-history/<sid>.jsonl`. Options:
 
   --delay MS       write the record MS milliseconds after Enter (busy TUI)
   --swallow N      drop the N-th submitted line (1-based) without any record
@@ -59,7 +59,7 @@ class Fake:
         self.transcript = []
         self.parent = None
         self.submitted = 0
-        root = os.environ.get("AGENTHUB_TEST_CLAUDE_ROOT", "")
+        root = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ROOT", "")
         self.path = os.path.join(root, "project-history", f"{self.sid}.jsonl") if root and self.sid else ""
         # A resumed session chains from the file's last record like the real
         # CLI does; a second root would be a separate branch the read model
