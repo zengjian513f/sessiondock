@@ -714,6 +714,14 @@ Python 仓库 2026-09-12 一天推进了 34 个提交（分层侧栏 `spawned_by
 - 部署完成：Lyra `b3cb81dff723`、Cygnus `b7734f4fede8`、Pavo `15d4aba55ba3`、Cetus `3053935a465a`，Hub 前端 `218f88bc6d4f`。Linux 二进制 SHA-256 前缀 `fa07e058e3e3`，Windows `390e77ae4402`；原有 16 个 Lyra 宿主及 1 个 Cetus 宿主身份保持。备份在各节点 served 树之外的 `backup-attachment-*`；部署前配置检查、失败自动回滚及最终健康检查均有记录。
 - 发布验证与共享工作区区分：最后一次主树 `files::` 检查为 43 通过 / 1 失败，失败项是并行修改后 `FileService::open(vec![])` 的已有断言；不属于附件补丁，也未带入已验证的部署快照。
 
+### 新建会话附件上传修复（2026-09-13）
+
+- 根因：新建页在原生记录落盘前使用 `tmux:<host>` 临时 UID，普通附件接口却只从原生 `SessionStore` 视图取 cwd，因此直接返回“会话不存在”；Python 基线会从 pending 记录的可信 cwd 上传。
+- 修复：legacy composer 对 Rust pending 行随上传附带 `record_id + instance_id`；节点以后端 lifecycle 回执核对完整临时 UID、record 和 instance，再复用同一受控 `agenthub_attachments/` 写入路径。Hub 保持由 scoped pending UID 选定节点，回执字段原样转发。已显式丢弃的回执不再授权；普通原生会话和 Python 页面协议不变。
+- 回归：Rust 单测覆盖回执/name/instance 精确匹配，HTTP 合成宿主在原生记录尚未产生时验证中文名附件写入及错误 instance 409，legacy 契约执行真实上传函数并断言 URL 携带三项身份；Hub 定向测试确认 scoped pending UID 选中节点且两项回执字段原样转发；原有文件写入集成 6 项继续通过。
+- 验收：Linux `cargo test --workspace --locked` 全绿（sessiondock 库 948 通过 / 5 忽略，ptyhost 61 / 1，其余 workspace target 无失败），Clippy `-D warnings`、fmt、release 构建通过；legacy 契约 51 / 51，`lifecycle_http_suite` 的真实合成宿主 pending 上传通过。Cetus 独立源码快照以 MSVC release 原生构建，新增定向单测通过（1 / 1）。
+- 部署：Lyra、Cygnus、Pavo、Cetus 的现有 SessionDock 节点已替换并重启健康；Linux 二进制 SHA-256 前缀 `6d6f18661fd0`，Windows `30d6ea458480`，四端 `term.js` 前缀 `0697f72ba757`。部署前后 Lyra 18 条宿主记录 / 13 个 ptyhost、Pavo 2 / 2、Cetus 3 / 2 保持，Cygnus原为 0 / 0；各端保留 `backup-pending-attachment-20260913-232552` 回滚副本。生产只读探针均由新 pending 分支返回 `launch_missing`，没有创建附件或会话。
+
 ### 下一批的具体入口
 
 **Python 行为对齐清理（2026-09-13，部署收口中）**

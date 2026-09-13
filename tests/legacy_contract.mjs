@@ -253,6 +253,39 @@ test('Rust pending rows require launch identity and never run native resolution 
   await loadFunction(context,'resolveNewSession',read('term.js'))(row);
 });
 
+test('pending composer attachments carry the exact Rust launch receipt identity', async () => {
+  const row={name:'node~pending-host',record_id:'receipt',instance_id:'instance'};
+  let request;
+  const context=contextWithCapabilities(disabled, {
+    T:{pending:[row]}, pendingUid:name=>`tmux:${name}`,
+    URL, appUrl:path=>`http://sessiondock.test/${path}`, renderComposerItems:()=>{},
+    fetch:async (url, options) => {
+      request={url:String(url),options};
+      return {ok:true,status:200,json:async()=>({ok:true,attachment_id:'1'})};
+    },
+  });
+  const identity=loadFunction(context,'composerAttachmentIdentity',read('term.js'));
+  context.composerAttachmentIdentity=identity;
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(identity('tmux:node~pending-host'))),
+    {uid:'tmux:node~pending-host',record_id:'receipt',instance_id:'instance'});
+  assert.deepEqual(JSON.parse(JSON.stringify(identity('codex:node~native'))),
+    {uid:'codex:node~native'});
+  const upload=loadFunction(context,'uploadComposerAttachment',read('term.js'));
+  await upload({file:{name:'新会话附件.txt',type:'text/plain'},status:'',error:'',uploaded:null},
+    'tmux:node~pending-host');
+  const query=new URL(request.url).searchParams;
+  assert.equal(query.get('uid'),'tmux:node~pending-host');
+  assert.equal(query.get('record_id'),'receipt');
+  assert.equal(query.get('instance_id'),'instance');
+  assert.equal(query.get('name'),'新会话附件.txt');
+  assert.equal(request.options.method,'POST');
+  const python=contextWithCapabilities(undefined, {T:{pending:[row]},pendingUid:name=>`tmux:${name}`});
+  assert.deepEqual(JSON.parse(JSON.stringify(
+    loadFunction(python,'composerAttachmentIdentity',read('term.js'))('tmux:node~pending-host'))),
+    {uid:'tmux:node~pending-host'});
+});
+
 test('explicit false gates only the declared capability and namespaces Rust storage', () => {
   const {AgentHubCapabilities: caps} = contextWithCapabilities(disabled);
   assert.equal(caps.namespace, 'sessiondock.');

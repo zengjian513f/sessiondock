@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, json, os, subprocess, tempfile, time, uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request
 from history_parity import BINARY as DEBUG_BINARY, REPO, Corpus, isolated_server
 
@@ -44,6 +44,20 @@ def call(opener, base, method, route, body=None, want=200):
         fail(route, "response is not JSON", raw)
 
 
+def upload(opener, base, query, payload, want=200):
+    route = "/api/session/attachment?" + urlencode(query)
+    req = Request(base + route, data=payload, method="POST",
+                  headers={"Content-Type": "text/plain"})
+    try:
+        with opener.open(req, timeout=20) as resp:
+            raw, code = resp.read(4096), resp.status
+    except HTTPError as err:
+        raw, code = err.read(4096), err.code
+    if code != want:
+        fail(route, f"HTTP {code} (want {want})", raw)
+    return json.loads(raw)
+
+
 def qstat(rec):
     return f"/api/term/new-status?record_id={rec['record_id']}&instance_id={rec['instance_id']}"
 
@@ -72,6 +86,18 @@ def run(opener, base, root, work, claude_cwd):
         rec = wait_run(opener, base, rec)
         created.append(rec)
         passed("POST /api/term/create free-shell launch_kind=fixed running")
+
+        attachment_query = {"uid": "tmux:" + rec["name"], "record_id": rec["record_id"],
+                            "instance_id": rec["instance_id"], "name": "新会话附件.txt"}
+        wrong = upload(opener, base, {**attachment_query, "instance_id": "0" * 32},
+                       b"must not be written", want=409)
+        if wrong.get("code") != "launch_identity":
+            fail("pending attachment wrong instance", wrong)
+        uploaded = upload(opener, base, attachment_query, b"pending attachment bytes")
+        target = Path(work) / uploaded["relative_path"]
+        if target.read_bytes() != b"pending attachment bytes" or uploaded.get("recorded") is not False:
+            fail("pending attachment", uploaded)
+        passed("POST /api/session/attachment pending receipt identity and wrong-instance refusal")
 
         listed, raw = call(opener, base, "GET", "/api/term/list")
         pending, backends = listed.get("pending") or [], listed.get("backends") or []
@@ -224,7 +250,8 @@ def main():
         if init.returncode:
             fail("initialize-lifecycle", init.stderr.decode() or init.stdout.decode())
         with isolated_server(corpus, args.binary, host_dir=root / "host",
-                             lifecycle_dir=root / "ledger", launcher_config=cfg) as (base, opener):
+                             lifecycle_dir=root / "ledger", launcher_config=cfg,
+                             file_roots=(root / "work",), file_write_roots=(root / "work",)) as (base, opener):
             run(opener, base, root, str(root / "work"), str(root / "work" / "claude-area"))
 
 
