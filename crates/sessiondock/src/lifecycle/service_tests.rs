@@ -71,7 +71,6 @@ impl Fixture {
                 env: BTreeMap::new(),
             }],
             profiles: vec![],
-            bug_report_profiles: Default::default(),
         };
         let ledger = temp.path().join("ledger");
         drop(LifecycleStore::initialize(&ledger).unwrap());

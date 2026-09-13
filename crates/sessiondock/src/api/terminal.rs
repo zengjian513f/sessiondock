@@ -658,15 +658,8 @@ pub async fn list(
                     .count()
                     == 1
             );
-            // Resume/takeover needs exactly one resume-capable interactive CLI profile.
-            response["resume_sources"][key] = json!(
-                service
-                    .entries()
-                    .iter()
-                    .filter(|entry| entry.source == source && entry.resume && entry.interactive())
-                    .count()
-                    == 1
-            );
+            // Resume/takeover needs exactly one resume-capable CLI profile.
+            response["resume_sources"][key] = json!(service.entry_for(source, true).is_some());
         }
         response["backends"] = super::lifecycle::backends();
         response["enabled"] = json!(true);

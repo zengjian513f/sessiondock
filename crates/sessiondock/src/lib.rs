@@ -81,7 +81,6 @@ pub fn app_pair_with_shutdown(
         None,
         terminal,
         Vec::new(),
-        Vec::new(),
     )?;
     // The synchronous factory runs inside test runtimes; without one the
     // `/api/live` handler still records spawners on every call.
@@ -116,7 +115,7 @@ pub async fn prepare_app(
     config: Config,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> io::Result<PreparedApp> {
-    let (config, launcher, terminal, adapters, bug_report_profiles) = tokio::task::spawn_blocking(move || -> io::Result<_> {
+    let (config, launcher, terminal, adapters) = tokio::task::spawn_blocking(move || -> io::Result<_> {
         config.validate()?;
         let launcher = match (&config.lifecycle_dir, &config.launcher_config) {
             (Some(_), Some(path)) => {
@@ -129,14 +128,10 @@ pub async fn prepare_app(
                 "lifecycle startup requires both an initialized lifecycle directory and an explicit launcher configuration")),
         };
         let adapters = launcher.as_ref().map(|launcher| lifecycle::launcher::entries(launcher).into_iter()
-            .filter(lifecycle::launcher::Entry::interactive)
             .map(|entry| state::LaunchAdapter { source:entry.source })
             .collect()).unwrap_or_default();
-        // Batch 41: the worker profiles are resolved from the same file the
-        // launcher runs; the model policy is asserted at each launch.
-        let bug_report_profiles = launcher.as_ref().map(lifecycle::launcher::bug_report_profiles).unwrap_or_default();
         let terminal = prepare_terminal(&config)?;
-        Ok((config, launcher, terminal, adapters, bug_report_profiles))
+        Ok((config, launcher, terminal, adapters))
     }).await.map_err(io::Error::other)??;
     let delivery = match config.delivery_dir.clone() {
         Some(directory) => Some(Arc::new(
@@ -188,7 +183,6 @@ pub async fn prepare_app(
             worker_lifecycle,
             terminal,
             adapters,
-            bug_report_profiles,
         )
     })
     .await
@@ -258,7 +252,6 @@ fn build_app(
     lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     terminal: Option<Arc<terminal::TerminalService>>,
     launch_adapters: Vec<state::LaunchAdapter>,
-    bug_report_profiles: Vec<lifecycle::launcher::BugReportProfile>,
 ) -> io::Result<BuiltApp> {
     let audit = config
         .audit_dir
@@ -370,14 +363,14 @@ fn build_app(
     });
     capabilities["live"] = serde_json::json!(proc_scan.is_some());
     // Batch 41: true only with the bundle directory, repository, audit log,
-    // terminal transport, lifecycle service and a worker profile together.
+    // terminal transport and lifecycle service together; which CLI a worker
+    // runs is decided per request from the source (503 when none).
     capabilities["bug_report"] = serde_json::json!(
         config.bug_report_dir.is_some()
             && config.bug_report_repo.is_some()
             && audit.is_some()
             && terminal.is_some()
             && lifecycle.is_some()
-            && !bug_report_profiles.is_empty()
     );
     // Node identity (batch 38 H1): configuration proved the four settings come
     // together; the id is minted here (O_EXCL 0600) on first start. `hub`
@@ -436,8 +429,8 @@ fn build_app(
     });
     // Batch 41: every dependency of a bug-report worker must be configured —
     // the bundle directory and repository, the audit log (events.jsonl is the
-    // core of a report), the terminal transport, the lifecycle service and at
-    // least one worker profile — else the route stays 501 `bug_report_disabled`.
+    // core of a report), the terminal transport and the lifecycle service —
+    // else the route stays 501 `bug_report_disabled`.
     let bug_report = match (
         &config.bug_report_dir,
         &config.bug_report_repo,
@@ -453,13 +446,12 @@ fn build_app(
             Some(terminal),
             Some(lifecycle),
             Some(host),
-        ) if !bug_report_profiles.is_empty() && config.audit_dir.is_some() => {
+        ) if config.audit_dir.is_some() => {
             let service = bug_report::BugReportService::open(
                 directory.clone(),
                 repository.clone(),
                 config.audit_dir.clone().expect("checked above"),
                 assets.build.clone(),
-                bug_report_profiles,
             )?;
             let client = ptyhost_client::HostClient::new(
                 host,

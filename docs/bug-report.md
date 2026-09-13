@@ -16,26 +16,25 @@ dependency is configured.
 | --- | --- |
 | `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/agenthub/bug-reports`). Created as needed and chmodded to `0700` on Unix. |
 | `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `agenthub_attachments/`. Ordinary filesystem paths are accepted. |
-| launcher `bug_report_profiles` | `{"claude": id, "codex": id, "grok": id}` naming ordinary `profiles` entries of that source (any subset; an unknown id or a wrong source fails the launcher configuration). |
 
 The two variables are all-or-nothing (`--check-config` prints
 `bug_report_dir=` / `bug_report_repo=`). The route additionally needs the
 audit directory (`events.jsonl` is the core of a bundle), the terminal
-transport, the lifecycle service (initialized ledger + launcher) and at least
-one worker profile; otherwise the capability stays `false` and the route `501`.
+transport and the lifecycle service (initialized ledger + launcher);
+otherwise the capability stays `false` and the route `501`.
 
-### Model policy (fixed in code)
+### Which CLI the worker runs
 
-A worker is launched only through a profile whose argv (`args` + `new_args`)
-pins the cheapest configuration of AGENTS.md, asserted at every launch
-(`lifecycle::launcher::bug_report_policy`):
-
-- Claude: `--model claude-haiku-4-5-20251001` and `--effort low`;
-- Codex: `--model`/`-m gpt-5.6-luna` and `-c`/`--config model_reasoning_effort="low"` (quoted or bare);
-- Grok: `-m`/`--model grok-4.6` and `--reasoning-effort low`.
-
-A mismatch answers `501 bug_report_model_policy` before any bundle is written.
-Python launched the worker with the CLI's default model; this backend never does.
+Python `WORKER_SOURCES` / `shutil.which`: the worker is the source's one
+configured CLI, selected exactly as `POST /api/term/create` selects it
+(`LifecycleService::entry_for`), on the CLI's own default model and effort.
+There is no worker-specific profile and no model policy: the worker is the
+same session the user would start from the picker, launched with the
+repository as cwd. A source without a unique configured CLI answers
+`503 本机找不到 <source> 命令`. (Batch 41 had shipped a per-source
+`bug_report_profiles` table pinned to the cheapest test model; that confused
+the real-CLI *test* rule of AGENTS.md with production and was removed. A
+leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 
 ## Route contract (`POST /api/bug-report`)
 
@@ -50,8 +49,7 @@ non-numeric `cols`/`rows` are `400`.
 | `403 terminal_disabled` | terminal transport off (Python `TERMINAL` false) |
 | `501 bug_report_disabled` | any dependency above missing |
 | `400` `不支持的处理会话类型: …` | unknown `source` |
-| `503` `本机找不到 <source> 命令` | no worker profile for the source |
-| `501 bug_report_model_policy` | the profile does not pin the cheapest model |
+| `503` `本机找不到 <source> 命令` | the source has no unique configured CLI |
 | `400` (`请描述遇到的问题`, `问题描述不能超过 50000 字`, attachment messages) | validation before the directory exists |
 | `500 bug_report_capture_failed {error, report_id, path}` | a bundle file could not be written after the directory was created |
 | `500 bug_report_worker_failed {error, report_id, path}` | capture succeeded, the worker launch failed (manifest `status: failed`, audit `bug_report.worker_launch_failed`) |
@@ -104,7 +102,7 @@ other session `uid` uses the conversation attachment upload contract of
 
 ## The worker (`bug_report/worker.rs`)
 
-1. `lifecycle::Service::create` with the source's worker profile and cwd =
+1. `lifecycle::Service::create` with the source's configured CLI and cwd =
    repository (`request_id` `bug-report-<report_id>`, idempotent). The record
    must reach `Running`; the sidebar decoration `{kind: "bug-report",
    report_id, title: "处理 <id>", worker_status, worker_error}` is remembered
@@ -177,7 +175,6 @@ window's dates line by line (≤ 100 000 rows).
 - Audit rows carry structured metadata only; there is no `content` blob, so
   `events.jsonl` has no message text/composer content (Python's SQLite blobs).
 - The report id stamp is UTC (Python: local time).
-- The worker profile pins the cheapest model (Python: the CLI's default).
 - `terminal.txt` exists only for a managed instance (Python: any tmux window).
 - `submitted` means a native `user` record carries the prompt (Python: the
   composer cleared); a Codex/Grok worker whose rollout cannot be found is
@@ -190,13 +187,13 @@ window's dates line by line (≤ 100 000 rows).
 ## Validation
 
 - `cargo test -p sessiondock --lib bug_report --lib audit::query --lib api::bug_report --locked`
-  (bundle, attachments, policy, launcher parsing, composer probes, manifest merge).
+  (bundle, attachments, composer probes, manifest merge).
 - `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
-  501 unconfigured, model policy 501, raw attachment upload, 202 shape, bundle
+  501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
   files, `submitted` from the synthetic native record, second report sees the
   first in its window).
 - `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
-  10 scenarios including Codex `submitted_unconfirmed` and the audit trail).
+  9 scenarios including Codex `submitted_unconfirmed` and the audit trail).
 - `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
   `python3 tests/meta_capabilities_suite.py`.
 - `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real

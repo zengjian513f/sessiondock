@@ -80,8 +80,7 @@ def main():
                 "resume_args": ["--resume", "{sid}"],
                 "env": {**passthrough(), "HOME": str(tmp / "work"), "CLAUDE_CONFIG_DIR": str(config)},
 
-            }],
-            "bug_report_profiles": {"claude": "claude-real-v1"}}))
+            }]}))
         launcher.chmod(0o600)
         init = subprocess.run([str(binary), "--initialize-lifecycle", str(tmp / "ledger")], cwd=REPO,
                               env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
