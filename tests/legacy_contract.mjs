@@ -96,6 +96,35 @@ test('terminal ownership force retry retains the exact captured binding', async 
   assert.equal(calls[1].force, true);
 });
 
+test('selecting an existing pending terminal does not rebuild the full sidebar', () => {
+  let renders = 0;
+  const selected = {classList: {removed: [], remove(value) { this.removed.push(value); }}};
+  const row = {classList: {added: [], add(value) { this.added.push(value); }}};
+  const document = {
+    querySelector: selector => selector.includes('tmux%3Apane') ? row : null,
+    querySelectorAll: selector => selector === '#side .item.sel' ? [selected] : [],
+  };
+  const context = contextWithCapabilities(disabled, {
+    document, CSS: {escape: value => encodeURIComponent(value)}, renderSide: () => { renders++; },
+  });
+  const select = loadFunction(context, 'selectPendingSidebarRow', read('term.js'));
+  select('tmux:pane', false);
+  assert.equal(renders, 0);
+  assert.deepEqual(selected.classList.removed, ['sel']);
+  assert.deepEqual(row.classList.added, ['sel']);
+
+  select('tmux:missing', false);
+  select('tmux:pane', true);
+  assert.equal(renders, 2, 'new or not-yet-rendered rows still rebuild the sidebar');
+});
+
+test('pending terminals attach before any synchronous WebGL initialization', () => {
+  const context = contextWithCapabilities(disabled, {T: {uid: 'tmux:pane'}});
+  const shouldUse = loadFunction(context, 'shouldUseTermWebgl', read('term.js'));
+  assert.equal(shouldUse(), false);
+  assert.equal(shouldUse('codex:native'), true);
+});
+
 test('Rust remembered terminal layouts pin the full UID and instance', () => {
   const T = {name: 'pane', mode: 'normal', height: 200,
     list: [{name: 'pane', uid: 'codex:uid', instance_id: 'instance'}]};
