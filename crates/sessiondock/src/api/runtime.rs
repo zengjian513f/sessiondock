@@ -92,6 +92,16 @@ struct Merged {
     recorded: Option<Result<usize, crate::metadata::MetadataError>>,
 }
 
+fn seed_managed_status(response: &mut Value, running: &[String], started: &BTreeMap<String, f64>) {
+    response["uids"] = json!(running);
+    // A running managed instance owns an attachable ptyhost console even when
+    // this platform has no native process scanner (notably Windows). A
+    // successful scan later rebuilds this list in session order and adds
+    // native tmux/inherited-pane matches.
+    response["tmux_uids"] = json!(running);
+    response["started_at"] = json!(started);
+}
+
 /// Legacy envelope. Without the scan, `uids` lists only sessions whose managed
 /// instance is verified running and everything else is unknown, never
 /// stopped. With the scan (Linux, explicit switch) the answer is Python's:
@@ -139,8 +149,7 @@ pub async fn live(
         response["enabled"] = json!(true);
         response["known"] = json!(snapshot.known);
         response["unavailable_reason"] = json!(PARTIAL);
-        response["uids"] = json!(managed_running);
-        response["started_at"] = json!(managed_started);
+        seed_managed_status(&mut response, &managed_running, &managed_started);
         let mut managed = serde_json::to_value(snapshot).map_err(|_| {
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -417,6 +426,19 @@ mod external_scan_tests {
                 .is_none()
         );
         assert!(external_scan_result(Err(ScanError::Failed)).is_err());
+    }
+
+    #[test]
+    fn managed_console_is_tmux_shaped_without_an_external_scan() {
+        let uid = "claude:managed".to_owned();
+        let started = BTreeMap::from([(uid.clone(), 42.0)]);
+        let mut response = json!({"uids":[],"tmux_uids":[],"started_at":{}});
+
+        seed_managed_status(&mut response, std::slice::from_ref(&uid), &started);
+
+        assert_eq!(response["uids"], json!([uid]));
+        assert_eq!(response["tmux_uids"], response["uids"]);
+        assert_eq!(response["started_at"], json!({"claude:managed":42.0}));
     }
 }
 
