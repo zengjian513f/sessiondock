@@ -46,10 +46,10 @@ Rust, HTTP contracts, legacy browser flows and affected platforms with isolated
 fixtures. Native-history comparisons are read-only. Model CLI tests use the
 isolated configuration and inexpensive models specified in `AGENTS.md`.
 
-A production bug fix includes deploying the validated batch to affected services,
+A production bug fix includes deploying the validated change to affected services,
 preserving managed CLI processes and a rollback copy, then checking service
-health and the reported user flow. Historical measurements and implementation
-milestones live in [the migration ledger](../BACKEND_MIRGRATION_PLAN.md).
+health and the reported user flow. The completed Python-to-Rust work is retained
+only as [historical context](../MIGRATION_HISTORY.md); it is not a current plan.
 
 ### Conversation attachment compatibility fix
 

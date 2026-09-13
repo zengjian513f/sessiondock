@@ -21,4 +21,4 @@ are reported directly by the operation.
 Configuration and initialization tests use temporary directories. Store, engine,
 service and HTTP suites cover the configured runtime, recovery and send behavior.
 See [delivery-store.md](delivery-store.md), [delivery-service.md](delivery-service.md)
-and the migration ledger for final batch validation results.
+and the release record for final validation results.

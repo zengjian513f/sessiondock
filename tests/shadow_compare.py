@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Operator-run M8 read-only shadow comparison of CLI histories vs Python adapters.
+"""Operator-run read-only shadow comparison of CLI histories vs Python adapters.
 
 Isolated loopback server; explicit native read roots only; never writes under them.
 Requires --i-understand-this-reads-real-histories.
@@ -19,7 +19,7 @@ from history_parity import REPO
 from provider_parity import NoRedirects, load_adapters
 
 SOURCES = ("claude", "codex", "grok")
-PLAN = ("M8 生产数据只读影子比对（BACKEND_MIRGRATION_PLAN.md）。 Isolated loopback "
+PLAN = ("生产数据只读影子比对。 Isolated loopback "
         "server with only given read roots; compare sessions/messages vs Python adapters; "
         "never writes under the roots. Pass --i-understand-this-reads-real-histories to run.")
 
