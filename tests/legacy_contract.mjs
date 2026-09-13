@@ -193,6 +193,7 @@ test('bug-report worker rows surface the manifest status and pending rows name t
   assert.equal(label({record_id:'r',state:'exited'}),'实例已退出');
   assert.equal(label({record_id:'r',state:'running'}),'等待首条消息');
   assert.equal(label({record_id:'r',state:'running',kind:'bug-report',worker_status:'injecting'}),'正在注入缺陷报告提示词');
+  assert.match(source, /info\.state === 'uncertain'[\s\S]*?`状态不确定 · \$\{info\.title/);
 });
 
 test('a stale Rust terminal view cannot reconnect to a replacement instance', async () => {

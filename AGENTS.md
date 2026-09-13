@@ -21,6 +21,7 @@
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
 - `origin` is `zengjian513f/sessiondock`. Push landed work, not every small fix.
+- Hub SSH: `ecs-user@driftnode.cn`.
 - A production bug fix includes build, validation, deployment, restart and
   health check. Deploy the current workspace unless the user names another
   source. Preserve sessions, state and concurrent changes; keep a rollback.
