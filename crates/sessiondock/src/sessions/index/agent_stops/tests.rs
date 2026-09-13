@@ -393,7 +393,7 @@ fn update_restarts_on_a_new_inode_and_keeps_the_scan_when_the_file_is_gone() {
 }
 
 #[test]
-fn a_line_over_the_record_budget_is_skipped_whole_and_the_scan_continues() {
+fn a_line_above_former_record_budget_retains_stop_notices() {
     let owner = Owner::new();
     let mut bytes = lines(&[attachment_notice(
         "2026-09-12T01:00:00.000Z",
@@ -402,8 +402,9 @@ fn a_line_over_the_record_budget_is_skipped_whole_and_the_scan_continues() {
     )]);
     let huge_start = bytes.len();
     bytes.extend(b"{\"type\":\"user\",\"timestamp\":\"2026-09-12T01:30:00.000Z\",\"content\":\"");
-    bytes.extend(std::iter::repeat_n(b'x', budgets::RECORD_BYTES + 3 * CHUNK));
-    bytes.extend(notice_text("huge", "completed").as_bytes());
+    bytes.extend(std::iter::repeat_n(b'x', 64 * 1024 * 1024 + 3 * CHUNK));
+    let notice = serde_json::to_string(&notice_text("huge", "completed")).unwrap();
+    bytes.extend(&notice.as_bytes()[1..notice.len() - 1]);
     bytes.extend(b"\"}\n");
     bytes.extend(lines(&[attachment_notice(
         "2026-09-12T02:00:00.000Z",
@@ -416,6 +417,7 @@ fn a_line_over_the_record_budget_is_skipped_whole_and_the_scan_continues() {
     assert_eq!(
         stops(&scan),
         [
+            ("huge", "2026-09-12T01:30:00.000Z"),
             ("one", "2026-09-12T01:00:00.000Z"),
             ("two", "2026-09-12T02:00:00.000Z")
         ]

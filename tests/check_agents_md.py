@@ -123,6 +123,8 @@ def collect():
     for path in sorted((ROOT / "tests").glob("*.py")):
         if not any(path.stem.endswith(suffix) for suffix in TOOLS):
             continue
+        if path.name in validation:
+            continue
         lines = path.read_text(encoding="utf-8").splitlines()[:40]
         if SKIP_MARK not in lines:
             add(findings, "missing-skip", str(path.relative_to(ROOT)))

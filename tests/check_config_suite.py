@@ -81,7 +81,7 @@ def real(path):
 
 def builders():
     def minimal_ok(_tmp):
-        # Unset optionals stay disabled; "only loopback binds are allowed".
+        # Unset optionals stay disabled.
         return base(), 0, None, ["config=ok", "state_dir=(unset)"]
 
     def roots_ok(tmp):
@@ -95,8 +95,7 @@ def builders():
         )
 
     def non_loopback_bind(_tmp):
-        # "only loopback binds are allowed"
-        return base(SESSIONDOCK_BIND="0.0.0.0:8741"), 1, "loopback", []
+        return base(SESSIONDOCK_BIND="0.0.0.0:8741"), 0, None, ["bind=0.0.0.0:8741"]
 
     def invalid_bind(_tmp):
         # "invalid SESSIONDOCK_BIND"
@@ -113,67 +112,59 @@ def builders():
         return base(SESSIONDOCK_CLAUDE_ROOT=path), 1, "must be a directory", []
 
     def state_overlaps_root(tmp):
-        # "metadata requires an independent directory outside host and native inputs"
         same = mkdir(os.path.join(tmp, "same"))
-        return base(SESSIONDOCK_CLAUDE_ROOT=same, SESSIONDOCK_STATE_DIR=same), 1, "independent", []
+        return base(SESSIONDOCK_CLAUDE_ROOT=same, SESSIONDOCK_STATE_DIR=same), 0, None, ["config=ok"]
 
     def state_inside_web(tmp):
-        # "frontend and private runtime/native directories must not overlap"
         web = make_web(tmp)
         state = mkdir(os.path.join(web, "state"), 0o700)
         return (
             {"SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": web,
              "SESSIONDOCK_STATE_DIR": state},
-            1, "overlap", [],
+            0, None, ["config=ok"],
         )
 
     def delivery_missing_dir(tmp):
-        # "SESSIONDOCK_DELIVERY_DIR requires an explicit existing absolute directory"
-        return base(SESSIONDOCK_DELIVERY_DIR=os.path.join(tmp, "missing")), 1, "SESSIONDOCK_DELIVERY_DIR", []
+        path = os.path.join(tmp, "missing")
+        return base(SESSIONDOCK_DELIVERY_DIR=path), 0, None, [f"delivery_dir={path}"]
 
     def delivery_relative(_tmp):
-        # same rule: not absolute → "explicit existing absolute directory without relative jumps"
-        return base(SESSIONDOCK_DELIVERY_DIR="relative/dir"), 1, None, []
+        return base(SESSIONDOCK_DELIVERY_DIR="relative/dir"), 0, None, ["delivery_dir=relative/dir"]
 
     def file_write_without_read(tmp):
-        # "SESSIONDOCK_FILE_WRITE_ROOTS requires SESSIONDOCK_FILE_ROOTS"
-        return base(SESSIONDOCK_FILE_WRITE_ROOTS=mkdir(os.path.join(tmp, "files"))), 1, "SESSIONDOCK_FILE_ROOTS", []
+        return base(SESSIONDOCK_FILE_WRITE_ROOTS=mkdir(os.path.join(tmp, "files"))), 0, None, ["config=ok"]
 
     def file_write_outside_read(tmp):
-        # "each file write root must equal or lie inside an explicit read file root"
+        # File settings enable operator access; read roots do not jail write roots.
         a, b = mkdir(os.path.join(tmp, "a")), mkdir(os.path.join(tmp, "b"))
-        return base(SESSIONDOCK_FILE_ROOTS=a, SESSIONDOCK_FILE_WRITE_ROOTS=b), 1, None, []
+        return base(SESSIONDOCK_FILE_ROOTS=a, SESSIONDOCK_FILE_WRITE_ROOTS=b), 0, None, ["config=ok"]
 
     def file_roots_too_many(tmp):
-        # "SESSIONDOCK_FILE_ROOTS needs 1..16 explicit directories"
+        # There is no arbitrary count cap on configured operator directories.
         paths = [mkdir(os.path.join(tmp, f"fr{i}")) for i in range(17)]
-        return base(SESSIONDOCK_FILE_ROOTS=os.pathsep.join(paths)), 1, "1..16", []
+        return base(SESSIONDOCK_FILE_ROOTS=os.pathsep.join(paths)), 0, None, ["config=ok"]
 
     def file_roots_empty(_tmp):
-        # "SESSIONDOCK_FILE_ROOTS must not be empty"
-        return base(SESSIONDOCK_FILE_ROOTS=""), 1, None, []
+        return base(SESSIONDOCK_FILE_ROOTS=""), 0, None, ["config=ok"]
 
     def codex_index_without_root(tmp):
-        # "SESSIONDOCK_CODEX_INDEX requires an explicit existing absolute file and a Codex sessions root"
         index = os.path.join(tmp, "index.json")
         Path(index).write_text("{}", encoding="utf-8")
-        return base(SESSIONDOCK_CODEX_INDEX=index), 1, "SESSIONDOCK_CODEX_INDEX", []
+        return base(SESSIONDOCK_CODEX_INDEX=index), 0, None, ["config=ok"]
 
-    def private_dirs_nested(tmp):
-        # "trash requires an independent directory outside ... audit ..."
+    def shared_service_dirs_allowed(tmp):
         priv = mkdir(os.path.join(tmp, "priv"), 0o700)
         inner = mkdir(os.path.join(priv, "inner"), 0o700)
-        return base(SESSIONDOCK_AUDIT_DIR=priv, SESSIONDOCK_TRASH_DIR=inner), 1, None, []
+        return base(SESSIONDOCK_AUDIT_DIR=priv, SESSIONDOCK_TRASH_DIR=inner), 0, None, ["config=ok"]
 
-    def symlinked_private_dir(tmp):
-        # root() canonicalize follows STATE_DIR; validate does not reject the alias (store checks later).
+    def symlinked_state_dir(tmp):
+        # root() canonicalize follows STATE_DIR and accepts the alias.
         target = mkdir(os.path.join(tmp, "real"), 0o700)
         link = os.path.join(tmp, "link")
         os.symlink(target, link)
         return base(SESSIONDOCK_STATE_DIR=link), 0, None, ["config=ok"]
 
-    def all_private_ok(tmp):
-        # delivery must exist (0700) but --check-config must not need an initialized ledger.
+    def all_service_paths_ok(tmp):
         web = make_web(tmp)
         roots = {n: mkdir(os.path.join(tmp, n)) for n in ("claude", "codex", "grok")}
         priv = {n: mkdir(os.path.join(tmp, n), 0o700)
@@ -193,53 +184,20 @@ def builders():
         ]
         return env, 0, None, extras
 
-    def proc_scan_default_off(_tmp):
-        # Unset: the scan is off and the Grok active file unset.
-        return base(), 0, None, ["proc_scan=0", "proc_root=/proc", "grok_active=(unset)"]
-
-    def proc_scan_on_ok(_tmp):
-        # "1" switches the scan on; the real table is the default root.
-        return base(SESSIONDOCK_PROC_SCAN="1"), 0, None, ["proc_scan=1", "proc_root=/proc"]
-
-    def proc_scan_invalid_value(_tmp):
-        # "SESSIONDOCK_PROC_SCAN must be 1 or 0"
-        return base(SESSIONDOCK_PROC_SCAN="yes"), 1, "SESSIONDOCK_PROC_SCAN", []
-
-    def proc_root_without_scan(tmp):
-        # "SESSIONDOCK_PROC_ROOT and SESSIONDOCK_GROK_ACTIVE require SESSIONDOCK_PROC_SCAN=1"
-        return base(SESSIONDOCK_PROC_ROOT=mkdir(os.path.join(tmp, "proc"))), 1, "SESSIONDOCK_PROC_SCAN=1", []
+    def native_discovery_defaults(_tmp):
+        return base(), 0, None, ["proc_root=/proc", "grok_active=(unset)"]
 
     def proc_root_synthetic_ok(tmp):
         # A synthetic tree (tests) is echoed canonicalized.
         proc = mkdir(os.path.join(tmp, "proc"))
-        return base(SESSIONDOCK_PROC_SCAN="1", SESSIONDOCK_PROC_ROOT=proc), 0, None, [f"proc_root={real(proc)}"]
+        return base(SESSIONDOCK_PROC_ROOT=proc), 0, None, [f"proc_root={proc}"]
 
-    def proc_root_is_file(tmp):
-        # root(): "must be a directory"
-        path = os.path.join(tmp, "notproc")
-        Path(path).write_text("x", encoding="utf-8")
-        return base(SESSIONDOCK_PROC_SCAN="1", SESSIONDOCK_PROC_ROOT=path), 1, "must be a directory", []
-
-    def grok_active_missing(tmp):
-        # "SESSIONDOCK_GROK_ACTIVE requires an explicit existing absolute file"
-        return (base(SESSIONDOCK_PROC_SCAN="1", SESSIONDOCK_GROK_ACTIVE=os.path.join(tmp, "missing.json")),
-                1, "SESSIONDOCK_GROK_ACTIVE", [])
-
-    def grok_active_inside_native_root(tmp):
-        # "Grok active-sessions file must stay outside frontend, native, host, ..."
+    def grok_active_override_ok(tmp):
         grok = mkdir(os.path.join(tmp, "grok"))
         active = os.path.join(grok, "active_sessions.json")
         Path(active).write_text("[]", encoding="utf-8")
-        return (base(SESSIONDOCK_PROC_SCAN="1", SESSIONDOCK_GROK_ROOT=grok, SESSIONDOCK_GROK_ACTIVE=active),
-                1, "Grok active-sessions file", [])
-
-    def grok_active_ok(tmp):
-        # Next to the Grok root (like ~/.grok/active_sessions.json beside ~/.grok/sessions), not inside it.
-        grok = mkdir(os.path.join(tmp, "sessions"))
-        active = os.path.join(tmp, "active_sessions.json")
-        Path(active).write_text("[]", encoding="utf-8")
-        return (base(SESSIONDOCK_PROC_SCAN="1", SESSIONDOCK_GROK_ROOT=grok, SESSIONDOCK_GROK_ACTIVE=active),
-                0, None, [f"grok_active={active}", "proc_scan=1"])
+        return (base(SESSIONDOCK_GROK_ROOT=grok, SESSIONDOCK_GROK_ACTIVE=active),
+                0, None, [f"grok_active={active}"])
 
     # Node listener (batch 38 H1): four settings together or nothing.
     NODE_TOKEN = "check-t0ken.check-t0ken.check-t0ken.check-t0ken~"
@@ -252,9 +210,7 @@ def builders():
         ids = mkdir(os.path.join(tmp, "ids"), 0o700)
         return token, os.path.join(ids, "node-id")
 
-    def launcher_env(tmp, cwd_root):
-        """Full private layout plus an initialized ledger and a schema-2 launcher whose
-        cwd root is `cwd_root(tmp)`; --check-config must cross-check it like startup."""
+    def launcher_env(tmp):
         import shutil, json
         def deep(path, mode=None):
             os.makedirs(path)
@@ -272,17 +228,15 @@ def builders():
         for n in ("ptyhost", "claude"):
             exe[n] = os.path.join(bindir, n)
             shutil.copyfile("/bin/sh", exe[n]); os.chmod(exe[n], 0o755)
-        root = cwd_root(tmp, home, priv)
         launcher = os.path.join(tmp, "launcher.json")
         with open(launcher, "w", encoding="utf-8") as fh:
             json.dump({
                 "schema": 2, "host_binary": exe["ptyhost"], "host_dir": priv["ptyhost"],
-                "cwd_roots": [root], "adapters": [],
+                "adapters": [],
                 "profiles": [{"id": "claude-cli-v1", "source": "claude", "executable": exe["claude"],
                               "args": [], "new_args": ["--session-id", "{session_id}"],
                               "resume_args": ["--resume", "{sid}"],
-                              "env": {"PATH": "/usr/bin:/bin", "HOME": home},
-                              "cwd_roots": [root]}],
+                              "env": {"PATH": "/usr/bin:/bin", "HOME": home}}],
             }, fh)
         os.chmod(launcher, 0o600)
         env = {
@@ -299,22 +253,10 @@ def builders():
             raise RuntimeError(f"initialize-lifecycle failed: {init.stderr.strip()}")
         return env
 
-    def launcher_cwd_root_home_ancestor_of_native_ok(tmp):
-        # Python never restricted a session's cwd; a session started from `~` resumes
-        # there. A cwd root that is an *ancestor* of the native roots is accepted and
-        # --check-config now reports the launcher cross-check.
-        env = launcher_env(tmp, lambda tmp, home, priv: home)
-        return env, 0, "", ["launcher=ok"]
-
-    def launcher_cwd_root_inside_native_root(tmp):
-        # ...but a cwd root *inside* a native root is still refused.
-        env = launcher_env(tmp, lambda tmp, home, priv: mkdir(os.path.join(home, ".claude", "projects", "proj")))
-        return env, 1, "stay outside private/native/frontend roots", []
-
-    def launcher_cwd_root_ancestor_of_state_dir(tmp):
-        # SessionDock's own private directories stay disjoint in both directions.
-        env = launcher_env(tmp, lambda tmp, home, priv: os.path.join(tmp, "priv"))
-        return env, 1, "stay outside private/native/frontend roots", []
+    def launcher_executable_missing(tmp):
+        env = launcher_env(tmp)
+        os.unlink(os.path.join(tmp, "bin", "claude"))
+        return env, 1, "UnsafePath", []
 
     def node_env(tmp, **override):
         token, node_id = node_files(tmp)
@@ -362,8 +304,7 @@ def builders():
         return node_env(tmp, SESSIONDOCK_NODE_BIND="not-an-address"), 1, "SESSIONDOCK_NODE_BIND", []
 
     def node_bind_wildcard(tmp):
-        # "SESSIONDOCK_NODE_BIND must name one interface address, not a wildcard"
-        return node_env(tmp, SESSIONDOCK_NODE_BIND="0.0.0.0:8742"), 1, "wildcard", []
+        return node_env(tmp, SESSIONDOCK_NODE_BIND="0.0.0.0:8742"), 0, None, ["config=ok"]
 
     def node_bind_equals_bind(tmp):
         # "SESSIONDOCK_NODE_BIND must differ from SESSIONDOCK_BIND"
@@ -381,7 +322,7 @@ def builders():
         return node_env(tmp, SESSIONDOCK_NODE_PEERS="wireguard"), 1, "SESSIONDOCK_NODE_PEERS", []
 
     def node_token_missing_file(tmp):
-        # "SESSIONDOCK_NODE_TOKEN_FILE requires an explicit existing absolute file"
+        # The credential still has to be readable so its token can be checked.
         return node_env(tmp, SESSIONDOCK_NODE_TOKEN_FILE=os.path.join(tmp, "absent")), 1, "SESSIONDOCK_NODE_TOKEN_FILE", []
 
     def node_token_too_short(tmp):
@@ -396,10 +337,9 @@ def builders():
         return env, 1, "32", []
 
     def node_token_world_readable(tmp):
-        # "SESSIONDOCK_NODE_TOKEN_FILE must not be readable by group or others"
         env = node_env(tmp)
         os.chmod(env["SESSIONDOCK_NODE_TOKEN_FILE"], 0o644)
-        return env, 1, "group or others", []
+        return env, 0, None, ["config=ok"]
 
     def node_id_existing_ok(tmp):
         # An existing valid id file is only read.
@@ -414,24 +354,15 @@ def builders():
         return env, 1, "invalid node identity", []
 
     def node_id_parent_missing(tmp):
-        # "SESSIONDOCK_NODE_ID_FILE parent directory must exist"
-        return node_env(tmp, SESSIONDOCK_NODE_ID_FILE=os.path.join(tmp, "nowhere", "node-id")), 1, "parent directory", []
+        return node_env(tmp, SESSIONDOCK_NODE_ID_FILE=os.path.join(tmp, "nowhere", "node-id")), 0, None, ["config=ok"]
 
     def node_id_is_directory(tmp):
-        # "SESSIONDOCK_NODE_ID_FILE must be a regular file"
-        return node_env(tmp, SESSIONDOCK_NODE_ID_FILE=mkdir(os.path.join(tmp, "iddir"))), 1, "regular file", []
-
-    def node_id_same_as_token(tmp):
-        # "... must be different files"
-        env = node_env(tmp)
-        env["SESSIONDOCK_NODE_ID_FILE"] = env["SESSIONDOCK_NODE_TOKEN_FILE"]
-        return env, 1, "different files", []
+        return node_env(tmp, SESSIONDOCK_NODE_ID_FILE=mkdir(os.path.join(tmp, "iddir"))), 1, "directory", []
 
     def node_id_inside_native_root(tmp):
-        # "node token and id files must stay outside frontend, native, ..."
         claude = mkdir(os.path.join(tmp, "claude"))
         return node_env(tmp, SESSIONDOCK_CLAUDE_ROOT=claude,
-                        SESSIONDOCK_NODE_ID_FILE=os.path.join(claude, "node-id")), 1, "outside", []
+                        SESSIONDOCK_NODE_ID_FILE=os.path.join(claude, "node-id")), 0, None, ["config=ok"]
 
     def node_token_inside_state_dir(tmp):
         state = mkdir(os.path.join(tmp, "state"), 0o700)
@@ -439,10 +370,10 @@ def builders():
         moved = os.path.join(state, "node-token")
         os.rename(env["SESSIONDOCK_NODE_TOKEN_FILE"], moved)
         env["SESSIONDOCK_NODE_TOKEN_FILE"] = moved
-        return env, 1, "outside", []
+        return env, 0, None, ["config=ok"]
 
     def bug_report_env(tmp, **override):
-        # dir 0700 + repo inside a file write root (which lies inside a read root).
+        # A configured bundle directory and repository enable bug reports.
         work = mkdir(os.path.join(tmp, "work"), 0o755)
         repo = mkdir(os.path.join(work, "repo"), 0o755)
         reports = mkdir(os.path.join(tmp, "reports"), 0o700)
@@ -471,34 +402,36 @@ def builders():
         return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_DIR=None), 1, "set together", []
 
     def bug_report_dir_open_mode(tmp):
-        # "bug-report directory requires private owner-only permissions (0700)"
         env = bug_report_env(tmp)
         os.chmod(env["SESSIONDOCK_BUG_REPORT_DIR"], 0o755)
-        return env, 1, "0700", []
+        return env, 0, None, ["config=ok"]
 
     def bug_report_dir_missing(tmp):
-        return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_DIR=os.path.join(tmp, "absent")), 1, "SESSIONDOCK_BUG_REPORT_DIR", []
+        return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_DIR=os.path.join(tmp, "absent")), 0, None, ["config=ok"]
 
     def bug_report_repo_outside_write_roots(tmp):
-        # "... must equal or lie inside a file write root"
+        # The enabled file manager permits an operator-selected repository.
         outside = mkdir(os.path.join(tmp, "elsewhere"))
-        return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_REPO=outside), 1, "write root", []
+        return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_REPO=outside), 0, None, ["config=ok"]
 
     def bug_report_repo_without_write_roots(tmp):
         env = bug_report_env(tmp, SESSIONDOCK_FILE_WRITE_ROOTS=None)
-        return env, 1, "write root", []
+        return env, 0, None, ["config=ok"]
+
+    def bug_report_repo_ordinary_paths(tmp):
+        return bug_report_env(tmp, SESSIONDOCK_BUG_REPORT_REPO="relative/repo"), 0, None, ["config=ok"]
 
     def bug_report_dir_inside_file_root(tmp):
-        # The bundle directory must stay outside every file access path.
+        # File-manager activation roots do not isolate private bundle storage.
         env = bug_report_env(tmp)
         inside = mkdir(os.path.join(env["SESSIONDOCK_FILE_ROOTS"], "reports"), 0o700)
         env["SESSIONDOCK_BUG_REPORT_DIR"] = inside
-        return env, 1, "outside", []
+        return env, 0, None, ["config=ok"]
 
     def bug_report_dir_equals_audit(tmp):
         env = bug_report_env(tmp)
         env["SESSIONDOCK_AUDIT_DIR"] = env["SESSIONDOCK_BUG_REPORT_DIR"]
-        return env, 1, "outside", []
+        return env, 0, None, ["config=ok"]
 
     def public_hosts_ok(_tmp):
         # Trimmed, lower-cased, echoed in order; unset prints "(unset)".
@@ -552,6 +485,7 @@ def builders():
         ("bug_report_dir_missing", bug_report_dir_missing),
         ("bug_report_repo_outside_write_roots", bug_report_repo_outside_write_roots),
         ("bug_report_repo_without_write_roots", bug_report_repo_without_write_roots),
+        ("bug_report_repo_ordinary_paths", bug_report_repo_ordinary_paths),
         ("bug_report_dir_inside_file_root", bug_report_dir_inside_file_root),
         ("bug_report_dir_equals_audit", bug_report_dir_equals_audit),
         ("node_unset", node_unset),
@@ -575,21 +509,12 @@ def builders():
         ("node_id_invalid_content", node_id_invalid_content),
         ("node_id_parent_missing", node_id_parent_missing),
         ("node_id_is_directory", node_id_is_directory),
-        ("node_id_same_as_token", node_id_same_as_token),
         ("node_id_inside_native_root", node_id_inside_native_root),
         ("node_token_inside_state_dir", node_token_inside_state_dir),
-        ("proc_scan_default_off", proc_scan_default_off),
-        ("proc_scan_on_ok", proc_scan_on_ok),
-        ("proc_scan_invalid_value", proc_scan_invalid_value),
-        ("proc_root_without_scan", proc_root_without_scan),
+        ("native_discovery_defaults", native_discovery_defaults),
         ("proc_root_synthetic_ok", proc_root_synthetic_ok),
-        ("proc_root_is_file", proc_root_is_file),
-        ("grok_active_missing", grok_active_missing),
-        ("grok_active_inside_native_root", grok_active_inside_native_root),
-        ("launcher_cwd_root_home_ancestor_of_native_ok", launcher_cwd_root_home_ancestor_of_native_ok),
-        ("launcher_cwd_root_inside_native_root", launcher_cwd_root_inside_native_root),
-        ("launcher_cwd_root_ancestor_of_state_dir", launcher_cwd_root_ancestor_of_state_dir),
-        ("grok_active_ok", grok_active_ok),
+        ("launcher_executable_missing", launcher_executable_missing),
+        ("grok_active_override_ok", grok_active_override_ok),
         ("roots_ok", roots_ok),
         ("non_loopback_bind", non_loopback_bind),
         ("invalid_bind", invalid_bind),
@@ -604,9 +529,9 @@ def builders():
         ("file_roots_too_many", file_roots_too_many),
         ("file_roots_empty", file_roots_empty),
         ("codex_index_without_root", codex_index_without_root),
-        ("private_dirs_nested", private_dirs_nested),
-        ("symlinked_private_dir", symlinked_private_dir),
-        ("all_private_ok", all_private_ok),
+        ("shared_service_dirs_allowed", shared_service_dirs_allowed),
+        ("symlinked_state_dir", symlinked_state_dir),
+        ("all_service_paths_ok", all_service_paths_ok),
     ]
 
 

@@ -157,14 +157,15 @@ def run(opener, base, corpus, files):
     passed("embedded GET type/length/bytes/sha256")
     passed("Cache-Control private, no-store")
     passed("warm GET identical bytes")
-    bad = token_of(items[5], "invalid", rawb)
-    code, _, body = media_get(opener, base, bad, want=422)
-    err = json.loads(body) if body else {}
-    if code != 422 or not err.get("error") or b"AAAA" in body:
-        fail("invalid", f"HTTP {code}", body)
+    # Python accepts any nonempty, decodable base64 bytes with a supported
+    # declared image MIME; it does not parse the image format before serving.
+    opaque = token_of(items[5], "opaque", rawb)
+    code, headers, body = media_get(opener, base, opaque)
+    if code != 200 or headers.get("content-type") != "image/png" or body != b64("AAAA"):
+        fail("opaque", f"HTTP {code}", body)
     if not any("invalid remains" in (row.get("text") or "") for row in data["messages"]):
         fail("invalid", "readable text dropped", rawb)
-    passed("invalid base64 still registered; GET 422")
+    passed("decodable opaque image bytes match Python GET")
     file_src, expected = token_of(items[6], "file", rawb), png_fill(1)
     code, headers, body = media_get(opener, base, file_src)
     if code != 200 or body != expected or headers.get("content-type") != "image/png":

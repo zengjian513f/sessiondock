@@ -14,9 +14,10 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import time
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, build_opener
 
@@ -88,6 +89,13 @@ def server(corpus, binary, index):
             else:
                 raise AssertionError("isolated server failed to become ready")
             yield base, opener
+        except BaseException:
+            log.flush()
+            log.seek(0)
+            output = log.read().decode("utf-8", "replace")
+            if output:
+                print(output, file=sys.stderr, end="")
+            raise
         finally:
             if process.poll() is None:
                 process.terminate()
@@ -97,17 +105,6 @@ def server(corpus, binary, index):
                     process.kill()  # Only this test's exact child process.
                     process.wait(timeout=5)
                     raise AssertionError("isolated server shutdown exceeded five seconds")
-
-
-def expect_error(opener, base, route, status):
-    try:
-        get_json(opener, base, route)
-    except HTTPError as error:
-        assert error.code == status, (route, error.code)
-        body = json.loads(error.read(1024 * 1024))
-        assert "Codex 名称索引" in body["error"], body
-    else:
-        raise AssertionError("broken configured name index returned success")
 
 
 def parity(corpus, base, opener, index, rows, python_source):
@@ -153,10 +150,16 @@ def parity(corpus, base, opener, index, rows, python_source):
     assert agent["meta"]["title"] == actual["root"]["agent_items"][0]["title"]
     for raw in (b"{broken}\n", b'{"id":"standalone","thread_name":'):
         index.write_bytes(raw)
-        for route in ("/api/sessions", "/api/messages/" + corpus.uid("standalone"), "/api/search?q=synthetic"):
-            expect_error(opener, base, route, 503)
+        listed = get_json(opener, base, "/api/sessions")
+        fallback = next(row for row in listed["sessions"] if row["sid"] == "standalone")
+        assert fallback["title"] == "standalone synthetic searchable message"
+        viewed = api(opener, base, corpus.uid("standalone"))
+        assert viewed["meta"]["title"] == fallback["title"]
+        search = get_json(opener, base, "/api/search?q=synthetic")
+        assert next(row for row in search["results"] if row["sid"] == "standalone")["title"] == fallback["title"]
     index.unlink()  # This tool created this temporary fixture file.
-    expect_error(opener, base, "/api/sessions", 503)
+    listed = get_json(opener, base, "/api/sessions")
+    assert next(row for row in listed["sessions"] if row["sid"] == "standalone")["title"] == "standalone synthetic searchable message"
     write_index(index, rows)
     assert api(opener, base, corpus.uid("standalone"))["meta"]["title"] == "Updated standalone title"
 
@@ -192,13 +195,13 @@ def browser_check(corpus, base, index, rows):
             page.wait_for_function("window.__namePackets.some(p => p.meta?.title === 'SSE renamed title' && p.reset === false && p.messages.length === 0)")
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
             index.write_bytes(b"{broken}\n")
-            expect(page.locator("#migration-read-error")).to_contain_text("Codex 名称索引", timeout=10000)
+            expect(page.locator(".dtitle h2")).to_contain_text("standalone synthetic searchable message", timeout=10000)
+            expect(page.locator("#migration-read-error")).to_have_count(0)
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
             expect(page.locator("#a-term")).to_be_visible()
             expect(page.locator("#a-term")).to_be_enabled()
             write_index(index, rows)
-            page.locator("#migration-read-error button").click()
-            expect(page.locator("#migration-read-error")).to_have_count(0)
+            expect(page.locator(".dtitle h2")).to_contain_text("SSE renamed title", timeout=10000)
             page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
             page.set_viewport_size({"width": 390, "height": 844})
             if not page.locator("#a-term").is_visible():

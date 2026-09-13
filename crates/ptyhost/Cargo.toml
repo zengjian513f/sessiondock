@@ -3,7 +3,7 @@ name = "ptyhost"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "ptyhost：AgentHub 的终端后端，每个 CLI 会话一个独立进程，pty + 本地 socket"
+description = "ptyhost：独立终端后端，每个 CLI 会话一个独立进程，pty + 本地 socket"
 
 [[bin]]
 name = "ptyhost"

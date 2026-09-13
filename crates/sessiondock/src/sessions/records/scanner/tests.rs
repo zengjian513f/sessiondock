@@ -15,7 +15,6 @@ fn span_data_url_prefix_and_payload_evidence_survive_all_chunk_boundaries() {
                 Chunked::new(encoded.as_bytes(), chunk),
                 Limits {
                     inline_string_bytes: threshold,
-                    ..Default::default()
                 },
             )
             .unwrap();
@@ -47,7 +46,6 @@ fn span_prefix_is_bounded_and_data_candidate_is_not_media_validation() {
             encoded.as_slice(),
             Limits {
                 inline_string_bytes: 1,
-                ..Default::default()
             },
         )
         .unwrap();
@@ -138,7 +136,7 @@ fn every_byte_can_split_json_tokens_utf8_and_surrogate_pairs() {
 }
 
 #[test]
-fn duplicate_decoded_keys_rejected_but_nested_reuse_is_valid() {
+fn duplicate_decoded_keys_keep_the_last_value_like_serde() {
     for input in [
         r#"{"a":1,"a":2}"#,
         r#"{"a":1,"\u0061":2}"#,
@@ -146,8 +144,8 @@ fn duplicate_decoded_keys_rejected_but_nested_reuse_is_valid() {
         r#"{"x":{"a":0,"a":0}}"#,
     ] {
         assert_eq!(
-            failure(input.as_bytes(), Limits::default()).kind,
-            ErrorKind::DuplicateKey
+            value(input.as_bytes(), 1),
+            serde_json::from_str::<Value>(input).unwrap()
         );
     }
     let input = br#"{"a":1,"nested":{"a":2},"A":3}"#;
@@ -155,9 +153,6 @@ fn duplicate_decoded_keys_rejected_but_nested_reuse_is_valid() {
         value(input, 1),
         serde_json::from_slice::<Value>(input).unwrap()
     );
-    let error = failure(br#"{"secret-input":0,"secret-input":1}"#, Limits::default());
-    assert!(!error.to_string().contains("secret"));
-    assert!(!format!("{error:?}").contains("secret"));
 }
 
 #[test]
@@ -187,14 +182,7 @@ fn object_insertion_order_survives_nested_scanning_and_value_serialization() {
         .collect::<Vec<_>>()
         .join(",");
     let input = format!("{{{input}}}");
-    let document = scan(
-        input.as_bytes(),
-        Limits {
-            resident_bytes: 8 * 1024 * 1024,
-            ..Limits::default()
-        },
-    )
-    .unwrap();
+    let document = scan(input.as_bytes(), Limits::default()).unwrap();
     assert_eq!(document.stats.keys, 5000);
     let actual = document.into_value().unwrap();
     assert_eq!(
@@ -275,7 +263,6 @@ fn invalid_utf8_is_checked_even_after_string_has_become_a_span() {
                 Chunked::new(input.as_slice(), chunk),
                 Limits {
                     inline_string_bytes: 1,
-                    ..Limits::default()
                 },
             )
             .err()
@@ -290,7 +277,6 @@ fn invalid_utf8_is_checked_even_after_string_has_become_a_span() {
             &input,
             Limits {
                 inline_string_bytes: 1,
-                ..Limits::default()
             }
         )
         .kind,
@@ -304,7 +290,6 @@ fn span_offsets_exclude_quotes_and_digest_covers_unescaped_utf8_not_spelling() {
     let escaped = "  \"\\u0061\\/\\u00e9\\ud83d\\ude00\"\n";
     let limits = Limits {
         inline_string_bytes: 2,
-        ..Limits::default()
     };
     let a = scan(Chunked::new(raw.as_bytes(), 1), limits).unwrap();
     let b = scan(Chunked::new(escaped.as_bytes(), 1), limits).unwrap();
@@ -335,12 +320,8 @@ fn span_offsets_exclude_quotes_and_digest_covers_unescaped_utf8_not_spelling() {
 #[test]
 fn inline_threshold_is_decoded_utf8_bytes_and_strict_small_records_remain_movable() {
     let mut build = StringBuild::new();
-    let mut budget = Resident {
-        maximum: 64,
-        used: 0,
-        peak: 0,
-    };
-    build.feed(b"small", 64, false, &mut budget, 0).unwrap();
+    let mut resident = Resident { used: 0, peak: 0 };
+    build.feed(b"small", 64, false, &mut resident, 0).unwrap();
     assert!(
         build.hash.is_none(),
         "resident text does not initialize a digest buffer"
@@ -350,7 +331,6 @@ fn inline_threshold_is_decoded_utf8_bytes_and_strict_small_records_remain_movabl
             input.as_bytes(),
             Limits {
                 inline_string_bytes: 4,
-                ..Limits::default()
             },
         )
         .unwrap();
@@ -361,7 +341,6 @@ fn inline_threshold_is_decoded_utf8_bytes_and_strict_small_records_remain_movabl
                 input.as_bytes(),
                 Limits {
                     inline_string_bytes: 3,
-                    ..Limits::default()
                 }
             )
             .unwrap()
@@ -375,7 +354,6 @@ fn inline_threshold_is_decoded_utf8_bytes_and_strict_small_records_remain_movabl
         Chunked::new(input.as_bytes(), 701),
         Limits {
             inline_string_bytes: 2 * 1024 * 1024,
-            ..Limits::default()
         },
     )
     .unwrap();
@@ -437,7 +415,6 @@ fn escaped_stream_hash_covers_discarded_prefix_middle_and_tail() {
         Chunked::new(input.as_bytes(), 11),
         Limits {
             inline_string_bytes: 31,
-            ..Limits::default()
         },
     )
     .unwrap();
@@ -457,7 +434,6 @@ fn escaped_stream_hash_covers_discarded_prefix_middle_and_tail() {
         changed.as_slice(),
         Limits {
             inline_string_bytes: 31,
-            ..Limits::default()
         },
     )
     .unwrap();
@@ -465,160 +441,8 @@ fn escaped_stream_hash_covers_discarded_prefix_middle_and_tail() {
 }
 
 #[test]
-fn physical_budget_counts_whitespace_and_escapes_and_reads_only_one_probe_byte() {
-    for input in [
-        b"null".as_slice(),
-        b" null\r\n".as_slice(),
-        br#""\u0061""#.as_slice(),
-    ] {
-        let maximum = input.len() as u64;
-        assert!(
-            scan(
-                input,
-                Limits {
-                    physical_bytes: maximum,
-                    ..Limits::default()
-                }
-            )
-            .is_ok()
-        );
-        let mut reader = Chunked::new(input, 8192);
-        assert_eq!(
-            scan(
-                &mut reader,
-                Limits {
-                    physical_bytes: maximum - 1,
-                    ..Limits::default()
-                }
-            )
-            .err()
-            .unwrap()
-            .kind,
-            ErrorKind::PhysicalLimit
-        );
-        assert!(reader.bytes <= maximum as usize);
-    }
-    let mut endless = Chunked::new(io::repeat(b' '), 3);
-    assert_eq!(
-        scan(
-            &mut endless,
-            Limits {
-                physical_bytes: 19,
-                ..Limits::default()
-            }
-        )
-        .err()
-        .unwrap()
-        .kind,
-        ErrorKind::PhysicalLimit
-    );
-    assert_eq!(endless.bytes, 20);
-}
-
-#[test]
-fn depth_node_key_and_resident_budgets_fail_closed_at_exact_boundaries() {
-    let deepest = format!("{}null{}", "[".repeat(HARD_DEPTH), "]".repeat(HARD_DEPTH));
-    assert!(
-        scan(
-            deepest.as_bytes(),
-            Limits {
-                depth: HARD_DEPTH,
-                ..Limits::default()
-            }
-        )
-        .unwrap()
-        .into_value()
-        .is_ok()
-    );
-    let depth = format!("{}null{}", "[".repeat(8), "]".repeat(8));
-    let limits = Limits {
-        depth: 8,
-        ..Limits::default()
-    };
-    assert!(scan(depth.as_bytes(), limits).is_ok());
-    assert_eq!(
-        failure(format!("[{depth}]").as_bytes(), limits).kind,
-        ErrorKind::DepthLimit
-    );
-    assert_eq!(
-        failure(
-            b"null",
-            Limits {
-                depth: 129,
-                ..limits
-            }
-        )
-        .kind,
-        ErrorKind::InvalidLimits
-    );
-    let hostile = io::repeat(b'[').take(100_000);
-    assert_eq!(
-        scan(hostile, limits).err().unwrap().kind,
-        ErrorKind::DepthLimit
-    );
-    assert!(scan(b"[null]".as_slice(), Limits { nodes: 2, ..limits }).is_ok());
-    assert_eq!(
-        failure(b"[null,null]", Limits { nodes: 2, ..limits }).kind,
-        ErrorKind::NodeLimit
-    );
-    assert!(scan(br#"{"a":{"b":0}}"#.as_slice(), Limits { keys: 2, ..limits }).is_ok());
-    assert_eq!(
-        failure(br#"{"a":{"b":0}}"#, Limits { keys: 1, ..limits }).kind,
-        ErrorKind::KeyLimit
-    );
-    assert!(
-        scan(
-            b"null".as_slice(),
-            Limits {
-                resident_bytes: NODE_WEIGHT,
-                ..limits
-            }
-        )
-        .is_ok()
-    );
-    assert_eq!(
-        failure(
-            b"null",
-            Limits {
-                resident_bytes: NODE_WEIGHT - 1,
-                ..limits
-            }
-        )
-        .kind,
-        ErrorKind::ResidentLimit
-    );
-    let input = br#"{"a":["short",1,false],"b":"text"}"#;
-    let stats = scan(input.as_slice(), limits).unwrap().stats;
-    assert!(
-        scan(
-            input.as_slice(),
-            Limits {
-                resident_bytes: stats.peak_resident_bytes,
-                ..limits
-            }
-        )
-        .is_ok()
-    );
-    assert_eq!(
-        failure(
-            input,
-            Limits {
-                resident_bytes: stats.peak_resident_bytes - 1,
-                ..limits
-            }
-        )
-        .kind,
-        ErrorKind::ResidentLimit
-    );
-}
-
-#[test]
-fn keys_never_become_spans_and_numeric_bounds_preserve_serde_behavior() {
-    let limits = Limits {
-        key_bytes: 3,
-        number_bytes: 3,
-        ..Limits::default()
-    };
+fn keys_never_become_spans_and_numbers_preserve_serde_behavior() {
+    let limits = Limits::default();
     assert_eq!(
         scan(br#"{"\u0061bc":123}"#.as_slice(), limits)
             .unwrap()
@@ -627,10 +451,15 @@ fn keys_never_become_spans_and_numeric_bounds_preserve_serde_behavior() {
         serde_json::json!({"abc":123})
     );
     assert_eq!(
-        failure(br#"{"abcd":1}"#, limits).kind,
-        ErrorKind::StringLimit
+        scan(
+            br#"{"long-key-without-a-service-limit":12345678901234567890}"#.as_slice(),
+            limits
+        )
+        .unwrap()
+        .into_value()
+        .unwrap(),
+        serde_json::json!({"long-key-without-a-service-limit":12345678901234567890u64})
     );
-    assert_eq!(failure(b"1234", limits).kind, ErrorKind::NumberLimit);
     for number in [
         "-0",
         "0.0",
@@ -658,7 +487,6 @@ fn unknown_nested_tool_strings_are_private_spans_not_fake_json_or_media() {
         input.as_slice(),
         Limits {
             inline_string_bytes: 8,
-            ..Limits::default()
         },
     )
     .unwrap();
@@ -703,7 +531,6 @@ fn read_failures_and_interrupted_reads_do_not_leak_input_or_return_partial_tree(
         },
         Limits {
             inline_string_bytes: 1,
-            ..Limits::default()
         },
     )
     .err()
@@ -770,12 +597,9 @@ fn cpu_cases() -> Vec<(&'static str, Vec<Vec<u8>>, usize)> {
 }
 
 #[test]
-fn direct_value_matches_tree_serialization_and_identical_logical_charges() {
+fn direct_value_matches_tree_serialization_and_identical_statistics() {
     let limits = Limits {
         inline_string_bytes: 2 * 1024 * 1024,
-        resident_bytes: 8 * 1024 * 1024,
-        depth: 128,
-        ..Limits::default()
     };
     for (name, records, _) in cpu_cases() {
         for record in records {
@@ -785,7 +609,10 @@ fn direct_value_matches_tree_serialization_and_identical_logical_charges() {
                     scan_into::<_, Node>(Chunked::new(record.as_slice(), chunk), limits).unwrap();
                 let (value, after) =
                     scan_into::<_, Value>(Chunked::new(record.as_slice(), chunk), limits).unwrap();
-                assert_eq!(before, after, "logical budgets changed for {name}/{chunk}");
+                assert_eq!(
+                    before, after,
+                    "logical statistics changed for {name}/{chunk}"
+                );
                 assert_eq!(
                     serde_json::to_vec(&value).unwrap(),
                     serde_json::to_vec(&tree.into_value().unwrap()).unwrap()
@@ -794,21 +621,7 @@ fn direct_value_matches_tree_serialization_and_identical_logical_charges() {
                     serde_json::to_vec(&value).unwrap(),
                     serde_json::to_vec(&serde).unwrap()
                 );
-                let exact = Limits {
-                    resident_bytes: before.peak_resident_bytes,
-                    ..limits
-                };
-                assert!(scan_value(Chunked::new(record.as_slice(), chunk), exact).is_ok());
-                let below = Limits {
-                    resident_bytes: before.peak_resident_bytes - 1,
-                    ..limits
-                };
-                assert_eq!(
-                    scan_value(Chunked::new(record.as_slice(), chunk), below)
-                        .unwrap_err()
-                        .kind,
-                    ErrorKind::ResidentLimit
-                );
+                assert!(scan_value(Chunked::new(record.as_slice(), chunk), limits).is_ok());
             }
         }
     }
@@ -818,7 +631,6 @@ fn direct_value_matches_tree_serialization_and_identical_logical_charges() {
 fn direct_value_rejects_spans_and_preserves_grammar_error_checks() {
     let limits = Limits {
         inline_string_bytes: 2,
-        ..Limits::default()
     };
     for bytes in [
         br#""long ordinary text""#.as_slice(),
@@ -847,17 +659,6 @@ fn direct_value_rejects_spans_and_preserves_grammar_error_checks() {
             }
         }
     }
-    let nested = format!("{}null{}", "[".repeat(HARD_DEPTH), "]".repeat(HARD_DEPTH));
-    assert!(
-        scan_value(
-            nested.as_bytes(),
-            Limits {
-                depth: HARD_DEPTH,
-                ..Limits::default()
-            }
-        )
-        .is_ok()
-    );
 }
 
 /// Explicit opt-in, in-memory parser CPU smoke; no service/native files/CLI.
@@ -869,9 +670,6 @@ fn scanner_cpu_benchmark() {
     use std::{hint::black_box, time::Instant};
     let limits = Limits {
         inline_string_bytes: 2 * 1024 * 1024,
-        resident_bytes: 8 * 1024 * 1024,
-        depth: 128,
-        ..Limits::default()
     };
     for (name, records, repeats) in cpu_cases() {
         let mut samples = [Vec::new(), Vec::new()];

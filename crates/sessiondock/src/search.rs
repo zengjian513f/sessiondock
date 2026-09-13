@@ -16,33 +16,16 @@
 //! reusable buffer: no session body is read into memory whole unless the
 //! query can match across a newline (`PreparedSearch::chunkable`), which only
 //! a regex using escapes, classes, inline flags or anchors can; those read the
-//! body whole under a bytes-in-flight budget.
+//! body whole.
 //!
 //! Wire compatibility: `q`, comma-separated `source`, `limit` (default 60,
-//! 1..=200), and `word/case/regex/progress` encoded as 0/1. Public session views
+//! optional), and `word/case/regex/progress` enabled by the value 1. Public session views
 //! are the search pool, matching Python's default; attached agent transcripts
 //! are not silently merged into their owner's text. Unsupported views produce
 //! `errors`, `partial` and `incomplete`, while readable results are retained.
 //!
-//! Regex compatibility: Rust regex 1 supports Unicode literals/classes,
-//! alternation, repetition, anchors and inline flags. Lookaround and
-//! backreferences are intentionally unsupported and return HTTP 400 before
-//! either JSON or NDJSON starts. Unicode case folding follows regex 1, not
-//! Python re's exact edge cases. Whole-word means Unicode letters/numbers/_
-//! on both sides, including punctuation-led queries; it does not require a
-//! regex lookbehind. Query size, compiled regex size and result bytes are
-//! bounded. Cancellation is checked between views, chunks and matches, not
-//! inside a single bounded regex engine call or snapshot parse.
-//!
-//! | Option/syntax | Compatibility contract |
-//! | --- | --- |
-//! | Literal mode | Escaped Unicode text, never interpreted as regex |
-//! | `word=1` | Unicode letters/numbers/underscore boundary; no Rust `\b` shortcut |
-//! | `case=0` | regex 1 Unicode simple folding; some Python `re.I` cases differ |
-//! | Regex `\w`, `\b`, flags, anchors | regex 1 dialect; not a Python re emulation |
-//! | Lookaround, backreferences, excessive pattern complexity | Explicit HTTP 400 |
-//!
-//! Engine reference: <https://docs.rs/regex/latest/regex/#syntax>.
+//! Search accepts lookaround and backreferences and follows Python's whole-word
+//! boundary construction. The native session text is unchanged by matching.
 
 pub mod cache;
 pub mod service;
@@ -54,15 +37,14 @@ use std::sync::{
     mpsc,
 };
 
-use regex::{Regex, RegexBuilder};
+use fancy_regex::{Regex, RegexBuilder};
+use regex::Regex as PlainRegex;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::sessions::{SessionError, ViewSnapshot};
 pub use cache::Cached;
 
-const QUERY_BYTES: usize = 4096;
-const RESULT_BYTES: usize = 8 * 1024 * 1024;
 const HIT_CAP: usize = 200;
 /// Characters of context around the first hit (Python `m.start() - 40`,
 /// `m.end() + 150`).
@@ -129,8 +111,6 @@ pub struct SearchQuery {
 
 pub struct PreparedSearch {
     pattern: Option<Regex>,
-    continued_word_pattern: Option<Regex>,
-    word: bool,
     /// The pattern cannot match across a newline, so a body can be matched
     /// as line-aligned chunks with exactly the whole-body outcome.
     chunkable: bool,
@@ -155,16 +135,8 @@ pub fn empty_result() -> Value {
         "errors": [], "partial": false, "incomplete": false})
 }
 
-fn flag(value: &str) -> Result<bool, SearchError> {
-    match value {
-        "" | "0" => Ok(false),
-        "1" => Ok(true),
-        _ => Err(SearchError::new(
-            400,
-            "invalid_search_query",
-            "搜索开关仅接受 0 或 1",
-        )),
-    }
+fn flag(value: &str) -> bool {
+    value == "1"
 }
 
 /// Whether a pattern provably never matches a newline: a literal query
@@ -185,83 +157,46 @@ fn chunkable(q: &str, regex: bool) -> bool {
 
 impl SearchQuery {
     pub fn prepare(self) -> Result<PreparedSearch, SearchError> {
-        if self.q.len() > QUERY_BYTES {
-            return Err(SearchError::new(
-                400,
-                "search_query_too_long",
-                "搜索词超过 4096 字节限制",
-            ));
-        }
-        let word = flag(&self.word)?;
-        let case = flag(&self.case)?;
-        let regex = flag(&self.regex)?;
-        let progress = flag(&self.progress)?;
-        let limit = if self.limit.is_empty() {
-            60
-        } else {
-            self.limit.parse::<usize>().map_err(|_| {
-                SearchError::new(400, "invalid_search_limit", "limit 必须为 1 至 200 的整数")
-            })?
-        };
-        if !(1..=200).contains(&limit) {
-            return Err(SearchError::new(
-                400,
-                "invalid_search_limit",
-                "limit 必须为 1 至 200 的整数",
-            ));
-        }
+        let word = flag(&self.word);
+        let case = flag(&self.case);
+        let regex = flag(&self.regex);
+        let progress = flag(&self.progress);
+        let limit = self.limit.parse::<usize>().unwrap_or(60);
         let sources: BTreeSet<_> = self
             .source
             .split(',')
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
-        if sources
-            .iter()
-            .any(|s| !["claude", "codex", "grok"].contains(&s.as_str()))
-        {
-            return Err(SearchError::new(
-                400,
-                "invalid_search_source",
-                "未知搜索来源；仅支持 claude、codex、grok",
-            ));
-        }
         let chunkable = chunkable(&self.q, regex);
-        let (pattern, continued_word_pattern) = if self.q.trim().is_empty() {
-            (None, None)
+        let pattern = if self.q.trim().is_empty() {
+            None
         } else {
             let source = if regex {
                 self.q
             } else {
                 regex::escape(&self.q)
             };
-            // Capture only the user's match, while consuming boundary separators.
-            // Reuse consumed separators in the scanner for adjacent matches;
-            // this also preserves regex alternative backtracking (a|ab on ab).
-            let build = |source: &str| {
-                RegexBuilder::new(source).case_insensitive(!case)
-                .size_limit(1024 * 1024).dfa_size_limit(2 * 1024 * 1024).nest_limit(64)
-                .build().map_err(|error| SearchError::new(400, "invalid_search_regex",
-                    format!("正则无效或超出 Rust 搜索语法/复杂度限制；不支持前后查找（lookaround）和反向引用（backreference）：{error}")))
-            };
-            if word {
-                (
-                    Some(build(&format!(
-                        r"(?:^|[^\p{{L}}\p{{N}}_])({source})(?:$|[^\p{{L}}\p{{N}}_])"
-                    ))?),
-                    Some(build(&format!(
-                        r"[^\p{{L}}\p{{N}}_]({source})(?:$|[^\p{{L}}\p{{N}}_])"
-                    ))?),
-                )
+            let source = if word {
+                format!(r"(?<![\p{{L}}\p{{N}}_])(?:{source})(?![\p{{L}}\p{{N}}_])")
             } else {
-                (Some(build(&source)?), None)
-            }
+                source
+            };
+            Some(
+                RegexBuilder::new(&source)
+                    .case_insensitive(!case)
+                    .backtrack_limit(usize::MAX)
+                    .delegate_size_limit(usize::MAX)
+                    .delegate_dfa_size_limit(usize::MAX)
+                    .build()
+                    .map_err(|error| {
+                        SearchError::new(400, "invalid_search_regex", format!("正则无效: {error}"))
+                    })?,
+            )
         };
         Ok(PreparedSearch {
             debug_run: self.debug_run.chars().take(64).collect(),
             pattern,
-            continued_word_pattern,
-            word,
             chunkable,
             sources,
             limit,
@@ -278,9 +213,9 @@ fn check_cancel(cancelled: &AtomicBool) -> Result<(), SearchError> {
     }
 }
 
-fn ansi() -> &'static Regex {
-    static ANSI: OnceLock<Regex> = OnceLock::new();
-    ANSI.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*m").expect("constant regex"))
+fn ansi() -> &'static PlainRegex {
+    static ANSI: OnceLock<PlainRegex> = OnceLock::new();
+    ANSI.get_or_init(|| PlainRegex::new(r"\x1b\[[0-9;]*m").expect("constant regex"))
 }
 
 fn collapse(raw: &str) -> String {
@@ -445,29 +380,20 @@ impl<'q> Scanner<'q> {
         let Some(pattern) = &query.pattern else {
             return Ok(());
         };
-        let (mut cursor, mut first_in_chunk) = (0, true);
-        loop {
+        let mut position = 0;
+        while position <= chunk.len() {
             check_cancel(cancelled)?;
-            let found = if query.word {
-                let pattern = if first_in_chunk {
-                    pattern
-                } else {
-                    query
-                        .continued_word_pattern
-                        .as_ref()
-                        .expect("word continuation pattern")
-                };
-                pattern
-                    .captures_at(chunk, cursor)
-                    .and_then(|groups| groups.get(1))
-            } else {
-                pattern.find_at(chunk, cursor)
-            };
+            let found = pattern.find_from_pos(chunk, position).map_err(|error| {
+                SearchError::new(
+                    400,
+                    "invalid_search_regex",
+                    format!("正则匹配失败: {error}"),
+                )
+            })?;
             let Some(found) = found else { break };
-            if found.is_empty() && !final_chunk && found.start() == chunk.len() {
+            if found.start() == found.end() && !final_chunk && found.start() == chunk.len() {
                 break;
             }
-            first_in_chunk = false;
             self.count += 1;
             if self.snippet.is_none() && self.pending.is_none() {
                 if final_chunk && self.tail.is_empty() {
@@ -480,28 +406,13 @@ impl<'q> Scanner<'q> {
                 self.capped = true;
                 break;
             }
-            cursor = found.end();
-            if query.word {
-                if found.is_empty() {
-                    if cursor == chunk.len() {
-                        break;
-                    }
-                } else {
-                    // Reuse the preceding separator for adjacent punctuation
-                    // matches ("#" on "##"). Removing the ^ alternative prevents
-                    // replaying a match at zero; empty matches advance via their
-                    // mandatory consumed prefix instead of skipping a character.
-                    cursor = chunk[..cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(offset, _)| offset);
-                }
-            } else if found.is_empty() {
-                let Some(next) = chunk[cursor..].chars().next() else {
-                    break;
-                };
-                cursor += next.len_utf8();
-            }
+            position = if found.end() > found.start() {
+                found.end()
+            } else if let Some(next) = chunk[found.end()..].chars().next() {
+                found.end() + next.len_utf8()
+            } else {
+                break;
+            };
         }
         if !final_chunk {
             self.remember_tail(chunk);
@@ -574,7 +485,7 @@ pub fn scan_view(
 /// its error becomes that row's `errors` entry. Up to `workers` candidates
 /// are scanned at once, but `emit` sees hits and progress strictly in pool
 /// order and the scan stops where a sequential one would (`limit`,
-/// cancellation, result budget); `emit` provides bounded backpressure and
+/// cancellation); `emit` provides bounded backpressure and
 /// returning an error stops work immediately. No partial history is guessed.
 pub fn execute(
     rows: &[Value],
@@ -595,7 +506,7 @@ pub fn execute(
         })
         .collect();
     emit(json!({"type": "progress", "done": 0, "total": pool.len()}))?;
-    let (mut hits, mut errors, mut scanned, mut bytes) = (Vec::new(), Vec::new(), 0, 0);
+    let (mut hits, mut errors, mut scanned) = (Vec::new(), Vec::new(), 0);
     let mut truncated = false;
     let stop = AtomicBool::new(false);
     let next = AtomicUsize::new(0);
@@ -652,20 +563,6 @@ pub fn execute(
                         hit["hits"] = json!(count);
                         hit["hits_capped"] = json!(capped);
                         hit["snippet"] = json!(snippet);
-                        let size = serde_json::to_vec(&hit)
-                            .expect("JSON value serializes")
-                            .len();
-                        if size > RESULT_BYTES - bytes {
-                            errors.push(json!({"uid": uid, "source": row["source"], "name": row["title"],
-                                "status": 413, "code": "search_result_limit", "error": "搜索结果超过 8 MiB 预算，请细化条件"}));
-                            truncated = true;
-                            scanned += 1;
-                            emit(
-                                json!({"type": "progress", "done": scanned, "total": pool.len()}),
-                            )?;
-                            break;
-                        }
-                        bytes += size;
                         emit(json!({"type": "matches", "results": [hit.clone()]}))?;
                         hits.push(hit);
                     }
@@ -764,21 +661,20 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_patterns_and_invalid_flags_are_client_errors() {
-        for expression in [r"(?=cat)", r"(?<=cat)", r"(cat)\1", "["] {
-            assert_eq!(
-                SearchQuery {
-                    q: expression.into(),
-                    regex: "1".into(),
-                    ..Default::default()
-                }
-                .prepare()
-                .err()
-                .unwrap()
-                .status,
-                400
-            );
-        }
+    fn python_regex_features_and_ordinary_flags_are_accepted() {
+        assert_eq!(count(r"(?=cat)", "cat", false, true), 1);
+        assert_eq!(count(r"(?<=cat)", "cat", false, true), 1);
+        assert_eq!(count(r"(cat)\1", "catcat", false, true), 1);
+        assert_eq!(count(r"(cat)\1", "catcat", true, true), 1);
+        assert!(
+            SearchQuery {
+                q: "[".into(),
+                regex: "1".into(),
+                ..Default::default()
+            }
+            .prepare()
+            .is_err()
+        );
         assert!(
             SearchQuery {
                 q: "test".into(),
@@ -786,7 +682,15 @@ mod tests {
                 ..Default::default()
             }
             .prepare()
-            .is_err()
+            .is_ok()
+        );
+        assert!(
+            SearchQuery {
+                q: "x".repeat(4097),
+                ..Default::default()
+            }
+            .prepare()
+            .is_ok()
         );
     }
 

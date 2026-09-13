@@ -163,20 +163,16 @@ async fn invalid_names_and_limits_are_rejected_before_io() {
 }
 
 #[tokio::test]
-async fn discovery_has_entry_and_metadata_size_budgets() {
+async fn discovery_has_no_entry_quota_and_keeps_metadata_size_budget() {
     let (directory, _listener, _client) = tcp_peer(Limits::default()).await;
     tokio::fs::write(directory.path().join("second.json"), b"{}")
         .await
         .unwrap();
     let limits = Limits {
-        max_directory_entries: 1,
         ..Limits::default()
     };
     let client = HostClient::new(directory.path(), limits).unwrap();
-    assert!(matches!(
-        client.discover().await,
-        Err(Error::DiscoveryLimit)
-    ));
+    assert_eq!(client.discover().await.unwrap().len(), 1);
     let limits = Limits {
         max_line_bytes: 4,
         ..Limits::default()
@@ -592,7 +588,7 @@ async fn attach_rejects_large_unknown_and_truncated_frames() {
 #[tokio::test]
 async fn attach_read_cancellation_keeps_partial_header_and_idle_has_no_deadline() {
     let limits = Limits {
-        partial_frame_timeout: Duration::from_secs(1),
+        partial_frame_timeout: Some(Duration::from_secs(1)),
         operation_timeout: Duration::from_millis(100),
         ..Limits::default()
     };
@@ -636,7 +632,7 @@ async fn attach_read_cancellation_keeps_partial_header_and_idle_has_no_deadline(
 async fn attach_stalled_partial_frame_times_out_and_rejects_large_input_before_write() {
     let limits = Limits {
         max_frame_bytes: 16,
-        partial_frame_timeout: Duration::from_millis(40),
+        partial_frame_timeout: Some(Duration::from_millis(40)),
         ..Limits::default()
     };
     let (_directory, listener, client) = tcp_peer(limits).await;

@@ -137,12 +137,12 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
     rollout(&held, HELD_SID, &codex_area);
     rollout(&decoy, DECOY_SID, &codex_area);
     let launcher = root.join("launcher.json");
-    let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
-        "adapters":[],
-        "profiles":[{"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
-            "args":[],"new_args":[],"resume_args":["resume","{sid}"],
-            "env":{"PATH":"/usr/bin:/bin","HOME":root.join("home"),"AGENTHUB_TEST_ROLLOUT":held},
-            "cwd_roots":[codex_area]}]});
+    let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,
+    "adapters":[],
+    "profiles":[{"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
+        "args":[],"new_args":[],"resume_args":["resume","{sid}"],
+        "env":{"PATH":"/usr/bin:/bin","HOME":root.join("home"),"AGENTHUB_TEST_ROLLOUT":held},
+        }]});
     file(&launcher, config.to_string().as_bytes(), 0o600);
     drop(LifecycleStore::initialize(&lifecycle).unwrap());
     let shutdown = CancellationToken::new();
@@ -153,7 +153,6 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
             lifecycle_dir: Some(lifecycle.clone()),
             launcher_config: Some(launcher.clone()),
             audit_dir: Some(audit.clone()),
-            proc_scan: true,
             roots: SessionRoots {
                 codex: Some(codex_root.clone()),
                 ..Default::default()

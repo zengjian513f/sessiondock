@@ -1,4 +1,4 @@
-//! ptyhost：AgentHub 的终端后端，tmux 的替代。
+//! ptyhost：独立终端后端，tmux 的替代。
 //!
 //! 每个会话一个独立进程，持有一个 pty 跑 CLI，并在本地 socket 上接受连接：
 //!
@@ -327,7 +327,7 @@ fn cmd_attach(dir: &PathBuf, args: &Args) -> i32 {
             return 1;
         }
     };
-    eprintln!("[agenthub] attached to {name}; 按 Ctrl-\\ 退出 (不影响会话)");
+    eprintln!("[ptyhost] attached to {name}; 按 Ctrl-\\ 退出 (不影响会话)");
     let stdin_thread = {
         let mut writer = match attach.stream.try_clone() {
             Ok(s) => s,
@@ -367,7 +367,7 @@ fn cmd_attach(dir: &PathBuf, args: &Args) -> i32 {
         }
     }
     drop(saved);
-    eprintln!("\r\n[agenthub] detached");
+    eprintln!("\r\n[ptyhost] detached");
     let _ = stdin_thread;
     0
 }

@@ -1,6 +1,7 @@
 # ptyhost 开发说明
 
-源码由原项目 `host-rs` 原样导入，当前 Web 服务尚未与它连接。
+源码最初由原项目 `host-rs` 导入；当前 SessionDock Web 服务通过
+`ptyhost-client` 连接宿主，launcher 负责创建宿主进程。
 
 ```sh
 cargo build -p ptyhost --locked

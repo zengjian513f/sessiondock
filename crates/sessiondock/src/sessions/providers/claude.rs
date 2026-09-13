@@ -572,7 +572,6 @@ pub(super) fn record(
                 None
             };
             let mut emitted_abandoned = false;
-            let message_start = parser.events.len();
             for part in parts {
                 let before = parser.events.len();
                 if let Some(text) = part_text(&part) {
@@ -663,7 +662,6 @@ pub(super) fn record(
                     }
                 }
             }
-            super::image_content::validate_claude(&parser.events[message_start..])?;
             if emitted_abandoned && !branch.deferred_abort {
                 parser.status(
                     end,

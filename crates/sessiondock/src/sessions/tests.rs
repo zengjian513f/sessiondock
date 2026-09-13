@@ -335,22 +335,17 @@ fn malformed_complete_record_is_noted_but_shape_errors_fail_closed_then_recover_
 }
 
 #[test]
-fn duplicate_native_keys_are_skipped_and_never_win_by_last_key() {
+fn duplicate_native_keys_follow_python_last_key_wins() {
     let (_temp, file, store, uid) = setup();
     let initial = store.messages(&uid, &MessageQuery::default()).unwrap();
-    // Even escaped-equivalent keys cannot grant last-key-wins authority: the
-    // line is skipped and noted (documented DELTA: Python reads it as the
-    // assistant record), never projected.
+    // Escaped-equivalent keys follow json.loads and keep the last value.
     append(
         &file,
         b"{\"type\":\"user\",\"ty\\u0070e\":\"assistant\",\"uuid\":\"dup\",\"parentUuid\":\"a1\",\"sessionId\":\"synthetic-session\",\"message\":{\"role\":\"assistant\",\"content\":\"last key wins\"}}\n",
     );
     let delta = store.messages(&uid, &continuation(&initial)).unwrap();
-    assert_eq!(delta["messages"], json!([]));
-    assert_eq!(
-        delta["meta"]["migration_warnings"],
-        json!(["跳过无效的JSONL 记录 ×1"])
-    );
+    assert_eq!(delta["messages"][0]["text"], "last key wins");
+    assert_eq!(delta["meta"]["migration_warnings"], json!([]));
     assert_eq!(delta["end"], fs::metadata(&file).unwrap().len());
     assert_eq!(store.list(true).unwrap()["sessions"][0]["supported"], true);
     write_rows(
@@ -939,13 +934,14 @@ fn codex_question_result_across_cursor_keeps_call_identity() {
 }
 
 #[test]
-fn oversized_file_is_listed_and_fails_only_its_own_open() {
+fn large_file_is_listed_and_range_open_has_no_size_quota() {
     let (temp, _file, store, uid) = setup();
     let before = store.list(false).unwrap();
     let oversized = temp.path().join("claude/project/oversized.jsonl");
+    let large_size = 4 * 1024 * 1024 * 1024 + 1;
     fs::File::create(&oversized)
         .unwrap()
-        .set_len(FILE_LIMIT + 1)
+        .set_len(large_size)
         .unwrap();
     let list = store.list(true).unwrap();
     let rows = list["sessions"].as_array().unwrap();
@@ -954,12 +950,18 @@ fn oversized_file_is_listed_and_fails_only_its_own_open() {
         .iter()
         .find(|row| row["path"].as_str().unwrap().ends_with("oversized.jsonl"))
         .unwrap();
-    assert_eq!(big["size"], FILE_LIMIT + 1);
-    let error = store
-        .messages(big["uid"].as_str().unwrap(), &MessageQuery::default())
-        .unwrap_err();
-    assert_eq!(error.status, 413);
-    assert!(error.message.contains("4 GiB"), "{}", error.message);
+    assert_eq!(big["size"], large_size);
+    let expected = stamp(&oversized).unwrap();
+    assert!(
+        native_input::CheckedNative::open_range(
+            &temp.path().join("claude"),
+            &oversized,
+            &expected,
+            0,
+            expected.size
+        )
+        .is_ok()
+    );
     // The other session is untouched.
     assert!(store.messages(&uid, &MessageQuery::default()).is_ok());
     fs::remove_file(&oversized).unwrap();
@@ -969,7 +971,7 @@ fn oversized_file_is_listed_and_fails_only_its_own_open() {
 
 #[cfg(unix)]
 #[test]
-fn symlink_inputs_are_not_followed() {
+fn symlink_inputs_are_followed_like_python() {
     use std::os::unix::fs::symlink;
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("root");
@@ -977,19 +979,26 @@ fn symlink_inputs_are_not_followed() {
     let outside = temp.path().join("outside.jsonl");
     write_rows(
         &outside,
-        &[claude_row("u1", Value::Null, "user", "not in root")],
+        &[claude_row("u1", Value::Null, "user", "through link")],
     );
     symlink(outside, root.join("project/link.jsonl")).unwrap();
     let store = SessionStore::new(SessionRoots {
         claude: Some(root),
         ..Default::default()
     });
-    assert_eq!(store.list(false).unwrap()["sessions"], json!([]));
+    let list = store.list(false).unwrap();
+    assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
+    let uid = list["sessions"][0]["uid"].as_str().unwrap();
+    assert!(
+        store.messages(uid, &MessageQuery::default()).unwrap()["messages"]
+            .to_string()
+            .contains("through link")
+    );
 }
 
 #[cfg(unix)]
 #[test]
-fn cached_path_cannot_follow_a_replaced_parent_directory() {
+fn cached_path_follows_a_replaced_parent_directory_like_python() {
     use std::os::unix::fs::symlink;
     let (temp, file, store, uid) = setup();
     let outside = temp.path().join("outside");
@@ -999,27 +1008,23 @@ fn cached_path_cannot_follow_a_replaced_parent_directory() {
             "external",
             Value::Null,
             "user",
-            "EXTERNAL SHOULD NEVER BE READ",
+            "external replacement",
         )],
     );
     let project = file.parent().unwrap();
     fs::rename(project, temp.path().join("original-project")).unwrap();
     symlink(&outside, project).unwrap();
-    let error = store.messages(&uid, &MessageQuery::default()).unwrap_err();
-    assert_eq!(error.status, 403);
-    assert!(!error.message.contains("EXTERNAL"));
-    assert!(store.views().unwrap().cached(&uid, "").is_none_or(|view| {
-        !view
-            .view
-            .all_events()
-            .iter()
-            .any(|event| event.message.to_string().contains("EXTERNAL"))
-    }));
+    let messages = store.messages(&uid, &MessageQuery::default()).unwrap();
+    assert!(
+        messages["messages"]
+            .to_string()
+            .contains("external replacement")
+    );
 }
 
 #[cfg(unix)]
 #[test]
-fn cached_path_cannot_follow_a_replaced_final_file() {
+fn cached_path_follows_a_replaced_final_file_like_python() {
     use std::os::unix::fs::symlink;
     let (temp, file, store, uid) = setup();
     let outside = temp.path().join("outside.jsonl");
@@ -1029,12 +1034,10 @@ fn cached_path_cannot_follow_a_replaced_final_file() {
     );
     fs::rename(&file, temp.path().join("original.jsonl")).unwrap();
     symlink(outside, &file).unwrap();
-    assert_eq!(
-        store
-            .messages(&uid, &MessageQuery::default())
-            .unwrap_err()
-            .status,
-        403
+    assert!(
+        store.messages(&uid, &MessageQuery::default()).unwrap()["messages"]
+            .to_string()
+            .contains("outside")
     );
 }
 
@@ -1054,7 +1057,7 @@ fn an_opened_file_must_match_the_expected_stamp_before_reading() {
 }
 
 #[test]
-fn missing_fork_parent_and_media_fail_closed_but_compact_is_supported() {
+fn missing_fork_parent_is_reported_while_compact_and_unknown_media_are_readable() {
     let temp = TempDir::new().unwrap();
     let codex = temp.path().join("codex");
     let path = codex.join("rollout.jsonl");
@@ -1098,9 +1101,9 @@ fn missing_fork_parent_and_media_fail_closed_but_compact_is_supported() {
             json!({"type": "user", "message": {"content": [{"type": "image", "source": {"type": "base64", "data": "synthetic"}}]}}),
         ],
     );
-    let error = store.messages(&uid, &MessageQuery::default()).unwrap_err();
-    assert_eq!(error.status, 501);
-    assert!(error.message.contains("媒体"));
+    let media = store.messages(&uid, &MessageQuery::default()).unwrap();
+    assert_eq!(media["messages"], json!([]));
+    assert_eq!(media["meta"]["supported"], true);
 }
 
 #[test]
@@ -1334,7 +1337,7 @@ fn persisted_timeline_pin_equals_pure_options_resets_cursors_and_retires_explici
     assert_eq!(list["sessions"][0]["cursor"], pinned["meta"]["cursor"]);
     let bytes = fs::read(&file).unwrap();
     let mut decoder = records::Decoder::cold();
-    records::scan_records(&bytes[..], &mut decoder, None, FILE_LIMIT).unwrap();
+    records::scan_records(&bytes[..], &mut decoder, None).unwrap();
     let records = decoder.finish(bytes.len()).records;
     let (_, pure, error) = providers::parse_with_options(
         "claude",

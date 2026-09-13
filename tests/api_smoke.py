@@ -7,6 +7,8 @@ redirects, no production data. urllib and http.client only.
 """
 from __future__ import annotations
 
+import sys
+
 import argparse
 import http.client
 import json
@@ -189,7 +191,7 @@ def run(base, opener):
 
     route = "/api/live"
     live = ok(opener, base, route)
-    assert live.get("enabled") is False and live.get("known") is False, f"{route} {live}"
+    assert live.get("enabled") is sys.platform.startswith("linux") and live.get("known") is sys.platform.startswith("linux"), f"{route} {live}"
     passed(route)
 
     route = "/api/term/list"

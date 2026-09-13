@@ -1,6 +1,5 @@
 use super::{
-    FileError, ListOptions, MAX_PREVIEW_BYTES, MAX_RAW_BYTES, MAX_STREAM_BYTES, ResolvedTarget,
-    STREAM_CHUNK_BYTES, boundary,
+    FileError, MAX_PREVIEW_BYTES, MAX_RAW_BYTES, ResolvedTarget, STREAM_CHUNK_BYTES, boundary,
 };
 use serde_json::{Value, json};
 use std::{
@@ -197,18 +196,31 @@ fn validate_pdf(target: &ResolvedTarget) -> Result<(), FileError> {
 }
 pub(super) fn describe(target: &ResolvedTarget) -> Result<Value, FileError> {
     target.verify()?;
-    let name = target
-        .path()
+    let mut result = metadata_description(target.path(), &target.metadata, target.kind())?;
+    describe_preview(&mut result, target, target.path())?;
+    target.verify()?;
+    Ok(result)
+}
+
+pub(super) fn metadata_description(
+    path: &Path,
+    metadata: &cap_std::fs::Metadata,
+    kind: &str,
+) -> Result<Value, FileError> {
+    let name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    let mut result = json!({"name":name,"path":boundary::wire_path(target.path())?,"size":target.metadata.len(),"modified":boundary::modified(&target.metadata),"kind":target.kind(),"mime":mime_guess::from_path(target.path()).first_raw().unwrap_or("application/octet-stream"),"mode":Value::Null,"owner":Value::Null,"group":Value::Null,"writable":false});
+    #[allow(unused_mut)]
+    let mut result = json!({"name":name,"path":boundary::wire_path(path)?,"size":metadata.len(),"modified":boundary::modified(metadata),"kind":kind,"mime":mime_guess::from_path(path).first_raw().unwrap_or("application/octet-stream"),"mode":Value::Null,"owner":Value::Null,"group":Value::Null,"writable":false});
     #[cfg(unix)]
     {
         use cap_std::fs::MetadataExt;
-        let mode = target.metadata.mode();
-        let mut label = String::from(if target.kind() == "directory" {
+        let mode = metadata.mode();
+        let mut label = String::from(if kind == "directory" {
             "d"
+        } else if kind == "symlink" {
+            "l"
         } else {
             "-"
         });
@@ -226,19 +238,25 @@ pub(super) fn describe(target: &ResolvedTarget) -> Result<Value, FileError> {
             label.push(if mode & bit != 0 { character } else { '-' });
         }
         result["mode"] = json!(label);
-        result["owner"] = json!(target.metadata.uid());
-        result["group"] = json!(target.metadata.gid());
+        result["owner"] = json!(metadata.uid());
+        result["group"] = json!(metadata.gid());
     }
+    Ok(result)
+}
+
+pub(super) fn describe_preview(
+    result: &mut Value,
+    target: &ResolvedTarget,
+    display_path: &Path,
+) -> Result<(), FileError> {
     if target.kind() == "file" {
-        if let Some(mime) = media(target.path()) {
-            if mime == "application/pdf" {
-                validate_pdf(target)?;
-            }
+        if let Some(mime) = media(display_path) {
             result["preview"] = json!(mime);
         } else {
             let data = prefix(target, MAX_PREVIEW_BYTES)?;
             let truncated = target.metadata.len() > MAX_PREVIEW_BYTES as u64;
-            if let Some(text) = text(&data, truncated) {
+            if !data.contains(&0) {
+                let text = String::from_utf8_lossy(&data).into_owned();
                 result["preview"] = json!("text");
                 result["text"] = json!(text);
                 result["truncated"] = json!(truncated);
@@ -247,8 +265,7 @@ pub(super) fn describe(target: &ResolvedTarget) -> Result<Value, FileError> {
             }
         }
     }
-    target.verify()?;
-    Ok(result)
+    Ok(())
 }
 
 fn disposition(name: &str, download: bool) -> String {
@@ -348,25 +365,24 @@ pub(super) fn read(
 ) -> Result<FileResponse, FileError> {
     target.verify()?;
     if target.kind() == "directory" {
-        if options.download || options.preview {
-            return Err(FileError::new(
-                400,
-                "file_required",
-                "目录只提供有界列表，不能作为文件预览或下载",
-            ));
-        }
-        let value = boundary::list(&target, &ListOptions::default())?;
-        let mut listing = format!("{}/\n\n", boundary::wire_path(target.path())?);
-        for entry in value["entries"].as_array().unwrap() {
-            listing.push_str(entry["name"].as_str().unwrap_or(""));
-            if entry["kind"] == "directory" {
-                listing.push('/');
+        let directory = target.directory()?;
+        let mut entries = Vec::new();
+        for entry in directory.entries().map_err(FileError::io)? {
+            let entry = entry.map_err(FileError::io)?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_directory = target.path().join(&name).is_dir();
+            entries.push(format!("{name}{}", if is_directory { "/" } else { "" }));
+            if entries.len() >= 2000 {
+                entries.push("…（最多显示 2000 项）".into());
+                break;
             }
-            listing.push('\n');
         }
-        if value["next_offset"].is_number() {
-            listing.push_str("…（请使用目录浏览分页查看其余项目）\n");
-        }
+        entries.sort();
+        let listing = format!(
+            "{}/\n\n{}",
+            boundary::wire_path(target.path())?,
+            entries.join("\n")
+        );
         let data = listing.into_bytes();
         return bytes_response(
             data,
@@ -377,13 +393,6 @@ pub(super) fn read(
         );
     }
     let size = target.metadata.len();
-    if size > MAX_STREAM_BYTES {
-        return Err(FileError::new(
-            413,
-            "file_stream_budget",
-            "单文件超过 16 GiB 开发传输上限",
-        ));
-    }
     let name = target
         .path()
         .file_name()

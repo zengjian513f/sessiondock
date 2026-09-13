@@ -1,3 +1,5 @@
+const LINE_LIMIT: usize = 64 * 1024 * 1024;
+const ROW_LIMIT: usize = 1_000_000;
 use super::super::FileStamp;
 use super::*;
 use serde_json::json;
@@ -29,7 +31,7 @@ fn parsed(candidate: Candidate, bytes: &[u8], raw_error: Option<String>) -> Pars
     Parsed {
         candidate,
         _fixture: None,
-        raw_index: super::super::native_input::RawIndex::scan(bytes, Default::default()).unwrap(),
+        raw_index: super::super::native_input::RawIndex::scan(bytes).unwrap(),
         committed: committed(bytes),
         meta: json!({}),
         native_id: Ok("synthetic-native-id".into()),
@@ -249,7 +251,7 @@ fn torn_nul_line_between_records_is_skipped_but_its_bytes_stay_in_the_index() {
     let mut cache = RecordCache::default();
     let (batch, index) = cache
         .decode_input(&source, None, |decoder, probe| {
-            scan_records(bytes.as_slice(), decoder, probe, super::super::FILE_LIMIT)
+            scan_records(bytes.as_slice(), decoder, probe)
         })
         .unwrap();
     assert!(batch.error.is_none(), "{:?}", batch.error);
@@ -270,19 +272,20 @@ fn torn_nul_line_between_records_is_skipped_but_its_bytes_stay_in_the_index() {
     assert!(index.is_checkpoint(first.len() as u64));
     assert!(index.is_checkpoint(bytes.len() as u64));
     assert!(!index.is_checkpoint(torn_end - 1));
-    // The KEEP budget: an oversized complete line still fails the session.
+    // Invalid complete JSON stays skippable even above the former record quota.
     let mut oversized = first.to_vec();
     oversized.extend_from_slice(&vec![0u8; LINE_LIMIT + 1]);
     oversized.push(b'\n');
     oversized.extend_from_slice(last);
     let source = candidate(8, &oversized);
     let batch = RecordCache::default().decode(&source, None, &oversized, committed(&oversized));
-    assert!(batch.error.as_deref().unwrap().contains("64 MiB"));
-    assert_eq!(batch.invalid, 0);
+    assert!(batch.error.is_none());
+    assert_eq!(batch.invalid, 1);
+    assert_eq!(batch.records.len(), 2);
 }
 
 #[test]
-fn exact_line_limit_is_accepted_and_oversize_append_cannot_bypass_it() {
+fn records_above_former_line_limit_survive_cache_reuse() {
     let exact = format!(
         "{{\"p\":\"{}\"}}\n",
         "x".repeat(LINE_LIMIT - b"{\"p\":\"\"}\n".len())
@@ -290,7 +293,7 @@ fn exact_line_limit_is_accepted_and_oversize_append_cannot_bypass_it() {
     .into_bytes();
     assert_eq!(exact.len(), LINE_LIMIT);
     // A 64 MiB record weighs more than the default 64 MiB AST budget; this
-    // test is about the line limit, so give the cache the old 1 GiB.
+    // test checks append reuse, so give the cache enough retention capacity.
     let mut cache = RecordCache::with_budget(1 << 30, 8);
     let previous = seed(&mut cache, 1, &exact);
     let mut next_bytes = exact.clone();
@@ -299,18 +302,18 @@ fn exact_line_limit_is_accepted_and_oversize_append_cannot_bypass_it() {
     next_bytes.extend(oversized);
     let next = candidate(1, &next_bytes);
     let batch = cache.decode(&next, Some(&previous), &next_bytes, committed(&next_bytes));
-    assert_eq!((cache.decoded, cache.reused), (1, 1));
-    assert_eq!(batch.records.len(), 1);
-    assert!(batch.error.as_deref().unwrap().contains("64 MiB"));
+    assert_eq!((cache.decoded, cache.reused), (2, 1));
+    assert_eq!(batch.records.len(), 2);
+    assert!(batch.error.is_none());
     assert_matches_cold(&next, &next_bytes, &batch);
     cache.retain(next, batch);
-    assert_eq!(cache.weight, 0);
+    assert!(cache.weight > 0);
 }
 
 #[test]
-fn row_limit_is_cumulative_across_cache_hits_and_whitespace_does_not_add_rows() {
+fn more_than_a_million_rows_survive_cache_reuse() {
     let mut bytes = b"{}\n".repeat(ROW_LIMIT);
-    // A million rows weigh ~100 MB; this test is about the row limit.
+    // A million rows weigh ~100 MB; keep them cached to check append reuse.
     let mut cache = RecordCache::with_budget(1 << 30, 8);
     let previous = seed(&mut cache, 1, &bytes);
     assert_eq!(cache.decoded, ROW_LIMIT);
@@ -319,11 +322,11 @@ fn row_limit_is_cumulative_across_cache_hits_and_whitespace_does_not_add_rows() 
     let batch = cache.decode(&next, Some(&previous), &bytes, committed(&bytes));
     assert_eq!((cache.decoded, cache.reused), (ROW_LIMIT + 1, ROW_LIMIT));
     assert_eq!(batch.records.len(), ROW_LIMIT + 1);
-    assert!(batch.error.as_deref().unwrap().contains("1000000"));
+    assert!(batch.error.is_none());
     assert_matches_cold(&next, &bytes, &batch);
     cache.retain(next, batch);
-    assert!(cache.entries.is_empty());
-    assert_eq!(cache.weight, 0);
+    assert_eq!(cache.entries.len(), 1);
+    assert!(cache.weight > 0);
 }
 
 #[test]
@@ -393,29 +396,24 @@ fn weight_boundary_evicts_old_entries_and_oversized_batches_are_disposable() {
 }
 
 #[test]
-fn many_small_json_nodes_hit_scanner_budget_before_cache_admission() {
-    let node_count = budgets::RECORD_NODES + 1024;
-    let bytes = serde_json::to_vec(&json!({"items": vec![Value::Null; node_count]})).unwrap();
-    let mut bytes = bytes;
+fn many_small_json_nodes_are_readable_without_cache_admission() {
+    let node_count = 3_200_001;
+    let mut bytes = serde_json::to_vec(&json!({"items": vec![Value::Null; node_count]})).unwrap();
     bytes.push(b'\n');
-    assert!(bytes.len() < LINE_LIMIT);
     let next = candidate(1, &bytes);
     let mut cache = RecordCache::default();
     let batch = cache.decode(&next, None, &bytes, committed(&bytes));
-    // Intentional scanner safety delta: a physically small record never
-    // materializes an arbitrarily large AST. Batch 35: the undecodable line is
-    // skipped and counted like any other (the session stays readable), and
-    // the count is what the cache retains for it.
     assert!(batch.error.is_none(), "{:?}", batch.error);
-    assert_eq!(batch.invalid, 1);
-    assert!(batch.records.is_empty());
-    let previous = parsed(next.clone(), &bytes, None);
-    cache.retain(next.clone(), batch);
-    assert_eq!(cache.entries.len(), 1);
-    let batch = cache.decode(&next, Some(&previous), &bytes, committed(&bytes));
-    assert_eq!((cache.decoded, cache.reused), (1, 0));
-    assert_eq!(batch.invalid, 1);
-    assert_matches_cold(&next, &bytes, &batch);
+    assert_eq!(batch.invalid, 0);
+    assert_eq!(
+        batch.records[0].0["items"].as_array().unwrap().len(),
+        node_count
+    );
+    cache.retain(next, batch);
+    assert!(
+        cache.entries.is_empty(),
+        "large AST is readable but not cached"
+    );
     assert_accounting(&cache);
 }
 
@@ -464,13 +462,7 @@ fn streaming_chunks_preserve_blank_crlf_utf8_and_complete_byte_offsets() {
             }
         }
         let mut decoder = Decoder::cold();
-        let index = scan_records(
-            Chunked(bytes, chunk),
-            &mut decoder,
-            None,
-            super::super::FILE_LIMIT,
-        )
-        .unwrap();
+        let index = scan_records(Chunked(bytes, chunk), &mut decoder, None).unwrap();
         let batch = decoder.finish(index.committed() as usize);
         assert!(batch.error.is_none());
         assert_eq!(batch.records.len(), 1);
@@ -484,7 +476,7 @@ fn streaming_chunks_preserve_blank_crlf_utf8_and_complete_byte_offsets() {
 }
 
 #[test]
-fn oversized_uncommitted_line_is_bounded_and_only_fails_when_lf_arrives() {
+fn oversized_uncommitted_line_waits_for_lf() {
     let mut decoder = Decoder::cold();
     decoder.feed(b"{}\n\"");
     let feeds = LINE_LIMIT / 65536 + 8;
@@ -492,11 +484,12 @@ fn oversized_uncommitted_line_is_bounded_and_only_fails_when_lf_arrives() {
         decoder.feed(&[b'x'; 65536]);
     }
     assert!(decoder.error.is_none());
-    assert!(decoder.line.capacity() <= LINE_LIMIT);
-    assert!(decoder.line.is_empty());
+    assert!(decoder.line.len() > LINE_LIMIT);
     assert_eq!(decoder.records.len(), 1);
     decoder.feed(b"\"\n");
-    assert!(decoder.finish(feeds * 65536 + 6).error.is_some());
+    let batch = decoder.finish(feeds * 65536 + 6);
+    assert!(batch.error.is_none());
+    assert_eq!(batch.invalid, 1);
 }
 
 #[test]
@@ -510,7 +503,7 @@ fn prefix_probe_failure_reopens_once_and_never_returns_stale_cached_rows() {
     let (batch, index) = cache
         .decode_input(&next, Some(&previous), |decoder, probe| {
             probes.push(probe);
-            scan_records(new.as_slice(), decoder, probe, super::super::FILE_LIMIT)
+            scan_records(new.as_slice(), decoder, probe)
         })
         .unwrap();
     assert_eq!(probes, [Some(old.len() as u64), None]);
@@ -533,7 +526,7 @@ fn failed_second_pass_does_not_restore_or_publish_the_stale_cache_entry() {
         if calls == 2 {
             return Err(SessionError::new(503, "synthetic source changed"));
         }
-        scan_records(changed.as_slice(), decoder, probe, super::super::FILE_LIMIT)
+        scan_records(changed.as_slice(), decoder, probe)
     });
     assert_eq!(result.err().unwrap().status, 503);
     assert_eq!(calls, 2);
@@ -541,4 +534,11 @@ fn failed_second_pass_does_not_restore_or_publish_the_stale_cache_entry() {
     assert_eq!(cache.weight, 0);
     let recovered = cache.decode(&next, None, changed, changed.len());
     assert_eq!(recovered.records[0].0["n"], 2);
+}
+
+#[test]
+fn long_object_key_is_valid_native_json() {
+    let key = "k".repeat(16 * 1024 + 1);
+    let raw = serde_json::to_vec(&json!({key.clone(): "value"})).unwrap();
+    assert_eq!(decode_record(&raw).unwrap()[&key], "value");
 }

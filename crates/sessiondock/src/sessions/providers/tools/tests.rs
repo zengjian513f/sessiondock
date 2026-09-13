@@ -213,7 +213,7 @@ fn huge_changes_return_explicit_presentation_limit() {
 }
 
 #[test]
-fn output_envelopes_are_strict_and_can_be_one_of_multiple_parts() {
+fn output_envelopes_and_python_stringify_fallbacks_can_be_one_of_multiple_parts() {
     let envelope =
         json!({"output":"actual stdout","exit_code":1,"wall_time_seconds":0.25}).to_string();
     let (text, fields) = output(&json!([{"type":"text", "text":format!("Script completed\nOutput:\n{envelope}")}, {"type":"text", "text":"wrapper tail"}])).unwrap();
@@ -225,8 +225,18 @@ fn output_envelopes_are_strict_and_can_be_one_of_multiple_parts() {
         output(&json!({"text":"plain text"})).unwrap().0,
         "plain text"
     );
-    assert!(output(&json!([{"type":"image", "source":{}}])).is_err());
-    assert!(output(&json!([{"type":"unknown", "text":"not trusted"}])).is_err());
+    assert_eq!(
+        output(&json!([{"type":"image", "source":{}}])).unwrap().0,
+        "[图片]"
+    );
+    assert_eq!(
+        output(&json!([{"type":"unknown", "text":"rendered text"}]))
+            .unwrap()
+            .0,
+        "rendered text"
+    );
+    let unknown = json!({"type":"future", "payload":{"value":1}});
+    assert_eq!(output(&unknown).unwrap().0, string(&unknown));
     assert_eq!(
         output(&json!(format!("preface inline {envelope}")))
             .unwrap()
@@ -396,10 +406,10 @@ fn multi_part_media_and_error_flags_follow_the_chunks() {
         fields,
         json!({"exit_code": 0, "duration_s": 1.0, "error": true})
     );
-    // Unknown block kinds among the parts stay the strict batch-19 failure.
+    // Extra serializable block kinds do not invalidate streamed envelopes.
     let unknown = json!([part(HEADER), part(chunk("a", "x", 1.0, Some(0))),
         part(chunk("b", "y", 1.0, Some(0))), {"type":"unknown","text":"not trusted"}]);
-    assert!(output(&unknown).is_err());
+    assert_eq!(output(&unknown).unwrap().0, "xy");
 }
 
 #[test]
@@ -417,4 +427,21 @@ fn question_answers_handle_cancel_boundary_and_empty_rows() {
     assert_eq!(answer(&value).unwrap(), ("A、B\nC".to_owned(), false));
     let empty = json!({"answers":{"one":{"answers":[]}}});
     assert_eq!(answer(&empty).unwrap().0, string(&empty));
+}
+
+#[test]
+fn output_envelopes_have_no_candidate_count_quota() {
+    let raw = format!(
+        "{}{}",
+        "{invalid}\n".repeat(40),
+        json!({"output":"FOUND","wall_time_seconds":1,"exit_code":0})
+    );
+    assert_eq!(output(&json!(raw)).unwrap().0, "FOUND");
+    let mut parts = vec![json!("ordinary"); 70];
+    parts.push(json!(format!(
+        "prefix\nOutput:\n{}",
+        json!({"output":"LATE","wall_time_seconds":1,"exit_code":0})
+    )));
+    parts.push(json!("trailing ordinary"));
+    assert_eq!(output(&json!(parts)).unwrap().0, "LATE");
 }

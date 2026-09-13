@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read-only GET /api/session/outbox contract on an isolated loopback server.
 
-Disabled 501, empty initialized ledger, uid errors, debug_run ignored, and a fresh
-epoch after restart. Synthetic temp fixtures only; no production directories.
+Disabled 501, empty initialized ledger, Python-compatible empty snapshots for
+unknown UIDs, ignored extra query fields, and a fresh epoch after restart.
+Synthetic temp fixtures only; no production directories.
 """
 from __future__ import annotations
 
@@ -132,16 +133,16 @@ def main():
             ver = empty_ok("empty", payload, raw)
             leaks("empty", raw, *needles)
             passed("empty outbox epoch/revision")
-            payload, raw = fetch(opener, base, "/api/session/outbox?uid=claude:unknown", 404)
-            if payload.get("code") != "session_error" or "outbox" in payload:
-                fail("unknown", "want 404 session_error without outbox", raw)
+            payload, raw = fetch(opener, base, "/api/session/outbox?uid=claude:unknown", 200)
+            if empty_ok("unknown", payload, raw) != {"epoch": "none", "revision": 0}:
+                fail("unknown", "want Python's empty unsupported-source snapshot", raw)
             leaks("unknown", raw, *needles)
-            passed("unknown uid 404")
-            payload, raw = fetch(opener, base, "/api/session/outbox", 400)
-            if payload.get("code") != "invalid_outbox_query" or "outbox" in payload:
-                fail("missing", "want 400 invalid_outbox_query", raw)
+            passed("unknown uid empty snapshot")
+            payload, raw = fetch(opener, base, "/api/session/outbox", 200)
+            if empty_ok("missing", payload, raw) != {"epoch": "none", "revision": 0}:
+                fail("missing", "want Python's empty unsupported-source snapshot", raw)
             leaks("missing", raw, *needles)
-            passed("missing uid 400")
+            passed("missing uid empty snapshot")
             # `debug_run` selects the list view only; outbox ignores it.
             payload, raw = fetch(opener, base, route + "&debug_run=1", 200)
             if "outbox" not in payload:

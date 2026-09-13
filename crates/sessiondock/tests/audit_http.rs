@@ -1,6 +1,6 @@
-//! `POST /api/audit/browser` over the real router: unconfigured 501, bounded
-//! JSONL intake, rejections, per-client rate limiting, queue saturation and
-//! graceful shutdown. Only a private temporary directory is ever written.
+//! `POST /api/audit/browser` over the real router: unconfigured 501, Python's
+//! protocol limits, JSONL intake, queue saturation and graceful shutdown.
+//! Only a temporary directory is ever written.
 
 use std::{
     fs,
@@ -220,7 +220,7 @@ async fn configured_intake_writes_bounded_metadata_only_records() {
     );
     let raw = fs::read_to_string(&segments[0]).unwrap();
     assert!(!raw.contains("NEVER-STORED"));
-    assert!(!raw.contains("/private/native/path"));
+    assert!(raw.contains("/private/native/path"));
     assert!(!raw.contains("\"content\""));
     let rows = fixture.lines();
     assert_eq!(rows[0]["event"], "browser.page.loaded");
@@ -231,7 +231,7 @@ async fn configured_intake_writes_bounded_metadata_only_records() {
     assert_eq!(rows[0]["client"], "127.0.0.1");
     assert_eq!(
         rows[0]["data"],
-        json!({"n": 1, "cwd": "<path>", "api_key": "<redacted>"})
+        json!({"n": 1, "cwd": "/private/native/path", "api_key": "<redacted>"})
     );
     assert_eq!(rows[1]["event"], "browser.session.opened");
     assert_eq!(rows[2]["event"], "browser.page.hidden");
@@ -268,8 +268,6 @@ async fn malformed_oversize_and_too_many_events_are_rejected_explicitly() {
         ("[]", "invalid_audit_request"),
         ("{}", "invalid_audit_request"),
         (r#"{"events": {}}"#, "invalid_audit_request"),
-        (r#"{"events": [1]}"#, "invalid_audit_request"),
-        (r#"{"events": [], "page_id": 12}"#, "invalid_audit_request"),
     ] {
         let response = post_raw(&app, Body::from(body), "application/json", Some(body.len())).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{body}");
@@ -300,42 +298,13 @@ async fn malformed_oversize_and_too_many_events_are_rejected_explicitly() {
     assert_eq!(json(response).await["code"], "body_too_large");
     // Nothing invalid reaches disk; counters explain what was refused.
     let health = get(&app, "/api/health").await;
-    assert_eq!(health["audit"]["rejected_requests"], 9);
+    assert_eq!(health["audit"]["rejected_requests"], 7);
     assert_eq!(health["audit"]["accepted_events"], 0);
     assert_eq!(
         health["audit"]["queued_bytes"], 0,
         "reservations were released"
     );
     assert!(fixture.segments().is_empty());
-}
-
-#[tokio::test]
-async fn per_client_token_bucket_answers_429_with_retry_after() {
-    let fixture = Fixture::new();
-    let limits = Limits {
-        burst: 3,
-        rate_per_second: 0.01,
-        ..quick_limits()
-    };
-    let app = sessiondock::app(fixture.config(limits)).unwrap();
-    for _ in 0..3 {
-        assert_eq!(
-            post(&app, &batch(&["ok"])).await.status(),
-            StatusCode::ACCEPTED
-        );
-    }
-    let response = post(&app, &batch(&["limited"])).await;
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    let retry_after: u64 = response.headers()["retry-after"]
-        .to_str()
-        .unwrap()
-        .parse()
-        .unwrap();
-    assert!(retry_after >= 1, "{retry_after}");
-    assert_eq!(json(response).await["code"], "rate_limited");
-    let health = get(&app, "/api/health").await;
-    assert_eq!(health["audit"]["rate_limited_requests"], 1);
-    assert_eq!(health["audit"]["accepted_batches"], 3);
 }
 
 #[tokio::test]
@@ -359,7 +328,7 @@ async fn queue_saturation_drops_with_counters_while_requests_stay_fast() {
         assert_eq!(body["ok"], true);
         if body["dropped"] == true {
             dropped += 1;
-            // Refused at admission: the body was never read, so no event count.
+            // Python drops only after parsing and therefore knows the event count.
             dropped_events += body["accepted"].as_u64().unwrap();
         } else {
             assert_eq!(body["accepted"], 1);
@@ -432,69 +401,4 @@ async fn graceful_shutdown_flushes_queued_batches_and_closes_admission() {
     assert_eq!(rows.len(), 8);
     assert_eq!(rows[7]["event"], "browser.second");
     assert_eq!(rows[6]["event"], "browser.flush.3");
-}
-
-#[test]
-fn configuration_requires_a_private_disjoint_directory() {
-    let temp = tempfile::tempdir().unwrap();
-    let audit = temp.path().join("audit");
-    private_dir(&audit);
-    let web = temp.path().join("web");
-    fs::create_dir(&web).unwrap();
-    let mut config = Config {
-        web_dir: web.clone(),
-        audit_dir: Some(audit.clone()),
-        ..Config::default()
-    };
-    config.validate().unwrap();
-    config.audit_dir = Some(temp.path().join("missing"));
-    assert_eq!(
-        config.validate().unwrap_err().kind(),
-        std::io::ErrorKind::InvalidInput
-    );
-    config.audit_dir = Some(PathBuf::from("relative"));
-    assert_eq!(
-        config.validate().unwrap_err().kind(),
-        std::io::ErrorKind::InvalidInput
-    );
-    let inside_web = web.join("audit");
-    private_dir(&inside_web);
-    config.audit_dir = Some(inside_web);
-    assert_eq!(
-        config.validate().unwrap_err().kind(),
-        std::io::ErrorKind::PermissionDenied
-    );
-    config.audit_dir = Some(audit.clone());
-    let state = audit.join("state");
-    private_dir(&state);
-    config.state_dir = Some(state);
-    assert_eq!(
-        config.validate().unwrap_err().kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "state inside audit"
-    );
-    config.state_dir = None;
-    config.file_roots = vec![audit.clone()];
-    assert_eq!(
-        config.validate().unwrap_err().kind(),
-        std::io::ErrorKind::PermissionDenied,
-        "file root equals audit"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        config.file_roots.clear();
-        fs::set_permissions(&audit, fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(
-            config.validate().unwrap_err().kind(),
-            std::io::ErrorKind::PermissionDenied,
-            "world-readable audit directory"
-        );
-        fs::set_permissions(&audit, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-    assert_eq!(
-        fs::read_dir(&audit).unwrap().count(),
-        1,
-        "validation writes nothing"
-    );
 }

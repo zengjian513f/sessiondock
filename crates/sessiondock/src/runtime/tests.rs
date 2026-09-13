@@ -268,15 +268,17 @@ async fn dead_endpoint_is_unknown_and_record_is_not_removed() {
         .unwrap();
     assert_eq!(snapshot.hosts[0].liveness, Liveness::Unknown);
     assert!(!snapshot.hosts[0].known);
-    assert_eq!(
-        snapshot.hosts[0].probe_error,
-        Some(ProbeFailure::Unreachable)
-    );
+    let expected = if cfg!(windows) {
+        ProbeFailure::Timeout
+    } else {
+        ProbeFailure::Unreachable
+    };
+    assert_eq!(snapshot.hosts[0].probe_error, Some(expected));
     assert!(path.exists());
 }
 
 #[tokio::test]
-async fn total_deadline_bounds_silent_hosts_and_host_budget_is_explicit() {
+async fn total_deadline_bounds_silent_hosts_without_an_inventory_quota() {
     let directory = tempfile::tempdir().unwrap();
     let mut peers = Vec::new();
     for index in 0..3 {
@@ -297,13 +299,14 @@ async fn total_deadline_bounds_silent_hosts_and_host_budget_is_explicit() {
             .iter()
             .all(|host| host.probe_error == Some(ProbeFailure::Timeout))
     );
-    service.limits.max_hosts = 2;
     assert_eq!(
         service
             .observe(&NativeCatalog::default())
             .await
-            .unwrap_err(),
-        RuntimeError::HostLimit
+            .unwrap()
+            .hosts
+            .len(),
+        3
     );
 }
 
@@ -636,7 +639,12 @@ async fn duplicate_and_unreachable_hosts_leave_sessions_unknown_with_typed_reaso
     let unreachable = &snapshot.sessions[UID_TWO];
     assert_eq!(unreachable.state, RunState::Unknown);
     assert_eq!(unreachable.reason, Some(UnknownReason::HostUnreachable));
-    assert_eq!(unreachable.probe_error, Some(ProbeFailure::Unreachable));
+    let expected = if cfg!(windows) {
+        ProbeFailure::Timeout
+    } else {
+        ProbeFailure::Unreachable
+    };
+    assert_eq!(unreachable.probe_error, Some(expected));
     assert_eq!(
         unreachable.instance_id.as_deref(),
         Some("synthetic-instance-0003")
@@ -862,15 +870,5 @@ async fn shared_observation_is_single_flight_cached_and_force_bypasses_ttl() {
         .await;
     assert!(matches!(failed, Err(SharedError::Prepare("busy"))));
     assert!(service.cached().is_none());
-    assert!(
-        ManagedRuntime::new(
-            HostClient::new(directory.path(), Limits::default()).unwrap(),
-            RuntimeLimits {
-                memory_entries: 1,
-                ..RuntimeLimits::default()
-            }
-        )
-        .is_err()
-    );
     peer.abort();
 }

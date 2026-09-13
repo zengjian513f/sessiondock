@@ -193,11 +193,10 @@ def run(opener, base, corpus):
         fail("uid", "invalid uid is 404 session_error (messages path is not 400)", mraw)
     passed("invalid uid 404")
 
-    for key, n in (("agent", 257), ("head", 257), ("anchor", 513)):
-        err, eraw = fetch(opener, base, route(main, **{key: "x" * n}), want=400)
-        if err.get("code") != "invalid_query" or "无效" not in str(err.get("error", "")):
-            fail("query", f"overlong {key} want 400 invalid_query", eraw)
-    passed("overlong agent/head/anchor 400")
+    fetch(opener, base, route(main, agent="x" * 257), want=404)
+    for key, n in (("head", 257), ("anchor", 513)):
+        fetch(opener, base, route(main, **{key: "x" * n}))
+    passed("message selectors have no additional length rejection")
 
     stale, sraw = fetch(opener, base, route(main, append="1", start=0, head="stale", anchor="stale"))
     if stale.get("reset") is not True or stale.get("messages") != []:

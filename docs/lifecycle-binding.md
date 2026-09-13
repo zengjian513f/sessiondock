@@ -10,8 +10,7 @@ WP-E adds a second asserting party with the same durable path: the server's
 own process evidence (`BindingMethod::Process`, `lifecycle::autobind`,
 described in [lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence-wp-e)).
 `VerifiedNativeBinding::from_process_evidence(scope, receipt, note)` replaces
-the operator confirmation with a bounded, control-free evidence note (≤ 512
-bytes) naming the CLI pids under the host's child and the held native
+the operator confirmation with an evidence note naming the CLI pids under the host's child and the held native
 record; everything below — intent before host call, one bind per request,
 confirmation only by matching guarded Info, recovery to Uncertain — is
 unchanged. `BindingRecord` carries `method`, `evidence` and `bound_at` (Unix
@@ -39,10 +38,9 @@ bypass later cancellation or instance replacement.
 
 The private persisted model is `Record::binding(): Option<&BindingRecord>` with
 `BindingRecord::{spec(), state()}` and `BindingSpec::{source(), sid(), uid()}`.
-State is Intent, Confirmed or Uncertain. SID and UID each have a 256-byte ASCII
-identifier budget; UID must have its exact source prefix and a nonempty suffix.
-Identity strings are supplied whole from validated native scope, never truncated
-display IDs. Existing 128-record, 1 MiB ledger and strict JSON budgets remain.
+State is Intent, Confirmed or Uncertain. UID must have its exact source prefix and
+a nonempty suffix. Identity strings are supplied whole from validated native
+scope, never truncated display IDs. Retained records and ledger bytes have no fixed quota.
 No public HTTP schema is introduced by this library; full specs/receipts remain
 private and errors never embed SID, UID, paths or host credentials.
 
@@ -86,8 +84,8 @@ schema-2 ledgers migrate durably by adding `binding:null`, preserving all prior
 requests, identities and cancellation flags. Schema 1 also receives the previously
 defined `cancel_requested:false`. Schema 5 (WP-E) adds `method:"operator"`,
 `evidence:null` and `bound_at:null` to every migrated binding object. Old
-envelopes containing newer fields, missing required current fields, mixed
-schemas, duplicates and unknown fields fail closed.
+envelopes with missing required current fields or mixed schemas fail closed;
+ordinary extra fields follow Python's tolerant dictionary reads.
 
 On open, historical Intent and Confirmed binding states become Uncertain in the
 same durable recovery commit used for Starting/CancelRequested. No new binding
@@ -132,7 +130,7 @@ when the host remains alive and the Web process restarts with an empty registry.
 
 Synthetic store tests cover durable intents, exact/old authorities, conflicting
 specs and observations, explicit retry, all injected write-failure boundaries,
-schema-1/2 migration, strict shapes, identifier budgets and cancellation races.
+schema-1/2 migration, required shapes, source identity and cancellation races.
 Service peers validate persist-before-call, dropped responses, lost ACK and missing
 Info, ACK without a matching observation, explicit retry versus read-only recovery,
 Confirmed-to-offline downgrade, unsupported scopes/capability, stale instances,

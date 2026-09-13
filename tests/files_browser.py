@@ -26,11 +26,16 @@ def main():
         (files / "nested" / "child.txt").write_text("nested directory content")
         (files / "picture.png").write_bytes(bytes.fromhex("89504e470d0a1a0a"))
         (files / "invalid.pdf").write_bytes(b"synthetic damaged PDF without magic")
+        if os.name != "nt":
+            (files / "dangling-link").symlink_to("missing-target")
         sid = "claude-file-test"
         row = claude_row(sid,"user","u0",None,f"Open `{files}/` and `{files / 'notes.md'}` and `{files / 'invalid.pdf'}`. Missing `missing.txt`.",cwd=str(files))
         corpus.put(sid,"claude",[row],[])
         native_before = {path:path.read_bytes() for path in corpus.paths.values()}
         before = {path:path.read_bytes() for path in files.rglob("*") if path.is_file()}
+        outside = corpus.root / "outside-files"
+        outside.mkdir()
+        (outside / "reachable.txt").write_text("outside configured roots")
         with isolated_server(corpus,args.binary,file_roots=(files,)) as (base,_), sync_playwright() as playwright:
             launch = {"headless":True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -64,24 +69,39 @@ def main():
                 expect(manager.locator("#machine")).to_contain_text("只读")
                 expect(manager.locator('[data-action="new"]').first).to_be_disabled()
                 expect(manager.locator('[data-action="delete"]').first).to_be_disabled()
+                if os.name != "nt":
+                    for width, height in [(1280, 900), (390, 844)]:
+                        manager.set_viewport_size({"width": width, "height": height})
+                        manager.locator('#entries .entry-link').filter(has_text="dangling-link").click()
+                        manager.locator('[data-action="info"]').first.click()
+                        expect(manager.locator("#preview-content .properties")).to_contain_text("链接目标")
+                        expect(manager.locator("#preview-content .properties")).to_contain_text("missing-target")
+                        expect(manager.locator("#preview-content")).not_to_contain_text("不存在")
+                        manager.locator('[data-close="preview-dialog"]').first.click()
+                    manager.set_viewport_size({"width":1280,"height":900})
                 manager.locator("#view").select_option("grid")
                 manager.locator('#entries .entry-link').filter(has_text="nested").dblclick()
                 expect(manager.locator("#entries")).to_contain_text("child.txt")
-                # Crumbs above the bounding root are labels; the root and below are links.
+                # An authorized directory browser can navigate through every ancestor.
                 crumbs = manager.locator("#breadcrumbs a")
                 expect(crumbs.last).to_have_text("nested")
-                expect(crumbs.last).to_have_attribute("data-navigate", "1")
                 expect(crumbs.first).to_have_text("根目录")
-                expect(crumbs.first).to_have_attribute("aria-disabled", "true")
-                expect(crumbs.filter(has_text=re.compile(f"^{re.escape(files.name)}$")).first).to_have_attribute("data-navigate", "1")
-                assert manager.evaluate("[...document.querySelectorAll('#breadcrumbs a')].filter(a => a.dataset.navigate).map(a => a.textContent)") == list(Path(files).parts[-1:]) + ["nested"]
-                # A refused navigation (address bar outside the root) keeps the last listing,
+                expect(crumbs.first).to_have_attribute("data-navigate", "1")
+                manager.locator("#edit-address").click()
+                manager.locator("#address").fill(str(outside))
+                manager.locator("#address").press("Enter")
+                expect(manager.locator("#entries")).to_contain_text("reachable.txt")
+                manager.locator("#edit-address").click()
+                manager.locator("#address").fill(str(files / "nested"))
+                manager.locator("#address").press("Enter")
+                expect(manager.locator("#entries")).to_contain_text("child.txt")
+                # A failed navigation (a nonexistent directory) keeps the last listing,
                 # shows the server reason and restores the URL, so a refresh does not re-fail.
                 manager.locator("#edit-address").click()
-                manager.locator("#address").fill("/etc")
+                manager.locator("#address").fill(str(outside / "missing-directory"))
                 manager.locator("#address").press("Enter")
                 expect(manager.locator("#status")).to_have_class("error")
-                expect(manager.locator("#status")).to_contain_text("越出")
+                expect(manager.locator("#status")).to_contain_text("不存在")
                 expect(manager.locator("#entries")).to_contain_text("child.txt")
                 expect(manager.locator("#breadcrumbs a").last).to_have_text("nested")
                 expect(manager.locator("#page-info")).to_contain_text("1–1 / 1")
@@ -105,7 +125,10 @@ def main():
                 expect(denied.locator("#file-content")).to_contain_text("所选会话分支")
                 broken = context.new_page()
                 broken.goto(base+"/file.html?"+urlencode({"uid":corpus.uid(sid),"ref":str(files/"invalid.pdf"),"open":1}))
-                expect(broken.locator("#file-content")).to_contain_text("PDF 标识")
+                frame = broken.locator("#file-content iframe")
+                expect(frame).to_be_visible()
+                preview = context.request.get(frame.get_attribute("src"))
+                assert preview.status == 400 and preview.json()["code"] == "file_invalid_pdf", (preview.status, preview.text())
                 expect(broken.locator("#file-download")).to_be_visible()
                 with broken.expect_download() as saved:
                     broken.locator("#file-download").click()
@@ -116,7 +139,7 @@ def main():
                 browser.close()
         assert all(path.read_bytes()==content for path,content in native_before.items())
         assert all(path.read_bytes()==content for path,content in before.items())
-        print("PASS scoped files browser: session links, Markdown/source safety, exact download, directory navigation, bounded crumbs + refused-navigation rollback, readonly/mobile, capability gates, forbidden unmentioned file, native/files unchanged")
+        print("PASS scoped files browser: session links, Markdown/source safety, exact download, directory navigation, filesystem-root crumbs + failed-navigation rollback, readonly/mobile, capability gates, forbidden unmentioned file, native/files unchanged")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@
 //! capabilities, trash totals, the NDJSON search stream and the writes split
 //! per machine. Nothing here touches a session root.
 use std::{
+    ffi::OsStr,
     io::{Read, Write},
     net::TcpStream,
     path::{Path, PathBuf},
@@ -27,13 +28,41 @@ const NID_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const NID_C: &str = "cccccccccccccccccccccccccccccccc";
 
 fn python3() -> PathBuf {
-    std::env::var_os("PATH")
-        .and_then(|paths| {
-            std::env::split_paths(&paths)
-                .map(|dir| dir.join("python3"))
-                .find(|candidate| candidate.is_file())
+    python_from_path(std::env::var_os("PATH").as_deref())
+}
+
+fn python_from_path(path: Option<&OsStr>) -> PathBuf {
+    // Windows does not apply PATHEXT to a constructed absolute path.
+    let names: &[&str] = if cfg!(windows) {
+        &["python3.exe", "python.exe"]
+    } else {
+        &["python3"]
+    };
+    path.and_then(|paths| first_file_on_path(paths, names))
+        .unwrap_or_else(|| {
+            PathBuf::from(if cfg!(windows) {
+                "python.exe"
+            } else {
+                "/usr/bin/python3"
+            })
         })
-        .unwrap_or_else(|| PathBuf::from("/usr/bin/python3"))
+}
+
+fn first_file_on_path(paths: &OsStr, names: &[&str]) -> Option<PathBuf> {
+    names.iter().find_map(|name| {
+        std::env::split_paths(paths)
+            .map(|dir| dir.join(name))
+            .find(|candidate| usable_python(candidate))
+    })
+}
+
+fn usable_python(candidate: &Path) -> bool {
+    let Ok(metadata) = candidate.metadata() else {
+        return false;
+    };
+    // Windows App Execution Aliases are zero-byte placeholders that only
+    // print a Store-install message when launched outside the desktop shell.
+    metadata.is_file() && metadata.len() != 0
 }
 
 struct FakeNode {
@@ -850,12 +879,12 @@ async fn bulk_delete_is_split_per_machine_and_reports_failed_machines_per_uid() 
         hub.a.writes().last().unwrap(),
         &(
             "/api/sessions/delete".to_string(),
-            json!({"uids": ["claude:same-file-hash", "claude:same-file-hash"]})
+            json!({"uids": ["claude:same-file-hash", "claude:same-file-hash"], "force": false})
         )
     );
     assert_eq!(
         hub.b.writes().last().unwrap().1,
-        json!({"uids": ["claude:same-file-hash"]})
+        json!({"uids": ["claude:same-file-hash"], "force": false})
     );
     hub.a.pop(&["deleted"]);
     hub.b.pop(&["deleted"]);
@@ -874,6 +903,19 @@ async fn bulk_delete_is_split_per_machine_and_reports_failed_machines_per_uid() 
     );
     hub.a.pop(&["deleted"]);
 
+    let _ = aggregate::delete(
+        &hub.registry,
+        &hub.client,
+        &json!({"uids": [&a], "force": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        hub.a.writes().last().unwrap().1,
+        json!({"uids": ["claude:same-file-hash"], "force": true})
+    );
+    hub.a.pop(&["deleted"]);
+
     for (body, message) in [
         (json!({}), "没有选中任何会话"),
         (json!({"uids": []}), "没有选中任何会话"),
@@ -882,6 +924,7 @@ async fn bulk_delete_is_split_per_machine_and_reports_failed_machines_per_uid() 
             "missing or invalid machine reference",
         ),
         (json!({"uids": ["nosource"]}), "missing session source"),
+        (json!({"uids": [&a], "force": "true"}), "需要布尔值 force"),
     ] {
         assert_eq!(
             aggregate::delete(&hub.registry, &hub.client, &body)
@@ -980,5 +1023,38 @@ async fn purge_all_sums_every_selected_machine_and_prefixes_failures_with_the_na
     assert_eq!(
         data,
         json!({"ok": true, "removed": 1, "freed": 10, "errors": ["NodeB: 请求失败，请核对结果"]})
+    );
+}
+
+#[test]
+fn python_lookup_prefers_python3_exe_then_python_exe_in_isolated_dirs() {
+    let early = tempfile::tempdir().unwrap();
+    let late = tempfile::tempdir().unwrap();
+    std::fs::write(early.path().join("python3.exe"), []).unwrap();
+    std::fs::write(early.path().join("python.exe"), b"python").unwrap();
+    std::fs::write(late.path().join("python3.exe"), b"python3").unwrap();
+    std::fs::write(late.path().join("python3"), b"python3").unwrap();
+    let path = std::env::join_paths([early.path(), late.path()]).unwrap();
+
+    assert_eq!(
+        first_file_on_path(&path, &["python3.exe", "python.exe"]),
+        Some(late.path().join("python3.exe"))
+    );
+    std::fs::remove_file(late.path().join("python3.exe")).unwrap();
+    assert_eq!(
+        first_file_on_path(&path, &["python3.exe", "python.exe"]),
+        Some(early.path().join("python.exe"))
+    );
+    assert_eq!(
+        first_file_on_path(&path, &["python3"]),
+        Some(late.path().join("python3"))
+    );
+    assert_eq!(
+        python_from_path(None),
+        PathBuf::from(if cfg!(windows) {
+            "python.exe"
+        } else {
+            "/usr/bin/python3"
+        })
     );
 }

@@ -320,28 +320,21 @@ impl Harness {
     }
     async fn open(&mut self, limits: ExecutorLimits) {
         self.shutdown = CancellationToken::new();
-        // The service admits two concurrent opens process-wide; parallel tests
-        // simply wait their turn.
-        let service = loop {
-            match DeliveryService::open(
+        let service = Arc::new(
+            DeliveryService::open(
                 self.delivery_dir.clone(),
                 Default::default(),
                 self.shutdown.clone(),
             )
             .await
-            {
-                Ok(service) => break Arc::new(service),
-                Err(service::Error::Busy) => tokio::time::sleep(Duration::from_millis(20)).await,
-                Err(error) => panic!("open: {error}"),
-            }
-        };
+            .unwrap(),
+        );
         let reader = Reader {
             store: Arc::new(SessionStore::new(SessionRoots {
                 claude: Some(self.root.clone()),
                 ..Default::default()
             })),
             workers: Arc::new(Semaphore::new(4)),
-            wait: std::time::Duration::from_secs(10),
         };
         let resolver = Arc::new(FakeResolver {
             target: synthetic_target("agenthub-claude-0d3c5a8e", &self.uid),
@@ -386,8 +379,10 @@ impl Harness {
     fn request(&self, id: &str, text: &str, overwrite: &str) -> SendRequest {
         SendRequest {
             uid: self.uid.clone(),
+            agent: String::new(),
             name: "agenthub-claude-0d3c5a8e".into(),
             text: text.into(),
+            media: Vec::new(),
             request_id: id.into(),
             overwrite_draft: overwrite.into(),
             page_lease: None,
@@ -583,9 +578,6 @@ async fn wrong_name_unknown_session_and_media_rules() {
         reply.body["error"],
         "服务端发送账本只用于已有 Claude/Codex 会话"
     );
-    let reply = harness.exec().send(harness.request("short", "x", "")).await;
-    assert_eq!(reply.status, 400);
-    assert_eq!(reply.body["code"], "invalid_request_id");
     let reply = harness
         .exec()
         .send(harness.request("request-0005", "   ", ""))
@@ -819,13 +811,84 @@ async fn fifo_second_request_waits_for_the_first_and_epoch_revision_advance() {
 }
 
 #[test]
-fn request_id_validation_matches_domain_rules() {
+fn request_id_normalization_matches_python_characters_without_trimming() {
+    for id in ["x", "短🦀", "../bad ?#", "  ", "\n\0"] {
+        assert_eq!(normalize_request_id(id).unwrap(), id);
+    }
+    let id = normalize_request_id("").unwrap();
+    assert_eq!(id.len(), 36);
+    assert_eq!(id.chars().filter(|&ch| ch == '-').count(), 4);
+    assert_eq!(&id[14..15], "4");
+    assert!(matches!(id.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
+    assert_ne!(id, normalize_request_id("").unwrap());
     assert_eq!(
-        validate_request_id("abcd-1234_XYZ").unwrap(),
-        "abcd-1234_XYZ"
+        normalize_request_id(&"🦀".repeat(129)).unwrap(),
+        "🦀".repeat(128)
     );
-    assert_eq!(validate_request_id("").unwrap().len(), 32);
-    assert!(validate_request_id("short").is_err());
-    assert!(validate_request_id("bad id with spaces").is_err());
-    assert!(validate_request_id(&"x".repeat(129)).is_err());
+}
+
+#[tokio::test]
+async fn request_ids_reopen_replay_and_lookup_without_byte_or_ascii_gates() {
+    for raw in ["x".to_owned(), " ../短🦀 ?# ".to_owned(), "🦀".repeat(129)] {
+        let id: String = raw.chars().take(128).collect();
+        let mut harness = Harness::new().await;
+        harness.driver.state().no_composer = true;
+        let sent = harness
+            .exec()
+            .send(harness.request(&raw, "persist once", ""))
+            .await;
+        assert_eq!(sent.status, 200, "{}", sent.body);
+        assert_eq!(sent.body["item"]["id"], id);
+        harness.restart(limits()).await;
+        harness.driver.state().no_composer = true;
+        assert_eq!(harness.receipt(&id).await.unwrap().request.id, id);
+        let replay = harness
+            .exec()
+            .send(harness.request(&raw, "persist once", ""))
+            .await;
+        assert_eq!(replay.status, 200, "{}", replay.body);
+        assert_eq!(replay.body["item"]["id"], id);
+        assert_eq!(replay.body["outbox"].as_array().unwrap().len(), 1);
+        let conflict = harness
+            .exec()
+            .send(harness.request(&raw, "different", ""))
+            .await;
+        assert_eq!(conflict.status, 400);
+        assert_eq!(conflict.body["code"], "request_conflict");
+        let absent = if id.trim() != id {
+            id.trim().to_owned()
+        } else {
+            format!("{id}!")
+        };
+        assert_eq!(
+            harness
+                .exec()
+                .retry(&harness.uid, &absent, "", None)
+                .await
+                .status,
+            404
+        );
+        assert_eq!(
+            harness.exec().discard(&harness.uid, &absent).await.status,
+            404
+        );
+        assert_eq!(
+            harness
+                .exec()
+                .retry(&harness.uid, &id, "", None)
+                .await
+                .status,
+            200
+        );
+        assert_eq!(harness.exec().discard(&harness.uid, &id).await.status, 200);
+        assert!(harness.driver.state().pasted.is_empty());
+        assert!(harness.driver.state().keys.is_empty());
+        harness.restart(limits()).await;
+        let replay = harness
+            .exec()
+            .send(harness.request(&raw, "persist once", ""))
+            .await;
+        assert_eq!(replay.status, 200, "{}", replay.body);
+        assert!(harness.driver.state().pasted.is_empty());
+    }
 }

@@ -61,14 +61,14 @@ def build(root):
             (path / "chat_history.jsonl").write_bytes(encoded({"type": "user", "prompt_index": 1, "content": content}))
             corpus.paths[name] = path
     (root / "claude/private.png").write_bytes(base64.b64decode(GREEN))
-    denied = {"outside": root / "outside.png", "native": root / "claude/private.png"}
+    extra = {"outside": root / "outside.png", "native": root / "claude/private.png"}
     if os.name != "nt":
         (files / "linked.png").symlink_to(files / "structured.png")
-        denied["symlink"] = files / "linked.png"
-    for suffix, path in denied.items():
-        name = "claude-denied-" + suffix
+        extra["symlink"] = files / "linked.png"
+    for suffix, path in extra.items():
+        name = "claude-extra-" + suffix
         corpus.put(name, "claude", [claude_row(name, "user", "u", None,
-            [image("claude", path), {"type": "text", "text": "Denied " + suffix + " text survives"}], cwd=str(files))], [])
+            [image("claude", path), {"type": "text", "text": "Extra " + suffix + " text survives"}], cwd=str(files))], [])
     corpus.put("claude-remote-markdown", "claude", [claude_row("claude-remote-markdown", "user", "u", None,
         "Remote remains explicit: ![remote blocked](https://media.example.invalid/never.png)", cwd=str(files))], [])
     rows = [codex_row("session_meta", {"id": "codex-file-window", "cwd": str(files)})]
@@ -76,7 +76,7 @@ def build(root):
         content = [image("codex", files / "window.png")] if index == 150 else [{"type": "input_text", "text": f"Synthetic window row {index}"}]
         rows.append(codex_row("response_item", {"type": "message", "role": "user", "content": content}))
     corpus.put("codex-file-window", "codex", rows, [])
-    return corpus, files, denied
+    return corpus, files, extra
 
 
 def media(value):
@@ -136,7 +136,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-file-media-browser-") as temporary:
-        corpus, files, denied = build(Path(temporary))
+        corpus, files, extra = build(Path(temporary))
         original_native = native_bytes(corpus.root)
         original_files = {path: path.read_bytes() for path in files.iterdir() if path.is_file() and not path.is_symlink()}
         with sync_playwright() as playwright:
@@ -145,10 +145,9 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
-                for authorized in (False, True):
-                    with isolated_server(corpus, args.binary, file_roots=(files,) if authorized else ()) as (base, opener):
-                        if authorized:
-                            check_window_opens(corpus, files, opener, base)
+                for configured in (False, True):
+                    with isolated_server(corpus, args.binary, file_roots=(files,) if configured else ()) as (base, opener):
+                        check_window_opens(corpus, files, opener, base)
                         context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                         context.route("**/*", lambda request: request.continue_() if request.request.url.startswith(base + "/") else request.abort())
                         errors, requests = [], []
@@ -180,26 +179,18 @@ def main():
                             assert PNG not in json.dumps(projected) and "base64" not in json.dumps(projected)
                             items = media(projected)
                             assert len(items) == 5, (source, items)
-                            if authorized:
-                                for item, (mime, data) in zip(items, (("image/png", PNG), ("image/jpeg", JPEG), ("image/gif", FORMATS[0][2]), ("image/png", GREEN), ("image/png", PNG))):
-                                    assert item.get("lazy") is True and TOKEN.fullmatch(item["src"]), item
-                                    assert not {"mime", "width", "height"}.intersection(item)
-                                    with opener.open(base + item["src"], timeout=5) as response:
-                                        assert response.headers["Content-Type"] == mime
-                                        assert response.headers["X-Content-Type-Options"] == "nosniff"
-                                        assert "private" in response.headers["Cache-Control"] and "no-store" in response.headers["Cache-Control"]
-                                        assert response.read() == base64.b64decode(data)
-                            else:
-                                assert all("src" not in item and item["error"]["status"] == 501 for item in items)
+                            for item, (mime, data) in zip(items, (("image/png", PNG), ("image/jpeg", JPEG), ("image/gif", FORMATS[0][2]), ("image/png", GREEN), ("image/png", PNG))):
+                                assert item.get("lazy") is True and TOKEN.fullmatch(item["src"]), item
+                                assert not {"mime", "width", "height"}.intersection(item)
+                                with opener.open(base + item["src"], timeout=5) as response:
+                                    assert response.headers["Content-Type"] == mime
+                                    assert response.headers["X-Content-Type-Options"] == "nosniff"
+                                    assert "private" in response.headers["Cache-Control"] and "no-store" in response.headers["Cache-Control"]
+                                    assert response.read() == base64.b64decode(data)
                             open_session(name, source.title() + " file media complete")
-                            if authorized:
-                                pictures([(2, 3), (3, 2), (3, 2), (4, 1), (2, 3)])
-                                expect(page.locator("#msgs .media-error")).to_have_count(0)
-                            else:
-                                expect(page.locator("#msgs img")).to_have_count(0)
-                                expect(page.locator("#msgs .media-error")).to_have_count(5)
-                                expect(page.locator("#msgs")).to_contain_text("未配置")
-                        if authorized:
+                            pictures([(2, 3), (3, 2), (3, 2), (4, 1), (2, 3)])
+                            expect(page.locator("#msgs .media-error")).to_have_count(0)
+                        if configured:
                             open_session("claude-file-media", "Claude file media complete")
                             page.locator("#a-view-switch").click()
                             page.locator('#session-view-menu button[data-agent="worker"]').click()
@@ -222,11 +213,13 @@ def main():
                             refreshed = get_json(opener, base, route(corpus, "claude-file-media"))
                             assert media(refreshed)[0]["src"] != old_token
                             page.set_viewport_size({"width": 390, "height": 844})
-                            for suffix in denied:
-                                open_session("claude-denied-" + suffix, "Denied " + suffix + " text survives")
-                                expect(page.locator("#msgs img")).to_have_count(0)
-                                expect(page.locator("#msgs .media-error")).to_have_count(1)
-                                assert page.locator("#msgs .media-error").inner_text().strip()
+                            for suffix, path in extra.items():
+                                name = "claude-extra-" + suffix
+                                open_session(name, "Extra " + suffix + " text survives")
+                                pictures([(4, 1)])
+                                expect(page.locator("#msgs .media-error")).to_have_count(0)
+                                projected = get_json(opener, base, route(corpus, name))
+                                assert status(opener, base + media(projected)[0]["src"], 200) == path.read_bytes()
                             open_session("claude-remote-markdown", "Remote remains explicit")
                             expect(page.locator("#msgs img")).to_have_count(0)
                             expect(page.locator("#msgs")).to_contain_text("remote blocked")
@@ -236,7 +229,7 @@ def main():
                         assert native_bytes(corpus.root) == original_native, "native fixture bytes changed"
                         assert all(path.read_bytes() == data for path, data in original_files.items()), "file changed outside explicit replacement"
                         context.close()
-                print("PASS file media: three providers/path/fileURI/Markdown/raw/sniff, no-root visible errors, true decoding, replacement409+reload, branch/agent/mobile/remote isolation, Linux omitted-window zero IN_OPEN and history zero IN_ACCESS/first GET positive read, native bytes unchanged")
+                print("PASS file media: roots configured or empty, path/fileURI/Markdown/raw/sniff, links, true decoding, replacement409+reload, branch/agent/mobile/remote isolation, native bytes unchanged")
             finally:
                 browser.close()
 

@@ -287,7 +287,7 @@ fn scope_rechecks_native_provenance_and_keeps_previous_snapshot_immutable() {
 }
 
 #[test]
-fn incomplete_native_identity_is_not_guessed_and_invalid_values_do_not_become_names() {
+fn incomplete_native_identity_is_not_guessed_and_string_values_follow_python() {
     let (_temp, store, parent, _child, uid) = fixture();
     let row = claude(Some("real-native-session"), None, "root-message");
     let bytes = serde_json::to_vec(&row).unwrap();
@@ -303,18 +303,18 @@ fn incomplete_native_identity_is_not_guessed_and_invalid_values_do_not_become_na
         store.native_scope(&uid, "").unwrap().session_id,
         "real-native-session"
     );
-    for invalid in [
-        json!(null),
-        json!(42),
-        json!(""),
-        json!("a\nb"),
-        json!("x".repeat(257)),
-    ] {
+    for invalid in [json!(null), json!(42), json!("")] {
         let mut row = row.clone();
         row["sessionId"] = invalid;
         write(&parent, &[row]);
         assert_eq!(store.native_scope(&uid, "").unwrap_err().status, 501);
         assert!(store.messages(&uid, &MessageQuery::default()).is_ok());
+    }
+    for value in ["a\nb".to_owned(), "x".repeat(257)] {
+        let mut row = row.clone();
+        row["sessionId"] = json!(value);
+        write(&parent, &[row]);
+        assert_eq!(store.native_scope(&uid, "").unwrap().session_id, value);
     }
 }
 

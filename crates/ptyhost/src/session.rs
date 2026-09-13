@@ -49,9 +49,12 @@ struct AttachmentPermit<'a>(&'a AtomicUsize);
 
 impl<'a> AttachmentPermit<'a> {
     fn acquire(slots: &'a AtomicUsize) -> Option<Self> {
-        slots.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
-            (n < MAX_ATTACHMENTS).then_some(n + 1)
-        }).ok().map(|_| Self(slots))
+        slots
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_ATTACHMENTS).then_some(n + 1)
+            })
+            .ok()
+            .map(|_| Self(slots))
     }
 }
 
@@ -393,9 +396,7 @@ impl Session {
 
     pub fn info(&self) -> Value {
         let (cols, rows) = *lock(&self.size);
-        let attached = lock(&self.clients)
-            .iter()
-            .any(|c| !c.is_dead());
+        let attached = lock(&self.clients).iter().any(|c| !c.is_dead());
         let mut info = json!({
             "name": self.name_now(),
             "host_pid": std::process::id(),
@@ -525,8 +526,11 @@ impl Session {
                 piece
             };
             let answer = apply_screen_piece(
-                &self.screen, &self.backlog, &piece,
-                #[cfg(test)] || {},
+                &self.screen,
+                &self.backlog,
+                &piece,
+                #[cfg(test)]
+                || {},
             );
             self.backlog_cv.notify_all();
             if let Some(answer) = answer {
@@ -563,7 +567,11 @@ impl Session {
             }
             // EOF can win the race against the fallback after its deadline was
             // checked. All preceding publication is complete at this boundary.
-            if self.reader_eof.load(Ordering::Acquire) { None } else { reason }
+            if self.reader_eof.load(Ordering::Acquire) {
+                None
+            } else {
+                reason
+            }
         };
         if let Some(reason) = reason {
             eprintln!("PTY output incomplete: {reason}");
@@ -688,9 +696,10 @@ impl Session {
             return;
         }
         if req["op"] == guard::binding::OP {
-            let reply = match guard::binding::prepare(&req, &self.meta)
-                .and_then(|candidate| self.native_binding.bind(candidate, &self.child, &self.exited))
-            {
+            let reply = match guard::binding::prepare(&req, &self.meta).and_then(|candidate| {
+                self.native_binding
+                    .bind(candidate, &self.child, &self.exited)
+            }) {
                 Ok(binding) => binding.acknowledge(),
                 Err(error) => error.reply(),
             };
@@ -706,10 +715,7 @@ impl Session {
                 } else {
                     "instance_guard_rejected"
                 };
-                let _ = send_json(
-                    &mut writer,
-                    &json!({"ok":false,"error":error,"code":code}),
-                );
+                let _ = send_json(&mut writer, &json!({"ok":false,"error":error,"code":code}));
                 return;
             }
         };
@@ -902,9 +908,12 @@ impl Session {
         // Reserve before resize, replay construction, registration or starting a
         // writer. Pending attaches count too; a full host never evicts a peer.
         let Some(_permit) = AttachmentPermit::acquire(&self.attachment_slots) else {
-            let _ = send_json(&mut writer, &json!({
-                "ok": false, "error": "attachment limit reached", "code": "attach_limit"
-            }));
+            let _ = send_json(
+                &mut writer,
+                &json!({
+                    "ok": false, "error": "attachment limit reached", "code": "attach_limit"
+                }),
+            );
             return;
         };
         let (cur_cols, cur_rows) = *lock(&self.size);
@@ -918,9 +927,7 @@ impl Session {
             .unwrap_or(cur_rows as u64) as u16;
         self.resize(cols, rows);
 
-        let client = match Client::new(
-            self.next_client.fetch_add(1, Ordering::Relaxed), writer,
-        ) {
+        let client = match Client::new(self.next_client.fetch_add(1, Ordering::Relaxed), writer) {
             Ok(client) => client,
             Err(_) => return,
         };
@@ -938,9 +945,12 @@ impl Session {
                 replay.extend_from_slice(&screen.replay_bytes(self.history));
                 replay.extend_from_slice(&backlog.unapplied_bytes());
             }
-            let replay = if replay.is_empty() { replay } else { pack_frame(FRAME_DATA, &replay) };
-            if self.finishing.load(Ordering::Acquire)
-                || !client.initialize(acknowledgement, replay)
+            let replay = if replay.is_empty() {
+                replay
+            } else {
+                pack_frame(FRAME_DATA, &replay)
+            };
+            if self.finishing.load(Ordering::Acquire) || !client.initialize(acknowledgement, replay)
             {
                 false
             } else {
@@ -1038,17 +1048,23 @@ mod tests {
         assert!(client.initialize(line, pack_frame(FRAME_DATA, b"REPLAY")));
         // Registration can now expose the client to the reader pump immediately.
         assert!(client.send(pack_frame(FRAME_DATA, b"LIVE").into()));
-        client.finish(pack_frame(FRAME_EXIT, b"{\"code\":0}").into(), Instant::now() + DRAIN_TIMEOUT);
+        client.finish(
+            pack_frame(FRAME_EXIT, b"{\"code\":0}").into(),
+            Instant::now() + DRAIN_TIMEOUT,
+        );
         let mut peer = Stream::Unix(peer);
         peer.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
         let mut buffer = Vec::new();
         assert_eq!(recv_json(&mut peer, &mut buffer).unwrap(), ack);
         peer.read_to_end(&mut buffer).unwrap();
-        assert_eq!(read_frames(&mut buffer), vec![
-            (FRAME_DATA, b"REPLAY".to_vec()),
-            (FRAME_DATA, b"LIVE".to_vec()),
-            (FRAME_EXIT, b"{\"code\":0}".to_vec()),
-        ]);
+        assert_eq!(
+            read_frames(&mut buffer),
+            vec![
+                (FRAME_DATA, b"REPLAY".to_vec()),
+                (FRAME_DATA, b"LIVE".to_vec()),
+                (FRAME_EXIT, b"{\"code\":0}".to_vec()),
+            ]
+        );
     }
 
     #[cfg(unix)]
@@ -1082,7 +1098,8 @@ mod tests {
     fn attachment_capacity_includes_pending_work_and_is_reclaimed() {
         let slots = AtomicUsize::new(0);
         let mut permits: Vec<_> = (0..MAX_ATTACHMENTS)
-            .map(|_| AttachmentPermit::acquire(&slots).unwrap()).collect();
+            .map(|_| AttachmentPermit::acquire(&slots).unwrap())
+            .collect();
         assert!(AttachmentPermit::acquire(&slots).is_none());
         permits.pop();
         assert!(AttachmentPermit::acquire(&slots).is_some());
@@ -1182,17 +1199,24 @@ mod tests {
         let mut state = backlog_with(&[b"UNIQUE_MARKER", b"QUEUED_TAIL"]);
         state.inflight = state.queue.pop_front();
         let backlog = Mutex::new(state);
-        let snapshot = || with_replay_boundary(&screen, &backlog, |screen, backlog| {
-            let mut replay = screen.replay_bytes(100);
-            replay.extend_from_slice(&backlog.unapplied_bytes());
-            replay
-        });
+        let snapshot = || {
+            with_replay_boundary(&screen, &backlog, |screen, backlog| {
+                let mut replay = screen.replay_bytes(100);
+                replay.extend_from_slice(&backlog.unapplied_bytes());
+                replay
+            })
+        };
         let before = snapshot();
         apply_screen_piece(&screen, &backlog, &piece, || {});
         let after = snapshot();
         for replay in [before, after] {
-            assert_eq!(replay.windows(b"UNIQUE_MARKER".len())
-                .filter(|w| *w == b"UNIQUE_MARKER").count(), 1);
+            assert_eq!(
+                replay
+                    .windows(b"UNIQUE_MARKER".len())
+                    .filter(|w| *w == b"UNIQUE_MARKER")
+                    .count(),
+                1
+            );
             assert!(replay.ends_with(b"QUEUED_TAIL"));
         }
         let backlog = lock(&backlog);
@@ -1225,12 +1249,18 @@ mod tests {
         assert!(lock(&backlog).inflight.is_some());
         resume_tx.send(()).unwrap();
         worker.join().unwrap();
-        assert!(snapshot_blocked, "snapshot could duplicate an already fed piece");
+        assert!(
+            snapshot_blocked,
+            "snapshot could duplicate an already fed piece"
+        );
         let replay = with_replay_boundary(&screen, &backlog, |screen, backlog| {
             let mut replay = screen.replay_bytes(100);
             replay.extend_from_slice(&backlog.unapplied_bytes());
             replay
         });
-        assert_eq!(replay.windows(12).filter(|w| *w == b"EXACTLY_ONCE").count(), 1);
+        assert_eq!(
+            replay.windows(12).filter(|w| *w == b"EXACTLY_ONCE").count(),
+            1
+        );
     }
 }

@@ -170,8 +170,8 @@ impl PreparedImage {
                 // Reserve the exact decoded allocation; decode_vec may reserve a
                 // padded upper bound beyond the shared cache accounting.
                 let mut bytes = vec![0; length];
-                let written = STANDARD
-                    .decode_slice(encoded, &mut bytes)
+                let written = PYTHON_BASE64
+                    .decode_slice(python_base64_payload(encoded), &mut bytes)
                     .map_err(|_| MediaError::Invalid)?;
                 if written != length {
                     return Err(MediaError::Invalid);
@@ -195,7 +195,7 @@ impl PreparedImage {
                 (bytes, mime)
             }
         };
-        let (width, height) = inspect(mime, &bytes)?;
+        let (width, height) = inspect(mime, &bytes).unwrap_or((0, 0));
         Ok((bytes, mime, width, height))
     }
 }
@@ -223,9 +223,8 @@ pub(crate) fn failure(status: u16, code: &str, message: &str) -> Value {
 /// A text-discovered reference that Python's `media.register_path` would also
 /// register nothing for (missing file, no cwd for a relative path, not a
 /// regular file, over the shared 32 MiB limit, unparsable path): the message
-/// keeps its text and no placeholder is projected. Authorization refusals
-/// (unconfigured or outside roots, symlinks, permissions) stay visible: there
-/// Python would show the image and the operator can act on the reason.
+/// keeps its text and no placeholder is projected. Other failures stay visible
+/// so the operator can act on the reason.
 pub(crate) fn silent_failure(error: &FileError) -> bool {
     matches!(
         error.code,

@@ -138,7 +138,7 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST), "host_dir": str(host),
-            "cwd_roots": [str(work)], "adapters": [],
+            "adapters": [],
             "profiles": [{
                 "id": "claude-real-v1", "source": "claude", "executable": CLAUDE,
                 "args": ["--model", MODEL, "--effort", "low",
@@ -146,7 +146,7 @@ def main():
                 "new_args": ["--session-id", "{session_id}"],
                 "resume_args": ["--resume", "{sid}"],
                 "env": {**passthrough(), "HOME": str(work), "CLAUDE_CONFIG_DIR": str(config)},
-                "cwd_roots": [str(area)],
+
             }]}))
         for flag, directory in (("--initialize-lifecycle", ledger), ("--initialize-delivery", delivery)):
             with socket.socket() as occupied:

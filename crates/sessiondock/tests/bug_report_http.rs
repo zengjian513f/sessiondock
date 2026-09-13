@@ -111,14 +111,17 @@ impl Fixture {
              "args":args,
              "new_args":["--session-id","{session_id}"],
              "resume_args":["--resume","{sid}"],
-             "env":env,"cwd_roots":[repo]})
+             "env":env})
         };
         let launcher = root.join("launcher.json");
         file(
             &launcher,
-            json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
+            json!({"schema":2,"host_binary":host_binary,"host_dir":host,
             "adapters":[],
-            "profiles":[profile("claude-cheap-v1", json!(["--model", MODEL, "--effort", "low", "--reply"]))],
+            "profiles":[
+                profile("claude-plain-v1", json!(["--reply"])),
+                profile("claude-cheap-v1", json!(["--model", MODEL, "--effort", "low", "--reply"]))
+            ],
             "bug_report_profiles":{"claude":"claude-cheap-v1"}})
             .to_string()
             .as_bytes(),
@@ -128,7 +131,7 @@ impl Fixture {
         let launcher_bad = root.join("launcher-bad.json");
         file(
             &launcher_bad,
-            json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
+            json!({"schema":2,"host_binary":host_binary,"host_dir":host,
             "adapters":[],
             "profiles":[profile("claude-pricey-v1", json!(["--model", "claude-opus-4-1", "--effort", "high"]))],
             "bug_report_profiles":{"claude":"claude-pricey-v1"}})
@@ -633,8 +636,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
     let (status, plain) = post(
         &router,
         "/api/term/create",
-        json!({"source":"claude","cwd":fixture.repo,"request_id":"plain-launch-one",
-            "adapter_id":"claude-cheap-v1"}),
+        json!({"source":"claude","cwd":fixture.repo,"request_id":"plain-launch-one"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{plain}");

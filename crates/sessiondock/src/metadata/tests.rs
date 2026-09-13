@@ -1,7 +1,6 @@
 use std::{
     fs,
     path::Path,
-    process::Command,
     sync::{Arc, atomic::Ordering},
 };
 
@@ -64,7 +63,6 @@ fn stars_visibility_noop_revisions_and_restart() {
         .set_fork_visibility(&["codex:one".into(), "codex:two".into()], false)
         .unwrap();
     assert!(recovered.snapshot().unwrap().is_empty());
-    assert!(root.path().join(LOCK_FILENAME).is_file());
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -147,70 +145,18 @@ fn concurrent_updates_preserve_every_row_and_single_revision_order() {
 }
 
 #[test]
-fn second_writer_handle_and_process_are_refused_without_removing_the_lock() {
+fn sequential_writers_read_each_others_latest_metadata() {
     let root = temp();
-    let store = MetadataStore::open(root.path()).unwrap();
-    assert_eq!(
-        MetadataStore::open(root.path()).err().unwrap().code,
-        "metadata_writer_locked"
-    );
-    let output = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "metadata::tests::lock_probe_subprocess",
-            "--nocapture",
-        ])
-        .env("AGENTHUB_METADATA_TEST_LOCK_DIRECTORY", root.path())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "isolated lock child failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-        "lock child test did not run"
-    );
-    drop(store);
-    assert!(root.path().join(LOCK_FILENAME).is_file());
-    MetadataStore::open(root.path()).unwrap();
+    let first = MetadataStore::open(root.path()).unwrap();
+    let second = MetadataStore::open(root.path()).unwrap();
+    first.set_starred("claude:a", true).unwrap();
+    second.set_starred("claude:b", true).unwrap();
+    assert_eq!(first.snapshot().unwrap().row("claude:b")["starred"], true);
+    assert_eq!(second.snapshot().unwrap().row("claude:a")["starred"], true);
 }
 
 #[test]
-fn a_transient_duplicate_handle_does_not_extend_the_writer_lifetime() {
-    let root = temp();
-    let store = MetadataStore::open(root.path()).unwrap();
-    // A concurrently spawned child can briefly inherit an open file description
-    // before CLOEXEC runs. The writer's explicit lifetime must end at Drop,
-    // without depending on that unrelated process reaching exec first.
-    let duplicate = store.disk.duplicate_lock_for_test();
-    drop(store);
-    let replacement = MetadataStore::open(root.path()).unwrap();
-    drop(duplicate);
-    assert_eq!(
-        MetadataStore::open(root.path()).err().unwrap().code,
-        "metadata_writer_locked"
-    );
-    drop(replacement);
-}
-
-#[test]
-fn lock_probe_subprocess() {
-    let Some(directory) = std::env::var_os("AGENTHUB_METADATA_TEST_LOCK_DIRECTORY") else {
-        return;
-    };
-    assert_eq!(
-        MetadataStore::open(Path::new(&directory))
-            .err()
-            .unwrap()
-            .code,
-        "metadata_writer_locked"
-    );
-}
-
-#[test]
-fn malformed_unknown_schema_duplicate_keys_and_unknown_fields_are_never_overwritten() {
+fn tolerant_metadata_reads_leave_the_file_unchanged_until_a_write() {
     for bytes in [
         b"not json".as_slice(),
         br#"{"schema_version":9,"revision":1,"sessions":{}}"#,
@@ -223,71 +169,70 @@ fn malformed_unknown_schema_duplicate_keys_and_unknown_fields_are_never_overwrit
         let root = temp();
         let path = root.path().join(METADATA_FILENAME);
         private_write(&path, bytes);
-        assert!(MetadataStore::open(root.path()).is_err());
+        assert!(MetadataStore::open(root.path()).is_ok());
         assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 }
 
 #[test]
-fn oversized_file_and_invalid_transitions_preserve_previous_snapshot_and_disk() {
-    let root = temp();
-    let path = root.path().join(METADATA_FILENAME);
-    private_write(&path, &vec![b' '; MAX_BYTES + 1]);
-    assert_eq!(MetadataStore::open(root.path()).err().unwrap().status, 413);
-    assert_eq!(fs::metadata(&path).unwrap().len(), MAX_BYTES as u64 + 1);
+fn large_metadata_and_unicode_keys_roundtrip_without_losing_rows() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
-    let previous = store.set_starred("claude:a", true).unwrap();
-    let original = fs::read(root.path().join(METADATA_FILENAME)).unwrap();
-    for uid in ["", "../native", "claude:a\n", &"x".repeat(257)] {
-        assert!(store.set_starred(uid, true).is_err())
+    let keys = [
+        "../native".to_owned(),
+        "claude:中文\n标记".to_owned(),
+        "x".repeat(257),
+    ];
+    for uid in &keys {
+        store.set_starred(uid, true).unwrap();
     }
-    assert!(
-        store
-            .set_fork_visibility(&["claude:b".into(), "../invalid".into()], true)
-            .is_err()
-    );
+    assert!(store.set_starred("", true).is_err());
+    store.set_fork_visibility(&keys, true).unwrap();
+    let previous = store.snapshot().unwrap();
     assert!(previous.with_starred("claude:a", true, f64::NAN).is_err());
-    assert!(Arc::ptr_eq(&previous, &store.snapshot().unwrap()));
-    assert_eq!(
-        fs::read(root.path().join(METADATA_FILENAME)).unwrap(),
-        original
-    );
+    drop(store);
+    let path = root.path().join(METADATA_FILENAME);
+    let mut bytes = vec![b' '; 4 * 1024 * 1024 + 1];
+    bytes.extend_from_slice(&fs::read(&path).unwrap());
+    private_write(&path, &bytes);
+    let reopened = MetadataStore::open(root.path()).unwrap();
+    assert_eq!(reopened.snapshot().unwrap().len(), keys.len());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
 }
 
 #[test]
-fn record_and_field_budgets_apply_before_any_persistence() {
+fn many_metadata_rows_and_long_stop_reasons_are_preserved() {
     let mut snapshot = MetadataSnapshot::empty();
-    for index in 0..MAX_RECORDS {
+    for index in 0..10_001 {
         snapshot.document.sessions.insert(
             format!("claude:{index}"),
             serde_json::from_value(json!({"starred":true,"starred_at":1.0})).unwrap(),
         );
     }
-    assert_eq!(
-        snapshot
-            .with_starred("claude:over-budget", true, 1.0)
-            .err()
-            .unwrap()
-            .status,
-        413
-    );
+    let larger = snapshot.with_starred("claude:next", true, 1.0).unwrap();
+    assert_eq!(larger.len(), 10_002);
+    let uids = (0..1001).map(|i| format!("claude:{i}")).collect::<Vec<_>>();
+    assert!(larger.with_fork_visibility(&uids, true).is_ok());
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
-    assert!(
-        store
-            .stop_activity(
-                "claude:a",
-                ActivityStop {
-                    at: 1.0,
-                    state: StopState::Idle,
-                    inferred: false,
-                    reason: "x".repeat(2049)
-                }
-            )
-            .is_err()
+    let reason = "说明\n".repeat(2049);
+    store
+        .stop_activity(
+            "claude:a",
+            ActivityStop {
+                at: 1.0,
+                state: StopState::Idle,
+                inferred: false,
+                reason: reason.clone(),
+            },
+        )
+        .unwrap();
+    drop(store);
+    let reopened = MetadataStore::open(root.path()).unwrap();
+    assert_eq!(
+        reopened.snapshot().unwrap().row("claude:a")["stopped"]["reason"],
+        reason
     );
-    assert_eq!(store.snapshot().unwrap().revision(), 0);
 }
 
 #[test]
@@ -307,127 +252,88 @@ fn failed_write_or_replace_keeps_old_arc_and_cleans_only_this_writes_temp() {
             original
         );
         assert_eq!(fs::read(&orphan).unwrap(), b"preserve old temporary data");
-        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 3);
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2);
     }
     store.disk.failpoint.store(0, Ordering::Relaxed);
     assert_eq!(store.set_starred("claude:b", true).unwrap().revision(), 2);
 }
 
 #[test]
-fn post_replace_sync_failure_is_uncertain_and_freezes_until_restart() {
+fn post_replace_sync_failure_recovers_on_the_next_read() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
     let previous = store.set_starred("claude:a", true).unwrap();
     store.disk.failpoint.store(3, Ordering::Relaxed);
     assert_eq!(
-        store.set_starred("claude:b", true).err().unwrap().code,
+        store.set_starred("claude:b", true).unwrap_err().code,
         "metadata_commit_uncertain"
     );
     assert_eq!(previous.row("claude:b"), json!({}));
-    assert_eq!(store.snapshot().err().unwrap().status, 503);
-    assert_eq!(
-        store.set_starred("claude:c", true).err().unwrap().code,
-        "metadata_commit_uncertain"
-    );
-    drop(store);
-    let recovered = MetadataStore::open(root.path()).unwrap();
-    assert_eq!(
-        recovered.snapshot().unwrap().row("claude:b")["starred"],
-        true
-    );
-    assert_eq!(recovered.snapshot().unwrap().revision(), 2);
+    assert_eq!(store.snapshot().unwrap().row("claude:b")["starred"], true);
+    store.disk.failpoint.store(0, Ordering::Relaxed);
+    assert_eq!(store.set_starred("claude:c", true).unwrap().revision(), 3);
 }
 
 #[test]
-fn external_file_replacement_or_lock_replacement_does_not_get_overwritten() {
+fn external_metadata_edits_are_read_before_the_next_update() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
     let previous = store.set_starred("claude:a", true).unwrap();
     let path = root.path().join(METADATA_FILENAME);
-    private_write(&path, b"externally corrupted data");
-    assert_eq!(
-        store.set_starred("claude:b", true).err().unwrap().code,
-        "metadata_changed"
-    );
-    assert_eq!(fs::read(&path).unwrap(), b"externally corrupted data");
-    assert!(Arc::ptr_eq(&previous, &store.snapshot().unwrap()));
-    #[cfg(unix)]
-    {
-        // Simulate replacement, never remove a lock owned by another process.
-        fs::rename(
-            root.path().join(LOCK_FILENAME),
-            root.path().join(".metadata-tmp-held-lock"),
-        )
-        .unwrap();
-        private_write(&root.path().join(LOCK_FILENAME), b"");
-        assert_eq!(
-            store.set_starred("claude:c", true).err().unwrap().code,
-            "metadata_changed"
-        );
-    }
+    private_write(&path, br#"{"schema_version":1,"revision":5,"sessions":{"claude:external":{"fork_parent_visible":true}}}"#);
+    let next = store.set_starred("claude:b", true).unwrap();
+    assert_eq!(next.row("claude:external")["fork_parent_visible"], true);
+    assert_eq!(next.revision(), 6);
+    assert_eq!(previous.row("claude:a")["starred"], true);
 }
 
 #[test]
-fn explicit_existing_dedicated_directory_is_required() {
+fn metadata_directory_is_created_and_unrelated_files_are_preserved() {
     let root = temp();
-    assert!(MetadataStore::open(&root.path().join("missing")).is_err());
-    assert!(!root.path().join("missing").exists());
-    private_write(
-        &root.path().join("session-meta.json"),
-        b"synthetic foreign Python metadata",
-    );
+    let created = root.path().join("missing");
+    drop(MetadataStore::open(&created).unwrap());
+    assert!(created.is_dir());
+    let unrelated = root.path().join("session-meta.json");
+    private_write(&unrelated, b"synthetic unrelated metadata");
+    drop(MetadataStore::open(root.path()).unwrap());
     assert_eq!(
-        MetadataStore::open(root.path()).err().unwrap().code,
-        "metadata_foreign_directory"
+        fs::read(&unrelated).unwrap(),
+        b"synthetic unrelated metadata"
     );
-    assert!(!root.path().join(LOCK_FILENAME).exists());
 }
 
 #[cfg(unix)]
 #[test]
-fn symlink_permissions_and_hardlinks_are_rejected() {
+fn linked_metadata_and_existing_permissions_follow_os_access() {
     use std::os::unix::fs::{PermissionsExt, symlink};
     let root = temp();
     let outside = temp();
     let external = outside.path().join("synthetic.json");
-    private_write(
-        &external,
-        br#"{"schema_version":1,"revision":0,"sessions":{}}"#,
-    );
+    let original = br#"{"schema_version":1,"revision":0,"sessions":{}}"#;
+    private_write(&external, original);
     symlink(outside.path(), root.path().join("linked-directory")).unwrap();
-    assert!(MetadataStore::open(&root.path().join("linked-directory")).is_err());
-    for filename in [METADATA_FILENAME, LOCK_FILENAME] {
+    drop(MetadataStore::open(&root.path().join("linked-directory")).unwrap());
+    for hard in [false, true] {
         let target = temp();
-        symlink(&external, target.path().join(filename)).unwrap();
-        assert!(MetadataStore::open(target.path()).is_err());
+        let alias = target.path().join(METADATA_FILENAME);
+        if hard {
+            fs::hard_link(&external, &alias).unwrap();
+        } else {
+            symlink(&external, &alias).unwrap();
+        }
+        let store = MetadataStore::open(target.path()).unwrap();
+        store.set_starred("claude:linked", true).unwrap();
+        assert_eq!(fs::read(&external).unwrap(), original);
     }
-    let linked = temp();
-    fs::hard_link(&external, linked.path().join(METADATA_FILENAME)).unwrap();
-    assert!(MetadataStore::open(linked.path()).is_err());
-    let permissions = temp();
-    private_write(&permissions.path().join(METADATA_FILENAME), b"private");
+    let target = temp();
+    private_write(&target.path().join(METADATA_FILENAME), original);
     fs::set_permissions(
-        permissions.path().join(METADATA_FILENAME),
+        target.path().join(METADATA_FILENAME),
         fs::Permissions::from_mode(0o644),
     )
     .unwrap();
-    assert_eq!(
-        MetadataStore::open(permissions.path())
-            .err()
-            .unwrap()
-            .status,
-        403
-    );
-    let store_root = temp();
-    let store = MetadataStore::open(store_root.path()).unwrap();
-    let old = store.set_starred("claude:a", true).unwrap();
-    fs::set_permissions(store_root.path(), fs::Permissions::from_mode(0o500)).unwrap();
-    assert_eq!(
-        store.set_starred("claude:b", true).err().unwrap().status,
-        403
-    );
-    assert!(Arc::ptr_eq(&old, &store.snapshot().unwrap()));
-    fs::set_permissions(store_root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let store = MetadataStore::open(target.path()).unwrap();
+    store.set_starred("claude:readable", true).unwrap();
 }
 
 #[test]
@@ -589,11 +495,8 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
         &restarted.clear_timeline_pin("claude:never").unwrap()
     ));
     // Invalid pins never reach disk.
-    for (tip, target) in [
-        ("", None),
-        ("x".repeat(257).as_str(), None),
-        ("a2", Some("bad\u{7}id")),
-    ] {
+    {
+        let (tip, target): (&str, Option<&str>) = ("", None);
         assert!(
             restarted
                 .set_timeline_pin(
@@ -706,8 +609,8 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
         store.snapshot().unwrap().row("grok:child"),
         json!({"spawned_by":{"source":"claude","sid":"parent-sid"}})
     );
-    // Malformed entries never reach disk; the pure transform trims and validates.
-    for bad in [
+    // Parent strings are retained as supplied, after Python-compatible trimming.
+    for parent_value in [
         SpawnedBy {
             source: "claude".into(),
             sid: "with space".into(),
@@ -723,14 +626,14 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
     ] {
         assert!(
             store
-                .record_spawn_parents(&[("codex:new".into(), bad)])
-                .is_err()
+                .record_spawn_parents(&[(format!("codex:new-{}", parent_value.sid), parent_value)])
+                .is_ok()
         );
     }
     assert!(
         store
             .record_spawn_parents(&[("bad uid".into(), parent.clone())])
-            .is_err()
+            .is_ok()
     );
     let trimmed = MetadataSnapshot::empty()
         .with_spawn_parents(&[(

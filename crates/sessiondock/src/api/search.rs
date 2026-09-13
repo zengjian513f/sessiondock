@@ -1,5 +1,4 @@
-//! JSON/NDJSON search transport: bounded search admission (two at once, a
-//! bounded wait, then 503 `search_busy`) and eight queued packets. Search
+//! JSON/NDJSON search transport queues work and applies stream backpressure. Search
 //! never takes a read-pool permit: bodies come from the search-text cache and
 //! its own parse budget (`search::service`). Dropping a response cancels its
 //! workers and unblocks sends.
@@ -33,9 +32,6 @@ impl Drop for CancelOnDrop {
         self.0.store(true, Ordering::Relaxed);
     }
 }
-
-/// How long a third concurrent search waits for one of the two slots.
-const SEARCH_ADMISSION_WAIT: Duration = Duration::from_secs(10);
 
 /// One search over the frozen pool: every worker thread owns one reusable
 /// chunk buffer; bodies are never retained beyond their match.
@@ -136,24 +132,13 @@ pub async fn get(
             JsonBytes::new(&data).into_response()
         });
     }
-    let busy = || {
+    let search_permit = Arc::new(state.searches.clone().acquire_owned().await.map_err(|_| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
-            "search_busy",
-            "同时搜索过多，请稍后重试",
+            "search_closed",
+            "搜索服务正在关闭",
         )
-    };
-    let search_permit = Arc::new(
-        match tokio::time::timeout(
-            SEARCH_ADMISSION_WAIT,
-            state.searches.clone().acquire_owned(),
-        )
-        .await
-        {
-            Ok(Ok(permit)) => permit,
-            Ok(Err(_)) | Err(_) => return Err(busy()),
-        },
-    );
+    })?);
     let cancelled = Arc::new(AtomicBool::new(false));
     let guard = CancelOnDrop(cancelled.clone());
     let service = state.search.clone();

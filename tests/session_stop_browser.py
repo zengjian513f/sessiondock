@@ -5,9 +5,8 @@ A synthetic Codex session is resumed through the existing console button
 (`/api/term/takeover`, fake CLI = free shell that exits on Ctrl-D). The header
 "停止会话" action then posts `/api/session/stop` with a `request_id`, the page
 shows which stage ended the instance (graceful), the console turns into the
-exit explanation and the action flips to "删除会话". A session that never had
-a managed instance answers the typed 501: the page shows the "external
-instances cannot be stopped" explanation inline and sends nothing else. The
+exit explanation and the action flips to "删除会话". A session that has no
+running instance succeeds as a Python-compatible no-op. The
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
 """
@@ -29,9 +28,6 @@ for arg in "$@"; do printf ' [%s]' "$arg"; done
 printf '\\n'
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; *) printf "RS_INPUT_OK\\n" ;; esac; done'
 """
-UNMANAGED_TEXT = "不探测未受管的外部 CLI"
-
-
 def session_action(page):
     button = page.locator("#a-session-action")
     if not button.is_visible():
@@ -68,11 +64,10 @@ def main():
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
-            "host_dir": str(root / "host"), "cwd_roots": [str(root / "work")], "adapters": [], "profiles": [
+            "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-codex"),
                  "args": [], "resume_args": ["resume", "{sid}"],
-                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"},
-                 "cwd_roots": [str(root / "work/codex-area")]}]}))
+                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))
         initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
@@ -151,8 +146,8 @@ def main():
                     live = json.loads(opener.open(base + "/api/live?force=1", timeout=10).read())
                     assert live["managed"]["sessions"][codex_uid]["state"] == "exited", live["managed"]["sessions"]
 
-                    # ---- A session without any managed instance: the server refuses
-                    # with the typed 501 and the page shows the explanation inline.
+                    # ---- A session without any running instance follows Python:
+                    # stopping succeeds as a no-op and the stale live marker clears.
                     # `S.live` can hold stale entries in Rust mode (no live poll), so the
                     # stop control can still be reached for such a session.
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
@@ -163,13 +158,14 @@ def main():
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
                     before = len(dialogs)
-                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as refused:
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
-                    assert refused.value.status == 501, refused.value.text()
-                    assert refused.value.json()["code"] == "session_stop_unmanaged", refused.value.text()
+                    assert stopped.value.status == 200, stopped.value.text()
+                    result = stopped.value.json()
+                    assert result.get("ok") is True and result.get("stopped") is False, result
+                    assert result.get("external_detection") == "proc_scan", result
                     expect(notice).to_be_visible()
-                    expect(notice).to_contain_text("停止失败")
-                    expect(notice).to_contain_text(UNMANAGED_TEXT)
+                    expect(notice).to_contain_text("停止请求已处理")
                     assert len(dialogs) == before + 1 and dialogs[-1][0] == "confirm", dialogs[before:]
                     assert not errors, errors
                     context.close()
@@ -228,7 +224,7 @@ def main():
                     time.sleep(.05)
     print("PASS session stop browser: session_stop capability, desktop header action stops a resumed managed "
           "instance (graceful, request_id, exit explanation, action flips to delete, /api/live exited), "
-          "typed 501 explanation for a session without an instance, 390px long-press menu stop, native bytes unchanged")
+          "no-op for a session without a running instance, 390px long-press menu stop, native bytes unchanged")
 
 
 if __name__ == "__main__":

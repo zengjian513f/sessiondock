@@ -128,11 +128,15 @@ def run(opener, base, claude_uid, claude_cwd, codex_uid, swallow_uid, codex_cwd)
         fail("draft status", draft, raw)
     passed("draft status")
 
+    media_value = [{"kind": "image", "token": "abc"}]
     media, raw = call(opener, base, "POST", "/api/session/send",
-                      {**body, "request_id": "send-media1", "media": [{"kind": "image", "token": "abc"}]}, want=400)
-    if media.get("code") != "delivery_media_unsupported":
-        fail("media rejected", media.get("code"), raw)
-    passed("media rejected")
+                      {**body, "request_id": "send-media1", "media": media_value})
+    if media.get("ok") is not True or (media.get("item") or {}).get("media") != media_value:
+        fail("media accepted", media, raw)
+    until(opener, base, "GET", f"/api/session/outbox?uid={claude_uid}",
+          lambda d: not any(r.get("id") == "send-media1" for r in d.get("outbox") or []),
+          "media confirmation", 20, delay=0.15)
+    passed("media accepted and confirmed")
 
     # docs: an attempted row still in the outbox is 409; a confirmed row has left it (404 like unknown);
     # retry shares send's stale-build gate.
@@ -216,7 +220,13 @@ def main():
         claude_uid, codex_uid, swallow_uid = corpus.uid(CLAUDE_SID), corpus.uid(CODEX_SID), corpus.uid(SWALLOW_SID)
         for name, script in (("fake-claude", "fake_claude_cli.py"), ("fake-codex", "fake_codex_cli.py")):
             path = root / "bin" / name
-            path.write_text(f"#!/bin/sh\nexec {PY} {REPO / 'tests' / script} \"$@\"\n")
+            if name == "fake-codex":
+                path.write_text(
+                    f'#!/bin/sh\ncase " $* " in *" {SWALLOW_SID} "*) '
+                    f'exec {PY} {REPO / "tests" / script} --swallow 1 "$@" ;; '
+                    f'*) exec {PY} {REPO / "tests" / script} --reply "$@" ;; esac\n')
+            else:
+                path.write_text(f"#!/bin/sh\nexec {PY} {REPO / 'tests' / script} \"$@\"\n")
             path.chmod(0o700)
         shared = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color", "LANG": "C.UTF-8"}
         env_c = {**shared, "AGENTHUB_TEST_CLAUDE_ROOT": str(root / "claude")}
@@ -224,17 +234,15 @@ def main():
         def prof(pid, source, exe, args, rargs, env, cwd):
             return {"id": pid, "source": source, "executable": str(root / "bin" / exe), "args": args,
                     "new_args": ["--session-id", "{session_id}"] if source == "claude" else [],
-                    "resume_args": rargs, "env": env, "cwd_roots": [cwd]}
+                    "resume_args": rargs, "env": env}
         cfg = root / "launcher.json"
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [str(root / "work")], "adapters": [], "profiles": [
+            "adapters": [], "profiles": [
                 prof("claude-cli-v1", "claude", "fake-claude", ["--settings", "/synthetic/bridge-settings.json"],
                      ["--resume", "{sid}"], env_c, claude_cwd),
-                prof("codex-cli-v1", "codex", "fake-codex", ["--reply"], ["resume", "{sid}"], env_x, codex_cwd),
-                prof("codex-swallow-v1", "codex", "fake-codex", ["--swallow", "1"], ["resume", "{sid}"],
-                     env_x, codex_cwd)]}))
+                prof("codex-cli-v1", "codex", "fake-codex", [], ["resume", "{sid}"], env_x, codex_cwd)]}))
         cfg.chmod(0o600)
         for flag, directory in (("--initialize-lifecycle", root / "ledger"),
                                 ("--initialize-delivery", root / "delivery")):

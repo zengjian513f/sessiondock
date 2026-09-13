@@ -282,10 +282,6 @@ impl NativeCatalog {
 
 fn identifier(value: &str) -> bool {
     !value.is_empty()
-        && value.len() <= 256
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -539,14 +535,11 @@ impl RuntimeSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct RuntimeLimits {
-    pub max_hosts: usize,
     pub parallel_probes: usize,
     pub probe_timeout: Duration,
     pub snapshot_timeout: Duration,
     /// Shared observations younger than this answer `/api/live` without probing.
     pub cache_ttl: Duration,
-    /// Verified identities remembered for instances that stopped answering.
-    pub memory_entries: usize,
     /// Seconds a child may appear to start after its record's `created` stamp
     /// before the PID is treated as reused.
     pub record_slack: u64,
@@ -555,12 +548,10 @@ pub struct RuntimeLimits {
 impl Default for RuntimeLimits {
     fn default() -> Self {
         Self {
-            max_hosts: 256,
             parallel_probes: 8,
             probe_timeout: Duration::from_secs(2),
             snapshot_timeout: Duration::from_secs(5),
             cache_ttl: Duration::from_secs(2),
-            memory_entries: 1024,
             record_slack: 5,
         }
     }
@@ -570,7 +561,6 @@ impl Default for RuntimeLimits {
 pub enum RuntimeError {
     InvalidLimits,
     DiscoveryFailed,
-    HostLimit,
 }
 
 impl fmt::Display for RuntimeError {
@@ -578,7 +568,6 @@ impl fmt::Display for RuntimeError {
         f.write_str(match self {
             Self::InvalidLimits => "invalid controlled runtime limits",
             Self::DiscoveryFailed => "controlled host inventory unavailable",
-            Self::HostLimit => "controlled host inventory exceeds configured limit",
         })
     }
 }
@@ -611,7 +600,7 @@ struct IdentityMemory {
 }
 
 impl IdentityMemory {
-    fn remember(&mut self, key: InstanceKey, captured: Captured, capacity: usize) {
+    fn remember(&mut self, key: InstanceKey, captured: Captured) {
         if let Some(uid) = &captured.uid {
             // A newly verified instance supersedes an ended one for its UID.
             self.entries.retain(|other, entry| {
@@ -619,21 +608,6 @@ impl IdentityMemory {
             });
         }
         self.entries.insert(key, captured);
-        self.evict(capacity);
-    }
-
-    fn evict(&mut self, capacity: usize) {
-        while self.entries.len() > capacity {
-            let Some(oldest) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| (!entry.gone, entry.last_seen))
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            self.entries.remove(&oldest);
-        }
     }
 }
 
@@ -686,17 +660,9 @@ fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 impl ManagedRuntime {
     pub fn new(client: HostClient, limits: RuntimeLimits) -> Result<Self, RuntimeError> {
-        if limits.max_hosts == 0
-            || limits.max_hosts > 4096
-            || limits.parallel_probes == 0
-            || limits.parallel_probes > 32
+        if limits.parallel_probes == 0
             || limits.probe_timeout.is_zero()
             || limits.snapshot_timeout.is_zero()
-            || limits.snapshot_timeout > Duration::from_secs(30)
-            || limits.cache_ttl > Duration::from_secs(60)
-            || limits.memory_entries < limits.max_hosts
-            || limits.memory_entries > 65_536
-            || limits.record_slack > 3600
         {
             return Err(RuntimeError::InvalidLimits);
         }
@@ -781,9 +747,6 @@ impl ManagedRuntime {
             .await
             .map_err(|_| RuntimeError::DiscoveryFailed)?
             .map_err(|_| RuntimeError::DiscoveryFailed)?;
-        if records.len() > self.limits.max_hosts {
-            return Err(RuntimeError::HostLimit);
-        }
         let clock = self.clock().await;
         let record_names: HashSet<String> = records.iter().map(|row| row.name.clone()).collect();
         let mut hosts: Vec<ManagedHost> = stream::iter(records)
@@ -1046,7 +1009,6 @@ impl ManagedRuntime {
                         last_seen: Instant::now(),
                         gone: false,
                     },
-                    self.limits.memory_entries,
                 );
                 ProcessEvidence::Verified { child, host }
             }
@@ -1155,7 +1117,6 @@ impl ManagedRuntime {
                 },
             ));
         }
-        memory.evict(self.limits.memory_entries);
         candidates
     }
 }

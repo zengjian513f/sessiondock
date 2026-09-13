@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Exact native-input budget boundaries over HTTP.
+"""Former native-input capacity boundaries over HTTP.
 
-Constants from the `budgets` block at the top of sessions/mod.rs, which mirrors
-the table in docs/read-model.md (物理工作预算): 64 MiB per record, 4 GiB per
-file, 2,000,000 LF checkpoints, 1,000,000 records per view. There is no session
-count, total-byte or directory-entry cap any more, and the list never parses a
-file: every over-budget input is listed (the head/tail summary cannot see the
-budget) and fails only when that session is opened (413/501 for it alone).
+Valid records, views and checkpoint counts on both sides of the former hard
+limits remain readable. Sparse 4 GiB files verify lazy inventory sizes only;
+checked ranges above that boundary are covered by Rust replay-source tests,
+without a multi-gigabyte full-file parse in the routine HTTP sweep.
 """
 from __future__ import annotations
 import argparse, json, os, sys, tempfile
@@ -19,9 +17,9 @@ from history_parity import BINARY as DEBUG_BINARY, REPO, Corpus, isolated_server
 
 BINARY = (p if (p := REPO / "target/release" / DEBUG_BINARY.name).is_file() else DEBUG_BINARY)
 MIB = 1024 * 1024
-FILE_LIMIT = 4 * 1024 * MIB  # budgets::FILE_BYTES
+FILE_LIMIT = 4 * 1024 * MIB  # former file-size cap
 SESSIONS, ENTRY_LIMIT = 1_000, 20_000  # no session cap; the old directory-entry bound is gone too
-LINE_LIMIT, ROW_LIMIT, MAX_LF = 64 * MIB, 1_000_000, 2_000_000  # RECORD_BYTES / VIEW_RECORDS / FILE_CHECKPOINTS
+LINE_LIMIT, ROW_LIMIT, MAX_LF = 64 * MIB, 1_000_000, 2_000_000  # former record / view / checkpoint caps
 CAP, TAIL = 4 * MIB, b'"}}\n'
 BIG_CAP = LINE_LIMIT + 4 * MIB
 
@@ -155,26 +153,25 @@ def run_ok(opener, base):
         fail("sessions", f"listed {len(rows)} want {SESSIONS}", raw)
     passed(f"{SESSIONS} sessions listed (no session cap)")
     ok = row_ok(rows, "line-ok", True, "", raw)
-    # A 64 MiB message exceeds the 8 MiB history-page budget (413 for the
-    # windowed request, docs/history-pages.md); the plain view opens it.
-    detail(opener, base, ok["uid"], 413, "预算")
+    # An oversized first event occupies its own page and remains readable.
+    windowed = detail(opener, base, ok["uid"], 200, cap=BIG_CAP)
     payload = detail(opener, base, ok["uid"], 200, window=False, cap=BIG_CAP)
     text = "".join(m.get("text") or "" for m in payload.get("messages") or [] if isinstance(m, dict))
     if len(text) < LINE_LIMIT // 2:
         fail("line-ok", f"projected {len(text)} bytes", (payload.get("messages") or [""])[:1])
-    passed("line == 64 MiB accepted (giant ordinary text materialized)")
-    # The list summarizes 96 KiB + 512 KiB of a file: a 64 MiB + 1 line is
-    # invisible to it and the row stays listed; opening the session is the
-    # 64 MiB hard budget (an oversized line is never just "skipped").
+    assert windowed["messages"] == payload["messages"]
+    passed("line == 64 MiB accepted in both paged and plain views")
     over = row_ok(rows, "line-over", True, "", raw)
-    detail(opener, base, over["uid"], 501, "64 MiB")
-    passed("line +1 byte: listed, open 501")
+    larger = detail(opener, base, over["uid"], 200, cap=BIG_CAP)
+    larger_text = "".join(m.get("text") or "" for m in larger.get("messages", []))
+    assert len(larger_text) == len(text) - 1  # SID line-over is two bytes longer.
+    passed("line +1 byte: listed and fully readable")
     rec = row_ok(rows, "rec-ok", True, "", raw)
     detail(opener, base, rec["uid"], 200)
     passed(f"{ROW_LIMIT} records accepted")
     bad = row_ok(rows, "rec-over", True, "", raw)
-    detail(opener, base, bad["uid"], 501, "1000000")
-    passed(f"{ROW_LIMIT + 1} records: listed, open 501")
+    detail(opener, base, bad["uid"], 200)
+    passed(f"{ROW_LIMIT + 1} records: listed and readable")
     lf = row_ok(rows, "lf-ok", True, "", raw)
     detail(opener, base, lf["uid"], 200)
     passed(f"{MAX_LF} LF checkpoints accepted")
@@ -203,22 +200,23 @@ def main():
             rows, raw = listed(opener, base, timeout=600)
             if "file-eq" not in rows or rows["file-eq"].get("size") != FILE_LIMIT:
                 fail("file-eq", f"want listed size {FILE_LIMIT}", raw)
-        passed("file == 4 GiB FILE_BYTES listed")
-        # Over-budget files are listed (the walk only stats them) and 413 only
-        # when opened; a flooded directory is walked without any entry cap.
-        cases = (
-            ("file-over", "over", lambda r: (p := hist(r, "over"), p.write_bytes(b"\n"), os.truncate(p, FILE_LIMIT + 1)), "4 GiB"),
-            ("lf-over", "lf-over", lambda r: hist(r, "lf-over").write_bytes(progress("lf-over") + b"\n" * MAX_LF), "读取或索引预算"),
-        )
-        for name, sid, builder, needle in cases:
-            root = tmp / name
-            builder(root)
-            with serve(root, args.binary) as (base, opener):
-                rows, raw = listed(opener, base, timeout=120)
-                if sid not in rows:
-                    fail(name, "over-budget file must still be listed", raw)
-                detail(opener, base, rows[sid]["uid"], 413, needle)
-            passed(f"{name}: listed, open 413 {needle!r}")
+        passed("file == 4 GiB listed without parsing")
+        root = tmp / "file-over"
+        path = hist(root, "file-over")
+        path.write_bytes(progress("file-over"))
+        os.truncate(path, FILE_LIMIT + 1)
+        with serve(root, args.binary) as (base, opener):
+            rows, raw = listed(opener, base)
+            row = row_ok(rows, "file-over", True, "", raw)
+            assert row["size"] == FILE_LIMIT + 1
+        passed("file > 4 GiB listed with exact size; range opening covered by Rust tests")
+        root = tmp / "lf-over"
+        hist(root, "lf-over").write_bytes(progress("lf-over") + b"\n" * MAX_LF)
+        with serve(root, args.binary) as (base, opener):
+            rows, raw = listed(opener, base)
+            row = row_ok(rows, "lf-over", True, "", raw)
+            detail(opener, base, row["uid"], 200)
+        passed(f"{MAX_LF + 1} LF checkpoints: listed and readable")
         root = tmp / "entry-over"
         flood(root / "claude/pad", ENTRY_LIMIT)
         hist(root, "beside-flood").write_bytes(progress("beside-flood"))

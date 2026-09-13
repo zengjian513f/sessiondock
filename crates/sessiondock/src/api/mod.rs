@@ -30,6 +30,24 @@ use serde_json::{Value, json};
 
 use crate::{error::ApiError, state::AppState};
 
+/// Match each Python handler's request-body policy, including raw uploads.
+pub(crate) fn request_body_limit(path: &str) -> usize {
+    match path {
+        "/api/session/files/upload" => files::UPLOAD_BODY_LIMIT,
+        "/api/session/files/action" => crate::files::DEFAULT_UPLOAD_CHUNK_BYTES,
+        "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
+        "/api/session/star"
+        | "/api/sessions/fork-visibility"
+        | "/api/audit/browser"
+        | "/api/bug-report"
+        | "/api/trash/restore"
+        | "/api/trash/purge"
+        | "/api/sessions/delete"
+        | "/api/session/resolve-files" => 4 * 1024 * 1024,
+        _ => usize::MAX,
+    }
+}
+
 pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
@@ -46,133 +64,182 @@ pub fn router() -> Router<AppState> {
         // the delivery ledger and the terminal transport are configured.
         .route(
             "/session/send",
-            post(delivery::send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)),
+            post(delivery::send).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/send",
+            ))),
         )
         .route(
             "/session/draft-status",
-            post(delivery::draft_status).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(delivery::draft_status).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/session/draft-status"),
+            )),
         )
         .route(
             "/session/outbox/retry",
-            post(delivery::retry).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(delivery::retry).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/outbox/retry",
+            ))),
         )
         .route(
             "/session/outbox/discard",
-            post(delivery::discard).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(delivery::discard).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/session/outbox/discard"),
+            )),
         )
         .route("/watch", get(read::watch))
         .route("/search", get(search::get))
         .route(
             "/session/resolve-files",
-            post(files::resolve).layer(axum::extract::DefaultBodyLimit::max(1100 * 1024)),
+            post(files::resolve).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/resolve-files",
+            ))),
         )
         .route("/session/file", get(files::file))
         .route("/session/files", get(files::directory))
-        // Write side: 501 with `files_jobs_disabled` unless write roots exist.
+        // Write routes require the file-writing service.
         .route(
             "/session/files/action",
-            post(files::action).layer(axum::extract::DefaultBodyLimit::max(512 * 1024)),
+            post(files::action).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/files/action",
+            ))),
         )
         .route(
             "/session/files/upload",
-            post(files::upload).layer(axum::extract::DefaultBodyLimit::max(
-                files::UPLOAD_BODY_LIMIT,
-            )),
+            post(files::upload).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/files/upload",
+            ))),
         )
-        // Batch 41: `uid=bug-report` is Python's raw upload into the
-        // repository; every other uid is the JSON upload completion (8 KiB).
+        // Raw attachments target a native session cwd or the bug-report repo.
+        // Without a query uid, retain JSON upload completion.
         .route(
             "/session/attachment",
             post(bug_report::attachment).layer(axum::extract::DefaultBodyLimit::max(
-                bug_report::ATTACHMENT_BODY_LIMIT,
+                request_body_limit("/api/session/attachment"),
             )),
         )
         .route(
             "/session/star",
-            post(metadata::star).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(metadata::star).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/star",
+            ))),
         )
         .route(
             "/sessions/fork-visibility",
-            post(metadata::visibility).layer(axum::extract::DefaultBodyLimit::max(384 * 1024)),
+            post(metadata::visibility).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/sessions/fork-visibility"),
+            )),
         )
         // Read-model display pin only; 501 when no metadata directory is configured.
         .route(
             "/session/rewind",
-            post(metadata::rewind).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(metadata::rewind).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/rewind",
+            ))),
         )
         .route("/term/list", get(terminal::list))
         .route(
             "/term/create",
-            post(lifecycle::create).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::create).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/term/create"),
+            )),
         )
         .route("/term/new-status", get(lifecycle::status))
         .route(
             "/term/takeover",
-            post(lifecycle::takeover).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::takeover).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/term/takeover"),
+            )),
         )
         .route("/term/complete-dir", get(lifecycle::complete_dir))
         .route(
             "/term/backend",
-            post(lifecycle::backend).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::backend).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/term/backend"),
+            )),
         )
         .route(
             "/term/bind",
-            post(lifecycle::bind).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::bind).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/term/bind",
+            ))),
         )
         // WP-E: drop a finished pending receipt from the sidebar (Python
         // `pending_store.discard`); never kills or deletes anything.
         .route(
             "/term/discard",
-            post(lifecycle::discard).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::discard).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/term/discard"),
+            )),
         )
         .route(
             "/term/kill",
-            post(lifecycle::cancel).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::cancel).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/term/kill"),
+            )),
         )
-        // Managed instances only; 501 typed refusal for unmanaged/external CLIs.
+        // Stop the selected managed or precisely observed native CLI.
         .route(
             "/session/stop",
-            post(lifecycle::stop).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(lifecycle::stop).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/stop",
+            ))),
         )
         .route(
             "/term/claim",
-            post(terminal::claim).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(terminal::claim).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/term/claim",
+            ))),
         )
         .route("/term/attach", get(terminal::attach))
-        // Raw input carries at most 1 MiB of decoded text; JSON escaping can
-        // multiply that, so the body bound is Python's 4 MiB request cap.
+        // The host applies its decoded-input protocol limit after JSON parsing.
         .route(
             "/term/send",
-            post(terminal::send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)),
+            post(terminal::send).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/term/send",
+            ))),
         )
         .route(
             "/term/scroll",
-            post(terminal::scroll).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(terminal::scroll).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/term/scroll",
+            ))),
         )
         .route("/live", get(runtime::live))
         // Reads its own bounded body; 501 with the same code as before when unconfigured.
-        .route("/audit/browser", post(audit::browser))
+        .route(
+            "/audit/browser",
+            post(audit::browser).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/audit/browser",
+            ))),
+        )
         // Recycle bin: every handler answers 501 unless SESSIONDOCK_TRASH_DIR is set.
         .route("/session/{uid}", delete(trash::delete_session))
         .route(
             "/sessions/delete",
-            post(trash::delete_batch).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)),
+            post(trash::delete_batch).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/sessions/delete"),
+            )),
         )
         .route("/trash", get(trash::list))
         .route(
             "/trash/restore",
-            post(trash::restore).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
+            post(trash::restore).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/trash/restore",
+            ))),
         )
         .route(
             "/trash/purge",
-            post(trash::purge).layer(axum::extract::DefaultBodyLimit::max(64 * 1024)),
+            post(trash::purge).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/trash/purge",
+            ))),
         )
         // Batch 41: 501 `bug_report_disabled` until the bundle directory,
         // repository, audit, terminal, lifecycle and worker profiles exist.
         .route(
             "/bug-report",
-            post(bug_report::report)
-                .layer(axum::extract::DefaultBodyLimit::max(bug_report::BODY_LIMIT)),
+            post(bug_report::report).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/bug-report"),
+            )),
         );
     router.fallback(not_found)
 }

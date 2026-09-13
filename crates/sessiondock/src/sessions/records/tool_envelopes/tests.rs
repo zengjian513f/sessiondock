@@ -7,12 +7,19 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     io::Cursor,
-    path::Path,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+fn synthetic_root() -> PathBuf {
+    std::env::temp_dir().join("sessiondock-tool-envelope-fixture")
+}
+fn synthetic_path() -> PathBuf {
+    synthetic_root().join("session.jsonl")
+}
 
 type SourceReader = io::Take<Cursor<Arc<[u8]>>>;
 struct Checked {
@@ -40,8 +47,8 @@ fn opener(
     opens: Arc<AtomicUsize>,
     finishes: Arc<AtomicUsize>,
     fail_finish: bool,
-) -> impl FnMut(&DecodePlan, WorkBudget) -> Result<Box<dyn CheckedReplay>, String> {
-    move |plan, budget| {
+) -> impl FnMut(&DecodePlan) -> Result<Box<dyn CheckedReplay>, String> {
+    move |plan| {
         opens.fetch_add(1, Ordering::SeqCst);
         let first = plan.first();
         if first.end > source.len() as u64 {
@@ -49,7 +56,7 @@ fn opener(
         }
         let mut source = Cursor::new(source.clone());
         source.set_position(first.start);
-        let reader = ReplayReader::new(source.take(first.end - first.start), plan, budget)
+        let reader = ReplayReader::new(source.take(first.end - first.start), plan)
             .map_err(|error| error.to_string())?;
         Ok(Box::new(Checked {
             reader,
@@ -64,7 +71,6 @@ fn outer(text: &str) -> (Arc<[u8]>, TextSpan) {
         source.as_ref(),
         scanner::Limits {
             inline_string_bytes: 0,
-            ..Default::default()
         },
     )
     .unwrap();
@@ -84,16 +90,8 @@ type Prepared = (Value, Vec<native_images::Sidecar>, Arc<[u8]>);
 fn prepare(output: Value) -> Result<Prepared, String> {
     let record = json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"call","output":output}});
     let source: Arc<[u8]> = serde_json::to_vec(&record).unwrap().into();
-    let document = scanner::scan(
-        source.as_ref(),
-        scanner::Limits {
-            inline_string_bytes: 2 * 1024 * 1024,
-            resident_bytes: 8 * 1024 * 1024,
-            depth: 128,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let document =
+        scanner::scan(source.as_ref(), scanner::Limits::native(2 * 1024 * 1024)).unwrap();
     let opens = Arc::new(AtomicUsize::new(0));
     let finishes = Arc::new(AtomicUsize::new(0));
     let (value, sidecars) = native_images::prepare_with_replay(
@@ -107,8 +105,8 @@ fn prepare(output: Value) -> Result<Prepared, String> {
                     (plan.first().start, plan.first().end)
                 });
             NativeImage::from_native_span(NativeSpan {
-                root: "/synthetic".into(),
-                path: "/synthetic/session.jsonl".into(),
+                root: synthetic_root(),
+                path: synthetic_path(),
                 file_identity: "fixture".into(),
                 record_start: 0,
                 record_end: source.len() as u64,
@@ -124,7 +122,16 @@ fn prepare(output: Value) -> Result<Prepared, String> {
             .map_err(|error| error.to_string())
         },
         opener(source.clone(), opens.clone(), finishes.clone(), false),
-        |_| Err("原生文本读回来源未配置".into()),
+        |span| {
+            let plan = extend(None, span)?;
+            let mut reader = opener(source.clone(), opens.clone(), finishes.clone(), false)(&plan)?;
+            let mut text = String::new();
+            reader
+                .read_to_string(&mut text)
+                .map_err(|_| "fixture text read")?;
+            reader.finish()?;
+            Ok(text)
+        },
     )?;
     assert_eq!(
         opens.load(Ordering::SeqCst),
@@ -134,9 +141,9 @@ fn prepare(output: Value) -> Result<Prepared, String> {
 }
 
 #[test]
-fn bounded_candidates_keep_last_output_then_root_then_object_lines() {
+fn candidates_keep_last_output_then_root_then_object_lines() {
     let text = b"log\nOutput:\n{first}\nOutput:\n{last}";
-    let positions = candidates(&mut text.as_slice(), &WorkBudget::new(1000)).unwrap();
+    let positions = candidates(&mut text.as_slice()).unwrap();
     assert_eq!(positions[0].0, 28);
     assert_eq!(positions[1].0, 0);
     assert_eq!(positions[2].0, 12);
@@ -157,7 +164,7 @@ fn output_marker_and_candidate_base_produce_replayable_final_image_plan() {
         Arc::new(AtomicUsize::new(0)),
         false,
     );
-    let mut reader = open(plan, WorkBudget::default()).unwrap();
+    let mut reader = open(plan).unwrap();
     let mut decoded = String::new();
     reader.read_to_string(&mut decoded).unwrap();
     reader.finish().unwrap();
@@ -165,7 +172,7 @@ fn output_marker_and_candidate_base_produce_replayable_final_image_plan() {
     assert_eq!(decoded.len() as u64, span.decoded_len);
     let (_, events, error) = crate::sessions::providers::parse_with_media(
         "codex",
-        Path::new("/synthetic/session.jsonl"),
+        &synthetic_path(),
         &[(value, 1)],
         None,
         "fixture",
@@ -183,7 +190,7 @@ fn output_marker_and_candidate_base_produce_replayable_final_image_plan() {
 }
 
 #[test]
-fn mixed_structured_and_nested_string_envelopes_share_depth_limit() {
+fn mixed_structured_and_nested_string_envelopes_decode() {
     for layers in [1, 2, 8, 9] {
         let mut output = json!([image()]);
         for layer in 0..layers {
@@ -195,11 +202,7 @@ fn mixed_structured_and_nested_string_envelopes_share_depth_limit() {
             };
         }
         let result = prepare(output);
-        if layers <= 8 {
-            assert_eq!(result.unwrap().1.len(), 1, "{layers}");
-        } else {
-            assert!(result.err().unwrap().contains('8'));
-        }
+        assert_eq!(result.unwrap().1.len(), 1, "{layers}");
     }
 }
 
@@ -244,10 +247,10 @@ fn single_text_wrappers_work_but_multiple_giant_pieces_or_unconsumed_fields_fail
     assert_eq!(sidecars.len(), 1);
     assert_eq!(value["payload"]["output"][0]["exit_code"], 3);
     assert_eq!(value["payload"]["output"][1]["text"], "extra");
-    assert!(prepare(json!({"content":[{"type":"text","text":text},{"type":"text","text":text}],"isError":false})).is_err());
+    assert_eq!(prepare(json!({"content":[{"type":"text","text":text},{"type":"text","text":text}],"isError":false})).unwrap().1.len(), 2);
     assert!(
         prepare(json!({"type":"text","text":text,"metadata":"x".repeat(2 * 1024 * 1024 + 1)}))
-            .is_err()
+            .is_ok()
     );
 }
 
@@ -260,7 +263,6 @@ fn failed_candidates_always_finish_and_source_finish_failure_is_fatal() {
     let result = parse(
         &span,
         None,
-        &WorkBudget::default(),
         &mut opener(source.clone(), opens.clone(), finishes.clone(), false),
     )
     .unwrap()
@@ -274,7 +276,6 @@ fn failed_candidates_always_finish_and_source_finish_failure_is_fatal() {
         parse(
             &span,
             None,
-            &WorkBudget::default(),
             &mut opener(source, opens.clone(), finishes.clone(), true)
         )
         .is_err()
@@ -284,49 +285,25 @@ fn failed_candidates_always_finish_and_source_finish_failure_is_fatal() {
 }
 
 #[test]
-fn work_budget_is_shared_sticky_and_not_replenished_for_candidates() {
-    let (source, span) = outer(&envelope(json!({"ok":true})).to_string());
-    let opens = Arc::new(AtomicUsize::new(0));
-    let finishes = Arc::new(AtomicUsize::new(0));
-    let budget = WorkBudget::new(10);
-    assert!(
-        parse(
-            &span,
-            None,
-            &budget,
-            &mut opener(source, opens.clone(), finishes.clone(), false)
-        )
-        .is_err()
-    );
-    assert!(budget.exhausted());
-    assert!(budget.charge(0).is_err());
-    assert_eq!(opens.load(Ordering::SeqCst), 1);
-    assert_eq!(finishes.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn candidate_limit_and_strict_duplicate_key_reject_without_hidden_fallback() {
-    let raw = "{invalid}\n".repeat(33);
+fn all_candidates_are_read_and_duplicate_keys_use_the_last_value() {
+    let raw = "{invalid}\n".repeat(40);
     let (source, span) = outer(&raw);
     let opens = Arc::new(AtomicUsize::new(0));
     let finishes = Arc::new(AtomicUsize::new(0));
-    let error = parse(
+    let result = parse(
         &span,
         None,
-        &WorkBudget::default(),
         &mut opener(source, opens.clone(), finishes.clone(), false),
     )
-    .err()
     .unwrap();
-    assert!(error.contains("候选限制"));
-    assert_eq!(opens.load(Ordering::SeqCst), 33);
-    assert_eq!(finishes.load(Ordering::SeqCst), 33);
+    assert!(result.is_none());
+    assert_eq!(opens.load(Ordering::SeqCst), 41);
+    assert_eq!(finishes.load(Ordering::SeqCst), 41);
     let (source, span) =
         outer(r#"{"output":[],"wall_time_seconds":1,"exit_code":0,"\u0065xit_code":2}"#);
-    let error = parse(
+    let parsed = parse(
         &span,
         None,
-        &WorkBudget::default(),
         &mut opener(
             source,
             Arc::new(AtomicUsize::new(0)),
@@ -334,15 +311,17 @@ fn candidate_limit_and_strict_duplicate_key_reject_without_hidden_fallback() {
             false,
         ),
     )
-    .err()
+    .unwrap()
     .unwrap();
-    assert!(error.contains("DuplicateKey"));
+    assert_eq!(parsed.root.into_value().unwrap()["exit_code"], json!(2));
 }
 
 #[test]
 fn ordinary_tutorial_and_arguments_are_not_replay_sources() {
     let data = envelope(json!([image()])).to_string();
-    assert!(prepare(json!({"business":data})).is_err());
+    let (value, sidecars, _) = prepare(json!({"business":data})).unwrap();
+    assert!(sidecars.is_empty());
+    assert_eq!(value["payload"]["output"]["business"], data);
     let record = json!({"type":"response_item","payload":{"type":"function_call","name":"tool","arguments":data}});
     let bytes = serde_json::to_vec(&record).unwrap();
     let root = scanner::scan(bytes.as_slice(), scanner::Limits::default())
@@ -353,8 +332,8 @@ fn ordinary_tutorial_and_arguments_are_not_replay_sources() {
             "codex",
             root,
             |_| panic!("not an image"),
-            |_, _| panic!("not authorized to replay"),
-            |_| Err("原生文本读回来源未配置".into()),
+            |_| panic!("not authorized to replay"),
+            |_| Err("原生文本读回来源未配置".into())
         )
         .is_err()
     );
@@ -385,7 +364,7 @@ fn small_tool_strings_keep_legacy_metadata_text_and_candidate_priority_exactly()
             "codex",
             root,
             |_| panic!("small fixture has no image span"),
-            |_, _| panic!("small fixture must not reopen source"),
+            |_| panic!("small fixture must not reopen source"),
             |_| panic!("small fixture has no text span"),
         )
         .unwrap();
@@ -394,7 +373,7 @@ fn small_tool_strings_keep_legacy_metadata_text_and_candidate_priority_exactly()
         let parse = |record| {
             crate::sessions::providers::parse(
                 "codex",
-                Path::new("/synthetic/session.jsonl"),
+                &synthetic_path(),
                 &[(record, 1)],
                 None,
                 "fixture",
@@ -424,7 +403,7 @@ fn legacy_mcp_string_envelope_oracle_preserves_outer_error_and_inner_metadata() 
         let record = json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"mcp","output":{"content":[{"type":"text","text":inner.to_string()}],"isError":error}}});
         let (_, events, unsupported) = crate::sessions::providers::parse(
             "codex",
-            Path::new("/synthetic/session.jsonl"),
+            &synthetic_path(),
             &[(record, 1)],
             None,
             "fixture",
@@ -450,7 +429,7 @@ fn mcp_giant_single_source_matches_small_oracle_without_public_markers() {
             assert!(serde_json::to_vec(&value).unwrap().len() < 2048);
             crate::sessions::providers::parse_with_media(
                 "codex",
-                Path::new("/synthetic/session.jsonl"),
+                &synthetic_path(),
                 &[(value, 1)],
                 None,
                 "fixture",
@@ -459,7 +438,7 @@ fn mcp_giant_single_source_matches_small_oracle_without_public_markers() {
         } else {
             crate::sessions::providers::parse(
                 "codex",
-                Path::new("/synthetic/session.jsonl"),
+                &synthetic_path(),
                 &[(record, 1)],
                 None,
                 "fixture",
@@ -514,7 +493,6 @@ fn known_envelope_wins_over_mcp_shaped_extra_fields_without_dropping_unknown_spa
         bytes.as_slice(),
         scanner::Limits {
             inline_string_bytes: 64,
-            ..Default::default()
         },
     )
     .unwrap()
@@ -531,7 +509,7 @@ fn unicode_candidate_trim_matches_small_oracle_and_replays_exact_image_offsets()
     let record = json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c","output":raw}});
     let (_, old, error) = crate::sessions::providers::parse(
         "codex",
-        Path::new("/synthetic/session.jsonl"),
+        &synthetic_path(),
         &[(record, 1)],
         None,
         "fixture",
@@ -542,7 +520,6 @@ fn unicode_candidate_trim_matches_small_oracle_and_replays_exact_image_offsets()
     let parsed = parse(
         &span,
         None,
-        &WorkBudget::default(),
         &mut opener(
             source,
             Arc::new(AtomicUsize::new(0)),
@@ -563,7 +540,7 @@ fn unicode_candidate_trim_matches_small_oracle_and_replays_exact_image_offsets()
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicUsize::new(0)),
             false,
-        )(span.plan.as_ref().unwrap(), WorkBudget::default())
+        )(span.plan.as_ref().unwrap())
         .unwrap();
         let mut data = String::new();
         reader.read_to_string(&mut data).unwrap();
@@ -589,18 +566,15 @@ fn unicode_discovery_is_chunk_bounded_and_does_not_rewrite_json_interior() {
     let start = raw.find('{').unwrap() as u64;
     let end = raw.rfind('}').unwrap() as u64 + 1;
     for chunk in [1, 2, 3, 4, 7, 8192] {
-        let result = candidates(
-            &mut Chunked {
-                data: raw.as_bytes(),
-                chunk,
-            },
-            &WorkBudget::new(1024),
-        )
+        let result = candidates(&mut Chunked {
+            data: raw.as_bytes(),
+            chunk,
+        })
         .unwrap();
         assert_eq!(result[0], (start, end));
     }
     for data in [b"\xf0\x80\x80\x80".as_slice(), b"\xe2\x80".as_slice()] {
-        assert!(candidates(&mut Chunked { data, chunk: 1 }, &WorkBudget::new(1024)).is_err());
+        assert!(candidates(&mut Chunked { data, chunk: 1 }).is_err());
     }
     let (source, span) = outer("{\u{2003}\"output\":[],\"wall_time_seconds\":1,\"exit_code\":0}");
     // Unicode whitespace inside the JSON is not trimmed away: no envelope
@@ -609,7 +583,6 @@ fn unicode_discovery_is_chunk_bounded_and_does_not_rewrite_json_interior() {
         parse(
             &span,
             None,
-            &WorkBudget::default(),
             &mut opener(
                 source,
                 Arc::new(AtomicUsize::new(0)),
@@ -620,4 +593,47 @@ fn unicode_discovery_is_chunk_bounded_and_does_not_rewrite_json_interior() {
         .unwrap()
         .is_none()
     );
+}
+
+#[test]
+fn nested_giant_ordinary_text_is_replayed_without_becoming_media() {
+    let text = format!("{}中文", "x".repeat(2 * 1024 * 1024 + 1));
+    let (value, sidecars, _) = prepare(json!(
+        envelope(json!({"content":[{"type":"text","text":text}]})).to_string()
+    ))
+    .unwrap();
+    assert!(sidecars.is_empty());
+    assert_eq!(
+        value["payload"]["output"]["output"]["content"][0]["text"],
+        text
+    );
+}
+
+#[test]
+fn large_envelope_ast_materializes() {
+    // A giant ordinary field selects streaming replay even with many sibling nodes.
+    let text = "x".repeat(2 * 1024 * 1024 + 1);
+    let output = json!({"text":text, "items":vec![Value::Null; 50_000]});
+    let (value, sidecars, _) = prepare(json!(envelope(output.clone()).to_string())).unwrap();
+    assert!(sidecars.is_empty());
+    assert_eq!(value["payload"]["output"]["output"], output);
+}
+
+#[test]
+fn streamed_envelope_after_more_than_thirty_two_candidates_is_found() {
+    let raw = format!("{}{}", "{invalid}\n".repeat(40), envelope(json!("FOUND")));
+    let (source, span) = outer(&raw);
+    let found = parse(
+        &span,
+        None,
+        &mut opener(
+            source,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+            false,
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(found.root.into_value().unwrap()["output"], "FOUND");
 }

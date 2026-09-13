@@ -1,7 +1,7 @@
 //! One trusted selected-view reference index shared by an entire media window.
 use super::{CheckedImage, FileError, FileScope, FileService, normalize_media_ref, references};
 use serde_json::Value;
-use std::{cell::Cell, sync::Arc};
+use std::sync::Arc;
 
 /// Media indexes cached per immutable view revision: a history request with
 /// images and every file-backed media GET reauthorize against the same view,
@@ -11,10 +11,8 @@ pub(super) const MEDIA_INDEX_CACHE_ENTRIES: usize = 8;
 pub(super) const MEDIA_INDEX_CACHE_REFS: usize = 1_000_000;
 
 pub(crate) struct ScopedFiles<'a> {
-    service: &'a FileService,
     scope: FileScope<'a>,
     index: Arc<references::ReferenceIndex>,
-    probes: Cell<usize>,
 }
 
 impl FileService {
@@ -65,12 +63,7 @@ impl FileService {
                 index
             }
         };
-        Ok(ScopedFiles {
-            service: self,
-            scope,
-            index,
-            probes: Cell::new(0),
-        })
+        Ok(ScopedFiles { scope, index })
     }
     fn cached_media_index(&self, revision: &str) -> Option<Arc<references::ReferenceIndex>> {
         let mut cache = self.media_indexes.lock().ok()?;
@@ -104,11 +97,7 @@ impl ScopedFiles<'_> {
     pub(crate) fn identity(&self) -> (&str, Option<&str>) {
         (self.scope.uid, self.scope.agent)
     }
-    /// Python (`media.register_path`) resolves an image reference against the
-    /// session cwd only. Rust additionally refuses a basename that several
-    /// explicitly mentioned full paths share (never guess), but does not walk
-    /// every mentioned directory for a bare image name: that sweep is a
-    /// `resolve-files` rule and would cost thousands of probes per request.
+    /// Media paths resolve directly against cwd, as in Python register_path.
     pub(crate) fn image(&self, reference: &str) -> Result<CheckedImage, FileError> {
         let reference = normalize_media_ref(reference)?;
         // Missing references should not probe any paths in the branch.
@@ -119,13 +108,22 @@ impl ScopedFiles<'_> {
                 "该路径未出现在所选会话分支中",
             ));
         }
-        let target = self.service.resolve_reference(
-            &self.scope,
-            &self.index,
-            &reference,
-            &[],
-            &self.probes,
-        )?;
+        let path = super::boundary::expand_user(&reference);
+        let path = if path.is_absolute() {
+            path
+        } else {
+            let cwd = std::path::Path::new(self.scope.cwd);
+            if !cwd.is_absolute() {
+                return Err(FileError::new(
+                    404,
+                    "file_not_found",
+                    "会话没有绝对工作目录",
+                ));
+            }
+            cwd.join(path)
+        };
+        let path = path.canonicalize().map_err(FileError::io)?;
+        let target = super::boundary::open_target(super::boundary::volume_root(&path)?, path)?;
         CheckedImage::new(target)
     }
 }

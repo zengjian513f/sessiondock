@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP-only contract of GET /api/live: unconfigured envelope, empty inventory,
+"""HTTP-only contract of GET /api/live: empty inventory,
 cache hit/force miss, bound free-shell running then exited; then the explicit
 `/proc` scan (batch 36, Python live.py) over a synthetic process tree: uids,
 tmux_uids (with the Python 16cc89c CLI barrier: a `grok -p` under a pane's
@@ -31,12 +31,6 @@ SHELL = (
     'stty -echo 2>/dev/null; printf "RS_SHELL_READY\\n"; '
     'while IFS= read -r c; do case "$c" in quit) exit 0 ;; *) printf "RS_UNKNOWN\\n" ;; esac; done'
 )
-# api/runtime.rs UNCONFIGURED. Docs/processes.md omit unavailable_reason; code includes it.
-UNCONFIGURED = {
-    "enabled": False, "known": False, "partial": True,
-    "unavailable_reason": "尚未实现外部 CLI 进程探测；受控 host 的部分观察不能据此接管或停止会话。",
-    "uids": [], "tmux_uids": [], "started_at": {}, "managed": None,
-}
 EXIT_EVIDENCE = {"host_exit", "exit_receipt", "identity_gone"}  # docs/processes.md three-state
 
 
@@ -110,9 +104,10 @@ def run(opener, base, uid, other, work):
     cache = managed.get("cache") or {}
     if (body.get("enabled") is not True or body.get("known") is not True or body.get("uids") != []
             or managed.get("sessions") != {} or (managed.get("unlisted") or {}).get("state") != "unknown"
-            or cache.get("ttl_ms") != 2000 or "scan" in body or body.get("partial") is not True
-            or managed.get("external_detection") != "not_implemented"):
-        fail("empty inventory", "enabled/known/uids/sessions/unlisted/cache/no scan", raw)
+            or cache.get("ttl_ms") != 2000 or body.get("partial") is not False
+            or managed.get("external_detection") != "proc_scan"
+            or ((body.get("scan") or {}).get("stats") or {}).get("processes") != 1):
+        fail("empty inventory", "enabled/known/uids/sessions/unlisted/cache/native scan", raw)
     passed("GET /api/live empty inventory enabled/known, sessions {}, unlisted.unknown, ttl_ms 2000")
 
     time.sleep(0.05)
@@ -158,7 +153,7 @@ def run(opener, base, uid, other, work):
 
 
 # ---------------------------------------------------------------- proc scan
-# Batch 36: the explicit `/proc` scan (Python live.py) over a synthetic tree
+# Batch 36: the `/proc` scan (Python live.py) over a synthetic tree
 # (SESSIONDOCK_PROC_ROOT), Python tests/test_live.py FakeProc shape.
 BTIME = 1_700_000_000
 SID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"   # claude, resumed by pid 100
@@ -197,7 +192,7 @@ class FakeProc:
 
 @contextmanager
 def scan_server(binary, roots, state, proc_root, grok_active=None, managed=None):
-    """isolated_server with the scan switched on (history_parity's helper has no env hook);
+    """isolated_server with a synthetic native process table;
     `managed` = (host_dir, lifecycle_dir, launcher_config) adds the private ptyhost inventory."""
     executable = Path(binary).resolve(strict=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
@@ -207,7 +202,7 @@ def scan_server(binary, roots, state, proc_root, grok_active=None, managed=None)
     base = f"http://127.0.0.1:{port}"
     environment.update({
         "SESSIONDOCK_BIND": f"127.0.0.1:{port}", "SESSIONDOCK_WEB_DIR": str(REPO / "legacy-web"),
-        "SESSIONDOCK_STATE_DIR": str(state), "SESSIONDOCK_PROC_SCAN": "1",
+        "SESSIONDOCK_STATE_DIR": str(state),
         "SESSIONDOCK_PROC_ROOT": str(proc_root)})
     if grok_active is not None:
         environment["SESSIONDOCK_GROK_ACTIVE"] = str(grok_active)
@@ -339,7 +334,7 @@ def scan_case(binary: Path, root: Path):
         meta, raw = call(opener, base, "GET", "/api/meta")
         if (meta.get("capabilities") or {}).get("live") is not True:
             fail("meta", "capabilities.live should be true with the scan on", raw)
-        passed("GET /api/meta capabilities.live true with SESSIONDOCK_PROC_SCAN=1")
+        passed("GET /api/meta capabilities.live true on a supported platform")
         body, raw = call(opener, base, "GET", "/api/live")
         redacted(raw)
         expect_live = {uids[SID_A], uids[SID_C], uids[SID_D], uids[SID_E], uids[SID_F], uids[SID_H]}
@@ -445,11 +440,10 @@ def continued_case(binary: Path, root: Path, ptyhost: Path):
     cfg.touch(mode=0o600)
     cfg.write_text(json.dumps({
         "schema": 2, "host_binary": str(ptyhost.resolve()), "host_dir": str(root / "continued-host"),
-        "cwd_roots": [str(root / "continued-work")], "adapters": [],
+        "adapters": [],
         "profiles": [{"id": "claude-cli-v1", "source": "claude", "executable": str(fake.resolve()),
                       "args": [], "new_args": ["--session-id", "{session_id}"], "resume_args": ["--resume", "{sid}"],
-                      "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"},
-                      "cwd_roots": [str(root / "continued-work")]}]}))
+                      "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))
     cfg.chmod(0o600)
     init = subprocess.run([str(binary), "--initialize-lifecycle", str(root / "continued-ledger")],
                           cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
@@ -510,6 +504,8 @@ def main():
         for name in ("host", "work", "ledger", "claude", "codex", "grok"):
             (root / name).mkdir(mode=0o700)
             (root / name).chmod(0o700)
+        empty_proc = root / "proc-managed"
+        FakeProc(empty_proc).add(1, "systemd", 0, "/sbin/init")
         corpus = Corpus(root)
         corpus.put("synthetic-live-sid", "codex", [
             codex_row("session_meta", {"id": "synthetic-live-sid", "cwd": str(root / "work")}),
@@ -523,7 +519,7 @@ def main():
         cfg.write_text(json.dumps({
             "host_binary": str(args.ptyhost.resolve()),
             "host_dir": str(root / "host"),
-            "cwd_roots": [str(root / "work")],
+
             "adapters": [{
                 "id": "synthetic-shell-v1", "source": "codex",
                 "executable": str(Path("/bin/sh").resolve()),
@@ -537,16 +533,18 @@ def main():
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         if init.returncode:
             fail("initialize-lifecycle", init.stderr.decode() or init.stdout.decode())
-        with isolated_server(corpus, args.binary) as (base, opener):
+        with isolated_server(corpus, args.binary, extra_env={
+                "SESSIONDOCK_PROC_ROOT": str(empty_proc)}) as (base, opener):
             body, raw = call(opener, base, "GET", "/api/live")
-            if body != UNCONFIGURED:
-                fail("unconfigured", body, raw)
+            if (body.get("uids"), body.get("known"), body.get("partial"), body.get("managed")) != ([], True, False, None):
+                fail("native-empty", body, raw)
             meta, raw = call(opener, base, "GET", "/api/meta")
-            if (meta.get("capabilities") or {}).get("live") is not False:
-                fail("meta", "capabilities.live must stay false without the scan", raw)
-            passed("GET /api/live unconfigured envelope, capabilities.live false (scan off)")
+            if (meta.get("capabilities") or {}).get("live") is not True:
+                fail("meta", "capabilities.live must expose native discovery", raw)
+            passed("GET /api/live empty native inventory, capabilities.live true")
         with isolated_server(corpus, args.binary, host_dir=root / "host",
-                             lifecycle_dir=root / "ledger", launcher_config=cfg) as (base, opener):
+                             lifecycle_dir=root / "ledger", launcher_config=cfg,
+                             extra_env={"SESSIONDOCK_PROC_ROOT": str(empty_proc)}) as (base, opener):
             run(opener, base, uid, other, str(root / "work"))
         scan_case(args.binary, root)
         continued_case(args.binary, root, args.ptyhost)

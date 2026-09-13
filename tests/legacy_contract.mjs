@@ -463,14 +463,23 @@ test('file resolution is gated and Python console availability remains unchanged
   assert.match(appSource, /if \(!AgentHubCapabilities\.allows\('files'\)\) throw new Error/);
   const baseline = readFileSync(new URL('../reference/legacy-web/nodes.js', import.meta.url), 'utf8');
   const start = 'function consoleUnavailableReason';
-  const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (AgentHubCapabilities.config.backend === 'rust' && !linked\n      && !(AgentHubCapabilities.allows('terminal_takeover')\n        && T.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
+  const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (AgentHubCapabilities.config.backend === 'rust' && !linked\n      && !(AgentHubCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
-  const exitGuard = "  if (AgentHubCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // WP-E: like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && AgentHubCapabilities.allows('terminal_takeover') && !!T.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const exitGuard = "  if (AgentHubCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // WP-E: like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && AgentHubCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
   assert.ok(read('nodes.js').includes(exitGuard));
   const pendingGuard = "  if (AgentHubCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
   assert.equal(compatible.slice(compatible.indexOf(start)), baseline.slice(baseline.indexOf(start)));
+});
+
+test('pending session header actions use icons when promoted from the overflow menu', () => {
+  const term = read('term.js');
+  const index = read('index.html');
+  assert.match(term, /id="a-native-bind" title="关联原生会话"\s+aria-label="关联原生会话">\$\{uiIcon\('link'\)\}<\/button>/);
+  assert.match(term, /id="a-pending-release" title="释放本页控制台"\s+aria-label="释放本页控制台">\$\{uiIcon\('log-out'\)\}<\/button>/);
+  assert.match(index, /<symbol id="i-link"/);
+  assert.match(index, /<symbol id="i-log-out"/);
 });
 
 function migrationContext(extra = {}, capabilities = disabled) {
@@ -665,6 +674,10 @@ test('an explicit failure event needs no HTTP probe', () => {
   const es = {close: () => {}};
   const context = migrationContext({_es: es, _esUid: 'codex:fixture',
     fetchMessages: () => assert.fail('The event already carries a precise reason')});
+  assert.equal(context.pauseMigrationWatch(es, 'codex:fixture', null,
+    {error: '原生输入在读取期间变化，请重试', status: 503, code: 'session_error'}), false);
+  assert.equal(context.migrationReadFailures.size, 0,
+    'a transient migration-error must leave the view live for SSE reconnect');
   assert.equal(context.pauseMigrationWatch(es, 'codex:fixture', null,
     {error: '文件不存在', status: 404, code: 'session_error'}), true);
   assert.equal(context.migrationReadProbes.size, 0);

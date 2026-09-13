@@ -127,12 +127,10 @@ fn config(native: Option<PathBuf>, host: Option<PathBuf>) -> Config {
             grok: None,
         },
         ptyhost_dir: host,
-        // The admission test asserts exactly two probe permits and an immediate
-        // refusal; batch 44 WP-A scaled read_workers with the host's cores and
-        // made the pool wait 10 s. Pin both (read_workers/2 clamps to 2).
+        // Pin the probe pool at two so the admission test can hold both permits
+        // while checking that another observation waits.
         pools: sessiondock::config::Pools {
             read_workers: 4,
-            wait: std::time::Duration::ZERO,
             ..Default::default()
         },
         ..Default::default()
@@ -166,14 +164,25 @@ fn native_fixture() -> TempDir {
 }
 
 #[tokio::test]
-async fn missing_explicit_host_directory_keeps_legacy_live_unknown() {
+async fn missing_explicit_host_directory_still_reports_the_python_process_scan() {
     let app = app_with_shutdown(config(None, None), CancellationToken::new()).unwrap();
     let (status, body, no_store) = get(&app, "/api/live").await;
     assert_eq!(status, StatusCode::OK);
     assert!(no_store);
-    assert_eq!(body["enabled"], false);
-    assert_eq!(body["known"], false);
-    assert_eq!(body["partial"], true);
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(body["enabled"], true);
+        assert_eq!(body["known"], true);
+        assert_eq!(body["partial"], false);
+        assert!(body.get("unavailable_reason").is_none());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert_eq!(body["enabled"], false);
+        assert_eq!(body["known"], false);
+        assert_eq!(body["partial"], true);
+        assert!(body["unavailable_reason"].is_string());
+    }
     assert!(body["managed"].is_null());
     assert_eq!(body["uids"], json!([]));
     assert_eq!(body["tmux_uids"], json!([]));
@@ -197,11 +206,11 @@ async fn exact_association_is_visible_only_inside_partial_managed_snapshot() {
     let (status, body, no_store) = get(&app, "/api/live").await;
     assert_eq!(status, StatusCode::OK);
     assert!(no_store);
-    // The managed inventory is known and partial; a synthetic PID can never
-    // be verified, so the legacy running list stays empty.
+    // A synthetic PID can never be verified, so the Python-compatible process
+    // scan keeps the running list empty while the managed details stay visible.
     assert_eq!(body["known"], true);
     assert_eq!(body["enabled"], true);
-    assert_eq!(body["partial"], true);
+    assert_eq!(body["partial"], cfg!(not(target_os = "linux")));
     assert_eq!(body["uids"], json!([]));
     assert_eq!(
         body["managed"]["sessions"][uid.as_str().unwrap()]["state"],
@@ -262,7 +271,7 @@ async fn empty_metadata_is_running_but_never_associated_by_name() {
 }
 
 #[tokio::test]
-async fn observation_admission_is_bounded_and_shutdown_cancels_active_probes() {
+async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     let host = FakeHost::new(json!({})).await;
     host.silent.store(true, Ordering::SeqCst);
     let cancel = CancellationToken::new();
@@ -291,7 +300,8 @@ async fn observation_admission_is_bounded_and_shutdown_cancels_active_probes() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(host.accepted.load(Ordering::SeqCst), 1);
     // A fresh (claim-grade) observation takes the second admission permit;
-    // the next fresh observer is refused explicitly rather than queued.
+    // another observer waits for capacity instead of becoming a request-level
+    // refusal that Python does not have.
     let third = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, "/api/term/list").await })
@@ -303,11 +313,17 @@ async fn observation_admission_is_bounded_and_shutdown_cancels_active_probes() {
     })
     .await
     .unwrap();
-    let (status, body, _) = get(&app, "/api/term/list").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["code"], "runtime_busy");
+    let mut fourth = {
+        let app = app.clone();
+        tokio::spawn(async move { get(&app, "/api/term/list").await })
+    };
+    assert!(
+        timeout(Duration::from_millis(100), &mut fourth)
+            .await
+            .is_err()
+    );
     cancel.cancel();
-    for request in [first, second, third] {
+    for request in [first, second, third, fourth] {
         let (status, body, _) = timeout(Duration::from_secs(1), request)
             .await
             .unwrap()

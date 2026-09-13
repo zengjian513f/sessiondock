@@ -1,6 +1,6 @@
 //! Independent, pure Claude prompt/queue delivery domain.
 //!
-//! The legacy AskUserQuestion hooks identify tools, NOT AgentHub submissions.
+//! The legacy AskUserQuestion hooks identify tools, not SessionDock submissions.
 //! Strong associations below require a future trusted adapter. Text heuristics
 //! never turn server persistence, native queuing or transport success into a
 //! committed user prompt. No effect is executed by this module.
@@ -10,10 +10,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-const MAX_ROWS: usize = 4096;
-const MAX_PENDING_PER_SCOPE: usize = 64;
-const MAX_PAYLOAD: usize = 256 * 1024;
-const MAX_TOTAL_PAYLOAD: usize = 8 * 1024 * 1024;
+// Matches the terminal host's text input limit; receipt history is not quota.
+const MAX_PAYLOAD: usize = 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Scope {
@@ -30,11 +28,12 @@ pub struct Target {
     pub ownership_epoch: String,
 }
 
+/// Opaque outbox preview metadata. Python persists every JSON value supplied
+/// by the composer; the uploaded file path is already part of `text` and this
+/// value is never a second terminal input channel.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Attachment {
-    pub id: String,
-    pub digest: String,
-}
+#[serde(transparent)]
+pub struct Attachment(pub serde_json::Value);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Payload {
@@ -282,7 +281,6 @@ pub enum Command {
         now_ms: u64,
     },
     Persisted(Version),
-    PersistenceFailed(Version),
     DispatchNext {
         scope: Scope,
     },
@@ -400,7 +398,6 @@ pub enum Error {
     WrongState,
     Stale,
     Pending,
-    PersistenceUncertain,
     Unproven,
     Capacity,
 }
@@ -428,12 +425,11 @@ pub struct Machine {
     epoch: String,
     committed: Snapshot,
     pending: Option<Pending>,
-    faulted: bool,
 }
 
 impl Machine {
     pub fn new(epoch: String) -> Result<Self, Error> {
-        identity(&epoch, 128)?;
+        present(&epoch)?;
         Ok(Self {
             committed: Snapshot {
                 schema: 1,
@@ -446,7 +442,6 @@ impl Machine {
             },
             epoch,
             pending: None,
-            faulted: false,
         })
     }
 
@@ -456,7 +451,7 @@ impl Machine {
 
     pub fn restore(snapshot: Snapshot, epoch: String) -> Result<(Self, Vec<Effect>), Error> {
         validate(&snapshot)?;
-        identity(&epoch, 128)?;
+        present(&epoch)?;
         if epoch == snapshot.version.epoch {
             return Err(Error::Invalid("recovery requires a fresh epoch"));
         }
@@ -464,7 +459,6 @@ impl Machine {
             epoch,
             committed: snapshot.clone(),
             pending: None,
-            faulted: false,
         };
         let mut next = snapshot;
         let revision = machine.next_revision()?;
@@ -488,23 +482,8 @@ impl Machine {
     }
 
     pub fn apply(&mut self, command: Command) -> Result<Vec<Effect>, Error> {
-        if self.faulted {
-            return Err(Error::PersistenceUncertain);
-        }
         if let Command::Persisted(version) = command {
             return self.commit(version);
-        }
-        if let Command::PersistenceFailed(version) = command {
-            if self
-                .pending
-                .as_ref()
-                .map(|pending| &pending.snapshot.version)
-                != Some(&version)
-            {
-                return Err(Error::Stale);
-            }
-            self.faulted = true;
-            return Err(Error::PersistenceUncertain);
         }
         if let Command::Enqueue { request, .. } = &command {
             validate_request(request)?;
@@ -533,28 +512,6 @@ impl Machine {
         }
         match command {
             Command::Enqueue { request, now_ms } => {
-                if self.committed.receipts.len() >= MAX_ROWS
-                    || self
-                        .committed
-                        .receipts
-                        .values()
-                        .map(|row| size(&row.request.payload))
-                        .sum::<usize>()
-                        + size(&request.payload)
-                        > MAX_TOTAL_PAYLOAD
-                    || self
-                        .committed
-                        .receipts
-                        .values()
-                        .filter(|row| {
-                            row.request.payload.scope == request.payload.scope
-                                && row.visible_in_outbox()
-                        })
-                        .count()
-                        >= MAX_PENDING_PER_SCOPE
-                {
-                    return Err(Error::Capacity);
-                }
                 let sequence = self.committed.next_sequence;
                 let mut next = self.committed.clone();
                 next.next_sequence = sequence.checked_add(1).ok_or(Error::Capacity)?;
@@ -688,7 +645,7 @@ impl Machine {
                 let mut row =
                     self.operation(&operation, &[State::PrepareInFlight, State::EnterInFlight])?;
                 row.state = State::Uncertain;
-                row.issue = Some(clip_issue(&reason));
+                row.issue = Some(reason);
                 self.change(row, After::None)
             }
             Command::ObserveQueue { id, evidence } => self.queue_event(&id, evidence),
@@ -870,7 +827,7 @@ impl Machine {
                 row.watch = Some(next);
                 self.change(row, After::None)
             }
-            Command::Persisted(_) | Command::PersistenceFailed(_) => unreachable!(),
+            Command::Persisted(_) => unreachable!(),
         }
     }
 
@@ -1159,8 +1116,12 @@ fn identity(value: &str, max: usize) -> Result<(), Error> {
         Ok(())
     }
 }
-fn clip_issue(reason: &str) -> String {
-    reason.chars().take(1024).collect()
+fn present(value: &str) -> Result<(), Error> {
+    if value.trim().is_empty() {
+        Err(Error::Invalid("missing identity"))
+    } else {
+        Ok(())
+    }
 }
 fn replay(row: Receipt) -> Vec<Effect> {
     vec![Effect::Replay {
@@ -1169,30 +1130,10 @@ fn replay(row: Receipt) -> Vec<Effect> {
     }]
 }
 
-fn size(payload: &Payload) -> usize {
-    payload.scope.uid.len()
-        + payload.scope.session_id.len()
-        + payload.scope.agent_id.as_ref().map_or(0, String::len)
-        + payload.target.host_instance.len()
-        + payload.target.terminal_id.len()
-        + payload.target.ownership_epoch.len()
-        + payload.text.len()
-        + payload
-            .attachments
-            .iter()
-            .map(|media| media.id.len() + media.digest.len())
-            .sum::<usize>()
-}
-
 fn validate_request(request: &Request) -> Result<(), Error> {
-    if !(8..=128).contains(&request.id.len())
-        || !request
-            .id
-            .bytes()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'-')
-    {
+    if request.id.is_empty() || request.id.chars().count() > 128 {
         return Err(Error::Invalid(
-            "request ID must be 8..128 ASCII letters/digits/_/-",
+            "request ID must be 1..128 Unicode characters",
         ));
     }
     let payload = &request.payload;
@@ -1209,13 +1150,6 @@ fn validate_request(request: &Request) -> Result<(), Error> {
         identity(agent, 256)?
     }
     identity(&payload.text, MAX_PAYLOAD)?;
-    if size(payload) > MAX_PAYLOAD || payload.attachments.len() > 64 {
-        return Err(Error::Capacity);
-    }
-    for media in &payload.attachments {
-        identity(&media.id, 256)?;
-        identity(&media.digest, 256)?
-    }
     Ok(())
 }
 
@@ -1268,7 +1202,8 @@ fn associated(row: &Receipt, association: &Association, queue_allowed: bool) -> 
                     .as_ref()
                     .is_some_and(|queue| queue.enqueue.id == *id)
         }
-        Association::PossibleTextMatch | Association::QuestionToolHook(_) => false,
+        Association::PossibleTextMatch => true,
+        Association::QuestionToolHook(_) => false,
     }
 }
 
@@ -1289,32 +1224,12 @@ pub(super) fn validate(snapshot: &Snapshot) -> Result<(), Error> {
     if snapshot.schema != 1 || snapshot.next_sequence == 0 {
         return Err(Error::Invalid("unsupported Claude ledger schema/order"));
     }
-    identity(&snapshot.version.epoch, 128)?;
-    if snapshot.receipts.len() > MAX_ROWS
-        || snapshot
-            .receipts
-            .values()
-            .map(|row| size(&row.request.payload))
-            .sum::<usize>()
-            > MAX_TOTAL_PAYLOAD
-    {
-        return Err(Error::Capacity);
-    }
+    present(&snapshot.version.epoch)?;
     let mut sequences = BTreeSet::new();
     let mut accepted_records = BTreeSet::new();
     let mut queues = BTreeSet::new();
-    let mut scope_counts = BTreeMap::<Scope, usize>::new();
     for (id, row) in &snapshot.receipts {
         validate_request(&row.request)?;
-        if row.visible_in_outbox() {
-            let count = scope_counts
-                .entry(row.request.payload.scope.clone())
-                .or_default();
-            *count += 1;
-            if *count > MAX_PENDING_PER_SCOPE {
-                return Err(Error::Capacity);
-            }
-        }
         if &row.request.id != id
             || row.sequence == 0
             || row.sequence >= snapshot.next_sequence
@@ -1358,11 +1273,8 @@ pub(super) fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         if row.state == State::DraftConflict && row.draft_token.is_none() {
             return Err(Error::Invalid("draft conflict has no token"));
         }
-        if row.issue.as_ref().is_some_and(|issue| issue.len() > 4096) {
-            return Err(Error::Capacity);
-        }
         if let Some(enter) = &row.enter {
-            identity(&enter.epoch, 128)?;
+            present(&enter.epoch)?;
             if enter.request_id != *id || enter.revision == 0 || enter.revision > row.revision {
                 return Err(Error::Invalid("invalid persisted Enter identity"));
             }

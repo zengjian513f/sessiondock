@@ -72,13 +72,6 @@ impl WatchHub {
                 entry.subscribers += 1;
                 (entry.id, entry.sender.subscribe(), None)
             } else {
-                if registry.views.len() >= 32 {
-                    return Err(ApiError::new(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "view_limit",
-                        "同时观察的逻辑视图过多",
-                    ));
-                }
                 registry.next = registry.next.checked_add(1).ok_or_else(closed)?;
                 let id = registry.next;
                 let (sender, receiver) = watch::channel(Published::Loading);
@@ -251,7 +244,6 @@ mod tests {
             Reader {
                 store,
                 workers: Arc::new(Semaphore::new(4)),
-                wait: Duration::from_secs(10),
             },
             CancellationToken::new(),
         );

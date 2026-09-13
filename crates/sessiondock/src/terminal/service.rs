@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
@@ -18,41 +18,34 @@ use ptyhost_client::{
     HostClient, HostEvent, LaunchState, LaunchTarget, Limits, SessionSummary, TerminalSize,
 };
 use serde::Deserialize;
-use tokio::sync::{Mutex as AsyncMutex, OwnedSemaphorePermit, Semaphore, mpsc, watch};
+use tokio::sync::{Mutex as AsyncMutex, mpsc, watch};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-use super::input::{self, InputRate};
+use super::input;
 use super::ownership::{
     self, BoundLease, ClaimResponse, ExpectedTarget, LeaseTarget, Registry, Revocation,
 };
 
 const OUTPUT_CHUNK: usize = 32 * 1024;
 const OUTPUT_QUEUE: usize = 16;
-const CONTROL_BYTES: usize = 1024;
 const CLOSE_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Debug)]
 pub struct BridgeLimits {
-    pub max_connections: usize,
-    pub max_operations: usize,
     pub max_input_bytes: usize,
     pub max_host_frame_bytes: usize,
     pub operation_timeout: Duration,
-    pub write_timeout: Duration,
-    pub partial_frame_timeout: Duration,
+    pub partial_frame_timeout: Option<Duration>,
 }
 
 impl Default for BridgeLimits {
     fn default() -> Self {
         Self {
-            max_connections: 16,
-            max_operations: 8,
-            max_input_bytes: 1024 * 1024, // ptyhost's send/paste ceiling; Python bounds only the request body
+            max_input_bytes: 1024 * 1024, // ptyhost's guarded send/paste ceiling
             max_host_frame_bytes: 8 * 1024 * 1024,
-            operation_timeout: Duration::from_secs(2),
-            write_timeout: Duration::from_secs(2),
-            partial_frame_timeout: Duration::from_secs(3),
+            operation_timeout: Duration::from_secs(10),
+            partial_frame_timeout: None,
         }
     }
 }
@@ -161,12 +154,8 @@ fn input_error(error: ptyhost_client::Error) -> TerminalError {
 pub struct TerminalService {
     client: HostClient,
     registry: Arc<Registry>,
-    connections: Arc<Semaphore>,
-    operations: Arc<Semaphore>,
     limits: BridgeLimits,
     gates: Mutex<BTreeMap<String, Weak<AsyncMutex<()>>>>,
-    input_rate: Mutex<InputRate>,
-    started: Instant,
 }
 
 /// One HTTP input request after JSON validation. Text is UTF-8 only because
@@ -175,16 +164,15 @@ pub struct TerminalService {
 pub enum InputPayload {
     Text(String),
     /// Host key names already resolved by [`input::map_keys`].
-    Keys(Vec<&'static str>),
+    Keys(Vec<String>),
     /// Batch 31 delivery driver: the host wraps the text in bracketed-paste
     /// markers when the application enabled them; no Enter is implied. Bounded
     /// by the delivery payload limit rather than the raw HTTP input limit.
     Paste(String),
 }
 
-/// Delivery payloads are bounded by the Claude ledger (256 KiB), not by the
-/// 1 MiB raw HTTP input limit (ptyhost's own send/paste ceiling; Python
-/// only bounds the 4 MiB request body).
+/// Decoded paste bytes, matching ptyhost's send/paste ceiling. The serialized
+/// request must also fit the host's 4 MiB JSON control-line budget.
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 
 impl InputPayload {
@@ -229,20 +217,15 @@ impl TerminalService {
             TerminalError::new(503, "terminal_config", "显式 ptyhost 目录不存在或不可访问")
         })?;
         if !directory.is_dir()
-            || limits.max_connections == 0
-            || limits.max_connections > 64
-            || limits.max_operations == 0
-            || limits.max_operations > 32
             || limits.max_input_bytes == 0
             || limits.max_input_bytes > 1024 * 1024
             || limits.max_host_frame_bytes == 0
             || limits.max_host_frame_bytes > 64 * 1024 * 1024
             || limits.operation_timeout.is_zero()
             || limits.operation_timeout > Duration::from_secs(30)
-            || limits.write_timeout.is_zero()
-            || limits.write_timeout > Duration::from_secs(5)
-            || limits.partial_frame_timeout.is_zero()
-            || limits.partial_frame_timeout > Duration::from_secs(30)
+            || limits
+                .partial_frame_timeout
+                .is_some_and(|timeout| timeout.is_zero())
         {
             return Err(TerminalError::new(
                 503,
@@ -254,8 +237,9 @@ impl TerminalService {
             directory,
             Limits {
                 max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
-                max_frame_bytes: limits.max_host_frame_bytes,
-                max_directory_entries: 10_000,
+                // The host wire carries a u32 length and Python applies no
+                // smaller attachment-frame policy.
+                max_frame_bytes: u32::MAX as usize,
                 operation_timeout: limits.operation_timeout,
                 partial_frame_timeout: limits.partial_frame_timeout,
             },
@@ -263,25 +247,14 @@ impl TerminalService {
         .map_err(host_error)?;
         Ok(Self {
             client,
-            registry: Arc::new(Registry::new(256)?),
-            connections: Arc::new(Semaphore::new(limits.max_connections)),
-            operations: Arc::new(Semaphore::new(limits.max_operations)),
+            registry: Arc::new(Registry::new()?),
             limits,
             gates: Mutex::new(BTreeMap::new()),
-            input_rate: Mutex::new(InputRate::default()),
-            started: Instant::now(),
         })
     }
 
     pub fn limits(&self) -> &BridgeLimits {
         &self.limits
-    }
-
-    fn operation(&self) -> Result<OwnedSemaphorePermit, TerminalError> {
-        self.operations
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| TerminalError::new(429, "terminal_busy", "终端探测繁忙，请稍后重试"))
     }
 
     fn gate(&self, name: &str) -> Result<Arc<AsyncMutex<()>>, TerminalError> {
@@ -293,15 +266,14 @@ impl TerminalService {
         if let Some(gate) = gates.get(name).and_then(Weak::upgrade) {
             return Ok(gate);
         }
-        // Strong references are held only by bounded active connections and
-        // admitted operations; expired name entries cannot grow this map.
+        // Strong references are held only by active connections and operations;
+        // expired name entries cannot grow this map.
         let gate = Arc::new(AsyncMutex::new(()));
         gates.insert(name.to_owned(), Arc::downgrade(&gate));
         Ok(gate)
     }
 
     pub async fn hosts(&self) -> Result<Vec<SessionSummary>, TerminalError> {
-        let _permit = self.operation()?;
         Ok(self
             .client
             .discover()
@@ -323,7 +295,6 @@ impl TerminalService {
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(name)?;
         ownership::validate_page(page)?;
-        let _permit = self.operation()?;
         let observation = self.client.probe(name).await.map_err(host_error)?;
         if observation.launch != LaunchState::Missing {
             return Err(ownership::OwnershipError::BindingMismatch.into());
@@ -336,11 +307,7 @@ impl TerminalService {
             ));
         }
         let gate = self.gate(name)?;
-        let _gate = timeout(self.limits.operation_timeout, gate.lock())
-            .await
-            .map_err(|_| {
-                TerminalError::new(503, "terminal_busy", "终端输入仍在完成，请稍后重试接管")
-            })?;
+        let _gate = gate.lock().await;
         Ok(self.registry.claim(name, page, ip, force)?)
     }
 
@@ -360,13 +327,8 @@ impl TerminalService {
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(target.name())?;
         ownership::validate_page(page)?;
-        let _permit = self.operation()?;
         let gate = self.gate(target.name())?;
-        let _gate = timeout(self.limits.operation_timeout, gate.lock())
-            .await
-            .map_err(|_| {
-                TerminalError::new(503, "terminal_busy", "终端输入仍在完成，请稍后重试接管")
-            })?;
+        let _gate = gate.lock().await;
         let observation = self.client.probe(target.name()).await.map_err(host_error)?;
         let fresh = BoundTarget::from_observation(
             &observation,
@@ -397,13 +359,8 @@ impl TerminalService {
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(target.name())?;
         ownership::validate_page(page)?;
-        let _permit = self.operation()?;
         let gate = self.gate(target.name())?;
-        let _gate = timeout(self.limits.operation_timeout, gate.lock())
-            .await
-            .map_err(|_| {
-                TerminalError::new(503, "terminal_busy", "终端输入仍在完成，请稍后重试接管")
-            })?;
+        let _gate = gate.lock().await;
         self.registry.check_launch(&target)?;
         let observation = self.client.probe(target.name()).await.map_err(host_error)?;
         let fresh = LaunchTarget::from_observation(
@@ -421,16 +378,11 @@ impl TerminalService {
     /// Permanently block this exact tuple for this service lifetime and revoke
     /// its input lease under the same gate as attach/write/claim. No host I/O or
     /// kill: even an offline old instance can have its local authority retired.
-    /// A full no-eviction retirement set fails explicitly without partial revoke.
+    /// Retired launch identities are retained for the service lifetime.
     pub async fn retire_launch(&self, target: Arc<LaunchTarget>) -> Result<(), TerminalError> {
         ownership::validate_name(target.name())?;
-        let _permit = self.operation()?;
         let gate = self.gate(target.name())?;
-        let _gate = timeout(self.limits.operation_timeout, gate.lock())
-            .await
-            .map_err(|_| {
-                TerminalError::new(503, "terminal_busy", "终端输入仍在完成，尚未撤销启动授权")
-            })?;
+        let _gate = gate.lock().await;
         Ok(self.registry.retire_launch(&target)?)
     }
 
@@ -438,7 +390,6 @@ impl TerminalService {
     /// This reads only the local record; it is not liveness or authorization.
     pub async fn has_host(&self, name: &str) -> Result<bool, TerminalError> {
         ownership::validate_name(name)?;
-        let _permit = self.operation()?;
         Ok(self
             .client
             .session(name)
@@ -480,22 +431,20 @@ impl TerminalService {
         }
         let operation = match payload {
             InputPayload::Text(text) => ControlOp::Send { text },
-            InputPayload::Keys(keys) => ControlOp::Keys {
-                keys: keys.into_iter().map(str::to_owned).collect(),
-            },
+            InputPayload::Keys(keys) => ControlOp::Keys { keys },
             InputPayload::Paste(text) => ControlOp::Paste {
                 text,
                 bracketed: true,
             },
         };
-        self.request_under_lease(name, page, token, expected, operation, true)
+        self.request_under_lease(name, page, token, expected, operation)
             .await
             .map(|_| InputReceipt { bytes })
     }
 
     /// Batch 31 delivery driver: the host's screen model plus cursor and
     /// health counters, read under the exact lease and per-name gate like an
-    /// input, without consuming the rate window. The host first lets the model
+    /// input. The host first lets the model
     /// catch up with pending output; a nonzero `lag` means it did not.
     pub async fn capture_screen(
         &self,
@@ -518,7 +467,6 @@ impl TerminalService {
                     join: false,
                     lines: 0,
                 },
-                false,
             )
             .await?;
         match reply {
@@ -532,7 +480,7 @@ impl TerminalService {
     }
 
     /// Shared body of the HTTP input and delivery driver paths: operation
-    /// permit, per-name gate, exact current lease, optional rate window, then
+    /// permit, per-name gate, exact current lease, then
     /// one guarded host request whose failure after submission is ambiguous.
     async fn request_under_lease(
         &self,
@@ -541,32 +489,10 @@ impl TerminalService {
         token: &str,
         expected: ExpectedTarget<'_>,
         operation: ControlOp,
-        rate_limited: bool,
     ) -> Result<ControlReply, TerminalError> {
-        let _permit = self.operation()?;
         let gate = self.gate(name)?;
-        let _gate = timeout(self.limits.operation_timeout, gate.lock())
-            .await
-            .map_err(|_| {
-                TerminalError::new(503, "terminal_busy", "终端输入仍在完成，请稍后重试")
-            })?;
+        let _gate = gate.lock().await;
         let target = self.registry.authorize_input(name, page, token, expected)?;
-        if rate_limited {
-            let mut rate = self.input_rate.lock().map_err(|_| {
-                TerminalError::new(503, "terminal_unavailable", "终端输入限频状态不可用")
-            })?;
-            if let Err(retry) = rate.admit(&target.instance_key(name), self.started.elapsed()) {
-                return Err(TerminalError::new(
-                    429,
-                    "terminal_input_rate",
-                    format!(
-                        "同一终端实例每秒最多 {} 次 HTTP 输入，请在 {} ms 后重试",
-                        input::RATE_LIMIT,
-                        retry.as_millis().max(1)
-                    ),
-                ));
-            }
-        }
         let result = match &target {
             LeaseTarget::Native(bound) => self.client.request_bound(bound, operation).await,
             LeaseTarget::Launch(launch) => self.client.request_launch(launch, operation).await,
@@ -633,9 +559,6 @@ impl TerminalService {
         token: &str,
         expected: ExpectedTarget<'_>,
     ) -> Result<PreparedAttachment, TerminalError> {
-        let permit = self.connections.clone().try_acquire_owned().map_err(|_| {
-            TerminalError::new(429, "terminal_connections", "终端 WebSocket 连接数达到限制")
-        })?;
         ownership::validate_name(name)?;
         let gate = self.gate(name)?;
         let bound = match expected {
@@ -654,7 +577,6 @@ impl TerminalService {
                 bound,
                 gate,
             },
-            _permit: permit,
         })
     }
 }
@@ -672,11 +594,10 @@ impl Drop for LeaseGuard {
 }
 
 /// Captured by the upgrade callback. If upgrading fails, dropping that callback
-/// releases both the bound lease and connection permit, without host I/O.
+/// releases the bound lease without host I/O.
 pub struct PreparedAttachment {
     service: Arc<TerminalService>,
     guard: LeaseGuard,
-    _permit: OwnedSemaphorePermit,
 }
 
 impl PreparedAttachment {
@@ -697,12 +618,9 @@ impl PreparedAttachment {
                     let (send, receive) = mpsc::channel(OUTPUT_QUEUE);
                     // These futures stay inside one scope. Exiting it drops both
                     // host halves before attempting the browser close handshake.
-                    let output =
-                        host_output(reader, send.clone(), self.service.limits.write_timeout);
-                    let input =
-                        browser_input(stream, writer, send, &self.guard, &self.service.limits);
-                    let sending =
-                        browser_output(&mut sink, receive, self.service.limits.write_timeout);
+                    let output = host_output(reader, send.clone());
+                    let input = browser_input(stream, writer, send, &self.guard);
+                    let sending = browser_output(&mut sink, receive);
                     tokio::pin!(output, input, sending);
                     tokio::select! {
                         biased;
@@ -725,12 +643,7 @@ impl PreparedAttachment {
         &self,
         size: TerminalSize,
     ) -> Result<ptyhost_client::Attachment, Close> {
-        let _gate = timeout(
-            self.service.limits.operation_timeout,
-            self.guard.gate.lock(),
-        )
-        .await
-        .map_err(|_| Close::new(1011, "attach failed: terminal busy"))?;
+        let _gate = self.guard.gate.lock().await;
         current(&self.guard)?;
         let attachment = match self.guard.bound.lease_target() {
             LeaseTarget::Native(target) => {
@@ -770,11 +683,11 @@ impl PreparedAttachment {
 }
 
 pub fn terminal_size(cols: u16, rows: u16) -> Result<TerminalSize, TerminalError> {
-    if cols == 0 || rows == 0 || cols > 500 || rows > 300 {
+    if cols == 0 || rows == 0 {
         return Err(TerminalError::new(
             400,
             "terminal_size",
-            "终端尺寸须为 1..500 列、1..300 行",
+            "终端尺寸须为正整数",
         ));
     }
     TerminalSize::new(cols, rows).map_err(host_error)
@@ -834,32 +747,20 @@ enum BrowserOutput {
     Finish(Close),
 }
 
-async fn enqueue(
-    sender: &mpsc::Sender<BrowserOutput>,
-    item: BrowserOutput,
-    deadline: Duration,
-) -> Result<(), Close> {
-    timeout(deadline, sender.send(item))
+async fn enqueue(sender: &mpsc::Sender<BrowserOutput>, item: BrowserOutput) -> Result<(), Close> {
+    sender
+        .send(item)
         .await
-        .map_err(|_| Close::new(1013, "browser output stalled"))?
         .map_err(|_| Close::new(1001, "browser disconnected"))
 }
 
-async fn host_output(
-    mut reader: AttachReader,
-    sender: mpsc::Sender<BrowserOutput>,
-    deadline: Duration,
-) -> Close {
+async fn host_output(mut reader: AttachReader, sender: mpsc::Sender<BrowserOutput>) -> Close {
     loop {
         match reader.next().await {
             Ok(Some(HostEvent::Data(bytes))) => {
                 for chunk in bytes.chunks(OUTPUT_CHUNK) {
-                    if let Err(close) = enqueue(
-                        &sender,
-                        BrowserOutput::Data(Bytes::copy_from_slice(chunk)),
-                        deadline,
-                    )
-                    .await
+                    if let Err(close) =
+                        enqueue(&sender, BrowserOutput::Data(Bytes::copy_from_slice(chunk))).await
                     {
                         return close;
                     }
@@ -879,37 +780,28 @@ async fn host_output(
                     }
                     _ => "host output incomplete",
                 };
-                return finish_output(&sender, Close::new(1011, reason), deadline).await;
+                return finish_output(&sender, Close::new(1011, reason)).await;
             }
             Ok(Some(HostEvent::Exit { .. })) => {
-                return finish_output(&sender, Close::new(1000, "host exited"), deadline).await;
+                return finish_output(&sender, Close::new(1000, "host exited")).await;
             }
             Ok(None) => {
                 return finish_output(
                     &sender,
                     Close::new(1011, "host stream closed without exit marker"),
-                    deadline,
                 )
                 .await;
             }
             Err(_) => {
-                return finish_output(
-                    &sender,
-                    Close::new(1011, "local host protocol failed"),
-                    deadline,
-                )
-                .await;
+                return finish_output(&sender, Close::new(1011, "local host protocol failed"))
+                    .await;
             }
         }
     }
 }
 
-async fn finish_output(
-    sender: &mpsc::Sender<BrowserOutput>,
-    close: Close,
-    deadline: Duration,
-) -> Close {
-    if let Err(close) = enqueue(sender, BrowserOutput::Finish(close), deadline).await {
+async fn finish_output(sender: &mpsc::Sender<BrowserOutput>, close: Close) -> Close {
+    if let Err(close) = enqueue(sender, BrowserOutput::Finish(close)).await {
         return close;
     }
     // Let the one browser writer drain all prior output before returning the
@@ -918,7 +810,7 @@ async fn finish_output(
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "t", deny_unknown_fields)]
+#[serde(tag = "t")]
 enum BrowserControl {
     #[serde(rename = "resize")]
     Resize { cols: u16, rows: u16 },
@@ -929,7 +821,6 @@ async fn browser_input(
     mut writer: AttachWriter,
     sender: mpsc::Sender<BrowserOutput>,
     guard: &LeaseGuard,
-    limits: &BridgeLimits,
 ) -> Close {
     while let Some(message) = stream.next().await {
         let message = match message {
@@ -938,41 +829,34 @@ async fn browser_input(
         };
         let write = match message {
             Message::Binary(bytes) => {
-                if bytes.len() > limits.max_input_bytes {
-                    return Close::new(1009, "terminal input too large");
-                }
                 if bytes.is_empty() {
                     continue;
                 }
                 HostInput::Data(bytes)
             }
             Message::Text(text) => {
-                if text.len() > CONTROL_BYTES {
-                    return Close::new(1009, "terminal control too large");
+                match serde_json::from_str::<BrowserControl>(&text) {
+                    Ok(BrowserControl::Resize { cols, rows }) => match terminal_size(cols, rows) {
+                        Ok(size) => HostInput::Resize(size),
+                        Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
+                    },
+                    // Python treats every other text frame, including JSON
+                    // that is not a valid resize, as literal PTY input.
+                    Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
                 }
-                let control = serde_json::from_str::<BrowserControl>(&text);
-                let Ok(BrowserControl::Resize { cols, rows }) = control else {
-                    return Close::new(1008, "invalid terminal control");
-                };
-                let Ok(size) = terminal_size(cols, rows) else {
-                    return Close::new(1008, "invalid terminal size");
-                };
-                HostInput::Resize(size)
             }
             Message::Close(_) => return Close::new(1000, "client closed"),
             Message::Ping(_) => {
                 // Tungstenite queued the matching pong; flush via the one sink
                 // owner instead of allowing independent concurrent WS writes.
-                if let Err(close) =
-                    enqueue(&sender, BrowserOutput::Flush, limits.write_timeout).await
-                {
+                if let Err(close) = enqueue(&sender, BrowserOutput::Flush).await {
                     return close;
                 }
                 continue;
             }
             Message::Pong(_) => continue,
         };
-        if let Err(close) = gated_write(guard, &mut writer, write, limits.write_timeout).await {
+        if let Err(close) = gated_write(guard, &mut writer, write).await {
             return close;
         }
     }
@@ -995,19 +879,16 @@ async fn gated_write(
     guard: &LeaseGuard,
     writer: &mut AttachWriter,
     input: HostInput,
-    deadline: Duration,
 ) -> Result<(), Close> {
-    let _gate = timeout(deadline, guard.gate.lock())
-        .await
-        .map_err(|_| Close::new(1011, "host input busy"))?;
+    let _gate = guard.gate.lock().await;
     // The same async gate covers claim publication, attach and every write.
     // No new old-lease write can begin after a successful force claim.
     current(guard)?;
     let result = match input {
-        HostInput::Data(bytes) => timeout(deadline, writer.send_data(&bytes)).await,
-        HostInput::Resize(size) => timeout(deadline, writer.resize(size)).await,
+        HostInput::Data(bytes) => writer.send_data(&bytes).await,
+        HostInput::Resize(size) => writer.resize(size).await,
     };
-    if matches!(result, Ok(Ok(()))) {
+    if result.is_ok() {
         return Ok(());
     }
     // A frame prefix may have reached the host. Drop; do not retry or reuse.
@@ -1017,18 +898,15 @@ async fn gated_write(
 async fn browser_output(
     sink: &mut SplitSink<WebSocket, Message>,
     mut receiver: mpsc::Receiver<BrowserOutput>,
-    deadline: Duration,
 ) -> Close {
     while let Some(item) = receiver.recv().await {
         let result = match item {
-            BrowserOutput::Data(bytes) => {
-                timeout(deadline, sink.send(Message::Binary(bytes))).await
-            }
-            BrowserOutput::Flush => timeout(deadline, sink.flush()).await,
+            BrowserOutput::Data(bytes) => sink.send(Message::Binary(bytes)).await,
+            BrowserOutput::Flush => sink.flush().await,
             BrowserOutput::Finish(close) => return close,
         };
-        if !matches!(result, Ok(Ok(()))) {
-            return Close::new(1013, "browser output stalled");
+        if result.is_err() {
+            return Close::new(1001, "browser disconnected");
         }
     }
     Close::new(1000, "host output closed")
@@ -1093,32 +971,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepared_drop_releases_lease_and_connection_capacity() {
+    async fn prepared_connections_have_no_process_wide_quota() {
         let temporary = tempfile::tempdir().unwrap();
         let service = Arc::new(
-            TerminalService::with_limits(
-                temporary.path().to_owned(),
-                BridgeLimits {
-                    max_connections: 1,
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
+            TerminalService::with_limits(temporary.path().to_owned(), BridgeLimits::default())
+                .unwrap(),
         );
         let first = token(&service.registry, "first", "page");
         let second = token(&service.registry, "second", "page");
         let prepared = service.prepare("first", "page", &first).unwrap();
-        assert_eq!(
-            service
-                .prepare("second", "page", &second)
-                .err()
-                .unwrap()
-                .status,
-            429
-        );
-        drop(prepared); // includes a never-started/failed upgrade callback
+        let second_prepared = service.prepare("second", "page", &second).unwrap();
+        drop(prepared);
         assert!(service.registry.owner("first").unwrap().is_none());
-        assert!(service.prepare("second", "page", &second).is_ok());
+        drop(second_prepared);
+        assert!(service.registry.owner("second").unwrap().is_none());
     }
 
     #[tokio::test]

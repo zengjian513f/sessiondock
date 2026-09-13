@@ -2,50 +2,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{
-    Deserialize, Serialize,
-    de::{self, MapAccess, Visitor},
-};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{MAX_RECORDS, MetadataError};
+use super::MetadataError;
 
 pub const SCHEMA_VERSION: u32 = 1;
-const UID_LIMIT: usize = 256;
-const FIELD_LIMIT: usize = 2048;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub(super) struct Document {
     pub schema_version: u32,
     pub revision: u64,
-    #[serde(deserialize_with = "unique_rows")]
     pub sessions: BTreeMap<String, Row>,
-}
-
-fn unique_rows<'de, D: de::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<BTreeMap<String, Row>, D::Error> {
-    struct Rows;
-    impl<'de> Visitor<'de> for Rows {
-        type Value = BTreeMap<String, Row>;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("unique session UID map")
-        }
-        fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
-            let mut rows = BTreeMap::new();
-            while let Some((uid, row)) = map.next_entry::<String, Row>()? {
-                if rows.insert(uid, row).is_some() {
-                    return Err(de::Error::custom("duplicate metadata UID"));
-                }
-                if rows.len() > MAX_RECORDS {
-                    return Err(de::Error::custom("metadata record limit"));
-                }
-            }
-            Ok(rows)
-        }
-    }
-    deserializer.deserialize_map(Rows)
 }
 
 fn no(value: &bool) -> bool {
@@ -56,7 +24,7 @@ fn zero(value: &u64) -> bool {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(super) struct Row {
     #[serde(skip_serializing_if = "no")]
     starred: bool,
@@ -86,17 +54,13 @@ pub(super) struct Row {
 /// Python `session_meta.record_spawn_parents` payload: the spawner's source and
 /// native session id. The spawner row may be gone; this is not a UID.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SpawnedBy {
     pub source: String,
     pub sid: String,
 }
 
-pub const MAX_ATTACHMENTS: usize = 256;
-
 /// Final path of an uploaded file, recorded once per path per session.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Attachment {
     pub path: String,
     pub name: String,
@@ -116,7 +80,6 @@ pub enum StopState {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ActivityStop {
     pub at: f64,
     pub reason: String,
@@ -125,7 +88,6 @@ pub struct ActivityStop {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PendingRewind {
     pub from_tip: String,
     pub stale_end: u64,
@@ -136,7 +98,6 @@ pub struct PendingRewind {
 /// were the current leaf. It never writes native files or signals the CLI;
 /// native records appended after `stale_end` retire it in the read model.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TimelinePin {
     pub tip: String,
     pub stale_end: u64,
@@ -153,34 +114,29 @@ pub struct MetadataSnapshot {
 }
 
 pub(super) fn validate_uid(uid: &str) -> Result<(), MetadataError> {
-    if uid.is_empty()
-        || uid.len() > UID_LIMIT
-        || !uid
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b":._-".contains(&byte))
-    {
+    if uid.trim().is_empty() {
         return Err(MetadataError::new(
             400,
             "invalid_metadata_uid",
-            "元数据 UID 必须为 1 至 256 字节的字母、数字或 :._-",
+            "缺少会话 uid",
         ));
     }
     Ok(())
 }
 
-fn field(value: &str, limit: usize) -> Result<(), MetadataError> {
-    if value.is_empty() || value.len() > limit || value.chars().any(char::is_control) {
+fn field(value: &str) -> Result<(), MetadataError> {
+    if value.is_empty() {
         return Err(MetadataError::new(
             400,
             "invalid_metadata_field",
-            "元数据字段为空、过长或包含控制字符",
+            "元数据字段为空",
         ));
     }
     Ok(())
 }
 
 fn epoch(value: f64) -> Result<(), MetadataError> {
-    if !value.is_finite() || !(0.0..=253_402_300_799.0).contains(&value) {
+    if !value.is_finite() || !(-62_135_596_800.0..=253_402_300_799.0).contains(&value) {
         return Err(MetadataError::new(
             400,
             "invalid_metadata_time",
@@ -197,37 +153,18 @@ fn increment(value: u64) -> Result<u64, MetadataError> {
 }
 
 fn validate_attachment(attachment: &Attachment) -> Result<(), MetadataError> {
-    field(&attachment.path, 4096)?;
-    field(&attachment.name, 255)?;
+    field(&attachment.path)?;
+    field(&attachment.name)?;
     epoch(attachment.at)?;
     if let Some(agent) = &attachment.agent {
-        field(agent, UID_LIMIT)?
-    }
-    if attachment
-        .sha256
-        .as_deref()
-        .is_some_and(|digest| digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()))
-    {
-        return Err(MetadataError::new(
-            400,
-            "invalid_metadata_field",
-            "附件 sha256 须为 64 位十六进制",
-        ));
+        field(agent)?
     }
     Ok(())
 }
 
 fn validate_spawned_by(parent: &SpawnedBy) -> Result<(), MetadataError> {
-    field(&parent.source, 32)?;
-    field(&parent.sid, UID_LIMIT)?;
-    if parent.source.chars().any(char::is_whitespace) || parent.sid.chars().any(char::is_whitespace)
-    {
-        return Err(MetadataError::new(
-            400,
-            "invalid_metadata_field",
-            "发起者 source/sid 不能含空白",
-        ));
-    }
+    field(&parent.source)?;
+    field(&parent.sid)?;
     Ok(())
 }
 
@@ -263,67 +200,6 @@ impl MetadataSnapshot {
         )
     }
 
-    pub(super) fn validate(&self) -> Result<(), MetadataError> {
-        if self.document.schema_version != SCHEMA_VERSION {
-            return Err(MetadataError::new(
-                501,
-                "metadata_schema_unsupported",
-                "开发元数据 schema_version 尚不受支持；原文件未被覆盖",
-            ));
-        }
-        if self.len() > MAX_RECORDS {
-            return Err(MetadataError::new(
-                413,
-                "metadata_record_limit",
-                "元数据超过 10000 条记录限制",
-            ));
-        }
-        for (uid, row) in &self.document.sessions {
-            validate_uid(uid)?;
-            if row.starred != row.starred_at.is_some() {
-                return Err(MetadataError::new(
-                    400,
-                    "invalid_metadata_star",
-                    "收藏状态与时间戳不一致",
-                ));
-            }
-            if let Some(at) = row.starred_at {
-                epoch(at)?
-            }
-            if let Some(stop) = &row.stopped {
-                epoch(stop.at)?;
-                field(&stop.reason, FIELD_LIMIT)?
-            }
-            if let Some(pending) = &row.rewind_pending {
-                field(&pending.from_tip, UID_LIMIT)?;
-                epoch(pending.started_at)?
-            }
-            if let Some(timeline) = &row.timeline {
-                field(&timeline.tip, UID_LIMIT)?;
-                if let Some(target) = &timeline.target {
-                    field(target, UID_LIMIT)?
-                }
-                if let Some(at) = timeline.pinned_at {
-                    epoch(at)?
-                }
-            }
-            if row.attachments.len() > MAX_ATTACHMENTS {
-                return Err(MetadataError::new(
-                    413,
-                    "metadata_attachment_limit",
-                    "单个会话最多登记 256 个附件",
-                ));
-            }
-            for attachment in &row.attachments {
-                validate_attachment(attachment)?
-            }
-            if let Some(parent) = &row.spawned_by {
-                validate_spawned_by(parent)?
-            }
-        }
-        Ok(())
-    }
-
     fn change(
         &self,
         update: impl FnOnce(&mut BTreeMap<String, Row>) -> Result<(), MetadataError>,
@@ -336,7 +212,6 @@ impl MetadataSnapshot {
         if next.document.sessions != self.document.sessions {
             next.document.revision = increment(self.revision())?
         }
-        next.validate()?;
         Ok(next)
     }
 
@@ -373,13 +248,6 @@ impl MetadataSnapshot {
             {
                 return Ok(());
             }
-            if row.attachments.len() >= MAX_ATTACHMENTS {
-                return Err(MetadataError::new(
-                    413,
-                    "metadata_attachment_limit",
-                    "单个会话最多登记 256 个附件",
-                ));
-            }
             row.attachments.push(attachment);
             Ok(())
         })
@@ -409,8 +277,7 @@ impl MetadataSnapshot {
     /// Python `record_spawn_parents`: a session is spawned once; the first
     /// observed relation is kept for good and a later, different clue is
     /// ignored. Entries with an empty uid, source or sid are skipped like
-    /// Python; a malformed one (whitespace, control characters, over budget)
-    /// fails the whole transaction so nothing half-recorded is published.
+    /// Python. Existing parent relationships remain unchanged.
     pub fn with_spawn_parents(&self, found: &[(String, SpawnedBy)]) -> Result<Self, MetadataError> {
         self.change(|rows| {
             for (uid, parent) in found {
@@ -438,13 +305,6 @@ impl MetadataSnapshot {
         uids: &[String],
         visible: bool,
     ) -> Result<Self, MetadataError> {
-        if uids.len() > 1000 {
-            return Err(MetadataError::new(
-                413,
-                "metadata_batch_limit",
-                "单次偏好更新最多 1000 个会话",
-            ));
-        }
         for uid in uids {
             validate_uid(uid)?
         }
@@ -498,7 +358,7 @@ impl MetadataSnapshot {
     /// never changes the confirmed timeline and never authorizes native writes.
     pub fn with_confirmed_rewind(&self, uid: &str, tip: &str) -> Result<Self, MetadataError> {
         validate_uid(uid)?;
-        field(tip, UID_LIMIT)?;
+        field(tip)?;
         self.change(|rows| {
             let row = rows
                 .get_mut(uid)
@@ -533,9 +393,9 @@ impl MetadataSnapshot {
     /// read-model preference only: no native write, no CLI signal.
     pub fn with_timeline_pin(&self, uid: &str, pin: TimelinePin) -> Result<Self, MetadataError> {
         validate_uid(uid)?;
-        field(&pin.tip, UID_LIMIT)?;
+        field(&pin.tip)?;
         if let Some(target) = &pin.target {
-            field(target, UID_LIMIT)?
+            field(target)?
         }
         if let Some(at) = pin.pinned_at {
             epoch(at)?

@@ -370,7 +370,6 @@ async fn retirement_serializes_with_claim_and_input_and_blocks_only_the_exact_tu
         &prepared.guard,
         &mut writer,
         HostInput::Data(Bytes::from_static(b"before")),
-        Duration::from_secs(1),
     )
     .await
     .unwrap_or_else(|_| panic!("write"));
@@ -413,7 +412,6 @@ async fn retirement_serializes_with_claim_and_input_and_blocks_only_the_exact_tu
             &prepared.guard,
             &mut writer,
             HostInput::Data(Bytes::from_static(b"after")),
-            Duration::from_secs(1)
         )
         .await
         .err()

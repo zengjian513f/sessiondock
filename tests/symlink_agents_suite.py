@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""HTTP contract: Claude subagent symlinks are followed only in-root.
+"""HTTP contract: Claude subagent aliases follow Python's normal path handling.
 
 A continued session may link the origin's sidecar into its own subagents/
-directory. The index follows that link only when canonicalize() yields a
-regular file inside a configured read root (WP-C item 2). Out-of-root,
-dangling, and directory links are skipped and never appear on the owner row.
+directory. In-root and external aliases to regular sidecar files are listed;
+dangling aliases and directory targets are skipped.
 """
 from __future__ import annotations
 
@@ -131,11 +130,11 @@ def run(opener, base, corpus):
     if by[P_SID].get("agents") not in (1, None):
         fail("P agents", f"agents={by[P_SID].get('agents')!r} want 1", json.dumps(by[P_SID]).encode())
     passed("P lists in-root sidecar")
-    if q_ids != [A_ID]:
-        fail("Q agents", f"ids {q_ids} want [{A_ID}] (b/c/d skipped)", json.dumps(by[Q_SID]).encode())
-    if by[Q_SID].get("agents") not in (1, None):
-        fail("Q agents", f"agents={by[Q_SID].get('agents')!r} want 1", json.dumps(by[Q_SID]).encode())
-    passed("Q lists only in-root symlink")
+    if q_ids != [A_ID, BAD[0]]:
+        fail("Q agents", f"ids {q_ids} want [{A_ID}, {BAD[0]}]", json.dumps(by[Q_SID]).encode())
+    if by[Q_SID].get("agents") != 2:
+        fail("Q agents", f"agents={by[Q_SID].get('agents')!r} want 2", json.dumps(by[Q_SID]).encode())
+    passed("Q lists regular-file symlink targets")
 
     p_view = ok(opener, base, messages_route(corpus.uid(P_SID), agent=A_ID), "P agent view")
     q_view = ok(opener, base, messages_route(corpus.uid(Q_SID), agent=A_ID), "Q agent view")
@@ -146,8 +145,13 @@ def run(opener, base, corpus):
              json.dumps({"p": p_n, "q": q_n}).encode())
     passed("Q in-root symlink agent view matches P")
 
+    outside_view = ok(opener, base, messages_route(corpus.uid(Q_SID), agent=BAD[0]), "Q external agent view")
+    if len(outside_view.get("messages") or []) < 2:
+        fail("Q external agent view", "external regular-file alias was not readable")
+    passed("Q external regular-file symlink agent view")
+
     q_uid = corpus.uid(Q_SID)
-    for aid in BAD:
+    for aid in BAD[1:]:
         expect_json_error(opener, base, messages_route(q_uid, agent=aid), f"Q?agent={aid}")
 
 

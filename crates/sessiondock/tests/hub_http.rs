@@ -39,6 +39,14 @@ const NID_C: &str = "cccccccccccccccccccccccccccccccc";
 const PNG_LEN: usize = 68;
 
 fn python3() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(candidate) = std::env::var_os("USERPROFILE")
+        .map(PathBuf::from)
+        .map(|home| home.join("anaconda3/python.exe"))
+        .filter(|candidate| candidate.is_file())
+    {
+        return candidate;
+    }
     std::env::var_os("PATH")
         .and_then(|paths| {
             std::env::split_paths(&paths)

@@ -4,7 +4,7 @@ mod json;
 
 use super::model::{
     self, BindingMethod, BindingRecord, BindingSpec, BindingState, Failure, Launch, LaunchSpec,
-    MAX_EVIDENCE_BYTES, MAX_RECORDS, Record, State,
+    Record, State,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -13,8 +13,6 @@ use std::{
 };
 
 pub const LEDGER_FILENAME: &str = "lifecycle-ledger.json";
-pub const LOCK_FILENAME: &str = ".lifecycle.lock";
-pub const MAX_BYTES: usize = 1024 * 1024;
 /// Current ledger envelope schema. Schema 5 (WP-E) adds `finished_at` /
 /// `discarded` to every record and `method` / `evidence` / `bound_at` to a
 /// binding; older envelopes migrate strictly on open.
@@ -22,27 +20,21 @@ pub const SCHEMA: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    DurabilityUnavailable,
     Io(&'static str, std::io::ErrorKind),
     UnsafePath,
-    UnsafePermissions,
-    ForeignDirectory,
     AlreadyInitialized,
     MissingLedger,
-    WriterLocked,
     Changed,
     Invalid,
     InvalidSpec,
     InvalidRequest,
     UnsupportedSchema,
-    Limit,
     Conflict,
     Missing,
     WrongState,
     StaleAuthority,
     RandomUnavailable,
     Uncertain,
-    Frozen,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -52,7 +44,6 @@ impl std::fmt::Display for Error {
 impl std::error::Error for Error {}
 
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Document {
     format: String,
     schema: u32,
@@ -65,9 +56,6 @@ impl Document {
     fn validate(&self) -> Result<(), Error> {
         if self.format != "agenthub-lifecycle" || self.schema != SCHEMA {
             return Err(Error::UnsupportedSchema);
-        }
-        if self.records.len() > MAX_RECORDS {
-            return Err(Error::Limit);
         }
         if (self.revision == 0) != self.records.is_empty() {
             return Err(Error::Invalid);
@@ -186,11 +174,11 @@ pub struct LifecycleStore {
     document: Document,
     fingerprint: String,
     owner: String,
-    frozen: bool,
 }
 impl LifecycleStore {
     pub fn initialize(directory: &Path) -> Result<Self, Error> {
-        require_absolute(directory)?;
+        std::fs::create_dir_all(directory)
+            .map_err(|error| Error::Io("create lifecycle directory", error.kind()))?;
         let owner = random()?;
         let document = Document {
             format: "agenthub-lifecycle".into(),
@@ -207,13 +195,11 @@ impl LifecycleStore {
             document,
             fingerprint,
             owner,
-            frozen: false,
         })
     }
     /// Starting always recovers to durable Uncertain before the handle is ready.
     /// Prepared remains a receipt only; this method never reissues spawn authority.
     pub fn open(directory: &Path) -> Result<Self, Error> {
-        require_absolute(directory)?;
         let disk = disk::Disk::open(directory, false)?;
         let bytes = disk.read()?.ok_or(Error::MissingLedger)?;
         let document = json::decode(&bytes)?;
@@ -222,7 +208,6 @@ impl LifecycleStore {
             document,
             fingerprint: disk::hash(&bytes),
             owner: random()?,
-            frozen: false,
         };
         if store.document.legacy
             || store.document.records.values().any(|r| {
@@ -277,9 +262,6 @@ impl LifecycleStore {
                 record: record.clone(),
                 prepared: None,
             });
-        }
-        if self.document.records.len() == MAX_RECORDS {
-            return Err(Error::Limit);
         }
         // Deserialization is necessary for private disk receipts but is not
         // permission to bypass fresh cwd validation on a new creation intent.
@@ -525,11 +507,6 @@ impl LifecycleStore {
         method: BindingMethod,
         evidence: Option<String>,
     ) -> Result<BindingAuthority, Error> {
-        if evidence.as_deref().is_some_and(|note| {
-            note.is_empty() || note.len() > MAX_EVIDENCE_BYTES || note.chars().any(char::is_control)
-        }) {
-            return Err(Error::InvalidSpec);
-        }
         let current = self.get(expected.record_id())?;
         if current != *expected {
             return Err(Error::StaleAuthority);
@@ -646,12 +623,9 @@ impl LifecycleStore {
             .cloned()
             .ok_or(Error::Missing)
     }
-    /// Full private receipts, intentionally bounded and not a public HTTP DTO.
+    /// Private receipts, optionally paginated; not a public HTTP DTO.
     pub fn list(&mut self, offset: usize, limit: usize) -> Result<Vec<Record>, Error> {
         self.check()?;
-        if limit == 0 || limit > MAX_RECORDS {
-            return Err(Error::Limit);
-        }
         Ok(self
             .document
             .records
@@ -681,7 +655,7 @@ impl LifecycleStore {
         Ok(result)
     }
     fn next_revision(&self) -> Result<u64, Error> {
-        self.document.revision.checked_add(1).ok_or(Error::Limit)
+        self.document.revision.checked_add(1).ok_or(Error::Invalid)
     }
     fn transition(
         &mut self,
@@ -712,13 +686,9 @@ impl LifecycleStore {
         Ok(result)
     }
     fn check(&mut self) -> Result<(), Error> {
-        if self.frozen {
-            return Err(Error::Frozen);
-        }
-        if let Err(error) = self.disk.verify(Some(&self.fingerprint)) {
-            self.frozen = true;
-            return Err(error);
-        }
+        let bytes = self.disk.read()?.ok_or(Error::MissingLedger)?;
+        self.document = json::decode(&bytes)?;
+        self.fingerprint = disk::hash(&bytes);
         Ok(())
     }
     fn commit(&mut self, mut next: Document) -> Result<(), Error> {
@@ -731,10 +701,7 @@ impl LifecycleStore {
                 self.fingerprint = fingerprint;
                 Ok(())
             }
-            Err(error) => {
-                self.frozen = true;
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -744,17 +711,15 @@ fn now_unix() -> u64 {
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0)
 }
-fn require_absolute(path: &Path) -> Result<(), Error> {
-    if path.is_absolute() {
-        Ok(())
-    } else {
-        Err(Error::UnsafePath)
-    }
-}
 fn random() -> Result<String, Error> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|_| Error::RandomUnavailable)?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+/// Mint a private request key when a Python-compatible caller omits one.
+/// Explicit request IDs still retain the durable replay behavior.
+pub fn fresh_request_id() -> Result<String, Error> {
+    random()
 }
 /// Lowercase RFC 4122 version-4 text UUID from the OS random source.
 fn uuid_v4() -> Result<String, Error> {

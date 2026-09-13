@@ -176,8 +176,7 @@ fn file_uri(path: &Path) -> String {
 }
 
 #[tokio::test]
-async fn every_provider_requires_explicit_roots_and_projects_structured_uri_markdown_raw_and_sniffed_files()
- {
+async fn every_provider_projects_files_with_or_without_configured_roots() {
     let mut fixture = Fixture::new();
     for source in ["claude", "codex", "grok"] {
         fixture.put(
@@ -191,36 +190,27 @@ async fn every_provider_requires_explicit_roots_and_projects_structured_uri_mark
             ],
         );
     }
-    let denied = fixture.app(false);
-    for source in ["claude", "codex", "grok"] {
-        let projected = messages(&denied, &format!("{source}-files"), "").await;
-        assert!(projected.to_string().contains("File fixture text survives"));
-        let images = media(&projected);
-        assert_eq!(images.len(), 5, "{projected}");
-        for image in images {
-            no_src_error(image);
-            assert_eq!(image["error"]["status"], 501);
-        }
-    }
-    let app = fixture.app(true);
-    for source in ["claude", "codex", "grok"] {
-        let projected = messages(&app, &format!("{source}-files"), "").await;
-        assert!(!projected.to_string().contains(PNG));
-        let images = media(&projected);
-        assert_eq!(images.len(), 5, "{projected}");
-        for image in images {
-            let src = image["src"].as_str().unwrap_or_else(|| panic!("{image}"));
-            assert!(src.starts_with("/api/media/") && src.len() == 43);
-            assert_eq!(image["lazy"], true);
-            for absent in ["mime", "width", "height"] {
-                assert!(image.get(absent).is_none());
+    for configured in [false, true] {
+        let app = fixture.app(configured);
+        for source in ["claude", "codex", "grok"] {
+            let projected = messages(&app, &format!("{source}-files"), "").await;
+            assert!(!projected.to_string().contains(PNG));
+            let images = media(&projected);
+            assert_eq!(images.len(), 5, "configured={configured}: {projected}");
+            for image in images {
+                let src = image["src"].as_str().unwrap_or_else(|| panic!("{image}"));
+                assert!(src.starts_with("/api/media/") && src.len() == 43);
+                assert_eq!(image["lazy"], true);
+                for absent in ["mime", "width", "height"] {
+                    assert!(image.get(absent).is_none());
+                }
+                let response = get(&app, src).await;
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(response.headers()["content-type"], "image/png");
+                assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+                assert_eq!(response.headers()["cache-control"], "private, no-store");
+                assert_eq!(bytes(response).await, STANDARD.decode(PNG).unwrap());
             }
-            let response = get(&app, src).await;
-            assert_eq!(response.status(), StatusCode::OK);
-            assert_eq!(response.headers()["content-type"], "image/png");
-            assert_eq!(response.headers()["x-content-type-options"], "nosniff");
-            assert_eq!(response.headers()["cache-control"], "private, no-store");
-            assert_eq!(bytes(response).await, STANDARD.decode(PNG).unwrap());
         }
     }
     fixture.unchanged();
@@ -324,7 +314,7 @@ async fn warm_file_get_reauthorizes_native_scope_without_an_intervening_history_
 }
 
 #[tokio::test]
-async fn unsafe_native_outside_symlink_and_remote_references_never_gain_tokens() {
+async fn selected_local_images_and_remote_urls_are_projected_with_or_without_roots() {
     let mut fixture = Fixture::new();
     fixture.put(
         "claude",
@@ -354,30 +344,36 @@ async fn unsafe_native_outside_symlink_and_remote_references_never_gain_tokens()
         fixture.put("claude", "symlink", vec![image("linked.png")]);
     }
     let app = fixture.app(true);
-    let denied = [
-        "outside",
-        "native",
+    let readable = [
+        ("outside", GREEN),
+        ("native", GREEN),
         #[cfg(unix)]
-        "symlink",
+        ("symlink", PNG),
     ];
-    for sid in denied {
+    // Python media.register_path resolves a selected image reference through
+    // symlinks and checks the actual file; configured roots do not narrow it.
+    for (sid, expected) in readable {
         let projected = messages(&app, sid, "").await;
         let images = media(&projected);
         assert_eq!(images.len(), 1);
-        no_src_error(images[0]);
-        assert_eq!(images[0]["error"]["status"], 403, "{projected}");
+        let src = images[0]["src"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{projected}"));
+        assert!(src.starts_with("/api/media/"));
+        assert!(images[0].get("error").is_none(), "{projected}");
+        let response = get(&app, src).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "image/png");
+        assert_eq!(bytes(response).await, STANDARD.decode(expected).unwrap());
+        if sid != "symlink" {
+            assert!(projected.to_string().contains("text remains"));
+        }
     }
-    let response = get(
-        &app,
-        &format!("/api/messages/{}", uid(&app, "remote").await),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    assert!(
-        !String::from_utf8(bytes(response).await)
-            .unwrap()
-            .contains("media.example.invalid")
-    );
+    let projected = messages(&app, "remote", "").await;
+    let images = media(&projected);
+    assert_eq!(images.len(), 1, "{projected}");
+    assert_eq!(images[0]["src"], "https://media.example.invalid/never.png");
+    assert_eq!(images[0]["external"], true);
     fixture.unchanged();
 }
 
@@ -420,7 +416,7 @@ async fn selected_branch_and_agent_have_separate_media_and_retired_branch_tokens
 }
 
 #[tokio::test]
-async fn basename_ambiguity_uses_the_complete_view_not_only_the_display_window() {
+async fn a_missing_cwd_basename_stays_text_even_when_other_directories_share_the_name() {
     let mut fixture = Fixture::new();
     let cwd = fixture.file("");
     let mut rows = vec![json!({"type":"session_meta","payload":{"id":"window","cwd":cwd}})];
@@ -428,8 +424,8 @@ async fn basename_ambiguity_uses_the_complete_view_not_only_the_display_window()
         let content = match index {
             150 => "a/same.png".to_owned(),
             151 => "b/same.png".to_owned(),
-            // A bare name in prose is text (Python `_RAW_PATH`); the
-            // Markdown spelling is the candidate whose basename is ambiguous.
+            // A bare name in prose is text (Python `_RAW_PATH`); the Markdown
+            // spelling resolves only against cwd, where this file is absent.
             699 => "![shot](same.png)".to_owned(),
             _ => format!("plain synthetic row {index}"),
         };
@@ -439,19 +435,18 @@ async fn basename_ambiguity_uses_the_complete_view_not_only_the_display_window()
     let app = fixture.app(true);
     let projected = messages(&app, "window", "?window=1").await;
     assert!(projected["partial"].is_object());
-    let images = media(&projected);
-    assert_eq!(images.len(), 1, "{images:?}");
-    no_src_error(images[0]);
-    assert_eq!(images[0]["error"]["status"], 409, "{projected}");
+    assert!(media(&projected).is_empty(), "{projected}");
+    assert!(projected.to_string().contains("![shot](same.png)"));
     fixture.unchanged();
 }
 
 /// Python's `media.register_path` registers nothing for a text reference that
-/// is not an image file: the text stays, no placeholder. Authorization refusals
-/// stay visible, typed native references keep their slot, and a hard-linked
-/// attachment inside the root is an ordinary image.
+/// is not an image file: the text stays, no placeholder. Typed native references
+/// keep their slot, and selected images outside configured roots or reached by
+/// a hard link are ordinary images.
 #[tokio::test]
-async fn text_references_python_would_drop_project_no_placeholder_while_refusals_stay_visible() {
+async fn text_references_python_would_drop_project_no_placeholder_while_referenced_images_are_readable()
+ {
     let mut fixture = Fixture::new();
     fixture.put(
         "codex",
@@ -504,8 +499,14 @@ async fn text_references_python_would_drop_project_no_placeholder_while_refusals
     let projected = messages(&app, "outside", "").await;
     let images = media(&projected);
     assert_eq!(images.len(), 1, "{projected}");
-    no_src_error(images[0]);
-    assert_eq!(images[0]["error"]["code"], "file_outside_roots");
+    let src = images[0]["src"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{projected}"));
+    assert!(images[0].get("error").is_none(), "{projected}");
+    let response = get(&app, src).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "image/png");
+    assert_eq!(bytes(response).await, STANDARD.decode(GREEN).unwrap());
     let projected = messages(&app, "typed-missing", "").await;
     let images = media(&projected);
     assert_eq!(images.len(), 1, "{projected}");

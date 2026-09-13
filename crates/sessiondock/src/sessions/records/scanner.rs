@@ -1,23 +1,20 @@
-//! Private, bounded JSON structure scanner. This is not a media classifier or
+//! Private streaming JSON structure scanner. This is not a media classifier or
 //! a file capability: every span is initially unauthorized ordinary text.
 //!
-//! Input must be limited by the caller to ONE complete JSON record. Success
-//! requires EOF after JSON whitespace; partial JSONL tails are the caller's
-//! responsibility. Offsets are relative to that input, not a native file.
-//! The fixed 8 KiB input/hash buffers never grow with a large string. At most
-//! `physical_bytes + 1` bytes are read (the extra byte distinguishes exact EOF
-//! from oversized input). Resident accounting is a conservative logical AST
-//! weight, including string capacities; it is not an allocator/RSS measurement.
+//! The caller supplies ONE complete JSON record. Success requires EOF after
+//! JSON whitespace; partial JSONL tails are the caller's responsibility. Offsets
+//! are relative to that input, not a native file. The fixed 8 KiB input/hash
+//! buffers never grow with a large string. Resident statistics are a conservative
+//! logical AST weight, including string capacities.
 use indexmap::IndexMap;
 use serde_json::{Number, Value};
 use sha1::{Digest, Sha1};
 use std::io::Read;
 
 const BUFFER: usize = 8192;
-const HARD_DEPTH: usize = 128;
 // Covers spare vector/ordered-map slots (including key headers and cached
-// hashes), independently of node/key count limits. KEY_WEIGHT pays hash-table
-// bookkeeping; owned key/text buffers additionally charge actual capacity.
+// hashes). KEY_WEIGHT pays hash-table bookkeeping; owned key/text buffers
+// additionally charge actual capacity.
 const NODE_WEIGHT: usize = 2
     * (std::mem::size_of::<Node>() + std::mem::size_of::<String>() + std::mem::size_of::<usize>())
     + 64;
@@ -25,26 +22,19 @@ const KEY_WEIGHT: usize = 96;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Limits {
-    pub physical_bytes: u64,
     pub inline_string_bytes: usize,
-    pub resident_bytes: usize,
-    pub depth: usize,
-    pub nodes: usize,
-    pub keys: usize,
-    pub key_bytes: usize,
-    pub number_bytes: usize,
+}
+impl Limits {
+    pub(super) fn native(inline_string_bytes: usize) -> Self {
+        Self {
+            inline_string_bytes,
+        }
+    }
 }
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            physical_bytes: 256 * 1024 * 1024,
             inline_string_bytes: 64 * 1024,
-            resident_bytes: 2 * 1024 * 1024,
-            depth: 64,
-            nodes: 100_000,
-            keys: 50_000,
-            key_bytes: 16 * 1024,
-            number_bytes: 1024,
         }
     }
 }
@@ -53,17 +43,9 @@ impl Default for Limits {
 pub(crate) enum ErrorKind {
     Syntax,
     Utf8,
-    DuplicateKey,
     Io,
-    PhysicalLimit,
-    ResidentLimit,
-    StringLimit,
-    DepthLimit,
-    NodeLimit,
-    KeyLimit,
-    NumberLimit,
+    Allocation,
     UnmaterializedSpan,
-    InvalidLimits,
 }
 /// Deliberately contains no input snippets, key names, paths or reader errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,14 +139,6 @@ pub(crate) enum Node {
 }
 #[cfg_attr(not(test), allow(dead_code))]
 impl Node {
-    pub(crate) fn has_span(&self) -> bool {
-        match self {
-            Self::String(Text::Span(_)) => true,
-            Self::Array(values) => values.iter().any(Self::has_span),
-            Self::Object(values) => values.values().any(Self::has_span),
-            _ => false,
-        }
-    }
     /// Replace every remaining private span with text the caller reads back
     /// from its own checked source (verified against the span's decoded
     /// length/SHA-1). Ordinary giant text only: image spans were already
@@ -243,16 +217,15 @@ pub(crate) fn scan<R: Read>(reader: R, limits: Limits) -> Result<Document, ScanE
     Ok(Document { root, stats })
 }
 
-/// Strict resident decode using the same grammar, ordering, duplicate-key and
-/// budget checks as `scan`, but building Value containers directly. A private
+/// Strict resident decode using the same grammar, ordering and duplicate-key
+/// behavior as `scan`, but building Value containers directly. A private
 /// span is rejected explicitly, never replaced with a marker/empty value.
 pub(crate) fn scan_value<R: Read>(reader: R, limits: Limits) -> Result<Value, ScanError> {
     scan_into::<_, Value>(reader, limits).map(|(value, _)| value)
 }
 
-// Output construction is the ONLY variable part of parsing. Logical charges
-// deliberately remain based on the conservative Node shape even when Value's
-// representation is lighter; the fast path does not relax input admission.
+// Output construction is the only variable part of parsing. Statistics remain
+// based on the conservative Node shape even when Value is lighter.
 trait Build: Sized {
     type Map: Default;
     fn null() -> Self;
@@ -261,7 +234,6 @@ trait Build: Sized {
     fn text(value: Text) -> Result<Self, ScanError>;
     fn array(values: Vec<Self>) -> Self;
     fn object(values: Self::Map) -> Self;
-    fn contains(values: &Self::Map, key: &str) -> bool;
     fn insert(values: &mut Self::Map, key: String, value: Self);
 }
 impl Build for Node {
@@ -283,9 +255,6 @@ impl Build for Node {
     }
     fn object(values: Self::Map) -> Self {
         Self::Object(values)
-    }
-    fn contains(values: &Self::Map, key: &str) -> bool {
-        values.contains_key(key)
     }
     fn insert(values: &mut Self::Map, key: String, value: Self) {
         values.insert(key, value);
@@ -311,21 +280,12 @@ impl Build for Value {
     fn object(values: Self::Map) -> Self {
         Self::Object(values)
     }
-    fn contains(values: &Self::Map, key: &str) -> bool {
-        values.contains_key(key)
-    }
     fn insert(values: &mut Self::Map, key: String, value: Self) {
         values.insert(key, value);
     }
 }
 
 fn scan_into<R: Read, T: Build>(reader: R, limits: Limits) -> Result<(T, ScanStats), ScanError> {
-    if limits.depth == 0 || limits.depth > HARD_DEPTH || limits.physical_bytes == u64::MAX {
-        return Err(ScanError {
-            kind: ErrorKind::InvalidLimits,
-            offset: 0,
-        });
-    }
     let mut parser = Parser {
         input: Input {
             reader,
@@ -333,25 +293,20 @@ fn scan_into<R: Read, T: Build>(reader: R, limits: Limits) -> Result<(T, ScanSta
             position: 0,
             filled: 0,
             offset: 0,
-            maximum: limits.physical_bytes,
         },
-        budget: Resident {
-            maximum: limits.resident_bytes,
-            used: 0,
-            peak: 0,
-        },
+        resident: Resident { used: 0, peak: 0 },
         stats: ScanStats::default(),
         limits,
     };
     parser.whitespace()?;
-    let root = parser.node::<T>(0)?;
+    let root = parser.node::<T>()?;
     parser.whitespace()?;
     if parser.input.peek()?.is_some() {
         return Err(parser.error(ErrorKind::Syntax));
     }
     parser.stats.physical_bytes = parser.input.offset;
-    parser.stats.resident_bytes = parser.budget.used;
-    parser.stats.peak_resident_bytes = parser.budget.peak;
+    parser.stats.resident_bytes = parser.resident.used;
+    parser.stats.peak_resident_bytes = parser.resident.peak;
     Ok((root, parser.stats))
 }
 
@@ -361,14 +316,11 @@ struct Input<R> {
     position: usize,
     filled: usize,
     offset: u64,
-    maximum: u64,
 }
 impl<R: Read> Input<R> {
     fn peek(&mut self) -> Result<Option<u8>, ScanError> {
         if self.position == self.filled {
-            let available = (self.maximum - self.offset)
-                .saturating_add(1)
-                .min(BUFFER as u64) as usize;
+            let available = BUFFER;
             self.filled = loop {
                 match self.reader.read(&mut self.bytes[..available]) {
                     Ok(size) => break size,
@@ -386,12 +338,6 @@ impl<R: Read> Input<R> {
         if self.position == self.filled {
             return Ok(None);
         }
-        if self.offset == self.maximum {
-            return Err(ScanError {
-                kind: ErrorKind::PhysicalLimit,
-                offset: self.offset,
-            });
-        }
         Ok(Some(self.bytes[self.position]))
     }
     fn next(&mut self) -> Result<Option<u8>, ScanError> {
@@ -406,27 +352,20 @@ impl<R: Read> Input<R> {
         self.offset += count as u64;
     }
     fn chunk(&self) -> &[u8] {
-        let count = (self.filled - self.position)
-            .min((self.maximum - self.offset).min(BUFFER as u64) as usize);
-        &self.bytes[self.position..self.position + count]
+        &self.bytes[self.position..self.filled]
     }
 }
 
 struct Resident {
-    maximum: usize,
     used: usize,
     peak: usize,
 }
 impl Resident {
     fn add(&mut self, count: usize, offset: u64) -> Result<(), ScanError> {
-        let next = self
-            .used
-            .checked_add(count)
-            .filter(|&next| next <= self.maximum)
-            .ok_or(ScanError {
-                kind: ErrorKind::ResidentLimit,
-                offset,
-            })?;
+        let next = self.used.checked_add(count).ok_or(ScanError {
+            kind: ErrorKind::Allocation,
+            offset,
+        })?;
         self.used = next;
         self.peak = self.peak.max(next);
         Ok(())
@@ -446,7 +385,7 @@ impl Resident {
             .checked_add(text.len())
             .filter(|&length| length <= limit)
             .ok_or(ScanError {
-                kind: ErrorKind::StringLimit,
+                kind: ErrorKind::Allocation,
                 offset,
             })?;
         if length > string.capacity() {
@@ -460,7 +399,7 @@ impl Resident {
             string
                 .try_reserve_exact(capacity - string.len())
                 .map_err(|_| ScanError {
-                    kind: ErrorKind::ResidentLimit,
+                    kind: ErrorKind::Allocation,
                     offset,
                 })?;
             if string.capacity() > capacity {
@@ -492,26 +431,24 @@ impl StringBuild {
         bytes: &[u8],
         threshold: usize,
         key: bool,
-        budget: &mut Resident,
+        resident: &mut Resident,
         offset: u64,
     ) -> Result<(), ScanError> {
         self.decoded_len += bytes.len() as u64;
         if self.decoded_len > threshold as u64 {
-            if key {
-                return Err(ScanError {
-                    kind: ErrorKind::StringLimit,
-                    offset,
-                });
-            }
+            debug_assert!(
+                !key,
+                "keys use the complete physical input as their threshold"
+            );
             if let Some(inline) = self.inline.take() {
                 // Ordinary keys/small strings never initialize the hash buffer
                 // or compute a digest. A new span first hashes its ENTIRE
                 // previously retained prefix, before releasing that prefix.
-                budget.add(256, offset)?; // Retained decoded-prefix capacity.
+                resident.add(256, offset)?; // Retained decoded-prefix capacity.
                 let mut hash = Box::new(SpanHash::new());
                 hash.feed(inline.as_bytes());
                 self.hash = Some(hash);
-                budget.release(inline.capacity());
+                resident.release(inline.capacity());
             }
         }
         if let Some(inline) = &mut self.inline {
@@ -521,7 +458,7 @@ impl StringBuild {
                 kind: ErrorKind::Utf8,
                 offset,
             })?;
-            budget.append(inline, text, threshold, offset)?;
+            resident.append(inline, text, threshold, offset)?;
         }
         if let Some(hash) = &mut self.hash {
             hash.feed(bytes);
@@ -617,7 +554,7 @@ impl TextHash {
 
 struct Parser<R> {
     input: Input<R>,
-    budget: Resident,
+    resident: Resident,
     stats: ScanStats,
     limits: Limits,
 }
@@ -640,12 +577,9 @@ impl<R: Read> Parser<R> {
         }
         Ok(())
     }
-    fn node<T: Build>(&mut self, depth: usize) -> Result<T, ScanError> {
-        if self.stats.nodes >= self.limits.nodes {
-            return Err(self.error(ErrorKind::NodeLimit));
-        }
+    fn node<T: Build>(&mut self) -> Result<T, ScanError> {
         self.stats.nodes += 1;
-        self.budget.add(NODE_WEIGHT, self.input.offset)?;
+        self.resident.add(NODE_WEIGHT, self.input.offset)?;
         match self.input.peek()? {
             Some(b'n') => {
                 for byte in b"null" {
@@ -667,15 +601,12 @@ impl<R: Read> Parser<R> {
             }
             Some(b'"') => T::text(self.string(false)?),
             Some(b'-' | b'0'..=b'9') => self.number().map(T::number),
-            Some(b'[' | b'{') if depth >= self.limits.depth => {
-                Err(self.error(ErrorKind::DepthLimit))
-            }
-            Some(b'[') => self.array::<T>(depth + 1),
-            Some(b'{') => self.object::<T>(depth + 1),
+            Some(b'[') => self.array::<T>(),
+            Some(b'{') => self.object::<T>(),
             _ => Err(self.error(ErrorKind::Syntax)),
         }
     }
-    fn array<T: Build>(&mut self, depth: usize) -> Result<T, ScanError> {
+    fn array<T: Build>(&mut self) -> Result<T, ScanError> {
         self.expect(b'[')?;
         self.whitespace()?;
         let mut values = Vec::new();
@@ -684,7 +615,7 @@ impl<R: Read> Parser<R> {
             return Ok(T::array(values));
         }
         loop {
-            values.push(self.node::<T>(depth)?);
+            values.push(self.node::<T>()?);
             self.whitespace()?;
             match self.input.next()? {
                 Some(b']') => return Ok(T::array(values)),
@@ -693,7 +624,7 @@ impl<R: Read> Parser<R> {
             }
         }
     }
-    fn object<T: Build>(&mut self, depth: usize) -> Result<T, ScanError> {
+    fn object<T: Build>(&mut self) -> Result<T, ScanError> {
         self.expect(b'{')?;
         self.whitespace()?;
         let mut values = T::Map::default();
@@ -702,23 +633,13 @@ impl<R: Read> Parser<R> {
             return Ok(T::object(values));
         }
         loop {
-            if self.stats.keys >= self.limits.keys {
-                return Err(self.error(ErrorKind::KeyLimit));
-            }
             self.stats.keys += 1;
-            self.budget.add(KEY_WEIGHT, self.input.offset)?;
-            let key_start = self.input.offset;
+            self.resident.add(KEY_WEIGHT, self.input.offset)?;
             let key = self.string(true)?.into_string()?;
-            if T::contains(&values, &key) {
-                return Err(ScanError {
-                    kind: ErrorKind::DuplicateKey,
-                    offset: key_start,
-                });
-            }
             self.whitespace()?;
             self.expect(b':')?;
             self.whitespace()?;
-            let value = self.node::<T>(depth)?;
+            let value = self.node::<T>()?;
             T::insert(&mut values, key, value);
             self.whitespace()?;
             match self.input.next()? {
@@ -732,7 +653,7 @@ impl<R: Read> Parser<R> {
         self.expect(b'"')?;
         let start = self.input.offset;
         let threshold = if key {
-            self.limits.key_bytes
+            usize::MAX
         } else {
             self.limits.inline_string_bytes
         };
@@ -769,7 +690,7 @@ impl<R: Read> Parser<R> {
                         character.encode_utf8(&mut bytes).as_bytes(),
                         threshold,
                         key,
-                        &mut self.budget,
+                        &mut self.resident,
                         self.input.offset,
                     )?;
                 }
@@ -793,7 +714,7 @@ impl<R: Read> Parser<R> {
                             &chunk[..count],
                             threshold,
                             key,
-                            &mut self.budget,
+                            &mut self.resident,
                             self.input.offset,
                         )?;
                         self.input.advance(count);
@@ -824,7 +745,7 @@ impl<R: Read> Parser<R> {
                             &scalar[..width],
                             threshold,
                             key,
-                            &mut self.budget,
+                            &mut self.resident,
                             self.input.offset,
                         )?;
                     }
@@ -863,18 +784,15 @@ impl<R: Read> Parser<R> {
         char::from_u32(scalar).ok_or_else(|| self.error(ErrorKind::Syntax))
     }
     fn number_byte(&mut self, token: &mut String) -> Result<(), ScanError> {
-        if token.len() >= self.limits.number_bytes {
-            return Err(self.error(ErrorKind::NumberLimit));
-        }
         let byte = self
             .input
             .next()?
             .ok_or_else(|| self.error(ErrorKind::Syntax))?;
         let buffer = [byte];
-        self.budget.append(
+        self.resident.append(
             token,
             std::str::from_utf8(&buffer).map_err(|_| self.error(ErrorKind::Syntax))?,
-            self.limits.number_bytes,
+            usize::MAX,
             self.input.offset,
         )
     }
@@ -909,7 +827,7 @@ impl<R: Read> Parser<R> {
             self.digits(&mut token)?;
         }
         let value = serde_json::from_str(&token).map_err(|_| self.error(ErrorKind::Syntax))?;
-        self.budget.release(token.capacity());
+        self.resident.release(token.capacity());
         Ok(value)
     }
 }

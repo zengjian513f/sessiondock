@@ -1,49 +1,33 @@
-# Read-only delivery HTTP contract
+# Delivery HTTP contract
 
-`prepare_app(Config, CancellationToken).await` validates configuration, opens a
-configured existing delivery ledger with fresh-epoch recovery, and builds the
-Web app off the reactor. It returns `PreparedApp { router, delivery }`; callers
-must stop HTTP admission, cancel the token, and await `delivery.shutdown()`.
-The binary does so, including bind failure. If asset loading fails after ledger
-recovery, preparation waits for the writer lock to be released before returning
-the error. Configuration absence keeps the service disabled; missing data is
-never treated as permission to initialize it.
+`prepare_app(Config, CancellationToken).await` opens configured services and
+builds the router. Startup and shutdown wait for delivery work to finish.
+Configuration determines whether the delivery and terminal services are enabled.
 
-`GET /api/session/outbox?uid=...&agent=...` is a committed display projection, not
-a send or acknowledgment operation. UID and agent are bounded; unknown fields,
-duplicate query keys, malformed queries and unknown native views are errors.
-Native scope comes from one validated inventory view, with provenance described
-in [delivery-scope.md](delivery-scope.md). Claude child views use the real parent
-session ID, not their display `sid`. Unknown/short/foreign agents and missing or
-conflicting native IDs never become a successful empty queue. Codex child delivery
-and Grok delivery remain unsupported. An existing supported scope with no visible
-receipts legitimately returns an empty outbox with its actual epoch/revision.
+`GET /api/session/outbox?uid=...&agent=...` returns
+`{outbox, outbox_version}` for the selected native view. Unknown query fields are
+ignored. A valid session with no visible receipts returns an empty outbox with
+its current version; missing sessions and actual service errors remain errors.
 
-The response retains `{outbox, outbox_version}` and uses the Engine's conservative
-state mapping. Unsupported media returns an explicit error; corruption/freeze
-returns 503 without substituting an empty queue or exposing stored prompt data
-in an error. API responses are same-origin/loopback, JSON and `Cache-Control:
-no-store`. Neither host credentials nor arbitrary native metadata is serialized.
+`POST /api/session/send` submits prompt text and opaque media metadata under a
+request ID. The executor uses the session's terminal association and persists
+its receipt, writes input, then checks the native queue or transcript using the
+provider's Python confirmation rules. Retrying an existing ID returns its receipt;
+changing that ID's payload is a conflict. Uploaded attachment paths are already
+part of the text.
 
-`outbox_read` is enabled only after the configured service opens. `outbox` remains
-false: legacy send/retry/discard/background-reconciliation controls are not
-enabled by read access. No HTTP command, internal persistence callback, executor,
-strong native acknowledgment, receipt/log diagnostic route or queue migration
-endpoint is added. Existing unimplemented mutations still return 501.
+Discard, retry and other supported mutations are described in
+[delivery-executor.md](delivery-executor.md) and
+[delivery-codex-executor.md](delivery-codex-executor.md). The terminal protocol
+retains its actual input and framing limits. Ordinary request admission queues
+behind the service worker. Growing outboxes are returned without a separate
+response-size quota.
 
-The service admits eight requests/responses by default. The HTTP Body holds its
-`ResponseGuard` while unpolled, while delivering 32 KiB chunks, and until EOF or
-Drop; the ninth retained response returns 503. Serialization has a 16 MiB default
-budget inside the single blocking worker; oversized responses fail before HTTP
-success, rather than returning a truncated queue. Budgeting covers application
-response storage, not every transport/OS buffer. Client cancellation does not
-abort an already started blocking read or release its ownership early. Shutdown
-waits for that work and releases the ledger lock even if a caller still retains
-an already computed response Body.
+Responses are JSON with `Cache-Control: no-store`. Authentication, same-origin
+checks and native scope remain in their respective transport layers. Storage
+errors are reported for the affected operation and never fabricated as successful
+CLI acceptance.
 
-`cargo test -p sessiondock --test delivery_http --locked` validates synthetic
-Claude main/child and Codex receipts, identity failures, default disablement,
-startup failures, response admission, errors, unchanged native bytes and unchanged
-ledger bytes after open, epoch recovery, and lock cleanup. No test invokes a
-model CLI or writes production data. This is not reliable-send acceptance or
-Windows/macOS runtime validation.
+Synthetic HTTP and browser suites cover sends, retry identity, attachments,
+parent/child scopes, confirmation, outbox projection, cancellation and shutdown.
+The migration ledger records the consolidated validation and deployment result.

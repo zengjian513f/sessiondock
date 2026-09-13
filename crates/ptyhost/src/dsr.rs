@@ -14,7 +14,9 @@
 pub enum Piece {
     Data(Vec<u8>),
     /// `ESC[6n`（dec=false）或 `ESC[?6n`（dec=true）：报告光标位置。
-    CursorReport { dec: bool },
+    CursorReport {
+        dec: bool,
+    },
     /// `ESC[5n`：报告设备状态，固定回 `ESC[0n`。
     DeviceOk,
 }
@@ -148,7 +150,10 @@ mod tests {
     #[test]
     fn a_lone_cursor_query_is_lifted_out_of_the_stream() {
         let mut scanner = Scanner::default();
-        assert_eq!(scanner.scan(b"\x1b[6n"), vec![Piece::CursorReport { dec: false }]);
+        assert_eq!(
+            scanner.scan(b"\x1b[6n"),
+            vec![Piece::CursorReport { dec: false }]
+        );
     }
 
     #[test]
@@ -156,7 +161,11 @@ mod tests {
         let mut scanner = Scanner::default();
         assert_eq!(
             scanner.scan(b"before\x1b[6nafter"),
-            vec![data(b"before"), Piece::CursorReport { dec: false }, data(b"after")]
+            vec![
+                data(b"before"),
+                Piece::CursorReport { dec: false },
+                data(b"after")
+            ]
         );
     }
 
@@ -166,7 +175,10 @@ mod tests {
         // conhost 通常单独发这 4 个字节，但不能指望它永远如此
         assert_eq!(scanner.scan(b"x\x1b"), vec![data(b"x")]);
         assert_eq!(scanner.scan(b"[6"), vec![]);
-        assert_eq!(scanner.scan(b"ny"), vec![Piece::CursorReport { dec: false }, data(b"y")]);
+        assert_eq!(
+            scanner.scan(b"ny"),
+            vec![Piece::CursorReport { dec: false }, data(b"y")]
+        );
     }
 
     #[test]
@@ -186,15 +198,27 @@ mod tests {
     #[test]
     fn the_dec_variant_and_device_status_are_recognised() {
         let mut scanner = Scanner::default();
-        assert_eq!(scanner.scan(b"\x1b[?6n"), vec![Piece::CursorReport { dec: true }]);
+        assert_eq!(
+            scanner.scan(b"\x1b[?6n"),
+            vec![Piece::CursorReport { dec: true }]
+        );
         assert_eq!(scanner.scan(b"\x1b[5n"), vec![Piece::DeviceOk]);
     }
 
     #[test]
     fn replies_are_one_based() {
-        assert_eq!(reply(&Piece::CursorReport { dec: false }, 0, 0).unwrap(), b"\x1b[1;1R");
-        assert_eq!(reply(&Piece::CursorReport { dec: false }, 11, 16).unwrap(), b"\x1b[17;12R");
-        assert_eq!(reply(&Piece::CursorReport { dec: true }, 4, 2).unwrap(), b"\x1b[?3;5;1R");
+        assert_eq!(
+            reply(&Piece::CursorReport { dec: false }, 0, 0).unwrap(),
+            b"\x1b[1;1R"
+        );
+        assert_eq!(
+            reply(&Piece::CursorReport { dec: false }, 11, 16).unwrap(),
+            b"\x1b[17;12R"
+        );
+        assert_eq!(
+            reply(&Piece::CursorReport { dec: true }, 4, 2).unwrap(),
+            b"\x1b[?3;5;1R"
+        );
         assert_eq!(reply(&Piece::DeviceOk, 9, 9).unwrap(), b"\x1b[0n");
         assert!(reply(&data(b"x"), 0, 0).is_none());
     }
@@ -203,6 +227,9 @@ mod tests {
     fn an_escape_that_is_not_a_csi_is_returned_as_is() {
         let mut scanner = Scanner::default();
         assert_eq!(scanner.scan(b"\x1bOA"), vec![data(b"\x1bOA")]);
-        assert_eq!(scanner.scan(b"\x1b\x1b[6n"), vec![data(b"\x1b"), Piece::CursorReport { dec: false }]);
+        assert_eq!(
+            scanner.scan(b"\x1b\x1b[6n"),
+            vec![data(b"\x1b"), Piece::CursorReport { dec: false }]
+        );
     }
 }

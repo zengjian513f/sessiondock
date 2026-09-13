@@ -3,7 +3,7 @@
 use super::records::string_reader::JsonStringReader;
 use super::{Candidate, SessionError, SessionStore, native_input::CheckedNative};
 use crate::media::NativeSpan;
-use crate::native_replay::{ReplayReader, WorkBudget};
+use crate::native_replay::ReplayReader;
 use std::io::{self, Read};
 
 pub(crate) struct AuthorizedNativeReader {
@@ -11,36 +11,25 @@ pub(crate) struct AuthorizedNativeReader {
 }
 enum NativeReader {
     Direct(Box<JsonStringReader<CheckedNative>>),
-    Nested(Box<ReplayReader<CheckedNative>>, WorkBudget),
+    Nested(Box<ReplayReader<CheckedNative>>),
 }
 impl Read for AuthorizedNativeReader {
     fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
         match &mut self.reader {
             NativeReader::Direct(reader) => reader.read(output),
-            NativeReader::Nested(reader, _) => reader.read(output),
+            NativeReader::Nested(reader) => reader.read(output),
         }
     }
 }
 impl AuthorizedNativeReader {
-    pub(crate) fn failure(&self) -> Option<SessionError> {
-        match &self.reader {
-            NativeReader::Nested(_, budget) if budget.exhausted() => {
-                Some(SessionError::new(413, "原生嵌套图片超过共享读取预算"))
-            }
-            _ => None,
-        }
-    }
     pub(crate) fn finish(self) -> Result<(), SessionError> {
         let reader = match self.reader {
             NativeReader::Direct(reader) => reader
                 .finish()
                 .map_err(|_| SessionError::new(409, "原生图片内容或范围已变化，请重新加载会话"))?,
-            NativeReader::Nested(reader, budget) => reader.finish().map_err(|_| {
-                SessionError::new(
-                    if budget.exhausted() { 413 } else { 409 },
-                    "原生嵌套图片的外层来源或读取预算未通过校验",
-                )
-            })?,
+            NativeReader::Nested(reader) => reader
+                .finish()
+                .map_err(|_| SessionError::new(409, "原生嵌套图片的外层来源未通过校验"))?,
         };
         reader.finish()
     }
@@ -82,14 +71,9 @@ pub(super) fn authorized_reader(
             span.end,
         )?;
         let reader = if let Some(plan) = &span.plan {
-            let budget = WorkBudget::default();
-            let replay = ReplayReader::new(reader, plan, budget.clone()).map_err(|_| {
-                SessionError::new(
-                    if budget.exhausted() { 413 } else { 409 },
-                    "原生嵌套图片范围无效",
-                )
-            })?;
-            NativeReader::Nested(Box::new(replay), budget)
+            let replay = ReplayReader::new(reader, plan)
+                .map_err(|_| SessionError::new(409, "原生嵌套图片范围无效"))?;
+            NativeReader::Nested(Box::new(replay))
         } else {
             let direct = JsonStringReader::new(
                 reader,

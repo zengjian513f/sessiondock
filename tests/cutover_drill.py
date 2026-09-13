@@ -172,7 +172,7 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(ptyhost), "host_dir": str(host),
-            "cwd_roots": [str(work)],
+
             "adapters": [{"id": "synthetic-shell-v1", "source": "codex",
                           "executable": str(Path("/bin/sh").resolve()),
                           "args": ["-c", "sleep 600"],

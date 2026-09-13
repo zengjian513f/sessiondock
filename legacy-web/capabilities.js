@@ -43,10 +43,3 @@ globalThis.AgentHubCapabilities = (() => {
   };
   return Object.freeze({config, allows, namespace, declared: !!meta, stored});
 })();
-
-// The Rust backend deliberately uses a bounded, non-backtracking regex engine.
-// Explain its dialect where the existing search option is selected.
-if (AgentHubCapabilities.config.backend === 'rust') {
-  const regexOption = document.querySelector('button[data-o="regex"]');
-  if (regexOption) regexOption.title = 'Rust regex：支持 Unicode、分组和重复；不支持前后查找、反向引用；Unicode 大小写与 \\w 语义可能与 Python 不同';
-}

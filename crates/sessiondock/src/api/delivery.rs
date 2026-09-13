@@ -1,4 +1,4 @@
-//! Read-only projection of an explicitly opened AgentHub-owned ledger, plus
+//! Read-only projection of an explicitly opened SessionDock-owned ledger, plus
 //! (batch 31) the four Python send routes driven by the reliable-send executor
 //! (Claude main sessions; Codex main sessions since batch 32).
 //! Native scope is resolved before querying; acknowledgment input never comes
@@ -6,7 +6,7 @@
 use std::convert::Infallible;
 
 use axum::{
-    Json,
+    Extension, Json,
     body::{Body, Bytes},
     extract::{Query, State, rejection::JsonRejection, rejection::QueryRejection},
     http::{StatusCode, header},
@@ -19,7 +19,6 @@ use crate::{
     delivery::{
         claude::Scope,
         driver::PageLease,
-        engine,
         executor::{DeliveryExecutor, Reply, SendRequest},
         service,
     },
@@ -27,44 +26,13 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
-pub struct OutboxQuery {
-    uid: String,
-    agent: String,
-    /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
-    #[allow(dead_code)]
-    debug_run: String,
-}
-
 impl From<service::Error> for ApiError {
     fn from(error: service::Error) -> Self {
         let (status, code, message) = match error {
-            service::Error::Busy => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "delivery_busy",
-                "发送账本读取繁忙，请稍后重试",
-            ),
             service::Error::Closed => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "delivery_closed",
                 "发送账本读取服务已关闭",
-            ),
-            service::Error::ResponseLimit => (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "delivery_response_limit",
-                "发送账本响应超过读取预算",
-            ),
-            service::Error::Engine(engine::Error::UnsupportedAgent) => (
-                StatusCode::NOT_IMPLEMENTED,
-                "delivery_agent_unsupported",
-                "此来源尚不支持子代理发送账本",
-            ),
-            service::Error::Engine(engine::Error::UnsupportedMedia) => (
-                StatusCode::NOT_IMPLEMENTED,
-                "delivery_media_unsupported",
-                "发送账本包含尚未迁移的媒体引用",
             ),
             service::Error::Engine(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -83,7 +51,7 @@ impl From<service::Error> for ApiError {
 
 pub async fn outbox(
     State(state): State<AppState>,
-    query: Result<Query<OutboxQuery>, QueryRejection>,
+    query: Result<Query<Vec<(String, String)>>, QueryRejection>,
 ) -> Result<Response, ApiError> {
     let service = state.delivery.as_ref().ok_or_else(|| {
         ApiError::new(
@@ -99,25 +67,37 @@ pub async fn outbox(
             "需要有效的会话 UID 和完整子代理 ID",
         )
     })?;
-    if query.uid.is_empty() || query.uid.len() > 256 || query.agent.len() > 256 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_outbox_query",
-            "发送账本查询标识无效",
-        ));
-    }
     if state.shutdown.is_cancelled() {
         return Err(service::Error::Closed.into());
     }
-    let uid = query.uid;
-    let agent = query.agent;
-    let native = state
+    // Python uses parse_qs(...).get("uid", [""])[0] and ignores every other
+    // query field, including the legacy agent/debug selectors.
+    let uid = query
+        .into_iter()
+        .find_map(|(key, value)| (key == "uid").then_some(value))
+        .unwrap_or_default();
+    let native = match state
         .reader
         .run({
-            let (uid, agent) = (uid.clone(), agent.clone());
-            move |store| store.native_scope(&uid, &agent)
+            let uid = uid.clone();
+            move |store| store.native_scope(&uid, "")
         })
-        .await?;
+        .await
+    {
+        Ok(native) => native,
+        Err(error)
+            if matches!(
+                error.status,
+                StatusCode::BAD_REQUEST
+                    | StatusCode::NOT_FOUND
+                    | StatusCode::CONFLICT
+                    | StatusCode::NOT_IMPLEMENTED
+            ) =>
+        {
+            return Ok(empty_outbox());
+        }
+        Err(error) => return Err(error),
+    };
     let encoded = match native.source.as_str() {
         "codex" => service.codex_outbox(native.uid, native.agent_id).await?,
         "claude" => {
@@ -130,21 +110,24 @@ pub async fn outbox(
                 .await?
         }
         _ => {
-            return Err(ApiError::new(
-                StatusCode::NOT_IMPLEMENTED,
-                "delivery_source_unsupported",
-                "此来源尚未实现发送账本",
-            ));
+            return Ok(empty_outbox());
         }
     };
     Ok(body(encoded))
 }
 
+fn empty_outbox() -> Response {
+    Json(json!({
+        "outbox": [],
+        "outbox_version": {"epoch": "none", "revision": 0},
+    }))
+    .into_response()
+}
+
 fn body(encoded: service::EncodedJson) -> Response {
-    let (bytes, guard) = encoded.into_parts();
+    let bytes = encoded.into_bytes();
     let length = bytes.len();
     let stream = async_stream::stream! {
-        let _guard = guard;
         let mut bytes = Bytes::from(bytes);
         while !bytes.is_empty() {
             let size = bytes.len().min(32 * 1024);
@@ -194,15 +177,11 @@ impl LeaseBody {
         if self.token.is_empty() || self.page.is_empty() || self.instance_id.is_empty() {
             return None;
         }
-        if self.token.len() != 64
-            || self.page.len() > 128
-            || self.instance_id.len() > 128
-            || self.launch_id.len() > 128
-        {
+        if self.token.len() != 64 {
             return None;
         }
         Some(PageLease {
-            page: self.page,
+            page: self.page.chars().take(128).collect(),
             token: self.token,
             instance_id: self.instance_id,
             launch_id: (!self.launch_id.is_empty()).then_some(self.launch_id),
@@ -212,19 +191,183 @@ impl LeaseBody {
 
 /// Python `_queue_message` body. Unknown fields (`activity`, `cursor`,
 /// `page_id`, diagnostics) are accepted and ignored as in Python; `media` is
-/// accepted but rejected explicitly because uploaded attachments are not
-/// resolvable in this backend yet.
+/// accepted and retained as opaque outbox preview metadata. Uploaded paths are
+/// already embedded in `text` by the composer, exactly as in Python.
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct SendBody {
+    #[serde(deserialize_with = "python_request_id")]
     uid: String,
+    #[serde(deserialize_with = "python_request_id")]
+    agent: String,
+    #[serde(deserialize_with = "python_request_id")]
     name: String,
+    #[serde(deserialize_with = "python_request_id")]
     text: String,
     media: Value,
+    #[serde(deserialize_with = "python_request_id")]
     request_id: String,
+    #[serde(deserialize_with = "python_request_id")]
     overwrite_draft: String,
     lease: LeaseBody,
+    #[serde(deserialize_with = "python_request_id")]
     _build: String,
+}
+
+/// Python send/retry/discard use `str(value or "")`. Keep JSON raw here so
+/// integer precision and object insertion order survive only this conversion;
+/// other native JSON parsers keep their existing number/ordering behavior.
+fn python_request_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let raw = <Box<serde_json::value::RawValue>>::deserialize(deserializer)?;
+    python_id_value(raw.get(), false).map_err(serde::de::Error::custom)
+}
+
+pub(crate) fn python_id_value(raw: &str, nested: bool) -> serde_json::Result<String> {
+    let raw = raw.trim();
+    Ok(match raw.as_bytes()[0] {
+        b'n' => if nested { "None" } else { "" }.into(),
+        b'f' => if nested { "False" } else { "" }.into(),
+        b't' => "True".into(),
+        b'"' => {
+            let value: String = serde_json::from_str(raw)?;
+            if nested {
+                python_string_repr(&value)
+            } else {
+                value
+            }
+        }
+        b'[' => {
+            let items: Vec<Box<serde_json::value::RawValue>> = serde_json::from_str(raw)?;
+            if items.is_empty() && !nested {
+                String::new()
+            } else {
+                let items = items
+                    .iter()
+                    .map(|item| python_id_value(item.get(), true))
+                    .collect::<serde_json::Result<Vec<_>>>()?;
+                format!("[{}]", items.join(", "))
+            }
+        }
+        b'{' => {
+            struct Object;
+            impl<'de> serde::de::Visitor<'de> for Object {
+                type Value = Vec<(String, String)>;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a JSON object")
+                }
+                fn visit_map<M: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: M,
+                ) -> Result<Self::Value, M::Error> {
+                    let mut entries = Vec::new();
+                    let mut positions = std::collections::HashMap::<String, usize>::new();
+                    while let Some((key, value)) =
+                        map.next_entry::<String, Box<serde_json::value::RawValue>>()?
+                    {
+                        let value =
+                            python_id_value(value.get(), true).map_err(serde::de::Error::custom)?;
+                        if let Some(index) = positions.get(&key) {
+                            entries[*index] = (key, value);
+                        } else {
+                            positions.insert(key.clone(), entries.len());
+                            entries.push((key, value));
+                        }
+                    }
+                    Ok(entries)
+                }
+            }
+            let entries = serde::Deserializer::deserialize_map(
+                &mut serde_json::Deserializer::from_str(raw),
+                Object,
+            )?;
+            if entries.is_empty() && !nested {
+                String::new()
+            } else {
+                format!(
+                    "{{{}}}",
+                    entries
+                        .iter()
+                        .map(|(key, value)| format!("{}: {value}", python_string_repr(key)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        _ => {
+            // JSON's integer spelling is already Python's decimal representation,
+            // except -0. Floating point uses Python's fixed/scientific threshold.
+            if !raw.contains(['.', 'e', 'E']) {
+                if raw == "0" || raw == "-0" {
+                    if nested { "0" } else { "" }.into()
+                } else {
+                    raw.into()
+                }
+            } else {
+                let number: f64 = raw
+                    .parse()
+                    .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+                if number == 0.0 && !nested {
+                    String::new()
+                } else if !number.is_finite() {
+                    number.to_string()
+                } else {
+                    let scientific = format!("{number:e}");
+                    let (mantissa, exponent) =
+                        scientific.split_once('e').expect("finite float exponent");
+                    let exponent: i32 = exponent.parse().expect("formatted exponent");
+                    if (-4..16).contains(&exponent) {
+                        let mut text = number.to_string();
+                        if !text.contains('.') {
+                            text.push_str(".0");
+                        }
+                        text
+                    } else {
+                        format!("{mantissa}e{exponent:+03}")
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn python_string_repr(value: &str) -> String {
+    use std::{fmt::Write, sync::OnceLock};
+    static NON_PRINTABLE: OnceLock<regex::Regex> = OnceLock::new();
+    let non_printable = NON_PRINTABLE.get_or_init(|| regex::Regex::new(r"[\p{C}\p{Z}]").unwrap());
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut result = String::new();
+    result.push(quote);
+    for ch in value.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            ch if ch == quote => {
+                result.push('\\');
+                result.push(ch);
+            }
+            ch if ch != ' ' && non_printable.is_match(ch.encode_utf8(&mut [0; 4])) => {
+                let number = ch as u32;
+                if number <= 0xff {
+                    write!(result, "\\x{number:02x}").unwrap();
+                } else if number <= 0xffff {
+                    write!(result, "\\u{number:04x}").unwrap();
+                } else {
+                    write!(result, "\\U{number:08x}").unwrap();
+                }
+            }
+            ch => result.push(ch),
+        }
+    }
+    result.push(quote);
+    result
 }
 
 fn bad_body(error: JsonRejection, what: &str) -> ApiError {
@@ -247,10 +390,10 @@ fn reply(reply: Reply) -> Response {
         .into_response()
 }
 
-fn stale_build(state: &AppState, build: &str) -> Option<Response> {
+fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
     // Python rejects text writes from a tab that outlived a deployment before
     // touching the terminal; old clients surface the error and keep their text.
-    (build != state.assets.build).then(|| {
+    (!hub && build != state.assets.build).then(|| {
         (
             StatusCode::CONFLICT,
             [(header::CACHE_CONTROL, "no-store")],
@@ -276,41 +419,42 @@ fn shutting_down(state: &AppState) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn bounded(uid: &str, name: &str, id: &str) -> Result<(), ApiError> {
-    if uid.is_empty() || uid.len() > 256 || name.len() > 128 || id.len() > 128 {
-        return Err(ApiError::new(
+fn python_media_list(value: Value) -> Result<Vec<Value>, ApiError> {
+    match value {
+        Value::Null | Value::Bool(false) => Ok(Vec::new()),
+        Value::Array(items) => Ok(items),
+        Value::String(text) if text.is_empty() => Ok(Vec::new()),
+        Value::String(text) => Ok(text.chars().map(|ch| Value::String(ch.into())).collect()),
+        Value::Object(entries) if entries.is_empty() => Ok(Vec::new()),
+        Value::Object(entries) => Ok(entries
+            .into_iter()
+            .map(|(key, _)| Value::String(key))
+            .collect()),
+        Value::Number(number) if number.as_f64() == Some(0.0) => Ok(Vec::new()),
+        _ => Err(ApiError::new(
             StatusCode::BAD_REQUEST,
-            "invalid_send",
-            "会话 UID、终端名或消息 ID 无效",
-        ));
+            "bad_body",
+            "bad body",
+        )),
     }
-    Ok(())
 }
 
 pub async fn send(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<SendBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let executor = executor(&state)?;
     let Json(body) = body.map_err(|error| bad_body(error, "发送"))?;
-    if let Some(response) = stale_build(&state, &body._build) {
+    if let Some(response) = stale_build(&state, &body._build, hub.is_some()) {
         return Ok(response);
     }
-    bounded(&body.uid, &body.name, &body.request_id)?;
-    if body.media.as_array().is_some_and(|media| !media.is_empty())
-        || (!body.media.is_null() && !body.media.is_array())
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "delivery_media_unsupported",
-            "此后端尚不能解析上传附件；请去掉附件后再发送",
-        ));
-    }
+    let media = python_media_list(body.media)?;
     if body.text.len() > 1024 * 1024 {
         return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "delivery_text_too_large",
-            "消息正文超过 256 KiB",
+            "消息正文超过 1 MiB",
         ));
     }
     shutting_down(&state)?;
@@ -318,8 +462,10 @@ pub async fn send(
         executor
             .send(SendRequest {
                 uid: body.uid,
+                agent: body.agent,
                 name: body.name,
                 text: body.text,
+                media,
                 request_id: body.request_id,
                 overwrite_draft: body.overwrite_draft,
                 page_lease: body.lease.page_lease(),
@@ -331,7 +477,9 @@ pub async fn send(
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct DraftStatusBody {
+    #[serde(deserialize_with = "python_request_id")]
     uid: String,
+    #[serde(deserialize_with = "python_request_id")]
     name: String,
     lease: LeaseBody,
 }
@@ -342,7 +490,6 @@ pub async fn draft_status(
 ) -> Result<Response, ApiError> {
     let executor = executor(&state)?;
     let Json(body) = body.map_err(|error| bad_body(error, "草稿检测"))?;
-    bounded(&body.uid, &body.name, "")?;
     shutting_down(&state)?;
     Ok(reply(
         executor
@@ -354,23 +501,27 @@ pub async fn draft_status(
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct RetryBody {
+    #[serde(deserialize_with = "python_request_id")]
     uid: String,
+    #[serde(deserialize_with = "python_request_id")]
     id: String,
+    #[serde(deserialize_with = "python_request_id")]
     overwrite_draft: String,
     lease: LeaseBody,
+    #[serde(deserialize_with = "python_request_id")]
     _build: String,
 }
 
 pub async fn retry(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<RetryBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let executor = executor(&state)?;
     let Json(body) = body.map_err(|error| bad_body(error, "重试"))?;
-    if let Some(response) = stale_build(&state, &body._build) {
+    if let Some(response) = stale_build(&state, &body._build, hub.is_some()) {
         return Ok(response);
     }
-    bounded(&body.uid, "", &body.id)?;
     shutting_down(&state)?;
     Ok(reply(
         executor
@@ -387,7 +538,9 @@ pub async fn retry(
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct DiscardBody {
+    #[serde(deserialize_with = "python_request_id")]
     uid: String,
+    #[serde(deserialize_with = "python_request_id")]
     id: String,
 }
 
@@ -397,7 +550,6 @@ pub async fn discard(
 ) -> Result<Response, ApiError> {
     let executor = executor(&state)?;
     let Json(body) = body.map_err(|error| bad_body(error, "移除"))?;
-    bounded(&body.uid, "", &body.id)?;
     shutting_down(&state)?;
     Ok(reply(executor.discard(&body.uid, &body.id).await))
 }

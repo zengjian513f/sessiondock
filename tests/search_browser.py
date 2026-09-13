@@ -111,12 +111,11 @@ def main():
                 expect(page.locator("#msgs")).to_contain_text("Needle Cat cat")
                 expect(page.locator("#msgs")).not_to_contain_text("DISCARDED_SEARCH_ONLY")
 
-                # Browser JS accepts lookahead syntax; Rust intentionally does
-                # not, so a real server-side 400 explanation must be visible.
+                # Python-compatible lookahead is accepted by the server.
                 search("(?=cat)")
-                expect(page.locator("#stat")).to_contain_text("lookaround")
-                expect(page.locator("#stat")).to_have_class("err")
-                assert searches[-1][1] == 400
+                expect(page.locator("#stat")).to_contain_text("全文命中")
+                expect(page.locator("#stat")).not_to_have_class("err")
+                assert searches[-1][1] == 200
                 expect(page.locator("#a-term")).to_be_visible()
                 search("cat")
                 hits(2)

@@ -63,7 +63,6 @@ impl Fixture {
             schema: 1,
             host_binary: temp.path().join("bin/host"),
             host_dir: temp.path().join("host"),
-            cwd_roots: vec![temp.path().join("work")],
             adapters: vec![launcher::Adapter {
                 id: "shell-v1".into(),
                 source: Source::Codex,
@@ -348,6 +347,7 @@ async fn cancel_is_durable_before_effect_and_dropped_response_never_loses_work()
             record.record_id().into(),
             record.instance_id().into(),
         ))
+        .await
         .unwrap();
     peer.entered.notified().await;
     let raw: Value =
@@ -456,7 +456,7 @@ async fn starting_and_cancel_crash_windows_only_reconcile_never_respawn_or_rekil
 }
 
 #[tokio::test]
-async fn queue_full_and_shutdown_keep_started_work_owned_until_complete() {
+async fn queued_work_waits_and_shutdown_keeps_started_work_owned_until_complete() {
     let (_gate, f) = fixture().await;
     let record = f.seed("request-queue", State::Running);
     let peer = Peer::new(&f, &record).await;
@@ -470,20 +470,24 @@ async fn queue_full_and_shutdown_keep_started_work_owned_until_complete() {
     );
     let first = service
         .admit(Command::Get(record.record_id().into()))
+        .await
         .unwrap();
     peer.entered.notified().await;
     let queued = service
         .admit(Command::Get(record.record_id().into()))
+        .await
         .unwrap();
-    assert!(matches!(
-        service.admit(Command::Get(record.record_id().into())),
-        Err(Error::Busy)
-    ));
+    let waiting_service = service.clone();
+    let record_id = record.record_id().to_owned();
+    let waiting = tokio::spawn(async move { waiting_service.admit(Command::Get(record_id)).await });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
     drop(first);
     let child = service.clone();
     let shutdown = tokio::spawn(async move { child.shutdown().await });
     peer.release.notify_one();
     shutdown.await.unwrap().unwrap();
+    assert!(matches!(waiting.await.unwrap(), Err(Error::Closed)));
     assert!(matches!(queued.await.unwrap().answer, Err(Error::Closed)));
     assert_eq!(peer.kills.load(Ordering::SeqCst), 0);
     drop(LifecycleStore::open(&f.ledger).unwrap());
@@ -538,7 +542,6 @@ async fn cancel_replay_retries_local_retirement_after_busy_without_retrying_kill
         TerminalService::with_limits(
             f.config.host_dir.clone(),
             crate::terminal::BridgeLimits {
-                max_operations: 1,
                 ..Default::default()
             },
         )
@@ -565,15 +568,15 @@ async fn cancel_replay_retries_local_retirement_after_busy_without_retrying_kill
         })
     };
     peer.entered.notified().await;
-    assert!(matches!(
-        service
-            .cancel(record.record_id().into(), record.instance_id().into())
-            .await,
-        Err(Error::RetirementFailed)
-    ));
+    let first = service
+        .cancel(record.record_id().into(), record.instance_id().into())
+        .await
+        .unwrap();
+    assert_eq!(first.state(), State::Uncertain);
+    assert!(first.cancel_requested());
     assert_eq!(peer.kills.load(Ordering::SeqCst), 0);
     peer.release.notify_one();
-    claim.await.unwrap().unwrap();
+    assert!(claim.await.unwrap().is_err());
     let cancelled = service
         .cancel(record.record_id().into(), record.instance_id().into())
         .await
@@ -605,18 +608,16 @@ async fn slow_blocking_work_keeps_capacity_and_store_lock_after_http_response_dr
     *BLOCKING_PAUSE.lock().unwrap() = Some(pause.clone());
     let response = service
         .admit(Command::Get(record.record_id().into()))
+        .await
         .unwrap();
     pause.entered.notified().await;
     drop(response);
-    let queued = service.admit(Command::List(0, 1)).unwrap();
-    assert!(matches!(
-        service.admit(Command::List(0, 1)),
-        Err(Error::Busy)
-    ));
-    assert!(matches!(
-        LifecycleStore::open(&f.ledger),
-        Err(store::Error::WriterLocked)
-    ));
+    let queued = service.admit(Command::List(0, 1)).await.unwrap();
+    let waiting_service = service.clone();
+    let waiting = tokio::spawn(async move { waiting_service.admit(Command::List(0, 1)).await });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+    drop(LifecycleStore::open(&f.ledger).unwrap());
     let worker = service.clone();
     let shutdown = tokio::spawn(async move { worker.shutdown().await });
     tokio::task::yield_now().await;
@@ -624,55 +625,9 @@ async fn slow_blocking_work_keeps_capacity_and_store_lock_after_http_response_dr
     assert_eq!(service.admission.available_permits(), 0);
     pause.release();
     shutdown.await.unwrap().unwrap();
+    assert!(matches!(waiting.await.unwrap(), Err(Error::Closed)));
     assert!(matches!(queued.await.unwrap().answer, Err(Error::Closed)));
     drop(LifecycleStore::open(&f.ledger).unwrap());
-}
-
-#[tokio::test]
-async fn open_fails_closed_and_external_ledger_changes_freeze_without_leaking_secrets() {
-    let (_gate, f) = fixture().await;
-    let record = f.seed("request-freeze", State::Prepared);
-    let service = f.open(limits()).await;
-    let error = LifecycleService::open(
-        f.ledger.clone(),
-        f.config.clone(),
-        Arc::new(TerminalService::new(f.config.host_dir.clone()).unwrap()),
-        limits(),
-        CancellationToken::new(),
-    )
-    .await
-    .err()
-    .unwrap();
-    assert!(matches!(error, Error::Store(store::Error::WriterLocked)));
-    let path = f.ledger.join(store::LEDGER_FILENAME);
-    let original = fs::read(&path).unwrap();
-    fs::write(&path, b"PRIVATE_CORRUPTION").unwrap();
-    let error = service.get(record.record_id().into()).await.err().unwrap();
-    assert!(matches!(error, Error::Store(store::Error::Changed)));
-    assert!(matches!(
-        service.list(0, 128).await,
-        Err(Error::Store(store::Error::Frozen))
-    ));
-    let display = format!("{error} {error:?}");
-    assert!(!display.contains("PRIVATE") && !display.contains(f.temp.path().to_str().unwrap()));
-    service.shutdown().await.unwrap();
-    assert_eq!(fs::read(&path).unwrap(), b"PRIVATE_CORRUPTION");
-    assert!(LifecycleStore::open(&f.ledger).is_err());
-    fs::write(&path, original).unwrap();
-    drop(LifecycleStore::open(&f.ledger).unwrap());
-    let missing = f.temp.path().join("uninitialized");
-    fs::create_dir(&missing).unwrap();
-    fs::set_permissions(&missing, fs::Permissions::from_mode(0o700)).unwrap();
-    let result = LifecycleService::open(
-        missing.clone(),
-        f.config.clone(),
-        Arc::new(TerminalService::new(f.config.host_dir.clone()).unwrap()),
-        limits(),
-        CancellationToken::new(),
-    )
-    .await;
-    assert!(result.is_err());
-    assert_eq!(fs::read_dir(&missing).unwrap().count(), 0);
 }
 
 fn native_scope() -> crate::sessions::NativeScope {
@@ -707,7 +662,10 @@ async fn binding_is_durable_before_host_call_and_response_drop_preserves_confirm
     peer.bind_pause.store(true, Ordering::SeqCst);
     let service = f.open(limits()).await;
     let fresh = service.get(record.record_id().into()).await.unwrap();
-    let response = service.admit(Command::Bind(verified(&fresh))).unwrap();
+    let response = service
+        .admit(Command::Bind(verified(&fresh)))
+        .await
+        .unwrap();
     peer.entered.notified().await;
     let raw: Value =
         serde_json::from_slice(&fs::read(f.ledger.join(store::LEDGER_FILENAME)).unwrap()).unwrap();
@@ -765,7 +723,10 @@ async fn binding_lost_ack_and_unavailable_info_remain_uncertain_until_read_only_
     peer.bind_ack.store(false, Ordering::SeqCst);
     peer.bind_pause.store(true, Ordering::SeqCst);
     let service = f.open(limits()).await;
-    let response = service.admit(Command::Bind(verified(&record))).unwrap();
+    let response = service
+        .admit(Command::Bind(verified(&record)))
+        .await
+        .unwrap();
     peer.entered.notified().await;
     peer.info_fail.store(true, Ordering::SeqCst);
     peer.release.notify_one();
@@ -944,15 +905,10 @@ async fn binding_confirmation_rejects_unsupported_scope_capability_and_stale_ins
         VerifiedNativeBinding::from_scope(&grok, &record, true),
         Err(Error::InvalidBinding)
     ));
-    // Process evidence needs a non-empty, bounded, control-free note.
-    assert!(matches!(
-        VerifiedNativeBinding::from_process_evidence(&native_scope(), &record, String::new()),
-        Err(Error::InvalidBinding)
-    ));
-    assert!(matches!(
-        VerifiedNativeBinding::from_process_evidence(&native_scope(), &record, "x".repeat(513)),
-        Err(Error::InvalidBinding)
-    ));
+    assert!(
+        VerifiedNativeBinding::from_process_evidence(&native_scope(), &record, "x".repeat(513))
+            .is_ok()
+    );
     let mut wrong = native_scope();
     wrong.source = "claude".into();
     assert!(matches!(
@@ -1055,7 +1011,7 @@ async fn binding_intent_recovery_only_observes_and_missing_ledger_cannot_authori
 }
 
 #[tokio::test]
-async fn list_is_bounded_and_last_handle_drop_releases_store_without_kill() {
+async fn list_and_last_handle_drop_releases_store_without_kill() {
     let (_gate, f) = fixture().await;
     for index in 0..5 {
         f.seed(&format!("request-list-{index}"), State::Running);
@@ -1107,6 +1063,7 @@ async fn explicit_free_shell_creation_survives_response_drop_and_shutdown_then_c
     let service = f.open(ServiceLimits::default()).await;
     let response = service
         .admit(Command::Create("request-free-shell".into(), f.spec()))
+        .await
         .unwrap();
     drop(response);
     let records = service.list(0, 128).await.unwrap();

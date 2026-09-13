@@ -3,11 +3,11 @@
 Batch 32 wires the [Codex delivery domain](delivery.md) and the
 [Codex native acknowledgment adapter](delivery-codex-ack.md) into the same
 executor, terminal driver and four HTTP routes that batch 31 built for Claude
-([delivery-executor.md](delivery-executor.md)). A Codex **main session on a
-managed instance** is now a send target; Grok and child agents stay a typed
-`501 delivery_source_unsupported` / `delivery_agent_unsupported`. Nothing in
-this batch confirms from screen text: a receipt becomes acknowledged only from
-the session's rollout, and only when the record carries its own turn ID.
+([delivery-executor.md](delivery-executor.md)). A Codex session on a managed
+instance is now a send target; Grok remains `501 delivery_source_unsupported`.
+Nothing in this batch confirms from screen text: a receipt becomes acknowledged
+only from a causal matching user record in the session's rollout. A turn ID is
+used for completion when present, but is not required to confirm the input.
 
 ## One executor, two providers
 
@@ -19,7 +19,7 @@ display name) and shares everything that is not domain-specific:
 |---|---|
 | admission (`workers`), per-UID `tokio::sync::Mutex` serialization, shutdown cancellation | the domain commands (`claude::Command` vs `codex::Command`) and receipts |
 | `ManagedResolver` (unique guard-capable managed host whose verified native association names the UID; launch origin authorized through the lifecycle binding) | the composer model: `driver::inspect_for(ComposerKind::Claude | Codex, capture)` |
-| lease borrow/claim (`agenthub-delivery-executor` page or the request's own console lease) | the native adapter (`claude_adapter` JSONL inputs vs `codex_adapter::observe` over `ViewSnapshot::native_tail`) |
+| lease borrow/claim (`sessiondock-delivery-executor` page or the request's own console lease) | the native adapter (`claude_adapter` JSONL inputs vs `codex_adapter::observe` over `ViewSnapshot::native_tail`) |
 | `overwrite_draft` (consent before any durable write), `prepare` (paste + independent full-text observation), `enter` (frame recheck, `Enter`) | the outbox projection (`claude_outbox` / `codex_outbox`) and the Python messages |
 | the tracker tick | the replay schedule: Claude's in-memory `confirm_timeout` clock vs Codex's `codex_adapter::ReplayClock` |
 
@@ -42,7 +42,7 @@ POST /api/session/send (Codex uid)
   → persist Prepared (EnterInFlight + enter_operation)                                → InjectEnter
   → recheck the frame, press Enter
   → persist EnterFinished → Uncertain (Python "failed", attempts 1, "发送结果待核对；禁止自动重试")
-  → tracker: codex_adapter::observe after the fixed boundary → NativeAck (OperationTurn) → Acknowledged
+  → tracker: codex_adapter::observe after the fixed boundary → NativeAck (PossibleTextMatch) → Acknowledged
        → task_complete of that turn → Completed (hidden like Acknowledged)
 ```
 
@@ -92,7 +92,7 @@ Draft consent is identical to Claude: `draft-status` → `{draft_state}` plus
 and no receipt; with it the approved draft is cleared (`C-u C-k`) and verified
 empty before the paste.
 
-## Native acknowledgment: `OperationTurn` from the executor's own Enter
+## Native acknowledgment: Python-compatible causal text matching
 
 The tracker polls every attempted Codex receipt that is `Uncertain` and not
 dismissed. For each tick `codex_adapter::ReplayClock::plan(policy,
@@ -119,37 +119,24 @@ Outcome mapping:
 
 | Adapter outcome | Executor |
 |---|---|
-| `Possible(m)` with `m.record.turn_id = Some(t)` | `NativeAck` with `m.evidence` but `correlation = Correlation::OperationTurn { enter_operation: receipt.enter_operation, turn_id: t }` → `Acknowledged`; then `NativeCompletion` when the adapter already saw that turn's `task_complete`/`turn_aborted` → `Completed`/`Stopped` |
-| `Possible(m)` without a turn ID | nothing: the receipt stays `Uncertain`. A later `task_started` is **never** borrowed as the turn |
+| `Possible(m)` | `NativeAck` with `m.evidence` and `PossibleTextMatch` → `Acknowledged`; when the record has a turn ID and the adapter already saw that turn's `task_complete`/`turn_aborted`, `NativeCompletion` follows → `Completed`/`Stopped` |
 | `Absent` | `AdvanceWatch` to the observation's current cursor |
 | `Uncertain(CheckpointMismatch)` | one `NativeReset` annotation (the fence never moves); nothing retried |
-| `Uncertain(Ambiguous | ForeignScope | MediaUnsupported | UnmatchableText | Unreadable)` | nothing; the receipt stays `Uncertain` |
+| `Uncertain(ForeignScope | UnmatchableText | Unreadable)` | nothing; the receipt stays `Uncertain` |
 
-**Why `OperationTurn` is legitimate here and not in the adapter.** The
-adapter alone cannot bind a rollout record to a terminal operation, so it
-keeps producing `PossibleTextMatch`, which the Machine refuses. The executor
-can, for the same reason batch 31's Claude adapter attributes
-`VerifiedEnter`: it held the exclusive write lease for the instance, verified
+The adapter produces `PossibleTextMatch`. The Machine accepts it only after it
+matches the receipt's fixed confirmation cursor, source identity, real-user
+record, exact media metadata and end-trimmed text, matching Python
+`send_queue.observe`. The executor held the write lease for the instance, verified
 the composer was empty (or cleared the one approved draft), captured the
 physical fence from the frozen view before the paste, independently observed
 the complete text in the composer, rechecked the frame, and pressed Enter
 itself. The only human input record that can then appear after that fence
-with exactly that text (end-trimmed) is this delivery — the adapter's
-`Ambiguous` rule already refuses the case where two identical records
-appear, and the Machine refuses a record whose start, record ID or turn ID
-already acknowledged another receipt. The turn ID is copied from the record
-itself (`payload.turn_id` or
-`internal_chat_message_metadata_passthrough.turn_id`, which current Codex
-rollouts carry on user `response_item` messages — verified 2026-09-12); it is
-never derived from a neighbouring `task_started`. Because the association is
-the executor's own persisted `enter_operation` plus the record's own turn, it
-is exactly the claim `docs/delivery.md` asks the trusted integration to
-establish independently, and `validate_snapshot` re-checks it on every
-restore.
+with exactly that text (end-trimmed) is this delivery. The Machine refuses a record whose start or record ID already
+acknowledged another receipt. A nonempty turn ID also cannot be consumed twice;
+it is never derived from a neighbouring `task_started`.
 
-What stays uncertain: a record without a turn ID (`--no-turn-id`), two
-identical user records after the boundary (`--duplicate`; Python would
-confirm the later one), a swallowed line, an ambiguous transport result, a
+What stays uncertain: a swallowed line, an ambiguous transport result, a
 rewritten/truncated rollout, and anything past the one-hour window.
 
 ## HTTP: the same four routes, Python's Codex bodies
@@ -163,7 +150,7 @@ they differ from Claude's:
 | `send` | `item.state` is the Codex projection: `queued`/`failed` with `attempts 0` before a write, `failed` with `attempts 1` and `error "发送结果待核对；禁止自动重试"` once pasted (legacy `codexNeedsInspection`: "终端写入待核对", 检查终端/移除). Replay of a confirmed/hidden ID → `state:"confirmed"`, no text. `name` mismatch → `409 terminal_unlinked "Codex 终端会话未连接…"`. |
 | `draft-status` | identical (`empty`/`editing`+token/`unknown`) |
 | `outbox/retry` | only a `failed` row with `attempts 0` (`FailedBeforeWrite`, or a `DraftConflict` with its token) re-inspects; anything attempted → `409 "消息已经写入终端或仍在确认，禁止重复发送"`; unknown → `404 "待发送消息不存在"`. The console draft is probed before the retry like Python. |
-| `outbox/discard` | Python `_discard_message` for Codex: a pre-write row is discarded (tombstone kept); an attempted `Uncertain` row is **dismissed** (hidden, state and dedup identity kept, tracking stops — Python `9b1c2fd` lets the user remove a confirming receipt; it never resends); a live prepare/Enter boundary → `409 "消息不存在或已经开始发送"`; a missing/already removed ID → `200 {ok, uid, outbox…}` (idempotent, unlike Claude's 404). |
+| `outbox/discard` | Python `_discard_message` for Codex: a pre-write row is discarded (tombstone kept); an attempted row, including an in-flight prepare/Enter, is **dismissed** (hidden, state, operation revision and dedup identity kept); authorized callbacks may settle once, and dismissal never resends; a missing/already removed ID → `200 {ok, uid, outbox…}` (idempotent, unlike Claude's 404). |
 
 `GET /api/session/outbox` is unchanged. The legacy composer needs no change:
 `sendToSession` already treats Claude and Codex the same way and the Codex
@@ -173,10 +160,10 @@ under Python.
 ## Domain addition: `codex::Command::Dismiss`
 
 `delivery/codex.rs` gains `Receipt.dismissed` (serde default, only valid on an
-attempted `Uncertain` row) and `Command::Dismiss`: a pre-write row behaves
-like `Discard`; an `Uncertain` row is hidden without changing its state or
-revision (an authorized one-shot callback keeps its token); in-flight
-boundaries are `WrongState`; a dismissed/hidden row replays. `Discard` keeps
+attempted row) and `Command::Dismiss`: a pre-write row behaves
+like `Discard`; an attempted row, including in-flight prepare/Enter, is hidden
+without changing its state or revision. Authorized one-shot callbacks keep
+their tokens and may settle once; a dismissed/hidden row replays. `Discard` keeps
 its batch-6 semantics and tests.
 
 ## Validation
@@ -185,25 +172,24 @@ its batch-6 semantics and tests.
   composer tests: placeholder + particles, bright draft, wrapped rows,
   Ready/Context and rewind footers, footerless cursor rules, menus/lag/busy),
   `--lib delivery::codex` (`Dismiss`), `--lib delivery::executor::codex_tests`
-  (nine: persist → paste → Enter → `OperationTurn` → Completed with the fence
+  (persist → paste → Enter → causal `PossibleTextMatch` → Completed with the fence
   captured before the paste; request-ID replay/conflict; draft consent;
   ownership/unlinked/unknown session; swallowed line uncertain + retry
   refused + restart without re-injection + dismiss hides + tombstone replay +
-  a fresh identical request confirms on its own record; no turn ID and
-  duplicate records stay uncertain; ambiguous Enter and unknown composer
+  a fresh identical request confirms on its own record; no-turn-ID and
+  duplicate native records confirm in Python row order; ambiguous Enter and unknown composer
   (pre-write failure, manual retry); lagging capture never idle; tracking
   window; immediate follow-up).
 - Integration (real router + isolated ptyhost + launcher + ledger, fake Codex
   CLI only): `cargo test -p sessiondock --test delivery_send_codex` —
   resume through `resume_args ["resume","{sid}"]`; the driver reads the
   fake's particle/placeholder composer as empty; send → `failed`/`attempts 1`
-  → confirmed and the persisted association is `OperationTurn` with the
-  rollout record's `internal_chat_message_metadata_passthrough.turn_id`;
-  replay; media 400; wrong name/unknown session; console draft consent under
+  → confirmed and the persisted association is `PossibleTextMatch`;
+  replay; uploaded media path delivery; wrong name/unknown session; console draft consent under
   a page lease; slow TUI (Working footer) confirms late; swallowed line stays
   uncertain, retry refused, Web restart does not re-inject, discard hides and
   a second discard is `200`, later resend confirms; `--no-turn-id` and
-  `--duplicate` stay uncertain with no association; the four routes are `501`
+  `--duplicate` confirm by the first causal text record; the four routes are `501`
   without the ledger/transport.
 - Browser: `python3 tests/send_codex_browser.py` (desktop + 390 px) — resume
   via the console button, compose through the real legacy composer against
@@ -223,7 +209,7 @@ its batch-6 semantics and tests.
   usage limit; the second run passed against the
   real Codex 0.154 TUI: the driver read its particle/placeholder composer as
   `empty`, the send was pasted and Entered, the receipt was confirmed from
-  the real rollout's user record (`OperationTurn`), the model was asserted
+  the real rollout's causal user record (`PossibleTextMatch`), the model was asserted
   from `turn_context`, and the batch-33 read model listed the session
   `supported:true` with `migration_warnings` for `world_state`,
   `item_completed` and `token_usage_record`.
@@ -242,11 +228,12 @@ knobs `--delay`, `--swallow N`, `--no-turn-id`, `--duplicate`, `--reply`,
 - Long pastes that Codex collapses into a placeholder are never Entered by
   the executor (the domain requires the full text to be observed); the row
   stays `Uncertain` with the text left in the composer for the user.
-- Two identical prompts after one boundary stay `Uncertain` for both
-  (documented adapter strictness); Python would confirm the later copy.
+- Identical prompts follow Python row order: the first causal native record
+  confirms the first matching receipt and cannot confirm another.
 - An unknown composer (approval prompt, menu, lagging capture) is a
   pre-write failure with a manual 重试, not a background re-dispatch (Python
   would paste blindly).
 - Expired tracking is silent for Codex (the domain has no timeout command).
-- Attachments (`400 delivery_media_unsupported`), stop/interrupt, rename and
-  compact acknowledgment remain out of scope; Grok is not a send target.
+- Attachment paths are submitted in the prompt and their preview metadata is
+  retained in the outbox. Stop/interrupt, rename and compact acknowledgment
+  remain out of scope; Grok is not a send target.

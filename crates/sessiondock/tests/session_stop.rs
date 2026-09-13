@@ -169,17 +169,17 @@ impl Fixture {
             0o600,
         );
         let launcher = root.join("launcher.json");
-        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
+        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,
         "adapters":[],
         "profiles":[
             {"id":"codex-cli-v1","source":"codex","executable":bin.join("fake-codex"),
              "args":[],"new_args":[],"resume_args":["resume","{sid}"],
              "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/codex-home","AGENTHUB_TEST_LABEL":"CODEX"},
-             "cwd_roots":[work]},
+             },
             {"id":"claude-cli-v1","source":"claude","executable":bin.join("fake-claude"),
              "args":[],"new_args":["--session-id","{session_id}"],"resume_args":["--resume","{sid}"],
              "env":{"PATH":"/usr/bin:/bin","HOME":"/synthetic/claude-home","AGENTHUB_TEST_LABEL":"CLAUDE"},
-             "cwd_roots":[work]}
+             }
         ]});
         file(&launcher, config.to_string().as_bytes(), 0o600);
         drop(LifecycleStore::initialize(&lifecycle).unwrap());
@@ -344,27 +344,18 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     let claude_uid = uid_of(&router, CLAUDE_SID).await;
     assert_eq!(uid_of(&router, CODEX_SID).await, fixture.codex_uid);
 
-    // ---- Request shape: invalid UID 400, unknown UID 404, unknown field 400.
+    // Python looks up the stringified UID first, so malformed and unknown IDs
+    // are both ordinary missing sessions.
     for (body, expected, code) in [
         (
             json!({"uid":"../etc","request_id":"stop-bad-uid"}),
-            StatusCode::BAD_REQUEST,
-            "invalid_stop_request",
+            StatusCode::NOT_FOUND,
+            "session_missing",
         ),
         (
             json!({"uid":"codex:0000000000000000","request_id":"stop-missing"}),
             StatusCode::NOT_FOUND,
             "session_missing",
-        ),
-        (
-            json!({"uid":fixture.codex_uid,"request_id":"stop-extra","force":true}),
-            StatusCode::BAD_REQUEST,
-            "invalid_stop_request",
-        ),
-        (
-            json!({"uid":fixture.codex_uid,"request_id":""}),
-            StatusCode::BAD_REQUEST,
-            "invalid_stop_request",
         ),
     ] {
         let (status, reply) = post(&router, "/api/session/stop", body).await;
@@ -372,23 +363,26 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
         assert_eq!(reply["code"], code, "{reply}");
     }
 
-    // ---- Unmanaged: an inventory session with no managed instance is a
-    // typed 501 explaining the missing external detection, never a success.
+    // Unknown keys and an unusable optional request id are ignored like
+    // Python's dictionary body handling.
+    for body in [
+        json!({"uid":fixture.other_codex_uid,"request_id":"stop-extra","force":true}),
+        json!({"uid":fixture.other_codex_uid,"request_id":""}),
+    ] {
+        let (status, reply) = post(&router, "/api/session/stop", body).await;
+        assert_eq!(status, StatusCode::OK, "{reply}");
+        assert_eq!(reply["stopped"], false);
+    }
+
+    // An inventory session with no running process is already stopped.
     let (status, reply) = post(
         &router,
         "/api/session/stop",
         json!({"uid":fixture.other_codex_uid,"request_id":"stop-unmanaged"}),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{reply}");
-    assert_eq!(reply["code"], "session_stop_unmanaged");
-    assert!(
-        reply["error"]
-            .as_str()
-            .unwrap()
-            .contains("不探测未受管的外部 CLI"),
-        "{reply}"
-    );
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    assert_eq!(reply["stopped"], false);
     // The Python page's bare body works the same way (no request_id needed).
     let (status, reply) = post(
         &router,
@@ -396,7 +390,7 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
         json!({"uid":fixture.other_codex_uid}),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{reply}");
+    assert_eq!(status, StatusCode::OK, "{reply}");
     assert_eq!(fixture.host_records(), 0);
 
     // ---- Managed Codex resume (declared identity, no operator binding).
@@ -414,9 +408,7 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     let live = wait_live_state(&router, &fixture.codex_uid, "running").await;
     assert_eq!(live["uids"], json!([fixture.codex_uid]));
 
-    // Same request_id for a different session: typed conflict, nothing sent.
-    // (Nothing is remembered yet for this id; the conflict check happens on
-    // replay, so first exercise it after a remembered outcome below.)
+    // request_id is an ignored browser field, matching Python.
     let started = Instant::now();
     let (status, stopped) = post(
         &router,
@@ -430,12 +422,11 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     assert_eq!(stopped["stage"], "graceful", "{stopped}");
     assert_eq!(stopped["stopped"], true);
     assert_eq!(stopped["graceful_attempts"], 1);
-    assert_eq!(stopped["replayed"], false);
     assert_eq!(stopped["tmux"], false);
     assert_eq!(stopped["name"], name);
     assert_eq!(stopped["instance_id"], instance);
     assert_eq!(stopped["record_id"], resume["record_id"]);
-    assert_eq!(stopped["external_detection"], "not_implemented");
+    assert_eq!(stopped["external_detection"], "proc_scan");
     assert!(
         elapsed < Duration::from_millis(2400),
         "graceful exit should end the first EOF wait early: {elapsed:?}"
@@ -459,7 +450,8 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     assert_eq!(receipt["state"], "exited", "{receipt}");
     assert_eq!(receipt["native_binding"], "unbound");
 
-    // Replay: the same request_id answers the remembered outcome.
+    // A repeated stop re-observes current state; it does not replay a private
+    // server-side outcome keyed by an ignored field.
     let (status, replay) = post(
         &router,
         "/api/session/stop",
@@ -467,19 +459,19 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay["stage"], "graceful");
-    assert_eq!(replay["replayed"], true);
-    assert_eq!(replay["instance_id"], instance);
-    // A remembered request_id cannot be reused for another session.
-    let (status, conflict) = post(
+    assert_eq!(replay["stopped"], false);
+    assert_eq!(replay["tmux"], false);
+    assert_eq!(replay["external_detection"], "proc_scan");
+    // Reusing the ignored value for another session is not a conflict.
+    let (status, other) = post(
         &router,
         "/api/session/stop",
         json!({"uid":claude_uid,"request_id":"stop-codex-1"}),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{conflict}");
-    assert_eq!(conflict["code"], "stop_request_conflict");
-    // A new request after the exit: already exited, nothing sent.
+    assert_eq!(status, StatusCode::OK, "{other}");
+    assert_eq!(other["stopped"], false);
+    // A new request after the exit also observes that nothing is running.
     let (status, again) = post(
         &router,
         "/api/session/stop",
@@ -487,9 +479,8 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{again}");
-    assert_eq!(again["stage"], "already_exited", "{again}");
-    assert_eq!(again["stopped"], true);
-    assert_eq!(again["graceful_attempts"], 0);
+    assert_eq!(again["stopped"], false);
+    assert_eq!(again["tmux"], false);
 
     // ---- A managed Claude resume whose shell ignores EOF: both Ctrl-D
     // attempts elapse, then the guarded host stop (the term/kill path) ends it

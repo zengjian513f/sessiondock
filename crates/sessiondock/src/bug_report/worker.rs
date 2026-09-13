@@ -49,7 +49,7 @@ use crate::{
 
 /// Origin label recorded in audit rows for the worker's server-originated
 /// input (no browser lease is claimed under this name any more).
-pub const PAGE: &str = "agenthub-bug-report";
+pub const PAGE: &str = "sessiondock-bug-report";
 /// Python `_inject_worker(timeout=90.0)`.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
 /// Python `SETTLE_SECONDS`.
@@ -68,7 +68,6 @@ const FAST_POLL: Duration = Duration::from_millis(100);
 /// Codex/Grok candidates: sessions of the source under the repository
 /// created no earlier than this before the launch.
 const CANDIDATE_SLACK: Duration = Duration::from_secs(120);
-const MAX_CANDIDATES: usize = 4;
 
 fn now_text() -> String {
     crate::audit::query::rfc3339(SystemTime::now())
@@ -205,15 +204,12 @@ struct Confirmed {
 
 impl Injection {
     async fn run(self) {
-        let permit = tokio::select! {
-            _ = self.ctx.shutdown.cancelled() => None,
-            permit = self.ctx.service.injections.clone().acquire_owned() => permit.ok(),
-        };
         let name = self.record.host_name().to_owned();
         let label = source_label(self.source);
-        let result = match permit {
-            Some(_permit) => self.inject().await,
-            None => Err("服务正在关闭，未注入缺陷报告".to_owned()),
+        let result = if self.ctx.shutdown.is_cancelled() {
+            Err("服务正在关闭，未注入缺陷报告".to_owned())
+        } else {
+            self.inject().await
         };
         let submitted = crate::audit::query::rfc3339(SystemTime::now());
         match result {
@@ -523,7 +519,7 @@ impl Injection {
 
     /// The native `user` record that carries the prompt. Claude: the declared
     /// session. Codex/Grok: the newest sessions of the source under the
-    /// repository created since the launch, opened one by one (bounded).
+    /// repository created since the launch, opened one by one.
     async fn confirm_native(&self) -> Option<Confirmed> {
         let deadline = Instant::now() + NATIVE_TIMEOUT;
         // Every poll rescans the roots for the new file (a fresh session is
@@ -617,10 +613,7 @@ impl Injection {
             })
             .collect();
         rows.sort_by(|left, right| right.0.cmp(&left.0));
-        rows.into_iter()
-            .take(MAX_CANDIDATES)
-            .map(|(_, uid)| uid)
-            .collect()
+        rows.into_iter().map(|(_, uid)| uid).collect()
     }
 }
 

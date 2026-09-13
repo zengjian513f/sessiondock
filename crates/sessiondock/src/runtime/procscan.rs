@@ -1,7 +1,7 @@
 //! Read-only `/proc` scan for external CLI processes (Python `live.py`).
 //!
-//! Linux only and only behind the explicit `SESSIONDOCK_PROC_SCAN=1` switch;
-//! `SESSIONDOCK_PROC_ROOT` points tests at a synthetic tree (Python `PROC_FS`).
+//! Linux uses `/proc` by default; `SESSIONDOCK_PROC_ROOT` points tests at a
+//! synthetic tree (Python `PROC_FS`).
 //! The scan reads `cmdline`, `stat`, `environ`, the `cwd` link and the `fd`
 //! links of processes in the table, never signals, writes or follows a link
 //! outside the tree. The three families leave different traces, so three
@@ -103,27 +103,6 @@ impl SessionRoots {
     }
 }
 
-/// Bounded work per process; Python reads whole files. Session ids sit near
-/// the front of both files, so a truncated tail loses nothing in practice.
-#[derive(Clone, Copy, Debug)]
-pub struct ScanLimits {
-    pub cmdline_bytes: usize,
-    pub environ_bytes: usize,
-    pub fd_entries: usize,
-    pub processes: usize,
-}
-
-impl Default for ScanLimits {
-    fn default() -> Self {
-        Self {
-            cmdline_bytes: 256 * 1024,
-            environ_bytes: 1024 * 1024,
-            fd_entries: 4096,
-            processes: 1 << 20,
-        }
-    }
-}
-
 /// Python `_cli_name`: basename without directories or `.exe`, lowercase.
 pub fn cli_name(argv0: &str) -> String {
     let trimmed = argv0.trim();
@@ -206,11 +185,10 @@ struct Memo {
     starts: HashMap<u32, Option<f64>>,
 }
 
-/// Read-only, memoized access to one process tree. Every read is bounded and a
-/// failure is an absent value, never an error: a process may vanish mid-walk.
+/// Read-only, memoized access to one process tree. A failed read is an absent
+/// value because a process may vanish mid-walk.
 pub struct ProcTree {
     root: PathBuf,
-    limits: ScanLimits,
     /// Boot clock of this tree (`<root>/stat btime`, ticks from this process's
     /// own auxv like Python's `sysconf`); absent when the tree has no `stat`.
     clock: Option<ProcClock>,
@@ -223,20 +201,8 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn read_capped(path: &Path, cap: usize) -> Option<Vec<u8>> {
-    use std::io::Read;
-    let file = std::fs::File::open(path).ok()?;
-    // procfs files report size 0, so `read_to_end` would probe with 32-byte
-    // reads and double up: one page of capacity makes a typical `cmdline`
-    // two syscalls instead of four or five (batch 44 WP-A, ~3,500 processes
-    // per scan).
-    let mut bytes = Vec::with_capacity(cap.min(4096));
-    file.take(cap as u64).read_to_end(&mut bytes).ok()?;
-    Some(bytes)
-}
-
 impl ProcTree {
-    pub fn open(root: PathBuf, limits: ScanLimits) -> Self {
+    pub fn open(root: PathBuf) -> Self {
         let boot_time = std::fs::read_to_string(root.join("stat"))
             .ok()
             .and_then(|stat| ProcClock::parse_boot_time(&stat));
@@ -254,7 +220,6 @@ impl ProcTree {
         };
         Self {
             root,
-            limits,
             clock: boot_time.map(|boot_time| ProcClock {
                 boot_time,
                 ticks_per_second,
@@ -276,11 +241,9 @@ impl ProcTree {
         if let Some(known) = lock(&self.memo).cmdlines.get(&pid) {
             return known.clone();
         }
-        let value = read_capped(
-            &self.pid_dir(pid).join("cmdline"),
-            self.limits.cmdline_bytes,
-        )
-        .map(|bytes| Arc::from(cmdline_text(&bytes)));
+        let value = std::fs::read(self.pid_dir(pid).join("cmdline"))
+            .ok()
+            .map(|bytes| Arc::from(cmdline_text(&bytes)));
         lock(&self.memo).cmdlines.insert(pid, value.clone());
         value
     }
@@ -319,10 +282,7 @@ impl ProcTree {
             return known.clone();
         }
         let mut found = BTreeMap::new();
-        if let Some(bytes) = read_capped(
-            &self.pid_dir(pid).join("environ"),
-            self.limits.environ_bytes,
-        ) {
+        if let Ok(bytes) = std::fs::read(self.pid_dir(pid).join("environ")) {
             for entry in String::from_utf8_lossy(&bytes).split('\0') {
                 if let Some((key, value)) = entry.split_once('=')
                     && SPAWN_ENV_KEYS.contains(&key)
@@ -530,13 +490,11 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     let mut paths: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut bare_claude = BTreeMap::new();
     let mut stats = ScanStats::default();
-    let limits = tree.limits;
     let entries: Vec<u32> = std::fs::read_dir(tree.root())
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
-        .take(limits.processes)
         .collect();
     stats.processes = entries.len();
     for pid in entries {
@@ -573,7 +531,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
             }
         }
         let directory = tree.root().join(pid.to_string());
-        if let Some(bytes) = read_capped(&directory.join("environ"), limits.environ_bytes) {
+        if let Ok(bytes) = std::fs::read(directory.join("environ")) {
             for entry in String::from_utf8_lossy(&bytes).split('\0') {
                 let Some((prefix, family)) = ENV_FAMILY
                     .iter()
@@ -595,7 +553,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let Ok(fds) = std::fs::read_dir(directory.join("fd")) else {
             continue;
         };
-        for entry in fds.flatten().take(limits.fd_entries) {
+        for entry in fds.flatten() {
             let Ok(target) = std::fs::read_link(entry.path()) else {
                 continue;
             };
@@ -656,7 +614,8 @@ fn env_owner(
 /// Python `_note_grok_sessions`: Grok's own active list names sessions without
 /// exposing a pid; a stale entry stays exactly as Python would show it.
 fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
-    let Some(data) = read_capped(file, 1024 * 1024)
+    let Some(data) = std::fs::read(file)
+        .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
     else {
         return;
@@ -879,6 +838,49 @@ pub enum ScanError {
     Failed,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum KillError {
+    UnsupportedPlatform,
+    UnsafeProcessRoot,
+}
+
+/// PIDs that accepted TERM, followed by the subset still present after the
+/// TERM/KILL window. PID start ticks are rechecked before every signal so a
+/// recycled PID is never touched.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct KillOutcome {
+    pub killed: Vec<u32>,
+    pub remaining: Vec<u32>,
+}
+
+fn process_stamp(root: &Path, pid: u32) -> Option<(char, u64)> {
+    let stat = std::fs::read_to_string(root.join(pid.to_string()).join("stat")).ok()?;
+    let close = stat.rfind(')')?;
+    let mut fields = stat[close + 1..].split_ascii_whitespace();
+    let state = fields.next()?.chars().next()?;
+    let start = stat[close + 1..]
+        .split_ascii_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()?;
+    Some((state, start))
+}
+
+#[cfg(target_os = "linux")]
+fn signal_if_same(root: &Path, pid: u32, start: u64, signal: i32) -> bool {
+    if !matches!(process_stamp(root, pid), Some((state, current)) if state != 'Z' && current == start)
+    {
+        return false;
+    }
+    // SAFETY: `pid` is a positive process ID proven by the frozen proc scan;
+    // start ticks were re-read immediately above to prevent PID-reuse kills.
+    unsafe { libc::kill(pid as i32, signal) == 0 }
+}
+
+fn still_same(root: &Path, pid: u32, start: u64) -> bool {
+    matches!(process_stamp(root, pid), Some((state, current)) if state != 'Z' && current == start)
+}
+
 impl std::fmt::Display for ScanError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -901,7 +903,6 @@ pub struct ProcScanner {
     root: PathBuf,
     grok_active: Option<PathBuf>,
     roots: SessionRoots,
-    limits: ScanLimits,
     ttl: Duration,
     cached: Mutex<Option<Arc<Scan>>>,
     refresh: tokio::sync::Mutex<()>,
@@ -909,21 +910,19 @@ pub struct ProcScanner {
 
 impl ProcScanner {
     pub fn new(root: PathBuf, grok_active: Option<PathBuf>, roots: SessionRoots) -> Self {
-        Self::with_limits(root, grok_active, roots, ScanLimits::default(), TTL)
+        Self::with_ttl(root, grok_active, roots, TTL)
     }
 
-    pub fn with_limits(
+    pub fn with_ttl(
         root: PathBuf,
         grok_active: Option<PathBuf>,
         roots: SessionRoots,
-        limits: ScanLimits,
         ttl: Duration,
     ) -> Self {
         Self {
             root,
             grok_active,
             roots,
-            limits,
             ttl,
             cached: Mutex::new(None),
             refresh: tokio::sync::Mutex::new(()),
@@ -960,7 +959,7 @@ impl ProcScanner {
 
     /// One synchronous scan of the tree (tests and the blocking worker).
     pub fn scan_blocking(&self) -> Scan {
-        let tree = Arc::new(ProcTree::open(self.root.clone(), self.limits));
+        let tree = Arc::new(ProcTree::open(self.root.clone()));
         scan(tree, self.grok_active.as_deref(), &self.roots)
     }
 
@@ -978,9 +977,8 @@ impl ProcScanner {
         let root = self.root.clone();
         let grok_active = self.grok_active.clone();
         let roots = self.roots.clone();
-        let limits = self.limits;
         let scan = tokio::task::spawn_blocking(move || {
-            let tree = Arc::new(ProcTree::open(root, limits));
+            let tree = Arc::new(ProcTree::open(root));
             scan(tree, grok_active.as_deref(), &roots)
         })
         .await
@@ -991,6 +989,57 @@ impl ProcScanner {
             scan,
             cached: false,
             age: Duration::ZERO,
+        })
+    }
+
+    /// Python `term.kill_pids`: TERM the positively owned CLI main processes,
+    /// wait up to six seconds, then KILL survivors. This is available only for
+    /// the real Linux `/proc`; synthetic proc trees remain read-only fixtures.
+    pub async fn kill_pids(&self, pids: &[i64]) -> Result<KillOutcome, KillError> {
+        if !cfg!(target_os = "linux") {
+            return Err(KillError::UnsupportedPlatform);
+        }
+        if self.root != Path::new("/proc") {
+            return Err(KillError::UnsafeProcessRoot);
+        }
+        let mut targets: Vec<(u32, u64)> = pids
+            .iter()
+            .filter(|pid| **pid > 0)
+            .filter_map(|pid| {
+                let pid = *pid as u32;
+                let (state, start) = process_stamp(&self.root, pid)?;
+                (state != 'Z').then_some((pid, start))
+            })
+            .collect();
+        targets.sort_unstable();
+        targets.dedup();
+        #[cfg(target_os = "linux")]
+        let killed: Vec<(u32, u64)> = targets
+            .into_iter()
+            .filter(|(pid, start)| signal_if_same(&self.root, *pid, *start, libc::SIGTERM))
+            .collect();
+        #[cfg(not(target_os = "linux"))]
+        let killed: Vec<(u32, u64)> = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(6);
+        while tokio::time::Instant::now() < deadline
+            && killed
+                .iter()
+                .any(|(pid, start)| still_same(&self.root, *pid, *start))
+        {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        #[cfg(target_os = "linux")]
+        for (pid, start) in &killed {
+            signal_if_same(&self.root, *pid, *start, libc::SIGKILL);
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        Ok(KillOutcome {
+            killed: killed.iter().map(|(pid, _)| *pid).collect(),
+            remaining: killed
+                .iter()
+                .filter(|(pid, start)| still_same(&self.root, *pid, *start))
+                .map(|(pid, _)| *pid)
+                .collect(),
         })
     }
 }

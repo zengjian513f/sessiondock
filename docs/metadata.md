@@ -1,21 +1,14 @@
 # Development metadata store
 
-This module persists AgentHub-owned preferences only. It never discovers CLI
+This module persists SessionDock-owned preferences only. It never discovers CLI
 homes, migrates Python state, writes native transcripts, sends terminal input,
 or starts a CLI. Enabling metadata does not enable general session mutations.
 
 ## Directory and schema
 
-The caller must explicitly provide an existing, dedicated development directory.
-The store does not create the directory. It accepts only its two fixed files,
-unrecovered `.metadata-tmp-*` files and the debug-run registry the session
-read model consults (`debug-runs.json`, plus its `debug-runs.json.tmp` replace
-step, never read or written by this store — see
-[read-model.md](read-model.md#debug_run-视图python-agenthubdebug_runspy));
-other entries, including Python's `session-meta.json`, cause an error. Old temporary files are not read or cleaned.
-Use a new local directory, not a production state directory or a native session
-root. Directory ancestors cannot be symlinks; supply an actual physical path on
-systems where a conventional temporary-directory prefix itself is a symlink.
+The configured state directory is created when needed. Existing permissions and
+symlink ancestors use ordinary OS access rules. The store updates its own files
+and leaves unrelated directory entries untouched.
 
 Files:
 
@@ -41,18 +34,14 @@ The independent Rust schema starts at version 1; this is not Python's version 1.
 }
 ```
 
-UIDs are opaque ASCII keys, not paths: 1–256 bytes of letters, digits or `:._-`.
-The API must separately verify that a UID exists and that a visibility target is
-a valid fork parent. Bounds are 10,000 metadata records, 4 MiB per document,
-1,000 UIDs per visibility transaction, 256-byte timeline IDs and 2,048-byte
-activity reasons. Invalid timestamps, unknown fields, duplicate UID keys,
-unknown schemas and corrupt JSON are rejected. No malformed document becomes
-an empty store, and no existing invalid document is automatically overwritten.
+UIDs are nonempty opaque strings. The API separately verifies that a UID exists
+and that a visibility target is a valid fork parent. Metadata stores all retained
+rows and attachment records. Timestamp and persisted-schema validation catch
+invalid state without silently replacing the file with an empty store.
 
-On Unix, committed/lock files must be regular files with mode 0600 and one hard
-link. Existing permissions are not silently repaired. The directory must be
-owner-writable/searchable and not group/world-writable. On Windows, read-only
-files and reparse points are rejected; ACL access failures remain errors.
+The state directory is created when needed. Existing directory permissions and
+symlink/hardlink aliases follow OS access rules. Writes replace the named metadata
+entry atomically and preserve unrelated files in the directory.
 
 ## Snapshot and preference semantics
 
@@ -126,9 +115,7 @@ server writes it itself from the process tree while both CLIs are alive
 ([liveness.md](liveness.md#spawned_by)) — every `/api/live` and a 10 s
 background tick call `MetadataStore::record_spawn_parents`, which applies
 `with_spawn_parents`: the first relation is kept for good, a later different
-clue is ignored, entries with an empty uid/source/sid are skipped, and a
-malformed one (whitespace, control characters, `source` over 32 or `sid` over
-256 bytes) fails the whole transaction. The value names the spawner's source
+clue is ignored, and entries with an empty uid/source/sid are skipped. The value names the spawner's source
 and native session id, not a UID, and the spawner row may no longer exist.
 `enrich`/`enrich_one` put the object on the row as `spawned_by`; there is no
 HTTP route to set or clear it, and stars/visibility/pins never touch it.
@@ -140,37 +127,15 @@ HTTP route to set or clear it, and stars/visibility/pins never touch it.
 
 ## Writer exclusion and durable publication
 
-The store holds `std::fs::File::try_lock()` on `.metadata.lock` for its lifetime.
-A second handle or process is refused, and the lock is never unlinked during
-normal shutdown. The owner explicitly unlocks before closing its descriptor;
-a concurrent fork's transient pre-exec duplicate cannot extend the declared
-writer lifetime. A duplicate-handle regression verifies that dropping an old
-duplicate does not release a newly acquired writer lock.
-This is cooperative writer exclusion, not a sandbox against a
-malicious process running as the same OS user. Before each transaction, the
-store rechecks directory/lock identity and the exact prior document fingerprint;
-external edits are conflicts, not permission to overwrite them. The OS mapping
-and portability caveats are described in the [Rust File locking documentation](https://doc.rust-lang.org/std/fs/struct.File.html#method.try_lock).
+An in-process mutex serializes metadata updates. Each read and update reloads
+external edits, retaining the current immutable snapshot when the file is unchanged.
+Malformed or unsupported documents follow Python's empty-read behavior.
 
-Publication order is:
-
-1. Validate the full proposed snapshot and byte budget.
-2. Revalidate the existing directory, lock and committed document.
-3. Create a unique same-directory file with `create_new`, write and `sync_all`.
-4. Revalidate the previous committed document, close the temporary handle, and
-   rename over the destination. There is no delete-old-file fallback.
-5. On Unix, synchronize the already-open directory handle.
-6. Publish the new in-memory `Arc` and revision only after success.
-
-Failures before replacement keep the old disk document and in-memory snapshot.
-Cleanup targets only the exact temporary file created by this operation, with
-an identity check; unrelated files and prior-run temporary files are preserved.
-If replacement has happened but subsequent synchronization/validation fails,
-the operation returns `metadata_commit_uncertain`. The store then rejects both
-new snapshots and writes with HTTP-compatible 503 errors until restart. Existing
-captured `Arc`s stay immutable, but are not a claim about the uncertain disk
-state. The UI/health integration must expose this condition; blind retry is not
-safe. Restart validates whichever complete document is actually present.
+Writes use a unique temporary file in the same directory, flush it, and replace
+the metadata entry atomically. Failure before replacement preserves the previous
+file. A post-replacement synchronization failure is reported for that operation;
+the next read reloads the file and later requests can proceed without a restart.
+Captured snapshots remain immutable.
 
 ## Platform acceptance limits
 
@@ -181,9 +146,6 @@ file to accommodate a Windows sharing/ACL failure. File contents are flushed
 before replacement. Unix directory synchronization is implemented; Rust does
 not provide the same portable directory-fsync guarantee on Windows here.
 
-Linux temporary-directory tests cover real persistence, restart, independent
-writer processes, symlink/hardlink/permission rejection, external modification,
-concurrent callers and injected pre/post-replacement failures. Linux success
-does not establish Windows/macOS execution, Windows power-loss durability,
-network-filesystem locking, or hardware/storage power-loss guarantees. Those
-platform acceptance checks remain required before production use.
+The regression suite covers persistence, restart, sequential writer handles,
+external edits, concurrent callers and injected pre/post-replacement failures.
+Platform execution and deployment results are recorded in the batch ledger.

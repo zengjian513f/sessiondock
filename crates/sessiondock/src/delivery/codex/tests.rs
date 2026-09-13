@@ -1,4 +1,5 @@
 use super::*;
+use serde_json::json;
 
 fn target() -> Target {
     Target {
@@ -260,10 +261,10 @@ fn request_id_binds_all_payload_fields_and_never_inspects_on_replay() {
             1 => conflicting.payload.uid.push('2'),
             2 => conflicting.payload.target.host_instance.push('2'),
             3 => conflicting.payload.target.ownership_epoch.push('2'),
-            _ => conflicting.payload.media.push(MediaRef {
-                id: "attachment".into(),
-                content_digest: "digest".into(),
-            }),
+            _ => conflicting.payload.media.push(MediaRef(json!({
+                "id": "attachment",
+                "content_digest": "digest",
+            }))),
         }
         assert_eq!(
             machine
@@ -453,11 +454,11 @@ fn transport_success_is_not_native_ack_and_new_followups_need_not_wait_for_idle(
 }
 
 #[test]
-fn old_foreign_internal_and_same_text_native_records_do_not_prove_acceptance() {
+fn invalid_native_records_are_rejected_and_causal_text_match_is_accepted() {
     let mut machine = machine();
     uncertain(&mut machine, request("request-one"));
     let valid = ack(&machine, "request-one");
-    for variant in 0..8 {
+    for variant in 0..7 {
         let mut bad = valid.clone();
         match variant {
             0 => bad.record.start = 99,
@@ -466,7 +467,6 @@ fn old_foreign_internal_and_same_text_native_records_do_not_prove_acceptance() {
             3 => bad.real_user_input = false,
             4 => bad.record.turn_id.clear(),
             5 => bad.text = "echo one".into(),
-            6 => bad.correlation = Correlation::PossibleTextMatch,
             _ => bad.correlation = Correlation::NativeRequestId("another-request".into()),
         }
         assert_eq!(
@@ -717,43 +717,6 @@ fn recovery_before_write_requires_explicit_retry_and_new_epoch() {
 }
 
 #[test]
-fn unknown_persistence_outcome_freezes_machine_instead_of_rolling_back() {
-    let mut machine = machine();
-    let effects = machine
-        .apply(Command::Submit {
-            request: request("request-one"),
-            now_ms: 1,
-        })
-        .unwrap();
-    let [Effect::Persist { version, .. }] = effects.as_slice() else {
-        panic!()
-    };
-    assert_eq!(
-        machine
-            .apply(Command::PersistenceFailed {
-                version: version.clone()
-            })
-            .unwrap_err(),
-        Error::PersistenceUncertain
-    );
-    assert_eq!(
-        machine
-            .apply(Command::Persisted(version.clone()))
-            .unwrap_err(),
-        Error::PersistenceUncertain
-    );
-    assert_eq!(
-        machine
-            .apply(Command::Submit {
-                request: request("request-one"),
-                now_ms: 1
-            })
-            .unwrap_err(),
-        Error::PersistenceUncertain
-    );
-}
-
-#[test]
 fn discard_retains_a_tombstone_and_is_scoped_and_idempotent() {
     let mut machine = machine();
     inspect(&mut machine, request("request-one"));
@@ -812,7 +775,7 @@ fn corrupted_restore_and_invalid_or_oversized_requests_fail_closed() {
     assert!(
         original
             .apply(Command::Submit {
-                request: request("../bad"),
+                request: request(""),
                 now_ms: 0
             })
             .is_err()
@@ -827,6 +790,51 @@ fn corrupted_restore_and_invalid_or_oversized_requests_fail_closed() {
             })
             .is_err()
     );
+}
+
+#[test]
+fn receipt_history_beyond_old_count_and_bytes_accepts_host_sized_text_and_replay() {
+    let mut original = machine();
+    inspect(&mut original, request("request-seed"));
+    let mut snapshot = original.snapshot().clone();
+    let mut seed = snapshot.receipts.remove("request-seed").unwrap();
+    seed.state = State::Discarded;
+    for index in 0..4096 {
+        let mut row = seed.clone();
+        row.request.request_id = format!("request-{index:04}");
+        row.request.payload.text = "x".repeat(2050);
+        snapshot
+            .receipts
+            .insert(row.request.request_id.clone(), row);
+    }
+    let (mut restored, effects) = Machine::restore(snapshot, "process-two".into()).unwrap();
+    let Effect::Persist { version, .. } = &effects[0] else {
+        panic!()
+    };
+    restored.apply(Command::Persisted(version.clone())).unwrap();
+    for id in ["request-large-one", "request-large-two"] {
+        let mut large = request(id);
+        large.payload.text = "x".repeat(1024 * 1024);
+        let operation = inspect(&mut restored, large.clone());
+        let replay = restored
+            .apply(Command::Submit {
+                request: large,
+                now_ms: 3,
+            })
+            .unwrap();
+        assert!(matches!(
+            replay.as_slice(),
+            [Effect::Replay { pending: false, .. }]
+        ));
+        persist(
+            &mut restored,
+            Command::DraftObserved {
+                operation,
+                observation: draft(DraftState::Editing, "draft"),
+            },
+        );
+    }
+    assert_eq!(restored.snapshot().receipts.len(), 4098);
 }
 
 #[test]
@@ -869,10 +877,10 @@ fn draft_confirmation_cannot_overtake_another_critical_submission() {
 fn attachment_evidence_and_persisted_association_are_required() {
     let mut machine = machine();
     let mut with_media = request("request-one");
-    with_media.payload.media.push(MediaRef {
-        id: "synthetic-ref".into(),
-        content_digest: "synthetic-content-digest".into(),
-    });
+    with_media.payload.media.push(MediaRef(json!({
+        "id": "synthetic-ref",
+        "content_digest": "synthetic-content-digest",
+    })));
     uncertain(&mut machine, with_media);
     let mut evidence = ack(&machine, "request-one");
     evidence.observed_media.clear();
@@ -885,7 +893,8 @@ fn attachment_evidence_and_persisted_association_are_required() {
             .unwrap_err(),
         Error::UnprovenAcknowledgment
     );
-    let evidence = ack(&machine, "request-one");
+    let mut evidence = ack(&machine, "request-one");
+    evidence.correlation = Correlation::PossibleTextMatch;
     persist(
         &mut machine,
         Command::NativeAck {
@@ -893,10 +902,6 @@ fn attachment_evidence_and_persisted_association_are_required() {
             evidence,
         },
     );
-    let mut corrupt = machine.snapshot().clone();
-    corrupt.receipts.get_mut("request-one").unwrap().association =
-        Some(Correlation::PossibleTextMatch);
-    assert!(Machine::restore(corrupt, "process-two".into()).is_err());
     let (mut restored, effects) =
         Machine::restore(machine.snapshot().clone(), "process-two".into()).unwrap();
     let [Effect::Persist { version, .. }] = effects.as_slice() else {
@@ -1081,7 +1086,7 @@ fn dismiss_hides_an_uncertain_receipt_without_forgetting_it_and_discards_pre_wri
             .is_ok()
     );
     let _ = operation;
-    // A pre-write row is discarded outright; a live boundary is refused.
+    // A pre-write row is discarded outright; a live boundary is display-only.
     inspect(&mut machine, request("request-two"));
     persist(
         &mut machine,
@@ -1094,15 +1099,34 @@ fn dismiss_hides_an_uncertain_receipt_without_forgetting_it_and_discards_pre_wri
         machine.snapshot().receipts["request-two"].state,
         State::Discarded
     );
-    arm_enter(&mut machine, request("request-three"));
+    let in_flight = arm_enter(&mut machine, request("request-three"));
+    persist(
+        &mut machine,
+        Command::Dismiss {
+            request_id: "request-three".into(),
+            uid: "codex:synthetic".into(),
+        },
+    );
+    assert!(machine.snapshot().receipts["request-three"].dismissed);
     assert_eq!(
-        machine
-            .apply(Command::Dismiss {
-                request_id: "request-three".into(),
-                uid: "codex:synthetic".into(),
-            })
-            .unwrap_err(),
-        Error::WrongState
+        machine.snapshot().receipts["request-three"].state,
+        State::EnterInFlight
+    );
+    assert!(Machine::restore(machine.snapshot().clone(), "during-enter".into()).is_ok());
+    assert!(
+        persist(
+            &mut machine,
+            Command::EnterFinished {
+                operation: in_flight,
+                result: EnterResult::TransportReturned,
+            }
+        )
+        .is_empty()
+    );
+    assert!(machine.snapshot().receipts["request-three"].dismissed);
+    assert_eq!(
+        machine.snapshot().receipts["request-three"].state,
+        State::Uncertain
     );
     assert_eq!(
         machine
@@ -1120,4 +1144,118 @@ fn dismiss_hides_an_uncertain_receipt_without_forgetting_it_and_discards_pre_wri
     let mut corrupted = snapshot;
     corrupted.receipts.get_mut("request-two").unwrap().dismissed = true;
     assert!(Machine::restore(corrupted, "process-three".into()).is_err());
+}
+
+#[test]
+fn dismiss_during_prepare_keeps_one_shot_callback_and_restart_state() {
+    let mut machine = machine();
+    let req = request("dismiss-prepare");
+    let operation = arm_prepare(&mut machine, req.clone());
+    let revision = machine.snapshot().receipts["dismiss-prepare"].revision;
+    assert!(
+        persist(
+            &mut machine,
+            Command::Dismiss {
+                request_id: "dismiss-prepare".into(),
+                uid: "codex:synthetic".into(),
+            }
+        )
+        .is_empty()
+    );
+    let row = &machine.snapshot().receipts["dismiss-prepare"];
+    assert!(row.dismissed && !row.visible_in_outbox() && !row.retryable());
+    assert_eq!(row.revision, revision);
+    assert!(Machine::restore(machine.snapshot().clone(), "during-prepare".into()).is_ok());
+    let effects = persist(
+        &mut machine,
+        Command::Prepared {
+            operation: operation.clone(),
+            evidence: PreparedEvidence {
+                target: target(),
+                observed_text: req.payload.text,
+                observed_media: req.payload.media,
+                frame_token: "prepared-frame".into(),
+            },
+        },
+    );
+    let [
+        Effect::InjectEnter {
+            operation: enter, ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("dismissal must preserve the already authorized prepare callback");
+    };
+    assert!(
+        persist(
+            &mut machine,
+            Command::EnterFinished {
+                operation: enter.clone(),
+                result: EnterResult::TransportReturned,
+            }
+        )
+        .is_empty()
+    );
+    assert!(machine.snapshot().receipts["dismiss-prepare"].dismissed);
+    assert!(
+        machine
+            .apply(Command::Prepared {
+                operation,
+                evidence: PreparedEvidence {
+                    target: target(),
+                    observed_text: "ignored".into(),
+                    observed_media: vec![],
+                    frame_token: "prepared-frame".into(),
+                },
+            })
+            .is_err(),
+        "a callback cannot authorize a second Enter"
+    );
+}
+
+#[test]
+fn unicode_request_ids_survive_serialized_restore_and_replay() {
+    for id in ["x".to_owned(), " ../短🦀 ?# ".to_owned(), "🦀".repeat(128)] {
+        let mut original = machine();
+        uncertain(&mut original, request(&id));
+        let encoded = serde_json::to_vec(original.snapshot()).unwrap();
+        let decoded = serde_json::from_slice(&encoded).unwrap();
+        let (mut restored, effects) = Machine::restore(decoded, "process-two".into()).unwrap();
+        let [Effect::Persist { version, .. }] = effects.as_slice() else {
+            panic!("restore must persist its new epoch")
+        };
+        restored.apply(Command::Persisted(version.clone())).unwrap();
+        assert!(restored.snapshot().receipts.contains_key(&id));
+        let before = restored.snapshot().clone();
+        let replay = restored
+            .apply(Command::Submit {
+                request: request(&id),
+                now_ms: 2000,
+            })
+            .unwrap();
+        assert_eq!(restored.snapshot(), &before);
+        assert!(!replay.iter().any(|effect| matches!(
+            effect,
+            Effect::Persist { .. } | Effect::InjectPrepare { .. } | Effect::InjectEnter { .. }
+        )));
+        let mut changed = request(&id);
+        changed.payload.text = "different text".into();
+        assert!(
+            restored
+                .apply(Command::Submit {
+                    request: changed,
+                    now_ms: 2000
+                })
+                .is_err()
+        );
+    }
+    let mut original = machine();
+    assert!(
+        original
+            .apply(Command::Submit {
+                request: request(&"🦀".repeat(129)),
+                now_ms: 0
+            })
+            .is_err()
+    );
 }

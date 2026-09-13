@@ -186,12 +186,11 @@ async fn uids(app: &Router) -> (String, String) {
     (managed.unwrap(), other.unwrap())
 }
 
-fn legacy_envelope(body: &Value) {
+fn live_envelope(body: &Value) {
     for key in [
         "enabled",
         "known",
         "partial",
-        "unavailable_reason",
         "uids",
         "tmux_uids",
         "started_at",
@@ -199,8 +198,13 @@ fn legacy_envelope(body: &Value) {
     ] {
         assert!(body.get(key).is_some(), "{key}");
     }
-    assert_eq!(body["partial"], true);
-    assert_eq!(body["tmux_uids"], json!([]));
+    assert_eq!(body["partial"], cfg!(not(target_os = "linux")));
+    if cfg!(target_os = "linux") {
+        assert!(body.get("unavailable_reason").is_none());
+    } else {
+        assert!(body["unavailable_reason"].is_string());
+    }
+    assert!(body["tmux_uids"].is_array());
     assert!(body["uids"].is_array() && body["started_at"].is_object());
     let encoded = body.to_string();
     for private in [
@@ -236,7 +240,7 @@ async fn live_reports_running_exited_and_unknown_per_uid_without_stopping_unrela
     // Running: reachable host, child alive, identity verified.
     let (status, body) = get(&app, "/api/live").await;
     assert_eq!(status, StatusCode::OK);
-    legacy_envelope(&body);
+    live_envelope(&body);
     assert_eq!(body["enabled"], true);
     assert_eq!(body["known"], true);
     assert_eq!(body["uids"], json!([managed_uid]));
@@ -248,7 +252,7 @@ async fn live_reports_running_exited_and_unknown_per_uid_without_stopping_unrela
     let managed = &body["managed"];
     assert_eq!(managed["known"], true);
     assert_eq!(managed["partial"], true);
-    assert_eq!(managed["external_detection"], "not_implemented");
+    assert_eq!(managed["external_detection"], "proc_scan");
     assert_eq!(managed["process_identity"], "linux_proc");
     assert_eq!(managed["cache"]["hit"], false);
     let session = &managed["sessions"][&managed_uid];
@@ -326,7 +330,7 @@ async fn live_reports_running_exited_and_unknown_per_uid_without_stopping_unrela
 }
 
 #[tokio::test]
-async fn live_without_host_directory_keeps_the_unknown_legacy_envelope() {
+async fn live_without_host_directory_still_reports_the_python_process_scan() {
     let native = native_fixture();
     let app = app_with_shutdown(
         Config {
@@ -343,9 +347,9 @@ async fn live_without_host_directory_keeps_the_unknown_legacy_envelope() {
     .unwrap();
     let (status, body) = get(&app, "/api/live?force=1").await;
     assert_eq!(status, StatusCode::OK);
-    legacy_envelope(&body);
-    assert_eq!(body["enabled"], false);
-    assert_eq!(body["known"], false);
+    live_envelope(&body);
+    assert_eq!(body["enabled"], cfg!(target_os = "linux"));
+    assert_eq!(body["known"], cfg!(target_os = "linux"));
     assert_eq!(body["uids"], json!([]));
     assert!(body["managed"].is_null());
 }

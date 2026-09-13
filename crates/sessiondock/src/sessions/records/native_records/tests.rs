@@ -1,6 +1,7 @@
 use super::*;
-use crate::sessions::budgets::FILE_CHECKPOINTS as MAX_CHECKPOINTS;
-use crate::sessions::{FILE_LIMIT, FileStamp};
+const MAX_CHECKPOINTS: usize = 2_000_000;
+const LINE_LIMIT: usize = 64 * 1024 * 1024;
+use crate::sessions::FileStamp;
 
 #[test]
 fn complete_but_uncommitted_tool_string_never_opens_a_replay_source() {
@@ -16,8 +17,7 @@ fn complete_but_uncommitted_tool_string_never_opens_a_replay_source() {
     let mut decoder = Decoder::cold();
     // The synthetic candidate has no file. Replaying before LF would try to open it;
     // instead the uncommitted complete JSON is ignored without any source open.
-    let index =
-        scan_native_records(bytes.as_slice(), &mut decoder, None, FILE_LIMIT, &source).unwrap();
+    let index = scan_native_records(bytes.as_slice(), &mut decoder, None, &source).unwrap();
     let batch = decoder.finish(index.committed() as usize);
     assert_eq!(index.committed(), 0);
     assert!(batch.records.is_empty() && batch.sidecars.is_empty());
@@ -62,6 +62,18 @@ impl Read for Chunked<'_> {
     }
 }
 fn pull(bytes: &[u8], chunk: usize) -> (super::super::Batch, RawIndex) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let path = root.join("records.jsonl");
+    std::fs::write(&path, bytes).unwrap();
+    let source = Candidate {
+        source: "claude",
+        root,
+        data: path.clone(),
+        path: path.clone(),
+        summary: None,
+        stamps: vec![crate::sessions::stamp(&path).unwrap()],
+    };
     let mut decoder = Decoder::cold();
     let index = scan_native_records(
         Chunked {
@@ -71,8 +83,7 @@ fn pull(bytes: &[u8], chunk: usize) -> (super::super::Batch, RawIndex) {
         },
         &mut decoder,
         None,
-        FILE_LIMIT,
-        &candidate(bytes),
+        &source,
     )
     .unwrap();
     let batch = decoder.finish(index.committed() as usize);
@@ -119,15 +130,9 @@ fn first_underlying_io_failure_cannot_be_swallowed_by_scanner_or_drain() {
             reads_after_failure: 0,
         };
         let mut decoder = Decoder::cold();
-        let error = scan_native_records(
-            &mut reader,
-            &mut decoder,
-            None,
-            16 * 1024 * 1024,
-            &candidate(&bytes),
-        )
-        .err()
-        .unwrap();
+        let error = scan_native_records(&mut reader, &mut decoder, None, &candidate(&bytes))
+            .err()
+            .unwrap();
         assert_eq!(error.status, 503, "failure at {fail_at}");
         assert!(!error.message.contains("SECRET"));
         assert_eq!(
@@ -140,55 +145,12 @@ fn first_underlying_io_failure_cannot_be_swallowed_by_scanner_or_drain() {
 }
 
 #[test]
-fn physical_index_budget_remains_413_when_failure_occurs_inside_scanner() {
-    let bytes = format!("{{\"text\":\"{}\"}}\n", "x".repeat(SMALL * 3)).into_bytes();
-    for maximum in [
-        0,
-        SMALL as u64 - 1,
-        SMALL as u64 + 29,
-        bytes.len() as u64 - 1,
-    ] {
-        let mut decoder = Decoder::cold();
-        let error = scan_native_records(
-            bytes.as_slice(),
-            &mut decoder,
-            None,
-            maximum,
-            &candidate(&bytes),
-        )
-        .err()
-        .unwrap();
-        assert_eq!(error.status, 413, "budget {maximum}");
-        assert!(decoder.records.is_empty());
-    }
-    let mut decoder = Decoder::cold();
-    let index = scan_native_records(
-        bytes.as_slice(),
-        &mut decoder,
-        None,
-        bytes.len() as u64,
-        &candidate(&bytes),
-    )
-    .unwrap();
-    assert!(decoder.finish(index.committed() as usize).error.is_none());
-}
-
-#[test]
-fn every_lf_counts_toward_index_budget_even_when_no_records_are_decoded() {
-    for (lines, expected_status) in [(MAX_CHECKPOINTS, None), (MAX_CHECKPOINTS + 1, Some(413))] {
+fn all_lf_checkpoints_are_retained() {
+    for lines in [MAX_CHECKPOINTS, MAX_CHECKPOINTS + 1] {
         let bytes = vec![b'\n'; lines];
         let mut decoder = Decoder::cold();
-        let result = scan_native_records(
-            bytes.as_slice(),
-            &mut decoder,
-            None,
-            bytes.len() as u64,
-            &candidate(&bytes),
-        );
-        assert_eq!(
-            result.as_ref().err().map(|error| error.status),
-            expected_status
-        );
+        let result = scan_native_records(bytes.as_slice(), &mut decoder, None, &candidate(&bytes));
+        assert!(result.is_ok());
         assert!(decoder.records.is_empty());
         assert_eq!(decoder.invalid, 0);
         if let Ok(index) = result {
@@ -198,7 +160,7 @@ fn every_lf_counts_toward_index_budget_even_when_no_records_are_decoded() {
 }
 
 #[test]
-fn oversized_long_partial_tail_only_fails_after_physical_lf() {
+fn oversized_partial_tail_is_not_published_until_physical_lf() {
     let mut bytes = b"{\"ok\":1}\n".to_vec();
     let committed = bytes.len();
     bytes.extend_from_slice(b"{\"text\":\"");
@@ -206,36 +168,22 @@ fn oversized_long_partial_tail_only_fails_after_physical_lf() {
     for suffix in [b"".as_slice(), b"\"}", b"\"}\n"] {
         let mut input = bytes.clone();
         input.extend_from_slice(suffix);
-        let mut decoder = Decoder::cold();
-        let index = scan_native_records(
-            input.as_slice(),
-            &mut decoder,
-            None,
-            FILE_LIMIT,
-            &candidate(&input),
-        )
-        .unwrap();
-        assert_eq!(decoder.records.len(), 1);
-        assert!(decoder.sidecars.is_empty());
+        let (batch, index) = pull(&input, SMALL);
         let complete = suffix.ends_with(b"\n");
-        // Over the record budget it is a KEEP hard failure, never a skipped
-        // line; before its LF it is neither.
-        assert_eq!(decoder.invalid, 0);
+        assert_eq!(batch.records.len(), if complete { 2 } else { 1 });
+        assert!(batch.sidecars.is_empty());
+        assert_eq!(batch.invalid, 0);
+        assert!(batch.error.is_none(), "{:?}", batch.error);
         assert_eq!(
             index.committed() as usize,
             if complete { input.len() } else { committed }
         );
-        let batch = decoder.finish(index.committed() as usize);
-        assert_eq!(batch.error.is_some(), complete, "{:?}", batch.error);
-        if complete {
-            assert!(batch.error.as_deref().unwrap().contains("64 MiB"));
-        }
     }
 }
 
 /// Ordinary strings above the span threshold are read back from the stamped
 /// file (verified length/SHA-1), never turned into image authority; over the
-/// record budget, or without a file to read from, the record fails closed.
+/// without a file to read from, the record fails closed.
 #[test]
 fn giant_ordinary_text_is_materialized_from_the_file_but_never_becomes_an_image() {
     let temporary = tempfile::tempdir().unwrap();
@@ -256,8 +204,7 @@ fn giant_ordinary_text_is_materialized_from_the_file_but_never_becomes_an_image(
         stamps: vec![crate::sessions::stamp(&path).unwrap()],
     };
     let mut decoder = Decoder::cold();
-    let index =
-        scan_native_records(bytes.as_slice(), &mut decoder, None, FILE_LIMIT, &source).unwrap();
+    let index = scan_native_records(bytes.as_slice(), &mut decoder, None, &source).unwrap();
     assert_eq!(index.committed(), bytes.len() as u64);
     let batch = decoder.finish(index.committed() as usize);
     assert!(batch.error.is_none(), "{:?}", batch.error);
@@ -274,7 +221,7 @@ fn giant_ordinary_text_is_materialized_from_the_file_but_never_becomes_an_image(
     changed[at] = b'B';
     std::fs::write(&path, &changed).unwrap();
     let mut decoder = Decoder::cold();
-    let error = scan_native_records(bytes.as_slice(), &mut decoder, None, FILE_LIMIT, &source)
+    let error = scan_native_records(bytes.as_slice(), &mut decoder, None, &source)
         .err()
         .expect("rewritten source is not trusted");
     assert!(matches!(error.status, 409 | 503), "{}", error.message);
@@ -294,8 +241,9 @@ fn giant_ordinary_strings_or_public_marker_fields_do_not_authorize_spans() {
         bytes.push(b'\n');
         let (batch, index) = pull(&bytes, SMALL);
         assert_eq!(index.committed(), bytes.len() as u64);
-        assert!(batch.error.is_some());
-        assert!(batch.records.is_empty());
+        assert!(batch.error.is_none(), "{:?}", batch.error);
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.records[0].0, value);
         assert!(batch.sidecars.is_empty());
     }
 }
@@ -332,7 +280,7 @@ fn actual_structured_image_span_is_retained_privately_without_container_decode()
 fn tiny_chunks_preserve_unicode_crlf_blank_lines_order_and_physical_offsets() {
     let bytes = "\n \r\n{\"z\":\"中文😀\",\"a\":2}\r\n\n{\"b\":3}\n{\"partial\":".as_bytes();
     let mut old_decoder = Decoder::cold();
-    let old_index = scan_records(bytes, &mut old_decoder, None, 16 * 1024 * 1024).unwrap();
+    let old_index = scan_records(bytes, &mut old_decoder, None).unwrap();
     let old = old_decoder.finish(old_index.committed() as usize);
     for chunk in [1, 2, 3, 7, SMALL] {
         let (batch, index) = pull(bytes, chunk);
@@ -366,11 +314,10 @@ fn pull_probe_hashes_the_skipped_prefix_and_interrupted_reads_remain_retryable()
         },
         &mut decoder,
         Some(skip as u64),
-        bytes.len() as u64,
         &candidate(bytes),
     )
     .unwrap();
-    let old = RawIndex::scan(&bytes[..skip], Default::default()).unwrap();
+    let old = RawIndex::scan(&bytes[..skip]).unwrap();
     assert_eq!(index.probe_digest(), Some(old.committed_digest()));
     assert_eq!(decoder.records.len(), 1);
     assert_eq!(decoder.records[0].0["new"], 2);
@@ -390,7 +337,6 @@ fn cold_read_retries_first_interrupted_io_without_skipping_or_double_counting_by
         },
         &mut decoder,
         None,
-        bytes.len() as u64,
         &candidate(bytes),
     )
     .unwrap();
@@ -399,7 +345,7 @@ fn cold_read_retries_first_interrupted_io_without_skipping_or_double_counting_by
     assert_eq!(decoder.records[0].1, b"{\"first\":1}\n".len() as u64);
     assert_eq!(decoder.records[1].0["second"], 2);
     assert_eq!(decoder.records[1].1, bytes.len() as u64);
-    let expected = RawIndex::scan(bytes.as_slice(), Default::default()).unwrap();
+    let expected = RawIndex::scan(bytes.as_slice()).unwrap();
     assert_eq!(index.length(), bytes.len() as u64);
     assert_eq!(index.digest(), expected.digest());
     assert_eq!(index.committed_digest(), expected.committed_digest());
@@ -407,14 +353,14 @@ fn cold_read_retries_first_interrupted_io_without_skipping_or_double_counting_by
 }
 
 #[test]
-fn real_image_span_does_not_waive_redacted_ordinary_record_budget() {
+fn image_span_and_large_ordinary_body_are_both_preserved() {
     let image = "A".repeat(SPAN_THRESHOLD + 4);
     // Ordinary text stays inline (each block below the span threshold), while
-    // the image forces the authorized-span branch. Its presence must not waive
-    // the cumulative ordinary JSON budget after removing private payloads.
+    // the image forces the authorized-span branch. Both below and above the
+    // old record quota, all ordinary text and the image marker survive.
     let block = "x".repeat(SPAN_THRESHOLD - 1024);
     let blocks = LINE_LIMIT / block.len();
-    for (count, accepted) in [(blocks - 1, true), (blocks + 1, false)] {
+    for count in [blocks - 1, blocks + 1] {
         let mut content = (0..count)
             .map(|_| serde_json::json!({"type":"text","text":block}))
             .collect::<Vec<_>>();
@@ -424,24 +370,22 @@ fn real_image_span_does_not_waive_redacted_ordinary_record_budget() {
         bytes.push(b'\n');
         let (batch, index) = pull(&bytes, SMALL);
         assert_eq!(index.committed(), bytes.len() as u64);
-        assert_eq!(batch.error.is_none(), accepted);
-        if accepted {
-            assert_eq!(batch.records.len(), 1);
-            assert_eq!(batch.sidecars[&(bytes.len() as u64)].len(), 1);
-            assert!(serde_json::to_vec(&batch.records[0].0).unwrap().len() <= LINE_LIMIT);
-        } else {
-            assert!(batch.records.is_empty());
-            assert!(batch.sidecars.is_empty());
-        }
+        assert!(batch.error.is_none(), "{:?}", batch.error);
+        assert_eq!(batch.records.len(), 1);
+        assert_eq!(batch.sidecars[&(bytes.len() as u64)].len(), 1);
+        let content = batch.records[0].0["message"]["content"].as_array().unwrap();
+        assert_eq!(content.len(), count + 1);
+        assert!(content[..count].iter().all(|part| part["text"] == block));
+        assert_eq!(content[count]["type"], "image");
     }
 }
 
 /// Batch 35: on the pull path too, a complete line that is not a JSON object
 /// is skipped and counted whatever its length (small-record and streaming
 /// scanner alike), the following records keep their physical offsets, and a
-/// valid giant record whose media is invalid still fails the session (KEEP).
+/// an unsupported media spelling does not turn valid JSON into a hard failure.
 #[test]
-fn invalid_lines_are_skipped_on_the_pull_path_but_media_failures_stay_hard() {
+fn invalid_lines_are_skipped_and_unsupported_media_does_not_fail_the_pull_path() {
     let first = b"{\"ok\":1}\n";
     let mut bytes = first.to_vec();
     bytes.extend_from_slice(b"not json\n");
@@ -471,15 +415,23 @@ fn invalid_lines_are_skipped_on_the_pull_path_but_media_failures_stay_hard() {
     bytes.push(b'\n');
     let (batch, index) = pull(&bytes, SMALL);
     assert_eq!(index.committed(), bytes.len() as u64);
-    assert_eq!(batch.error.as_deref(), Some("此原生媒体格式尚未支持"));
+    assert!(batch.error.is_none(), "{:?}", batch.error);
     assert_eq!(batch.invalid, 0);
-    assert!(batch.records.is_empty());
+    assert_eq!(batch.records.len(), 1);
+    assert!(batch.sidecars.is_empty());
+    assert_eq!(
+        batch.records[0].0["message"]["content"][0]["source"]["data"]
+            .as_str()
+            .unwrap()
+            .len(),
+        data.len()
+    );
 }
 
 /// Batch 36 (WP-G): a multi-part Codex output (`[header, chunk, chunk, …]`)
 /// is not one envelope candidate. Every giant chunk part is decoded in place
-/// through the shared replay budget (a span candidate, never read back as
-/// text and parsed a second time), a giant ordinary part is still read back
+/// through streaming replay (a span candidate, never read back as text and
+/// parsed a second time), a giant ordinary part is still read back
 /// verbatim, and an image part next to the chunks becomes a sidecar; the
 /// provider then shows every chunk's output.
 #[test]
@@ -520,8 +472,7 @@ fn multi_part_tool_output_decodes_giant_chunks_in_place() {
         stamps: vec![crate::sessions::stamp(&path).unwrap()],
     };
     let mut decoder = Decoder::cold();
-    let index =
-        scan_native_records(bytes.as_slice(), &mut decoder, None, FILE_LIMIT, &source).unwrap();
+    let index = scan_native_records(bytes.as_slice(), &mut decoder, None, &source).unwrap();
     assert_eq!(index.committed(), bytes.len() as u64);
     let batch = decoder.finish(index.committed() as usize);
     assert!(batch.error.is_none(), "{:?}", batch.error);

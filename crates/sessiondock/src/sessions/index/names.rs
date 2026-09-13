@@ -1,31 +1,23 @@
 //! Codex `session_index.jsonl` names applied to summary rows (batch 34).
 //!
-//! Same explicit, bounded contract as `sessions::names` (docs/codex-names.md):
-//! an explicitly configured absolute file, opened without following symlinks,
-//! 4 MiB / 50 000 lines / 10 000 ids, `id` + `thread_name` truthy, titles
-//! clipped to 110 characters, `renamed_at`/`renamed_to` only when the entry
-//! carries an `updated_at`. The snapshot is reused while the file's stamp is
-//! unchanged, so a warm list refresh costs one `stat` here.
+//! Same contract as Python's `_thread_names`: a missing index is an empty
+//! index, malformed lines are skipped, `id` + `thread_name` must be truthy,
+//! titles are clipped to 110 characters, and `renamed_at`/`renamed_to` only
+//! appear when the entry carries an `updated_at`. The snapshot is reused while
+//! the file's stamp is unchanged, so a warm list refresh costs one `stat` here.
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
-use cap_fs_ext::{DirExt, FollowSymlinks, MetadataExt, OpenOptionsFollowExt};
-use cap_std::ambient_authority;
-use cap_std::fs::{Dir, Metadata, OpenOptions};
+use cap_fs_ext::MetadataExt;
+use cap_std::fs::Metadata;
 use serde_json::{Value, json};
 
 use super::summary::{clip, norm_ts, truthy};
 use super::{CandidateRef, graph};
 use crate::sessions::SessionError;
-
-const BYTE_LIMIT: u64 = 4 * 1024 * 1024;
-const LINE_LIMIT: usize = 50_000;
-const NAME_LIMIT: usize = 10_000;
-const ID_LIMIT: usize = 256;
-const TITLE_LIMIT: usize = 16 * 1024;
 
 fn error(message: &str) -> SessionError {
     SessionError::new(503, format!("Codex 名称索引：{message}"))
@@ -34,8 +26,7 @@ fn error(message: &str) -> SessionError {
 fn io_error(io: std::io::Error) -> SessionError {
     match io.kind() {
         std::io::ErrorKind::PermissionDenied => error("文件或目录不可读"),
-        std::io::ErrorKind::NotFound => error("显式配置的文件或目录不存在"),
-        _ => error("文件访问失败，请检查显式配置；没有回退到旧名称"),
+        _ => error("文件访问失败，请检查名称索引"),
     }
 }
 
@@ -54,68 +45,30 @@ fn stamp(meta: &Metadata) -> Stamp {
     }
 }
 
-fn ordinary(meta: &Metadata, directory: bool) -> Result<(), SessionError> {
-    if meta.is_symlink() || (directory && !meta.is_dir()) || (!directory && !meta.is_file()) {
-        return Err(error(
-            "只接受普通文件和目录，不跟随符号链接、重解析点或特殊文件",
-        ));
-    }
-    if !directory && meta.nlink() != 1 {
-        return Err(error("不接受具有多个硬链接的名称索引"));
-    }
-    if !directory && meta.len() > BYTE_LIMIT {
-        return Err(SessionError::new(413, "Codex 名称索引超过 4 MiB 字节预算"));
-    }
-    Ok(())
-}
-
 struct Opened {
-    file: cap_std::fs::File,
-    stamp: Stamp,
+    file: Option<std::fs::File>,
+    stamp: Option<Stamp>,
 }
 
 impl Opened {
-    /// Walk every component of the configured path without following links.
     fn new(path: &Path) -> Result<Self, SessionError> {
-        if !path.is_absolute()
-            || path
-                .to_str()
-                .is_none_or(|s| s.len() > 4096 || s.contains('\0'))
-        {
-            return Err(SessionError::new(
-                400,
-                "Codex 名称索引需要显式、标准的绝对 UTF-8 文件路径",
-            ));
-        }
-        let mut base = PathBuf::new();
-        let mut parts = Vec::new();
-        for part in path.components() {
-            match part {
-                Component::Prefix(_) | Component::RootDir => base.push(part.as_os_str()),
-                Component::Normal(name) => parts.push(name.to_owned()),
-                _ => return Err(SessionError::new(400, "Codex 名称索引路径不能包含相对跳转")),
+        let file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    file: None,
+                    stamp: None,
+                });
             }
-        }
-        let name = parts.pop().ok_or_else(|| error("配置必须指向文件"))?;
-        let mut parent = Dir::open_ambient_dir(base, ambient_authority()).map_err(io_error)?;
-        for name in parts {
-            let before = parent.symlink_metadata(&name).map_err(io_error)?;
-            ordinary(&before, true)?;
-            parent = parent.open_dir_nofollow(&name).map_err(io_error)?;
-        }
-        let before = parent.symlink_metadata(&name).map_err(io_error)?;
-        ordinary(&before, false)?;
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No);
-        let file = parent.open_with(&name, &options).map_err(io_error)?;
-        let after = file.metadata().map_err(io_error)?;
-        ordinary(&after, false)?;
-        if stamp(&before) != stamp(&after) {
-            return Err(error("读取期间文件或父目录身份改变，请重试"));
+            Err(io) => return Err(io_error(io)),
+        };
+        let after = Metadata::from_file(&file).map_err(io_error)?;
+        if !after.is_file() {
+            return Err(error("配置必须指向文件"));
         }
         Ok(Self {
-            file,
-            stamp: stamp(&after),
+            file: Some(file),
+            stamp: Some(stamp(&after)),
         })
     }
 }
@@ -127,7 +80,7 @@ struct Name {
 }
 
 pub struct NameIndex {
-    stamp: Stamp,
+    stamp: Option<Stamp>,
     names: BTreeMap<String, Name>,
 }
 
@@ -145,20 +98,21 @@ pub fn load(
     if let Some(old) = previous.filter(|old| old.stamp == opened.stamp) {
         return Ok(old.clone());
     }
-    let mut bytes = Vec::with_capacity(opened.stamp.size as usize);
-    (&mut opened.file)
-        .take(BYTE_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io_error)?;
-    if bytes.len() as u64 > BYTE_LIMIT {
-        return Err(SessionError::new(413, "Codex 名称索引超过 4 MiB 字节预算"));
-    }
-    if bytes.len() as u64 != opened.stamp.size {
+    let Some(mut file) = opened.file.take() else {
+        return Ok(Arc::new(NameIndex {
+            stamp: None,
+            names: BTreeMap::new(),
+        }));
+    };
+    let expected = opened.stamp.as_ref().expect("opened file has a stamp");
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(io_error)?;
+    if bytes.len() as u64 != expected.size {
         return Err(error("读取期间文件或父目录身份改变，请重试"));
     }
     let names = parse(&bytes)?;
-    let after = opened.file.metadata().map_err(io_error)?;
-    if stamp(&after) != opened.stamp {
+    let after = Metadata::from_file(&file).map_err(io_error)?;
+    if stamp(&after) != *expected {
         return Err(error("读取期间文件或父目录身份改变，请重试"));
     }
     Ok(Arc::new(NameIndex {
@@ -169,46 +123,42 @@ pub fn load(
 
 fn parse(bytes: &[u8]) -> Result<BTreeMap<String, Name>, SessionError> {
     let mut names = BTreeMap::new();
-    for (index, line) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
-        if index >= LINE_LIMIT {
-            return Err(SessionError::new(413, "Codex 名称索引超过 50000 行预算"));
-        }
+    for line in bytes.split_inclusive(|b| *b == b'\n') {
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let row: Value =
-            serde_json::from_slice(line).map_err(|_| error("包含无效或未完成的 JSON 行"))?;
-        if !row.is_object() {
-            return Err(error("名称索引每一行必须是 JSON 对象"));
-        }
-        if !truthy(&row["id"]) || !truthy(&row["thread_name"]) {
+        let Ok(row) = serde_json::from_slice::<Value>(line) else {
             continue;
-        }
-        let sid = row["id"].as_str().ok_or_else(|| error("id 必须是字符串"))?;
-        let title = row["thread_name"]
-            .as_str()
-            .ok_or_else(|| error("thread_name 必须是字符串"))?;
-        if sid.len() > ID_LIMIT || title.len() > TITLE_LIMIT {
-            return Err(SessionError::new(
-                413,
-                "Codex 名称索引 id 或名称字段超过预算",
-            ));
-        }
+        };
+        let Some(row) = row.as_object() else {
+            continue;
+        };
+        let Some(id) = row.get("id").filter(|value| truthy(value)) else {
+            continue;
+        };
+        let Some(thread_name) = row.get("thread_name").filter(|value| truthy(value)) else {
+            continue;
+        };
+        let Some(sid) = id.as_str() else {
+            // Non-string Python dictionary keys cannot match a session SID.
+            continue;
+        };
+        let title = match thread_name {
+            Value::String(value) => value.clone(),
+            Value::Bool(value) => if *value { "True" } else { "False" }.to_owned(),
+            value => value.to_string(),
+        };
         names.insert(
             sid.to_owned(),
             Name {
-                title: title.to_owned(),
-                updated: norm_ts(&row["updated_at"])
+                title,
+                updated: row
+                    .get("updated_at")
+                    .and_then(norm_ts)
                     .map(Value::String)
                     .unwrap_or(Value::Null),
             },
         );
-        if names.len() > NAME_LIMIT {
-            return Err(SessionError::new(
-                413,
-                "Codex 名称索引超过 10000 个 ID 预算",
-            ));
-        }
     }
     Ok(names)
 }

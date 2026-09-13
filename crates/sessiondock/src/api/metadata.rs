@@ -1,8 +1,8 @@
-//! AgentHub-owned preferences only. No native session writes or CLI actions.
+//! SessionDock-owned preferences only. No native session writes or CLI actions.
 use std::{collections::BTreeSet, sync::Arc};
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::{State, rejection::JsonRejection},
     http::StatusCode,
 };
@@ -37,18 +37,8 @@ pub struct Diagnostics {
 }
 
 impl Diagnostics {
-    fn validate(&self, state: &AppState) -> Result<(), ApiError> {
-        if [&self._build, &self._trace_id, &self._page_id]
-            .iter()
-            .any(|field| field.len() > 128)
-        {
-            return Err(ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_metadata_request",
-                "偏好请求诊断字段过长",
-            ));
-        }
-        if !self._build.is_empty() && self._build != state.assets.build {
+    fn validate(&self, state: &AppState, hub: bool) -> Result<(), ApiError> {
+        if !hub && !self._build.is_empty() && self._build != state.assets.build {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "stale_build",
@@ -93,7 +83,7 @@ fn configured(state: &AppState) -> Result<Arc<MetadataStore>, ApiError> {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "metadata_disabled",
-            "偏好保存未启用：必须显式配置独立的开发状态目录",
+            "偏好保存未配置状态目录",
         )
     })
 }
@@ -144,12 +134,13 @@ async fn write(
 
 pub async fn star(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<StarRequest>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
-    body.diagnostics.validate(&state)?;
-    if body.uid.is_empty() || body.uid.len() > 256 {
+    body.diagnostics.validate(&state, hub.is_some())?;
+    if body.uid.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_metadata_uid",
@@ -178,22 +169,17 @@ pub async fn star(
 
 pub async fn visibility(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<VisibilityRequest>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
-    body.diagnostics.validate(&state)?;
-    if body.uids.is_empty()
-        || body.uids.len() > 1000
-        || body
-            .uids
-            .iter()
-            .any(|uid| uid.is_empty() || uid.len() > 256)
-    {
+    body.diagnostics.validate(&state, hub.is_some())?;
+    if body.uids.is_empty() || body.uids.iter().any(|uid| uid.is_empty()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_metadata_batch",
-            "需要 1 至 1000 个有效会话 uid",
+            "需要有效会话 uid",
         ));
     }
     write(state, move |store| {
@@ -223,32 +209,24 @@ pub async fn visibility(
 /// `native_rewind:false`. Later native records retire the pin explicitly.
 pub async fn rewind(
     State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     body: Result<Json<RewindRequest>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
-    body.diagnostics.validate(&state)?;
-    if body.uid.is_empty() || body.uid.len() > 256 {
+    body.diagnostics.validate(&state, hub.is_some())?;
+    if body.uid.is_empty() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_metadata_uid",
             "需要有效的会话 uid",
         ));
     }
-    if body.target.as_ref().is_some_and(|target| {
-        target.is_empty() || target.len() > 256 || target.chars().any(char::is_control)
-    }) {
+    if body.target.as_ref().is_some_and(|target| target.is_empty()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalid_rewind_target",
-            "target 必须是 1 至 256 字节的 Claude 记录节点 ID，或 null 表示取消固定",
-        ));
-    }
-    if body.request_id.as_ref().is_some_and(|id| id.len() > 128) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_metadata_request",
-            "request_id 过长",
+            "target 必须是 Claude 记录节点 ID，或 null 表示取消固定",
         ));
     }
     write(state, move |store| {

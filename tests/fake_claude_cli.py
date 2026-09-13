@@ -82,18 +82,15 @@ class Fake:
     def render(self, footer=""):
         lines = ["FAKE_CLAUDE_READY sid=[%s]" % self.sid]
         for text in self.transcript[-4:]:
-            lines.append("> " + text)
+            lines.extend(("> " + text).splitlines())
         lines.append("")
         lines.append(RULE)
-        prompt_row = len(lines) + 1
-        lines.append("❯ " + self.buffer)
-        lines.append(RULE)
-        if footer:
-            lines.append(footer)
-        # Clear screen, home, draw, then park the cursor after the buffer.
-        self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
-        column = 3 + len(self.buffer)
-        self.write("\x1b[%d;%dH" % (prompt_row, column))
+        # Let the terminal compute the cursor position: multiline attachments,
+        # wrapping and wide Unicode glyphs make string lengths/row counts wrong.
+        # Preserve the actual composer cursor while drawing its bottom rule.
+        body = "\r\n".join(lines) + "\r\n❯ " + self.buffer.replace("\n", "\r\n")
+        self.write("\x1b[2J\x1b[H" + body + "\x1b7\r\n" + RULE
+                   + ("\r\n" + footer if footer else "") + "\x1b8")
 
     def record(self, text):
         if not self.path:

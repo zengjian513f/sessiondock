@@ -72,14 +72,14 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST.resolve()), "host_dir": str(tmp / "host"),
-            "cwd_roots": [str(tmp / "work")], "adapters": [],
+            "adapters": [],
             "profiles": [{
                 "id": "claude-real-v1", "source": "claude", "executable": claude,
                 "args": ["--model", MODEL, "--effort", "low", "--permission-mode", "plan"],
                 "new_args": ["--session-id", "{session_id}"],
                 "resume_args": ["--resume", "{sid}"],
                 "env": {**passthrough(), "HOME": str(tmp / "work"), "CLAUDE_CONFIG_DIR": str(config)},
-                "cwd_roots": [str(repo)],
+
             }],
             "bug_report_profiles": {"claude": "claude-real-v1"}}))
         launcher.chmod(0o600)

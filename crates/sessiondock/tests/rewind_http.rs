@@ -284,7 +284,7 @@ async fn invalid_targets_and_non_claude_sessions_are_refused_without_writes() {
         (
             claude.as_str(),
             json!("x".repeat(257)),
-            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_FOUND,
         ),
         (claude.as_str(), json!(7), StatusCode::BAD_REQUEST),
         (codex.as_str(), json!("u3"), StatusCode::BAD_REQUEST),
@@ -308,20 +308,24 @@ async fn invalid_targets_and_non_claude_sessions_are_refused_without_writes() {
         call(
             &app,
             "/api/session/rewind",
-            Some(json!({"uid": claude, "target": "u3", "padding": "x".repeat(9 * 1024)}))
+            Some(json!({"uid": claude, "target": "u3", "padding": "x".repeat(5 * 1024 * 1024)}))
         )
         .await
         .status(),
-        StatusCode::PAYLOAD_TOO_LARGE
+        StatusCode::OK
     );
     let list = rows(&app).await;
-    assert!(session_row(&list, &claude).get("timeline_pin").is_none());
+    assert!(session_row(&list, &claude).get("timeline_pin").is_some());
+    assert_eq!(
+        rewind(&app, &claude, Value::Null).await.status(),
+        StatusCode::OK
+    );
     assert_eq!(
         texts(&json(call(&app, &format!("/api/messages/{claude}"), None).await).await).len(),
         6
     );
     assert_eq!(fs::read(&path).unwrap(), native);
-    assert!(!root.path().join("state/session-metadata.json").exists());
+    assert!(root.path().join("state/session-metadata.json").is_file());
 }
 
 #[tokio::test]

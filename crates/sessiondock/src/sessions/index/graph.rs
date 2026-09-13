@@ -31,9 +31,7 @@ use serde_json::{Value, json};
 use super::CandidateRef;
 use super::agent_stops::{Stops, claude_active};
 use super::summary::claude::owner_path;
-use crate::sessions::{NativeScope, SessionError};
-
-pub(super) const DEPTH_LIMIT: usize = 32;
+use crate::sessions::{NativeScope, SessionError, path_text};
 
 /// What the index learned about a parent's fixed-prefix cut.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,12 +354,6 @@ impl<'a> Graph<'a> {
             if !seen.insert(current.clone()) {
                 return Err(Unowned::Broken(unsupported("子代理归属关系存在循环")));
             }
-            if chain.len() > DEPTH_LIMIT {
-                return Err(Unowned::Broken(SessionError::new(
-                    413,
-                    "子代理归属超过 32 层限制",
-                )));
-            }
             chain.push(current.clone());
             let Some(agent) = self.agents.get(&current) else {
                 return Ok((current, chain));
@@ -395,9 +387,6 @@ impl<'a> Graph<'a> {
             let Some((sid, cut)) = history_link(&self.entries[&current])? else {
                 return Ok(chain);
             };
-            if chain.len() >= DEPTH_LIMIT {
-                return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-            }
             let parent = self.history_parent(sid)?;
             if !seen.insert(parent.clone()) {
                 return Err(unsupported("分叉历史依赖存在循环"));
@@ -529,7 +518,7 @@ fn base_row(entry: &CandidateRef) -> Value {
     row["migration_warnings"] = json!(summary.migration_warnings());
     row["uid"] = json!(entry.uid);
     row["source"] = json!(entry.source);
-    row["path"] = json!(entry.path.to_string_lossy());
+    row["path"] = json!(path_text(&entry.path));
     row["size"] = json!(summary.size);
     if let Some(grok) = &summary.grok {
         row["chat_exists"] = json!(grok.chat_exists);

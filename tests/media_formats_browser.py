@@ -12,7 +12,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from urllib.error import HTTPError
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
@@ -66,7 +65,7 @@ def build(root):
                 {"type": "tool_result", "tool_call_id": "formats", "content": [{"type": "text", "text": "Mixed formats"}, *blocks[3:]]},
                 {"type": "assistant", "content": marker}]))
             corpus.paths[name] = path
-    for suffix, data in (("bad-signature", b"not a GIF container"), ("frame-limit", excessive_gif(129)), ("pixel-limit", excessive_gif(65, 1024))):
+    for suffix, data in (("bad-signature", b"not a GIF container"), ("many-frames", excessive_gif(129)), ("many-pixels", excessive_gif(65, 1024))):
         name = "claude-" + suffix
         corpus.put(name, "claude", [claude_row(name, "user", "u", None, [
             {"type": "text", "text": "Readable text beside " + suffix},
@@ -83,7 +82,7 @@ def main():
         original = native_bytes(corpus.root)
         with isolated_server(corpus, args.binary) as (base, opener), sync_playwright() as playwright:
             caps = get_json(opener, base, "/api/meta")["capabilities"]
-            assert caps["media"] is True and caps["media_remote"] is False
+            assert caps["media"] is True and caps["media_remote"] is True
             assert caps["media_lazy"] is True
             for source in ("claude", "codex", "grok"):
                 response = get_json(opener, base, route(corpus, source + "-formats"))
@@ -100,20 +99,15 @@ def main():
                         assert reply.headers["X-Content-Type-Options"] == "nosniff"
                         assert "private" in reply.headers["Cache-Control"] and "no-store" in reply.headers["Cache-Control"]
                         assert reply.read() == base64.b64decode(data, validate=True)
-            for suffix, status in (("bad-signature", 422), ("frame-limit", 413), ("pixel-limit", 413)):
+            for suffix, expected in (("bad-signature", b"not a GIF container"), ("many-frames", excessive_gif(129)), ("many-pixels", excessive_gif(65, 1024))):
                 history = get_json(opener, base, route(corpus, "claude-" + suffix))
                 assert "Readable text beside " + suffix in json.dumps(history)
                 images = [item for row in history["messages"] for item in row.get("media", [])]
                 assert len(images) == 1 and images[0].get("lazy") is True
                 assert not {"mime", "width", "height", "error"}.intersection(images[0])
-                try:
-                    opener.open(base + images[0]["src"], timeout=5)
-                except HTTPError as error:
-                    assert error.code == status, (suffix, error.code)
-                    body = json.loads(error.read())
-                    assert body.get("error") and "base64" not in json.dumps(body)
-                else:
-                    raise AssertionError("invalid image accepted: " + suffix)
+                with opener.open(base + images[0]["src"], timeout=5) as reply:
+                    assert reply.status == 200 and reply.headers["Content-Type"] == "image/gif"
+                    assert reply.read() == expected
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -160,18 +154,18 @@ def main():
                         expect(page.locator("#msgs")).to_contain_text(source.title() + " formats complete")
                         verify_images()
                         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                for suffix in ("bad-signature", "frame-limit", "pixel-limit"):
+                for suffix in ("bad-signature", "many-frames", "many-pixels"):
                     if page.locator(".mobile-back").is_visible():
                         page.locator(".mobile-back").click()
                     page.locator(f'#side .item[data-uid="{uid(corpus, "claude-" + suffix)}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Readable text beside " + suffix)
                     expect(page.locator("#migration-read-error")).to_have_count(0)
-                    expect(page.locator("#msgs .media-load-error")).to_be_visible()
-                    expected_status = 422 if suffix == "bad-signature" else 413
-                    expect(page.locator("#msgs .media-load-error")).to_contain_text(str(expected_status))
                     expect(page.locator("#msgs img")).to_have_count(1)
-                    expect(page.locator("#msgs img")).to_be_hidden()
-                    expect(page.locator("#msgs .media-load-retry")).to_be_visible()
+                    if suffix == "bad-signature":
+                        expect(page.locator("#msgs .media-load-error")).to_be_visible()
+                        expect(page.locator("#msgs .media-load-retry")).to_be_visible()
+                    else:
+                        page.wait_for_function("document.querySelector('#msgs img').complete")
                     expect(page.locator(".mobile-back")).to_be_visible()
                     button = page.locator("#a-term")
                     expect(button).to_be_visible()
@@ -189,7 +183,7 @@ def main():
                 assert not errors, errors
                 assert all(url.startswith(base + "/") for url in requests), requests
                 assert native_bytes(corpus.root) == original, "native fixture bytes changed"
-                print("PASS media formats: GIF/WebP static+animated, AVIF/BMP, three providers and tool results, real Chromium 3x2 decoding, reload/mobile, visible invalid/limit errors, native bytes unchanged")
+                print("PASS media formats: GIF/WebP static+animated, AVIF/BMP, many-frame/pixel bytes accepted, browser decode errors visible, native bytes unchanged")
             finally:
                 browser.close()
 

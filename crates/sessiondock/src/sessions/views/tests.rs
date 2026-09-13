@@ -749,22 +749,23 @@ fn unsupported_files_and_oversized_files_fail_only_their_own_session() {
         )
         .unwrap();
     assert_eq!(texts(&view), ["fine"]);
-    let huge = root.join("2026/09/11/rollout-huge.jsonl");
-    fs::File::create(&huge)
-        .unwrap()
-        .set_len(FILE_LIMIT + 1)
-        .unwrap();
-    let error = views
-        .open(
-            &request(
-                &uid_for("codex", &huge),
-                &candidate("codex", &root, &huge),
-                "huge",
-            ),
-            &deps,
-        )
-        .unwrap_err();
-    assert_eq!(error.status, 413);
-    assert_eq!(views.stats().views, 1);
     let _ = hash(b"");
+}
+
+#[test]
+fn serialized_history_above_one_gib_is_counted_without_a_read_quota() {
+    // Reuse one message to cross the former accumulated limit without making
+    // a GiB-sized fixture or retaining a second full history in the test.
+    let message = json!({"role":"user","text":"x".repeat(1024 * 1024)});
+    let event = Event {
+        end: 1,
+        message,
+        media: Vec::new(),
+    };
+    let one = serde_json::to_vec(&event.message).unwrap().len();
+    assert_eq!(
+        encoded_bytes(std::iter::repeat_n(&event, 1025)).unwrap(),
+        one * 1025
+    );
+    assert!(one * 1025 > 1024 * 1024 * 1024);
 }

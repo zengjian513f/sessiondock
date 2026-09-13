@@ -1,9 +1,11 @@
 //! Read-only live status; never upgrades observations into CLI authority.
-//! Managed host observations (batch 22) and, when `SESSIONDOCK_PROC_SCAN=1`,
-//! the Python-shaped `/proc` scan of external CLIs are merged into the legacy
-//! `uids` / `tmux_uids` / `started_at` envelope.
+//! Managed host observations and Python-shaped native process discovery are
+//! merged into the legacy `uids` / `tmux_uids` / `started_at` envelope.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::Arc,
+};
 
 use axum::{
     Json,
@@ -18,7 +20,7 @@ use crate::{
     lifecycle::model::{BindingState, State as LaunchState},
     runtime::{
         ExitReceipt, ManagedRuntime, RuntimeSnapshot, SharedError, SharedObservation,
-        procscan::{Scan, ScanError, SessionRow},
+        procscan::{Scan, ScanError, ScanSnapshot, SessionRow},
     },
     state::AppState,
 };
@@ -31,6 +33,55 @@ const UNCONFIGURED: &str =
 const PARTIAL: &str = "仅观察显式配置的受控 host 实例；未列出的会话运行状态未知，不表示已停止，也不能据此接管或停止会话。";
 const SCAN_FAILED: &str =
     "进程表扫描失败；本次只有受控 host 实例的观察，未列出的会话运行状态未知。";
+
+fn external_scan_result(
+    result: Result<ScanSnapshot, ScanError>,
+) -> Result<Option<Arc<Scan>>, ApiError> {
+    match result {
+        Ok(snapshot) => Ok(Some(snapshot.scan)),
+        // Python falls back to psutil off /proc and returns an empty observation
+        // when that provider is unavailable. Absence of evidence never grants
+        // PID control; managed host observation remains independently usable.
+        Err(ScanError::UnsupportedPlatform) => Ok(None),
+        Err(error @ ScanError::Failed) => Err(ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "process_scan_unavailable",
+            format!("无法核对会话进程：{error}"),
+        )),
+    }
+}
+
+async fn external_scan(state: &AppState) -> Result<Option<Arc<Scan>>, ApiError> {
+    let scanner = state.proc_scan.clone().unwrap_or_else(|| {
+        Arc::new(crate::runtime::procscan::ProcScanner::new(
+            "/proc".into(),
+            None,
+            crate::runtime::procscan::SessionRoots::default(),
+        ))
+    });
+    external_scan_result(scanner.snapshot(true).await)
+}
+
+/// One process-table snapshot over a frozen session-list document. The map is
+/// Python `live.is_live(row, force=True)` for every row, including Grok's
+/// active-session evidence when it exposes no PID. Callers can protect a whole
+/// trash batch without rescanning once per UID.
+pub(crate) async fn observe_external_all(
+    state: &AppState,
+    document: &Value,
+) -> Result<BTreeMap<String, bool>, ApiError> {
+    let sessions = SessionRow::from_list(document);
+    let scan = external_scan(state).await?;
+    Ok(sessions
+        .iter()
+        .map(|session| {
+            (
+                session.uid.clone(),
+                scan.as_ref().is_some_and(|scan| scan.is_live(session)),
+            )
+        })
+        .collect())
+}
 
 /// The scan merged with the managed observations (Python `/api/live` body).
 #[derive(Default)]
@@ -104,7 +155,14 @@ pub async fn live(
         });
         response["managed"] = managed;
     }
-    if let Some(scanner) = &state.proc_scan {
+    {
+        let scanner = state.proc_scan.clone().unwrap_or_else(|| {
+            Arc::new(crate::runtime::procscan::ProcScanner::new(
+                "/proc".into(),
+                None,
+                crate::runtime::procscan::SessionRoots::default(),
+            ))
+        });
         let mut scan_report = json!({"enabled": true, "root": scanner.root().to_string_lossy()});
         match scanner.snapshot(force).await {
             Ok(snapshot) => {
@@ -299,7 +357,7 @@ async fn exit_receipts(state: &AppState) -> Result<Vec<ExitReceipt>, ApiError> {
         return Ok(Vec::new());
     };
     let records = service
-        .list(0, 128)
+        .list(0, usize::MAX)
         .await
         .map_err(super::lifecycle::failure)?;
     Ok(records
@@ -316,15 +374,9 @@ async fn exit_receipts(state: &AppState) -> Result<Vec<ExitReceipt>, ApiError> {
         .collect())
 }
 
-/// One of `Pools::runtime_probes` permits, queued within the bounded wait.
+/// One of `Pools::runtime_probes` permits, queued until available.
 async fn admit(state: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
-    crate::state::admit(
-        &state.runtime_probes,
-        state.admission_wait,
-        "runtime_busy",
-        "受控进程观察繁忙，请稍后重试",
-    )
-    .await
+    crate::state::admit(&state.runtime_probes, "runtime_busy").await
 }
 
 fn unavailable() -> ApiError {
@@ -353,6 +405,21 @@ pub(crate) async fn observe(state: &AppState) -> Result<Option<RuntimeSnapshot>,
     Ok(None)
 }
 
+#[cfg(test)]
+mod external_scan_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_platform_is_an_empty_external_observation() {
+        assert!(
+            external_scan_result(Err(ScanError::UnsupportedPlatform))
+                .expect("unsupported process discovery is not a request failure")
+                .is_none()
+        );
+        assert!(external_scan_result(Err(ScanError::Failed)).is_err());
+    }
+}
+
 /// Python 16cc89c `tests/test_server.py` PaneLinkingTests over a synthetic
 /// tree: pane root 10 → claude 11 (origin) → daemon 12 → claude 13 (the
 /// continued session's process); 11 also spawned grok 14. A CLI in between
@@ -363,7 +430,7 @@ mod tests {
 
     use super::*;
     use crate::runtime::procscan::{
-        ProcTree, ScanLimits, SessionRoots as ScanRoots, scan,
+        ProcTree, SessionRoots as ScanRoots, scan,
         tests::{FakeProc, session},
     };
 
@@ -402,7 +469,7 @@ mod tests {
             &[],
         );
         let scan = scan(
-            Arc::new(ProcTree::open(proc.root.clone(), ScanLimits::default())),
+            Arc::new(ProcTree::open(proc.root.clone())),
             None,
             &ScanRoots::default(),
         );

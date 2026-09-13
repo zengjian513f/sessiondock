@@ -16,7 +16,6 @@ use std::{
 
 use ptyhost_client::{BoundTarget, CaptureKind, ControlOp, ControlReply, HostClient};
 use serde_json::Value;
-use tokio::sync::Semaphore;
 
 use super::{claude::PromptStore, claude::Revision, codex};
 use crate::{sessions::ViewSnapshot, state::AppState};
@@ -63,8 +62,6 @@ pub struct CodexProbe {
 
 struct CodexCapture {
     client: HostClient,
-    /// Concurrent screen captures across all watchers; a busy tick is skipped.
-    captures: Semaphore,
 }
 
 /// Prompt sources configured for this process.
@@ -85,15 +82,11 @@ impl LivePrompts {
                 client: HostClient::new(
                     directory,
                     ptyhost_client::Limits {
-                        // 80 joined rows of a wide pane fit comfortably; the
-                        // reply is one JSON line.
-                        max_line_bytes: 1024 * 1024,
-                        max_directory_entries: 512,
-                        operation_timeout: Duration::from_secs(2),
+                        max_line_bytes: 4 * 1024 * 1024,
+                        operation_timeout: Duration::from_secs(10),
                         ..Default::default()
                     },
                 )?,
-                captures: Semaphore::new(4),
             }),
             None => None,
         };
@@ -166,9 +159,6 @@ impl LivePrompts {
             probe.target = codex_target(state, uid).await;
         }
         let Some(target) = probe.target.clone() else {
-            return Value::Null;
-        };
-        let Ok(_permit) = codex.captures.try_acquire() else {
             return Value::Null;
         };
         let capture = codex

@@ -71,7 +71,10 @@ def build(root):
         claude_row("claude-uni", "assistant", "aa", "au", "ok", cwd=CWD,
                    isSidechain=True, agentId="helper")]))
     agent.with_suffix(".meta.json").write_text(json.dumps({"description": "sidecar", "agentType": "reviewer"}))
-    os.symlink(cpath, proj / "link.jsonl")
+    linked = root / "linked-source.jsonl"
+    linked.write_bytes(encoded(
+        claude_row("link-sid", "user", "l0", None, "linked-body", cwd=CWD)))
+    os.symlink(linked, proj / "link.jsonl")
     (proj / "nl\n.jsonl").write_bytes(encoded(
         claude_row("newline-sid", "user", "n0", None, "newline-body", cwd=CWD)))
     try:
@@ -110,11 +113,12 @@ def run(opener, base, corpus, files, udir, note):
     nl = next((r for r in by.values() if "\n" in (r.get("path") or "")), None)
     if nl is None or nl.get("sid") != "newline-sid":
         fail("reject", "newline-named jsonl must be listed (walk skips links, not control chars)", raw)
-    if any("link.jsonl" in (r.get("path") or "") for r in by.values()) or any("\0" in str(r) for r in by.values()):
-        fail("reject", f"symlink listed or NUL path {sorted(by)}", raw)
-    passed("symlink session not listed; NUL cannot be created; newline-named jsonl is listed")
+    linked = by.get("link-sid")
+    if not linked or "link.jsonl" not in (linked.get("path") or "") or any("\0" in str(r) for r in by.values()):
+        fail("paths", f"symlink missing or NUL path listed {sorted(by)}", raw)
+    passed("symlink session and newline-named jsonl are listed; NUL cannot be created")
     expect = {s: uid_of(src, corpus.paths[s]) for s, src in zip(SIDS, ("claude", "codex", "grok"))}
-    if set(by) != set(SIDS) | {"newline-sid"}:
+    if set(by) != set(SIDS) | {"newline-sid", "link-sid"}:
         fail("list", f"listed {sorted(by)}", raw)
     for sid, source in zip(SIDS, ("claude", "codex", "grok")):
         row = by[sid]
@@ -145,7 +149,7 @@ def run(opener, base, corpus, files, udir, note):
     passed("messages search input-history for each unicode session")
     listing, lraw = fetch(opener, base, "/api/session/files?" + urlencode({"uid": cu, "ref": str(files)}))
     names = [e.get("name") for e in listing.get("entries") or [] if isinstance(e, dict)]
-    if UNI not in names or listing.get("writable") is not False or listing.get("root") != str(files):
+    if UNI not in names or listing.get("writable") is not False or listing.get("root") != files.anchor:
         fail("files", f"root listing names={names!r} root={listing.get('root')!r}", lraw)
     nested, nraw = fetch(opener, base, "/api/session/files?" + urlencode({"uid": cu, "ref": str(udir)}))
     if note.name not in [e.get("name") for e in nested.get("entries") or [] if isinstance(e, dict)]:

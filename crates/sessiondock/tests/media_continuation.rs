@@ -54,11 +54,9 @@ impl Fixture {
                 codex: Some(self.root.join("codex")),
                 grok: None,
             },
-            // Batch 44 WP-A: original 4-reader / 8-slot sizing with immediate
-            // rejection so the shared eight-slot admission test stays exact.
+            // Keep the original worker sizing while exercising queued reads.
             pools: sessiondock::config::Pools {
                 read_workers: 4,
-                wait: std::time::Duration::ZERO,
                 ..Default::default()
             },
             ..Default::default()
@@ -288,7 +286,6 @@ async fn forty_image_codex_message_shows_sixteen_inline_and_pages_the_remainder(
         format!("/api/messages/{uid}/media-page"),
         media_uri(&uid, "short", ""),
         media_uri(&uid, &"A".repeat(32), ""),
-        format!("{}&start=1", media_uri(&uid, &cursor, "")),
     ] {
         assert_eq!(
             get(&app, &uri).await.status(),
@@ -302,6 +299,8 @@ async fn forty_image_codex_message_shows_sixteen_inline_and_pages_the_remainder(
             .status(),
         StatusCode::NOT_FOUND
     );
+    let ignored = ok(&app, &format!("{}&start=1", media_uri(&uid, &cursor, ""))).await;
+    assert_eq!(ignored["page"]["start"], 16);
     assert_eq!(
         get(&app, &format!("/api/messages/{uid}/page?cursor={cursor}"))
             .await
@@ -356,6 +355,12 @@ async fn forty_image_codex_message_shows_sixteen_inline_and_pages_the_remainder(
         changed.len(),
         original.len() + encoded(&[codex_text("live-tail")]).len()
     );
+    // Windows does not expose Unix ctime through `Metadata`, so an in-place
+    // same-size write with its mtime restored has no observable version
+    // change. Replace the file there so the native file identity changes;
+    // Unix exercises the stricter same-inode ctime case.
+    #[cfg(windows)]
+    fs::remove_file(&path).unwrap();
     fs::write(&path, &changed).unwrap();
     fs::File::options()
         .write(true)
@@ -474,7 +479,7 @@ async fn watch_delta_and_http_delta_carry_media_more_for_an_appended_message() {
 }
 
 #[tokio::test]
-async fn media_pages_share_the_history_page_admission_slots() {
+async fn a_ninth_media_page_waits_until_an_earlier_body_is_released() {
     let f = Fixture::new();
     f.put(
         "codex/project/slots.jsonl",
@@ -491,12 +496,25 @@ async fn media_pages_share_the_history_page_admission_slots() {
         assert_eq!(response.status(), StatusCode::OK);
         held.push(response);
     }
-    assert_eq!(
-        get(&app, &uri).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
+    let mut queued = tokio::spawn({
+        let app = app.clone();
+        let uri = uri.clone();
+        async move { get(&app, &uri).await }
+    });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err(),
+        "the ninth page waits while all response slots are retained"
     );
-    drop(held);
-    let recovered = ok(&app, &uri).await;
+    drop(held.pop());
+    let response = tokio::time::timeout(Duration::from_secs(2), queued)
+        .await
+        .expect("queued media page completes after one response is released")
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let recovered = body(response).await;
     assert_eq!(recovered["page"]["cursor"], cursor);
     assert_eq!(recovered["media"].as_array().unwrap().len(), 16);
+    drop(held);
 }

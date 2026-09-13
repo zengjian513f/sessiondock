@@ -112,10 +112,10 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
 
-                    # Delete: confirm, then the explicit unknown-state force prompt.
+                    # Delete after the ordinary confirmation.
                     uid = corpus.uid("claude-abandoned")
                     open_session(page, corpus, "claude-abandoned", "Claude abandoned base answer")
-                    dialogs.expect(("服务端回收站", True), ("运行状态未知", True))
+                    dialogs.expect(("服务端回收站", True))
                     click_delete(page, narrow=False)
                     expect(page.locator("#detail")).to_contain_text("已移入回收站")
                     dialogs.drained()
@@ -125,7 +125,7 @@ def main():
                     entries = [path for path in trash.iterdir() if path.is_dir()]
                     assert len(entries) == 1 and (entries[0] / "manifest.json").is_file(), entries
                     manifest = json.loads((entries[0] / "manifest.json").read_text())
-                    assert manifest["uid"] == uid and manifest["state"] == "trashed" and manifest["forced"] is True
+                    assert manifest["uid"] == uid and manifest["state"] == "trashed" and manifest["forced"] is False
 
                     # Trash dialog from the detail receipt: restore brings it back.
                     page.locator("#detail-open-trash").click()
@@ -154,9 +154,9 @@ def main():
                     expect(page.locator(f'#side .item[data-uid="{parent}"]')).to_have_count(1)
                     assert corpus.paths["codex-parent"].exists()
 
-                    # Declining the force prompt keeps the session and explains why.
+                    # Cancelling the initial confirmation keeps the session.
                     open_session(page, corpus, "claude-compact", "Claude post compact answer")
-                    dialogs.expect(("服务端回收站", True), ("运行状态未知", False), ("删除失败: 运行状态未知", True))
+                    dialogs.expect(("服务端回收站", False))
                     click_delete(page, narrow=False)
                     page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                     dialogs.drained()
@@ -166,7 +166,7 @@ def main():
                     # Restore conflict: a recreated original is never overwritten.
                     branch = corpus.uid("claude-branch")
                     open_session(page, corpus, "claude-branch", "Claude selected answer")
-                    dialogs.expect(("服务端回收站", True), ("运行状态未知", True))
+                    dialogs.expect(("服务端回收站", True))
                     click_delete(page, narrow=False)
                     expect(page.locator("#detail")).to_contain_text("已移入回收站")
                     dialogs.drained()
@@ -200,7 +200,7 @@ def main():
                     assert not errors, errors
                     context.close()
 
-                    # Mobile: menu-folded delete, force prompt, trash via header menu.
+                    # Mobile: menu-folded delete and trash via header menu.
                     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
                     context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                     page = context.new_page()
@@ -209,7 +209,7 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     compact = corpus.uid("claude-compact")
                     open_session(page, corpus, "claude-compact", "Claude post compact answer")
-                    dialogs.expect(("服务端回收站", True), ("运行状态未知", True))
+                    dialogs.expect(("服务端回收站", True))
                     click_delete(page, narrow=True)
                     expect(page.locator(f'#side .item[data-uid="{compact}"]')).to_have_count(0)
                     dialogs.drained()

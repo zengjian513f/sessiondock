@@ -1,9 +1,11 @@
-//! Explicit-root, session-reference-scoped file service. Reads are granted by
-//! read roots; mutations additionally require explicit write roots (`write`).
-//! Transport must resolve the selected session/agent first and run blocking I/O
-//! off the async reactor. See `docs/files.md` for intentional legacy differences.
+//! Session-reference-scoped file reads and authenticated directory browsing.
+//! Configured roots enable the service; grants permit operator navigation up
+//! to the OS volume root. Transport validates each selected session first and
+//! runs blocking filesystem work off the async reactor. See `docs/files.md`.
 
 mod boundary;
+mod grants;
+mod info;
 mod jobs;
 mod media;
 mod references;
@@ -24,19 +26,16 @@ pub use references::clean_ref;
 pub(crate) use references::normalize_media_ref;
 pub(crate) use response::CheckedImage;
 pub use response::{CheckedReader, FileBody, FileResponse, ReadOptions};
+pub(crate) use write::move_recycle_entry;
 pub use write::{
-    ActionRequest, Conflict, FILE_TRASH_DIR, MAX_WRITE_ITEMS, Outcome, ScopeKey, UPLOAD_DIR,
-    WriteLimits, WriteService, validate_name,
+    ActionRequest, Conflict, DEFAULT_UPLOAD_CHUNK_BYTES, FILE_TRASH_DIR, MAX_WRITE_ITEMS, Outcome,
+    ScopeKey, UPLOAD_DIR, WriteLimits, WriteService, validate_name,
 };
 
-pub const MAX_ROOTS: usize = 16;
 pub const MAX_PATH_BYTES: usize = 4096;
-pub const MAX_DIRECTORY_ENTRIES: usize = 10_000;
 pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
 pub const MAX_RAW_BYTES: u64 = 32 * 1024 * 1024;
-pub const MAX_STREAM_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 pub const STREAM_CHUNK_BYTES: usize = 64 * 1024;
-const MAX_REFERENCE_PROBES: usize = 20_000;
 
 #[derive(Debug, Clone)]
 pub struct FileError {
@@ -62,11 +61,7 @@ impl FileError {
     }
     pub fn unsupported(mode: &str) -> Self {
         let _ = mode; // Do not reflect untrusted mode text into diagnostics.
-        Self::new(
-            501,
-            "file_mode_not_implemented",
-            "只读文件服务尚未实现此模式；不会伪造空任务或成功结果",
-        )
+        Self::new(501, "file_mode_not_implemented", "文件服务尚未实现此模式")
     }
     pub(super) fn changed() -> Self {
         Self::new(
@@ -78,11 +73,9 @@ impl FileError {
     pub(super) fn io(error: std::io::Error) -> Self {
         match error.kind() {
             std::io::ErrorKind::NotFound => Self::new(404, "file_not_found", "文件或目录不存在"),
-            std::io::ErrorKind::PermissionDenied => Self::new(
-                403,
-                "file_forbidden",
-                "无法访问此文件或目录，或路径越出授权目录",
-            ),
+            std::io::ErrorKind::PermissionDenied => {
+                Self::new(403, "file_forbidden", "操作系统不允许访问此文件或目录")
+            }
             _ => Self::new(503, "file_io", "文件访问失败；未忽略错误或返回空内容"),
         }
     }
@@ -124,53 +117,28 @@ impl Default for ListOptions {
 }
 
 pub struct FileService {
-    roots: Vec<std::sync::Arc<boundary::Root>>,
+    grants: grants::Grants,
     /// Media reference indexes keyed by view revision (`files/media.rs`).
     media_indexes: std::sync::Mutex<Vec<(String, std::sync::Arc<references::ReferenceIndex>)>>,
 }
 impl FileService {
-    pub fn open(roots: Vec<PathBuf>) -> Result<Self, FileError> {
-        if roots.is_empty() || roots.len() > MAX_ROOTS {
-            return Err(FileError::new(
-                400,
-                "file_roots_required",
-                "须显式配置 1 至 16 个既有独立开发文件目录",
-            ));
-        }
-        let mut opened = Vec::new();
-        for path in roots {
-            let root = std::sync::Arc::new(boundary::Root::open(&path)?);
-            if opened.iter().any(|other: &std::sync::Arc<boundary::Root>| {
-                root.path.starts_with(&other.path) || other.path.starts_with(&root.path)
-            }) {
-                return Err(FileError::new(
-                    400,
-                    "file_roots_overlap",
-                    "开发文件目录不能重叠或重复",
-                ));
-            }
-            opened.push(root);
-        }
+    pub fn open(_roots: Vec<PathBuf>) -> Result<Self, FileError> {
         Ok(Self {
-            roots: opened,
+            grants: grants::Grants::default(),
             media_indexes: std::sync::Mutex::new(Vec::new()),
         })
     }
 
     fn candidate(&self, scope: &FileScope<'_>, raw: &str) -> Result<ResolvedTarget, FileError> {
         let path = boundary::absolute_path(raw, scope.cwd)?;
-        let root = self
-            .roots
-            .iter()
-            .find(|root| path.starts_with(&root.path))
-            .ok_or_else(|| {
-                FileError::new(
-                    403,
-                    "file_outside_roots",
-                    "路径不在显式授权的开发文件目录内",
-                )
-            })?;
-        boundary::open_target(root.clone(), path)
+        boundary::open_target(boundary::volume_root(&path)?, path)
+    }
+
+    /// Resolve navigation only after transport has validated the session and
+    /// its durable directory grant. Cwd or a client path alone is no grant.
+    pub fn navigation(&self, raw: &str) -> Result<ResolvedTarget, FileError> {
+        let path = boundary::absolute_navigation(raw)?;
+        boundary::open_target(boundary::volume_root(&path)?, path)
     }
 
     fn probe(
@@ -180,13 +148,6 @@ impl FileService {
         probes: &Cell<usize>,
     ) -> Result<ResolvedTarget, FileError> {
         probes.set(probes.get() + 1);
-        if probes.get() > MAX_REFERENCE_PROBES {
-            return Err(FileError::new(
-                413,
-                "file_probe_budget",
-                "文件解析超过 20000 次路径检查预算，不能保证完整消歧",
-            ));
-        }
         self.candidate(scope, raw)
     }
     fn directories(
@@ -243,71 +204,40 @@ impl FileService {
             return self.probe(scope, reference, probes);
         }
         let mut candidates: BTreeMap<PathBuf, ResolvedTarget> = BTreeMap::new();
-        let mut blocked = None;
-        let mut unavailable_cwd = None;
         // Basenames require all branch references: never guess the first match.
         for other in index.basenames.get(reference).into_iter().flatten() {
-            match self.probe(scope, other, probes) {
-                Ok(target) => {
-                    candidates.insert(target.path().to_path_buf(), target);
-                    if candidates.len() > 1 {
-                        return Err(FileError::new(
-                            409,
-                            "file_ambiguous",
-                            "会话中有多个同名文件，请点击完整路径",
-                        ));
-                    }
-                }
-                Err(error) if error.status == 404 => {}
-                Err(error)
-                    if other == reference
-                        && matches!(error.code, "file_outside_roots" | "file_cwd_unavailable") =>
-                {
-                    // cwd is a basename heuristic, not a grant. Recorded
-                    // absolute candidates can work without an authorized cwd.
-                    unavailable_cwd = Some(error);
-                }
-                Err(error) if error.status == 413 => return Err(error),
-                Err(error) => {
-                    blocked.get_or_insert(error);
+            if let Ok(target) = self.probe(scope, other, probes) {
+                candidates.insert(target.path().to_path_buf(), target);
+                if candidates.len() > 1 {
+                    return Err(FileError::new(
+                        409,
+                        "file_ambiguous",
+                        "会话中有多个同名文件，请点击完整路径",
+                    ));
                 }
             }
         }
         for directory in directories {
             let child = directory.join(reference);
-            if let Some(child) = child.to_str() {
-                match self.probe(scope, child, probes) {
-                    Ok(target) => {
-                        candidates.insert(target.path().to_path_buf(), target);
-                        if candidates.len() > 1 {
-                            return Err(FileError::new(
-                                409,
-                                "file_ambiguous",
-                                "会话中有多个同名文件，请点击完整路径",
-                            ));
-                        }
-                    }
-                    Err(error) if error.status == 404 => {}
-                    Err(error) if error.status == 413 => return Err(error),
-                    Err(error) => {
-                        blocked.get_or_insert(error);
-                    }
+            if let Some(child) = child.to_str()
+                && let Ok(target) = self.probe(scope, child, probes)
+            {
+                candidates.insert(target.path().to_path_buf(), target);
+                if candidates.len() > 1 {
+                    return Err(FileError::new(
+                        409,
+                        "file_ambiguous",
+                        "会话中有多个同名文件，请点击完整路径",
+                    ));
                 }
             }
         }
-        // A same-basename explicit forbidden candidate must not silently select
-        // another file. This is stricter than probing arbitrary native paths.
-        if let Some(error) = blocked {
-            return Err(error);
-        }
         candidates.into_values().next().ok_or_else(|| {
-            unavailable_cwd.unwrap_or_else(|| {
-                FileError::new(404, "file_not_found", "文件不存在，或会话未记录其完整路径")
-            })
+            FileError::new(404, "file_not_found", "文件不存在，或会话未记录其完整路径")
         })
     }
 
-    /// No grants persist across requests; scope/reference authorization is fresh.
+    /// Direct file references are resolved against the current selected view.
     pub fn target(
         &self,
         scope: &FileScope<'_>,
@@ -334,16 +264,8 @@ impl FileService {
                 "文件浏览入口必须是会话提及的目录",
             ));
         }
-        let path = boundary::absolute_navigation(raw)?;
-        if !path.starts_with(&anchor.root.path) {
-            return Err(FileError::new(
-                403,
-                "file_outside_anchor_root",
-                "目录导航不能越出入口所属的开发文件目录",
-            ));
-        }
         anchor.verify()?;
-        boundary::open_target(anchor.root.clone(), path)
+        self.navigation(raw)
     }
 
     pub fn resolve_many(

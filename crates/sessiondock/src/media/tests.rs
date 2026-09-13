@@ -107,23 +107,19 @@ fn explicit_provider_shapes_share_semantics_but_not_new_random_tokens() {
 }
 
 #[test]
-fn only_explicit_images_are_recognized_and_remote_urls_and_svg_are_unsupported() {
+fn image_projection_follows_source_shapes_and_skips_unsupported_mime() {
     for ordinary in [
         Value::Null,
         json!(3),
         json!({"type":"text","text":"image.png","data":"PRIVATE"}),
-        json!({"file":{"base64":RED_PNG,"mimeType":"image/png"}}),
     ] {
         assert!(NativeImage::from_block(&ordinary).unwrap().is_none());
     }
     for block in [
-        json!({"type":"image","image_url":"https://example.invalid/PRIVATE"}),
         json!({"type":"image","mime_type":"image/svg+xml","data":"PHN2Zz4="}),
         json!({"type":"image","image_url":"data:image/png,PRIVATE"}),
     ] {
-        let error = NativeImage::from_block(&block).err().unwrap();
-        assert_eq!(error, MediaError::Unsupported.to_string());
-        assert!(!error.contains("PRIVATE"));
+        assert!(NativeImage::from_block(&block).unwrap().is_none());
     }
     for block in [
         json!({"type":"image","source":{"url":"file:///PRIVATE/image.png"}}),
@@ -143,7 +139,21 @@ fn only_explicit_images_are_recognized_and_remote_urls_and_svg_are_unsupported()
 }
 
 #[test]
-fn aliases_must_agree_and_untrusted_dimensions_or_names_are_not_projected() {
+fn remote_images_preserve_url_without_allocating_local_media() {
+    let reference = "https://media.example.invalid/image.png";
+    let image = NativeImage::from_block(&json!({"type":"image_url", "image_url":reference}))
+        .unwrap()
+        .unwrap();
+    assert_eq!(image.remote_ref(), Some(reference));
+    assert!(image.file_ref().is_none());
+    let store = MediaStore::new();
+    assert_eq!(store.project(&[image]).unwrap()[0]["src"], reference);
+    assert!(store.cache.lock().unwrap().entries.is_empty());
+    assert_eq!(store.budget.used.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn image_aliases_use_python_field_priority() {
     let mut block = json!({"type":"image","data":RED_PNG,"mime_type":"image/png","name":"PRIVATE_PATH","dimensions":{"width":999999999,"height":999999999}});
     let store = MediaStore::new();
     let projected = store
@@ -152,48 +162,60 @@ fn aliases_must_agree_and_untrusted_dimensions_or_names_are_not_projected() {
     assert_eq!(projected[0]["width"], 1);
     assert!(!projected[0].to_string().contains("PRIVATE"));
     block["base64"] = json!("AAAA");
-    assert_eq!(
-        NativeImage::from_block(&block).err(),
-        Some(MediaError::Invalid.to_string())
-    );
+    let image = NativeImage::from_block(&block).unwrap().unwrap();
+    store.project(std::slice::from_ref(&image)).unwrap();
+    assert_eq!(store.get(token(&image)).unwrap().bytes(), png_bytes());
     block.as_object_mut().unwrap().remove("base64");
     block["mimeType"] = json!("image/jpeg");
-    assert!(NativeImage::from_block(&block).is_err());
+    let image = NativeImage::from_block(&block).unwrap().unwrap();
+    store.project(std::slice::from_ref(&image)).unwrap();
+    assert_eq!(store.get(token(&image)).unwrap().mime(), "image/png");
 }
 
 #[test]
-fn base64_errors_and_declared_mime_disagreement_never_register_a_token() {
+fn malformed_base64_is_rejected_and_declared_mime_is_preserved() {
     let store = MediaStore::new();
-    for invalid in ["!!!!", "AA=A", "Zh==", " Zg=", "====", "", "AAA"] {
+    for invalid in ["!!!!", "AA=A", " Zg=", "====", "", "AAA"] {
         let parsed = NativeImage::from_block(
             &json!({"type":"image","mime_type":"image/png","data":invalid}),
         );
         if let Ok(Some(image)) = parsed {
             assert!(matches!(store.project(&[image]), Err(MediaError::Invalid)));
         } else {
-            assert!(parsed.is_err());
+            assert!(parsed.unwrap().is_none());
         }
         assert_eq!(store.budget.used.load(Ordering::Acquire), 0);
     }
-    let forged = image(b"<html>PRIVATE</html>", "image/png");
-    assert!(matches!(
-        store.project(std::slice::from_ref(&forged)),
-        Err(MediaError::Invalid)
-    ));
-    assert!(store.get(token(&forged)).is_none());
-    assert!(matches!(
-        store.project(&[image(&png_bytes(), "image/jpeg")]),
-        Err(MediaError::Invalid)
-    ));
-    assert!(matches!(
-        store.project(&[image(&jpeg_bytes(), "image/png")]),
-        Err(MediaError::Invalid)
-    ));
-    assert_eq!(store.budget.used.load(Ordering::Acquire), 0);
+    for (bytes, mime) in [
+        (b"<html>PRIVATE</html>".to_vec(), "image/png"),
+        (png_bytes(), "image/jpeg"),
+        (jpeg_bytes(), "image/png"),
+    ] {
+        let native = image(&bytes, mime);
+        store.project(std::slice::from_ref(&native)).unwrap();
+        let blob = store.get(token(&native)).unwrap();
+        assert_eq!(blob.bytes(), bytes);
+        assert_eq!(blob.mime(), mime);
+    }
+    let trailing_bits =
+        NativeImage::from_block(&json!({"type":"image", "mime_type":"image/png", "data":"Zh=="}))
+            .unwrap()
+            .unwrap();
+    store.project(std::slice::from_ref(&trailing_bits)).unwrap();
+    assert_eq!(store.get(token(&trailing_bits)).unwrap().bytes(), b"f");
+    for encoded in ["Zm9v=", "Zm9v==", "Zm9v====="] {
+        let image = NativeImage::from_block(
+            &json!({"type":"image", "mime_type":"image/png", "data":encoded}),
+        )
+        .unwrap()
+        .unwrap();
+        store.project(std::slice::from_ref(&image)).unwrap();
+        assert_eq!(store.get(token(&image)).unwrap().bytes(), b"foo");
+    }
 }
 
 #[test]
-fn png_crc_container_boundaries_and_pixel_limits_are_checked() {
+fn png_crc_container_boundaries_and_large_dimensions_are_readable() {
     let original = png_bytes();
     let mut bad_crc = original.clone();
     bad_crc[40] ^= 1;
@@ -205,12 +227,12 @@ fn png_crc_container_boundaries_and_pixel_limits_are_checked() {
     trailing.push(0);
     assert!(png(&trailing).is_err());
     let mut big = original.clone();
-    big[16..20].copy_from_slice(&(MAX_DIMENSION + 1).to_be_bytes());
+    big[16..20].copy_from_slice(&9000u32.to_be_bytes());
     let checksum = crc32(&big[12..29]);
     big[29..33].copy_from_slice(&checksum.to_be_bytes());
-    assert_eq!(png(&big), Err(MediaError::Limit));
+    assert_eq!(png(&big), Ok((9000, 1)));
     assert_eq!(dimensions(8192, 2048), Ok((8192, 2048)));
-    assert_eq!(dimensions(8192, 2049), Err(MediaError::Limit));
+    assert_eq!(dimensions(8192, 2049), Ok((8192, 2049)));
     assert_eq!(dimensions(0, 1), Err(MediaError::Invalid));
     let mut animated = original[..33].to_vec();
     animated.extend(chunk(b"acTL", &[0, 0, 0, 1, 0, 0, 0, 0]));
@@ -235,15 +257,15 @@ fn jpeg_markers_dimensions_and_truncation_are_checked() {
         .windows(2)
         .position(|pair| pair == [0xff, 0xc0])
         .unwrap();
-    big[sof + 5..sof + 7].copy_from_slice(&((MAX_DIMENSION + 1) as u16).to_be_bytes());
-    assert_eq!(jpeg(&big), Err(MediaError::Limit));
+    big[sof + 5..sof + 7].copy_from_slice(&9000u16.to_be_bytes());
+    assert_eq!(jpeg(&big), Ok((1, 9000)));
     let mut trailing = original.clone();
     trailing.push(0);
     assert!(jpeg(&trailing).is_err());
 }
 
 #[test]
-fn real_decoded_item_limit_is_one_and_a_half_mib_not_legacy_thirty_two_mib() {
+fn decoded_item_limit_matches_python_thirty_two_mib() {
     let original = png_bytes();
     let padding = vec![0u8; MAX_IMAGE_BYTES - original.len() - 12];
     let mut maximum = original[..original.len() - 12].to_vec();
@@ -251,15 +273,15 @@ fn real_decoded_item_limit_is_one_and_a_half_mib_not_legacy_thirty_two_mib() {
     maximum.extend(&original[original.len() - 12..]);
     assert_eq!(maximum.len(), MAX_IMAGE_BYTES);
     let image = image(&maximum, "image/png");
-    assert_eq!(image.encoded_len(), MAX_ENCODED_BYTES);
+    assert!(image.encoded_len() <= MAX_ENCODED_BYTES);
     MediaStore::new().project(&[image]).unwrap();
     maximum.push(0);
-    assert_eq!(
+    assert!(
         NativeImage::from_block(
             &json!({"type":"image","mime_type":"image/png","data":STANDARD.encode(maximum)})
         )
-        .err(),
-        Some(MediaError::Limit.to_string())
+        .unwrap()
+        .is_none()
     );
 }
 
@@ -283,25 +305,19 @@ fn batch_members_coexist_and_evicted_tokens_can_be_registered_again() {
 }
 
 #[test]
-fn held_response_arcs_keep_budget_after_eviction_until_the_last_clone_is_dropped() {
+fn held_response_arcs_do_not_reject_new_valid_images() {
     let length = png_bytes().len();
     let store = MediaStore::with_limits(2, length * 2);
     let (a, b, c, d) = (red(), red(), red(), red());
     store.project(&[a.clone(), b]).unwrap();
     let held = store.get(token(&a)).unwrap();
     let held_again = held.clone();
-    assert!(matches!(
-        store.project(&[c.clone(), d.clone()]),
-        Err(MediaError::Busy)
-    ));
-    assert_eq!(store.budget.used.load(Ordering::Acquire), length);
+    store.project(&[c.clone(), d.clone()]).unwrap();
+    assert_eq!(store.budget.used.load(Ordering::Acquire), length * 3);
     assert_eq!(held.bytes(), png_bytes());
     assert!(store.get(token(&a)).is_none());
     drop(held);
-    assert!(matches!(
-        store.project(&[c.clone(), d.clone()]),
-        Err(MediaError::Busy)
-    ));
+    store.project(&[c.clone(), d.clone()]).unwrap();
     drop(held_again);
     store.project(&[c, d]).unwrap();
     assert_eq!(store.budget.used.load(Ordering::Acquire), length * 2);
@@ -311,7 +327,10 @@ fn held_response_arcs_keep_budget_after_eviction_until_the_last_clone_is_dropped
 fn failed_batches_release_reservations_and_publish_no_partial_new_tokens() {
     let store = MediaStore::with_limits(2, png_bytes().len() * 2);
     let good = red();
-    let bad = image(b"PRIVATE", "image/png");
+    let bad =
+        NativeImage::from_block(&json!({"type":"image","mime_type":"image/png","data":"!!!!"}))
+            .unwrap()
+            .unwrap();
     assert!(matches!(
         store.project(&[good.clone(), bad.clone()]),
         Err(MediaError::Invalid)
@@ -320,11 +339,7 @@ fn failed_batches_release_reservations_and_publish_no_partial_new_tokens() {
     assert!(store.get(token(&bad)).is_none());
     assert_eq!(store.budget.used.load(Ordering::Acquire), 0);
     store.project(std::slice::from_ref(&good)).unwrap();
-    assert!(matches!(
-        store.project(&[red(), red(), red()]),
-        Err(MediaError::Limit)
-    ));
-    assert!(store.get(token(&good)).is_some());
+    store.project(&[red(), red(), red()]).unwrap();
 }
 
 #[test]
@@ -350,5 +365,4 @@ fn duplicates_are_one_cached_blob_tokens_are_strict_and_store_drop_does_not_revo
     assert_eq!(budget.used.load(Ordering::Acquire), 0);
     assert_eq!(MediaError::Unsupported.status(), 501);
     assert_eq!(MediaError::Limit.status(), 413);
-    assert_eq!(MediaError::Busy.status(), 503);
 }

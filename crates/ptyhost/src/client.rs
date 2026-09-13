@@ -5,9 +5,9 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
-use crate::protocol::{read_frames, recv_json, send_json, FRAME_DATA, FRAME_EXIT};
+use crate::protocol::{FRAME_DATA, FRAME_EXIT, read_frames, recv_json, send_json};
 use crate::transport::Stream;
 
 pub fn host_dir(explicit: Option<&str>) -> PathBuf {
@@ -17,7 +17,11 @@ pub fn host_dir(explicit: Option<&str>) -> PathBuf {
     if let Some(dir) = std::env::var_os("AGENTHUB_HOST_DIR") {
         return PathBuf::from(dir);
     }
-    home().join(".local").join("share").join("agenthub").join("host")
+    home()
+        .join(".local")
+        .join("share")
+        .join("agenthub")
+        .join("host")
 }
 
 fn home() -> PathBuf {
@@ -100,7 +104,8 @@ pub fn list_sessions(dir: &Path) -> Vec<Value> {
 }
 
 pub fn public_row(info: &Value) -> Value {
-    let get_u64 = |key: &str, default: u64| info.get(key).and_then(|v| v.as_u64()).unwrap_or(default);
+    let get_u64 =
+        |key: &str, default: u64| info.get(key).and_then(|v| v.as_u64()).unwrap_or(default);
     let get_str = |key: &str| {
         info.get(key)
             .and_then(|v| v.as_str())
@@ -162,15 +167,17 @@ pub fn request(dir: &Path, name: &str, op: &str, extra: Value) -> Result<Value, 
     });
     if let Some(map) = extra.as_object() {
         for (key, value) in map {
-            body.as_object_mut().unwrap().insert(key.clone(), value.clone());
+            body.as_object_mut()
+                .unwrap()
+                .insert(key.clone(), value.clone());
         }
     }
     let mut stream = connect(&info).map_err(|e| format!("宿主请求失败 ({op}): {e}"))?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     send_json(&mut stream, &body).map_err(|e| format!("宿主请求失败 ({op}): {e}"))?;
     let mut buffer = Vec::new();
-    let reply = recv_json(&mut stream, &mut buffer)
-        .map_err(|e| format!("宿主请求失败 ({op}): {e}"))?;
+    let reply =
+        recv_json(&mut stream, &mut buffer).map_err(|e| format!("宿主请求失败 ({op}): {e}"))?;
     if reply.get("ok").and_then(|v| v.as_bool()) != Some(true) {
         return Err(reply
             .get("error")
@@ -192,7 +199,13 @@ pub struct Attach {
 
 #[cfg_attr(not(unix), allow(dead_code))]
 impl Attach {
-    pub fn open(dir: &Path, name: &str, cols: u16, rows: u16, replay: bool) -> Result<Self, String> {
+    pub fn open(
+        dir: &Path,
+        name: &str,
+        cols: u16,
+        rows: u16,
+        replay: bool,
+    ) -> Result<Self, String> {
         let info = session_info(dir, name).ok_or_else(|| format!("会话不存在: {name}"))?;
         let mut stream = connect(&info).map_err(|e| format!("attach 失败: {e}"))?;
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
@@ -215,7 +228,12 @@ impl Attach {
                 .to_string());
         }
         let _ = stream.set_read_timeout(None);
-        Ok(Self { stream, buffer, exit_code: None, dead: false })
+        Ok(Self {
+            stream,
+            buffer,
+            exit_code: None,
+            dead: false,
+        })
     }
 
     /// 读出一批数据帧；返回空表示这次没有新数据。
@@ -252,5 +270,4 @@ impl Attach {
             self.dead = true;
         }
     }
-
 }

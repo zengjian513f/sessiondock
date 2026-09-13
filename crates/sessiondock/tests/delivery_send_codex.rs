@@ -81,7 +81,7 @@ fn sha1_uid(path: &Path) -> String {
 }
 
 impl Fixture {
-    fn new(host_binary: &Path) -> Self {
+    fn new(host_binary: &Path, selected_profile: &str) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         let lifecycle = root.join("lifecycle");
@@ -128,7 +128,7 @@ impl Fixture {
             profiles.push(
                 json!({"id":profile,"source":"codex","executable":executable,
                 "args":args,"new_args":[],"resume_args":["resume","{sid}"],
-                "env":env,"cwd_roots":[codex_area]}),
+                "env":env}),
             );
             let rows = [
                 json!({"timestamp":"2026-09-12T09:00:00.000Z","type":"session_meta",
@@ -149,8 +149,13 @@ impl Fixture {
             );
         }
         let launcher = root.join("launcher.json");
-        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,"cwd_roots":[work],
-        "adapters":[],"profiles":profiles});
+        let selected = profiles
+            .iter()
+            .find(|profile| profile["id"] == selected_profile)
+            .cloned()
+            .expect("selected test profile");
+        let config = json!({"schema":2,"host_binary":host_binary,"host_dir":host,
+        "adapters":[],"profiles":[selected],"test_profiles":profiles});
         file(&launcher, config.to_string().as_bytes(), 0o600);
         drop(LifecycleStore::initialize(&lifecycle).unwrap());
         drop(DeliveryEngine::initialize(&delivery).unwrap());
@@ -164,6 +169,18 @@ impl Fixture {
             web,
             launcher,
         }
+    }
+    fn select_profile(&self, profile: &str) {
+        let mut config: Value = serde_json::from_slice(&fs::read(&self.launcher).unwrap()).unwrap();
+        let selected = config["test_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == profile)
+            .cloned()
+            .expect("selected test profile");
+        config["profiles"] = json!([selected]);
+        fs::write(&self.launcher, serde_json::to_vec(&config).unwrap()).unwrap();
     }
     fn config(&self) -> Config {
         Config {
@@ -402,30 +419,32 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
     };
-    let fixture = Fixture::new(&host_binary);
+    let fixture = Fixture::new(&host_binary, "codex-cli-v1");
     let app = open(&fixture).await;
     let router = app.prepared.router.clone();
     let sid = SIDS[0].1;
     let (uid, name, instance, record) = resume(&app, &fixture, "codex-cli-v1").await;
     let instances = vec![(record.clone(), instance.clone())];
 
+    let request_id = " 短?🦀 ".repeat(20); // Under 128 characters, over 128 UTF-8 bytes.
+
     // Stale build gate before any terminal access.
     let (status, stale) = post(
         &router,
         "/api/session/send",
-        json!({"uid":uid,"name":name,"text":"x","request_id":"codex-send-0001","_build":"old"}),
+        json!({"uid":uid,"name":name,"text":"x","request_id":request_id,"_build":"old"}),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(stale["code"], "stale_build");
 
     let body = json!({"uid":uid,"name":name,"text":"hello from the web composer","media":[],
-        "activity":null,"request_id":"codex-send-0001","page_id":"page-one",
+        "activity":null,"request_id":request_id,"page_id":"page-one",
         "overwrite_draft":"","cursor":null,"_build":app.build});
     let (status, reply) = post(&router, "/api/session/send", body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     assert_eq!(reply["ok"], true);
-    assert_eq!(reply["item"]["id"], "codex-send-0001");
+    assert_eq!(reply["item"]["id"], request_id);
     assert_eq!(reply["item"]["uid"], uid);
     assert_eq!(reply["item"]["text"], "hello from the web composer");
     assert_eq!(reply["item"]["server"], true);
@@ -439,10 +458,10 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
         .unwrap()
         .to_owned();
     let revision = reply["outbox_version"]["revision"].as_u64().unwrap();
-    assert_eq!(reply["outbox"][0]["id"], "codex-send-0001");
+    assert_eq!(reply["outbox"][0]["id"], request_id);
 
     // The native user record (with its turn ID) confirms the receipt.
-    let confirmed = wait_confirmed(&app, &uid, "codex-send-0001", Duration::from_secs(10)).await;
+    let confirmed = wait_confirmed(&app, &uid, &request_id, Duration::from_secs(10)).await;
     assert_eq!(confirmed["outbox_version"]["epoch"], epoch);
     assert!(confirmed["outbox_version"]["revision"].as_u64().unwrap() > revision);
     let users = fixture.user_records(sid);
@@ -477,17 +496,17 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     // Replaying the same request ID is a status lookup, never a second paste.
     let (status, replay) = post(&router, "/api/session/send", body).await;
     assert_eq!(status, StatusCode::OK, "{replay}");
-    assert_eq!(replay["item"]["id"], "codex-send-0001");
+    assert_eq!(replay["item"]["id"], request_id);
     assert_eq!(replay["item"]["state"], "confirmed");
     assert!(replay["item"].get("text").is_none());
     assert!(replay["outbox"].as_array().unwrap().is_empty());
     let (status, conflict) = post(&router, "/api/session/send",
-        json!({"uid":uid,"name":name,"text":"another text","request_id":"codex-send-0001","_build":app.build})).await;
+        json!({"uid":uid,"name":name,"text":"another text","request_id":request_id,"_build":app.build})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(conflict["error"], "重复发送 ID 对应了不同消息");
     assert_eq!(fixture.user_records(sid).len(), 2, "replay must not inject");
 
-    // Attachments, wrong terminal name, unknown session: Python codes.
+    // Media is opaque preview metadata; the uploaded path is already in text.
     let (status, media) = post(
         &router,
         "/api/session/send",
@@ -495,8 +514,9 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
         "media":[{"kind":"image","token":"abc"}],"_build":app.build}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(media["code"], "delivery_media_unsupported");
+    assert_eq!(status, StatusCode::OK, "{media}");
+    assert_eq!(media["item"]["media"][0]["token"], "abc");
+    wait_confirmed(&app, &uid, "codex-send-0002", Duration::from_secs(10)).await;
     let (status, unlinked) = post(&router, "/api/session/send",
         json!({"uid":uid,"name":"agenthub-codex-other","text":"x","request_id":"codex-send-0003","_build":app.build})).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -573,14 +593,32 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     assert_eq!(sent["item"]["attempts"], 1);
     wait_confirmed(&app, &uid, "codex-send-0006", Duration::from_secs(10)).await;
     let users = fixture.user_records(sid);
-    assert_eq!(users.len(), 3, "{users:?}");
-    assert_eq!(users[2]["payload"]["content"][0]["text"], "overwrite me");
+    assert_eq!(users.len(), 4, "{users:?}");
+    assert_eq!(users[3]["payload"]["content"][0]["text"], "overwrite me");
+    kill(&app, &instances).await;
+    close(app).await;
+
+    // The persisted association follows Python's causal text match.
+    let row = receipt(&fixture, &request_id);
+    assert!(
+        matches!(
+            row.state,
+            codex::State::Acknowledged | codex::State::Completed
+        ),
+        "{row:?}"
+    );
+    let accepted = row.accepted.clone().unwrap();
+    assert_eq!(accepted.turn_id, turn);
+    assert_eq!(row.association, Some(codex::Correlation::PossibleTextMatch));
+    assert!(accepted.start >= row.confirmation.unwrap().position);
 
     // A slow TUI (record 1.5 s after Enter behind a Working footer) confirms late.
+    fixture.select_profile("codex-slow-v1");
+    let app = open(&fixture).await;
+    let router = app.prepared.router.clone();
     let (slow_uid, slow_name, slow_instance, slow_record) =
         resume(&app, &fixture, "codex-slow-v1").await;
-    let mut instances = instances;
-    instances.push((slow_record, slow_instance));
+    let instances = vec![(slow_record, slow_instance)];
     let started = Instant::now();
     let (status, reply) = post(&router, "/api/session/send",
         json!({"uid":slow_uid,"name":slow_name,"text":"slow prompt","request_id":"codex-send-slow1","_build":app.build})).await;
@@ -592,44 +630,23 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     );
     kill(&app, &instances).await;
     close(app).await;
-
-    // The persisted association is the executor's own Enter operation bound
-    // to the record's turn: `OperationTurn`, never the adapter's text match.
-    let row = receipt(&fixture, "codex-send-0001");
-    assert!(
-        matches!(
-            row.state,
-            codex::State::Acknowledged | codex::State::Completed
-        ),
-        "{row:?}"
-    );
-    let accepted = row.accepted.clone().unwrap();
-    assert_eq!(accepted.turn_id, turn);
-    assert_eq!(
-        row.association,
-        Some(codex::Correlation::OperationTurn {
-            enter_operation: row.enter_operation.clone().unwrap(),
-            turn_id: turn,
-        })
-    );
-    assert!(accepted.start >= row.confirmation.unwrap().position);
     assert!(receipt(&fixture, "codex-send-slow1").accepted.is_some());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn codex_swallowed_line_stays_uncertain_across_restart_and_weak_records_never_confirm() {
+async fn codex_swallowed_line_stays_uncertain_and_causal_text_records_confirm() {
     let Some(host_binary) = ptyhost_binary() else {
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
     };
-    let fixture = Fixture::new(&host_binary);
+    let fixture = Fixture::new(&host_binary, "codex-swallow-v1");
     let app = open(&fixture).await;
     let router = app.prepared.router.clone();
 
     // Swallowing instance: the first submitted line (our send) is dropped.
     let sid = SIDS[2].1;
     let (uid, name, instance, record) = resume(&app, &fixture, "codex-swallow-v1").await;
-    let mut instances = vec![(record, instance)];
+    let swallow_instance = (record, instance);
     let (status, reply) = post(&router, "/api/session/send",
         json!({"uid":uid,"name":name,"text":"lost in the tui","request_id":"codex-send-lost1","_build":app.build})).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
@@ -667,20 +684,17 @@ async fn codex_swallowed_line_stays_uncertain_across_restart_and_weak_records_ne
         "swallowed line re-injected"
     );
 
-    // Weak records: no turn ID, and duplicated identical records.
+    close(app).await;
+
+    // Python accepts the first causal matching record without a turn ID.
+    fixture.select_profile("codex-noturn-v1");
+    let app = open(&fixture).await;
+    let router = app.prepared.router.clone();
     let noturn_sid = SIDS[3].1;
     let (noturn_uid, noturn_name, noturn_instance, noturn_record) =
         resume(&app, &fixture, "codex-noturn-v1").await;
-    instances.push((noturn_record, noturn_instance));
     let (status, reply) = post(&router, "/api/session/send",
         json!({"uid":noturn_uid,"name":noturn_name,"text":"record without turn","request_id":"codex-send-noturn","_build":app.build})).await;
-    assert_eq!(status, StatusCode::OK, "{reply}");
-    let dup_sid = SIDS[4].1;
-    let (dup_uid, dup_name, dup_instance, dup_record) =
-        resume(&app, &fixture, "codex-dup-v1").await;
-    instances.push((dup_record, dup_instance));
-    let (status, reply) = post(&router, "/api/session/send",
-        json!({"uid":dup_uid,"name":dup_name,"text":"written twice","request_id":"codex-send-dup","_build":app.build})).await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     tokio::time::sleep(Duration::from_secs(2)).await;
     let users = fixture.user_records(noturn_sid);
@@ -692,23 +706,37 @@ async fn codex_swallowed_line_stays_uncertain_across_restart_and_weak_records_ne
             .rows(noturn_sid)
             .iter()
             .any(|row| row["payload"]["type"] == "task_started"),
-        "a later task_started must not be borrowed as the turn"
+        "task_started remains completion-only evidence"
     );
     let snapshot = outbox(&app, &noturn_uid).await;
-    assert_eq!(snapshot["outbox"][0]["id"], "codex-send-noturn");
-    assert_eq!(snapshot["outbox"][0]["state"], "failed");
+    assert!(snapshot["outbox"].as_array().unwrap().is_empty());
+    kill(&app, &[(noturn_record, noturn_instance)]).await;
+    close(app).await;
+
+    // Two identical causal records still confirm the same receipt.
+    fixture.select_profile("codex-dup-v1");
+    let app = open(&fixture).await;
+    let router = app.prepared.router.clone();
+    let dup_sid = SIDS[4].1;
+    let (dup_uid, dup_name, dup_instance, dup_record) =
+        resume(&app, &fixture, "codex-dup-v1").await;
+    let (status, reply) = post(&router, "/api/session/send",
+        json!({"uid":dup_uid,"name":dup_name,"text":"written twice","request_id":"codex-send-dup","_build":app.build})).await;
+    assert_eq!(status, StatusCode::OK, "{reply}");
+    tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(
         fixture.user_records(dup_sid).len(),
         3,
         "two identical records"
     );
     let snapshot = outbox(&app, &dup_uid).await;
-    assert_eq!(snapshot["outbox"][0]["id"], "codex-send-dup");
-    assert_eq!(snapshot["outbox"][0]["state"], "failed");
+    assert!(snapshot["outbox"].as_array().unwrap().is_empty());
+    kill(&app, &[(dup_record, dup_instance)]).await;
+    close(app).await;
 
     // Web restart: the uncertain receipt survives with a fresh epoch and is
     // never pasted again.
-    close(app).await;
+    fixture.select_profile("codex-swallow-v1");
     let app = open(&fixture).await;
     let router = app.prepared.router.clone();
     let snapshot = outbox(&app, &uid).await;
@@ -784,30 +812,36 @@ async fn codex_swallowed_line_stays_uncertain_across_restart_and_weak_records_ne
         .as_array()
         .unwrap()
         .iter()
-        .filter(|row| {
-            instances
-                .iter()
-                .any(|(_, instance)| row["instance_id"] == *instance)
-        })
+        .filter(|row| row["instance_id"] == swallow_instance.1)
         .map(|row| {
             (
-                instances
-                    .iter()
-                    .find(|(_, instance)| row["instance_id"] == *instance)
-                    .unwrap()
-                    .0
-                    .clone(),
+                swallow_instance.0.clone(),
                 row["instance_id"].as_str().unwrap().to_owned(),
             )
         })
         .collect();
     kill(&app, &live).await;
     close(app).await;
-    for id in ["codex-send-lost1", "codex-send-noturn", "codex-send-dup"] {
+    let lost = receipt(&fixture, "codex-send-lost1");
+    assert_eq!(lost.state, codex::State::Uncertain, "{lost:?}");
+    assert!(lost.accepted.is_none() && lost.association.is_none());
+    assert!(lost.dismissed);
+    for id in ["codex-send-noturn", "codex-send-dup"] {
         let row = receipt(&fixture, id);
-        assert_eq!(row.state, codex::State::Uncertain, "{id}: {row:?}");
-        assert!(row.accepted.is_none() && row.association.is_none(), "{id}");
-        assert_eq!(row.dismissed, id == "codex-send-lost1", "{id}");
+        assert!(
+            matches!(
+                row.state,
+                codex::State::Acknowledged | codex::State::Completed
+            ),
+            "{id}: {row:?}"
+        );
+        assert!(row.accepted.is_some(), "{id}");
+        assert_eq!(
+            row.association,
+            Some(codex::Correlation::PossibleTextMatch),
+            "{id}"
+        );
+        assert!(!row.dismissed, "{id}");
     }
     assert!(receipt(&fixture, "codex-send-lost2").accepted.is_some());
 }

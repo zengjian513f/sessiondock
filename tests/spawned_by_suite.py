@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP contract for process scan + spawned_by over a synthetic /proc tree.
 
-SESSIONDOCK_PROC_SCAN=1 with SESSIONDOCK_PROC_ROOT at a Linux-shaped tree
+SESSIONDOCK_PROC_ROOT points at a Linux-shaped tree
 (Python live.py e5b023a rules, verified against `live._scan`/`spawn_parents`
 over this very fixture): a CLI main process is argv0 claude/codex/grok only —
 `node …/cli.js --resume K` is not one, its --resume id still counts, and its
@@ -17,7 +17,7 @@ btime+starttime/100. spawned_by is written once into session-metadata.json
 (and GET /api/sessions) from the CLI process or an ancestor within 16 levels
 via another listed session's main process or CLAUDE_CODE_SESSION_ID /
 CODEX_THREAD_ID / CODEX_SESSION_ID / GROK_SESSION_ID / CLAUDE_PID. Unset
-PROC_SCAN → enabled:false and no row has spawned_by.
+The default process scan is enabled on Linux.
 
 CLI barrier (Python 16cc89c `live.is_cli_process`): Q is a claude inside a
 tmux pane whose tool shell spawned `grok -p` (G2, events.jsonl open). G2 is
@@ -25,6 +25,8 @@ live and spawned_by Q, but Q's claude between G2 and the tmux server means the
 console is Q's: tmux_uids lists Q only, never G2.
 """
 from __future__ import annotations
+
+import sys
 
 import argparse, hashlib, json, os, shutil, socket, subprocess, tempfile, time
 from contextlib import contextmanager
@@ -265,15 +267,15 @@ def run_scan(opener, base, uids, proc, state):
     passed("pid 200 gone: K not live, spawned_by unchanged")
 
 
-def run_disabled(opener, base):
+def run_default_scan(opener, base):
     live = fetch(opener, base, "/api/live")
-    if live.get("enabled") is not False:
-        fail("disabled", f"enabled={live.get('enabled')!r}", json.dumps(live).encode())
-    passed("GET /api/live enabled:false without PROC_SCAN")
+    if live.get("enabled") is not sys.platform.startswith("linux"):
+        fail("default-scan", f"enabled={live.get('enabled')!r}", json.dumps(live).encode())
+    passed("GET /api/live uses the default platform process scan")
     bad = [sid for sid, row in by_sid(opener, base).items() if row.get("spawned_by")]
     if bad:
         fail("disabled-spawned_by", f"rows {bad} still have spawned_by")
-    passed("no spawned_by without PROC_SCAN")
+    passed("unrelated default scan does not invent synthetic lineage")
 
 
 def main():
@@ -295,7 +297,7 @@ def main():
         state = root / "state"
         state.mkdir(mode=0o700)
         state.chmod(0o700)
-        scan = {"SESSIONDOCK_PROC_SCAN": "1", "SESSIONDOCK_PROC_ROOT": str(proc),
+        scan = {"SESSIONDOCK_PROC_ROOT": str(proc),
                 "SESSIONDOCK_STATE_DIR": str(state)}
         with server_with_env(corpus, scan, args.binary) as (base, opener):
             run_scan(opener, base, uids, proc, state)
@@ -303,7 +305,7 @@ def main():
         off.mkdir(mode=0o700)
         off.chmod(0o700)
         with server_with_env(corpus, {"SESSIONDOCK_STATE_DIR": str(off)}, args.binary) as (base, opener):
-            run_disabled(opener, base)
+            run_default_scan(opener, base)
 
 
 if __name__ == "__main__":

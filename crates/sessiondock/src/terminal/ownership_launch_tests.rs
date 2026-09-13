@@ -80,7 +80,7 @@ fn claim(registry: &Registry, target: Arc<LaunchTarget>, page: &str, force: bool
 
 #[test]
 fn launch_native_raw_claim_and_bind_kinds_never_interchange_even_with_force() {
-    let registry = Registry::new(4).unwrap();
+    let registry = Registry::new().unwrap();
     let target = target(LAUNCH, INSTANCE);
     let token = claim(&registry, target.clone(), "page", false);
     assert_eq!(
@@ -155,7 +155,7 @@ fn launch_native_raw_claim_and_bind_kinds_never_interchange_even_with_force() {
 
 #[test]
 fn launch_force_reconnect_revokes_and_old_cleanup_cannot_release_replacement() {
-    let registry = Registry::new(4).unwrap();
+    let registry = Registry::new().unwrap();
     let target = target(LAUNCH, INSTANCE);
     let token = claim(&registry, target.clone(), "old", false);
     let old = registry
@@ -180,7 +180,7 @@ fn launch_force_reconnect_revokes_and_old_cleanup_cannot_release_replacement() {
 
 #[test]
 fn retire_is_exact_idempotent_revokes_bound_and_blocks_reservation_reclaim() {
-    let registry = Registry::new(4).unwrap();
+    let registry = Registry::new().unwrap();
     let original = target(LAUNCH, INSTANCE);
     let token = claim(&registry, original.clone(), "page", false);
     let bound = registry
@@ -226,9 +226,9 @@ fn retire_is_exact_idempotent_revokes_bound_and_blocks_reservation_reclaim() {
 }
 
 #[test]
-fn retirement_capacity_never_evicts_and_failure_does_not_partially_revoke() {
-    let registry = Registry::new(4).unwrap();
-    for index in 0..MAX_RETIRED_LAUNCHES {
+fn retirement_keeps_every_revoked_authority() {
+    let registry = Registry::new().unwrap();
+    for index in 0..512 {
         registry
             .retire_launch(&target(&format!("synthetic-launch-{index:04}"), INSTANCE))
             .unwrap();
@@ -238,26 +238,20 @@ fn retirement_capacity_never_evicts_and_failure_does_not_partially_revoke() {
     let bound = registry
         .bind_launch("terminal", "page", &token, LAUNCH, INSTANCE)
         .unwrap();
-    assert_eq!(
-        registry.retire_launch(&original),
-        Err(OwnershipError::RetirementCapacity)
-    );
-    assert!(registry.is_current(&bound).unwrap());
+    registry.retire_launch(&original).unwrap();
+    assert!(!registry.is_current(&bound).unwrap());
     let first = target("synthetic-launch-0000", INSTANCE);
     registry.retire_launch(&first).unwrap();
     assert_eq!(
         registry.check_launch(&first),
         Err(OwnershipError::LaunchRetired)
     );
-    assert_eq!(
-        registry.state.lock().unwrap().retired.len(),
-        MAX_RETIRED_LAUNCHES
-    );
+    assert_eq!(registry.state.lock().unwrap().retired.len(), 513);
 }
 
 #[test]
 fn retired_launch_never_matches_another_source_name_nonce_or_native_lease() {
-    let registry = Registry::new(4).unwrap();
+    let registry = Registry::new().unwrap();
     let original = target(LAUNCH, INSTANCE);
     registry.retire_launch(&original).unwrap();
     for dimension in ["source", "name", "launch", "instance"] {

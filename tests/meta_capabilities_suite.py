@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove /api/meta capability flags flip only with explicit configuration.
+"""Check /api/meta capabilities for ordinary and explicitly enabled services.
 
 Synthetic fixtures in a temporary directory; loopback listeners only.
 Never scans CLI homes, production state, or the network.
@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from urllib.error import URLError
@@ -26,10 +27,10 @@ DEFAULT = RELEASE if RELEASE.is_file() else BINARY
 BASE = {
     "backend": "rust", "stage": "replacement", "read_only": False,
     "storage_namespace": "sessiondock.",
-    "sessions": True, "watch": True, "search": True, "live": False,
-    "terminal": False, "outbox": False, "audit": False, "files": False,
+    "sessions": True, "watch": True, "search": True, "live": sys.platform.startswith("linux"),
+    "terminal": False, "outbox": False, "audit": False, "files": True,
     "mutations": False, "hub": False,
-    "media": True, "media_remote": False, "media_lazy": True, "history_pages": True,
+    "media": True, "media_remote": True, "media_lazy": True, "history_pages": True,
     "media_continuation": True, "history_semantics": "limited_native",
     "terminal_transport": False, "terminal_create": False, "terminal_pending": False,
     "terminal_bind": False, "terminal_takeover": False, "terminal_complete_dir": False,
@@ -78,16 +79,23 @@ def check(area, opener, base, *, protocol=0, node_id=None, **flags):
 
 @contextmanager
 def running(area, corpus, binary, **kwargs):
+    proc_root = corpus.root / "proc-empty"
+    proc_root.mkdir(exist_ok=True)
+    extra_env = dict(kwargs.pop("extra_env", {}) or {})
+    extra_env.setdefault("SESSIONDOCK_PROC_ROOT", str(proc_root))
     try:
-        with isolated_server(corpus, binary, **kwargs) as pair:
+        with isolated_server(corpus, binary, extra_env=extra_env, **kwargs) as pair:
             yield pair
     except AssertionError as err:
         fail(area, str(err))
 
 
 def environment(corpus, port, extra):
+    proc_root = corpus.root / "proc-empty"
+    proc_root.mkdir(exist_ok=True)
     env = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
-    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"), **extra)
+    env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"),
+               SESSIONDOCK_PROC_ROOT=str(proc_root), **extra)
     for source in ("claude", "codex", "grok"):
         env["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
     return env
@@ -192,16 +200,19 @@ def main():
         host = mkdir(root, "host")
         with running("host-dir", corpus, binary, host_dir=host) as (base, opener):
             check("host-dir", opener, base, terminal=True, terminal_transport=True,
-                  terminal_backend=True, terminal_input=True, live=False)
+                  terminal_backend=True, terminal_input=True, files_write={"actions":["upload", "cancel", "mkdir", "new-file", "rename", "move"], "conflicts":["error", "keep", "skip"], "delete":"trash", "chunk_bytes":8*1024*1024, "job_bytes":1024**4, "max_items":2000}, files_jobs=True)
         shared = mkdir(root, "shared")
-        refuse("misconfig-overlap", binary, corpus, {
-            "SESSIONDOCK_STATE_DIR": str(shared), "SESSIONDOCK_AUDIT_DIR": str(shared)})
-        # Exact 0700 is the audit/delivery gate (metadata allows 0755 if not group/other-writable).
-        refuse("misconfig-mode", binary, corpus, {
-            "SESSIONDOCK_AUDIT_DIR": str(mkdir(root, "audit-open", 0o755))})
+        with running_env("overlap-compatible", binary, corpus, {
+                "SESSIONDOCK_STATE_DIR": str(shared),
+                "SESSIONDOCK_AUDIT_DIR": str(shared)}) as (base, opener):
+            check("overlap-compatible", opener, base, metadata=True, timeline_pin=True, audit=True)
+        with running_env("ordinary-directory-mode", binary, corpus, {
+                "SESSIONDOCK_AUDIT_DIR": str(mkdir(root, "audit-open", 0o755))}) as (base, opener):
+            check("ordinary-directory-mode", opener, base, audit=True)
         both = mkdir(root, "audit-files")
-        refuse("misconfig-file-root", binary, corpus, {
-            "SESSIONDOCK_AUDIT_DIR": str(both), "SESSIONDOCK_FILE_ROOTS": str(both)})
+        with running_env("operator-file-root", binary, corpus, {
+                "SESSIONDOCK_AUDIT_DIR": str(both), "SESSIONDOCK_FILE_ROOTS": str(both)}) as (base, opener):
+            check("operator-file-root", opener, base, audit=True, files=True)
         # Node identity (batch 38 H1): protocol 1 and the minted id, `hub` still false.
         token = root / "node-token"
         token.touch(mode=0o600)

@@ -23,7 +23,7 @@ RELEASE = REPO / "target/release" / (
     "sessiondock.exe" if os.name == "nt" else "sessiondock"
 )
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
-URI_MAX, BODY_MAX = 16 * 1024, 4 * 1024 * 1024
+URI_MAX, BODY_MAX = 64 * 1024, 4 * 1024 * 1024
 LEAK = ("[workspace]", "SessionDock workspace")
 
 
@@ -140,11 +140,11 @@ def run(host, port):
         fail("hub headers", "without a node identity /api/meta must stay protocol 0 / node_id null", meta)
     passed("hub headers")
     got, raw = call(host, port, "GET", "/api/health?" + "a" * URI_MAX)
-    if got != 414 or code_of(raw) != "uri_too_long":
-        fail("uri too long", f"HTTP {got} code={code_of(raw)!r} (want 414 uri_too_long)", raw)
+    if got != 414:
+        fail("uri too long", f"HTTP {got} code={code_of(raw)!r} (want Python request-line status 414)", raw)
     passed("uri too long")
     blob = (
-        f"POST /api/session/send HTTP/1.1\r\nHost: {host}:{port}\r\n"
+        f"POST /api/session/star HTTP/1.1\r\nHost: {host}:{port}\r\n"
         f"Content-Type: application/json\r\nContent-Length: {BODY_MAX + 1}\r\n"
         "Connection: close\r\n\r\n"
     ).encode() + b'{"x":"' + b"y" * 64 + b'"}'
@@ -152,6 +152,12 @@ def run(host, port):
     if status != 413 or code_of(body_of(buf)) != "body_too_large":
         fail("body too large", f"HTTP {status} code={code_of(body_of(buf))!r}", buf)
     passed("body too large")
+    # Python's terminal handlers do not impose the metadata route's body cap.
+    payload = json.dumps({"uid": "claude:missing", "future": "x" * (BODY_MAX + 1)}).encode()
+    status, raw = call(host, port, "POST", "/api/term/takeover", star, payload)
+    if status != 501:
+        fail("terminal body policy", f"HTTP {status} (want disabled terminal 501)", raw)
+    passed("terminal body policy")
     # `debug_run` is the list-view selector (Python `filter_rows`), not a
     # policy gate: an id no registry knows is an empty view, HTTP 200.
     status, raw = call(host, port, "GET", "/api/sessions?debug_run=abc")

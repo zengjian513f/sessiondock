@@ -109,7 +109,7 @@ async fn health_meta_and_default_empty_sources_are_honest() {
     assert!(unchanged.get("sessions").is_none());
     assert_eq!(
         json_body(get(&app, "/api/live").await).await["known"],
-        false
+        cfg!(target_os = "linux")
     );
     let term = json_body(get(&app, "/api/term/list").await).await;
     assert_eq!(term["enabled"], false);
@@ -225,9 +225,13 @@ async fn request_security_rejects_rebinding_cross_site_hub_bypass_and_oversize()
         app.clone().oneshot(req).await.unwrap().status(),
         StatusCode::OK
     );
-    let mut req = request("/api/session/send");
-    req.headers_mut()
-        .insert("content-length", "5000000".parse().unwrap());
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/session/resolve-files")
+        .header("Host", "127.0.0.1:8741")
+        .header("Content-Type", "application/json")
+        .body(Body::from(" ".repeat(4 * 1024 * 1024 + 1)))
+        .unwrap();
     assert_eq!(
         app.oneshot(req).await.unwrap().status(),
         StatusCode::PAYLOAD_TOO_LARGE
@@ -360,7 +364,7 @@ async fn sse_publishes_changed_agent_menu_even_when_leaf_cursor_is_unchanged() {
 }
 
 #[tokio::test]
-async fn watch_subscribers_are_bounded_and_permits_are_reclaimed() {
+async fn watch_subscribers_are_not_rejected_at_the_former_limit() {
     let (_temp, cfg, _) = fixture();
     let app = sessiondock::app(cfg).unwrap();
     let uid = first_uid(&app).await;
@@ -371,10 +375,7 @@ async fn watch_subscribers_are_bounded_and_permits_are_reclaimed() {
         assert_eq!(response.status(), StatusCode::OK);
         bodies.push(response.into_body());
     }
-    assert_eq!(
-        get(&app, &uri).await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(get(&app, &uri).await.status(), StatusCode::OK);
     bodies.pop();
     assert_eq!(get(&app, &uri).await.status(), StatusCode::OK);
 }

@@ -58,7 +58,6 @@ impl Fixture {
                     "-c".into(),
                     "model_reasoning_effort=\"low\"".into(),
                 ],
-                cwd_roots: vec![self.repo.clone()],
             }],
         )
         .unwrap()
@@ -79,7 +78,7 @@ fn read_json(path: &Path) -> Value {
 /// Wait for the audit writer thread to land a browser batch on disk.
 fn browser_batch(audit: &AuditService, page: &str, uid: &str, event: &str) {
     let body = json!({"page_id": page, "uid": uid, "events": [{"event": event, "ts": "t"}]});
-    let admission = audit.admit("127.0.0.1".parse().unwrap(), None).unwrap();
+    let admission = audit.admit().unwrap();
     audit
         .submit(
             admission,
@@ -300,6 +299,14 @@ fn resolve_attachments_rejects_paths_outside_the_upload_directory() {
         .resolve_attachments(&json!([{"path": link}]))
         .unwrap_err();
     assert!(linked.contains("不在附件目录中"), "{linked}");
+    let target = fixture.repo.join(ATTACHMENT_DIR).join("inside.txt");
+    fs::write(&target, "ok").unwrap();
+    let internal_link = fixture.repo.join(ATTACHMENT_DIR).join("inside-link.txt");
+    std::os::unix::fs::symlink(&target, &internal_link).unwrap();
+    let internal = service
+        .resolve_attachments(&json!([{"path": internal_link}]))
+        .unwrap();
+    assert_eq!(internal[0].path, target.canonicalize().unwrap());
     // A directory instead of a file.
     let directory = fixture.repo.join(ATTACHMENT_DIR).join("2");
     fs::create_dir_all(&directory).unwrap();
@@ -392,12 +399,12 @@ fn launcher_config_names_existing_profiles_of_the_same_source() {
     let root = temp.path().canonicalize().unwrap();
     let base = |profiles: Value, bug: Value| {
         json!({"schema": 2, "host_binary": "/usr/bin/true", "host_dir": root.join("host"),
-            "cwd_roots": [root.join("work")], "adapters": [], "profiles": profiles,
+            "adapters": [], "profiles": profiles,
             "bug_report_profiles": bug})
     };
     let profile = json!({"id": "codex-cheap-v1", "source": "codex", "executable": "/usr/bin/true",
         "args": ["-m", "gpt-5.6-luna", "-c", "model_reasoning_effort=\"low\""],
-        "new_args": [], "resume_args": [], "env": {}, "cwd_roots": [root.join("work")]});
+        "new_args": [], "resume_args": [], "env": {}});
     let write = |value: &Value| {
         let path = root.join("launcher.json");
         fs::write(&path, value.to_string()).unwrap();
@@ -414,7 +421,7 @@ fn launcher_config_names_existing_profiles_of_the_same_source() {
     assert_eq!(resolved[0].id, "codex-cheap-v1");
     assert_eq!(resolved[0].argv[0], "/usr/bin/true");
     assert!(resolved[0].policy_ok());
-    // Unknown id, wrong source and unknown keys all fail closed.
+    // Unknown ids and wrong sources fail; unrelated configuration keys are ignored.
     assert!(
         read_config(&write(&base(
             json!([profile]),
@@ -434,7 +441,7 @@ fn launcher_config_names_existing_profiles_of_the_same_source() {
             json!([profile]),
             json!({"bash": "codex-cheap-v1"})
         )))
-        .is_err()
+        .is_ok()
     );
     // Absent: no worker profiles, still a valid launcher.
     let none: Config = read_config(&write(&base(json!([profile]), json!({})))).unwrap();

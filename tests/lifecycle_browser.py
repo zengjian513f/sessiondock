@@ -29,7 +29,7 @@ def main(bind_native=False):
         configuration=root/"launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
-            "host_dir":str(root/"host"),"cwd_roots":[str(root/"work")],"adapters":[{
+            "host_dir":str(root/"host"),"adapters":[{
                 "id":"synthetic-shell-v1","source":"codex","executable":str(Path("/bin/sh").resolve()),
                 "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$AGENTHUB_TEST_START_LOG"\n'+SHELL_SCRIPT],
                 "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","AGENTHUB_TEST_START_LOG":str(root/"work/starts")}}]}))
@@ -84,6 +84,18 @@ def main(bind_native=False):
                             assert response.status==200,response.text()
                             receipt=response.json()
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
+                            # Pending-only actions may be promoted from the overflow
+                            # menu on a wide header. They must remain compact icons;
+                            # their full labels belong in title/aria and in the menu.
+                            for selector,label in [("#a-native-bind","关联原生会话"),
+                                ("#a-pending-release","释放本页控制台")]:
+                                action=page.locator(selector)
+                                expect(action).to_be_visible()
+                                expect(action).to_have_attribute("title",label)
+                                expect(action.locator("svg.ui-icon")).to_have_count(1)
+                                assert action.inner_text()=="",(selector,action.inner_text())
+                                bounds=action.bounding_box()
+                                assert bounds and bounds["width"]<=32,bounds
                             original_request=response.request.post_data_json
                             repeated=context.request.post(base+"/api/term/create",data=original_request)
                             assert repeated.status==200 and repeated.json()["record_id"]==receipt["record_id"]
@@ -116,7 +128,8 @@ def main(bind_native=False):
                         if bind_native and not restarted:
                             body={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"],"uid":native_uid,"operator_confirmed":True}
                             assert context.request.post(base+"/api/term/bind",data={**body,"operator_confirmed":False}).status==400
-                            assert context.request.post(base+"/api/term/bind",data={**body,"sid":"forged-display-id"}).status==400
+                            ignored={**body,"instance_id":"0"*32,"sid":"forged-display-id"}
+                            assert context.request.post(base+"/api/term/bind",data=ignored).status==409
                             page.evaluate("window.bindingSocket = T.ws")
                             if not page.locator("#a-native-bind").is_visible(): page.locator("#a-more").click()
                             page.locator("#a-native-bind").click()

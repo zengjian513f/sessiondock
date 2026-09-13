@@ -1,12 +1,12 @@
 # Onboarding: reading order
 
-Join the isolated Python → Rust AgentHub migration by reading in this order.
+Join the Python AgentHub → Rust SessionDock migration by reading in this order.
 This file is a map, not a product spec.
 
 ## 1. What this repository is and is not
 
-- [README.md](../README.md) — Independent Rust backend serving first-stage `legacy-web/`. Restricted native-history reads; **not** a full replacement and **not** Hub-node compatible. Vue `web/` stays frozen until stage two.
-- [AGENTS.md](../AGENTS.md#scope-and-boundaries) — Isolated migration build, not production. Do not edit the sibling Python project. Native histories stay read-only. Loopback only; missing configuration fails closed. No production hosts, paid CLIs, or commits of credentials, paths, or runtime data.
+- [README.md](../README.md) — Independent Rust backend serving first-stage `legacy-web/`. Native histories stay read-only; enabled services add terminal, reliable-send and file operations. The node listener and separate `sessiondock-hub` implement the shared Hub protocol. Vue `web/` stays frozen until stage two.
+- [AGENTS.md](../AGENTS.md) — Repository workflow and current development boundaries. Native histories stay read-only; do not commit credentials or runtime data.
 
 ## 2. Vocabulary
 
@@ -14,7 +14,7 @@ Read [glossary.md](glossary.md) before any contract. It defines UID/SID, event v
 
 ## 3. Architecture and module map
 
-- [architecture.md](architecture.md) — Default path: `legacy-web/` → Axum → bounded blocking pool → `sessions` parse/cache with SSE. Optional ptyhost, delivery, lifecycle, and files attach only after explicit directories.
+- [architecture.md](architecture.md) — Default path: `legacy-web/` → Axum → session views/search/SSE, with ptyhost, delivery, lifecycle, files and Hub services.
 - [module-map.md](module-map.md) — Generated map of every crate `src` `.rs` file.
 
 ## 4. Contracts by area
@@ -42,17 +42,18 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Delivery
 
-- [delivery.md](delivery.md) — Codex/Claude receipt machines; **not** a working sender and does not complete M5.
-- [delivery-store.md](delivery-store.md) — Isolated durable ledger; no sender or CLI.
+- [delivery.md](delivery.md) — Codex/Claude receipt machines and Python-compatible delivery behavior.
+- [delivery-store.md](delivery-store.md) — Durable delivery ledger and recovery semantics.
 - [delivery-engine.md](delivery-engine.md) — Exclusive owner of the store and both machines.
-- [delivery-service.md](delivery-service.md) — Bounded async committed-outbox reads.
-- [delivery-http.md](delivery-http.md) — Read-only HTTP after opening an existing ledger.
+- [delivery-service.md](delivery-service.md) — Serialized async committed-outbox reads and executor access.
+- [delivery-http.md](delivery-http.md) — HTTP contracts backed by the configured delivery service.
+- [delivery-executor.md](delivery-executor.md) and [delivery-codex-executor.md](delivery-codex-executor.md) — Claude/Codex send injection and native acknowledgment.
 - [delivery-scope.md](delivery-scope.md) — `NativeScope` from the session store.
 - [delivery-configuration.md](delivery-configuration.md) — Explicit directory; no implicit init.
 
 ### Files, diagnostics, capabilities, security
 
-- [files.md](files.md) — Read-only M6 slice: explicit roots ∩ selected-view references.
+- [files.md](files.md) — Python-compatible file navigation, attachments, uploads and write operations.
 - [diagnostics.md](diagnostics.md) — Bounded `POST /api/audit/browser`; unset keeps `audit:false` and 501.
 - [capabilities.md](capabilities.md) — HTML / `/api/meta` flags; a missing key stays allowed.
 - [security-model.md](security-model.md) — Trust boundaries: loopback, fail-closed, not a sandbox.
@@ -68,7 +69,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 ## 6. Validate and run locally
 
 - [validation.md](validation.md) — Table of every default suite in [tests/run_validation.py](../tests/run_validation.py). `--list` prints the plan; `--dry-run` does not execute. A full run takes the `target/` lock — skip it while other agents are building.
-- [runbook-dev.md](runbook-dev.md) — Synthetic corpus, loopback bind, disjoint `SESSIONDOCK_*` directories. Never point roots at production CLI homes.
+- [runbook-dev.md](runbook-dev.md) — Synthetic corpus, loopback bind and optional service configuration.
 
 ## 7. Delegating tooling tasks
 

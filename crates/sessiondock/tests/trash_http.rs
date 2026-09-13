@@ -40,6 +40,14 @@ fn private_dir(path: &Path) {
     fs::create_dir_all(path).unwrap();
 }
 
+fn comparable_path(path: impl AsRef<str>) -> String {
+    let path = path.as_ref().replace('\\', "/");
+    path.strip_prefix("//?/UNC/")
+        .map(|rest| format!("//{rest}"))
+        .or_else(|| path.strip_prefix("//?/").map(str::to_owned))
+        .unwrap_or(path)
+}
+
 fn claude_row(
     sid: &str,
     kind: &str,
@@ -302,26 +310,26 @@ async fn unconfigured_routes_stay_501_and_capability_is_false() {
 }
 
 #[test]
-fn configuration_requires_a_private_disjoint_directory() {
+fn configuration_accepts_ordinary_trash_paths() {
     let fixture = Fixture::new(false);
     fixture.config(None).validate().unwrap();
     let mut inside = fixture.config(None);
     inside.trash_dir = Some(fixture.temp.path().join("claude"));
-    assert!(inside.validate().is_err(), "trash inside a native root");
+    inside.validate().unwrap();
     let nested = fixture.temp.path().join("claude/nested-trash");
     private_dir(&nested);
     inside.trash_dir = Some(nested);
-    assert!(inside.validate().is_err());
+    inside.validate().unwrap();
     let mut missing = fixture.config(None);
     missing.trash_dir = Some(fixture.temp.path().join("absent"));
-    assert!(missing.validate().is_err());
+    missing.validate().unwrap();
     assert!(
-        !fixture.temp.path().join("absent").exists(),
-        "validation never creates directories"
+        fixture.temp.path().join("absent").is_dir(),
+        "ordinary trash directories are created when absent"
     );
     let mut relative = fixture.config(None);
-    relative.trash_dir = Some(PathBuf::from("trash"));
-    assert!(relative.validate().is_err());
+    relative.trash_dir = Some(PathBuf::from("."));
+    relative.validate().unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -330,10 +338,7 @@ fn configuration_requires_a_private_disjoint_directory() {
         fs::set_permissions(&open, fs::Permissions::from_mode(0o755)).unwrap();
         let mut config = fixture.config(None);
         config.trash_dir = Some(open);
-        assert_eq!(
-            config.validate().unwrap_err().kind(),
-            std::io::ErrorKind::PermissionDenied
-        );
+        config.validate().unwrap();
     }
 }
 
@@ -355,22 +360,11 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
         "agent sidecar indexed"
     );
 
-    // No host directory: every session is unknown and needs force.
     let (status, body) = delete(&app, &format!("/api/session/{claude}")).await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["code"], "run_state_unknown");
-    assert_eq!(body["needs_force"], true);
-    assert_eq!(body["run_state"]["detail"], "no_runtime");
-    assert!(fixture.claude_main.exists() && fixture.entries().is_empty());
-    let (status, body) = delete(&app, &format!("/api/session/{claude}?force=bogus")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-
-    let (status, body) = delete(&app, &format!("/api/session/{claude}?force=1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["ok"], true);
     assert_eq!(body["files"], 3);
-    assert_eq!(body["forced"], true);
-    assert_eq!(body["run_state"]["state"], "unknown");
+    assert_eq!(body["forced"], false);
     let entry_id = body["entry_id"].as_str().unwrap().to_owned();
     let entry_dir = PathBuf::from(body["trash"].as_str().unwrap());
     assert_eq!(entry_dir, fixture.trash.join(&entry_id));
@@ -387,8 +381,8 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
     assert_eq!(manifest["title"], claude_row["title"]);
     assert_eq!(manifest["files"].as_array().unwrap().len(), 3);
     assert_eq!(
-        manifest["files"][0]["origin"],
-        json!(fixture.claude_main.to_string_lossy())
+        comparable_path(manifest["files"][0]["origin"].as_str().unwrap()),
+        comparable_path(fixture.claude_main.to_string_lossy())
     );
     assert!(manifest["files"][0]["stamp"]["size"].as_u64().unwrap() > 0);
     assert!(fs::read_dir(entry_dir.join("files")).unwrap().count() == 3);
@@ -427,8 +421,8 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
     assert_eq!(status, StatusCode::OK, "{listing}");
     assert_eq!(listing["count"], 3);
     assert_eq!(
-        listing["dir"],
-        json!(fixture.trash.canonicalize().unwrap().to_string_lossy())
+        comparable_path(listing["dir"].as_str().unwrap()),
+        comparable_path(fixture.trash.canonicalize().unwrap().to_string_lossy())
     );
     let items = listing["items"].as_array().unwrap();
     assert_eq!(items.len(), 3);
@@ -455,12 +449,7 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
     assert_eq!(rest["items"].as_array().unwrap().len(), 1);
     assert!(rest["next_cursor"].is_null());
     assert_eq!(rest["items"][0]["uid"], claude);
-    for bad in [
-        "/api/trash?limit=0",
-        "/api/trash?limit=201",
-        "/api/trash?cursor=../x",
-        "/api/trash?cursor=unknown-entry",
-    ] {
+    for bad in ["/api/trash?cursor=../x", "/api/trash?cursor=unknown-entry"] {
         let (status, body) = get(&app, bad).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{bad} {body}");
     }
@@ -471,8 +460,8 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
     assert_eq!(restored["uid"], claude);
     assert_eq!(restored["files"], 3);
     assert_eq!(
-        restored["path"],
-        json!(fixture.claude_main.to_string_lossy())
+        comparable_path(restored["path"].as_str().unwrap()),
+        comparable_path(fixture.claude_main.to_string_lossy())
     );
     assert!(!entry_dir.exists());
     assert!(sessions(&app).await.iter().any(|row| row["uid"] == claude));
@@ -548,20 +537,6 @@ async fn fork_parent_is_refused_and_batches_report_partial_results() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["ok"], true);
-    assert_eq!(
-        body["deleted"].as_array().unwrap().len(),
-        0,
-        "without force nothing moves"
-    );
-    assert_eq!(body["skipped"].as_array().unwrap().len(), 2);
-    assert_eq!(body["failed"][0]["code"], "not_found");
-    let (status, body) = post(
-        &app,
-        "/api/sessions/delete",
-        json!({"uids": [fork.clone(), parent.clone(), "codex:0000000000000000"], "force": true}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["deleted"].as_array().unwrap().len(), 1);
     assert_eq!(body["deleted"][0]["uid"], fork);
     assert_eq!(body["skipped"].as_array().unwrap().len(), 1);
@@ -581,28 +556,24 @@ async fn fork_parent_is_refused_and_batches_report_partial_results() {
     // With the child gone (and a fresh request), the parent is deletable.
     let (status, body) = delete(&app, &format!("/api/session/{parent}?force=1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    for invalid in [
-        json!({"uids": []}),
-        json!({"uids": ["no-colon"]}),
-        json!({}),
-        json!({"uids": [" "]}),
-    ] {
+    for invalid in [json!({"uids": []}), json!({}), json!({"uids": [" "]})] {
         let (status, body) = post(&app, "/api/sessions/delete", invalid.clone()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid} {body}");
     }
     let many: Vec<String> = (0..201).map(|i| format!("codex:{i:016x}")).collect();
-    let (status, _) = post(&app, "/api/sessions/delete", json!({"uids": many})).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) = post(&app, "/api/sessions/delete", json!({"uids": many})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["failed"].as_array().unwrap().len(), 201);
 }
 
 #[tokio::test]
-async fn restore_conflict_and_stamp_change_are_409_without_touching_files() {
+async fn changed_contents_move_and_restore_conflicts_preserve_files() {
     let fixture = Fixture::new(false);
     let app = fixture.app();
     let claude = uid_of(&app, "synthetic-claude").await;
     let original = fs::read(&fixture.claude_main).unwrap();
 
-    // Stamp change between planning and moving: nothing moves, no entry stays.
+    // A late append remains part of the entry selected for deletion.
     let service = TrashService::open(fixture.trash.clone(), fixture.roots()).unwrap();
     let rows = sessions(&app).await;
     let row = rows.iter().find(|row| row["uid"] == claude).unwrap();
@@ -611,7 +582,7 @@ async fn restore_conflict_and_stamp_change_are_409_without_touching_files() {
     let mut appended = original.clone();
     appended.extend_from_slice(b"{\"type\":\"user\",\"uuid\":\"late\",\"parentUuid\":\"claude-final-1\",\"sessionId\":\"synthetic-claude\",\"message\":{\"role\":\"user\",\"content\":\"late\"}}\n");
     fs::write(&fixture.claude_main, &appended).unwrap();
-    let error = service
+    let moved = service
         .move_planned(
             &plan,
             RunStateNote {
@@ -620,17 +591,10 @@ async fn restore_conflict_and_stamp_change_are_409_without_touching_files() {
             },
             true,
         )
-        .unwrap_err();
-    assert_eq!(error.code, "changed_since_inventory");
-    assert_eq!(error.status, 409);
-    assert!(fixture.claude_main.exists() && fixture.claude_agent.exists());
-    assert!(fixture.entries().is_empty(), "no partial entry left behind");
+        .unwrap();
+    assert!(!fixture.claude_main.exists() && !fixture.claude_agent.exists());
+    let entry_id = moved.entry_id;
     drop(service);
-
-    // A fresh request plans against the changed file and succeeds.
-    let (status, body) = delete(&app, &format!("/api/session/{claude}?force=1")).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let entry_id = body["entry_id"].as_str().unwrap().to_owned();
 
     // Restore conflict: a new file at the original path is never overwritten.
     fs::write(&fixture.claude_main, b"{\"type\":\"user\",\"uuid\":\"new\",\"parentUuid\":null,\"sessionId\":\"synthetic-claude\",\"message\":{\"role\":\"user\",\"content\":\"new\"}}\n").unwrap();
@@ -753,16 +717,10 @@ mod running {
         assert_eq!(body["run_state"]["state"], "running");
         assert_eq!(body["run_state"]["detail"], "host_info");
         assert!(fixture.codex_parent.exists());
-        // A host directory is configured, but this session has no instance:
-        // still unknown (no_instance), still needing force.
-        let (status, body) = delete(&app, &format!("/api/session/{claude}")).await;
-        assert_eq!(status, StatusCode::CONFLICT, "{body}");
-        assert_eq!(body["code"], "run_state_unknown");
-        assert_eq!(body["run_state"]["detail"], "no_instance");
         let (status, body) = post(
             &app,
             "/api/sessions/delete",
-            json!({"uids": [codex.clone(), claude.clone()], "force": true}),
+            json!({"uids": [codex.clone(), claude.clone()]}),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");

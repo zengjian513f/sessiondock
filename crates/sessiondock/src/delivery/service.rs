@@ -1,10 +1,10 @@
 //! Bounded asynchronous access to an existing isolated delivery ledger.
 //! Only display/diagnostic reads are exposed; opening performs engine recovery.
 
-use std::{io::Write, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use serde::Serialize;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::{
@@ -12,8 +12,6 @@ use super::{
     engine::{self, DeliveryEngine, Provider},
 };
 
-const MAX_CAPACITY: usize = 16;
-const MAX_JSON_BYTES: usize = 32 * 1024 * 1024;
 // Also bound concurrent blocking opens process-wide, including opens whose
 // awaiting caller disappears. Production performs only a couple of opens at
 // startup; the bound keeps parallel opens (e.g. across many tests, or a
@@ -22,25 +20,17 @@ static OPEN_WORKERS: Semaphore = Semaphore::const_new(8);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// Total queued/active requests plus successful responses still held by callers.
+    /// Internal queue size. A full queue waits instead of rejecting input.
     pub capacity: usize,
-    pub max_json_bytes: usize,
 }
 impl Default for Limits {
     fn default() -> Self {
-        Self {
-            capacity: 8,
-            max_json_bytes: 16 * 1024 * 1024,
-        }
+        Self { capacity: 8 }
     }
 }
 impl Limits {
     fn validate(self) -> Result<Self, Error> {
-        if self.capacity == 0
-            || self.capacity > MAX_CAPACITY
-            || self.max_json_bytes == 0
-            || self.max_json_bytes > MAX_JSON_BYTES
-        {
+        if self.capacity == 0 {
             Err(Error::InvalidLimits)
         } else {
             Ok(self)
@@ -51,10 +41,8 @@ impl Limits {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     InvalidLimits,
-    Busy,
     Closed,
     WorkerFailed,
-    ResponseLimit,
     Encoding,
     Engine(engine::Error),
 }
@@ -69,25 +57,13 @@ impl std::error::Error for Error {}
 /// No Debug implementation: outbox JSON intentionally contains submitted text.
 pub struct EncodedJson {
     bytes: Vec<u8>,
-    permit: Option<OwnedSemaphorePermit>,
-}
-/// Keep this guard in a future HTTP response body until completion or Drop.
-/// Releasing it when constructing the body would lose the response memory bound.
-#[must_use = "retain this guard until the response body completes or is dropped"]
-pub struct ResponseGuard {
-    _permit: Option<OwnedSemaphorePermit>,
 }
 impl EncodedJson {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
-    pub fn into_parts(self) -> (Vec<u8>, ResponseGuard) {
-        (
-            self.bytes,
-            ResponseGuard {
-                _permit: self.permit,
-            },
-        )
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
     }
 }
 
@@ -116,14 +92,12 @@ type ExecJob = Box<dyn FnOnce(&mut DeliveryEngine) + Send + 'static>;
 struct Request {
     query: Query,
     reply: oneshot::Sender<Result<EncodedJson, Error>>,
-    permit: OwnedSemaphorePermit,
 }
 
 /// Share with Arc, not with a coordinator-owned clone. The coordinator never
-/// owns this handle or its sender, so last-handle Drop can release the OS lock.
+/// owns this handle or its sender, so last-handle Drop can stop the worker.
 pub struct DeliveryService {
     tx: mpsc::Sender<Request>,
-    admission: Arc<Semaphore>,
     stop: CancellationToken,
     done: watch::Receiver<Option<Result<(), Error>>>,
 }
@@ -149,7 +123,7 @@ impl DeliveryService {
         if shutdown.is_cancelled() {
             return Err(Error::Closed);
         }
-        let permit = OPEN_WORKERS.try_acquire().map_err(|_| Error::Busy)?;
+        let permit = OPEN_WORKERS.acquire().await.map_err(|_| Error::Closed)?;
         let stop = shutdown.child_token();
         let opening_stop = stop.clone();
         let engine = tokio::task::spawn_blocking(move || {
@@ -167,23 +141,9 @@ impl DeliveryService {
         .map_err(|_| Error::WorkerFailed)??;
         // No await between obtaining the engine and transferring it to its owner.
         let (tx, rx) = mpsc::channel(limits.capacity);
-        let admission = Arc::new(Semaphore::new(limits.capacity));
         let (done_tx, done) = watch::channel(None);
-        tokio::spawn(coordinate(
-            engine,
-            rx,
-            admission.clone(),
-            stop.clone(),
-            done_tx,
-            limits,
-            hooks,
-        ));
-        Ok(Self {
-            tx,
-            admission,
-            stop,
-            done,
-        })
+        tokio::spawn(coordinate(engine, rx, stop.clone(), done_tx, hooks));
+        Ok(Self { tx, stop, done })
     }
 
     /// Scope resolution belongs to the trusted caller; no native inventory or
@@ -237,40 +197,29 @@ impl DeliveryService {
         rx.await.map_err(|_| Error::WorkerFailed)
     }
     async fn request(&self, query: Query) -> Result<EncodedJson, Error> {
-        let response = self.admit(query)?;
+        let response = self.admit(query).await?;
         // Dropping this future drops only the response receiver. The request,
         // permit and engine belong to the coordinator/blocking worker already.
         response.await.map_err(|_| Error::WorkerFailed)?
     }
-    fn admit(&self, query: Query) -> Result<oneshot::Receiver<Result<EncodedJson, Error>>, Error> {
+    async fn admit(
+        &self,
+        query: Query,
+    ) -> Result<oneshot::Receiver<Result<EncodedJson, Error>>, Error> {
         if self.stop.is_cancelled() {
             return Err(Error::Closed);
         }
-        let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
-            if self.admission.is_closed() {
-                Error::Closed
-            } else {
-                Error::Busy
-            }
-        })?;
         let (reply, response) = oneshot::channel();
         self.tx
-            .try_send(Request {
-                query,
-                reply,
-                permit,
-            })
-            .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => Error::Busy,
-                mpsc::error::TrySendError::Closed(_) => Error::Closed,
-            })?;
+            .send(Request { query, reply })
+            .await
+            .map_err(|_| Error::Closed)?;
         Ok(response)
     }
     /// Closes admission, rejects reads that have not started, and waits for the
     /// active blocking read and the store's lock release. Safe to call repeatedly.
     pub async fn shutdown(&self) -> Result<(), Error> {
         self.stop.cancel();
-        self.admission.close();
         let mut done = self.done.clone();
         loop {
             if let Some(result) = done.borrow_and_update().clone() {
@@ -282,7 +231,6 @@ impl DeliveryService {
 }
 impl Drop for DeliveryService {
     fn drop(&mut self) {
-        self.admission.close();
         self.stop.cancel();
         // Drop cannot await; the independent coordinator still joins its active
         // blocking worker before releasing the engine and signaling completion.
@@ -306,10 +254,8 @@ impl Hooks {
 async fn coordinate(
     engine: DeliveryEngine,
     mut rx: mpsc::Receiver<Request>,
-    admission: Arc<Semaphore>,
     stop: CancellationToken,
     done: watch::Sender<Option<Result<(), Error>>>,
-    limits: Limits,
     hooks: Hooks,
 ) {
     let mut engine = Some(engine);
@@ -324,24 +270,14 @@ async fn coordinate(
         let hooks = hooks.clone();
         let work_stop = stop.clone();
         let joined = tokio::task::spawn_blocking(move || {
-            let Request {
-                query,
-                reply,
-                permit,
-            } = request;
+            let Request { query, reply } = request;
             let mut engine = current;
             let result = if work_stop.is_cancelled() {
                 Err(Error::Closed)
             } else {
                 hooks.before_read();
-                query_json(&mut engine, query, limits.max_json_bytes)
+                query_json(&mut engine, query)
             };
-            let result = result.map(|mut json| {
-                // Capacity covers slow or unread successful responses as well
-                // as queued/active work. Failed responses retain no large JSON.
-                json.permit = Some(permit);
-                json
-            });
             (engine, reply, result)
         })
         .await;
@@ -355,12 +291,11 @@ async fn coordinate(
             Err(_) => break Err(Error::WorkerFailed),
         }
     };
-    admission.close();
     rx.close();
     while let Ok(request) = rx.try_recv() {
         let _ = request.reply.send(Err(Error::Closed));
     }
-    // Releasing the ledger's file lock is also kept off the reactor.
+    // Dropping the engine is kept off the reactor.
     let status = if let Some(engine) = engine {
         match tokio::task::spawn_blocking(move || drop(engine)).await {
             Ok(()) => status,
@@ -372,22 +307,14 @@ async fn coordinate(
     let _ = done.send(Some(status));
 }
 
-fn query_json(
-    engine: &mut DeliveryEngine,
-    query: Query,
-    max_bytes: usize,
-) -> Result<EncodedJson, Error> {
+fn query_json(engine: &mut DeliveryEngine, query: Query) -> Result<EncodedJson, Error> {
     match query {
         Query::CodexOutbox { uid, agent_id } => encode(
             &engine
                 .codex_outbox(&uid, agent_id.as_deref())
                 .map_err(Error::Engine)?,
-            max_bytes,
         ),
-        Query::ClaudeOutbox(scope) => encode(
-            &engine.claude_outbox(&scope).map_err(Error::Engine)?,
-            max_bytes,
-        ),
+        Query::ClaudeOutbox(scope) => encode(&engine.claude_outbox(&scope).map_err(Error::Engine)?),
         Query::Receipts {
             provider,
             offset,
@@ -396,69 +323,22 @@ fn query_json(
             &engine
                 .receipts(provider, offset, limit)
                 .map_err(Error::Engine)?,
-            max_bytes,
         ),
         Query::Logs {
             after_sequence,
             limit,
-        } => encode(
-            &engine.logs(after_sequence, limit).map_err(Error::Engine)?,
-            max_bytes,
-        ),
+        } => encode(&engine.logs(after_sequence, limit).map_err(Error::Engine)?),
         Query::Exec(job) => {
             job(engine);
-            Ok(EncodedJson {
-                bytes: Vec::new(),
-                permit: None,
-            })
+            Ok(EncodedJson { bytes: Vec::new() })
         }
     }
 }
 
-struct BoundedWriter {
-    bytes: Vec<u8>,
-    max_bytes: usize,
-    exceeded: bool,
-}
-impl Write for BoundedWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > self.max_bytes.saturating_sub(self.bytes.len()) {
-            self.exceeded = true;
-            return Err(std::io::Error::other("delivery response budget exceeded"));
-        }
-        let required = self.bytes.len() + bytes.len();
-        if required > self.bytes.capacity() {
-            let capacity = required
-                .max(self.bytes.capacity().saturating_mul(2))
-                .min(self.max_bytes);
-            self.bytes
-                .try_reserve_exact(capacity - self.bytes.len())
-                .map_err(|_| std::io::Error::other("delivery response allocation unavailable"))?;
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-fn encode(value: &impl Serialize, max_bytes: usize) -> Result<EncodedJson, Error> {
-    let mut writer = BoundedWriter {
-        bytes: Vec::with_capacity(max_bytes.min(4096)),
-        max_bytes,
-        exceeded: false,
-    };
-    if serde_json::to_writer(&mut writer, value).is_err() {
-        return Err(if writer.exceeded {
-            Error::ResponseLimit
-        } else {
-            Error::Encoding
-        });
-    }
-    Ok(EncodedJson {
-        bytes: writer.bytes,
-        permit: None,
-    })
+fn encode(value: &impl Serialize) -> Result<EncodedJson, Error> {
+    serde_json::to_vec(value)
+        .map(|bytes| EncodedJson { bytes })
+        .map_err(|_| Error::Encoding)
 }
 
 #[cfg(all(test, unix))]

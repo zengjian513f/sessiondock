@@ -13,7 +13,8 @@ const MAX_GRANTS: usize = 1024;
 const GRANT_TTL: Duration = Duration::from_secs(10 * 60);
 /// Events per page unless `PageStore::with_page_events` says otherwise
 /// (batch 44 WP-A: `SESSIONDOCK_HISTORY_PAGE_EVENTS`, default 2000). The
-/// 8 MiB JSON / 128-image / 24 MiB image budgets below still cap a page.
+/// 8 MiB JSON / 128-image / 24 MiB image targets below group a page. A
+/// larger individual event gets its own page so history always advances.
 pub const DEFAULT_PAGE_EVENTS: usize = 2000;
 const MAX_IMAGES: usize = 128;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
@@ -101,7 +102,7 @@ impl Default for PageStore {
 }
 impl PageStore {
     /// A store whose history pages select at most `page_events` events
-    /// (clamped to 1..=10000) under the unchanged byte and image budgets.
+    /// (clamped to 1..=10000), using soft byte and image targets.
     pub fn with_page_events(page_events: usize) -> Self {
         Self {
             grants: Mutex::new(BTreeMap::new()),
@@ -246,9 +247,8 @@ impl Budget {
             return Ok(false);
         }
         let mut counter = Counter(0);
-        if serde_json::to_writer(&mut counter, &event.message).is_err() {
-            return self.too_large();
-        }
+        serde_json::to_writer(&mut counter, &event.message)
+            .map_err(|_| SessionError::new(500, "历史消息序列化失败"))?;
         // Only the inline-displayed prefix is charged; the remainder is paged
         // separately through media grants and never enters this response.
         let displayed = event.media.len().min(DISPLAY_LIMIT);
@@ -267,40 +267,24 @@ impl Budget {
             .0
             .saturating_add((displayed + crate::media::discover(&event.message).len()) * 8192)
             .saturating_add(32);
-        if image_bytes > MAX_IMAGE_BYTES || json_bytes.saturating_add(64 * 1024) > MAX_JSON_BYTES {
-            return self.too_large();
-        }
-        if self.events == limit
-            || self.images + displayed > MAX_IMAGES
-            || self.image_bytes + image_bytes > MAX_IMAGE_BYTES
-            || self.json_bytes + json_bytes > MAX_JSON_BYTES
+        if self.events > 0
+            && (self.images.saturating_add(displayed) > MAX_IMAGES
+                || self.image_bytes.saturating_add(image_bytes) > MAX_IMAGE_BYTES
+                || self.json_bytes.saturating_add(json_bytes) > MAX_JSON_BYTES)
         {
             return Ok(false);
         }
         self.events += 1;
         self.images += displayed;
-        self.image_bytes += image_bytes;
-        self.json_bytes += json_bytes;
+        self.image_bytes = self.image_bytes.saturating_add(image_bytes);
+        self.json_bytes = self.json_bytes.saturating_add(json_bytes);
         Ok(true)
-    }
-    fn too_large(&self) -> Result<bool, SessionError> {
-        if self.events > 0 {
-            Ok(false)
-        } else {
-            Err(SessionError::new(
-                413,
-                "单条消息超过历史页预算，尚不能拆分此消息",
-            ))
-        }
     }
 }
 struct Counter(usize);
 impl Write for Counter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.0 = self.0.saturating_add(bytes.len());
-        if self.0 > MAX_JSON_BYTES {
-            return Err(std::io::Error::other("history page JSON budget"));
-        }
         Ok(bytes.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -309,7 +293,7 @@ impl Write for Counter {
 }
 pub(super) fn validate_response(value: &Value) -> Result<(), SessionError> {
     serde_json::to_writer(Counter(0), value)
-        .map_err(|_| SessionError::new(413, "历史页响应超过 8 MiB 预算"))
+        .map_err(|_| SessionError::new(500, "历史页响应序列化失败"))
 }
 
 pub(super) fn window(

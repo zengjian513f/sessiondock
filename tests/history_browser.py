@@ -84,9 +84,12 @@ def main():
                     "description": "Renamed synthetic Claude child", "agentType": "reviewer"}))
                 expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
                 page.locator("#a-view-switch").click()
-                expect(page.locator('#session-view-menu button[data-agent="claude-agent-one"]')).to_contain_text(
-                    "Renamed synthetic Claude child")
-                page.locator('#session-view-menu button[data-agent="claude-agent-one"]').click()
+                renamed_agent = page.locator('#session-view-menu button[data-agent="claude-agent-one"]')
+                expect(renamed_agent).to_contain_text("Renamed synthetic Claude child")
+                if not renamed_agent.is_visible():
+                    page.locator("#a-view-switch").click()
+                expect(renamed_agent).to_be_visible()
+                renamed_agent.click()
                 expect(page.locator("#msgs")).to_contain_text("Claude agent answer")
                 agent("", "Claude selected answer")
                 select("claude-compact", "Claude post compact answer")
@@ -156,7 +159,7 @@ def main():
                 expect(page.locator("#msgs")).to_contain_text("Codex parent prefix NEW")
                 assert not errors, errors
                 assert all(url.startswith(base + "/") for url in requests), "browser escaped isolated loopback origin"
-                for suffix in ("/api/audit/browser", "/api/live", "/api/session/outbox", "/api/session/resolve-files"):
+                for suffix in ("/api/audit/browser", "/api/session/outbox", "/api/session/resolve-files"):
                     assert not any(suffix in url for url in requests), suffix
                 print("PASS advanced legacy browser: Claude branch/compact/interrupted inputs, refreshed agent menus, parent-chain navigation, nested subagent views, ancestor-prefix SSE reset, cache re-entry")
             finally:

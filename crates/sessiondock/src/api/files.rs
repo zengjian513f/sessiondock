@@ -1,7 +1,7 @@
-//! File transport. Read authority comes from explicit roots and a complete
-//! semantic branch, never a client-supplied cwd or native filesystem path.
-//! Write routes additionally require explicit write roots and re-resolve the
-//! session anchor on every request (including every upload chunk).
+//! File transport. Every request resolves the selected session; opening a
+//! referenced directory grants authenticated operator navigation. Persisted
+//! grants survive rename/delete, while write targets keep OS and private-data
+//! guards. Request cwd alone never establishes a browser grant.
 use std::{
     io::{self, Read},
     sync::Arc,
@@ -20,19 +20,19 @@ use axum::{
     Json,
     body::{Body, Bytes, to_bytes},
     extract::{
-        Query, State,
+        Query, Request, State,
         rejection::{JsonRejection, QueryRejection},
     },
-    http::{HeaderMap, Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::OwnedSemaphorePermit;
 
-/// Route body cap for one upload chunk: the explicit 4 MiB chunk limit plus
+/// Route body cap for one upload chunk: the Python-compatible 8 MiB chunk limit plus
 /// one byte so an oversized chunk reaches the handler's explicit 413.
-pub const UPLOAD_BODY_LIMIT: usize = 4 * 1024 * 1024 + 1;
+pub const UPLOAD_BODY_LIMIT: usize = crate::files::DEFAULT_UPLOAD_CHUNK_BYTES + 1;
 
 impl From<FileError> for ApiError {
     fn from(error: FileError) -> Self {
@@ -55,11 +55,11 @@ fn configured(state: &AppState) -> Result<Arc<FileService>, ApiError> {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "files_disabled",
-            "文件读取未启用：必须显式配置独立的开发文件目录",
+            "文件读取服务不可用",
         )
     })
 }
-fn admission(state: &AppState) -> Result<Arc<OwnedSemaphorePermit>, ApiError> {
+async fn admission(state: &AppState) -> Result<Arc<OwnedSemaphorePermit>, ApiError> {
     if state.shutdown.is_cancelled() {
         return Err(ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -67,29 +67,17 @@ fn admission(state: &AppState) -> Result<Arc<OwnedSemaphorePermit>, ApiError> {
             "服务正在关闭",
         ));
     }
-    state
-        .file_jobs
-        .clone()
-        .try_acquire_owned()
+    crate::state::admit(&state.file_jobs, "files_busy")
+        .await
         .map(Arc::new)
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "files_busy",
-                "文件工作池繁忙，请稍后重试",
-            )
-        })
 }
-fn validate_scope(uid: &str, agent: &str) -> Result<(), ApiError> {
-    if uid.is_empty()
-        || uid.len() > 256
-        || agent.len() > 256
-        || uid.chars().chain(agent.chars()).any(char::is_control)
-    {
+fn validate_scope(uid: &str, _agent: &str) -> Result<(), ApiError> {
+    if uid.is_empty() {
         return Err(invalid());
     }
     Ok(())
 }
+
 async fn work<T: Send + 'static>(
     state: &AppState,
     lease: Arc<OwnedSemaphorePermit>,
@@ -120,7 +108,6 @@ fn scope<'a>(view: &'a Value, uid: &'a str, agent: &'a str) -> Result<FileScope<
     })
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct ResolveRequest {
     uid: String,
     #[serde(default)]
@@ -145,7 +132,7 @@ pub async fn resolve(
         }
     })?;
     validate_scope(&body.uid, &body.agent)?;
-    let lease = admission(&state)?;
+    let lease = admission(&state).await?;
     work(&state, lease, move |store| {
         let view = store.messages(
             &body.uid,
@@ -163,7 +150,7 @@ pub async fn resolve(
 }
 
 #[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct FileQuery {
     uid: String,
     agent: String,
@@ -171,9 +158,10 @@ pub struct FileQuery {
     path: Option<String>,
     mode: String,
     download: String,
+    #[allow(dead_code)]
     raw: String,
-    offset: usize,
-    limit: Option<usize>,
+    offset: String,
+    limit: Option<String>,
     sort: String,
     order: String,
     hidden: String,
@@ -183,32 +171,101 @@ pub struct FileQuery {
     debug_run: String,
 }
 impl FileQuery {
-    fn validate(&self, directory: bool) -> Result<(), ApiError> {
+    fn validate(&mut self, directory: bool) -> Result<(), ApiError> {
         validate_scope(&self.uid, &self.agent)?;
         crate::files::clean_ref(&self.r#ref)?;
-        if (!directory && self.path.is_some())
-            || self
-                .path
-                .as_ref()
-                .is_some_and(|s| s.len() > 4096 || s.chars().any(char::is_control))
-            || [&self.download, &self.raw, &self.hidden]
-                .iter()
-                .any(|s| !["", "0", "1"].contains(&s.as_str()))
-        {
-            return Err(invalid());
+        if directory && self.mode == "jobs" {
+            // Python returns jobs before reading navigation or pagination.
+            self.path = None;
+            return Ok(());
         }
-        if !["", "info", "preview", "jobs"].contains(&self.mode.as_str()) {
+        if directory && matches!(self.mode.as_str(), "trash" | "artifact") {
             return Err(FileError::unsupported(&self.mode).into());
         }
-        if self.mode == "jobs" && (!directory || self.path.is_some()) {
-            return Err(invalid());
+        if self.download == "1" {
+            self.mode.clear();
+        } else if directory && self.mode == "thumbnail" {
+            return Err(FileError::unsupported(&self.mode).into());
+        } else if !matches!(self.mode.as_str(), "" | "info" | "preview") {
+            // Unknown modes are ordinary file reads/listings in Python.
+            self.mode.clear();
         }
-        if self.mode == "info" && (self.download == "1" || self.raw == "1") {
+        if !directory {
+            // The direct-reference route ignores any browser navigation field.
+            self.path = None;
+        }
+        if self
+            .path
+            .as_ref()
+            .is_some_and(|s| s.chars().count() > 4096 || s.contains('\0'))
+        {
             return Err(invalid());
         }
         Ok(())
     }
+    fn listing_offset(&self) -> Result<usize, ApiError> {
+        if self.offset.is_empty() {
+            return Ok(0);
+        }
+        let mut raw = self.offset.trim();
+        let negative = raw.starts_with('-');
+        if raw.starts_with(['+', '-']) {
+            raw = &raw[1..];
+        }
+        let mut value = 0usize;
+        let mut digit_before = false;
+        for character in raw.chars() {
+            if character == '_' {
+                if !digit_before {
+                    return Err(invalid());
+                }
+                digit_before = false;
+                continue;
+            }
+            let digit = decimal_digit(character).ok_or_else(invalid)?;
+            // Python integers are unbounded. Any offset past usize is already
+            // past every possible listing, so admit it as an empty page.
+            value = value.saturating_mul(10).saturating_add(digit);
+            digit_before = true;
+        }
+        if !digit_before || (negative && value != 0) {
+            return Err(invalid());
+        }
+        Ok(value)
+    }
+    fn listing_limit(&self) -> usize {
+        // Python's HTTP route ignores limit. Preserve our existing valid small
+        // pages, but ignore other values instead of adding an input rejection.
+        self.limit
+            .as_deref()
+            .and_then(|raw| raw.parse::<usize>().ok())
+            .filter(|limit| (1..=500).contains(limit))
+            .unwrap_or(500)
+    }
 }
+
+fn decimal_digit(character: char) -> Option<usize> {
+    if character.is_ascii_digit() {
+        return Some((character as u8 - b'0') as usize);
+    }
+    static DECIMAL: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^\p{Nd}$").unwrap());
+    let is_decimal = |character: char| {
+        let mut bytes = [0; 4];
+        DECIMAL.is_match(character.encode_utf8(&mut bytes))
+    };
+    if !is_decimal(character) {
+        return None;
+    }
+    // Unicode decimal sets consist of consecutive 0..9 digits; adjacent sets
+    // (such as the mathematical styles) repeat that sequence.
+    let mut first = character as u32;
+    while first > 0 && char::from_u32(first - 1).is_some_and(is_decimal) {
+        first -= 1;
+    }
+    Some(((character as u32 - first) % 10) as usize)
+}
+
 enum Prepared {
     Json(JsonBytes),
     File(FileResponse),
@@ -238,7 +295,7 @@ async fn get(
     directory: bool,
 ) -> Result<Response, ApiError> {
     let files = configured(&state)?;
-    let Query(query) = query.map_err(|_| invalid())?;
+    let Query(mut query) = query.map_err(|_| invalid())?;
     query.validate(directory)?;
     // This service deliberately emits no stable validator. An If-Range request
     // cannot prove continuity across filesystem versions, so send the complete
@@ -255,7 +312,7 @@ async fn get(
     if query.mode == "jobs" && state.files_write.is_none() {
         return Err(FileError::unsupported("jobs").into());
     }
-    let lease = admission(&state)?;
+    let lease = admission(&state).await?;
     let hostname = state.hostname.clone();
     let writer = state.files_write.clone();
     let prepared = work(&state, lease.clone(), move |store| {
@@ -267,7 +324,20 @@ async fn get(
             },
         )?;
         let scope = scope(&view, &query.uid, &query.agent)?;
-        let target = files.target(&scope, &query.r#ref, query.path.as_deref())?;
+        if directory && query.mode == "info" {
+            return Ok(Prepared::Json(JsonBytes::new(&files.browser_info(
+                &scope,
+                &query.r#ref,
+                query.path.as_deref(),
+            )?)));
+        }
+        let target = if query.mode == "jobs" {
+            files.browser_anchor(&scope, &query.r#ref)?
+        } else if directory {
+            files.browser_target(&scope, &query.r#ref, query.path.as_deref())?
+        } else {
+            files.target(&scope, &query.r#ref, query.path.as_deref())?
+        };
         if query.mode == "jobs" {
             let writer = writer.ok_or_else(|| FileError::unsupported("jobs"))?;
             if target.kind() != "directory" {
@@ -278,12 +348,12 @@ async fn get(
         if query.mode == "info" {
             return Ok(Prepared::Json(JsonBytes::new(&files.describe(&target)?)));
         }
-        if directory && query.mode.is_empty() && query.download != "1" && query.raw != "1" {
+        if directory && query.mode.is_empty() && query.download != "1" {
             let mut listing = files.list(
                 &target,
                 &ListOptions {
-                    offset: query.offset,
-                    limit: query.limit.unwrap_or(500),
+                    offset: query.listing_offset()?,
+                    limit: query.listing_limit(),
                     sort: if query.sort.is_empty() {
                         "name".into()
                     } else {
@@ -401,14 +471,9 @@ async fn write_admission(state: &AppState) -> Result<Arc<OwnedSemaphorePermit>, 
             "服务正在关闭",
         ));
     }
-    crate::state::admit(
-        &state.file_write_http,
-        state.admission_wait,
-        "files_busy",
-        "文件写入工作池繁忙，请稍后重试",
-    )
-    .await
-    .map(Arc::new)
+    crate::state::admit(&state.file_write_http, "files_busy")
+        .await
+        .map(Arc::new)
 }
 /// Errors carry their explicit limits/expectations at the top level.
 fn write_error(error: FileError) -> Response {
@@ -439,7 +504,7 @@ fn anchor<'a>(
     reference: &str,
 ) -> Result<(FileScope<'a>, crate::files::ResolvedTarget), ApiError> {
     let scope = scope(view, uid, agent)?;
-    let target = files.target(&scope, reference, None)?;
+    let target = files.browser_anchor(&scope, reference)?;
     if target.kind() != "directory" {
         return Err(FileError::new(
             400,
@@ -493,7 +558,7 @@ pub async fn action(
 }
 
 #[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct UploadQuery {
     uid: String,
     agent: String,
@@ -571,13 +636,116 @@ pub async fn upload(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AttachmentRequest {
     uid: String,
     #[serde(default)]
     agent: String,
     r#ref: String,
     job: String,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(default)]
+struct AttachmentQuery {
+    uid: String,
+    agent: String,
+    name: String,
+    id: Option<String>,
+    #[allow(dead_code)]
+    debug_run: String,
+}
+
+/// Legacy composer: raw file body, with the native UID and filename in the
+/// query. Resolve the destination from the selected history on the server.
+pub async fn upload_attachment(
+    State(state): State<AppState>,
+    request: Request,
+) -> Result<Response, ApiError> {
+    let (_, writer) = write_configured(&state)?;
+    let Query(query) =
+        Query::<AttachmentQuery>::try_from_uri(request.uri()).map_err(|_| invalid())?;
+    validate_scope(&query.uid, &query.agent)?;
+    let limit = WriteService::BUG_REPORT_ATTACHMENT_MAX_BYTES;
+    let too_large = || {
+        ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file_upload_too_large",
+            format!("单个附件不能超过 {} MB", limit / (1024 * 1024)),
+        )
+    };
+    if request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok())
+        .is_some_and(|length| length > limit)
+    {
+        return Err(too_large());
+    }
+    let mime = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let lease = write_admission(&state).await?;
+    let bytes = to_bytes(request.into_body(), limit)
+        .await
+        .map_err(|_| too_large())?;
+    let metadata = state.metadata.clone();
+    work(&state, lease, move |store| {
+        let view = store.messages(
+            &query.uid,
+            &MessageQuery {
+                agent: query.agent.clone(),
+                ..Default::default()
+            },
+        )?;
+        let scope = scope(&view, &query.uid, &query.agent)?;
+        let mut upload = match writer.session_attachment_upload(
+            &scope,
+            query
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|id| !id.is_empty()),
+            &query.name,
+            &mime,
+            &bytes,
+        ) {
+            Ok(upload) => upload,
+            Err(error) => return Ok(write_error(error)),
+        };
+        if let Some(metadata) = &metadata {
+            use sha2::{Digest, Sha256};
+            metadata
+                .record_attachment(
+                    &query.uid,
+                    crate::metadata::Attachment {
+                        path: upload["path"].as_str().unwrap_or("").to_owned(),
+                        name: upload["name"].as_str().unwrap_or("").to_owned(),
+                        size: bytes.len() as u64,
+                        sha256: Some(format!("{:x}", Sha256::digest(&bytes))),
+                        agent: scope.agent.map(str::to_owned),
+                        at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0),
+                    },
+                )
+                .map_err(|error| {
+                    ApiError::new(
+                        StatusCode::from_u16(error.status)
+                            .unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                        error.code,
+                        error.message,
+                    )
+                })?;
+        }
+        upload["recorded"] = json!(metadata.is_some());
+        Ok(([(header::CACHE_CONTROL, "no-store")], Json(upload)).into_response())
+    })
+    .await
 }
 
 /// Records a completed upload's final path for the session. Without a

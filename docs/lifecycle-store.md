@@ -7,19 +7,13 @@ inputs and directories are synthetic; no CLI or paid model is invoked.
 
 ## Explicit directory and specification
 
-`LifecycleStore::initialize(absolute_directory)` requires an existing empty
-directory with Unix permissions `0700`. `open(absolute_directory)` requires the
-existing valid ledger and stable lock. Neither method creates the directory,
-chooses a home/default path, resets missing data, or adopts unrelated files.
-The future configuration layer must reject overlap with native history, metadata,
-delivery, ptyhost, static assets and downloadable file roots. This library cannot
-discover those independently configured paths. Do not use their directories.
+`LifecycleStore::initialize(directory)` requires an existing directory without a
+ledger. `open(directory)` requires the existing valid ledger. Neither method creates
+the directory, chooses a home/default path, or resets missing data.
 
 The only specification is `LaunchSpec::new(Source, adapter_id, absolute_cwd)`,
-where Source is Claude, Codex or Grok. Construction rejects nonexistent or
-nonnormalized paths, parent/current-directory traversal, symlinks/reparse points
-in cwd or its ancestors, and control characters. It canonicalizes the existing
-directory. New create and begin-start calls revalidate the directory; serde
+where Source is Claude, Codex or Grok. It expands and resolves the requested
+working directory like Python. New create and begin-start calls revalidate the directory; serde
 decoding cannot bypass those checks. Reading/replaying an existing receipt does
 not require its historical cwd to still exist.
 
@@ -27,7 +21,7 @@ There are no arbitrary command strings, shell snippets, argv, environment
 variables, credentials, model calls, or client-selected runtime-file paths.
 Adapter IDs use 1–64 ASCII letters/digits/underscore/hyphen. An adapter ID is an
 identity, **not an executable path or permission to invoke any program**. A future
-trusted launcher must resolve it through an explicit server-owned allowlist and
+trusted launcher must resolve it through its server-owned CLI catalog and
 verify that it supports the declared source. It must revalidate cwd immediately
 before launch or use an appropriately retained directory capability. These
 point-in-time checks cannot prevent a malicious same-user rename race.
@@ -128,31 +122,24 @@ confirmation requires typed exact-record observation. The
 same-value retries, read-only recovery and post-restart native authorization.
 
 The local disk boundary is adapted from the reviewed delivery store without
-changing that existing module. It holds an exclusive OS file lock; checks private
-regular singly-linked files, directory ancestry and directory/lock identity;
-verifies ledger fingerprints before read/write; creates a private unique temp;
+changing that existing module. It creates a unique temp,
 writes and fsyncs it; atomically renames; fsyncs the directory; and verifies the
 installed bytes before acknowledging. The lock path is never removed by normal
 Drop. Only this invocation's own temporary file may be cleaned. Abandoned temps,
 partial initialization and unrelated files are preserved.
 
-An actual persistence error freezes the current handle, including known
-before-rename failure. No authority or optimistic state is returned. Post-rename
-failure is Uncertain; the last in-memory view is not declared authoritative.
-Drop and explicitly reopen for recovery; this module has no in-place write retry.
-External disk edits or directory identity changes also freeze live reads/writes.
-Validation or capacity rejection before disk persistence changes nothing and
-authorizes no work. Missing/corrupt ledgers fail closed, never as an empty store.
+An actual persistence error is returned and no optimistic state is acknowledged.
+Each operation reloads the current ledger data. Missing/corrupt ledgers fail closed,
+never as an empty store.
 
-Hard limits are 128 retained records, a 1 MiB encoded ledger, 4096 UTF-8 bytes per
-cwd, 64 bytes per adapter ID, and 8–128 ASCII identifier characters per request
-ID. Generated nonce fields have exact fixed sizes. JSON parsing also has 16,384
-value and 16-level depth budgets and rejects duplicate keys, unknown fields,
-missing persisted nullable fields, invalid state/failure combinations, duplicate
-identities and invalid revisions. Encoding uses a capped writer. Oversized
-requests/ledgers return an explicit Limit or validation error without evicting
-prior receipts. Whole snapshots are cloned and rewritten; these file bounds are
-not a total allocation guarantee or a high-throughput journal design.
+Retained receipts and encoded ledger bytes have no fixed capacity quota. Existing
+cwd paths follow the operating system's path limits; private creation request IDs
+remain 8–128 ASCII identifier characters. Generated nonces have exact fixed sizes.
+Parsing accepts JSON's ordinary last-key-wins and extra-field behavior while
+rejecting missing required fields, invalid states, duplicate identities and invalid revisions. Snapshot
+writes preserve every receipt and idempotency key; they neither expire entries
+nor silently evict records when the ledger grows. Whole snapshots are still
+cloned and rewritten, so this is not a high-throughput journal design.
 
 The durable backend runs on Unix and, since WP-W, on Windows. Unix syncs the
 temp file, renames it and then flushes the directory handle; Windows syncs the
@@ -172,7 +159,7 @@ HTTP cancellation.
 Synthetic tests cover commit-before-authority, complete-spec idempotency/conflict,
 all providers, handle-bound stale tokens, Prepared and Starting recovery, retained
 terminal-state tombstones, pre/post-rename freezing, lock exclusion and duplicate
-descriptors, malformed/strict JSON, record/file/string budgets, missing/foreign
+descriptors, malformed persisted JSON, large ledgers, missing/foreign
 directories, permissions, symlink ancestry, hardlinks, live directory replacement,
 external edits, changed cwd and deserialized-spec validation, abandoned temp
 preservation, and path/spec-free errors. No process or external application runs.

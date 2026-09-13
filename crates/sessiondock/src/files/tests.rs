@@ -64,7 +64,7 @@ fn bytes(response: FileResponse) -> Vec<u8> {
 }
 
 #[test]
-fn only_explicit_existing_roots_and_semantic_mentions_grant_access() {
+fn semantic_mentions_grant_access_without_configured_roots() {
     let mut fixture = Fixture::new();
     let secret = fixture.write("unmentioned.txt", b"synthetic private content");
     assert_eq!(
@@ -93,18 +93,12 @@ fn only_explicit_existing_roots_and_semantic_mentions_grant_access() {
         bytes(fixture.read("unmentioned.txt", ReadOptions::default())),
         b"synthetic private content"
     );
-    assert!(FileService::open(vec![]).is_err());
-    assert!(FileService::open(vec![fixture.root.join("missing")]).is_err());
+    assert!(FileService::open(vec![]).is_ok());
+    assert!(FileService::open(vec![fixture.root.join("missing")]).is_ok());
     assert!(!fixture.root.join("missing").exists());
-    assert!(FileService::open(vec![fixture.root.clone(), fixture.root.clone()]).is_err());
+    assert!(FileService::open(vec![fixture.root.clone(), fixture.root.clone()]).is_ok());
     #[cfg(unix)]
-    assert_eq!(
-        FileService::open(vec![PathBuf::from("/")])
-            .err()
-            .unwrap()
-            .code,
-        "file_root_too_broad"
-    );
+    assert!(FileService::open(vec![PathBuf::from("/")]).is_ok());
 }
 
 #[test]
@@ -243,7 +237,7 @@ fn basename_resolves_authorized_recorded_directory_without_granting_outside_cwd(
 }
 
 #[test]
-fn resolve_batch_reports_errors_and_never_probes_outside_roots() {
+fn resolve_batch_reports_missing_refs_and_resolves_recorded_paths_outside_settings() {
     let mut fixture = Fixture::new();
     let outside = Fixture::new();
     let external = outside.write("outside.txt", b"must not be read");
@@ -261,10 +255,16 @@ fn resolve_batch_reports_errors_and_never_probes_outside_roots() {
             ],
         )
         .unwrap();
-    assert_eq!(value["targets"].as_array().unwrap().len(), 1);
-    assert_eq!(value["resolved"]["good.txt"], good.to_str().unwrap());
-    assert_eq!(value["errors"].as_array().unwrap().len(), 2);
-    assert_eq!(value["errors"][1]["code"], "file_outside_roots");
+    assert_eq!(value["targets"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        value["resolved"]["good.txt"],
+        boundary::wire_path(&good).unwrap()
+    );
+    assert_eq!(value["errors"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        value["resolved"][external.to_str().unwrap()],
+        boundary::wire_path(&external).unwrap()
+    );
     assert_eq!(value["incomplete"], true);
     assert!(
         fixture
@@ -281,7 +281,7 @@ fn resolve_batch_reports_errors_and_never_probes_outside_roots() {
 }
 
 #[test]
-fn directory_navigation_stops_at_anchor_root_and_needs_fresh_directory_mention() {
+fn directory_navigation_reaches_volume_root_but_still_needs_directory_mention() {
     let mut fixture = Fixture::new();
     let child = fixture.write("nested/child.txt", b"child");
     fixture.mention("`./nested` `nested/child.txt`");
@@ -294,17 +294,22 @@ fn directory_navigation_stops_at_anchor_root_and_needs_fresh_directory_mention()
         .service
         .list(&at_root, &ListOptions::default())
         .unwrap();
-    assert_eq!(listing["parent"], Value::Null);
-    assert_eq!(listing["root"], fixture.root.to_str().unwrap());
-    assert_eq!(listing["writable"], false);
+    assert_eq!(
+        listing["parent"],
+        boundary::wire_path(fixture.root.parent().unwrap()).unwrap()
+    );
+    let volume = fixture.root.ancestors().last().unwrap();
+    let target = fixture
+        .service
+        .target(&scope, "./nested", volume.to_str())
+        .unwrap();
+    assert_eq!(target.path(), volume);
     assert_eq!(
         fixture
             .service
-            .target(&scope, "./nested", fixture.root.parent().unwrap().to_str())
-            .err()
-            .unwrap()
-            .status,
-        403
+            .list(&target, &ListOptions::default())
+            .unwrap()["parent"],
+        Value::Null
     );
     assert_eq!(
         fixture
@@ -325,14 +330,24 @@ fn directory_navigation_stops_at_anchor_root_and_needs_fresh_directory_mention()
         400
     );
     let second = Fixture::new();
-    let service = FileService::open(vec![fixture.root.clone(), second.root.clone()]).unwrap();
-    assert_eq!(
-        service
+    assert!(
+        fixture
+            .service
             .target(&scope, "./nested", second.root.to_str())
+            .is_ok()
+    );
+    let empty = FileScope {
+        messages: &[],
+        ..scope
+    };
+    assert_eq!(
+        fixture
+            .service
+            .target(&empty, "./nested", second.root.to_str())
             .err()
             .unwrap()
             .code,
-        "file_outside_anchor_root"
+        "file_not_referenced"
     );
 }
 
@@ -348,7 +363,7 @@ fn path_validation_has_no_home_url_or_cross_platform_fallback() {
         fixture.mention(format!("`{raw}`"));
         assert!(fixture.service.target(&fixture.scope(), raw, None).is_err());
     }
-    for raw in ["", "a\0b", "a\nb"] {
+    for raw in ["", "a\0b"] {
         assert!(clean_ref(raw).is_err());
     }
     fixture.write("note.txt", b"note");
@@ -366,7 +381,7 @@ fn path_validation_has_no_home_url_or_cross_platform_fallback() {
             .err()
             .unwrap()
             .code,
-        "file_cwd_unavailable"
+        "file_not_found"
     );
 }
 
@@ -461,6 +476,19 @@ fn text_html_svg_binary_media_pdf_and_unicode_download_policy() {
         fixture
             .service
             .describe(&fixture.target("invalid.pdf"))
+            .unwrap()["preview"],
+        "application/pdf"
+    );
+    assert_eq!(
+        fixture
+            .service
+            .read(
+                fixture.target("invalid.pdf"),
+                &ReadOptions {
+                    preview: true,
+                    ..Default::default()
+                }
+            )
             .err()
             .unwrap()
             .code,
@@ -648,68 +676,54 @@ fn preview_truncation_raw_and_download_budgets_are_explicit() {
         .write(true)
         .open(path)
         .unwrap()
-        .set_len(MAX_STREAM_BYTES + 1)
+        .set_len(16 * 1024 * 1024 * 1024 + 1)
         .unwrap();
+    let response = fixture.read(
+        "large.txt",
+        ReadOptions {
+            download: true,
+            head: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(response.status, 200);
     assert_eq!(
-        fixture
-            .service
-            .read(
-                fixture.target("large.txt"),
-                &ReadOptions {
-                    download: true,
-                    ..ReadOptions::default()
-                }
-            )
-            .err()
-            .unwrap()
-            .code,
-        "file_stream_budget"
+        response.headers["Content-Length"],
+        (16u64 * 1024 * 1024 * 1024 + 1).to_string()
     );
 }
 
 #[cfg(unix)]
 #[test]
-fn symlinks_special_files_and_permission_denial_are_never_followed_but_hardlinks_read() {
-    use std::os::unix::{
-        fs::{PermissionsExt, symlink},
-        net::UnixListener,
-    };
+fn symlinks_and_hardlinks_read_normally_while_special_files_are_rejected() {
+    use std::os::unix::{fs::symlink, net::UnixListener};
     let mut fixture = Fixture::new();
     let outside = Fixture::new();
-    let secret = outside.write("secret.txt", b"secret");
+    let secret = outside.write("secret.txt", b"linked content");
     symlink(&secret, fixture.root.join("link.txt")).unwrap();
     symlink(&outside.root, fixture.root.join("linked-dir")).unwrap();
-    // A hard link inside the root is an ordinary file for reading: Python's
-    // bug-report attachments and file manager link files into project trees.
     let shared = fixture.write("shared.txt", b"shared");
     fs::hard_link(&shared, fixture.root.join("hard.txt")).unwrap();
-    let socket = UnixListener::bind(fixture.root.join("socket")).unwrap();
-    let denied = fixture.write("denied.txt", b"no read");
-    fs::set_permissions(&denied, fs::Permissions::from_mode(0o000)).unwrap();
-    fixture.mention(
-        "`link.txt` `./linked-dir` `linked-dir/secret.txt` `hard.txt` `socket` `denied.txt`",
-    );
-    for raw in [
-        "link.txt",
-        "./linked-dir",
-        "linked-dir/secret.txt",
-        "socket",
-        "denied.txt",
-    ] {
+    let _socket = UnixListener::bind(fixture.root.join("socket")).unwrap();
+    fixture.mention("`link.txt` `./linked-dir` `linked-dir/secret.txt` `hard.txt` `./socket`");
+    for raw in ["link.txt", "linked-dir/secret.txt"] {
         assert_eq!(
-            fixture
-                .service
-                .target(&fixture.scope(), raw, None)
-                .err()
-                .unwrap()
-                .status,
-            403,
-            "{raw}"
+            bytes(fixture.read(raw, ReadOptions::default())),
+            b"linked content"
         );
     }
     assert_eq!(
         bytes(fixture.read("hard.txt", ReadOptions::default())),
         b"shared"
+    );
+    assert_eq!(
+        fixture
+            .service
+            .target(&fixture.scope(), "./socket", None)
+            .err()
+            .unwrap()
+            .code,
+        "file_special_forbidden"
     );
     fixture.mention(format!("`{}`", fixture.root.display()));
     let listing = fixture
@@ -719,21 +733,20 @@ fn symlinks_special_files_and_permission_denial_are_never_followed_but_hardlinks
             &ListOptions::default(),
         )
         .unwrap();
-    assert_eq!(listing["incomplete"], true);
     let rows = listing["entries"].as_array().unwrap();
     assert!(
-        rows.iter()
-            .filter(|row| !["hard.txt", "shared.txt"].contains(&row["name"].as_str().unwrap()))
-            .all(|row| row["kind"] == "unavailable")
+        rows.iter().any(|row| row["name"] == "link.txt"
+            && row["kind"] == "file"
+            && row["symlink"] == true)
     );
+    assert!(rows.iter().any(|row| row["name"] == "linked-dir"
+        && row["kind"] == "directory"
+        && row["symlink"] == true));
     assert!(
         rows.iter()
-            .filter(|row| ["hard.txt", "shared.txt"].contains(&row["name"].as_str().unwrap()))
-            .all(|row| row["kind"] == "file")
+            .any(|row| row["name"] == "socket" && row["kind"] == "unavailable")
     );
-    assert!(FileService::open(vec![fixture.root.join("linked-dir")]).is_err());
-    fs::set_permissions(denied, fs::Permissions::from_mode(0o600)).unwrap();
-    drop(socket);
+    assert!(FileService::open(vec![fixture.root.join("linked-dir")]).is_ok());
 }
 
 #[cfg(unix)]
@@ -797,20 +810,81 @@ fn replaced_root_parent_or_file_rejects_existing_handle_before_any_bytes() {
 }
 
 #[test]
-fn unsupported_modes_are_not_empty_success_and_directory_budgets_are_honest() {
-    assert_eq!(FileError::unsupported("jobs").status, 501);
+fn large_directories_are_paginated_without_an_arbitrary_entry_limit() {
     let mut fixture = Fixture::new();
     fixture.mention(format!("`{}`", fixture.root.display()));
-    for index in 0..=MAX_DIRECTORY_ENTRIES {
-        fs::write(fixture.root.join(format!("item-{index}")), b"").unwrap();
+    for index in 0..10_001 {
+        fs::write(fixture.root.join(format!("item-{index:05}")), b"").unwrap();
     }
-    let error = fixture
+    let target = fixture.target(fixture.root.to_str().unwrap());
+    let first = fixture
+        .service
+        .list(&target, &ListOptions::default())
+        .unwrap();
+    assert_eq!(first["total"], 10_001);
+    assert_eq!(first["next_offset"], 500);
+    let last = fixture
         .service
         .list(
-            &fixture.target(fixture.root.to_str().unwrap()),
-            &ListOptions::default(),
+            &target,
+            &ListOptions {
+                offset: 10_000,
+                ..Default::default()
+            },
         )
-        .err()
         .unwrap();
-    assert_eq!(error.code, "file_directory_budget");
+    assert_eq!(last["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(last["next_offset"], Value::Null);
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_parent_dotdot_and_deep_tool_references_follow_python_resolution() {
+    let mut fixture = Fixture::new();
+    let outside = Fixture::new();
+    outside.write("nested/marker", b"marker");
+    outside.write("answer.txt", b"resolved after symlink");
+    fixture.write("answer.txt", b"wrong lexical parent");
+    std::os::unix::fs::symlink(outside.root.join("nested"), fixture.root.join("alias")).unwrap();
+    fixture.mention("`alias/../answer.txt`");
+    assert_eq!(
+        bytes(fixture.read("alias/../answer.txt", ReadOptions::default())),
+        b"resolved after symlink"
+    );
+
+    let mut deep = fixture.root.clone();
+    for _ in 0..70 {
+        deep.push("d");
+    }
+    fs::create_dir_all(&deep).unwrap();
+    let path = deep.join("deep.txt");
+    fs::write(&path, b"deep").unwrap();
+    let mut args = json!({"path":path});
+    for _ in 0..70 {
+        args = json!({"nested":args});
+    }
+    fixture
+        .messages
+        .push(json!({"role":"tool","text":"","args":args}));
+    assert_eq!(
+        bytes(fixture.read(path.to_str().unwrap(), ReadOptions::default())),
+        b"deep"
+    );
+}
+
+#[test]
+fn path_validation_counts_unicode_characters_and_keeps_reference_url_filter() {
+    let allowed = "界".repeat(MAX_PATH_BYTES);
+    assert!(allowed.len() > MAX_PATH_BYTES);
+    assert!(boundary::validate_path_text(&allowed).is_ok());
+    assert!(clean_ref(&allowed).is_ok());
+    let too_long = format!("{allowed}界");
+    assert!(boundary::validate_path_text(&too_long).is_err());
+    assert!(clean_ref(&too_long).is_err());
+    for raw in ["", "/tmp/has\0nul"] {
+        assert!(boundary::validate_path_text(raw).is_err());
+        assert!(clean_ref(raw).is_err());
+    }
+    assert!(boundary::validate_path_text("/tmp/colon://leaf").is_ok());
+    assert!(boundary::absolute_path("/tmp/colon://leaf", "/").is_err());
 }

@@ -3,9 +3,8 @@
 This is an isolated, read-only migration capability. It does not discover
 native CLI home directories, launch or stop a CLI, clean records, or grant
 terminal control. An explicitly configured development `SESSIONDOCK_PTYHOST_DIR`
-is required; unset means no host observations. External CLI processes are a
-separate, explicitly switched capability: the Python-shaped `/proc` scan of
-[liveness.md](liveness.md) (`SESSIONDOCK_PROC_SCAN=1`), which `/api/live`
+is required; unset means no host observations. External CLI processes use the
+Python-shaped native scan of [liveness.md](liveness.md), which `/api/live`
 merges with the observations described here.
 
 ## Evidence, not name inference
@@ -144,8 +143,9 @@ does not enable session-console routing or reuse a bare host name as authority.
 
 ## HTTP and resource bounds
 
-`GET /api/live` keeps the legacy envelope. Without a configured host
-directory or scan it is unchanged: `enabled:false`, `known:false`,
+`GET /api/live` keeps the legacy envelope. On a platform without native
+process discovery and without a configured host directory it is
+`enabled:false`, `known:false`,
 `partial:true`, empty `uids`/`tmux_uids`/`started_at`, `managed:null`. With a
 host directory it answers `enabled:true`, `known:true`, `partial:true` (with an
 `unavailable_reason` explaining that only explicit host instances are
@@ -156,12 +156,12 @@ verified child start time, and `managed` carrying `process_identity`
 and `started_at`), `sessions[uid] = {state, evidence|reason, host,
 instance_id, pid, started_at}`, `unlisted`, and `cache:{hit, age_ms, ttl_ms}`.
 All additions are additive; legacy only reads `uids`/`tmux_uids`/`started_at`.
-`external_detection` is `not_implemented` without the scan: unmanaged external
+`external_detection` is `not_implemented` where native discovery is unsupported: unmanaged external
 CLIs are then outside this inventory, absence is never a negative liveness
 assertion or a reason to take over/stop a session, and the `live` capability
 stays `false` because the legacy `live:true` semantics treat the list as the
-complete set and would mark unlisted sessions as stopped. With
-`SESSIONDOCK_PROC_SCAN=1` on Linux the scan supplies that complete set:
+complete set and would mark unlisted sessions as stopped. On Linux the native
+scan supplies that complete set:
 `partial:false`, `external_detection:"proc_scan"`, `live:true`, and the
 managed `running` instances are merged into `uids`/`tmux_uids`/`started_at`
 ([liveness.md](liveness.md#apilive-with-the-scan)).

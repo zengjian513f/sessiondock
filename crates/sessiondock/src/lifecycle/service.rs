@@ -1,4 +1,4 @@
-//! Isolated, bounded lifecycle coordinator. HTTP cancellation never owns a spawn.
+//! Isolated lifecycle coordinator. HTTP cancellation never owns a spawn.
 
 use ptyhost_client::{BoundTarget, ControlOp, HostClient, LaunchTarget, NativeBindingState};
 use std::{
@@ -15,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use super::{
     launcher::{self, Launcher},
     model::{
-        BindingMethod, BindingSpec, BindingState, Failure, Launch, LaunchSpec, MAX_RECORDS, Record,
-        Source, State,
+        BindingMethod, BindingSpec, BindingState, Failure, Launch, LaunchSpec, Record, Source,
+        State,
     },
     store::{
         self, BindingEvidence, BindingObservation, LifecycleStore, Observation,
@@ -49,15 +49,10 @@ impl Default for ServiceLimits {
 impl ServiceLimits {
     fn validate(self) -> Result<Self, Error> {
         if self.capacity == 0
-            || self.capacity > 8
             || self.readiness_timeout.is_zero()
-            || self.readiness_timeout > Duration::from_secs(30)
             || self.cancel_timeout.is_zero()
-            || self.cancel_timeout > Duration::from_secs(10)
             || self.probe_timeout.is_zero()
-            || self.probe_timeout > Duration::from_secs(2)
             || self.poll_interval.is_zero()
-            || self.poll_interval > Duration::from_secs(1)
         {
             Err(Error::InvalidLimits)
         } else {
@@ -80,8 +75,6 @@ pub enum Error {
     InvalidBinding,
     BindingUnsupported,
     BindingConflict,
-    /// A remembered stop `request_id` names a different session.
-    StopRequestConflict,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -115,18 +108,12 @@ impl VerifiedNativeBinding {
     /// A binding asserted by process evidence (the launched host's child
     /// process holds the native record open / is the CLI main process of
     /// exactly one indexed session). `evidence` is the private note persisted
-    /// with the receipt; it must be non-empty and bounded.
+    /// with the receipt.
     pub fn from_process_evidence(
         scope: &crate::sessions::NativeScope,
         receipt: &Record,
         evidence: String,
     ) -> Result<Self, Error> {
-        if evidence.is_empty()
-            || evidence.len() > super::model::MAX_EVIDENCE_BYTES
-            || evidence.chars().any(char::is_control)
-        {
-            return Err(Error::InvalidBinding);
-        }
         Self::verified(scope, receipt, BindingMethod::Process, Some(evidence))
     }
     fn verified(
@@ -173,8 +160,6 @@ impl VerifiedNativeBinding {
 /// the host-performed stop. The Web process never signals a PID itself.
 pub const GRACEFUL_ATTEMPTS: u8 = 2;
 pub const GRACEFUL_WAIT: Duration = Duration::from_millis(1200);
-/// Remembered stop outcomes keyed by `request_id`; oldest evicted first.
-const STOP_MEMORY: usize = 256;
 
 /// Which stage ended the managed instance, or why nothing could be ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -213,8 +198,6 @@ pub struct StopOutcome {
     pub instance_id: Option<String>,
     pub record_id: Option<String>,
     pub graceful_attempts: u8,
-    /// Served from the remembered outcome of the same `request_id`.
-    pub replayed: bool,
 }
 impl StopOutcome {
     fn new(uid: &str, stage: StopStage) -> Self {
@@ -229,7 +212,6 @@ impl StopOutcome {
             instance_id: None,
             record_id: None,
             graceful_attempts: 0,
-            replayed: false,
         }
     }
 }
@@ -242,7 +224,7 @@ enum Command {
     Cancel(String, String),
     Bind(VerifiedNativeBinding),
     AuthorizeNative(BoundTarget),
-    Stop(String, StopCandidate, Option<String>),
+    Stop(String, StopCandidate),
     Discard(String, String),
 }
 enum Answer {
@@ -284,8 +266,11 @@ impl LifecycleService {
         }
         let stop = shutdown.child_token();
         let opening_stop = stop.clone();
-        let opening_permit = OPEN_WORKERS.try_acquire().map_err(|_| Error::Busy)?;
-        // Open/allowlist validation and all recovery fsync happen off the reactor.
+        let opening_permit = tokio::select! {
+            _ = opening_stop.cancelled() => return Err(Error::Closed),
+            permit = OPEN_WORKERS.acquire() => permit.map_err(|_| Error::Closed)?,
+        };
+        // Configuration validation and recovery fsync happen off the reactor.
         let (store, launcher, client) = tokio::task::spawn_blocking(move || {
             let _opening_permit = opening_permit;
             if opening_stop.is_cancelled() {
@@ -297,7 +282,6 @@ impl LifecycleService {
                 ptyhost_client::Limits {
                     operation_timeout: limits.probe_timeout,
                     max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
-                    max_directory_entries: 512,
                     ..Default::default()
                 },
             )
@@ -322,8 +306,6 @@ impl LifecycleService {
             children: BTreeMap::new(),
             targets: BTreeMap::new(),
             bindings: BTreeMap::new(),
-            stops: BTreeMap::new(),
-            stop_order: std::collections::VecDeque::new(),
             limits,
             stop: stop.clone(),
         };
@@ -342,13 +324,12 @@ impl LifecycleService {
             launcher,
         })
     }
-    /// Allowlisted adapter/profile IDs with their source and capabilities.
+    /// Configured adapter/profile IDs with their source and capabilities.
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
     }
-    /// Bounded directory completion inside the configured cwd roots. It uses
-    /// the same admission budget as other requests and never touches the
-    /// ledger, the host or any path outside a root.
+    /// Python-compatible absolute directory completion. It uses the same
+    /// admission path as other requests and does not touch ledger or host state.
     pub async fn complete_directories(
         &self,
         text: String,
@@ -357,13 +338,10 @@ impl LifecycleService {
         if self.stop.is_cancelled() {
             return Err(Error::Closed);
         }
-        let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
-            if self.admission.is_closed() {
-                Error::Closed
-            } else {
-                Error::Busy
-            }
-        })?;
+        let permit = tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            permit = self.admission.clone().acquire_owned() => permit.map_err(|_| Error::Closed)?,
+        };
         let launcher = self.launcher.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
@@ -443,44 +421,38 @@ impl LifecycleService {
     /// `_stop_session` parity, host-only): EOF keys through the guarded input
     /// path, then the same guarded stop `cancel` performs for launched
     /// receipts, or the host's own `kill` for a guarded instance without a
-    /// receipt. A `request_id` replays the remembered outcome for that UID.
+    /// receipt.
     pub async fn stop_session(
         &self,
         uid: String,
         candidate: StopCandidate,
-        request_id: Option<String>,
     ) -> Result<StopOutcome, Error> {
-        match self.ask(Command::Stop(uid, candidate, request_id)).await? {
+        match self.ask(Command::Stop(uid, candidate)).await? {
             Answer::Stop(outcome) => Ok(*outcome),
             _ => Err(Error::WorkerFailed),
         }
     }
     async fn ask(&self, command: Command) -> Result<Answer, Error> {
-        let response = self.admit(command)?;
+        let response = self.admit(command).await?;
         response.await.map_err(|_| Error::WorkerFailed)?.answer
     }
-    fn admit(&self, command: Command) -> Result<oneshot::Receiver<Response>, Error> {
+    async fn admit(&self, command: Command) -> Result<oneshot::Receiver<Response>, Error> {
         if self.stop.is_cancelled() {
             return Err(Error::Closed);
         }
-        let permit = self.admission.clone().try_acquire_owned().map_err(|_| {
-            if self.admission.is_closed() {
-                Error::Closed
-            } else {
-                Error::Busy
-            }
-        })?;
+        let permit = tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            permit = self.admission.clone().acquire_owned() => permit.map_err(|_| Error::Closed)?,
+        };
         let (reply, response) = oneshot::channel();
-        self.tx
-            .try_send(Request {
+        tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            result = self.tx.send(Request {
                 command,
                 reply,
                 permit,
-            })
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Full(_) => Error::Busy,
-                mpsc::error::TrySendError::Closed(_) => Error::Closed,
-            })?;
+            }) => result.map_err(|_| Error::Closed)?,
+        }
         Ok(response)
     }
     pub async fn shutdown(&self) -> Result<(), Error> {
@@ -540,10 +512,6 @@ struct Core {
     children: BTreeMap<String, watch::Receiver<ChildState>>,
     targets: BTreeMap<String, Arc<LaunchTarget>>,
     bindings: BTreeMap<String, NativeBindingState>,
-    /// Stop outcomes by `request_id` (with the UID they were issued for).
-    /// In-memory only, like Python's stop; bounded by `STOP_MEMORY`.
-    stops: BTreeMap<String, (String, StopOutcome)>,
-    stop_order: std::collections::VecDeque<String>,
     limits: ServiceLimits,
     stop: CancellationToken,
 }
@@ -608,8 +576,8 @@ impl Core {
                 .authorize_native(target)
                 .await
                 .map(|r| Answer::Record(Box::new(r))),
-            Command::Stop(uid, candidate, request_id) => self
-                .stop_session(uid, candidate, request_id)
+            Command::Stop(uid, candidate) => self
+                .stop_session(uid, candidate)
                 .await
                 .map(|outcome| Answer::Stop(Box::new(outcome))),
             Command::Discard(id, instance) => {
@@ -642,7 +610,7 @@ impl Core {
             return Ok(None);
         };
         let records = self
-            .work(|store| store.list(0, MAX_RECORDS).map_err(Error::Store))
+            .work(|store| store.list(0, usize::MAX).map_err(Error::Store))
             .await?;
         let deadline = Instant::now() + self.limits.readiness_timeout;
         for record in records {
@@ -676,6 +644,17 @@ impl Core {
         let stop = self.stop.clone();
         let created = self
             .work(move |store| {
+                // HTTP specs are deserialized before this blocking worker.
+                // Normalize a live cwd here just like Python Path.resolve().
+                // Keep the original spelling when it no longer exists so an
+                // exact replay can still return its durable receipt.
+                let spec = LaunchSpec::with_launch(
+                    spec.source(),
+                    spec.adapter_id().into(),
+                    spec.cwd(),
+                    spec.launch().clone(),
+                )
+                .unwrap_or(spec);
                 if let Some(record) = store.lookup_request(&id, &spec).map_err(Error::Store)? {
                     return Ok(Created::Existing(record));
                 }
@@ -684,11 +663,6 @@ impl Core {
                 }
                 launcher.validate_spec(&spec).map_err(Error::Launcher)?;
                 let reaper = Reaper::global()?;
-                let slot = reaper
-                    .slots
-                    .clone()
-                    .try_acquire_owned()
-                    .map_err(|_| Error::Busy)?;
                 let created = store.create(&id, &spec).map_err(Error::Store)?;
                 let Some(prepared) = created.prepared else {
                     return Ok(Created::Existing(created.record));
@@ -708,7 +682,7 @@ impl Core {
                             host_dir: launcher.host_dir().to_path_buf(),
                             record: started.authority.record().clone(),
                         };
-                        let observation = reaper.adopt(started.child, slot, identity);
+                        let observation = reaper.adopt(started.child, identity);
                         Ok(Created::Started(started.authority, observation))
                     }
                     Err(failed) => store
@@ -854,7 +828,7 @@ impl Core {
     async fn authorize_native(&mut self, target: BoundTarget) -> Result<Record, Error> {
         let launch = target.origin_launch_id().ok_or(Error::InvalidBinding)?;
         let records = self
-            .work(|store| store.list(0, MAX_RECORDS).map_err(Error::Store))
+            .work(|store| store.list(0, usize::MAX).map_err(Error::Store))
             .await?;
         let mut matching = records.into_iter().filter(|record| {
             record.host_name() == target.name()
@@ -1061,18 +1035,7 @@ impl Core {
         &mut self,
         uid: String,
         candidate: StopCandidate,
-        request_id: Option<String>,
     ) -> Result<StopOutcome, Error> {
-        if let Some(id) = &request_id
-            && let Some((remembered_uid, outcome)) = self.stops.get(id)
-        {
-            if *remembered_uid != uid {
-                return Err(Error::StopRequestConflict);
-            }
-            let mut outcome = outcome.clone();
-            outcome.replayed = true;
-            return Ok(outcome);
-        }
         let outcome = match candidate {
             StopCandidate::Instance(target) => self.stop_instance(&uid, *target).await?,
             StopCandidate::Exited => StopOutcome::new(&uid, StopStage::AlreadyExited),
@@ -1083,7 +1046,7 @@ impl Core {
                 // record was cleaned (also off Linux, where identity memory is
                 // unavailable). Anything else is not evidence of any kind.
                 let records = self
-                    .work(|store| store.list(0, MAX_RECORDS).map_err(Error::Store))
+                    .work(|store| store.list(0, usize::MAX).map_err(Error::Store))
                     .await?;
                 let exited = records.iter().find(|record| {
                     record.state() == State::Exited
@@ -1103,19 +1066,6 @@ impl Core {
                 }
             }
         };
-        // Only outcomes that acted on (or confirmed the end of) an instance are
-        // remembered; typed refusals are re-evaluated on every request.
-        if let Some(id) = request_id
-            && !matches!(outcome.stage, StopStage::Unknown | StopStage::NoInstance)
-        {
-            while self.stop_order.len() >= STOP_MEMORY {
-                if let Some(oldest) = self.stop_order.pop_front() {
-                    self.stops.remove(&oldest);
-                }
-            }
-            self.stop_order.push_back(id.clone());
-            self.stops.insert(id, (uid, outcome.clone()));
-        }
         Ok(outcome)
     }
 
@@ -1205,7 +1155,7 @@ impl Core {
         target: BoundTarget,
     ) -> Result<StopOutcome, Error> {
         let records = self
-            .work(|store| store.list(0, MAX_RECORDS).map_err(Error::Store))
+            .work(|store| store.list(0, usize::MAX).map_err(Error::Store))
             .await?;
         let record = Self::receipt_for(records, &target);
         let mut outcome = StopOutcome {
@@ -1332,7 +1282,6 @@ struct ReapJob {
     identity: ReapIdentity,
     child: Child,
     state: watch::Sender<ChildState>,
-    _slot: OwnedSemaphorePermit,
 }
 struct ReapIdentity {
     host_dir: PathBuf,
@@ -1340,7 +1289,6 @@ struct ReapIdentity {
 }
 struct Reaper {
     jobs: Mutex<Vec<ReapJob>>,
-    slots: Arc<Semaphore>,
 }
 static REAPER: OnceLock<Result<Arc<Reaper>, ()>> = OnceLock::new();
 impl Reaper {
@@ -1348,8 +1296,7 @@ impl Reaper {
         REAPER
             .get_or_init(|| {
                 let reaper = Arc::new(Self {
-                    jobs: Mutex::new(Vec::with_capacity(MAX_RECORDS)),
-                    slots: Arc::new(Semaphore::new(MAX_RECORDS)),
+                    jobs: Mutex::new(Vec::new()),
                 });
                 let worker = reaper.clone();
                 std::thread::Builder::new()
@@ -1386,12 +1333,7 @@ impl Reaper {
             .cloned()
             .map_err(|_| Error::ReaperUnavailable)
     }
-    fn adopt(
-        &self,
-        child: Child,
-        slot: OwnedSemaphorePermit,
-        identity: ReapIdentity,
-    ) -> watch::Receiver<ChildState> {
+    fn adopt(&self, child: Child, identity: ReapIdentity) -> watch::Receiver<ChildState> {
         let (state, receiver) = watch::channel(ChildState::Alive);
         self.jobs
             .lock()
@@ -1400,7 +1342,6 @@ impl Reaper {
                 identity,
                 child,
                 state,
-                _slot: slot,
             });
         receiver
     }

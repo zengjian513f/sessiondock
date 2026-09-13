@@ -13,7 +13,7 @@ lifecycle launcher profile (schema 2, `resume {sid}` on the session the login
 probe created), resumes that session via `/api/term/create`, sends ONE prompt
 via `POST /api/session/send`, verifies the receipt goes persisted → injected →
 confirmed from the real rollout `response_item` user record (its
-`turn_id` makes the executor's `OperationTurn` evidence), sees the assistant
+native user text confirms through the fixed pre-injection cursor, sees the assistant
 reply via `/api/messages`, asserts the model reached the CLI (the rollout's
 `turn_context.payload.model` is exactly that ID), then kills the instance.
 Proxy variables (HTTP(S)_PROXY, ALL_PROXY, NO_PROXY, lower-case too) are passed
@@ -172,8 +172,6 @@ def main():
     CODEX = shutil.which("codex")
     if not CODEX:
         skip("`codex` binary is not on PATH")
-    # The launcher refuses symlinked executables: give it the physical path.
-    CODEX = os.path.realpath(CODEX)
     if not PTYHOST.is_file():
         skip("ptyhost is not built (cargo build -p ptyhost)")
 
@@ -214,7 +212,7 @@ def main():
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({
             "schema": 2, "host_binary": str(PTYHOST), "host_dir": str(host),
-            "cwd_roots": [str(work)], "adapters": [],
+            "adapters": [],
             "profiles": [{
                 "id": "codex-real-v1", "source": "codex", "executable": CODEX,
                 "args": ["--model", MODEL, "-c", f'model_reasoning_effort="{EFFORT}"',
@@ -222,7 +220,7 @@ def main():
                 "new_args": [],
                 "resume_args": ["resume", "{sid}"],
                 "env": cli_env(home, area),
-                "cwd_roots": [str(area)],
+
             }]}))
 
         for flag, directory in (("--initialize-lifecycle", ledger),
@@ -339,7 +337,7 @@ def main():
         print(f"PASS send_codex_real: real Codex ({MODEL}, model_reasoning_effort={EFFORT}) launched via the "
               "launcher profile (`codex exec` created the session, the TUI resumed it), one prompt sent through "
               "/api/session/send, receipt persisted then injected then confirmed from the real rollout user record "
-              "(OperationTurn), assistant reply visible in /api/messages, model asserted from turn_context, instance "
+              "(causal text match), assistant reply visible in /api/messages, model asserted from turn_context, instance "
               "killed; isolated CODEX_HOME reused the login read-only, temp dirs removed")
 
 

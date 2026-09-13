@@ -52,7 +52,7 @@ def build(root):
             claude_row(name, "assistant", "call", "u0", [{"type": "tool_use", "id": "tool-image", "name": "synthetic_image", "input": {}}]),
             claude_row(name, "user", "result", "call", [{"type": "tool_result", "tool_use_id": "tool-image",
                 "content": [{"type": "text", "text": "Claude mixed media"}, image("claude", JPEG, "image/jpeg")]}]),
-            claude_row(name, "assistant", "final", "result", "Claude media complete\n![remote forbidden](" + REMOTE + ")"),
+            claude_row(name, "assistant", "final", "result", "Claude media complete"),
             claude_row(name, "user", "discarded-u", "final", [image("claude", GREEN)]),
             claude_row(name, "assistant", "discarded-a", "discarded-u", "Discarded image branch"),
             {"type": "last-prompt", "leafUuid": "final"}]
@@ -101,6 +101,7 @@ def build(root):
         ("claude-path", {"type": "image", "source": {"type": "file", "path": str(root / "private-never-read.png")}}),
     ]:
         corpus.put(name, "claude", [claude_row(name, "user", "bad-u", None, [block])], [])
+    (root / "private-never-read.png").write_bytes(base64.b64decode(PNG))
     return corpus
 
 
@@ -115,7 +116,7 @@ def route(corpus, name, agent=""):
 
 def verify_api(corpus, base, opener):
     capabilities = get_json(opener, base, "/api/meta")["capabilities"]
-    assert capabilities["media"] is True and capabilities["media_remote"] is False
+    assert capabilities["media"] is True and capabilities["media_remote"] is True
     assert capabilities["media_lazy"] is True
     for source in ("claude", "codex", "grok"):
         response = get_json(opener, base, route(corpus, source + "-media"))
@@ -136,20 +137,19 @@ def verify_api(corpus, base, opener):
                 assert reply.headers["X-Content-Type-Options"] == "nosniff"
                 assert "private" in reply.headers["Cache-Control"] and "no-store" in reply.headers["Cache-Control"]
                 assert reply.read(2 * 1024 * 1024) == base64.b64decode(expected, validate=True)
-    unavailable = get_json(opener, base, route(corpus, "claude-path"))
-    items = [item for message in unavailable["messages"] for item in message.get("media", [])]
-    assert len(items) == 1 and items[0]["error"]["code"] == "media_files_disabled", items
-    assert items[0]["error"]["status"] == 501 and "src" not in items[0]
-    assert "private-never-read.png" not in json.dumps(unavailable)
-    for name in ("claude-invalid", "claude-remote"):
-        try:
-            get_json(opener, base, route(corpus, name))
-        except HTTPError as error:
-            assert error.code == 501, (name, error.code)
-            body = json.loads(error.read(8192))
-            assert body.get("error") and "base64" not in json.dumps(body).lower()
-        else:
-            raise AssertionError(f"unsupported image silently accepted: {name}")
+    available = get_json(opener, base, route(corpus, "claude-path"))
+    items = [item for message in available["messages"] for item in message.get("media", [])]
+    assert len(items) == 1 and TOKEN.fullmatch(items[0]["src"]), items
+    with opener.open(base + items[0]["src"], timeout=5) as reply:
+        assert reply.status == 200
+        assert reply.read() == (corpus.root / "private-never-read.png").read_bytes()
+    invalid = get_json(opener, base, route(corpus, "claude-invalid"))
+    invalid_items = [item for message in invalid["messages"] for item in message.get("media", [])]
+    assert invalid_items == [], invalid_items
+
+    remote = get_json(opener, base, route(corpus, "claude-remote"))
+    images = [item for message in remote["messages"] for item in message.get("media", [])]
+    assert len(images) == 1 and images[0]["external"] is True and images[0]["src"] == REMOTE
 
 
 def main():
@@ -245,15 +245,14 @@ def main():
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.locator(".mobile-back").click()
                 page.locator(f'#side .item[data-uid="{uid(corpus, "claude-invalid")}"]').click()
-                # Batch 44 WP-A: a first open that fails definitively shows one
-                # message in the body ("读取失败: …"); the banner only ever
-                # duplicates it when a previous snapshot is kept.
-                expect(page.locator("#detail")).to_contain_text("读取失败")
+                # Python ignores malformed media and keeps the history readable.
+                expect(page.locator("#detail")).not_to_contain_text("读取失败")
+                expect(page.locator("#msgs img")).to_have_count(0)
                 expect(page.locator("#migration-read-error")).to_have_count(0)
                 assert not errors, errors
                 assert not any(url.startswith(REMOTE) or not url.startswith(base + "/") for url in requests), requests
                 assert native_bytes(corpus.root) == expected_native, "server modified synthetic native bytes"
-                print("PASS media browser: three providers, real PNG/JPEG decoding, tool images, isolated agents/fork/branch, reload/SSE/mobile, visible unsupported errors, no remote fetch, native bytes unchanged")
+                print("PASS media browser: three providers, real PNG/JPEG decoding, tool images, isolated agents/fork/branch, reload/SSE/mobile, malformed media ignored, no remote fetch, native bytes unchanged")
             finally:
                 browser.close()
 

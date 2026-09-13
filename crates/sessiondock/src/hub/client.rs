@@ -1,5 +1,5 @@
-//! Hub → node HTTP/1.1 client: one connection per request over
-//! `tokio::net::TcpStream`, written by hand.
+//! Hub → node HTTP/1.1 client: one connection per request over a plain or
+//! system-validated TLS socket, written by hand.
 //!
 //! Python's hub uses `http.client` and nothing more, so the Rust side does the
 //! same instead of pulling `hyper-util`'s legacy client (pool, resolver, tower,
@@ -10,8 +10,7 @@
 //! every socket operation carries an idle timeout exactly like Python's socket
 //! timeout (connect 5 s; reads 5 s for JSON, 60 s while a search streams,
 //! 10/45 s for proxied requests); JSON bodies are capped at `JSON_LIMIT` and an
-//! oversize body is an invalid response, never a partial parse. Plain `http://`
-//! only: the hub↔node link is the private WireGuard network.
+//! oversize body is an invalid response, never a partial parse.
 //!
 //! Failures carry a public code and a Chinese reason (`hub.py`
 //! `request_failure`) and never the URL, the token or upstream text.
@@ -19,11 +18,17 @@
 #[cfg(test)]
 mod tests;
 
-use std::{fmt, io, net::SocketAddr, time::Duration};
+use std::{
+    fmt, io,
+    net::SocketAddr,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use serde_json::Value;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf},
     net::TcpStream,
     time::timeout,
 };
@@ -40,8 +45,8 @@ pub const SEARCH_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 pub const PROXY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const WATCH_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// Status line plus headers; `http.client` allows 64 KiB per line and 100 headers.
-const HEAD_LIMIT: usize = 64 * 1024;
+/// `http.client` allows 64 KiB for each status/header/chunk line and 100 headers.
+const LINE_LIMIT: usize = 64 * 1024;
 const HEADER_COUNT_LIMIT: usize = 100;
 const READ_CHUNK: usize = 64 * 1024;
 
@@ -50,6 +55,8 @@ const READ_CHUNK: usize = 64 * 1024;
 pub struct Target {
     pub addr: SocketAddr,
     pub token: String,
+    /// Use TLS with system roots and the literal IP as the certificate name.
+    pub tls: bool,
 }
 
 impl Target {
@@ -65,7 +72,12 @@ impl Target {
 
 impl fmt::Debug for Target {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Target({}, token <redacted>)", self.addr)
+        write!(
+            f,
+            "Target({}://{}, token <redacted>)",
+            if self.tls { "https" } else { "http" },
+            self.addr
+        )
     }
 }
 
@@ -269,12 +281,10 @@ impl Client {
         request: &Request<'_>,
     ) -> Result<Pending, ClientError> {
         let head = encode_head(target, request)?;
-        let stream = match timeout(request.connect, TcpStream::connect(target.addr)).await {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(error)) => return Err(ClientError::from_io(&error)),
+        let stream = match timeout(request.connect, connect_stream(target)).await {
+            Ok(result) => result?,
             Err(_) => return Err(ClientError::Timeout),
         };
-        let _ = stream.set_nodelay(true);
         let mut pending = Pending {
             stream,
             idle: request.idle,
@@ -283,6 +293,26 @@ impl Client {
         pending.send(&head).await?;
         Ok(pending)
     }
+}
+
+async fn connect_stream(target: &Target) -> Result<UpstreamStream, ClientError> {
+    let stream = TcpStream::connect(target.addr)
+        .await
+        .map_err(|error| ClientError::from_io(&error))?;
+    let _ = stream.set_nodelay(true);
+    if !target.tls {
+        return Ok(UpstreamStream::new(stream));
+    }
+    // `TlsConnector::new` uses the platform trust store and verifies both the
+    // certificate chain and this literal IP (the registry never permits DNS).
+    let connector = native_tls::TlsConnector::new().map_err(|_| ClientError::ConnectionFailed)?;
+    let connector = tokio_native_tls::TlsConnector::from(connector);
+    let domain = target.addr.ip().to_string();
+    let stream = connector
+        .connect(&domain, stream)
+        .await
+        .map_err(|_| ClientError::ConnectionFailed)?;
+    Ok(UpstreamStream::new(stream))
 }
 
 fn encode_head(target: &Target, request: &Request<'_>) -> Result<Vec<u8>, ClientError> {
@@ -343,9 +373,56 @@ fn encode_head(target: &Target, request: &Request<'_>) -> Result<Vec<u8>, Client
     Ok(head.into_bytes())
 }
 
+trait HubIo: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> HubIo for T {}
+
+/// Plain TCP or TLS transport retained after a WebSocket upgrade.
+pub struct UpstreamStream {
+    inner: Box<dyn HubIo>,
+}
+
+impl UpstreamStream {
+    fn new(stream: impl HubIo + 'static) -> Self {
+        Self {
+            inner: Box::new(stream),
+        }
+    }
+}
+
+impl AsyncRead for UpstreamStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut *self.inner).poll_read(cx, buffer)
+    }
+}
+
+impl AsyncWrite for UpstreamStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        Pin::new(&mut *self.inner).poll_write(cx, buffer)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut *self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        Pin::new(&mut *self.inner).poll_shutdown(cx)
+    }
+}
+
 /// A connection whose request head is on the wire.
 pub struct Pending {
-    stream: TcpStream,
+    stream: UpstreamStream,
     idle: Duration,
     head_only: bool,
 }
@@ -515,7 +592,7 @@ enum Chunk {
 
 /// Decoded response body. Every socket read waits at most `idle`.
 pub struct Body {
-    stream: TcpStream,
+    stream: UpstreamStream,
     /// Raw bytes from the socket not yet decoded (`pos` consumed).
     buffer: Vec<u8>,
     pos: usize,
@@ -533,7 +610,7 @@ impl Body {
 
     /// Hand back the socket plus raw bytes already read beyond the response
     /// head (for a 101 upgrade; nothing has been decoded from them).
-    pub fn into_raw(self) -> (TcpStream, Vec<u8>) {
+    pub fn into_raw(self) -> (UpstreamStream, Vec<u8>) {
         let mut raw = self.pending;
         raw.extend_from_slice(&self.buffer[self.pos..]);
         (self.stream, raw)
@@ -643,23 +720,19 @@ impl Body {
     }
 
     async fn read_head(&mut self) -> Result<Vec<u8>, ClientError> {
+        let mut head = self.raw_line().await?;
+        let mut count = 0;
         loop {
-            let available = self.available();
-            if let Some(index) = find(&self.buffer[self.pos..], b"\r\n\r\n") {
-                let head = self.take(index);
-                self.skip(4);
+            let line = self.raw_line().await?;
+            if line.is_empty() {
                 return Ok(head);
             }
-            if available > HEAD_LIMIT {
-                return Err(ClientError::Invalid("response head too large"));
+            count += 1;
+            if count > HEADER_COUNT_LIMIT {
+                return Err(ClientError::Invalid("too many headers"));
             }
-            if !self.fill().await? {
-                return Err(if available == 0 {
-                    ClientError::ConnectionClosed
-                } else {
-                    ClientError::Invalid("truncated response head")
-                });
-            }
+            head.extend_from_slice(b"\r\n");
+            head.extend_from_slice(&line);
         }
     }
 
@@ -671,6 +744,9 @@ impl Body {
                 .iter()
                 .position(|byte| *byte == b'\n')
             {
+                if index + 1 > LINE_LIMIT {
+                    return Err(ClientError::Invalid("response line too long"));
+                }
                 let mut line = self.take(index);
                 self.skip(1);
                 if line.last() == Some(&b'\r') {
@@ -678,8 +754,8 @@ impl Body {
                 }
                 return Ok(line);
             }
-            if available > HEAD_LIMIT {
-                return Err(ClientError::Invalid("chunk line too long"));
+            if available > LINE_LIMIT {
+                return Err(ClientError::Invalid("response line too long"));
             }
             if !self.fill().await? {
                 return Err(ClientError::ConnectionClosed);
@@ -742,6 +818,7 @@ impl Body {
     }
 }
 
+#[cfg(test)]
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())

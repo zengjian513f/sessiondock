@@ -60,7 +60,7 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
     // explanation. The exited xterm is never reclaimed automatically.
     const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
     const resumable = !String(uid).startsWith('tmux:') && cap?.enabled
-      && AgentHubCapabilities.allows('terminal_takeover') && !!T.resume_sources?.[source]
+      && AgentHubCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]
       && !linkedTermSession(uid, {followReplacement: true});
     if (!resumable) return T.ended.get(uid).reason;
   }
@@ -74,7 +74,7 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   // configured resume-capable CLI profile; otherwise no name-based guessing.
   if (AgentHubCapabilities.config.backend === 'rust' && !linked
       && !(AgentHubCapabilities.allows('terminal_takeover')
-        && T.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))
+        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))
     return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';
   const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
   if (!linked && !cap.sources?.[source])

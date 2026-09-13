@@ -11,8 +11,8 @@
 //! takeover notification; it is not an assertion that the process has exited.
 //!
 //! `input` adds raw HTTP text/key writes under the same lease and per-name
-//! gate as the WebSocket path, bounded to 1 MiB and 16 requests per second per
-//! exact instance. A success is the host's write acknowledgement only; it never
+//! gate as the WebSocket path, bounded to the host's 1 MiB payload ceiling.
+//! A success is the host's write acknowledgement only; it never
 //! claims the CLI consumed the bytes and enables no send ledger or composer.
 
 pub mod input;

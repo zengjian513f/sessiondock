@@ -123,8 +123,8 @@ def spellings(binary):
     cases = [
         ('escaped', [image('claude', data)], True),
         ('aliases', [alias], True),
-        ('conflict', [conflict], False),
-        ('tutorial', [{'type':'text', 'text':'TUTORIAL', 'image_url':'data:image/png;base64,' + data}], False),
+        ('conflict', [conflict], True),
+        ('tutorial', [{'type':'text', 'text':'TUTORIAL', 'image_url':'data:image/png;base64,' + data}], 'tutorial'),
         # Batch 34 (WP-B): a giant string outside a reviewed media position is
         # plain text materialized from the checked range, never an image
         # source — the tool call renders, with no media registered.
@@ -155,10 +155,14 @@ def spellings(binary):
                     assert images(body) == [], label
                     assert [m['role'] for m in body['messages']] == ['tool'], label
                     assert 'base64' in body['messages'][0]['text'], label
+                elif valid == 'tutorial':
+                    body = get(opener,base,route)
+                    assert images(body) == [], label
+                    assert [m['text'] for m in body['messages']] == ['TUTORIAL'], label
                 else:
                     status(opener,base,route,501)
             assert path.read_bytes() == before
-    print('PASS native span spellings: physical JSON escapes, equivalent MIME/data URL aliases; conflicting aliases and tutorial extensions fail closed, tool arguments render as plain text without media')
+    print('PASS native span spellings: physical JSON escapes, first-match MIME/data URL aliases; tutorial extensions and tool arguments stay plain text without media')
 
 def run(binary, use_browser):
     payload = padded_png(3 * MIB)

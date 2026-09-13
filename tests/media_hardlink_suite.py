@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Read-side media accepts nlink>1 files; write-side rename still refuses them.
+"""Referenced hardlinked media can be read and renamed without changing its aliases.
 
-Batch 44 WP-D (docs/files.md, docs/media.md): GET /api/media of a hard-linked PNG
-is ordinary; POST /api/session/files/action rename is 403 file_hardlink_forbidden.
+GET /api/media returns the original PNG bytes; a file-manager rename preserves
+the inode and the other alias, matching Python.
 Synthetic temp fixtures and an isolated loopback Rust server only.
 """
 from __future__ import annotations
@@ -107,17 +107,17 @@ def run(opener, base, corpus, files, primary):
         "uid": uid, "ref": str(files) + "/", "action": "rename",
         "paths": [str(primary)], "name": "renamed.png",
     })
-    code = str(err.get("code") or "")
-    if status != 403 or "hardlink" not in code.lower():
+    if status != 200 or err.get("job", {}).get("state") != "completed":
         fail("rename", f"HTTP {status} body={err}", json.dumps(err).encode())
-    passed(f"rename hardlink 403 {code}")
+    passed("rename hardlink succeeds like Python")
     checks += 1
 
-    if not primary.exists() or primary.stat().st_nlink != 2:
-        fail("nlink", f"exists={primary.exists()} nlink={primary.stat().st_nlink if primary.exists() else 0}")
-    if not (files / "disk-alias.png").exists():
-        fail("nlink", "alias removed")
-    passed("source still nlink==2")
+    renamed, alias = files / "renamed.png", files / "disk-alias.png"
+    if primary.exists() or renamed.stat().st_nlink != 2:
+        fail("nlink", "rename did not preserve the hardlinked inode")
+    if not alias.samefile(renamed) or alias.read_bytes() != PNG or renamed.read_bytes() != PNG:
+        fail("nlink", "rename changed the alias or file content")
+    passed("renamed file and original alias retain identical bytes and inode")
     checks += 1
     return checks
 

@@ -7,7 +7,7 @@
 //! vt100 内部的 panic 在这里拦下：模型只是画面的副本，坏了可以从头重建，
 //! 但绝不能让宿主里的锁因此失效、把 attach 和 pty 读线程一起拖死。
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 pub struct Screen {
     parser: vt100::Parser,
@@ -41,8 +41,10 @@ impl Screen {
         }
         self.cols = cols;
         self.rows = rows;
-        if catch_unwind(AssertUnwindSafe(|| self.parser.screen_mut().set_size(rows, cols)))
-            .is_err()
+        if catch_unwind(AssertUnwindSafe(|| {
+            self.parser.screen_mut().set_size(rows, cols)
+        }))
+        .is_err()
         {
             self.recover();
         }
@@ -102,7 +104,11 @@ impl Screen {
             self.resets,
             cols,
             rows,
-            if restored { "current screen kept" } else { "blank" }
+            if restored {
+                "current screen kept"
+            } else {
+                "blank"
+            }
         );
     }
 
@@ -166,7 +172,7 @@ impl Screen {
             let window = self.collect_visible(styled);
             let skip = next - window_start;
             if skip >= window.len() {
-                break;                      // 窗口无法再前进，避免空转
+                break; // 窗口无法再前进，避免空转
             }
             for row in window.into_iter().skip(skip) {
                 out.push(row);
@@ -215,9 +221,7 @@ impl Screen {
             screen
                 .rows_formatted(0, self.cols)
                 .enumerate()
-                .map(|(i, raw)| {
-                    (String::from_utf8_lossy(&raw).into_owned(), wrapped[i])
-                })
+                .map(|(i, raw)| (String::from_utf8_lossy(&raw).into_owned(), wrapped[i]))
                 .collect()
         } else {
             screen
@@ -255,7 +259,11 @@ fn snapshot_without_broken_cells(screen: &vt100::Screen) -> Vec<u8> {
     out.extend_from_slice(format!("\x1b[0m\x1b[{};{}H", row + 1, col + 1).as_bytes());
     out.extend_from_slice(&screen.attributes_formatted());
     out.extend_from_slice(&screen.input_mode_formatted());
-    out.extend_from_slice(if screen.hide_cursor() { b"\x1b[?25l" } else { b"\x1b[?25h" });
+    out.extend_from_slice(if screen.hide_cursor() {
+        b"\x1b[?25l"
+    } else {
+        b"\x1b[?25h"
+    });
     out
 }
 
@@ -326,7 +334,10 @@ mod tests {
         screen.feed(b"\x1b[2;1H\x1b[K");
         screen.feed(b"\x1b[1;3H\x1b[2@");
         screen.feed(b"\x1b[4;1H\x1b[2P");
-        let rows: Vec<String> = plain(&mut screen).iter().map(|r| r.trim_end().to_string()).collect();
+        let rows: Vec<String> = plain(&mut screen)
+            .iter()
+            .map(|r| r.trim_end().to_string())
+            .collect();
         assert_eq!(rows, vec!["li  ne1", "", "line3", "ne4"]);
         screen.feed(b"\x1b[2J\x1b[H");
         assert!(plain(&mut screen).iter().all(|r| r.trim().is_empty()));
@@ -401,7 +412,10 @@ mod tests {
         // 历史按 limit 截尾后必须连续且不重复，末尾仍是最新一行
         assert_eq!(rows.last().map(String::as_str), Some("line-20"), "{rows:?}");
         let mut seen = std::collections::HashSet::new();
-        assert!(rows.iter().all(|r| seen.insert(r.clone())), "历史重复: {rows:?}");
+        assert!(
+            rows.iter().all(|r| seen.insert(r.clone())),
+            "历史重复: {rows:?}"
+        );
         let numbers: Vec<usize> = rows
             .iter()
             .map(|r| r.trim_start_matches("line-").parse().unwrap())
@@ -434,10 +448,13 @@ mod tests {
         // 再在那一行擦到行尾曾让 vt100 越界 panic，宿主从此连不上。
         let mut screen = Screen::new(12, 3, 0);
         screen.feed("abcdefghi你\r\nsecond".as_bytes());
-        screen.feed(b"\x1b[1;31m");            // 当前属性要在擦除后原样保留
+        screen.feed(b"\x1b[1;31m"); // 当前属性要在擦除后原样保留
         screen.resize(10, 3);
         screen.feed(b"\x1b[1;10H\x1b[K");
-        let rows: Vec<String> = plain(&mut screen).iter().map(|r| r.trim_end().to_string()).collect();
+        let rows: Vec<String> = plain(&mut screen)
+            .iter()
+            .map(|r| r.trim_end().to_string())
+            .collect();
         assert_eq!(rows, vec!["abcdefghi", "second", ""]);
         assert_eq!(screen.resets(), 0, "预处理后不应再走重建");
         assert_eq!(screen.cursor(), (9, 0));
@@ -451,11 +468,11 @@ mod tests {
     fn narrowing_restores_cursor_and_origin_mode() {
         let mut screen = Screen::new(12, 4, 0);
         screen.feed("abcdefghi你\r\n".as_bytes());
-        screen.feed(b"\x1b[2;4r\x1b[?6h\x1b[2;3H");   // 滚动区 2..4 + 原点模式，光标在区内第 2 行第 3 列
+        screen.feed(b"\x1b[2;4r\x1b[?6h\x1b[2;3H"); // 滚动区 2..4 + 原点模式，光标在区内第 2 行第 3 列
         assert_eq!(screen.cursor(), (2, 2));
         screen.resize(10, 4);
         assert_eq!(screen.cursor(), (2, 2), "清理宽字符不能移动应用的光标");
-        screen.feed(b"\x1b[1;1H");                   // 原点模式下 CUP 仍相对滚动区
+        screen.feed(b"\x1b[1;1H"); // 原点模式下 CUP 仍相对滚动区
         assert_eq!(screen.cursor(), (0, 1), "原点模式被清理过程改掉了");
     }
 
@@ -471,8 +488,15 @@ mod tests {
         assert!(screen.bracketed_paste(), "重建后应保留各项模式");
         assert!(!screen.cursor_visible(), "重建后应保留光标可见性");
         assert_eq!(screen.cursor(), (9, 0), "重建后光标应仍在 panic 前的位置");
-        let rows: Vec<String> = plain(&mut screen).iter().map(|r| r.trim_end().to_string()).collect();
-        assert_eq!(rows, vec!["abcdefghi", "second", ""], "重建后的画面不能错行");
+        let rows: Vec<String> = plain(&mut screen)
+            .iter()
+            .map(|r| r.trim_end().to_string())
+            .collect();
+        assert_eq!(
+            rows,
+            vec!["abcdefghi", "second", ""],
+            "重建后的画面不能错行"
+        );
         let styled = screen.screen_lines(true, false).remove(1);
         assert!(styled.contains("32"), "重建后应保留各行样式: {styled:?}");
         screen.feed(b"\x1b[3;1Hthird");
@@ -500,10 +524,12 @@ mod tests {
         screen.resize(20, 5);
         assert_eq!(screen.screen_lines(false, false).len(), 5);
         screen.feed(b"\r\nd");
-        assert!(screen
-            .screen_lines(false, false)
-            .iter()
-            .any(|r| r.trim_end() == "d"));
+        assert!(
+            screen
+                .screen_lines(false, false)
+                .iter()
+                .any(|r| r.trim_end() == "d")
+        );
     }
 
     /// 与 claude_bridge / codex_bridge 剥离转义的正则等价的最小实现。
@@ -552,7 +578,9 @@ mod bench {
     #[ignore]
     fn throughput() {
         let mut data = Vec::new();
-        let words = ["hello", "world", "你好", "世界", "def", "return", "错误", "OK"];
+        let words = [
+            "hello", "world", "你好", "世界", "def", "return", "错误", "OK",
+        ];
         for i in 0..120_000usize {
             let line: String = (0..10)
                 .map(|j| words[(i + j) % words.len()])

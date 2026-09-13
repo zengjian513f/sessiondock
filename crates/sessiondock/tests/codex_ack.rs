@@ -221,14 +221,12 @@ fn codex_ack_fake_cli_records_are_classified_through_the_real_reader_path() {
         Outcome::Absent(Absence { skipped_earlier: 0 })
     );
 
-    // A human resubmits the identical prompt later: the delivery can no
-    // longer be told apart from that input, so it is ambiguous, never
-    // confirmed by the second copy.
+    // Python keeps row order: the first causal matching record still wins.
     fixture.submit(&["hello from the web<NL>  second line", "finish"]);
-    assert_eq!(
+    assert!(matches!(
         fixture.observe(&boundary, text).outcome,
-        Outcome::Uncertain(Uncertainty::Ambiguous { candidates: 2 })
-    );
+        Outcome::Possible(_)
+    ));
 
     // A new boundary after those records sees only what follows it.
     let later = fixture.boundary(2);
@@ -246,12 +244,11 @@ fn codex_ack_fake_cli_records_are_classified_through_the_real_reader_path() {
     );
     assert_eq!(found.record.turn_id.as_deref(), Some("fake-turn-1"));
     assert_eq!(found.completion, None, "no task_complete was written yet");
-    // The original boundary still validates and now sees three identical
-    // candidates for the first text, plus the unrelated third prompt.
-    assert_eq!(
+    // The original boundary still selects its first causal matching record.
+    assert!(matches!(
         fixture.observe(&boundary, text).outcome,
-        Outcome::Uncertain(Uncertainty::Ambiguous { candidates: 2 })
-    );
+        Outcome::Possible(_)
+    ));
     assert!(matches!(
         fixture
             .observe(&boundary, "third \"quoted\" \\ prompt")
@@ -260,7 +257,7 @@ fn codex_ack_fake_cli_records_are_classified_through_the_real_reader_path() {
     ));
 
     // Cutting the rollout back to exactly the later boundary keeps both
-    // fences valid: the first still sees its two identical candidates, the
+    // fences valid: the first still sees its first matching record, the
     // later one sees nothing after itself.
     let bytes = fs::read(&fixture.rollout).unwrap();
     fs::write(
@@ -268,10 +265,10 @@ fn codex_ack_fake_cli_records_are_classified_through_the_real_reader_path() {
         &bytes[..later.confirmation.position as usize],
     )
     .unwrap();
-    assert_eq!(
+    assert!(matches!(
         fixture.observe(&boundary, text).outcome,
-        Outcome::Uncertain(Uncertainty::Ambiguous { candidates: 2 })
-    );
+        Outcome::Possible(_)
+    ));
     let observation = fixture.observe(&later, text);
     assert_eq!(
         observation.outcome,

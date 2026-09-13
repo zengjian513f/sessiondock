@@ -1,7 +1,6 @@
 //! Read-only session list, messages, grant pages, input history, and SSE watch.
-//! Page queries deny unknown fields; a grant cursor never carries live
-//! checkpoint fields. Watch admits one permit per browser; the publisher owns
-//! file checks and each subscriber renders its own checkpoint. `debug_run`
+//! Page queries use opaque cursors. The publisher owns file checks and each
+//! subscriber renders its own checkpoint. `debug_run`
 //! selects the list view (`SessionStore::list_view`, Python `filter_rows`).
 //! Main-session packets carry the live `prompt` (`bridge::live`: Claude
 //! question-card file, Codex approval screen) like Python's `_session_prompt`,
@@ -42,34 +41,11 @@ fn query_error(error: QueryRejection) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_query", error.body_text())
 }
 
-fn validate_query(query: &MessageQuery) -> Result<(), ApiError> {
-    if query.head.len() > 256
-        || query.anchor.len() > 512
-        || query.agent.len() > 256
-        || !matches!(query.append.as_str(), "" | "0" | "1")
-        || !matches!(query.window.as_str(), "" | "0" | "1")
-    {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_query",
-            "无效的消息游标参数",
-        ));
-    }
-    Ok(())
-}
-
 pub async fn list(
     State(state): State<AppState>,
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
-    if !matches!(query.force.as_str(), "" | "0" | "1") {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_query",
-            "force 必须为 0 或 1",
-        ));
-    }
     // Python `_debug_run`: the first 64 characters; an id the registry does
     // not know (or a malformed one) is an empty view, never an error.
     let debug_run: String = query.debug_run.chars().take(64).collect();
@@ -88,7 +64,6 @@ pub async fn messages(
     query: Result<Query<MessageQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
-    validate_query(&query)?;
     let media = state.media.clone();
     let files = state.files.clone();
     let pages = state.history_pages.clone();
@@ -159,9 +134,8 @@ async fn codex_prompt_field(
 }
 
 /// Opaque grant lookups for history pages and per-message media pages. Both
-/// reject unknown parameters: a cursor never carries live checkpoint fields.
+/// ignore unrelated query parameters as Python does.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PageQuery {
     cursor: String,
     #[serde(default)]
@@ -193,7 +167,6 @@ struct PageResources {
 async fn page_response<F>(
     state: AppState,
     query: Result<Query<PageQuery>, QueryRejection>,
-    too_large: &'static str,
     work: F,
 ) -> Result<Response, ApiError>
 where
@@ -202,24 +175,13 @@ where
         + 'static,
 {
     let Query(query) = query.map_err(query_error)?;
-    validate_query(&MessageQuery {
-        agent: query.agent.clone(),
-        ..Default::default()
-    })?;
     let resources = PageResources {
         pages: state.history_pages.clone(),
         media: state.media.clone(),
         files: state.files.clone(),
     };
-    let permit = Arc::new(
-        crate::state::admit(
-            &state.history_page_http,
-            state.admission_wait,
-            "history_page_busy",
-            "历史页读取繁忙，请稍后重试",
-        )
-        .await?,
-    );
+    let permit =
+        Arc::new(crate::state::admit(&state.history_page_http, "history_page_busy").await?);
     let worker_permit = permit.clone();
     let bytes = state
         .reader
@@ -227,12 +189,6 @@ where
             let _permit = worker_permit;
             let value = work(store, &resources, &query)?;
             let bytes = JsonBytes::new(&value);
-            if bytes.0.len() > 8 * 1024 * 1024 {
-                return Err(SessionError {
-                    status: 413,
-                    message: too_large.into(),
-                });
-            }
             Ok(bytes)
         })
         .await?;
@@ -258,21 +214,16 @@ pub async fn history_page(
     Path(uid): Path<String>,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    page_response(
-        state,
-        query,
-        "历史页响应超过 8 MiB 预算",
-        move |store, resources, query| {
-            let grant = resources.pages.lookup(&query.cursor, &uid, &query.agent)?;
-            store.snapshot(&uid, &query.agent)?.history_page(
-                grant,
-                &query.cursor,
-                &resources.media,
-                resources.files.as_deref(),
-                &resources.pages,
-            )
-        },
-    )
+    page_response(state, query, move |store, resources, query| {
+        let grant = resources.pages.lookup(&query.cursor, &uid, &query.agent)?;
+        store.snapshot(&uid, &query.agent)?.history_page(
+            grant,
+            &query.cursor,
+            &resources.media,
+            resources.files.as_deref(),
+            &resources.pages,
+        )
+    })
     .await
 }
 /// Continuation of one message's typed images beyond the inline limit.
@@ -281,23 +232,18 @@ pub async fn media_page(
     Path(uid): Path<String>,
     query: Result<Query<PageQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
-    page_response(
-        state,
-        query,
-        "图片分页响应超过 8 MiB 预算",
-        move |store, resources, query| {
-            let grant = resources
-                .pages
-                .lookup_media(&query.cursor, &uid, &query.agent)?;
-            store.snapshot(&uid, &query.agent)?.media_page(
-                grant,
-                &query.cursor,
-                &resources.media,
-                resources.files.as_deref(),
-                &resources.pages,
-            )
-        },
-    )
+    page_response(state, query, move |store, resources, query| {
+        let grant = resources
+            .pages
+            .lookup_media(&query.cursor, &uid, &query.agent)?;
+        store.snapshot(&uid, &query.agent)?.media_page(
+            grant,
+            &query.cursor,
+            &resources.media,
+            resources.files.as_deref(),
+            &resources.pages,
+        )
+    })
     .await
 }
 
@@ -387,15 +333,6 @@ pub async fn watch(
 ) -> Result<Response, ApiError> {
     let Query(query) = query.map_err(query_error)?;
     let cursor = query.cursor();
-    validate_query(&cursor)?;
-    // Each browser holds a permit; a bounded shared publisher owns file checks.
-    let permit = state.watchers.clone().try_acquire_owned().map_err(|_| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "watch_limit",
-            "同时观察的会话过多，请稍后重试",
-        )
-    })?;
     let mut subscription = state.observations.subscribe(query.uid, query.agent).await?;
     let snapshot = subscription.current()?;
     // Python: `claude_sid` / `codex_session` only for a main session; the
@@ -424,7 +361,6 @@ pub async fn watch(
         .await?;
     codex_prompt_field(&state, scope.as_ref(), &mut first.value, &mut probe).await;
     let stream = async_stream::stream! {
-        let _permit = permit;
         let mut cursor = first.query;
         // Python `prompt_revision` / `codex_prompt`: what the last packet carried.
         let mut claude_revision = match &scope {

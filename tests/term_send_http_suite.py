@@ -132,32 +132,24 @@ def run(opener, base, work, marker):
             fail("forged", err.get("code"), raw)
         passed("forged token 409 terminal_ownership")
 
-        err, raw, _ = call(opener, base, "POST", "/api/term/send",
-                           send_body(rec, token, {"keys": ["not-a-key"]}), want=400)
-        if err.get("code") != "invalid_terminal_input":
-            fail("unknown key", err.get("code"), raw)
-        err, raw, _ = call(opener, base, "POST", "/api/term/send",
-                           send_body(rec, token, {"data": "x", "bogus": 1}, build), want=400)
-        if err.get("code") != "invalid_terminal_input":
-            fail("unknown field", err.get("code"), raw)
+        got, raw, _ = call(opener, base, "POST", "/api/term/send",
+                           send_body(rec, token, {"keys": ["not-a-key"]}))
+        if got != {"ok": True, "bytes": 9, "acknowledged": True, "processed": "unknown"}:
+            fail("literal key", got, raw)
+        got, raw, _ = call(opener, base, "POST", "/api/term/send",
+                           send_body(rec, token, {"data": "x", "bogus": 1}, build))
+        if got != {"ok": True, "bytes": 1, "acknowledged": True, "processed": "unknown"}:
+            fail("unknown field ignored", got, raw)
         err, raw, _ = call(opener, base, "POST", "/api/term/send",
                            send_body(rec, token, {"data": "a" * (1024 * 1024 + 1)}, build), want=413)
         if err.get("code") != "terminal_input_too_large":
-            fail("17 KiB", err.get("code"), raw)
-        passed("unknown key 400 / unknown JSON field 400 / 1 MiB+1 data 413")
+            fail("1 MiB+1", err.get("code"), raw)
+        passed("literal key and unknown JSON field accepted / 1 MiB+1 data 413")
 
-        time.sleep(1.1)
-        saw_rate = False
-        for _ in range(17):
-            err, raw, code = call(opener, base, "POST", "/api/term/send",
-                                  send_body(rec, token, {"keys": ["escape"]}), want=(200, 429))
-            if code == 429:
-                if err.get("code") != "terminal_input_rate":
-                    fail("rate", err.get("code"), raw)
-                saw_rate = True
-        if not saw_rate:
-            fail("rate", "17 requests in one second produced no 429 terminal_input_rate")
-        passed("17 send requests within 1s → 429 terminal_input_rate")
+        for _ in range(32):
+            call(opener, base, "POST", "/api/term/send",
+                 send_body(rec, token, {"keys": ["escape"]}), want=200)
+        passed("32 consecutive sends accepted without an extra per-second limit")
 
         got, raw, _ = call(opener, base, "POST", "/api/term/scroll",
                            {"name": rec["name"], "up": True, "lines": 3})
@@ -213,7 +205,7 @@ def main():
         cfg.touch(mode=0o600)
         cfg.write_text(json.dumps({
             "host_binary": str(PTYHOST.resolve()), "host_dir": str(root / "host"),
-            "cwd_roots": [str(root / "work")],
+
             "adapters": [{"id": "synthetic-shell-v1", "source": "codex",
                           "executable": str(Path("/bin/sh").resolve()), "args": ["-c", SHELL],
                           "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))

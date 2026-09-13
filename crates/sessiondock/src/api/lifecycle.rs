@@ -20,6 +20,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::path::{Component, Path, PathBuf};
 
 pub(super) fn enabled(state: &AppState) -> Result<&std::sync::Arc<LifecycleService>, ApiError> {
     state
@@ -45,11 +46,6 @@ pub(super) fn failure(error: ServiceError) -> ApiError {
             "native_binding_conflict",
             "此启动实例已有不同关联意图或宿主绑定；不会覆盖或自动选择其他会话",
         ),
-        ServiceError::StopRequestConflict => (
-            StatusCode::CONFLICT,
-            "stop_request_conflict",
-            "同一 request_id 已用于停止另一个会话；请使用新的请求 ID",
-        ),
         ServiceError::Busy => (
             StatusCode::TOO_MANY_REQUESTS,
             "lifecycle_busy",
@@ -68,11 +64,6 @@ pub(super) fn failure(error: ServiceError) -> ApiError {
         ServiceError::Store(StoreError::Missing) => {
             (StatusCode::NOT_FOUND, "launch_missing", "没有这个创建回执")
         }
-        ServiceError::Store(StoreError::Limit) => (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "lifecycle_limit",
-            "创建回执或请求达到容量限制；已有记录不会被淘汰",
-        ),
         ServiceError::Store(
             StoreError::Conflict | StoreError::WrongState | StoreError::StaleAuthority,
         ) => (
@@ -84,7 +75,7 @@ pub(super) fn failure(error: ServiceError) -> ApiError {
         | ServiceError::Launcher(_) => (
             StatusCode::BAD_REQUEST,
             "invalid_launch",
-            "启动配置、适配器或工作目录不符合显式授权范围",
+            "启动配置、适配器或工作目录无效",
         ),
         _ => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -115,12 +106,8 @@ fn parse_body<T>(body: Result<Json<T>, JsonRejection>) -> Result<T, ApiError> {
         }
     })
 }
-fn diagnostics(values: [&str; 3]) -> Result<(), ApiError> {
-    if values.iter().any(|v| v.len() > 128) {
-        Err(invalid())
-    } else {
-        Ok(())
-    }
+fn diagnostics(_values: [&str; 3]) -> Result<(), ApiError> {
+    Ok(())
 }
 pub(super) fn check_instance(record: &Record, instance: &str) -> Result<(), ApiError> {
     if record.instance_id() != instance {
@@ -171,7 +158,6 @@ pub(super) fn project(record: &Record) -> Value {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BindRequest {
     record_id: String,
     instance_id: String,
@@ -189,14 +175,10 @@ pub async fn bind(
     body: Result<Json<BindRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
-    if body.record_id.len() != 32
-        || body.instance_id.len() != 32
-        || body.uid.len() > 256
-        || !body.operator_confirmed
-    {
+    if body.record_id.len() != 32 || body.instance_id.len() != 32 || !body.operator_confirmed {
         return Err(invalid());
     }
     let record = service.get(body.record_id).await.map_err(failure)?;
@@ -230,53 +212,23 @@ pub async fn bind(
     let result = service.bind(authority).await.map_err(failure)?;
     response(project(&result), permit).await
 }
-pub(super) fn admit(state: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
-    state
-        .lifecycle_http
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::TOO_MANY_REQUESTS,
-                "lifecycle_response_busy",
-                "创建状态响应达到并发限制，请释放旧响应后重试",
-            )
-        })
+pub(super) async fn admit(state: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
+    crate::state::admit(&state.lifecycle_http, "lifecycle_response_busy").await
 }
 pub(super) async fn response(
     value: Value,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<Response, ApiError> {
-    let (bytes, permit) = tokio::task::spawn_blocking(move || {
-        let mut writer = LimitedJson {
-            bytes: Vec::new(),
-            exceeded: false,
-        };
-        let result = serde_json::to_writer(&mut writer, &value);
-        (
-            result.map(|()| writer.bytes).map_err(|_| writer.exceeded),
-            permit,
-        )
-    })
-    .await
-    .map_err(|_| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "lifecycle_response",
-            "创建状态序列化失败",
-        )
-    })?;
-    let bytes = bytes.map_err(|exceeded| {
-        if exceeded {
+    let (bytes, permit) = tokio::task::spawn_blocking(move || (serde_json::to_vec(&value), permit))
+        .await
+        .map_err(|_| {
             ApiError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "lifecycle_response_limit",
-                "创建状态响应超过大小限制",
+                StatusCode::SERVICE_UNAVAILABLE,
+                "lifecycle_response",
+                "创建状态序列化失败",
             )
-        } else {
-            invalid()
-        }
-    })?;
+        })?;
+    let bytes = bytes.map_err(|_| invalid())?;
     let length = bytes.len();
     let mut bytes = axum::body::Bytes::from(bytes);
     let body = axum::body::Body::from_stream(async_stream::stream! {
@@ -294,61 +246,42 @@ pub(super) async fn response(
         .into_response())
 }
 
-struct LimitedJson {
-    bytes: Vec<u8>,
-    exceeded: bool,
-}
-impl std::io::Write for LimitedJson {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > (2 * 1024 * 1024usize).saturating_sub(self.bytes.len()) {
-            self.exceeded = true;
-            return Err(std::io::Error::other("bounded JSON response exceeded"));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod response_tests {
     use super::*;
 
     #[tokio::test]
-    async fn oversized_serialization_stops_at_limit_and_releases_response_permit() {
+    async fn large_status_response_streams_complete_body_and_releases_permit() {
         let admission = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
         let permit = admission.clone().acquire_owned().await.unwrap();
-        let response = response(json!({"value": "x".repeat(2 * 1024 * 1024)}), permit)
+        let value = json!({"value": "x".repeat(2 * 1024 * 1024 + 1)});
+        let response = response(value.clone(), permit).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(admission.available_permits(), 0);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
-            .unwrap_err()
-            .into_response();
-        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+            .unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&bytes).unwrap(), value);
         assert_eq!(admission.available_permits(), 1);
-        let mut writer = LimitedJson {
-            bytes: Vec::new(),
-            exceeded: false,
-        };
-        assert!(serde_json::to_writer(&mut writer, &"x".repeat(2 * 1024 * 1024)).is_err());
-        assert!(writer.exceeded);
-        assert!(writer.bytes.len() <= 2 * 1024 * 1024);
     }
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateRequest {
     source: Source,
     cwd: String,
-    request_id: String,
     #[serde(default)]
-    adapter_id: Option<String>,
+    request_id: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "adapter_id")]
+    _adapter_id: Option<String>,
     /// Full local UID of an inventory main session to resume. Its SID is
     /// resolved server-side from the frozen native catalog, never accepted
     /// from the client or derived from a path.
     #[serde(default)]
     resume_uid: Option<String>,
+    #[serde(default)]
+    create_cwd: bool,
     #[serde(default)]
     cols: Option<u16>,
     #[serde(default)]
@@ -361,36 +294,30 @@ pub struct CreateRequest {
     _page_id: String,
 }
 
-/// Exactly one allowlisted entry must match the source (and explicit ID); a
-/// resume additionally requires a resume-capable CLI profile. Without an
-/// explicit ID only interactive entries count: the bug-report worker profile
-/// of a source is never the browser's implicit choice.
-fn select_entry<'a>(
-    service: &'a LifecycleService,
+/// Exactly one interactive entry must match the source; a resume additionally
+/// requires resume support. Legacy `adapter_id` input is ignored because the
+/// Python endpoint selects commands solely from its fixed source table.
+fn select_entry(
+    service: &LifecycleService,
     source: Source,
-    adapter_id: Option<&str>,
     resume: bool,
-) -> Result<&'a Entry, ApiError> {
+) -> Result<&Entry, ApiError> {
     let candidates: Vec<&Entry> = service
         .entries()
         .iter()
-        .filter(|entry| {
-            entry.source == source
-                && adapter_id.map_or(entry.interactive(), |id| id == entry.id)
-                && (!resume || entry.resume)
-        })
+        .filter(|entry| entry.source == source && entry.interactive() && (!resume || entry.resume))
         .collect();
     match candidates.as_slice() {
         [entry] => Ok(entry),
         _ if resume => Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "launch_adapter",
-            "来源没有唯一的可续接 CLI 配置；请明确选择已授权的版本化 adapter_id",
+            "来源没有唯一的可续接 CLI 配置",
         )),
         _ => Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "launch_adapter",
-            "来源没有唯一的已配置适配器；请明确选择已授权的版本化 adapter_id",
+            "来源没有唯一的已配置 CLI",
         )),
     }
 }
@@ -398,16 +325,111 @@ fn launch_for(entry: &Entry, resume: Option<(String, String)>) -> Launch {
     match resume {
         Some((sid, uid)) => Launch::Resume { sid, uid },
         None if !entry.profile => Launch::Fixed,
-        None if entry.source == Source::Claude => Launch::NewAssigned,
+        None if entry.source != Source::Codex => Launch::NewAssigned,
         None => Launch::NewPending,
     }
 }
-fn valid_uid(uid: &str) -> bool {
-    !uid.is_empty()
-        && uid.len() <= 256
-        && uid
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b))
+fn request_id(value: Option<String>, strict: bool) -> Result<String, ApiError> {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        let valid = (8..=128).contains(&value.len())
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte));
+        if valid {
+            return Ok(value);
+        }
+        if strict {
+            return Err(invalid());
+        }
+    }
+    crate::lifecycle::store::fresh_request_id()
+        .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))
+}
+
+fn normalize_missing(path: &Path) -> Result<PathBuf, ApiError> {
+    let absolute = std::path::absolute(path).map_err(|_| invalid())?;
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    let mut ancestor = normalized.as_path();
+    let mut suffix = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(base) => {
+                let mut target = base;
+                for name in suffix.iter().rev() {
+                    target.push(name);
+                }
+                return Ok(target);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let Some(name) = ancestor.file_name() else {
+                    return Err(invalid());
+                };
+                suffix.push(name.to_owned());
+                ancestor = ancestor.parent().ok_or_else(invalid)?;
+            }
+            Err(_) => return Err(invalid()),
+        }
+    }
+}
+
+enum PreparedCwd {
+    Ready(String),
+    Missing(String),
+}
+
+async fn prepare_cwd(raw: String, create: bool) -> Result<PreparedCwd, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let text = raw.trim();
+        if text.is_empty() || text.contains('\0') {
+            return Err(invalid());
+        }
+        let path = crate::lifecycle::model::expand_user(Path::new(text)).ok_or_else(invalid)?;
+        if !path.is_absolute() {
+            return Err(invalid());
+        }
+        match path.canonicalize() {
+            Ok(path) if path.is_dir() => {
+                Ok(PreparedCwd::Ready(path.to_string_lossy().into_owned()))
+            }
+            Ok(_) => Err(invalid()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let target = normalize_missing(&path)?;
+                if !create {
+                    return Ok(PreparedCwd::Missing(target.to_string_lossy().into_owned()));
+                }
+                std::fs::create_dir_all(&target).map_err(|error| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        "create_cwd_failed",
+                        format!("创建启动目录失败：{error}"),
+                    )
+                })?;
+                let resolved = target.canonicalize().map_err(|_| invalid())?;
+                if !resolved.is_dir() {
+                    return Err(invalid());
+                }
+                Ok(PreparedCwd::Ready(resolved.to_string_lossy().into_owned()))
+            }
+            Err(_) => Err(invalid()),
+        }
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "cwd_check_failed",
+            "启动目录检查失败",
+        )
+    })?
 }
 /// Resolve a main-session native scope and its inventory cwd from one frozen
 /// snapshot. Missing sessions are 404; conflicting/unsupported/subagent
@@ -416,9 +438,6 @@ async fn resolve_resume(
     state: &AppState,
     uid: String,
 ) -> Result<(crate::sessions::NativeScope, Option<String>), ApiError> {
-    if !valid_uid(&uid) {
-        return Err(invalid());
-    }
     state
         .reader
         .run_wait(&state.shutdown, move |store| {
@@ -446,6 +465,84 @@ async fn resolve_resume(
             Ok((scope, cwd))
         })
         .await
+}
+
+struct ExternalProcesses {
+    scanner: std::sync::Arc<crate::runtime::procscan::ProcScanner>,
+    pids: Vec<i64>,
+    raw: bool,
+    hosted: bool,
+    tmux: bool,
+}
+
+async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProcesses, ApiError> {
+    let document = state
+        .reader
+        .run_wait(&state.shutdown, |store| store.list_recent())
+        .await?;
+    let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
+    let target = sessions
+        .iter()
+        .find(|session| session.uid == uid)
+        .cloned()
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "session_missing", "会话不存在"))?;
+    let scanner = state.proc_scan.clone().unwrap_or_else(|| {
+        std::sync::Arc::new(crate::runtime::procscan::ProcScanner::new(
+            "/proc".into(),
+            None,
+            crate::runtime::procscan::SessionRoots::default(),
+        ))
+    });
+    let observed = if state.runtime.is_some() {
+        super::runtime::observe(state).await?
+    } else {
+        None
+    };
+    let hosted_by_runtime = observed.as_ref().is_some_and(|snapshot| {
+        snapshot
+            .running_uids()
+            .into_iter()
+            .any(|running| running == uid)
+    });
+    let host_roots = observed
+        .as_ref()
+        .map(|snapshot| snapshot.hosts.iter().map(|host| host.summary.pid).collect())
+        .unwrap_or_default();
+    let scan = match scanner.snapshot(true).await {
+        Ok(scan) => Some(scan),
+        // Off `/proc`, Python uses psutil and treats an unavailable provider as
+        // an empty observation. With no exact PID evidence this path can still
+        // reuse or start a managed host, but can never signal a process.
+        Err(crate::runtime::procscan::ScanError::UnsupportedPlatform) => None,
+        Err(error) => {
+            return Err(ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "process_scan_unavailable",
+                format!("无法核对会话进程：{error}"),
+            ));
+        }
+    };
+    let Some(scan) = scan else {
+        return Ok(ExternalProcesses {
+            scanner,
+            pids: Vec::new(),
+            raw: false,
+            hosted: hosted_by_runtime,
+            tmux: false,
+        });
+    };
+    let raw = !scan.scan.pids_of(&target).is_empty();
+    let active = scan.scan.active_processes(&sessions);
+    let pids = active.owned.get(uid).cloned().unwrap_or_default();
+    let hosted = hosted_by_runtime || scan.scan.tree.hosted(&pids, &host_roots);
+    let tmux = scan.scan.tree.in_tmux(&pids);
+    Ok(ExternalProcesses {
+        scanner,
+        pids,
+        raw,
+        hosted,
+        tmux,
+    })
 }
 fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
     match scope.source.as_str() {
@@ -479,20 +576,12 @@ pub async fn create(
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
-    if body.cwd.len() > 4096 || body.request_id.len() > 128 {
-        return Err(invalid());
-    }
+    let request_id = request_id(body.request_id, true)?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
-    let entry = select_entry(
-        service,
-        body.source,
-        body.adapter_id.as_deref(),
-        body.resume_uid.is_some(),
-    )?
-    .clone();
+    let entry = select_entry(service, body.source, body.resume_uid.is_some())?.clone();
     let resume = match body.resume_uid {
         Some(uid) => {
             let (scope, _) = resolve_resume(&state, uid).await?;
@@ -507,21 +596,32 @@ pub async fn create(
         }
         None => None,
     };
-    let spec = build_spec(&entry, &body.cwd, resume)?;
-    let record = service
-        .create(body.request_id, spec)
-        .await
-        .map_err(failure)?;
+    let cwd = match prepare_cwd(body.cwd, body.create_cwd).await? {
+        PreparedCwd::Ready(cwd) => cwd,
+        PreparedCwd::Missing(cwd) => {
+            let mut reply = response(
+                json!({"error":"启动目录不存在","needs_create":true,"cwd":cwd}),
+                permit,
+            )
+            .await?;
+            *reply.status_mut() = StatusCode::CONFLICT;
+            return Ok(reply);
+        }
+    };
+    let spec = build_spec(&entry, &cwd, resume)?;
+    let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TakeoverRequest {
     uid: String,
-    request_id: String,
     #[serde(default)]
-    adapter_id: Option<String>,
+    #[serde(rename = "request_id")]
+    _request_id: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "adapter_id")]
+    _adapter_id: Option<String>,
     #[serde(default)]
     force: bool,
     #[serde(default)]
@@ -535,54 +635,85 @@ pub struct TakeoverRequest {
     #[serde(default)]
     _page_id: String,
 }
-/// Legacy takeover = resume of an inventory session in its recorded cwd. There
-/// is no external-process discovery, so `force` (kill an unmanaged instance)
-/// stays an explicit 501 instead of guessing PIDs by cwd, name or time.
+/// Python takeover: reuse a managed console, ask before replacing an external
+/// CLI, then resume the exact catalog identity in its recorded cwd.
 pub async fn takeover(
     State(state): State<AppState>,
     body: Result<Json<TakeoverRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
-    if body.request_id.len() > 128 || !valid_uid(&body.uid) {
-        return Err(invalid());
-    }
-    if body.force {
-        return Err(ApiError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "takeover_force_unsupported",
-            "不支持结束未受管的外部 CLI 实例：没有跨平台的进程归属证据，不会按目录或时间猜测 PID",
-        ));
-    }
+    let request_id = crate::lifecycle::store::fresh_request_id()
+        .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let (scope, cwd) = resolve_resume(&state, body.uid).await?;
+    let processes = external_processes(&state, &scope.uid).await?;
+    if processes.raw && processes.pids.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "takeover_superseded",
+            "该回滚分支的运行实例已转移到更新的子会话，请先处理当前子会话",
+        ));
+    }
+    let external: Vec<i64> = processes
+        .pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid > 0)
+        .collect();
+    if !external.is_empty() && !processes.hosted && !body.force {
+        return response(
+            json!({"needs_confirm":true,"pids":external,
+                "reason": if processes.tmux {"会话正在 tmux 中运行；当前宿主不能直接附加该 pane"}
+                    else {"会话正在运行, 且不在受管终端里"}}),
+            permit,
+        )
+        .await;
+    }
+    let killed = if !external.is_empty() && !processes.hosted && body.force {
+        let outcome = processes
+            .scanner
+            .kill_pids(&external)
+            .await
+            .map_err(|error| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "process_control_unavailable",
+                    format!("无法结束外部会话进程：{error:?}"),
+                )
+            })?;
+        !outcome.killed.is_empty()
+    } else {
+        false
+    };
     let source = source_of(&scope).ok_or_else(invalid)?;
-    let entry = select_entry(service, source, body.adapter_id.as_deref(), true)?.clone();
+    let entry = select_entry(service, source, true)?.clone();
     let cwd = cwd.ok_or_else(|| {
         ApiError::new(
             StatusCode::CONFLICT,
             "launch_cwd_unknown",
-            "该会话没有记录可用的工作目录；请通过创建接口明确指定白名单内的目录续接",
+            "该会话没有记录可用的工作目录；请通过创建接口明确指定目录续接",
         )
     })?;
     let spec = build_spec(&entry, &cwd, Some((scope.session_id, scope.uid)))?;
     let record = service
-        .create(body.request_id.clone(), spec)
+        .create(request_id.clone(), spec)
         .await
         .map_err(failure)?;
     let mut value = project(&record);
-    value["action"] = json!(if record.request_id() == body.request_id {
-        "started"
-    } else {
+    value["action"] = json!(if killed {
+        "killed"
+    } else if processes.hosted || record.request_id() != request_id {
         "reused"
+    } else {
+        "started"
     });
     response(value, permit).await
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CompleteDirQuery {
     #[serde(default)]
     path: String,
@@ -594,22 +725,15 @@ pub struct CompleteDirQuery {
     #[allow(dead_code)]
     debug_run: String,
 }
-/// Bounded completion strictly inside the launcher's cwd roots. The UI's
-/// `~` and relative forms are not expanded: only absolute paths complete.
+/// Python-compatible absolute-directory completion, with the typed spelling
+/// preserved.
 pub async fn complete_dir(
     State(state): State<AppState>,
     query: Result<Query<CompleteDirQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let Query(query) = query.map_err(|_| invalid())?;
-    if query.path.len() > 4096 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "invalid_path",
-            "启动目录路径过长",
-        ));
-    }
     let directories = service
         .complete_directories(query.path, query.limit.unwrap_or(DEFAULT_COMPLETIONS))
         .await
@@ -623,7 +747,6 @@ pub async fn complete_dir(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct BackendRequest {
     backend: String,
     #[serde(default)]
@@ -649,7 +772,7 @@ pub async fn backend(
     if state.terminal.is_none() {
         return Err(ApiError::unavailable("终端后端选择"));
     }
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     match body.backend.trim().to_ascii_lowercase().as_str() {
@@ -674,7 +797,6 @@ pub async fn backend(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct StatusQuery {
     record_id: String,
     instance_id: String,
@@ -689,7 +811,7 @@ pub async fn status(
     query: Result<Query<StatusQuery>, QueryRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let Query(query) = query.map_err(|_| invalid())?;
     if query.record_id.len() != 32 || query.instance_id.len() != 32 {
         return Err(invalid());
@@ -700,7 +822,6 @@ pub async fn status(
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CancelRequest {
     record_id: String,
     instance_id: String,
@@ -716,7 +837,7 @@ pub async fn cancel(
     body: Result<Json<CancelRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     if body.record_id.len() != 32 || body.instance_id.len() != 32 {
@@ -738,7 +859,7 @@ pub async fn discard(
     body: Result<Json<CancelRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = parse_body(body)?;
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     if body.record_id.len() != 32 || body.instance_id.len() != 32 {
@@ -760,13 +881,9 @@ pub async fn discard(
 
 // ------------------------------------------------------------------ session stop
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct StopRequest {
-    uid: String,
-    /// Optional: the same ID replays the remembered outcome for this UID.
-    /// The Python page sends `{uid}` only and needs no server-side flag.
     #[serde(default)]
-    request_id: Option<String>,
+    uid: String,
     #[serde(default)]
     _build: String,
     #[serde(default)]
@@ -781,13 +898,8 @@ fn invalid_stop() -> ApiError {
         "停止请求格式或会话 UID 无效",
     )
 }
-const UNMANAGED: &str = "该会话没有由本服务托管的运行实例，无法停止：Rust 后端不探测未受管的外部 CLI 进程，也不会按目录、时间或 PID 猜测。请在启动该 CLI 的终端里退出它。";
-/// Python `_stop_session` for managed instances only. The UID is resolved
-/// through the index's native catalog and one fresh guarded runtime observation
-/// (never the `/api/live` cache, never a name/cwd/time/PID guess); the
-/// service then escalates Ctrl-D → host-performed guarded stop and reports
-/// which stage ended the instance. An unmanaged session is a typed 501, an
-/// unreachable/duplicate managed record a typed 409 — never a silent success.
+/// Python `_stop_session`: use guarded host control for a managed instance and
+/// the same native SID/file/process-tree evidence for an external CLI.
 pub async fn stop(
     State(state): State<AppState>,
     body: Result<Json<StopRequest>, JsonRejection>,
@@ -796,7 +908,7 @@ pub async fn stop(
     if state.terminal.is_none() || state.runtime.is_none() {
         return Err(ApiError::unavailable("受管实例停止"));
     }
-    let permit = admit(&state)?;
+    let permit = admit(&state).await?;
     let body = body.map(|Json(value)| value).map_err(|error| {
         if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::new(
@@ -809,14 +921,6 @@ pub async fn stop(
         }
     })?;
     diagnostics([&body._build, &body._trace_id, &body._page_id]).map_err(|_| invalid_stop())?;
-    if !valid_uid(&body.uid)
-        || body
-            .request_id
-            .as_deref()
-            .is_some_and(|id| id.is_empty() || id.len() > 128)
-    {
-        return Err(invalid_stop());
-    }
     let uid = body.uid;
     // Index catalog: an unknown UID is 404 like Python's "会话不存在".
     // Subagent/unsupported/ambiguous rows proceed to the runtime lookup, which
@@ -840,6 +944,14 @@ pub async fn stop(
             "会话不存在",
         ));
     }
+    let external = external_processes(&state, &uid).await?;
+    if external.raw && external.pids.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "stop_superseded",
+            "该回滚分支已不是当前运行分支，未停止共享的子会话",
+        ));
+    }
     let observed = super::runtime::observe(&state)
         .await?
         .ok_or_else(|| ApiError::unavailable("受管实例停止"))?;
@@ -849,6 +961,30 @@ pub async fn stop(
         .filter_map(|host| host.bound_target())
         .filter(|target| target.uid() == uid)
         .collect();
+    if targets.is_empty() {
+        let pids: Vec<i64> = external.pids.into_iter().filter(|pid| *pid > 0).collect();
+        if pids.is_empty() {
+            return response(
+                json!({"ok":true,"stopped":false,"tmux":external.tmux,
+                    "external_detection":"proc_scan"}),
+                permit,
+            )
+            .await;
+        }
+        let killed = external.scanner.kill_pids(&pids).await.map_err(|error| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "process_control_unavailable",
+                format!("无法结束外部会话进程：{error:?}"),
+            )
+        })?;
+        return response(
+            json!({"ok":true,"stopped":!killed.killed.is_empty(),"tmux":external.tmux,
+                "external_detection":"proc_scan"}),
+            permit,
+        )
+        .await;
+    }
     let session = observed.sessions.get(&uid);
     let candidate = match targets.as_slice() {
         [target] => crate::lifecycle::service::StopCandidate::Instance(Box::new((*target).clone())),
@@ -864,16 +1000,18 @@ pub async fn stop(
         },
     };
     let outcome = service
-        .stop_session(uid, candidate, body.request_id)
+        .stop_session(uid, candidate)
         .await
         .map_err(failure)?;
     use crate::lifecycle::service::StopStage;
     match outcome.stage {
-        StopStage::NoInstance => Err(ApiError::new(
-            StatusCode::NOT_IMPLEMENTED,
-            "session_stop_unmanaged",
-            UNMANAGED,
-        )),
+        StopStage::NoInstance => {
+            response(
+                json!({"ok":true,"stopped":false,"tmux":false,"external_detection":"proc_scan"}),
+                permit,
+            )
+            .await
+        }
         StopStage::Unknown => {
             let reason = session
                 .and_then(|session| session.reason)
@@ -900,7 +1038,7 @@ pub async fn stop(
             let mut value = serde_json::to_value(&outcome).map_err(|_| invalid_stop())?;
             value["ok"] = json!(true);
             value["tmux"] = json!(false);
-            value["external_detection"] = json!("not_implemented");
+            value["external_detection"] = json!("proc_scan");
             value["explanation"] = json!(explanation);
             response(value, permit).await
         }

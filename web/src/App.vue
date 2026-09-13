@@ -14,7 +14,7 @@ import BackendStatus from './components/BackendStatus.vue'
 
     <section class="panel" aria-labelledby="scope-title">
       <h2 id="scope-title">从清晰的边界开始</h2>
-      <p>这是可运行的目录骨架，尚未迁移原版 AgentHub 的业务功能。</p>
+      <p>这是可运行的目录骨架，业务功能尚未迁移。</p>
       <ul class="modules">
         <li><strong>Web</strong><span>Vue 3 / TypeScript / Pinia，按 API、状态和组件分层。</span></li>
         <li><strong>Server</strong><span>Axum / Tokio，目前只提供健康检查和静态资源。</span></li>

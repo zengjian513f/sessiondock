@@ -43,6 +43,8 @@ struct FakeState {
     lag: u64,
     record_path: PathBuf,
     turns: usize,
+    pause_paste: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
+    pause_enter: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
 
 pub struct FakeDriver {
@@ -65,6 +67,8 @@ impl FakeDriver {
                 lag: 0,
                 record_path,
                 turns: 0,
+                pause_paste: None,
+                pause_enter: None,
             }),
         })
     }
@@ -184,6 +188,11 @@ impl TerminalDriver for FakeDriver {
         text: &'a str,
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
+            let pause = self.state().pause_paste.take();
+            if let Some((arrived, resume)) = pause {
+                arrived.notify_one();
+                resume.notified().await;
+            }
             let mut state = self.state();
             state.pasted.push(text.to_owned());
             state.buffer.push_str(text);
@@ -196,6 +205,15 @@ impl TerminalDriver for FakeDriver {
         keys: &'a [&'static str],
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
+            let pause = if keys.contains(&"Enter") {
+                self.state().pause_enter.take()
+            } else {
+                None
+            };
+            if let Some((arrived, resume)) = pause {
+                arrived.notify_one();
+                resume.notified().await;
+            }
             let mut state = self.state();
             state.keys.push(keys.to_vec());
             for key in keys {
@@ -357,26 +375,21 @@ impl Harness {
     }
     async fn open(&mut self, limits: ExecutorLimits) {
         self.shutdown = CancellationToken::new();
-        let service = loop {
-            match DeliveryService::open(
+        let service = Arc::new(
+            DeliveryService::open(
                 self.delivery_dir.clone(),
                 Default::default(),
                 self.shutdown.clone(),
             )
             .await
-            {
-                Ok(service) => break Arc::new(service),
-                Err(service::Error::Busy) => tokio::time::sleep(Duration::from_millis(20)).await,
-                Err(error) => panic!("open: {error}"),
-            }
-        };
+            .unwrap(),
+        );
         let reader = Reader {
             store: Arc::new(SessionStore::new(SessionRoots {
                 codex: Some(self.root.clone()),
                 ..Default::default()
             })),
             workers: Arc::new(Semaphore::new(4)),
-            wait: std::time::Duration::from_secs(10),
         };
         let resolver = Arc::new(FakeResolver {
             target: synthetic_target(&self.uid),
@@ -427,8 +440,10 @@ impl Harness {
     fn request(&self, id: &str, text: &str, overwrite: &str) -> SendRequest {
         SendRequest {
             uid: self.uid.clone(),
+            agent: String::new(),
             name: NAME.into(),
             text: text.into(),
+            media: Vec::new(),
             request_id: id.into(),
             overwrite_draft: overwrite.into(),
             page_lease: None,
@@ -477,7 +492,7 @@ async fn codex_send_persists_injects_two_steps_and_confirms_with_operation_turn(
     let receipt = harness.receipt("codex-req-0001").await.unwrap();
     assert_eq!(receipt.state, codex::State::Uncertain);
     assert_eq!(receipt.attempts, 1);
-    let enter = receipt.enter_operation.clone().expect("Enter persisted");
+    assert!(receipt.enter_operation.is_some());
     let confirmation = receipt.confirmation.clone().expect("fixed fence");
     assert_eq!(receipt.watch, Some(confirmation.clone()));
     assert_eq!(receipt.request.payload.target.host_instance, INSTANCE);
@@ -509,10 +524,7 @@ async fn codex_send_persists_injects_two_steps_and_confirms_with_operation_turn(
     assert!(accepted.record_id.starts_with("codex-line:"));
     assert_eq!(
         receipt.association,
-        Some(codex::Correlation::OperationTurn {
-            enter_operation: enter,
-            turn_id: "fake-turn-1".into(),
-        })
+        Some(codex::Correlation::PossibleTextMatch)
     );
     assert_eq!(receipt.state, codex::State::Completed);
     assert_eq!(receipt.completion, Some(codex::Completion::Succeeded));
@@ -735,7 +747,7 @@ async fn codex_swallowed_enter_stays_uncertain_retry_refused_dismiss_hides() {
 }
 
 #[tokio::test]
-async fn codex_record_without_turn_id_and_duplicates_stay_uncertain() {
+async fn codex_record_without_turn_id_and_duplicates_confirm_in_row_order() {
     let harness = Harness::new().await;
     harness.driver.state().no_turn_id = true;
     let reply = harness
@@ -743,17 +755,17 @@ async fn codex_record_without_turn_id_and_duplicates_stay_uncertain() {
         .send(harness.request("codex-req-0008", "no turn", ""))
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    harness.ticks(6).await;
-    let receipt = harness.receipt("codex-req-0008").await.unwrap();
-    assert_eq!(receipt.state, codex::State::Uncertain);
-    assert!(receipt.accepted.is_none());
+    let receipt = harness
+        .settle("codex-req-0008", codex::State::Acknowledged)
+        .await;
+    assert_eq!(receipt.state, codex::State::Acknowledged);
+    assert!(receipt.accepted.is_some());
     let rows = harness.rollout_lines();
     assert!(
         rows.iter()
             .any(|row| row["payload"]["type"] == "task_started"),
-        "the later task_started is never borrowed as the turn"
+        "task_started remains completion-only evidence"
     );
-    harness.exec().discard(&harness.uid, "codex-req-0008").await;
 
     harness.driver.state().no_turn_id = false;
     harness.driver.state().duplicate_record = true;
@@ -762,10 +774,11 @@ async fn codex_record_without_turn_id_and_duplicates_stay_uncertain() {
         .send(harness.request("codex-req-0009", "twice", ""))
         .await;
     assert_eq!(reply.status, 200, "{}", reply.body);
-    harness.ticks(6).await;
-    let receipt = harness.receipt("codex-req-0009").await.unwrap();
-    assert_eq!(receipt.state, codex::State::Uncertain);
-    assert!(receipt.accepted.is_none());
+    let receipt = harness
+        .settle("codex-req-0009", codex::State::Completed)
+        .await;
+    assert_eq!(receipt.state, codex::State::Completed);
+    assert!(receipt.accepted.is_some());
     let state = harness.driver.state();
     assert_eq!(state.pasted, vec!["no turn".to_owned(), "twice".to_owned()]);
     assert_eq!(state.keys.len(), 2);
@@ -907,4 +920,68 @@ async fn codex_follow_up_is_pasted_immediately_and_both_confirm() {
         .await;
     assert_eq!(first.accepted.unwrap().turn_id, "fake-turn-1");
     assert_eq!(second.accepted.unwrap().turn_id, "fake-turn-2");
+}
+
+#[tokio::test]
+async fn codex_can_dismiss_during_paste_and_enter_without_repeating_the_write() {
+    for preparing in [true, false] {
+        let mut configured = limits();
+        configured.prepare_timeout = Duration::from_secs(10);
+        let harness = Harness::with_limits(configured).await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        {
+            let mut state = harness.driver.state();
+            let pause = Some((arrived.clone(), resume.clone()));
+            if preparing {
+                state.pause_paste = pause;
+            } else {
+                state.pause_enter = pause;
+            }
+        }
+        let executor = harness.executor.as_ref().unwrap().clone();
+        let request = harness.request("dismiss-during-write", "single write", "");
+        let sending = tokio::spawn(async move { executor.send(request).await });
+        tokio::time::timeout(Duration::from_secs(5), arrived.notified())
+            .await
+            .unwrap();
+        let before = harness.receipt("dismiss-during-write").await.unwrap();
+        assert_eq!(
+            before.state,
+            if preparing {
+                codex::State::PrepareInFlight
+            } else {
+                codex::State::EnterInFlight
+            }
+        );
+        let dismissed = tokio::time::timeout(
+            Duration::from_secs(2),
+            harness.exec().discard(&harness.uid, "dismiss-during-write"),
+        )
+        .await;
+        resume.notify_one();
+        let dismissed = dismissed.expect("retiring a receipt must not await terminal I/O");
+        assert_eq!(dismissed.status, 200, "{}", dismissed.body);
+        assert!(dismissed.body["outbox"].as_array().unwrap().is_empty());
+        resume.notify_one();
+        let reply = tokio::time::timeout(Duration::from_secs(5), sending)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply.status, 200, "{}", reply.body);
+        harness.ticks(3).await;
+        let row = harness.receipt("dismiss-during-write").await.unwrap();
+        assert!(row.dismissed && !row.visible_in_outbox() && !row.retryable());
+        let state = harness.driver.state();
+        assert_eq!(state.pasted, vec!["single write"]);
+        assert_eq!(
+            state
+                .keys
+                .iter()
+                .flatten()
+                .filter(|key| **key == "Enter")
+                .count(),
+            1
+        );
+    }
 }

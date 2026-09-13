@@ -3,7 +3,7 @@
 //! A manifest is written before the first rename (`moving`), rewritten once
 //! every named file sits inside the entry (`trashed`), and marked `partial` if
 //! a rollback after a mid-batch failure could not return every file. Restore
-//! accepts `trashed` entries only; purge accepts any state.
+//! uses the recorded file locations, including recoverable partial entries.
 
 use std::{
     fs, io,
@@ -19,13 +19,9 @@ pub const MANIFEST_VERSION: u32 = 1;
 pub const MANIFEST_NAME: &str = "manifest.json";
 pub const MANIFEST_TEMP: &str = "manifest.json.tmp";
 pub const FILES_DIR: &str = "files";
-/// Manifests are small; a larger file is not one of ours.
-pub const MANIFEST_LIMIT: u64 = 1024 * 1024;
 
-/// Size, modification time and file identity captured before a move. Rename
-/// within one filesystem preserves all three, so the same stamp verifies the
-/// file again before it is moved back. `ctime` is deliberately excluded: it
-/// changes on rename.
+/// Size, modification time and file identity captured for manifest reporting.
+/// The recorded origin determines restoration; later edits do not revoke it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stamp {
     pub size: u64,
@@ -35,8 +31,7 @@ pub struct Stamp {
 }
 
 impl Stamp {
-    /// Never follows symlinks: a link (or anything but a regular file) is an
-    /// error, not a candidate.
+    /// Capture the named entry itself so a moved link remains a link.
     pub fn capture(path: &Path) -> Result<Self, TrashError> {
         let metadata = fs::symlink_metadata(path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
@@ -49,19 +44,17 @@ impl Stamp {
                 TrashError::new(503, "stat_failed", "会话文件暂时不可检查")
             }
         })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+        if !metadata.file_type().is_symlink() && !metadata.is_file() {
             return Err(TrashError::new(
                 403,
                 "not_regular_file",
-                "索引命名的路径不是普通文件（拒绝符号链接）",
+                "索引命名的路径不是文件",
             ));
         }
         Ok(Self::from_metadata(&metadata))
     }
 
-    /// A whole session directory (Grok, WP-E): must be a directory, never a
-    /// symlink. `size` is the sum of the regular files below it (reporting
-    /// only); `identity` is the directory's own dev:ino.
+    /// Capture a whole Grok session directory or its named link for reporting.
     pub fn capture_directory(path: &Path) -> Result<Self, TrashError> {
         let metadata = fs::symlink_metadata(path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
@@ -74,26 +67,16 @@ impl Stamp {
                 TrashError::new(503, "stat_failed", "会话目录暂时不可检查")
             }
         })?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if !metadata.file_type().is_symlink() && !metadata.is_dir() {
             return Err(TrashError::new(
                 403,
                 "not_directory",
-                "索引命名的路径不是目录（拒绝符号链接）",
+                "索引命名的路径不是目录",
             ));
         }
         let mut stamp = Self::from_metadata(&metadata);
         stamp.size = directory_bytes(path);
         Ok(stamp)
-    }
-
-    /// Whether a freshly captured stamp still matches the recorded one for
-    /// `role`. A directory's size and mtime legitimately move while its
-    /// files are written or the tree is renamed, so only its identity counts.
-    pub fn matches(&self, current: &Self, role: FileRole) -> bool {
-        match role {
-            FileRole::Directory => self.identity == current.identity,
-            _ => self == current,
-        }
     }
 
     pub fn from_metadata(metadata: &fs::Metadata) -> Self {
@@ -142,39 +125,27 @@ pub enum FileRole {
     Directory,
 }
 
-/// Bytes of the regular files below a directory (no links followed; bounded
-/// depth). Reporting only: the recycle bin's `bytes`/`size` fields.
+/// Sum regular-file bytes for recycle-bin reporting without traversal quotas.
 pub fn directory_bytes(path: &Path) -> u64 {
-    fn walk(path: &Path, depth: usize, total: &mut u64, entries: &mut usize) {
-        if depth > 8 || *entries > 20_000 {
-            return;
-        }
-        let Ok(children) = fs::read_dir(path) else {
-            return;
+    let mut pending = vec![path.to_path_buf()];
+    let mut total = 0u64;
+    while let Some(directory) = pending.pop() {
+        let Ok(children) = fs::read_dir(directory) else {
+            continue;
         };
         for child in children.flatten() {
-            *entries += 1;
-            if *entries > 20_000 {
-                return;
-            }
             let Ok(kind) = child.file_type() else {
                 continue;
             };
-            if kind.is_symlink() {
-                continue;
-            }
             if kind.is_dir() {
-                walk(&child.path(), depth + 1, total, entries);
+                pending.push(child.path());
             } else if kind.is_file()
                 && let Ok(metadata) = child.metadata()
             {
-                *total = total.saturating_add(metadata.len());
+                total = total.saturating_add(metadata.len());
             }
         }
     }
-    let mut total = 0;
-    let mut entries = 0;
-    walk(path, 0, &mut total, &mut entries);
     total
 }
 
@@ -258,21 +229,18 @@ impl Manifest {
 
     pub fn read(entry_dir: &Path) -> Result<Self, TrashError> {
         let path = Self::path(entry_dir);
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+        let metadata = fs::metadata(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 TrashError::new(404, "manifest_missing", "回收站条目缺少清单")
             } else {
                 TrashError::new(503, "manifest_unreadable", "回收站清单暂时不可读取")
             }
         })?;
-        if metadata.file_type().is_symlink()
-            || !metadata.is_file()
-            || metadata.len() > MANIFEST_LIMIT
-        {
+        if !metadata.is_file() {
             return Err(TrashError::new(
                 409,
                 "manifest_invalid",
-                "回收站清单不是普通文件或超过大小限制",
+                "回收站清单不是普通文件",
             ));
         }
         let bytes = fs::read(&path)
@@ -294,25 +262,16 @@ impl Manifest {
         if !matches!(self.source.as_str(), "claude" | "codex" | "grok") {
             return Err(invalid("回收站清单来源无效"));
         }
-        if self.uid.is_empty()
-            || self.uid.len() > 256
-            || !self.uid.starts_with(&format!("{}:", self.source))
-        {
+        if self.uid.is_empty() || !self.uid.starts_with(&format!("{}:", self.source)) {
             return Err(invalid("回收站清单 UID 无效"));
         }
-        if self.files.is_empty() || self.files.len() > super::FILES_PER_ENTRY_LIMIT {
+        if self.files.is_empty() {
             return Err(invalid("回收站清单文件数量无效"));
-        }
-        if !self.origin.is_absolute() || !self.root.is_absolute() {
-            return Err(invalid("回收站清单路径必须是绝对路径"));
         }
         let mut names = std::collections::BTreeSet::new();
         for file in &self.files {
             if !super::file_name_is_valid(&file.name) || !names.insert(&file.name) {
                 return Err(invalid("回收站清单文件名无效或重复"));
-            }
-            if !file.origin.is_absolute() || !file.origin.starts_with(&self.root) {
-                return Err(invalid("回收站清单文件原始路径不在记录的数据源内"));
             }
         }
         Ok(())

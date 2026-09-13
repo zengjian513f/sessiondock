@@ -93,7 +93,7 @@ pub async fn api_policy(request: Request, next: Next) -> Response {
             }
         }
     }
-    if request.uri().to_string().len() > 16 * 1024 {
+    if request.method().as_str().len() + request.uri().to_string().len() + 12 > 64 * 1024 {
         return ApiError::new(StatusCode::URI_TOO_LONG, "uri_too_long", "请求 URI 过长")
             .into_response();
     }
@@ -102,7 +102,7 @@ pub async fn api_policy(request: Request, next: Next) -> Response {
         .get(header::CONTENT_LENGTH)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.parse::<u64>().ok())
-        .is_some_and(|n| n > 4 * 1024 * 1024)
+        .is_some_and(|n| n > crate::api::request_body_limit(request.uri().path()) as u64)
     {
         return ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,

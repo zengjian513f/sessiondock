@@ -74,16 +74,15 @@ fn text_consumers_do_not_decode_or_serialize_private_image_payloads() {
     assert_eq!(
         media
             .materialize(media.ticket(token).unwrap(), None)
-            .err()
             .unwrap()
-            .status,
-        422
+            .bytes(),
+        &[0, 0, 0]
     );
     assert_eq!(fs::read(path).unwrap(), before);
 }
 
 #[test]
-fn omitted_window_images_are_not_registered_and_selected_images_fail_only_at_get() {
+fn omitted_window_images_are_not_registered_and_selected_images_materialize_on_get() {
     let rows = (0..701)
         .map(|index| row(index, index == 150))
         .collect::<Vec<_>>();
@@ -114,10 +113,9 @@ fn omitted_window_images_are_not_registered_and_selected_images_fail_only_at_get
     assert_eq!(
         media
             .materialize(media.ticket(token).unwrap(), None)
-            .err()
             .unwrap()
-            .status,
-        422
+            .bytes(),
+        &[0, 0, 0]
     );
 }
 
@@ -203,21 +201,14 @@ fn deferred_image_source_survives_ordinary_append_and_old_view_release() {
 }
 
 #[test]
-fn image_batch_limit_is_checked_before_any_decode() {
-    let rows = (0..crate::media::MAX_ITEMS + 1)
-        .map(|index| row(index, true))
-        .collect::<Vec<_>>();
+fn image_batch_has_no_message_count_rejection() {
+    let rows = (0..257).map(|index| row(index, true)).collect::<Vec<_>>();
     let (_temp, _path, store, uid) = fixture(&rows);
     let snapshot = store.snapshot(&uid, "").unwrap();
-    // All payloads have invalid image bytes: limit admission must win before
-    // registration, rather than decoding/registering a partial oversized batch.
-    assert_eq!(
-        snapshot
-            .messages_with_media(&MessageQuery::default(), &crate::media::MediaStore::new())
-            .unwrap_err()
-            .status,
-        413
-    );
+    let projected = snapshot
+        .messages_with_media(&MessageQuery::default(), &crate::media::MediaStore::new())
+        .unwrap();
+    assert_eq!(projected["messages"].as_array().unwrap().len(), 257);
     assert!(snapshot.messages(&MessageQuery::default()).is_ok());
 }
 

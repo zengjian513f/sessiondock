@@ -377,7 +377,17 @@ async fn guardless_or_missing_ack_replacement_is_not_usable_or_silently_retried(
             let _ = ws
                 .send(Message::Binary(b"no forward".to_vec().into()))
                 .await;
-            assert_eq!(closed(&mut ws).await, 1011);
+            let closed = timeout(Duration::from_secs(3), ws.next())
+                .await
+                .unwrap()
+                .unwrap();
+            match closed {
+                Ok(Message::Close(frame)) => assert_eq!(u16::from(frame.unwrap().code), 1011),
+                #[cfg(windows)]
+                Err(tungstenite::Error::Io(error))
+                    if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                other => panic!("missing-ack connection did not close: {other:?}"),
+            }
         }
         assert_eq!(host.frames.load(Ordering::SeqCst), 0);
         // No-ack is ambiguous: a compliant guard could already have resized.

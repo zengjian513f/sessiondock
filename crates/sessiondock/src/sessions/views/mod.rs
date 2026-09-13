@@ -20,10 +20,10 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
 use super::{
-    CURSOR_SCHEMA, Candidate, FILE_LIMIT, GROK_SUMMARY_LIMIT, MessageQuery, NativeFence,
-    NativeInputRead, NativeScope, NativeUserInput, PageStore, RewindTarget, SUMMARY_LIMIT,
-    SessionError, budgets, claude_agent_of, hash, history, media_projection, native_input, pages,
-    providers, records, restamp, scope, timestamp, uid_for,
+    CURSOR_SCHEMA, Candidate, MessageQuery, NativeFence, NativeInputRead, NativeScope,
+    NativeUserInput, PageStore, RewindTarget, SessionError, budgets, claude_agent_of, hash,
+    history, media_projection, native_input, pages, providers, records, restamp, scope, timestamp,
+    uid_for,
 };
 use crate::metadata::TimelinePin;
 
@@ -36,10 +36,6 @@ fn view_limit() -> usize {
 fn view_byte_limit() -> usize {
     budgets::caches().view_bytes
 }
-/// Serialized messages of ONE view (leaf plus inherited prefixes).
-const VIEW_BYTES: usize = budgets::VIEW_BYTES;
-const DEPTH_LIMIT: usize = 32;
-
 #[derive(Clone)]
 pub(crate) struct Event {
     pub end: u64,
@@ -96,17 +92,18 @@ impl Parsed {
 fn encoded_bytes<'a>(events: impl Iterator<Item = &'a Event>) -> Result<usize, SessionError> {
     let mut size = 0usize;
     for event in events {
-        size += serde_json::to_vec(&event.message)
-            .map_err(|_| SessionError::new(500, "消息序列化失败"))?
-            .len();
-        size += event
-            .media
-            .iter()
-            .map(crate::media::NativeImage::resident_len)
-            .sum::<usize>();
-        if size > VIEW_BYTES {
-            return Err(SessionError::new(413, "逻辑历史超过 1 GiB 消息预算"));
-        }
+        size = size.saturating_add(
+            serde_json::to_vec(&event.message)
+                .map_err(|_| SessionError::new(500, "消息序列化失败"))?
+                .len(),
+        );
+        size = size.saturating_add(
+            event
+                .media
+                .iter()
+                .map(crate::media::NativeImage::resident_len)
+                .fold(0usize, usize::saturating_add),
+        );
     }
     Ok(size)
 }
@@ -445,9 +442,6 @@ impl ViewSnapshot {
 }
 
 pub(crate) fn validate_message_query(query: &MessageQuery) -> Result<(), SessionError> {
-    if query.agent.len() > 256 || query.head.len() > 256 || query.anchor.len() > 512 {
-        return Err(SessionError::new(400, "消息视图参数过长"));
-    }
     if !["", "0", "1"].contains(&query.append.as_str())
         || !["", "0", "1"].contains(&query.window.as_str())
     {
@@ -468,7 +462,7 @@ pub(crate) fn committed_records(parsed: &Parsed) -> Result<Vec<(Value, u64)>, Se
     let mut reader =
         native_input::CheckedNative::open_prefix(&candidate.root, &candidate.data, expected, cut)?;
     let mut decoder = records::Decoder::cold();
-    let index = records::scan_native_records(&mut reader, &mut decoder, None, cut, candidate)?;
+    let index = records::scan_native_records(&mut reader, &mut decoder, None, candidate)?;
     reader.finish()?;
     if index.committed() != cut
         || index.prefix_hash(cut) != Some(parsed.prefix_hash(parsed.committed))
@@ -521,17 +515,16 @@ pub(crate) fn read_bounded(
     path: &std::path::Path,
     expected: &super::FileStamp,
 ) -> Result<Vec<u8>, SessionError> {
-    read_bounded_limit(root, path, expected, FILE_LIMIT)
+    read_bounded_limit(root, path, expected)
 }
 
 fn read_bounded_limit(
     root: &std::path::Path,
     path: &std::path::Path,
     expected: &super::FileStamp,
-    limit: u64,
 ) -> Result<Vec<u8>, SessionError> {
     use std::io::Read;
-    let mut file = native_input::CheckedNative::open(root, path, expected, limit)?;
+    let mut file = native_input::CheckedNative::open(root, path, expected)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)
         .map_err(|_| SessionError::new(503, "会话文件读取失败"))?;
@@ -545,11 +538,10 @@ pub(crate) fn read_native_input(
     probe: Option<u64>,
 ) -> Result<native_input::RawIndex, SessionError> {
     let Some(expected) = candidate.data_stamp() else {
-        return records::scan_records(&b""[..], decoder, probe, FILE_LIMIT);
+        return records::scan_records(&b""[..], decoder, probe);
     };
-    let mut reader =
-        native_input::CheckedNative::open(&candidate.root, &candidate.data, expected, FILE_LIMIT)?;
-    let index = records::scan_native_records(&mut reader, decoder, probe, FILE_LIMIT, candidate)?;
+    let mut reader = native_input::CheckedNative::open(&candidate.root, &candidate.data, expected)?;
+    let index = records::scan_native_records(&mut reader, decoder, probe, candidate)?;
     reader.finish()?;
     Ok(index)
 }
@@ -565,9 +557,6 @@ pub(crate) fn parse_candidate(
     cache: &mut records::RecordCache,
     pin: Option<TimelinePin>,
 ) -> Result<Parsed, SessionError> {
-    if candidate.stamps.iter().any(|s| s.size > FILE_LIMIT) {
-        return Err(SessionError::new(413, "原生单文件超过 4 GiB 扫描预算"));
-    }
     let (record_batch, raw_index) =
         cache.decode_input(&candidate, previous, |decoder, probe| {
             read_native_input(&candidate, decoder, probe)
@@ -576,16 +565,10 @@ pub(crate) fn parse_candidate(
         .summary
         .as_ref()
         .map(|path| {
-            let limit = if candidate.source == "grok" {
-                GROK_SUMMARY_LIMIT
-            } else {
-                SUMMARY_LIMIT
-            };
             let bytes = read_bounded_limit(
                 &candidate.root,
                 path,
                 candidate.summary_stamp().expect("summary stamp"),
-                limit,
             )?;
             serde_json::from_slice::<Value>(&bytes)
                 .map_err(|_| SessionError::new(503, "会话或子代理元数据尚不是完整有效的 JSON"))
@@ -656,7 +639,7 @@ pub(crate) fn parse_candidate(
     }
     meta["uid"] = json!(uid);
     meta["source"] = json!(candidate.source);
-    meta["path"] = json!(candidate.path.to_string_lossy());
+    meta["path"] = json!(super::path_text(&candidate.path));
     meta["size"] = json!(raw_index.length());
     if candidate.source == "grok" {
         // Python `_dir_size`: the whole session directory, like the row.
@@ -1182,12 +1165,8 @@ impl Views {
         self.files
             .values()
             .map(|entry| entry.encoded)
-            .sum::<usize>()
-            + self
-                .views
-                .values()
-                .map(|cached| cached.inherited_encoded)
-                .sum::<usize>()
+            .chain(self.views.values().map(|cached| cached.inherited_encoded))
+            .fold(0, usize::saturating_add)
     }
 
     /// A parsed file for `candidate`, reusing the exact retained parse or the
@@ -1233,7 +1212,9 @@ impl Views {
         self.files.remove(&id);
         let (view_limit, view_byte_limit) = (view_limit(), view_byte_limit());
         let mut evicted = fresh;
-        while self.files.len() >= view_limit || self.bytes() + encoded > view_byte_limit {
+        while self.files.len() >= view_limit
+            || self.bytes().saturating_add(encoded) > view_byte_limit
+        {
             let oldest = self
                 .files
                 .iter()
@@ -1352,9 +1333,6 @@ pub(crate) fn open_transient(
 }
 
 fn validate_request(request: &ViewRequest) -> Result<(), SessionError> {
-    if request.agent.len() > 256 {
-        return Err(SessionError::new(400, "子代理参数过长"));
-    }
     if request.uid.is_empty() {
         return Err(SessionError::new(404, "会话不存在"));
     }
@@ -1481,7 +1459,7 @@ fn build(
     old_inherited: Option<Arc<Vec<Event>>>,
 ) -> Result<Built, SessionError> {
     let leaf = selected.clone().unwrap_or_else(|| owner.clone());
-    let (parsed, encoded) = files.file(leaf, Pin::Exact(pin.as_ref()), deps)?;
+    let (parsed, _) = files.file(leaf, Pin::Exact(pin.as_ref()), deps)?;
     let owner_parsed = match selected {
         Some(_) => Some(files.file(owner, Pin::Any, deps)?.0),
         None => None,
@@ -1522,17 +1500,11 @@ fn build(
                 prefixes: Vec::new(),
                 seen: BTreeSet::from([uid_for(parsed.candidate.source, &parsed.candidate.path)]),
             };
-            chain.inherit(parsed.candidate.source, &parsed.meta, 0)?;
+            chain.inherit(parsed.candidate.source, &parsed.meta)?;
             (chain.prefixes, Arc::new(chain.events))
         }
     };
     let inherited_encoded = encoded_bytes(inherited.iter())?;
-    if inherited_encoded + encoded > VIEW_BYTES {
-        return Err(SessionError::new(413, "逻辑历史超过 1 GiB 消息预算"));
-    }
-    if inherited.len() + parsed.events.len() > budgets::VIEW_EVENTS {
-        return Err(SessionError::new(413, "逻辑历史超过 2000000 条消息预算"));
-    }
     let digests = prefixes
         .iter()
         .map(|prefix| prefix.digest.clone())
@@ -1615,13 +1587,10 @@ struct Chain<'a> {
 }
 
 impl Chain<'_> {
-    fn inherit(&mut self, source: &str, meta: &Value, depth: usize) -> Result<(), SessionError> {
+    fn inherit(&mut self, source: &str, meta: &Value) -> Result<(), SessionError> {
         let Some((sid, cut)) = history::history_link(source, meta)? else {
             return Ok(());
         };
-        if depth >= DEPTH_LIMIT {
-            return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-        }
         let candidate = self.deps.thread("codex", sid)?;
         let uid = uid_for(candidate.source, &candidate.path);
         if !self.seen.insert(uid.clone()) {
@@ -1632,9 +1601,6 @@ impl Chain<'_> {
             .raw_bytes
             .checked_add(cut)
             .ok_or_else(|| SessionError::new(413, "继承历史预算溢出"))?;
-        if self.raw_bytes as u64 > FILE_LIMIT {
-            return Err(SessionError::new(413, "继承历史超过 4 GiB 原始前缀预算"));
-        }
         let (prefix_meta, prefix_events, digest) = match parse_prefix(&candidate, sid, cut) {
             // A parent appended between the index's stat and this open is an
             // ordinary append of an unrelated tail: read it once more with
@@ -1650,7 +1616,7 @@ impl Chain<'_> {
         };
         // Zero is an empty prefix, not permission to include grandparents.
         if cut > 0 {
-            self.inherit(candidate.source, &prefix_meta, depth + 1)?;
+            self.inherit(candidate.source, &prefix_meta)?;
             self.events
                 .extend(prefix_events.into_iter().map(|event| Event {
                     end: 0,
@@ -1693,8 +1659,7 @@ fn parse_prefix(
         cut as u64,
     )?;
     let mut decoder = records::Decoder::cold();
-    let index =
-        records::scan_native_records(&mut reader, &mut decoder, None, cut as u64, candidate)?;
+    let index = records::scan_native_records(&mut reader, &mut decoder, None, candidate)?;
     reader.finish()?;
     if index.committed() != cut as u64 {
         return Err(unsupported("父历史固定前缀不在完整 JSONL 行边界"));

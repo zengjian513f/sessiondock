@@ -50,15 +50,14 @@ pub fn send_json<W: Write>(out: &mut W, value: &serde_json::Value) -> io::Result
 }
 
 /// 读到一行 JSON 为止；buffer 保留多读的字节（帧模式紧随其后）。
-pub fn recv_json<R: Read>(
-    reader: &mut R,
-    buffer: &mut Vec<u8>,
-) -> io::Result<serde_json::Value> {
+pub fn recv_json<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Result<serde_json::Value> {
     loop {
         if let Some(at) = buffer.iter().position(|b| *b == b'\n') {
             let line: Vec<u8> = buffer.drain(..=at).collect();
             let value: serde_json::Value = serde_json::from_slice(&line[..line.len() - 1])
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("非法 JSON: {e}")))?;
+                .map_err(|e| {
+                    io::Error::new(io::ErrorKind::InvalidData, format!("非法 JSON: {e}"))
+                })?;
             if !value.is_object() {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "请求必须是对象"));
             }
@@ -211,7 +210,10 @@ mod tests {
         let value = recv_json(&mut cursor, &mut buffer).unwrap();
         assert_eq!(value["op"], "info");
         // attach 应答后紧跟的帧必须留在缓冲里，不能被吞掉
-        assert_eq!(read_frames(&mut buffer), vec![(FRAME_DATA, b"tail".to_vec())]);
+        assert_eq!(
+            read_frames(&mut buffer),
+            vec![(FRAME_DATA, b"tail".to_vec())]
+        );
     }
 
     #[test]

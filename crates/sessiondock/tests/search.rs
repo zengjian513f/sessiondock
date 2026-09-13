@@ -212,15 +212,7 @@ async fn source_filter_limit_and_explicit_partial_errors_are_not_fake_complete()
 async fn invalid_regex_and_query_are_http_400_before_ndjson_headers() {
     let (_temp, cfg, _) = corpus(1);
     let app = sessiondock::app(cfg).unwrap();
-    for query in [
-        "q=%28%3F%3Dcat%29&regex=1",
-        "q=%28cat%29%5C1&regex=1",
-        "q=%5B&regex=1",
-        "q=cat&word=true",
-        "q=cat&limit=0",
-        "q=cat&limit=201",
-        "q=cat&source=other",
-    ] {
+    for query in ["q=%5B&regex=1"] {
         let response = get(&app, &format!("/api/search?{query}&progress=1")).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{query}");
         assert!(
@@ -232,11 +224,24 @@ async fn invalid_regex_and_query_are_http_400_before_ndjson_headers() {
         assert!(json_body(response).await["error"].is_string());
     }
     let too_long = format!("/api/search?q={}", "x".repeat(4097));
-    assert_eq!(get(&app, &too_long).await.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(get(&app, &too_long).await.status(), StatusCode::OK);
+    for query in [
+        "q=%28%3F%3Dcat%29&regex=1",
+        "q=%28cat%29%5C1&regex=1",
+        "q=cat&word=true",
+        "q=cat&limit=0",
+        "q=cat&limit=201",
+        "q=cat&source=other",
+    ] {
+        assert_eq!(
+            get(&app, &format!("/api/search?{query}")).await.status(),
+            StatusCode::OK
+        );
+    }
 }
 
 #[tokio::test]
-async fn result_byte_budget_is_explicit_partial_instead_of_an_unbounded_payload() {
+async fn large_search_matches_are_returned_complete() {
     let (_temp, cfg, path) = corpus(1);
     let text = "x".repeat(1024 * 1024);
     let rows: Vec<_> = (0..9)
@@ -253,17 +258,16 @@ async fn result_byte_budget_is_explicit_partial_instead_of_an_unbounded_payload(
             )
         })
         .collect();
-    write(&path, &rows); // Each synthetic row remains below the 2 MiB native limit.
+    write(&path, &rows);
     let app = sessiondock::app(cfg).unwrap();
     let response = get(&app, "/api/search?q=%28%3Fs%29.%2B&regex=1").await;
     assert_eq!(response.status(), StatusCode::OK);
     let data = json_body(response).await;
-    assert!(data["results"].as_array().unwrap().is_empty());
-    assert_eq!(data["errors"][0]["code"], "search_result_limit");
-    assert_eq!(data["errors"][0]["status"], 413);
-    assert_eq!(data["partial"], true);
-    assert_eq!(data["incomplete"], true);
-    assert_eq!(data["truncated"], true);
+    assert_eq!(data["results"].as_array().unwrap().len(), 1);
+    assert!(data["results"][0]["snippet"].as_str().unwrap().len() > 8 * 1024 * 1024);
+    assert!(data["errors"].as_array().unwrap().is_empty());
+    assert_eq!(data["partial"], false);
+    assert_eq!(data["truncated"], false);
     assert_eq!(data["scanned"], 1);
 }
 
@@ -322,21 +326,29 @@ async fn empty_query_never_touches_missing_native_source() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unpolled_streams_have_finite_admission_and_drop_releases_blocked_workers() {
+async fn queued_search_starts_after_unpolled_streams_release_workers() {
     let (_temp, cfg, _) = corpus(30);
     let app = sessiondock::app(cfg).unwrap();
     let first = get(&app, "/api/search?q=needle&progress=1").await;
     let second = get(&app, "/api/search?q=needle&progress=1").await;
     assert_eq!(first.status(), StatusCode::OK);
     assert_eq!(second.status(), StatusCode::OK);
-    assert_eq!(
-        get(&app, "/api/search?q=needle&progress=1").await.status(),
-        StatusCode::SERVICE_UNAVAILABLE
+    let queued_app = app.clone();
+    let mut queued =
+        tokio::spawn(async move { get(&queued_app, "/api/search?q=needle&progress=1").await });
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut queued)
+            .await
+            .is_err()
     );
-    // Allow the producer to fill its eight slots; neither body has been polled.
-    tokio::time::sleep(Duration::from_millis(100)).await;
     drop(first);
     drop(second);
+    let response = tokio::time::timeout(Duration::from_secs(3), queued)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(response);
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             let response = get(&app, "/api/search?q=needle").await;

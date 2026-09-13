@@ -15,8 +15,8 @@
    的会话建立，按需增量续读，进有界 LRU；不为未打开的会话保留任何消息对象。
 4. **常驻内存与数据总量无关。** 常驻的只有每个文件一条行摘要（几百字节）
    和 LRU 里有限个视图。
-5. **没有会话数或总字节上限。** 唯一的规模限制是文件系统本身；单文件
-   4 GiB 的全量解析预算只在打开该会话时生效（413 只针对它）。
+5. **没有人为的历史容量上限。** 不以单文件、单记录、记录数、事件数或索引
+   大小拒绝读取；实际分配和 I/O 失败仍正常报告。
 6. **搜索不重复解析。** 每个主会话的可搜索正文按文件版本持久化在搜索文本
    缓存里（WP-B，见下文"搜索"）；一次搜索只读缓存、只解析版本变了的会话，
    投影结果不留驻，命中语义与逐文件流式扫描完全一致。
@@ -37,13 +37,9 @@
 ## 列表：索引与摘要
 
 - **候选发现**：Claude `<root>/<project>/<sid>.jsonl` 主会话与 `agent-*.jsonl`
-  sidecar；Codex `<root>/YYYY/MM/DD/rollout-*.jsonl`；Grok `<root>/<dir>/summary.json`
-  （+ `chat_history.jsonl`）。只走两级目录，不跟随符号链接，路径必须在根内。
-  唯一例外（第四十四批 WP-C）：Claude 续写会话把原会话的 sidecar 以符号链接放进自己的
-  `subagents/`（Python 的 `glob` 会列出它），`subagents/agent-*.jsonl` 若是链接且
-  canonicalize 后是**任一配置读根内**的普通文件则跟随：链接路径是身份（uid、按目录归属
-  给续写会话），canonical 目标是数据文件；指向根外、悬空、指向目录的链接仍跳过，主会话
-  文件一律不跟随。
+  sidecar；Codex 根下递归的 `rollout-*.jsonl`；Grok `<root>/<dir>/summary.json`
+  （+ `chat_history.jsonl`）。目录递归和普通文件链接跟随 Python 的 `glob`/`rglob`
+  语义，不另设目录层数、路径组件、canonical root 或硬链接数量门槛。
 - **stamp** = `dev/ino/size/mtime_ns`。摘要缓存以 stamp 为键：stamp 未变则
   热刷新只有 `stat`；变了只重读这一个文件。
 - **摘要读取**：头 96 KiB 内最多 40 条完整记录 + 尾 512 KiB 内的完整记录
@@ -52,7 +48,7 @@
   计数兜底）、`branch`、`created`、`updated`（`mtime`）、`size`、`model`、
   Codex `session_meta`/`history_base`、Claude `sessionId`/fork 来源、Grok
   `summary.json` 字段。Grok 的 `size` 与 Python `_dir_size` 相同：会话目录内全部普通
-  文件字节之和（递归、不进入链接目录、深度 ≤ 8 / 条目 ≤ 100 000 的防病态上限），与
+  文件字节之和（递归、不进入链接目录、没有额外深度或条目数门槛），与
   摘要一起按 summary/chat 的 stamp 缓存——Python 也只在这两个文件变化时重算。头/尾里
   发现的硬错误（`content` 标量、缺 id 等）使该行 `supported:false` 并给出
   `migration_warnings == [原因]`；坏行、重复 `session_meta` 与未知记录类型只计入
@@ -94,8 +90,8 @@
   文件（LF 检查点、前缀 digest、provider 投影、媒体片段），产出不可变
   `ViewSnapshot`。追加时从上次已提交偏移续读；stamp/前缀 digest 不一致
   （重写、截断）则重建；读取期间文件变化只对这一会话返回既有的重试码。
-- LRU：默认保留 64 个视图、序列化消息合计 2 GiB、索引容量 1 GiB
-  （物理工作预算，不是 RSS 上限）；最近使用淘汰，依赖 stamp 变化即失效。
+- LRU：默认 16 条、128 MiB 视图记账预算，最近使用淘汰，依赖 stamp 变化即
+  失效。缓存预算决定保留量，不是历史可读容量或 RSS 保证。
 - 每视图契约不变：游标 schema `rs-m2-1`、前缀散列、语义锚点、时间线 pin、
   `valid_checkpoint`、`native_checkpoint`/`native_tail`、`claude_native_inputs`、
   分页/媒体授权、`message_total`/`partial`/`activity`。见
@@ -157,13 +153,11 @@
 - **可搜索正文** = `search::body`：主视图里 `user/assistant/user·subagent/
   assistant·subagent/thinking/question/answer` 角色的语义文本按 `\n` 拼接，
   与 Python `_search_text` 相同；工具参数/输出、媒体、游标、私有片段不进正文。
-- **缓存条目**：`<SESSIONDOCK_SEARCH_CACHE_DIR>/<source>-<hex>`——目录必须是
-  显式配置、已存在、0700 的独立目录（`SESSIONDOCK_STATE_DIR` 由元数据存储独占，
-  容不下别的条目；服务不创建、不改权限，宽于 0700 即启动失败）；文件 0600、
-  同目录临时文件 + rename；首行 JSON 头（schema、构建指纹、uid、版本键、kind、
+- **缓存条目**：`<SESSIONDOCK_SEARCH_CACHE_DIR>/<source>-<hex>`——配置目录后以
+  同目录临时文件 + rename 更新；首行 JSON 头（schema、构建指纹、uid、版本键、kind、
   字节数），其后是未压缩正文（真实根 816 会话共 18 MB，读页缓存比解压快，见
-  [performance.md](performance.md)）。确定性的打开失败（501/413，如父线程不在
-  索引中的 fork）也按版本缓存，不再每次搜索重新流式解析。未配置目录时缓存只在
+  [performance.md](performance.md)）。确定性的打开失败也按版本缓存，不再每次
+  搜索重新流式解析。未配置目录时缓存只在
   内存（≤ 64 MiB）且不预热。
 - **版本键**（`SessionStore::search_version`，只 `stat` + 索引，不读正文）：数据
   文件 `size/mtime_ns/dev:ino:ctime`、Claude 显示 pin（`tip`/`stale_end`）、
@@ -185,14 +179,16 @@
   严格按候选顺序发出，`limit` 停止点与顺序扫描相同。缓存正文按行对齐的 1 MiB
   块流式匹配（块只在 `\n` 处切，不含换行的模式命中不跨块，首个命中的上下文
   跨块拼接；非最后块末尾的空匹配留给下一块计数），整个正文不进内存；只有可能
-  跨行匹配的正则（含转义、字符类、内联标志或锚点）整体读入，受 64 MiB 在途预算。
+  跨行匹配的正则整体读入；在途预算只调度内存使用，不拒绝有效查询。正则由
+  `fancy-regex` 提供 Python 所用的 lookaround 与 backreference。未知 `source` 是
+  空筛选，`flags` 只有数值等于 `1` 时启用。
 - **预热**：有持久化目录时启动 2 s 后一趟后台预热（`workers/2` 个线程，
   解析槽按"前台无人等待才取"的低优先级），之后每 `SESSIONDOCK_SEARCH_WARMUP`
   秒（默认 300，0 关闭）复查一遍版本、只补解析变了的会话；预热不占读池、
   不阻塞索引（与列表共用索引 TTL）。
 - **容量**：`SESSIONDOCK_SEARCH_CACHE_BYTES`（默认 1 GiB）按最近使用淘汰。
-- 准入：2 路并发搜索，第三路最多等 10 s 后 503 `search_busy`；每查询 8 MiB
-  结果预算，超出返回 `partial:true`；正则方言限制不变（见 [architecture.md](architecture.md)）。
+- 搜索并发在服务内部排队；没有 10 秒 Busy、查询长度、编译大小或结果总字节数的
+  Rust 专属拒绝。`limit` 与 Python 一样控制命中条数。
 
 ## 目标与验收
 
@@ -214,36 +210,31 @@
 （行字段与 Python `list_sessions` 逐字段对照）、`tests/real_roots_bench.py`
 （操作者手动、只读真实根）；既有 73 套（含六套差分与真实 CLI）保持通过。
 
-## 物理工作预算（防病态文件，不是功能上限）
+## 历史容量与读取边界
 
-只保留防止单个病态文件打爆进程的几条，数值按 2026-09-12 真实分布（Claude 291
-文件 / 352 MB，最大 51.7 MB / 23,763 行 / 最长行 1.3 MB；Codex 470 文件 /
-2.6 GB，最大 228 MB / 36,124 行 / 最长行 2.9 MB）留 10–20 倍余量；超限只会
-发生在真正损坏的文件上，处理方式是对**该会话**明确 413，列表永不受影响。
+与 Python `_iter_records` / `json.loads` 的读取容量行为对齐，不再设置 64 MiB
+记录、4 GiB 文件、100 万记录、200 万事件/检查点、1 GiB 消息/索引以及摘要
+文件的固定拒读门槛。源文件的已验证长度限定实际读取范围；JSON 语法、完整行、
+源身份、跨度长度和 digest 校验仍生效。AST 节点/键/驻留记账上界从实际输入长度
+推导，缓冲区随已读数据增长，不按允许上限预分配。
 
-| 预算 | 值 | 依据 |
-| --- | ---: | --- |
-| 单条原生记录 | 64 MiB | 真实最长行 2.9 MB |
-| 单文件全量解析 | 4 GiB | 真实最大文件 228 MB |
-| 每文件 LF 检查点 | 2,000,000 | 真实最多 36,124 行 |
-| 每视图解析记录 / 事件 | 1,000,000 / 2,000,000 | 同上 |
-| 视图序列化消息 | 1 GiB | 228 MB 文件投影后约 50–100 MB |
-| 进程内索引容量 | 1 GiB | 检查点与 digest 的记账上限（每 LF 28 字节），不是预分配 |
-| 非 Grok / Grok 摘要文件 | 256 MiB / 16 MiB | 余量 |
-| 会话数 / 读根总字节 | 无 | 列表不解析文件 |
+历史分页的 8 MiB JSON / 128 张图片 / 24 MiB 图片估算是分组目标。超过目标的
+单条消息独占一页，下一页仍能继续；每页事件数限制和游标一致性校验保留。
 
-这些值是常量，集中在 `sessions` 模块顶部并引用本表。
+结构扫描不另设重复键、嵌套深度、节点/键/数字长度门槛；重复键与 Python 一样
+由最后一个值胜出。工具 envelope 不另设层数、候选数或累计 replay work 门槛，
+媒体也不增加 Python 没有的单图容量拒绝。
 
 ## 常驻内存预算（第四十四批 WP-A）
 
-上表是防病态文件的工作上限；真正决定常驻内存的是两个 LRU 缓存，单用户机器上
-默认值如下，启动时由环境变量覆盖（`--check-config` 回显）：
+两个 LRU 缓存决定解析结果的保留量。单用户机器上的默认值如下，启动时由
+环境变量覆盖（`--check-config` 回显）：
 
 | 缓存 | 默认 | 环境变量 | 记账口径 |
 | --- | ---: | --- | --- |
-| 已解析文件 / 视图 LRU 条数 | 16 | `SESSIONDOCK_CACHE_ENTRIES`（1–256） | 条数；AST 缓存取其一半 |
-| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（16–8192） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节 |
-| 解码 AST 缓存 | 64 MiB | `SESSIONDOCK_AST_CACHE_MB`（0–8192；0 = 不保留，追加全量重解码） | `serde_json::Value` 树的估重 |
+| 已解析文件 / 视图 LRU 条数 | 16 | `SESSIONDOCK_CACHE_ENTRIES`（0 = 不保留） | 条数；AST 缓存取其一半 |
+| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节 |
+| 解码 AST 缓存 | 64 MiB | `SESSIONDOCK_AST_CACHE_MB`（0 = 不保留，追加全量重解码） | `serde_json::Value` 树的估重 |
 
 实测（真实根，2026-09-13，[performance.md](performance.md#常驻内存第四十四批-wp-a)）：
 一个视图的常驻 ≈ 记账字节的 1.2–1.6 倍（文本会话）到 ≈ 文件大小的 1.6 倍
@@ -259,8 +250,7 @@
 十次 `/proc` 扫描的 futex 调用从 2.6k 涨到 564k，CPU 反而更高。搜索的瞬时投影
 不进 LRU、不记 AST，扫完即释放并 trim，RSS 不净增。
 
-`INDEX_BYTES`（1 GiB）与 `VIEW_BYTES`（1 GiB）仍是记账上限：前者每 LF 只占 28
-字节，后者只在单个视图序列化超过 1 GiB 时才 413；两者都不是预分配。
+索引容量与视图序列化字节继续记账，但不再以固定 1 GiB 门槛拒绝读取。
 
 ## 明确不做
 

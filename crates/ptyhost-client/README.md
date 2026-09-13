@@ -162,13 +162,12 @@ methods keep their established semantics.
   negotiated protocol version yet; extension fields are ignored, not forwarded.
 
 Default budgets are 4 MiB per control line/metadata file, 64 MiB per attach frame,
-10,000 scanned directory entries, 5 seconds per control/open/write operation,
-and 10 seconds for a partial attach frame. The replay allowance includes the
-existing host's 32 MiB model backlog plus history. Budgets are configurable;
-request cancellation and screen-health policy remain application decisions.
+and 5 seconds per control/open operation. Discovery enumerates every host
+record and attached reads have no partial-frame deadline, matching Python. The
+replay allowance includes the existing host's 32 MiB model backlog plus history.
 
-An attached host may be silent indefinitely: idle reads have no timeout. Once a
-partial frame arrives it has a fixed deadline, retained across read cancellation.
+An attached host may be silent indefinitely, including after a partial frame.
+Callers may opt into a fixed partial-frame deadline retained across cancellation.
 Readers can safely be used in `tokio::select!`. Failed/truncated frames terminate
 the reader. A cancelled or failed writer cannot be reused, because part of its
 frame may already have reached the host. Drop both halves and reconnect if needed.

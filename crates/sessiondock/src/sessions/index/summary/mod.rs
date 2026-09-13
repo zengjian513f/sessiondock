@@ -40,12 +40,6 @@ pub const CODEX_HEAD_LINES: usize = 120;
 /// Python `_first_jsonl_timestamp`: a Claude sidecar's created time comes
 /// from its first 8 pieces.
 pub const CLAUDE_AGENT_CREATED_LINES: usize = 8;
-/// Whole-file budget for a Claude sidecar `agent-*.meta.json` (read-model
-/// table: 非 Grok 摘要文件 256 MiB).
-pub const SIDECAR_LIMIT: u64 = 256 * 1024 * 1024;
-/// Whole-file budget for Grok `summary.json` (read-model table: 16 MiB).
-pub const GROK_SUMMARY_LIMIT: u64 = 16 * 1024 * 1024;
-
 /// The bytes the index read from one data file, plus the stamp of the file
 /// version those bytes belong to.
 pub struct DataFile<'a> {

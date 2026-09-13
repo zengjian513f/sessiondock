@@ -14,7 +14,7 @@ use sessiondock::{
 
 const USAGE: &str = "sessiondock-hub [--check-config | register --name NAME --url http://IP:PORT --token-file FILE [--color COLOR] [--id NODE_ID] | remove NODE_ID | list]\n\
 No option serves the hub on SESSIONDOCK_HUB_BIND (default 127.0.0.1:8742).\n\
-Environment: SESSIONDOCK_HUB_NODES (registry file, required), SESSIONDOCK_HUB_CACHE_DIR, SESSIONDOCK_HUB_NETWORKS, SESSIONDOCK_WEB_DIR, SESSIONDOCK_AUDIT_DIR.";
+Environment: SESSIONDOCK_HUB_NODES (default ~/.local/share/sessiondock/hub-nodes.json), SESSIONDOCK_HUB_CACHE_DIR, SESSIONDOCK_HUB_NETWORKS, SESSIONDOCK_WEB_DIR, SESSIONDOCK_AUDIT_DIR.";
 
 fn usage_error(detail: &str) -> Box<dyn Error> {
     std::io::Error::new(

@@ -54,28 +54,18 @@ impl Read for Chunked<'_> {
         Ok(count)
     }
 }
-fn cost(raw: &[u8], plan: &DecodePlan) -> u64 {
-    raw.len() as u64
-        + plan
-            .ranges()
-            .iter()
-            .map(|range| range.decoded_len)
-            .sum::<u64>()
-}
-
 #[test]
-fn one_through_nine_layers_decode_logical_ranges_and_verify_every_parent() {
-    for depth in 1..=MAX_LAYERS {
+fn one_through_twelve_layers_decode_logical_ranges_and_verify_every_parent() {
+    for depth in 1..=12 {
         let (raw, plan, expected) = nested(depth, 11);
         for chunk in [1, 3, CHUNK] {
-            let budget = WorkBudget::new(cost(&raw, &plan));
             let source = Chunked {
                 bytes: &raw,
                 chunk,
                 interrupted: true,
                 maximum: 0,
             };
-            let mut reader = ReplayReader::new(source, &plan, budget.clone()).unwrap();
+            let mut reader = ReplayReader::new(source, &plan).unwrap();
             let mut output = Vec::new();
             let mut buffer = [0; 2];
             loop {
@@ -89,34 +79,23 @@ fn one_through_nine_layers_decode_logical_ranges_and_verify_every_parent() {
             let source = reader.finish().unwrap();
             assert!(source.bytes.is_empty());
             assert!(source.maximum <= CHUNK);
-            assert_eq!(budget.remaining(), 0);
-            assert!(
-                !budget.exhausted(),
-                "exact usage may complete zero-byte EOF"
-            );
         }
     }
 }
 
 #[test]
-fn plans_reject_empty_tenth_layer_bounds_and_overflows() {
+fn plans_accept_large_ranges_and_layers_but_reject_invalid_bounds() {
     assert!(DecodePlan::new(Vec::new()).is_err());
     let (_, plan, _) = nested(9, 1);
     let mut ten = plan.ranges().to_vec();
     ten.push(range(0, b"a", b"a"));
-    assert!(DecodePlan::new(ten).is_err());
+    assert!(DecodePlan::new(ten).is_ok());
     for invalid_range in [
         StringRange {
             start: 2,
             end: 1,
             decoded_len: 0,
             decoded_sha1: hash(b""),
-        },
-        StringRange {
-            start: 0,
-            end: MAX_RANGE + 1,
-            decoded_len: 1,
-            decoded_sha1: hash(b"a"),
         },
         StringRange {
             start: 0,
@@ -131,7 +110,7 @@ fn plans_reject_empty_tenth_layer_bounds_and_overflows() {
     let plan = DecodePlan::new(vec![range(u64::MAX - 1, b"x", b"x")]).unwrap();
     assert!(plan.with_outer_offset(1).is_err());
     let edge = StringRange {
-        start: u64::MAX - MAX_RANGE,
+        start: u64::MAX - 1,
         end: u64::MAX,
         decoded_len: 0,
         decoded_sha1: hash(b""),
@@ -152,7 +131,7 @@ fn outer_offset_does_not_shift_children_or_cause_source_seeking() {
         shifted.resident_len(),
         std::mem::size_of::<DecodePlan>() + 3 * std::mem::size_of::<StringRange>()
     );
-    let mut replay = ReplayReader::new(Cursor::new(&raw), &shifted, WorkBudget::default()).unwrap();
+    let mut replay = ReplayReader::new(Cursor::new(&raw), &shifted).unwrap();
     let mut output = Vec::new();
     replay.read_to_end(&mut output).unwrap();
     assert_eq!(output, expected);
@@ -164,7 +143,7 @@ fn unread_parent_tail_mutation_is_rejected_after_successful_child_eof() {
     for depth in [2, 3, 9] {
         let (mut raw, plan, expected) = nested(depth, CHUNK * 2);
         *raw.last_mut().unwrap() = b'Z'; // same length, still valid JSON string interior
-        let mut reader = ReplayReader::new(raw.as_slice(), &plan, WorkBudget::default()).unwrap();
+        let mut reader = ReplayReader::new(raw.as_slice(), &plan).unwrap();
         let mut output = Vec::new();
         reader.read_to_end(&mut output).unwrap();
         assert_eq!(output, expected);
@@ -182,8 +161,7 @@ fn every_layer_digest_is_checked_even_when_outer_and_leaf_digests_match() {
         let mut ranges = plan.ranges().to_vec();
         ranges[target].decoded_sha1[0] ^= 1;
         let changed = DecodePlan::new(ranges).unwrap();
-        let mut reader =
-            ReplayReader::new(raw.as_slice(), &changed, WorkBudget::default()).unwrap();
+        let mut reader = ReplayReader::new(raw.as_slice(), &changed).unwrap();
         let mut output = Vec::new();
         let read = reader.read_to_end(&mut output);
         if read.is_ok() {
@@ -196,10 +174,10 @@ fn every_layer_digest_is_checked_even_when_outer_and_leaf_digests_match() {
 #[test]
 fn final_layer_must_reach_eof_before_finish_even_with_exact_output_count() {
     let (raw, plan, expected) = nested(3, 10);
-    let mut reader = ReplayReader::new(raw.as_slice(), &plan, WorkBudget::default()).unwrap();
+    let mut reader = ReplayReader::new(raw.as_slice(), &plan).unwrap();
     reader.read_exact(&mut vec![0; expected.len()]).unwrap();
     assert!(reader.finish().is_err());
-    let mut reader = ReplayReader::new(raw.as_slice(), &plan, WorkBudget::default()).unwrap();
+    let mut reader = ReplayReader::new(raw.as_slice(), &plan).unwrap();
     assert_eq!(reader.read(&mut []).unwrap(), 0);
     assert!(reader.finish().is_err());
 }
@@ -209,11 +187,11 @@ fn empty_target_still_verifies_skipped_prefix_and_parent_tail() {
     let text = b"prefix\"\"tail";
     let raw = escaped(text);
     let plan = DecodePlan::new(vec![range(0, &raw, text), range(7, b"", b"")]).unwrap();
-    let mut reader = ReplayReader::new(raw.as_slice(), &plan, WorkBudget::default()).unwrap();
+    let mut reader = ReplayReader::new(raw.as_slice(), &plan).unwrap();
     assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
     assert!(reader.finish().unwrap().is_empty());
     let plan = DecodePlan::new(vec![range(0, b"", b"")]).unwrap();
-    let mut reader = ReplayReader::new(b"".as_slice(), &plan, WorkBudget::new(0)).unwrap();
+    let mut reader = ReplayReader::new(b"".as_slice(), &plan).unwrap();
     assert_eq!(reader.read(&mut [0; 1]).unwrap(), 0);
     reader.finish().unwrap();
 }
@@ -222,11 +200,11 @@ fn empty_target_still_verifies_skipped_prefix_and_parent_tail() {
 fn short_or_extra_outer_source_cannot_be_accepted_as_an_exact_range() {
     let raw = b"abc";
     let plan = DecodePlan::new(vec![range(900, raw, raw)]).unwrap();
-    let mut short = ReplayReader::new(b"ab".as_slice(), &plan, WorkBudget::default()).unwrap();
+    let mut short = ReplayReader::new(b"ab".as_slice(), &plan).unwrap();
     assert!(short.read_to_end(&mut Vec::new()).is_err());
     assert!(short.read(&mut [0; 1]).is_err());
     assert!(short.finish().is_err());
-    let mut extra = ReplayReader::new(b"abcd".as_slice(), &plan, WorkBudget::default()).unwrap();
+    let mut extra = ReplayReader::new(b"abcd".as_slice(), &plan).unwrap();
     let mut output = Vec::new();
     extra.read_to_end(&mut output).unwrap();
     assert_eq!(output, raw);
@@ -248,70 +226,11 @@ fn underlying_failure_is_sanitized_and_reader_failure_is_sticky() {
         }
     }
     let plan = DecodePlan::new(vec![range(0, b"abc", b"abc")]).unwrap();
-    let mut reader =
-        ReplayReader::new(Once { failed: false }, &plan, WorkBudget::default()).unwrap();
+    let mut reader = ReplayReader::new(Once { failed: false }, &plan).unwrap();
     let error = reader.read_to_end(&mut Vec::new()).unwrap_err();
     assert!(!error.to_string().contains("SECRET"));
     assert!(reader.read(&mut [0; 1]).is_err());
     assert!(reader.finish().is_err());
-}
-
-#[test]
-fn budget_is_shared_across_reopens_and_exhaustion_is_permanent() {
-    let plan = DecodePlan::new(vec![range(0, b"abc", b"abc")]).unwrap();
-    let budget = WorkBudget::new(12);
-    for remaining in [6, 0] {
-        let mut reader = ReplayReader::new(b"abc".as_slice(), &plan, budget.clone()).unwrap();
-        reader.read_to_end(&mut Vec::new()).unwrap();
-        reader.finish().unwrap();
-        assert_eq!(budget.remaining(), remaining);
-    }
-    let mut third = ReplayReader::new(b"abc".as_slice(), &plan, budget.clone()).unwrap();
-    assert_eq!(
-        third.read(&mut [0; 3]).unwrap_err().kind(),
-        io::ErrorKind::InvalidInput
-    );
-    assert!(budget.exhausted());
-    assert!(budget.charge(0).is_err());
-    assert!(ReplayReader::new(b"abc".as_slice(), &plan, budget).is_err());
-}
-
-#[test]
-fn parent_tail_drain_uses_the_same_budget_and_cannot_refresh_it() {
-    let (raw, plan, _) = nested(2, CHUNK * 2);
-    let budget = WorkBudget::new(cost(&raw, &plan) - 1);
-    let mut reader = ReplayReader::new(raw.as_slice(), &plan, budget.clone()).unwrap();
-    reader.read_to_end(&mut Vec::new()).unwrap();
-    assert_eq!(
-        reader.finish().err().unwrap().kind(),
-        io::ErrorKind::InvalidInput
-    );
-    assert!(budget.exhausted());
-}
-
-#[test]
-fn external_scanner_charges_and_concurrent_clones_share_atomic_admission() {
-    let budget = WorkBudget::new(1000);
-    let accepted = Arc::new(AtomicU64::new(0));
-    std::thread::scope(|scope| {
-        for _ in 0..4 {
-            let budget = budget.clone();
-            let accepted = accepted.clone();
-            scope.spawn(move || {
-                while budget.charge(1).is_ok() {
-                    accepted.fetch_add(1, Ordering::AcqRel);
-                }
-            });
-        }
-    });
-    assert!(accepted.load(Ordering::Acquire) <= 1000);
-    assert!(budget.exhausted());
-    assert_eq!(budget.remaining(), 0);
-    assert!(budget.charge(u64::MAX).is_err());
-    assert_eq!(WorkBudget::default().remaining(), 512 * 1024 * 1024);
-    let maximum = WorkBudget::new(u64::MAX);
-    maximum.charge(u64::MAX).unwrap();
-    assert!(maximum.charge(1).is_err());
 }
 
 #[test]
@@ -347,7 +266,6 @@ fn generated_multimegabyte_source_has_fixed_read_requests_and_no_body_buffer() {
             maximum: 0,
         },
         &plan,
-        WorkBudget::new(2 * len as u64),
     )
     .unwrap();
     assert!(std::mem::size_of_val(&reader) < 256);
@@ -358,7 +276,7 @@ fn generated_multimegabyte_source_has_fixed_read_requests_and_no_body_buffer() {
 }
 
 #[test]
-fn multimegabyte_parent_skip_and_tail_are_streamed_under_one_shared_budget() {
+fn multimegabyte_parent_skip_and_tail_are_streamed() {
     struct Generated {
         left: usize,
     }
@@ -386,15 +304,22 @@ fn multimegabyte_parent_skip_and_tail_are_streamed_under_one_shared_budget() {
         range((length / 2) as u64, b"AAAA", b"AAAA"),
     ])
     .unwrap();
-    let budget = WorkBudget::new(2 * length as u64 + 4);
-    let mut reader = ReplayReader::new(Generated { left: length }, &plan, budget.clone()).unwrap();
+    let mut reader = ReplayReader::new(Generated { left: length }, &plan).unwrap();
     let mut output = Vec::new();
     reader.read_to_end(&mut output).unwrap();
     assert_eq!(output, b"AAAA");
-    assert!(
-        budget.remaining() > 1024 * 1024,
-        "parent tail has not been silently materialized"
-    );
     assert_eq!(reader.finish().unwrap().left, 0);
-    assert_eq!(budget.remaining(), 0);
+}
+
+#[test]
+fn large_range_validation_does_not_preallocate_its_bytes() {
+    let plan = DecodePlan::new(vec![StringRange {
+        start: 0,
+        end: u64::MAX / 2,
+        decoded_len: u64::MAX / 2,
+        decoded_sha1: hash(b"synthetic"),
+    }])
+    .unwrap();
+    assert_eq!(plan.ranges().len(), 1);
+    assert!(plan.resident_len() < 1024);
 }

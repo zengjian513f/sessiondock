@@ -3,7 +3,7 @@ name = "ptyhost-client"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Isolated asynchronous client for AgentHub's local ptyhost protocol"
+description = "Isolated asynchronous client for the local ptyhost protocol"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

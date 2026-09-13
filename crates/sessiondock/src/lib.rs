@@ -276,8 +276,7 @@ fn build_app(
                 directory,
                 ptyhost_client::Limits {
                     max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
-                    max_directory_entries: 512,
-                    operation_timeout: std::time::Duration::from_secs(2),
+                    operation_timeout: std::time::Duration::from_secs(10),
                     ..Default::default()
                 },
             )
@@ -288,19 +287,12 @@ fn build_app(
         })
         .transpose()?;
     let search_cache_dir = config.search_cache_dir.clone();
-    let files = if config.file_roots.is_empty() {
-        None
-    } else {
-        Some(Arc::new(
-            files::FileService::open(config.file_roots).map_err(io::Error::other)?,
-        ))
-    };
-    // Write roots are separate authority: configuration already proved each
-    // lies inside a read root and outside every private directory. Deleted
-    // entries move into `<state>/file-trash`, never into a project tree.
-    let files_write = if config.file_write_roots.is_empty() {
-        None
-    } else {
+    let files = Some(Arc::new(
+        files::FileService::open(config.file_roots)
+            .and_then(|files| files.with_grants(config.state_dir.as_deref()))
+            .map_err(io::Error::other)?,
+    ));
+    let files_write = if terminal.is_some() || !config.file_write_roots.is_empty() {
         Some(Arc::new(
             files::WriteService::open(
                 config.file_write_roots,
@@ -309,6 +301,8 @@ fn build_app(
             )
             .map_err(io::Error::other)?,
         ))
+    } else {
+        None
     };
     let metadata = config
         .state_dir
@@ -353,13 +347,15 @@ fn build_app(
         .transpose()?
         .map(Arc::new);
     capabilities["trash"] = serde_json::json!(trash.is_some());
-    // External CLI liveness: only the explicit `/proc` scan makes `/api/live`
-    // a complete set like Python's (legacy `live:true` marks unlisted sessions
-    // as stopped); managed observations alone never do.
-    let proc_scan = (config.proc_scan && runtime::procscan::ProcScanner::supported()).then(|| {
+    // Native CLI liveness is always discovered on supported platforms like
+    // Python. Explicit proc paths remain injectable for isolated tests.
+    let proc_scan = runtime::procscan::ProcScanner::supported().then(|| {
+        let grok_active = config.grok_active.clone().or_else(|| {
+            lifecycle::model::expand_user(std::path::Path::new("~/.grok/active_sessions.json"))
+        });
         Arc::new(runtime::procscan::ProcScanner::new(
             config.proc_root.clone(),
-            config.grok_active.clone(),
+            grok_active,
             runtime::procscan::SessionRoots::new(
                 [
                     &config.roots.claude,
@@ -400,7 +396,7 @@ fn build_app(
         &config.hostname,
         &capabilities,
     )?);
-    // Batch 44 WP-A: one configurable read pool with a bounded queue; the
+    // Batch 44 WP-A: one configurable read pool; the
     // response/probe pools are derived by the documented ratios. The cache
     // budgets are process-wide and fixed by the first app built.
     let pools = config.pools.clone();
@@ -414,7 +410,6 @@ fn build_app(
             config.codex_index,
         )),
         workers: Arc::new(Semaphore::new(pools.read_workers)),
-        wait: pools.wait,
     };
     let runtime_probes = Arc::new(Semaphore::new(pools.runtime_probes()));
     // WP-B: the search-text cache (persistent only with the explicit
@@ -470,8 +465,7 @@ fn build_app(
                 host,
                 ptyhost_client::Limits {
                     max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
-                    max_directory_entries: 512,
-                    operation_timeout: std::time::Duration::from_secs(2),
+                    operation_timeout: std::time::Duration::from_secs(10),
                     ..Default::default()
                 },
             )
@@ -535,7 +529,6 @@ fn build_app(
         file_write_http: Arc::new(Semaphore::new(pools.responses())),
         runtime,
         runtime_probes,
-        admission_wait: pools.wait,
         proc_scan,
         spawn_watch,
         observations: observe::WatchHub::new(reader.clone(), shutdown.clone()),
@@ -555,7 +548,7 @@ fn build_app(
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {
         api::node_router()
-            .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+            .layer(DefaultBodyLimit::disable())
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 api::node_auth::node_auth,
@@ -565,7 +558,7 @@ fn build_app(
     let router = Router::new()
         .nest("/api", api::router())
         .fallback(assets::serve)
-        .layer(DefaultBodyLimit::max(4 * 1024 * 1024))
+        .layer(DefaultBodyLimit::disable())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             security::local_only,

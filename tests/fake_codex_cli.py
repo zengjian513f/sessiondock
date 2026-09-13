@@ -25,7 +25,7 @@ rollout shape to the resumed rollout under `$AGENTHUB_TEST_CODEX_ROOT`:
 Options:
   --delay MS       write the turn MS milliseconds after Enter (slow TUI)
   --swallow N      drop the N-th submitted line (1-based) without any record
-  --no-turn-id     omit the user record's turn identity (stays uncertain)
+  --no-turn-id     omit the user record's turn identity (text still confirms)
   --duplicate      write the user record twice (ambiguous for the adapter)
   --reply          also append a synthetic assistant reply before task_complete
   --busy-footer    show Codex's "Working … esc to interrupt" status while delayed

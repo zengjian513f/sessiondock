@@ -218,17 +218,16 @@ def run(corpus,cases,fork,base,opener,owned):
         assert texts(read(sid))==expected
 
         clean=owned.expected[path]
-        # Batch 35: a complete line that is not JSON (or repeats a key) is skipped
-        # like the Python adapters, keeping its bytes; only a record whose shape
-        # Python cannot read either (scalar content) still fails closed.
-        for skipped in (b'{"type":]\n',b'{"type":"user","type":"assistant"}\n'):
-            owned.write(path,clean+skipped)
-            noted=read(sid,current)
-            assert noted["reset"] is False and texts(noted)==[] and noted["end"]==len(clean)+len(skipped)
-            assert any(w.startswith("跳过无效的JSONL 记录") for w in noted["meta"].get("migration_warnings") or []),noted["meta"]
-            owned.write(path,clean)
-            restored=read(sid)
-            assert texts(restored)==expected and restored["end"]==len(clean)
+        # A malformed complete line is skipped while keeping its bytes in the
+        # physical cursor.
+        malformed=b'{"type":]\n'
+        owned.write(path,clean+malformed)
+        noted=read(sid,current)
+        assert noted["reset"] is False and texts(noted)==[] and noted["end"]==len(clean)+len(malformed)
+        owned.write(path,clean)
+        restored=read(sid)
+        assert texts(restored)==expected and restored["end"]==len(clean)
+
         owned.write(path,clean+encoded(unreadable(source,sid,9)))
         reject(sid);reject(sid,current)
         owned.write(path,clean)

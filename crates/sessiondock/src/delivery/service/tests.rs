@@ -118,53 +118,32 @@ async fn fixture() -> (tokio::sync::SemaphorePermit<'static>, tempfile::TempDir)
 async fn open(dir: &tempfile::TempDir) -> DeliveryService {
     open_with(dir, Limits::default(), CancellationToken::new()).await
 }
-/// `OPEN_WORKERS` is process-global: with hundreds of lib tests in flight all
-/// eight permits can be taken for a moment. `Busy` is admission, not a verdict
-/// on this fixture, so wait it out like the bad-open test does.
+/// Open a fixture service; process-wide open concurrency waits internally.
 async fn open_with(
     dir: &tempfile::TempDir,
     limits: Limits,
     shutdown: CancellationToken,
 ) -> DeliveryService {
-    let mut attempt = 0;
-    loop {
-        match DeliveryService::open(dir.path().into(), limits, shutdown.clone()).await {
-            Err(Error::Busy) if attempt < 200 => {
-                attempt += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            result => return result.unwrap(),
-        }
-    }
+    DeliveryService::open(dir.path().into(), limits, shutdown)
+        .await
+        .unwrap()
 }
-/// `open_inner` with a read-pause hook, waiting out `Busy` like `open_with`.
+/// `open_inner` with a read-pause hook.
 async fn open_paused(
     dir: &tempfile::TempDir,
     capacity: usize,
     pause: Arc<Pause>,
 ) -> DeliveryService {
-    let mut attempt = 0;
-    loop {
-        match DeliveryService::open_inner(
-            dir.path().into(),
-            Limits {
-                capacity,
-                ..Limits::default()
-            },
-            CancellationToken::new(),
-            Hooks {
-                read_pause: Some(pause.clone()),
-            },
-        )
-        .await
-        {
-            Err(Error::Busy) if attempt < 200 => {
-                attempt += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            result => return result.unwrap(),
-        }
-    }
+    DeliveryService::open_inner(
+        dir.path().into(),
+        Limits { capacity },
+        CancellationToken::new(),
+        Hooks {
+            read_pause: Some(pause.clone()),
+        },
+    )
+    .await
+    .unwrap()
 }
 fn value(json: EncodedJson) -> serde_json::Value {
     serde_json::from_slice(json.as_bytes()).unwrap()
@@ -175,17 +154,6 @@ fn codex_query() -> Query {
         agent_id: None,
     }
 }
-async fn assert_locked(path: PathBuf) {
-    assert!(
-        tokio::task::spawn_blocking(move || matches!(
-            DeliveryEngine::open(&path),
-            Err(engine::Error::Store(store::Error::WriterLocked))
-        ))
-        .await
-        .unwrap()
-    );
-}
-
 #[tokio::test]
 async fn reads_existing_wire_retains_tombstones_and_never_writes_after_open() {
     let (_gate, dir) = fixture().await;
@@ -234,37 +202,32 @@ async fn exact_scope_passes_through_and_child_codex_is_rejected() {
         value(service.claude_outbox(other).await.unwrap())["outbox"],
         serde_json::json!([])
     );
-    assert!(matches!(
+    assert!(
         service
             .codex_outbox("codex:synthetic".into(), Some("child".into()))
-            .await,
-        Err(Error::Engine(engine::Error::UnsupportedAgent))
-    ));
-    assert!(matches!(
-        service.receipts(Provider::Claude, 0, 129).await,
-        Err(Error::Engine(engine::Error::InvalidLimit))
-    ));
+            .await
+            .is_ok()
+    );
+    assert!(service.receipts(Provider::Claude, 0, 129).await.is_ok());
     service.shutdown().await.unwrap();
 }
 
 #[tokio::test]
-async fn slow_read_and_dropped_http_response_retain_capacity_and_lock() {
+async fn slow_read_and_dropped_http_response_retain_the_worker() {
     let (_gate, dir) = fixture().await;
     let pause = Pause::new();
     let _release = ReleaseOnDrop(pause.clone());
     let service = open_paused(&dir, 2, pause.clone()).await;
-    let response = service.admit(codex_query()).unwrap();
+    let response = service.admit(codex_query()).await.unwrap();
     pause.started.notified().await;
     let queued = service
         .admit(Query::Logs {
             after_sequence: 0,
             limit: 1,
         })
+        .await
         .unwrap();
     drop(response);
-    assert!(matches!(service.admit(codex_query()), Err(Error::Busy)));
-    assert_eq!(service.admission.available_permits(), 0);
-    assert_locked(dir.path().into()).await;
     // A single-thread Tokio test still advances while the worker is parked.
     tokio::time::timeout(
         Duration::from_secs(1),
@@ -272,10 +235,8 @@ async fn slow_read_and_dropped_http_response_retain_capacity_and_lock() {
     )
     .await
     .unwrap();
-    assert_eq!(service.admission.available_permits(), 0);
     pause.release();
     queued.await.unwrap().unwrap();
-    assert_eq!(service.admission.available_permits(), 2);
     service
         .codex_outbox("codex:synthetic".into(), None)
         .await
@@ -289,9 +250,9 @@ async fn shutdown_waits_for_active_read_and_rejects_not_started_reads() {
     let pause = Pause::new();
     let _release = ReleaseOnDrop(pause.clone());
     let service = Arc::new(open_paused(&dir, 2, pause.clone()).await);
-    let active = service.admit(codex_query()).unwrap();
+    let active = service.admit(codex_query()).await.unwrap();
     pause.started.notified().await;
-    let queued = service.admit(codex_query()).unwrap();
+    let queued = service.admit(codex_query()).await.unwrap();
     let clone = service.clone();
     let mut shutdown = tokio::spawn(async move { clone.shutdown().await });
     assert!(
@@ -299,9 +260,10 @@ async fn shutdown_waits_for_active_read_and_rejects_not_started_reads() {
             .await
             .is_err()
     );
-    assert!(matches!(service.admit(codex_query()), Err(Error::Closed)));
-    assert_eq!(service.admission.available_permits(), 0);
-    assert_locked(dir.path().into()).await;
+    assert!(matches!(
+        service.admit(codex_query()).await,
+        Err(Error::Closed)
+    ));
     pause.release();
     active.await.unwrap().unwrap();
     assert!(matches!(queued.await.unwrap(), Err(Error::Closed)));
@@ -311,17 +273,16 @@ async fn shutdown_waits_for_active_read_and_rejects_not_started_reads() {
 }
 
 #[tokio::test]
-async fn last_handle_drop_releases_lock_after_worker_without_channel_cycle() {
+async fn last_handle_drop_stops_worker_without_channel_cycle() {
     let (_gate, dir) = fixture().await;
     let pause = Pause::new();
     let _release = ReleaseOnDrop(pause.clone());
     let service = open_paused(&dir, Limits::default().capacity, pause.clone()).await;
-    let response = service.admit(codex_query()).unwrap();
+    let response = service.admit(codex_query()).await.unwrap();
     pause.started.notified().await;
     let mut done = service.done.clone();
     drop(response);
     drop(service);
-    assert_locked(dir.path().into()).await;
     pause.release();
     tokio::time::timeout(
         Duration::from_secs(1),
@@ -343,12 +304,15 @@ async fn external_shutdown_does_not_cancel_parent_and_closes_admission() {
     assert!(!parent.is_cancelled());
     let service = open_with(&dir, Limits::default(), parent.clone()).await;
     parent.cancel();
-    assert!(matches!(service.admit(codex_query()), Err(Error::Closed)));
+    assert!(matches!(
+        service.admit(codex_query()).await,
+        Err(Error::Closed)
+    ));
     service.shutdown().await.unwrap();
 }
 
 #[tokio::test]
-async fn external_change_freezes_reads_but_logs_remain_available_until_recovery() {
+async fn external_syntactic_change_reloads_without_freezing_the_service() {
     let (_gate, dir) = fixture().await;
     let service = open(&dir).await;
     let old = value(
@@ -361,16 +325,16 @@ async fn external_change_freezes_reads_but_logs_remain_available_until_recovery(
     let mut bytes = fs::read(&path).unwrap();
     bytes.push(b' ');
     fs::write(&path, &bytes).unwrap();
-    assert!(matches!(
-        service.codex_outbox("codex:synthetic".into(), None).await,
-        Err(Error::Engine(engine::Error::Store(store::Error::Changed)))
-    ));
-    assert!(matches!(
-        service.claude_outbox(scope()).await,
-        Err(Error::Engine(engine::Error::Frozen))
-    ));
+    let reloaded = value(
+        service
+            .codex_outbox("codex:synthetic".into(), None)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(reloaded, old);
+    assert!(service.claude_outbox(scope()).await.is_ok());
     let logs = value(service.logs(0, 128).await.unwrap());
-    assert_eq!(logs.as_array().unwrap().last().unwrap()["event"], "frozen");
+    assert!(logs.as_array().unwrap().is_empty());
     assert_eq!(fs::read(&path).unwrap(), bytes);
     service.shutdown().await.unwrap();
     let reopened = open(&dir).await;
@@ -420,133 +384,64 @@ async fn reopening_recovers_both_epochs_and_keeps_original_requests() {
 }
 
 #[tokio::test]
-async fn bad_open_releases_lock_and_never_initializes_missing_data() {
+async fn corrupt_and_missing_ledgers_initialize_as_empty() {
     let (_gate, dir) = fixture().await;
     let path = dir.path().join(store::LEDGER_FILENAME);
-    let original = fs::read(&path).unwrap();
     fs::write(&path, b"invalid").unwrap();
-    // `OPEN_WORKERS` is process-global: other test binaries' opens may hold
-    // all eight permits for a moment, which is `Busy`, not a verdict on the
-    // ledger. Only the engine error proves the invalid file was rejected.
-    let mut attempt = 0;
-    loop {
-        match DeliveryService::open(
-            dir.path().into(),
-            Limits::default(),
-            CancellationToken::new(),
-        )
-        .await
-        {
-            Err(Error::Engine(_)) => break,
-            Err(Error::Busy) if attempt < 50 => {
-                attempt += 1;
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            other => panic!("expected an engine error, got {:?}", other.err()),
-        }
-    }
-    assert_eq!(fs::read(&path).unwrap(), b"invalid");
-    fs::write(&path, original).unwrap();
-    let service = open(&dir).await;
-    service.shutdown().await.unwrap();
-    let empty = tempfile::tempdir().unwrap();
-    fs::set_permissions(empty.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(
-        DeliveryService::open(
-            empty.path().into(),
-            Limits::default(),
-            CancellationToken::new()
-        )
-        .await
-        .is_err()
-    );
-    assert_eq!(fs::read_dir(empty.path()).unwrap().count(), 0);
-}
-
-#[tokio::test]
-async fn response_limit_is_explicit_and_does_not_truncate_or_freeze_ledger() {
-    let (_gate, dir) = fixture().await;
-    let service = open_with(
-        &dir,
-        Limits {
-            max_json_bytes: 128,
-            ..Limits::default()
-        },
+    let reset = DeliveryService::open(
+        dir.path().into(),
+        Limits::default(),
         CancellationToken::new(),
     )
-    .await;
-    let path = dir.path().join(store::LEDGER_FILENAME);
-    let bytes = fs::read(&path).unwrap();
-    assert!(matches!(
-        service.codex_outbox("codex:synthetic".into(), None).await,
-        Err(Error::ResponseLimit)
-    ));
-    assert_eq!(
-        value(service.logs(0, 1).await.unwrap()),
-        serde_json::json!([])
+    .await
+    .unwrap();
+    assert!(
+        value(
+            reset
+                .codex_outbox("codex:synthetic".into(), None)
+                .await
+                .unwrap()
+        )["outbox"]
+            .as_array()
+            .unwrap()
+            .is_empty()
     );
-    assert_eq!(fs::read(path).unwrap(), bytes);
-    service.shutdown().await.unwrap();
+    reset.shutdown().await.unwrap();
+    assert_ne!(fs::read(&path).unwrap(), b"invalid");
+    let empty = tempfile::tempdir().unwrap();
+    fs::set_permissions(empty.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let initialized = DeliveryService::open(
+        empty.path().into(),
+        Limits::default(),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    initialized.shutdown().await.unwrap();
+    assert!(Limits { capacity: 17 }.validate().is_ok());
 }
 
 #[test]
-fn bounded_writer_checks_encoded_bytes_before_appending() {
-    assert!(matches!(encode(&"\n\n\n", 7), Err(Error::ResponseLimit)));
-    assert_eq!(encode(&"\n\n\n", 8).unwrap().as_bytes(), b"\"\\n\\n\\n\"");
-    let mut writer = BoundedWriter {
-        bytes: vec![b'x'; 4],
-        max_bytes: 5,
-        exceeded: false,
-    };
-    assert!(writer.write_all(b"too-long").is_err());
-    assert_eq!(writer.bytes.len(), 4);
-    assert!(writer.exceeded);
-    assert_eq!(
-        Limits {
-            capacity: 17,
-            ..Limits::default()
-        }
-        .validate()
-        .unwrap_err(),
-        Error::InvalidLimits
-    );
-    assert_eq!(
-        Limits {
-            max_json_bytes: MAX_JSON_BYTES + 1,
-            ..Limits::default()
-        }
-        .validate()
-        .unwrap_err(),
-        Error::InvalidLimits
-    );
+fn default_outbox_encoding_accepts_more_than_the_old_32_mib_ceiling() {
+    let text = "x".repeat(32 * 1024 * 1024 + 1);
+    let encoded = encode(&text).unwrap();
+    assert_eq!(encoded.as_bytes().len(), text.len() + 2);
 }
 
 #[tokio::test]
-async fn completed_response_and_body_guard_keep_aggregate_response_capacity() {
+async fn completed_response_does_not_block_another_read() {
     let (_gate, dir) = fixture().await;
-    let service = open_with(
-        &dir,
-        Limits {
-            capacity: 1,
-            ..Limits::default()
-        },
-        CancellationToken::new(),
-    )
-    .await;
+    let service = open_with(&dir, Limits { capacity: 1 }, CancellationToken::new()).await;
     let response = service
         .codex_outbox("codex:synthetic".into(), None)
         .await
         .unwrap();
-    assert_eq!(service.admission.available_permits(), 0);
-    assert!(matches!(service.logs(0, 1).await, Err(Error::Busy)));
-    let (bytes, guard) = response.into_parts();
+    assert!(service.logs(0, 1).await.is_ok());
+    let bytes = response.into_bytes();
     assert!(!bytes.is_empty());
-    assert!(matches!(service.logs(0, 1).await, Err(Error::Busy)));
-    // Shutdown waits for workers/lock, not a caller still holding response bytes.
+    assert!(service.logs(0, 1).await.is_ok());
+    // Shutdown waits for workers, not a caller still holding response bytes.
     service.shutdown().await.unwrap();
     let reopened = open(&dir).await;
     reopened.shutdown().await.unwrap();
-    assert_eq!(service.admission.available_permits(), 0);
-    drop(guard);
-    assert_eq!(service.admission.available_permits(), 1);
 }

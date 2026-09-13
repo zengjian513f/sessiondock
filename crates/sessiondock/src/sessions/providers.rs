@@ -334,13 +334,6 @@ fn parse_context<'a>(
         if let Err(reason) = result {
             return (meta, Vec::new(), Some(reason));
         }
-        if parser.events.len() > super::budgets::VIEW_EVENTS {
-            return (
-                meta,
-                Vec::new(),
-                Some("消息数超过 2000000 条限制".to_owned()),
-            );
-        }
     }
     // Non-fatal: the session stays supported; the row reports what was skipped.
     meta["migration_warnings"] = json!(parser.skipped.warnings());
@@ -731,9 +724,6 @@ impl Parser<'_> {
         extra: Value,
         media: Vec<crate::media::NativeImage>,
     ) -> Result<(), String> {
-        if media.len() > image_content::MAX_MEDIA {
-            return Err("单条消息内嵌图片超过 256 张限制".into());
-        }
         self.emit(end, role, text, ts, extra);
         self.events.last_mut().expect("emit adds an event").media = media;
         Ok(())

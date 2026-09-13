@@ -12,7 +12,7 @@
 use serde_json::{Value, json};
 
 #[cfg(test)]
-use super::{Candidate, Event, NativeScope, View, budgets, providers};
+use super::{Candidate, Event, NativeScope, View, providers};
 use super::{Parsed, SessionError, hash};
 #[cfg(test)]
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,15 +21,6 @@ use std::sync::Arc;
 
 #[cfg(test)]
 type Inventory = BTreeMap<String, Arc<Parsed>>;
-#[cfg(test)]
-const DEPTH_LIMIT: usize = 32;
-#[cfg(test)]
-const RAW_PREFIX_LIMIT: usize = budgets::FILE_BYTES as usize;
-#[cfg(test)]
-const EVENT_LIMIT: usize = budgets::VIEW_EVENTS;
-#[cfg(test)]
-const EVENT_BYTE_LIMIT: usize = budgets::VIEW_BYTES;
-
 /// Must match the ordinary physical cursor produced by the inventory parser.
 /// In particular Codex agent parsing does not need an HTTP `agent` argument.
 pub(super) fn native_identity(parsed: &Parsed, agent: &str) -> String {
@@ -254,9 +245,6 @@ impl<'a> Graph<'a> {
             if !seen.insert(current.clone()) {
                 return Err(unsupported("子代理归属关系存在循环"));
             }
-            if chain.len() > DEPTH_LIMIT {
-                return Err(SessionError::new(413, "子代理归属超过 32 层限制"));
-            }
             chain.push(current.clone());
             let Some(agent) = self.agents.get(&current) else {
                 return Ok((current, chain));
@@ -322,7 +310,7 @@ impl<'a> Graph<'a> {
         dependencies.insert(selection.selected.clone());
         let mut current = selection.selected.clone();
         let mut seen = BTreeSet::new();
-        for depth in 0..=DEPTH_LIMIT {
+        loop {
             if !seen.insert(current.clone()) {
                 return Err(unsupported("分叉历史依赖存在循环"));
             }
@@ -331,12 +319,8 @@ impl<'a> Graph<'a> {
             let Some(sid) = relation_sid(parsed.candidate.source, &parsed.meta) else {
                 return Ok(dependencies.into_iter().collect());
             };
-            if depth == DEPTH_LIMIT {
-                return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-            }
             current = self.history_parent(sid)?;
         }
-        unreachable!("bounded loop returns")
     }
 
     /// Metadata-only validation. No parser call or event copy for every row.
@@ -349,9 +333,6 @@ impl<'a> Graph<'a> {
             let Some((sid, cut)) = history_link(parsed.candidate.source, &parsed.meta)? else {
                 return Ok(chain);
             };
-            if chain.len() >= DEPTH_LIMIT {
-                return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-            }
             let parent = self.history_parent(sid)?;
             if !seen.insert(parent.clone()) {
                 return Err(unsupported("分叉历史依赖存在循环"));
@@ -627,9 +608,6 @@ impl Builder<'_> {
     /// Charge `events` against the view budgets; inherited ones are copied
     /// with a zero physical end, the leaf's own are only counted.
     fn push(&mut self, events: &[Event], inherited: bool) -> Result<(), SessionError> {
-        if self.event_count + events.len() > EVENT_LIMIT {
-            return Err(SessionError::new(413, "逻辑历史超过 2000000 条消息预算"));
-        }
         self.event_count += events.len();
         for event in events {
             self.event_bytes += serde_json::to_vec(&event.message)
@@ -640,9 +618,6 @@ impl Builder<'_> {
                 .iter()
                 .map(crate::media::NativeImage::resident_len)
                 .sum::<usize>();
-            if self.event_bytes > EVENT_BYTE_LIMIT {
-                return Err(SessionError::new(413, "逻辑历史超过 1 GiB 消息预算"));
-            }
             if inherited {
                 self.events.push(Event {
                     end: 0,
@@ -654,13 +629,10 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn inherit(&mut self, source: &str, meta: &Value, depth: usize) -> Result<(), SessionError> {
+    fn inherit(&mut self, source: &str, meta: &Value) -> Result<(), SessionError> {
         let Some((sid, cut)) = history_link(source, meta)? else {
             return Ok(());
         };
-        if depth >= DEPTH_LIMIT {
-            return Err(SessionError::new(413, "分叉历史超过 32 层限制"));
-        }
         let uid = self.graph.history_parent(sid)?;
         if !self.seen.insert(uid.clone()) {
             return Err(unsupported("分叉历史依赖存在循环"));
@@ -672,13 +644,10 @@ impl Builder<'_> {
             .raw_bytes
             .checked_add(cut)
             .ok_or_else(|| SessionError::new(413, "继承历史预算溢出"))?;
-        if self.raw_bytes > RAW_PREFIX_LIMIT {
-            return Err(SessionError::new(413, "继承历史超过 4 GiB 原始前缀预算"));
-        }
         // Zero is an empty prefix, not permission to include grandparents.
         if cut > 0 {
             let (prefix_meta, prefix_events) = parse_prefix(parsed, cut)?;
-            self.inherit(parsed.candidate.source, &prefix_meta, depth + 1)?;
+            self.inherit(parsed.candidate.source, &prefix_meta)?;
             self.push(&prefix_events, true)?;
         }
         self.digests
@@ -702,13 +671,7 @@ fn parse_prefix(parsed: &Parsed, cut: usize) -> Result<(Value, Vec<Event>), Sess
         cut as u64,
     )?;
     let mut decoder = super::records::Decoder::cold();
-    let index = super::records::scan_native_records(
-        &mut reader,
-        &mut decoder,
-        None,
-        cut as u64,
-        candidate,
-    )?;
+    let index = super::records::scan_native_records(&mut reader, &mut decoder, None, candidate)?;
     reader.finish()?;
     if index.committed() != cut as u64
         || index.prefix_hash(cut as u64) != Some(parsed.prefix_hash(cut))
@@ -764,7 +727,7 @@ pub(super) fn resolve(inventory: &Inventory, uid: &str, agent: &str) -> Result<V
         seen: BTreeSet::from([selection.selected.clone()]),
         actual_dependencies: BTreeSet::new(),
     };
-    builder.inherit(parsed.candidate.source, &parsed.meta, 0)?;
+    builder.inherit(parsed.candidate.source, &parsed.meta)?;
     builder.push(&parsed.events, false)?;
     let native = native_identity(&parsed, agent);
     let identity = inherited_identity(native, builder.digests);
@@ -912,11 +875,7 @@ mod tests {
             _fixture: Some(fixture),
             native_id,
             semantic_digest: super::super::projection_digest(&events, bytes.len()),
-            raw_index: super::super::native_input::RawIndex::scan(
-                bytes.as_slice(),
-                Default::default(),
-            )
-            .unwrap(),
+            raw_index: super::super::native_input::RawIndex::scan(bytes.as_slice()).unwrap(),
             candidate: Candidate {
                 source,
                 root,
@@ -943,9 +902,7 @@ mod tests {
         std::fs::write(&parsed.candidate.data, &bytes).unwrap();
         parsed.candidate.stamps = vec![super::super::stamp(&parsed.candidate.data).unwrap()];
         parsed.committed = bytes.len();
-        parsed.raw_index =
-            super::super::native_input::RawIndex::scan(bytes.as_slice(), Default::default())
-                .unwrap();
+        parsed.raw_index = super::super::native_input::RawIndex::scan(bytes.as_slice()).unwrap();
     }
 
     fn codex(uid: &str, records: &[Value]) -> Arc<Parsed> {
@@ -1554,10 +1511,10 @@ mod tests {
     }
 
     #[test]
-    fn history_depth_and_output_count_have_bounded_failures() {
+    fn deep_history_and_large_output_have_no_service_quota() {
         let mut inventory = Inventory::new();
         inventory.insert("0".to_owned(), codex("0", &[header("sid-0")]));
-        for depth in 1..=DEPTH_LIMIT + 1 {
+        for depth in 1..=40 {
             let uid = depth.to_string();
             inventory.insert(
                 uid.clone(),
@@ -1571,14 +1528,8 @@ mod tests {
                 ),
             );
         }
-        assert!(resolve(&inventory, &DEPTH_LIMIT.to_string(), "").is_ok());
-        assert_eq!(
-            dependencies(&inventory, &(DEPTH_LIMIT + 1).to_string(), "")
-                .err()
-                .unwrap()
-                .status,
-            413
-        );
+        assert!(resolve(&inventory, "40", "").is_ok());
+        assert_eq!(dependencies(&inventory, "40", "").unwrap().len(), 41);
         let mut huge = codex("huge", &[header("huge-sid")]);
         Arc::get_mut(&mut huge).unwrap().events = vec![
             Event {
@@ -1586,9 +1537,9 @@ mod tests {
                 message: json!({"role":"user","text":"x"}),
                 media: Vec::new(),
             };
-            EVENT_LIMIT + 1
+            2_000_001
         ];
         let inventory = BTreeMap::from([("huge".to_owned(), huge)]);
-        assert_eq!(resolve(&inventory, "huge", "").err().unwrap().status, 413);
+        assert!(resolve(&inventory, "huge", "").is_ok());
     }
 }

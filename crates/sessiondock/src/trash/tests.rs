@@ -108,25 +108,21 @@ fn liveness_without_runtime_is_unknown_and_never_running() {
 }
 
 #[test]
-fn entry_ids_and_file_names_are_strict() {
-    assert!(entry_id_is_valid(
-        "20260912T080000Z-claude-0123456789abcdef-a1b2c3d4"
-    ));
-    for bad in [
-        "",
-        ".",
-        "..",
+fn entry_ids_and_file_names_are_single_components() {
+    for name in [
+        "20260912T080000Z-claude-a",
         "-x",
-        "a/b",
         "a b",
-        "a\u{0}",
+        "中文😀",
+        ".hidden",
         &"x".repeat(129),
     ] {
-        assert!(!entry_id_is_valid(bad), "{bad:?}");
+        assert!(entry_id_is_valid(name));
+        assert!(super::file_name_is_valid(name));
     }
-    assert!(super::file_name_is_valid("0-session.jsonl"));
-    for bad in ["", ".hidden", "..", "a/b", "a b"] {
-        assert!(!super::file_name_is_valid(bad), "{bad:?}");
+    for name in ["", ".", "..", "a/b", "a\\b", "a\0"] {
+        assert!(!entry_id_is_valid(name));
+        assert!(!super::file_name_is_valid(name));
     }
 }
 
@@ -194,7 +190,7 @@ fn manifest_round_trips_and_rejects_foreign_shapes() {
     let mut escaping = manifest.clone();
     escaping.files[0].origin = temp.path().join("elsewhere/sid.jsonl");
     escaping.write(&entry).unwrap();
-    assert_eq!(Manifest::read(&entry).unwrap_err().code, "manifest_invalid");
+    assert_eq!(Manifest::read(&entry).unwrap(), escaping);
     fs::write(Manifest::path(&entry), b"not json").unwrap();
     assert_eq!(Manifest::read(&entry).unwrap_err().code, "manifest_invalid");
     fs::remove_file(Manifest::path(&entry)).unwrap();
@@ -273,7 +269,7 @@ fn forced() -> Liveness {
 }
 
 #[test]
-fn plan_names_exactly_the_inventory_files_and_rejects_links() {
+fn plan_uses_inventory_paths_including_aliases() {
     let tree = Tree::new();
     let row = tree.claude_session("main", &["one"]);
     let plan = Plan::derive(&row, &tree.roots).unwrap();
@@ -302,69 +298,35 @@ fn plan_names_exactly_the_inventory_files_and_rejects_links() {
         plan.bytes(),
         (b"{\"info\":{}}".len() + b"{}\n".len() + b"keep".len()) as u64
     );
-    // A Grok directory without its summary is not a session any more.
-    let mut headless = tree.grok_session("h", true);
+    let headless = tree.grok_session("h", true);
     fs::remove_file(Path::new(headless["path"].as_str().unwrap()).join("summary.json")).unwrap();
-    headless["chat_exists"] = json!(true);
-    assert_eq!(
-        Plan::derive(&headless, &tree.roots).unwrap_err().code,
-        "changed_since_inventory"
-    );
-    let outside = row.clone();
-    let mut outside = outside;
-    outside["path"] = json!(tree.temp.path().join("codex/x.jsonl").to_string_lossy());
-    assert_eq!(
-        Plan::derive(&outside, &tree.roots).unwrap_err().code,
-        "path_outside_root"
-    );
+    assert!(Plan::derive(&headless, &tree.roots).is_ok());
     let mut relative = row.clone();
     relative["path"] = json!(format!(
         "{}/project/../project/main.jsonl",
-        tree.roots.claude.as_ref().unwrap().display()
+        crate::sessions::path_text(tree.roots.claude.as_ref().unwrap())
     ));
-    assert_eq!(
-        Plan::derive(&relative, &tree.roots).unwrap_err().code,
-        "path_outside_root"
-    );
+    assert!(Plan::derive(&relative, &tree.roots).is_ok());
     #[cfg(unix)]
     {
         let link = tree
             .roots
             .claude
-            .clone()
+            .as_ref()
             .unwrap()
             .join("project/link.jsonl");
-        std::os::unix::fs::symlink(
-            tree.roots
-                .claude
-                .clone()
-                .unwrap()
-                .join("project/main.jsonl"),
-            &link,
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(Path::new(row["path"].as_str().unwrap()), &link).unwrap();
         let mut linked = row.clone();
         linked["path"] = json!(link.to_string_lossy());
-        assert_eq!(
-            Plan::derive(&linked, &tree.roots).unwrap_err().code,
-            "symlink_rejected"
-        );
-        assert!(Stamp::capture(&link).is_err_and(|error| error.code == "not_regular_file"));
-        let aliased_dir = tree.roots.claude.clone().unwrap().join("alias");
+        assert!(Plan::derive(&linked, &tree.roots).is_ok());
+        let aliased_dir = tree.roots.claude.as_ref().unwrap().join("alias");
         std::os::unix::fs::symlink(
-            tree.roots.claude.clone().unwrap().join("project"),
+            tree.roots.claude.as_ref().unwrap().join("project"),
             &aliased_dir,
         )
         .unwrap();
-        assert_eq!(
-            super::plan::trusted_within(
-                tree.roots.claude.as_ref().unwrap(),
-                &aliased_dir.join("main.jsonl")
-            )
-            .unwrap_err()
-            .code,
-            "symlink_rejected"
-        );
+        linked["path"] = json!(aliased_dir.join("main.jsonl").to_string_lossy());
+        assert!(Plan::derive(&linked, &tree.roots).is_ok());
     }
 }
 
@@ -375,10 +337,6 @@ fn delete_restore_purge_round_trip_keeps_unnamed_files_and_refuses_conflicts() {
     let claude = tree.claude_session("main", &["one"]);
     let grok = tree.grok_session("g", true);
     let rows = vec![claude.clone(), grok.clone()];
-    let refused = service.delete(&rows, &forced(), &["claude:main".into()], false);
-    assert!(refused.deleted.is_empty());
-    assert_eq!(refused.skipped[0].code, "run_state_unknown");
-    assert!(refused.skipped[0].needs_force);
     let outcome = service.delete(
         &rows,
         &forced(),
@@ -388,7 +346,7 @@ fn delete_restore_purge_round_trip_keeps_unnamed_files_and_refuses_conflicts() {
             "claude:main".into(),
             "nope".into(),
         ],
-        true,
+        false,
     );
     assert_eq!(outcome.deleted.len(), 2, "{outcome:?}");
     assert_eq!(outcome.failed.len(), 1);
@@ -441,7 +399,7 @@ fn delete_restore_purge_round_trip_keeps_unnamed_files_and_refuses_conflicts() {
     assert_eq!(item["restorable"], false);
     assert!(item["reason"].as_str().unwrap().contains("原路径已存在"));
     fs::remove_file(claude_origin).unwrap();
-    // Parent directories the user removed are recreated without following links.
+    // Parent directories the user removed are recreated.
     fs::remove_dir_all(claude_origin.with_extension("")).unwrap();
     let restored = service.restore(&entry.entry_id).unwrap();
     assert_eq!(restored.files, 3);
@@ -486,36 +444,68 @@ fn delete_restore_purge_round_trip_keeps_unnamed_files_and_refuses_conflicts() {
 }
 
 #[test]
-fn stamp_change_between_plan_and_move_is_refused_and_rolled_back() {
+fn restore_cleanup_failure_records_both_published_names_as_partial_and_remains_recoverable() {
+    let tree = Tree::new();
+    let service = tree.service();
+    let row = tree.claude_session("cleanup-failure", &[]);
+    let origin = Path::new(row["path"].as_str().unwrap()).to_path_buf();
+    let deleted = service
+        .delete(
+            std::slice::from_ref(&row),
+            &forced(),
+            &["claude:cleanup-failure".into()],
+            false,
+        )
+        .deleted
+        .pop()
+        .unwrap();
+    let entry = Path::new(&deleted.trash);
+    let held = entry.join("files/0-cleanup-failure.jsonl");
+    let expected = fs::read(&held).unwrap();
+
+    super::fail_next_move_after_publish();
+    let error = service.restore(&deleted.entry_id).unwrap_err();
+    assert_eq!(error.code, "restore_failed");
+    assert_eq!(fs::read(&origin).unwrap(), expected);
+    assert_eq!(fs::read(&held).unwrap(), expected);
+    let manifest = Manifest::read(entry).unwrap();
+    assert_eq!(manifest.state, EntryState::Partial);
+    assert!(manifest.files[0].in_trash);
+
+    // Removing the duplicate published origin leaves the recorded trash copy
+    // available for an ordinary retry; no unique copy was discarded.
+    fs::remove_file(&origin).unwrap();
+    service.restore(&deleted.entry_id).unwrap();
+    assert_eq!(fs::read(&origin).unwrap(), expected);
+    assert!(!entry.exists());
+}
+
+#[test]
+fn changed_contents_between_plan_and_move_round_trip() {
     let tree = Tree::new();
     let service = tree.service();
     let claude = tree.claude_session("main", &["one", "two"]);
     let plan = Plan::derive(&claude, &tree.roots).unwrap();
-    // Grow the second agent after planning: the first file must return.
     let touched = plan.files[3].origin.clone();
-    fs::write(&touched, b"{\"agent\":true}\n{\"appended\":true}\n").unwrap();
-    let error = service
+    let appended = b"{\"agent\":true}\n{\"appended\":true}\n";
+    fs::write(&touched, appended).unwrap();
+    let deleted = service
         .move_into_trash(
             &plan,
             RunStateNote {
                 state: "unknown".into(),
                 detail: "no_runtime".into(),
             },
-            true,
+            false,
         )
-        .unwrap_err();
-    assert_eq!(error.code, "changed_since_inventory");
-    for file in &plan.files {
-        assert!(file.origin.exists(), "{}", file.origin.display());
-    }
-    assert!(
-        fs::read_dir(service.directory()).unwrap().next().is_none(),
-        "no entry left behind"
-    );
+        .unwrap();
+    assert!(!touched.exists());
+    service.restore(&deleted.entry_id).unwrap();
+    assert_eq!(fs::read(touched).unwrap(), appended);
 }
 
 #[test]
-fn purge_by_age_is_bounded_and_skips_foreign_content() {
+fn purge_by_age_removes_matching_entries() {
     let tree = Tree::new();
     let service = tree.service();
     let mut rows = Vec::new();
@@ -533,12 +523,49 @@ fn purge_by_age_is_bounded_and_skips_foreign_content() {
     let mut manifest = Manifest::read(old).unwrap();
     manifest.deleted_at_unix -= 10 * 86_400;
     manifest.write(old).unwrap();
-    // A stray file inside another entry blocks its purge only.
+    // Purge includes the entire selected entry, including later additions.
     fs::write(Path::new(&outcome.deleted[1].trash).join("stray"), b"x").unwrap();
     let aged = service.purge_older_than(7).unwrap();
     assert_eq!((aged.removed, aged.remaining), (1, 2));
     let all = service.purge_older_than(0).unwrap();
-    assert_eq!((all.removed, all.errors.len(), all.remaining), (1, 1, 1));
-    assert_eq!(all.failed[0]["code"], "unexpected_content");
-    assert!(Path::new(&outcome.deleted[1].trash).join("files").is_dir());
+    assert_eq!((all.removed, all.errors.len(), all.remaining), (2, 0, 0));
+    assert!(!Path::new(&outcome.deleted[1].trash).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn cross_filesystem_round_trip_keeps_links_and_recorded_origins() {
+    use std::os::unix::fs::{MetadataExt, symlink};
+    let tree = Tree::new();
+    let Ok(remote) = tempfile::tempdir_in("/dev/shm") else {
+        return;
+    };
+    if fs::metadata(tree.temp.path()).unwrap().dev() == fs::metadata(remote.path()).unwrap().dev() {
+        return;
+    }
+    let service = TrashService::open(remote.path().join("trash"), tree.roots.clone()).unwrap();
+    let claude = tree.claude_session("跨设备😀", &[]);
+    let grok = tree.grok_session("目录😀", true);
+    let grok_origin = Path::new(grok["path"].as_str().unwrap());
+    let external = tree.temp.path().join("link-target");
+    fs::write(&external, b"external stays in place").unwrap();
+    symlink(&external, grok_origin.join("alias")).unwrap();
+    let rows = vec![claude.clone(), grok.clone()];
+    let ids = rows
+        .iter()
+        .map(|row| row["uid"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let outcome = service.delete(&rows, &Liveness::default(), &ids, false);
+    assert!(outcome.failed.is_empty(), "{outcome:?}");
+    assert_eq!(outcome.deleted.len(), 2);
+    // Restoration follows recorded origins after data-source configuration changes.
+    let restorer =
+        TrashService::open(remote.path().join("trash"), SessionRoots::default()).unwrap();
+    for deleted in &outcome.deleted {
+        restorer.restore(&deleted.entry_id).unwrap();
+    }
+    assert!(Path::new(claude["path"].as_str().unwrap()).is_file());
+    assert_eq!(fs::read_link(grok_origin.join("alias")).unwrap(), external);
+    assert_eq!(fs::read(&external).unwrap(), b"external stays in place");
+    assert!(grok_origin.join("attachment.bin").is_file());
 }
