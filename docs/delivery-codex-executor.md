@@ -180,7 +180,7 @@ its batch-6 semantics and tests.
   duplicate native records confirm in Python row order; ambiguous Enter and unknown composer
   (pre-write failure, manual retry); lagging capture never idle; tracking
   window; immediate follow-up).
-- Integration (real router + isolated ptyhost + launcher + ledger, fake Codex
+- Integration (real router + temporary ptyhost + launcher + ledger, fake Codex
   CLI only): `cargo test -p sessiondock --test delivery_send_codex` —
   resume through `resume_args ["resume","{sid}"]`; the driver reads the
   fake's particle/placeholder composer as empty; send → `failed`/`attempts 1`
@@ -196,9 +196,9 @@ its batch-6 semantics and tests.
   the fake Codex CLI, "终端写入待核对" row replaced by the native message over
   SSE, server ledger emptied by the tracker, a second page refused with
   `terminal_ownership`, a 390 px send through the server-claimed lease.
-- Real CLI: `python3 tests/send_codex_real.py` runs in the normal sweep with
+- Real CLI: `python3 tests/send_codex_real.py` runs only with `--include-real` or direct invocation, using
   the cheapest configuration only (`gpt-5.6-luna`,
-  `-c model_reasoning_effort="low"`, isolated `CODEX_HOME` reusing
+  `-c model_reasoning_effort="low"`, temporary `CODEX_HOME` reusing
   `auth.json` read-only with its own `config.toml` trusting the throwaway
   cwd, proxy variables passed through, `codex exec` login probe creating the
   session the TUI resumes, one prompt, model asserted from

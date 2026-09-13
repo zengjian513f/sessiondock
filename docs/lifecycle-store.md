@@ -1,4 +1,4 @@
-# Isolated lifecycle creation receipts
+# Private lifecycle creation receipts
 
 `lifecycle::{model, store}` implements a synchronous, private creation-intent
 ledger. It does not launch or discover a process, connect to ptyhost, bind native

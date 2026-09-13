@@ -1,6 +1,6 @@
 # Synthetic Python/Rust media differential
 
-`tests/media_parity.py` constructs isolated Claude, Codex and Grok histories and
+`tests/media_parity.py` constructs temporary Claude, Codex and Grok histories and
 compares Python adapter output with SessionDock output. The corpus never reads a
 real native root or remote URL.
 

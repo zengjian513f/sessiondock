@@ -1,6 +1,6 @@
 # Controlled creation: integration contract
 
-This contract now has an isolated Linux implementation: explicit launcher,
+This contract has a private Linux runtime: explicit launcher,
 bounded coordinator, create/status/cancel HTTP and launch-bound pending WS.
 `terminal_create` remains false by default; it is enabled only after opening
 the configured lifecycle ledger and CLI profiles. Batch ten adds explicit
@@ -47,7 +47,7 @@ because the browser supplies a UID. A name is an endpoint locator only.
    must not lose a launched process or permit a duplicate spawn.
 4. Launch an explicit ptyhost binary with an explicit private `--dir`, fixed
    generated name and immutable launch metadata. Do not inherit a default native
-   home or production environment in isolated tests. Do not pipe undrained
+   home or production environment in tests. Do not pipe undrained
    stdout/stderr or kill the host when its Web request is dropped.
 5. Observe the exact host, require the advertised launch guard, and perform a
    guarded Info exchange before recording readiness. A created metadata file or
@@ -100,7 +100,7 @@ Pending leases remain launch-bound; switching to native requires explicit releas
 and fresh authorization. Cancelling the launch also retires its derived native
 leases, and its durable flag blocks new native claims after Web restart.
 
-## Isolated acceptance
+## Temporary-environment acceptance
 
 Use an explicit fake executable or fixed free shell, never a paid model CLI.
 Verify the whole creation/status/real browser input/cancel chain, duplicate

@@ -91,11 +91,12 @@ location <HUB_PATH>/ {
 }
 ```
 
-- WebSocket（`/api/term/attach`）需要 `Upgrade`/`Connection` 透传；`proxy_buffering off` 保证 SSE
-  `/api/watch` 与 NDJSON 搜索逐行到达浏览器。
+- WebSocket 需要透传 `Upgrade` 和 `Connection`。关闭代理缓冲，保证 SSE
+  和 NDJSON 逐行到达浏览器。
 - `client_max_body_size` 覆盖附件上限；读写超时给长连接（终端、SSE）留足。
 - 反代把 Host 原样传给 Hub（Hub 的同源检查按 Host 核对 Origin）；Hub 只 loopback，不直接对外。
 
 回退与切流步骤见 [replacement-checklist.md](replacement-checklist.md)。
 
-经认证的反向代理前缀（同节点部署）：hub 进程也读 `SESSIONDOCK_PUBLIC_HOSTS`（例如 `203.0.113.177`），否则代理转发的 `Host` 会被 `hub_gate` 以 403 `local_only` 拒绝；`sessiondock-hub --check-config` 打印 `public_hosts=`。
+同节点反代时，把外部 Host 加入 `SESSIONDOCK_PUBLIC_HOSTS`，否则 Hub
+返回 403 `local_only`。用 `sessiondock-hub --check-config` 核对。

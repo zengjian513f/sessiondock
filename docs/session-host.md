@@ -8,8 +8,7 @@ cargo build -p ptyhost --locked
 cargo test -p ptyhost --locked
 ```
 
-**注意：原默认目录仍属于旧 AgentHub。** 开发时必须显式指定隔离目录，
-不要执行不带 `--dir` 的 list / attach / send / kill 等命令。
+**默认目录属于旧 AgentHub。** 开发命令必须指定私有 `--dir`。
 
 ```sh
 # 从仓库根目录执行；只查看新项目的开发目录。
