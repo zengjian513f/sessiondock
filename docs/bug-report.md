@@ -1,0 +1,205 @@
+# Bug reports and their CLI workers (batch 41, M7)
+
+`POST /api/bug-report` (Python `server._bug_report` / `bug_report.py` at
+`e5b023a`) captures a self-contained diagnostic bundle and starts a managed
+CLI instance that investigates it. The Rust implementation lives in
+`bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt
+injection), `audit/query.rs` (server-side audit events and the time-window
+query), `api/bug_report.rs` (route, validation, the `uid=bug-report` upload)
+and `files/write.rs` (`bug_report_upload`). The route is `501
+bug_report_disabled` and `capabilities.bug_report` is `false` until every
+dependency is configured.
+
+## Configuration
+
+| Setting | Meaning |
+| --- | --- |
+| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/agenthub/bug-reports`). Existing absolute directory, `0700`, no symlinked ancestors, disjoint in both directions from every other configured path. |
+| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `agenthub_attachments/`. Existing directory equal to or inside an `SESSIONDOCK_FILE_WRITE_ROOTS` entry (so report attachments go through the file write service) and therefore outside every private/native path. |
+| launcher `bug_report_profiles` | `{"claude": id, "codex": id, "grok": id}` naming ordinary `profiles` entries of that source (any subset; an unknown id or a wrong source fails the launcher configuration). |
+
+The two variables are all-or-nothing (`--check-config` prints
+`bug_report_dir=` / `bug_report_repo=`). The route additionally needs the
+audit directory (`events.jsonl` is the core of a bundle), the terminal
+transport, the lifecycle service (initialized ledger + launcher) and at least
+one worker profile; otherwise the capability stays `false` and the route `501`.
+
+### Model policy (fixed in code)
+
+A worker is launched only through a profile whose argv (`args` + `new_args`)
+pins the cheapest configuration of AGENTS.md, asserted at every launch
+(`lifecycle::launcher::bug_report_policy`):
+
+- Claude: `--model claude-haiku-4-5-20251001` and `--effort low`;
+- Codex: `--model`/`-m gpt-5.6-luna` and `-c`/`--config model_reasoning_effort="low"` (quoted or bare);
+- Grok: `-m`/`--model grok-4.6` and `--reasoning-effort low`.
+
+A mismatch answers `501 bug_report_model_policy` before any bundle is written.
+Python launched the worker with the CLI's default model; this backend never does.
+
+## Route contract (`POST /api/bug-report`)
+
+Body as Python: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
+_trace_id, _build, source ∈ claude|codex|grok (default codex), terminal_name,
+snapshot (object), attachments: [{path, number, name, kind, mime, size,
+attachment_id}], cols (40–300), rows (12–120)}`; unknown fields are ignored,
+non-numeric `cols`/`rows` are `400`.
+
+| Status | When |
+| --- | --- |
+| `403 terminal_disabled` | terminal transport off (Python `TERMINAL` false) |
+| `501 bug_report_disabled` | any dependency above missing |
+| `400` `不支持的处理会话类型: …` | unknown `source` |
+| `503` `本机找不到 <source> 命令` | no worker profile for the source |
+| `501 bug_report_model_policy` | the profile does not pin the cheapest model |
+| `400` (`请描述遇到的问题`, `问题描述不能超过 50000 字`, attachment messages) | validation before the directory exists |
+| `500 bug_report_capture_failed {error, report_id, path}` | a bundle file could not be written after the directory was created |
+| `500 bug_report_worker_failed {error, report_id, path}` | capture succeeded, the worker launch failed (manifest `status: failed`, audit `bug_report.worker_launch_failed`) |
+| `202 {ok, report_id, path, worker: {name, source, sid, cwd, token, title, kind: "bug-report", report_id, record_id, launch_id, instance_id, profile, cols, rows}}` | worker started; the prompt injection continues in the background |
+
+`worker.sid` is the declared Claude session id (`null` for Codex/Grok, whose
+identity stays pending like any other launch); `token` is that sid or the
+launch id (Python's tmux token). The extra identity fields let the legacy page
+open the pending console exactly as after `term/create`.
+
+## The bundle
+
+`<dir>/BUG-YYYYMMDD-HHMMSS-hex6/` (`0700`, files `0600`, every write is a
+private temp file renamed into place):
+
+| File | Content |
+| --- | --- |
+| `description.md` | the trimmed description plus newline |
+| `browser-state.json` | the request's `snapshot` object, redacted |
+| `events.jsonl` | audit rows of the last 900 s whose `uid`, `page_id` or `trace_id` match the report, or whose `data.report_id` is the report — always including the report's own `bug_report.created` row |
+| `environment.json` | `repository`, Rust `build`, `git rev-parse HEAD` / `status --short` / `diff --stat` run with cwd = repository (10 s bound, stdout tail 200 000 / stderr tail 40 000 chars) |
+| `terminal.txt` | only when `terminal_name` is a managed instance: 8000 scrollback rows (screen as fallback) read through the instance's guard envelope |
+| `attachments/NN-<name>` | hard link or copy of each validated upload |
+| `worker-prompt.md` | the prompt (below) |
+| `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname, client_ip, session (list row of `uid`), outbox (delivery ledger snapshot), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
+
+Redaction follows Python `audit.sanitize`: keys in Python's `_SECRET_KEYS`
+(authorization, cookie, api-key, password, secret, access/refresh token …)
+become `<redacted>` at every level; paths are kept.
+
+### Attachments
+
+`resolve_attachments` follows Python: at most 12 items, each `path` an
+existing regular file below `<repo>/agenthub_attachments/` (no symlinks, no
+component outside), `number` from the item or the position, `mime` ≤ 100 chars,
+`kind` ∈ image/video/audio else `file`, `name` ≤ 200 chars, `relative_path`
+relative to the repository. The prompt lists them as `附件N: ./<relative_path>`.
+
+`POST /api/session/attachment?uid=bug-report&name=<file>[&id=N]` is Python's
+raw upload special case: the request body is the file, written through the
+file write service into `<repo>/agenthub_attachments/<id>/<name>` (`id` is
+`[1-9]\d{0,8}` or the next free batch number; the name is sanitized like
+Python `_attachment_name`; identical content is reused, a clash becomes
+`stem__N.suffix`; nothing is ever overwritten). Response: Python's `{ok, name,
+original_name, path, relative_path, attachment_id, mime, kind, size, reused,
+media: null}`. Bound: 32 MiB per file (`413`), Python allows 512 MB. Every
+other `uid` keeps the JSON upload-completion contract of `docs/files.md`.
+
+## The worker (`bug_report/worker.rs`)
+
+1. `lifecycle::Service::create` with the source's worker profile and cwd =
+   repository (`request_id` `bug-report-<report_id>`, idempotent). The record
+   must reach `Running`; the sidebar decoration `{kind: "bug-report",
+   report_id, title: "处理 <id>", worker_status, worker_error}` is remembered
+   per lifecycle record (`BugReportService::pending_decoration`, rebuilt from
+   manifests at start, `worker_status`/`worker_error` mirroring every
+   manifest `status`/`error` update — WP-E) and merged into the worker's
+   `/api/term/list` pending row; the legacy pending page and sidebar row show
+   it (`正在注入缺陷报告提示词`, `提示词已提交`, `提示词注入失败：…`).
+   Manifest `status: starting`; audit `bug_report.worker_started`.
+2. Readiness (Python `_inject_worker`, 90 s): the screen is read through the
+   launch guard without a lease so a page may open the console meanwhile.
+   Claude/Codex use the delivery driver's composer models
+   (`driver::inspect_for`), Grok Python's `_ScreenProbe` (a non-blank frame
+   that stopped changing). The composer must be `empty` for 600 ms; an
+   `editing` frame on a fresh instance is a failure (`新建 … 会话出现了意外草稿`).
+   State changes are audited as `bug_report.worker_probe`.
+3. Injection as server-originated host input through the launch guard
+   (`request_launch`, WP-E — the same path `session/stop` uses for its EOF
+   keys; Python's `tmux send-keys` needed no page console either). No browser
+   lease is claimed, so a page that opened the console from the toast keeps
+   it and watches the prompt arrive; `manifest.injection.origin` records
+   `agenthub-bug-report`. The frame is rechecked, `paste_started_at` is
+   persisted, the prompt is pasted (bracketed), the paste is verified on
+   screen — the composer shows the exact text, the TUI's collapsed-paste
+   placeholder (`[Pasted text #1 +N lines]`, `[Pasted Content …]`), or, when
+   the block cannot be read whole, a changed frame carrying the report id or
+   the prompt's last line — then `pasted_at`/`paste_verified`,
+   `enter_started_at`, Enter, `entered_at`, `enter_acknowledged` are persisted
+   in turn. An unacknowledged (timed-out) Enter is recorded and never repeated
+   blindly; a crash between the persisted steps leaves `status: injecting` and
+   is never resumed.
+4. Python `_confirm_submission`: for at most 4 × 1 s the composer is watched;
+   while it visibly still holds the pasted draft Enter is resent (audit
+   `bug_report.worker_enter_retry`); any other frame is only watched. The
+   result is the manifest's `composer_cleared`, diagnostic only.
+5. Confirmation comes from a native `user` record, never from the screen:
+   Claude — the declared session id resolved through the published list rows;
+   Codex/Grok — the newest (≤ 4) sessions of that source whose cwd is the
+   repository and that were created since the launch. A `user` text containing
+   the report id (or, for a declared session, a collapsed-paste placeholder as
+   its first input) is `submitted` with `confirmed_from: {uid, method:
+   "native_user_record", text_match}`; nothing within 20 s is
+   `submitted_unconfirmed` with Python's message `提示词已粘贴到 <CLI>，但未能确认已提交；请在终端里检查`;
+   any failed step is `failed` with `error`. Audit: `bug_report.worker_submitted`,
+   `bug_report.worker_unconfirmed` (warning), `bug_report.worker_failed` (error).
+
+At most two injections run at once; the lifecycle service still bounds the
+instances themselves.
+
+### Prompt
+
+`worker_prompt` is rewritten for this repository: read the bundle, locate the
+first event that diverges across layers, keep the user's working-tree changes,
+make the minimal complete fix, run only the validation proportionate to the
+change, and **never push, deploy, restart a deployed service or touch
+production directories** — explain in the session instead. Python's push /
+Hub-sync steps are gone.
+
+## Audit events (`audit/query.rs`)
+
+Server-side events share the browser intake's JSONL segments and queue
+(`AuditService::record`, `try_send`, dropped and counted when full): same
+fields as a browser row with `client: "server"`, `client_ts: null` and a
+`category`. `bug_report.created` carries `uid`/`page_id`/`trace_id` of the
+report and `data.report_id`; the worker events carry `trace_id = report_id`.
+`query(directory, since, until, filter, limit)` reads the segments of the
+window's dates line by line (≤ 100 000 rows).
+
+## Differences from Python (DELTA)
+
+- Audit rows carry structured metadata only; there is no `content` blob, so
+  `events.jsonl` has no message text/composer content (Python's SQLite blobs).
+- The report id stamp is UTC (Python: local time).
+- The worker profile pins the cheapest model (Python: the CLI's default).
+- `terminal.txt` exists only for a managed instance (Python: any tmux window).
+- `submitted` means a native `user` record carries the prompt (Python: the
+  composer cleared); a Codex/Grok worker whose rollout cannot be found is
+  `submitted_unconfirmed`.
+- Report attachments: ≤ 32 MiB per upload (Python 512 MB); no media preview
+  token in the upload response (`media: null`).
+- `cols`/`rows` are recorded in the manifest only; the PTY size follows the
+  console that attaches.
+
+## Validation
+
+- `cargo test -p sessiondock --lib bug_report --lib audit::query --lib api::bug_report --locked`
+  (bundle, attachments, policy, launcher parsing, composer probes, manifest merge).
+- `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
+  501 unconfigured, model policy 501, raw attachment upload, 202 shape, bundle
+  files, `submitted` from the synthetic native record, second report sees the
+  first in its window).
+- `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
+  10 scenarios including Codex `submitted_unconfirmed` and the audit trail).
+- `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
+  `python3 tests/meta_capabilities_suite.py`.
+- `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real
+  Claude worker with `claude-haiku-4-5-20251001 --effort low` in an isolated
+  `CLAUDE_CONFIG_DIR`, prompt confirmed from the real `user` record, model id
+  asserted from the assistant record, instance killed, bundle and session
+  files deleted.

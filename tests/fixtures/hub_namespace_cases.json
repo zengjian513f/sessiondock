@@ -1,0 +1,1726 @@
+[
+ {
+  "name": "sessions_rows_are_scoped_and_stamped",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:same-file-hash",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0
+    },
+    {
+     "uid": "codex:other",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0,
+     "continued_in": "codex:next"
+    }
+   ],
+   "sig": "fixture-sig",
+   "built_at": 0
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-file-hash",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    },
+    {
+     "uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~other",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0,
+     "continued_in": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~next",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "sig": "fixture-sig",
+   "built_at": 0
+  }
+ },
+ {
+  "name": "sessions_from_and_to_uid",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a",
+     "from_uid": "claude:b",
+     "to_uid": "grok:c",
+     "title": "t"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "from_uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b",
+     "to_uid": "grok:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~c",
+     "title": "t",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "sessions_empty_references_stay_empty",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "",
+     "continued_in": "",
+     "from_uid": null,
+     "to_uid": 7
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "",
+     "continued_in": "",
+     "from_uid": null,
+     "to_uid": 7,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "sessions_results_fallback_key",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "results": [
+    {
+     "uid": "claude:a"
+    }
+   ]
+  },
+  "expected": {
+   "results": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "sessions_key_wins_over_results",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a"
+    }
+   ],
+   "results": [
+    {
+     "uid": "claude:b"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "results": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b"
+    }
+   ]
+  }
+ },
+ {
+  "name": "sessions_row_node_stamp_overwrites_existing",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a",
+     "node_id": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+     "node_name": "old"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "sessions_unchanged_probe_has_no_rows",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "unchanged": true,
+   "sig": "fixture-sig"
+  },
+  "expected": {
+   "unchanged": true,
+   "sig": "fixture-sig"
+  }
+ },
+ {
+  "name": "sessions_non_object_rows_are_skipped_by_walk",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a"
+    }
+   ],
+   "pending": [
+    {
+     "uid": "claude:p"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "pending": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~p"
+    }
+   ]
+  }
+ },
+ {
+  "name": "search_results_rows",
+  "path": "/api/search",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "results": [
+    {
+     "uid": "claude:same-file-hash",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0,
+     "hits": 1,
+     "snippet": "needle /api/media/x uid"
+    }
+   ],
+   "total_pool": 1,
+   "truncated": false,
+   "scanned": 1
+  },
+  "expected": {
+   "results": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-file-hash",
+     "sid": "same-native-id",
+     "source": "claude",
+     "title": "NodeA session",
+     "cwd": "/same/project",
+     "size": 20,
+     "created": "2026-09-01T00:00:00Z",
+     "updated": "2026-09-07T00:00:00Z",
+     "agents": 0,
+     "hits": 1,
+     "snippet": "needle /api/media/x uid",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "total_pool": 1,
+   "truncated": false,
+   "scanned": 1
+  }
+ },
+ {
+  "name": "search_sessions_key_wins",
+  "path": "/api/search",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a"
+    }
+   ],
+   "results": [
+    {
+     "uid": "claude:b"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "results": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b"
+    }
+   ]
+  }
+ },
+ {
+  "name": "search_matches_chunk",
+  "path": "/api/search",
+  "node": {
+   "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "name": "机器乙"
+  },
+  "input": {
+   "results": [
+    {
+     "uid": "claude:x",
+     "title": "中文 標題 🚀"
+    }
+   ]
+  },
+  "expected": {
+   "results": [
+    {
+     "uid": "claude:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb~x",
+     "title": "中文 標題 🚀",
+     "node_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "node_name": "机器乙"
+    }
+   ]
+  }
+ },
+ {
+  "name": "live_keys_scoped",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "uids": [
+    "claude:a",
+    "codex:b"
+   ],
+   "tmux_uids": [
+    "claude:c"
+   ],
+   "started_at": {
+    "claude:a": 1.5,
+    "codex:b": 2
+   }
+  },
+  "expected": {
+   "uids": [
+    "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+    "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b"
+   ],
+   "tmux_uids": [
+    "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~c"
+   ],
+   "started_at": {
+    "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a": 1.5,
+    "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b": 2
+   }
+  }
+ },
+ {
+  "name": "live_missing_keys_are_created",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {},
+  "expected": {
+   "uids": [],
+   "tmux_uids": [],
+   "started_at": {}
+  }
+ },
+ {
+  "name": "live_empty_uid_and_extra_keys",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "uids": [
+    ""
+   ],
+   "tmux_uids": [],
+   "started_at": {},
+   "extra": {
+    "uid": "claude:e"
+   }
+  },
+  "expected": {
+   "uids": [
+    ""
+   ],
+   "tmux_uids": [],
+   "started_at": {},
+   "extra": {
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~e"
+   }
+  }
+ },
+ {
+  "name": "term_list_names_and_pending",
+  "path": "/api/term/list",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "enabled": true,
+   "unavailable_reason": "",
+   "sources": {
+    "claude": true,
+    "codex": true
+   },
+   "home": "/home/u/NodeA",
+   "backend": "tmux",
+   "backends": [
+    {
+     "name": "tmux",
+     "label": "tmux",
+     "available": true,
+     "current": true,
+     "unavailable_reason": ""
+    }
+   ],
+   "sessions": [
+    {
+     "name": "same-terminal",
+     "uid": "claude:x",
+     "source": "claude",
+     "cwd": "/w"
+    }
+   ],
+   "pending": [
+    {
+     "name": "pending-one",
+     "source": "codex",
+     "sid": "s",
+     "token": "lease"
+    }
+   ]
+  },
+  "expected": {
+   "enabled": true,
+   "unavailable_reason": "",
+   "sources": {
+    "claude": true,
+    "codex": true
+   },
+   "home": "/home/u/NodeA",
+   "backend": "tmux",
+   "backends": [
+    {
+     "name": "tmux",
+     "label": "tmux",
+     "available": true,
+     "current": true,
+     "unavailable_reason": ""
+    }
+   ],
+   "sessions": [
+    {
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-terminal",
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~x",
+     "source": "claude",
+     "cwd": "/w",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "pending": [
+    {
+     "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~pending-one",
+     "source": "codex",
+     "sid": "s",
+     "token": "lease",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "term_list_empty_and_missing_names",
+  "path": "/api/term/list",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "name": ""
+    },
+    {
+     "uid": "claude:x"
+    }
+   ],
+   "pending": [
+    {
+     "name": null
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "name": "",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    },
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~x",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "pending": [
+    {
+     "name": null,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "term_list_stale_rows",
+  "path": "/api/term/list",
+  "node": {
+   "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "name": "机器乙"
+  },
+  "input": {
+   "enabled": false,
+   "sources": {},
+   "sessions": [
+    {
+     "name": "t",
+     "stale": true,
+     "last_seen": 1.0
+    }
+   ],
+   "pending": []
+  },
+  "expected": {
+   "enabled": false,
+   "sources": {},
+   "sessions": [
+    {
+     "name": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb~t",
+     "stale": true,
+     "last_seen": 1.0,
+     "node_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "node_name": "机器乙"
+    }
+   ],
+   "pending": []
+  }
+ },
+ {
+  "name": "term_create_with_session",
+  "path": "/api/term/create",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "name": "same-terminal",
+   "source": "claude",
+   "sid": "new-sid",
+   "cwd": "/same",
+   "token": "fixture-lease",
+   "started": 1.0,
+   "session": {
+    "uid": "claude:new",
+    "title": "new",
+    "name": "not-a-terminal"
+   }
+  },
+  "expected": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-terminal",
+   "source": "claude",
+   "sid": "new-sid",
+   "cwd": "/same",
+   "token": "fixture-lease",
+   "started": 1.0,
+   "session": {
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~new",
+    "title": "new",
+    "name": "not-a-terminal",
+    "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_name": "NodeA"
+   },
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "node_name": "NodeA"
+  }
+ },
+ {
+  "name": "term_create_without_session",
+  "path": "/api/term/create",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "name": "same-terminal",
+   "session": null
+  },
+  "expected": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-terminal",
+   "session": null,
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "node_name": "NodeA"
+  }
+ },
+ {
+  "name": "term_create_empty_session_object",
+  "path": "/api/term/create",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "name": "",
+   "session": {}
+  },
+  "expected": {
+   "name": "",
+   "session": {},
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "node_name": "NodeA"
+  }
+ },
+ {
+  "name": "term_takeover",
+  "path": "/api/term/takeover",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "name": "taken",
+   "session": {
+    "uid": "codex:t"
+   }
+  },
+  "expected": {
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~taken",
+   "session": {
+    "uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~t",
+    "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_name": "NodeA"
+   },
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "node_name": "NodeA"
+  }
+ },
+ {
+  "name": "term_new_status",
+  "path": "/api/term/new-status",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "waiting": true,
+   "running": true,
+   "name": "status-term"
+  },
+  "expected": {
+   "waiting": true,
+   "running": true,
+   "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~status-term",
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "node_name": "NodeA"
+  }
+ },
+ {
+  "name": "bug_report_worker",
+  "path": "/api/bug-report",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "ok": true,
+   "report_id": "r1",
+   "worker": {
+    "name": "bug-worker",
+    "uid": "claude:w"
+   }
+  },
+  "expected": {
+   "ok": true,
+   "report_id": "r1",
+   "worker": {
+    "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~bug-worker",
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~w",
+    "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_name": "NodeA"
+   }
+  }
+ },
+ {
+  "name": "bug_report_without_worker",
+  "path": "/api/bug-report",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "ok": true,
+   "worker": null,
+   "name": "not-scoped"
+  },
+  "expected": {
+   "ok": true,
+   "worker": null,
+   "name": "not-scoped"
+  }
+ },
+ {
+  "name": "trash_items",
+  "path": "/api/trash",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "items": [
+    {
+     "id": "claude/same-trash",
+     "uid": "claude:same",
+     "source": "claude",
+     "title": "deleted",
+     "size": 10,
+     "restorable": true
+    },
+    {
+     "id": "",
+     "uid": "codex:x"
+    },
+    {
+     "uid": "grok:y"
+    }
+   ],
+   "size": 10
+  },
+  "expected": {
+   "items": [
+    {
+     "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~claude/same-trash",
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same",
+     "source": "claude",
+     "title": "deleted",
+     "size": 10,
+     "restorable": true,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    },
+    {
+     "id": "",
+     "uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~x",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    },
+    {
+     "uid": "grok:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~y",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "size": 10
+  }
+ },
+ {
+  "name": "trash_ids_only_scoped_under_trash_path",
+  "path": "/api/trash/restore",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "ok": true,
+   "id": "claude/same-trash",
+   "uid": "claude:same"
+  },
+  "expected": {
+   "ok": true,
+   "id": "claude/same-trash",
+   "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same"
+  }
+ },
+ {
+  "name": "messages_meta_and_media",
+  "path": "/api/messages/claude:same-file-hash",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "meta": {
+    "uid": "claude:same-file-hash",
+    "sid": "same-native-id",
+    "source": "claude",
+    "title": "NodeA session",
+    "cwd": "/same/project",
+    "size": 20,
+    "created": "2026-09-01T00:00:00Z",
+    "updated": "2026-09-07T00:00:00Z",
+    "agents": 0
+   },
+   "version": {
+    "head": "h",
+    "size": 2,
+    "mtime": 1
+   },
+   "messages": [
+    {
+     "id": "native-message",
+     "role": "assistant",
+     "text": "/api/media/keep-in-text",
+     "input": {
+      "uid": "arbitrary user input",
+      "src": "/api/media/dddddddddddddddddddddddddddddddd"
+     },
+     "media": [
+      {
+       "src": "/api/media/dddddddddddddddddddddddddddddddd",
+       "mime": "image/png"
+      },
+      {
+       "src": "/api/other/x"
+      }
+     ]
+    }
+   ],
+   "partial": null
+  },
+  "expected": {
+   "meta": {
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-file-hash",
+    "sid": "same-native-id",
+    "source": "claude",
+    "title": "NodeA session",
+    "cwd": "/same/project",
+    "size": 20,
+    "created": "2026-09-01T00:00:00Z",
+    "updated": "2026-09-07T00:00:00Z",
+    "agents": 0,
+    "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_name": "NodeA"
+   },
+   "version": {
+    "head": "h",
+    "size": 2,
+    "mtime": 1
+   },
+   "messages": [
+    {
+     "id": "native-message",
+     "role": "assistant",
+     "text": "/api/media/keep-in-text",
+     "input": {
+      "uid": "arbitrary user input",
+      "src": "/api/media/dddddddddddddddddddddddddddddddd"
+     },
+     "media": [
+      {
+       "src": "/api/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/api/media/dddddddddddddddddddddddddddddddd",
+       "mime": "image/png"
+      },
+      {
+       "src": "/api/other/x"
+      }
+     ]
+    }
+   ],
+   "partial": null
+  }
+ },
+ {
+  "name": "messages_without_meta",
+  "path": "/api/messages/claude:x",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "messages": [
+    {
+     "uid": "claude:m"
+    }
+   ],
+   "meta": null
+  },
+  "expected": {
+   "messages": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~m"
+    }
+   ],
+   "meta": null
+  }
+ },
+ {
+  "name": "watch_meta",
+  "path": "/api/watch",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "meta": {
+    "uid": "codex:abc",
+    "cwd": "/same"
+   },
+   "messages": [
+    {
+     "content": [
+      {
+       "uid": "claude:z"
+      }
+     ]
+    }
+   ]
+  },
+  "expected": {
+   "meta": {
+    "uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~abc",
+    "cwd": "/same",
+    "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "node_name": "NodeA"
+   },
+   "messages": [
+    {
+     "content": [
+      {
+       "uid": "claude:z"
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "name": "resolve_files_reference_names_untouched",
+  "path": "/api/session/resolve-files",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "resolved": {
+    "uid": "/project/uid",
+    "epoch": "/project/epoch"
+   },
+   "targets": [
+    {
+     "ref": "uid",
+     "path": "/project/uid",
+     "kind": "file"
+    }
+   ],
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "expected": {
+   "resolved": {
+    "uid": "/project/uid",
+    "epoch": "/project/epoch"
+   },
+   "targets": [
+    {
+     "ref": "uid",
+     "path": "/project/uid",
+     "kind": "file"
+    }
+   ],
+   "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+ },
+ {
+  "name": "media_src_only_with_media_prefix",
+  "path": "/api/session/attachment",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "media": {
+    "src": "/api/media/dddddddddddddddddddddddddddddddd"
+   },
+   "list": [
+    {
+     "src": "/api/media/"
+    },
+    {
+     "src": "api/media/x"
+    },
+    {
+     "src": "/api/mediax"
+    },
+    {
+     "src": 5
+    },
+    {
+     "src": ""
+    }
+   ]
+  },
+  "expected": {
+   "media": {
+    "src": "/api/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/api/media/dddddddddddddddddddddddddddddddd"
+   },
+   "list": [
+    {
+     "src": "/api/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/api/media/"
+    },
+    {
+     "src": "api/media/x"
+    },
+    {
+     "src": "/api/mediax"
+    },
+    {
+     "src": 5
+    },
+    {
+     "src": ""
+    }
+   ]
+  }
+ },
+ {
+  "name": "epoch_scoped_outside_opaque",
+  "path": "/api/session/outbox",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "outbox": [
+    {
+     "uid": "claude:o",
+     "epoch": "e1"
+    }
+   ],
+   "outbox_version": {
+    "epoch": "same-epoch",
+    "revision": 0
+   },
+   "empty": {
+    "epoch": ""
+   },
+   "number": {
+    "epoch": 3
+   },
+   "nested": [
+    [
+     {
+      "epoch": "deep"
+     }
+    ]
+   ]
+  },
+  "expected": {
+   "outbox": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~o",
+     "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~e1"
+    }
+   ],
+   "outbox_version": {
+    "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~same-epoch",
+    "revision": 0
+   },
+   "empty": {
+    "epoch": ""
+   },
+   "number": {
+    "epoch": 3
+   },
+   "nested": [
+    [
+     {
+      "epoch": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~deep"
+     }
+    ]
+   ]
+  }
+ },
+ {
+  "name": "opaque_subtrees_verbatim",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "data": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "content": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "input": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "arguments": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "raw": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "resolved": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   }
+  },
+  "expected": {
+   "data": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "content": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "input": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "arguments": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "raw": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   },
+   "resolved": {
+    "uid": "claude:hidden",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd",
+    "epoch": "hidden",
+    "deeper": [
+     {
+      "uid": "claude:h2"
+     }
+    ]
+   }
+  }
+ },
+ {
+  "name": "opaque_list_verbatim",
+  "path": "/api/session/send",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "content": [
+    {
+     "uid": "claude:h"
+    }
+   ],
+   "arguments": [
+    "claude:h",
+    {
+     "src": "/api/media/dddddddddddddddddddddddddddddddd"
+    }
+   ],
+   "sibling": {
+    "uid": "claude:visible"
+   }
+  },
+  "expected": {
+   "content": [
+    {
+     "uid": "claude:h"
+    }
+   ],
+   "arguments": [
+    "claude:h",
+    {
+     "src": "/api/media/dddddddddddddddddddddddddddddddd"
+    }
+   ],
+   "sibling": {
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~visible"
+   }
+  }
+ },
+ {
+  "name": "uid_non_string_values_recurse",
+  "path": "/api/session/star",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "uid": 5,
+   "from_uid": null,
+   "to_uid": true,
+   "continued_in": [
+    "claude:in-list"
+   ],
+   "wrapped": {
+    "uid": {
+     "uid": "claude:inner"
+    }
+   }
+  },
+  "expected": {
+   "uid": 5,
+   "from_uid": null,
+   "to_uid": true,
+   "continued_in": [
+    "claude:in-list"
+   ],
+   "wrapped": {
+    "uid": {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~inner"
+    }
+   }
+  }
+ },
+ {
+  "name": "uid_list_of_rows_under_reference_key",
+  "path": "/api/x",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "uid": [
+    {
+     "uid": "claude:a"
+    },
+    {
+     "from_uid": "codex:b"
+    },
+    "claude:plain"
+   ]
+  },
+  "expected": {
+   "uid": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a"
+    },
+    {
+     "from_uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b"
+    },
+    "claude:plain"
+   ]
+  }
+ },
+ {
+  "name": "deep_nesting_lists_of_lists",
+  "path": "/api/x",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "a": [
+    [
+     [
+      {
+       "uid": "claude:deep",
+       "media": [
+        [
+         {
+          "src": "/api/media/dddddddddddddddddddddddddddddddd"
+         }
+        ]
+       ]
+      }
+     ]
+    ],
+    "claude:text"
+   ]
+  },
+  "expected": {
+   "a": [
+    [
+     [
+      {
+       "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~deep",
+       "media": [
+        [
+         {
+          "src": "/api/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/api/media/dddddddddddddddddddddddddddddddd"
+         }
+        ]
+       ]
+      }
+     ]
+    ],
+    "claude:text"
+   ]
+  }
+ },
+ {
+  "name": "top_level_list_is_walked_not_decorated",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": [
+   {
+    "uid": "claude:a",
+    "src": "/api/media/dddddddddddddddddddddddddddddddd"
+   },
+   "claude:b",
+   3
+  ],
+  "expected": [
+   {
+    "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a",
+    "src": "/api/nodes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/api/media/dddddddddddddddddddddddddddddddd"
+   },
+   "claude:b",
+   3
+  ]
+ },
+ {
+  "name": "top_level_string_passes_through",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": "claude:a",
+  "expected": "claude:a"
+ },
+ {
+  "name": "top_level_null_passes_through",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": null,
+  "expected": null
+ },
+ {
+  "name": "top_level_number_passes_through",
+  "path": "/api/trash",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": 3.5,
+  "expected": 3.5
+ },
+ {
+  "name": "uid_tail_keeps_colons_and_tildes",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:a:b~c",
+     "continued_in": "codex:x~y:z"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a:b~c",
+     "continued_in": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~x~y:z",
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "delete_receipt",
+  "path": "/api/sessions/delete",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "ok": true,
+   "deleted": [
+    {
+     "uid": "claude:a"
+    },
+    {
+     "uid": "codex:b"
+    }
+   ],
+   "errors": [
+    {
+     "uid": "grok:c",
+     "error": "busy"
+    }
+   ]
+  },
+  "expected": {
+   "ok": true,
+   "deleted": [
+    {
+     "uid": "claude:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~a"
+    },
+    {
+     "uid": "codex:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~b"
+    }
+   ],
+   "errors": [
+    {
+     "uid": "grok:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~c",
+     "error": "busy"
+    }
+   ]
+  }
+ },
+ {
+  "name": "fork_visibility_receipt",
+  "path": "/api/sessions/fork-visibility",
+  "node": {
+   "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "name": "机器乙"
+  },
+  "input": {
+   "ok": true,
+   "updated": [
+    {
+     "uid": "codex:parent",
+     "fork_parent_visible": true
+    }
+   ],
+   "errors": []
+  },
+  "expected": {
+   "ok": true,
+   "updated": [
+    {
+     "uid": "codex:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb~parent",
+     "fork_parent_visible": true
+    }
+   ],
+   "errors": []
+  }
+ },
+ {
+  "name": "unicode_node_name_and_text",
+  "path": "/api/sessions",
+  "node": {
+   "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "name": "机器乙"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:中",
+     "title": "标题 ✓  ",
+     "cwd": "/家"
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "uid": "claude:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb~中",
+     "title": "标题 ✓  ",
+     "cwd": "/家",
+     "node_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+     "node_name": "机器乙"
+    }
+   ]
+  }
+ },
+ {
+  "name": "keys_named_like_references_but_not_strings",
+  "path": "/api/term/list",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "name": null,
+     "uid": null,
+     "from_uid": 0
+    }
+   ],
+   "pending": [
+    {
+     "name": false
+    }
+   ]
+  },
+  "expected": {
+   "sessions": [
+    {
+     "name": null,
+     "uid": null,
+     "from_uid": 0,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ],
+   "pending": [
+    {
+     "name": false,
+     "node_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "node_name": "NodeA"
+    }
+   ]
+  }
+ },
+ {
+  "name": "error_uid_without_source",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "nosource"
+    }
+   ]
+  },
+  "error": "invalid session reference"
+ },
+ {
+  "name": "error_nested_from_uid_without_source",
+  "path": "/api/watch",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "messages": [
+    {
+     "blocks": [
+      {
+       "from_uid": "bad"
+      }
+     ]
+    }
+   ]
+  },
+  "error": "invalid session reference"
+ },
+ {
+  "name": "error_live_uid_without_source",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "uids": [
+    "claude:a",
+    "bad"
+   ]
+  },
+  "error": "invalid session reference"
+ },
+ {
+  "name": "error_live_started_at_without_source",
+  "path": "/api/live",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "started_at": {
+    "bad": 1
+   }
+  },
+  "error": "invalid session reference"
+ },
+ {
+  "name": "error_continued_in_without_source",
+  "path": "/api/sessions",
+  "node": {
+   "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "name": "NodeA"
+  },
+  "input": {
+   "sessions": [
+    {
+     "uid": "claude:ok",
+     "continued_in": "bad"
+    }
+   ]
+  },
+  "error": "invalid session reference"
+ }
+]
