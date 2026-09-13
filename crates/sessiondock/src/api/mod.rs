@@ -46,7 +46,7 @@ pub fn router() -> Router<AppState> {
         // the delivery ledger and the terminal transport are configured.
         .route(
             "/session/send",
-            post(delivery::send).layer(axum::extract::DefaultBodyLimit::max(1024 * 1024)),
+            post(delivery::send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
         .route(
             "/session/draft-status",
@@ -139,11 +139,11 @@ pub fn router() -> Router<AppState> {
             post(terminal::claim).layer(axum::extract::DefaultBodyLimit::max(8 * 1024)),
         )
         .route("/term/attach", get(terminal::attach))
-        // Raw input carries at most 16 KiB of decoded text; JSON escaping can
-        // multiply that, so the body bound is wider than the payload bound.
+        // Raw input carries at most 1 MiB of decoded text; JSON escaping can
+        // multiply that, so the body bound is Python's 4 MiB request cap.
         .route(
             "/term/send",
-            post(terminal::send).layer(axum::extract::DefaultBodyLimit::max(128 * 1024)),
+            post(terminal::send).layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024)),
         )
         .route(
             "/term/scroll",

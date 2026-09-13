@@ -62,7 +62,25 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let mut config = Config::from_env()?;
     if check_config {
         // Same validation as startup (from_env already validated); nothing is
-        // opened, bound or spawned, so this is safe against production paths.
+        // bound or spawned, so this is safe against production paths. The
+        // launcher file is read and cross-checked exactly like `prepare_app`
+        // does, so a cwd root that startup would refuse fails here too.
+        match (&config.lifecycle_dir, &config.launcher_config) {
+            (Some(_), Some(path)) => {
+                let launcher = sessiondock::lifecycle::launcher::read_config(path)
+                    .map_err(std::io::Error::other)?;
+                config.validate_launcher(&launcher)?;
+                println!("launcher=ok");
+            }
+            (None, None) => {}
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "lifecycle startup requires both an initialized lifecycle directory and an explicit launcher configuration",
+                )
+                .into());
+            }
+        }
         print_effective_config(&config);
         return Ok(());
     }

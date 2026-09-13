@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 /// Decoded input bytes per request (text bytes, or the mapped key bytes).
-pub const MAX_INPUT_BYTES: usize = 16 * 1024;
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
 /// Named keys per request; the byte bound still applies.
 pub const MAX_KEYS: usize = 256;
 /// Requests admitted per exact host instance within one sliding window.

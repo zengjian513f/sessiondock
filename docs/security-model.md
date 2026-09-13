@@ -102,7 +102,11 @@ leave capabilities off; empty directory values fail startup.
 
 Overlap: frontend, native roots, ptyhost, state, delivery, lifecycle, launcher
 JSON, Codex index, and file roots must be disjoint in both directions (lexical
-paths plus resolved aliases). Delivery / lifecycle / audit dirs must already
+paths plus resolved aliases). Exception, matching Python: a launcher **cwd root**
+may be an *ancestor* of the native roots, the frontend and the Codex index (the
+home directory is where sessions started from `~` resume); it must still not lie
+inside them, and it stays fully disjoint from ptyhost/state/delivery/lifecycle
+and the launcher JSON. Delivery / lifecycle / audit dirs must already
 exist, be absolute without `..`, have no symlink or reparse ancestor, and be Unix
 mode `0700`. File roots must not include private metadata, host, or native trees,
 or the web snapshot. Runtime/native trees must never become public assets. Codex

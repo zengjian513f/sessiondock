@@ -40,7 +40,7 @@ live question cards send ([delivery.md](delivery.md), WP-G). Exact host names,
 lower-case aliases and that single-character form only; anything else is 400
 `invalid_terminal_input` and is never typed literally.
 
-Limits: 16 KiB decoded bytes per request (text or summed key bytes), ≤ 256
+Limits: 1 MiB decoded bytes per request (ptyhost's own send/paste ceiling) (text or summed key bytes), ≤ 256
 keys, 16 requests per sliding second per exact name/instance (429
 `terminal_input_rate` with a retry hint), 128 KiB JSON body, the shared
 operations permit and per-name gate, 2 s host timeout. Codes: 501

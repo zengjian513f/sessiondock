@@ -306,7 +306,7 @@ pub async fn send(
             "此后端尚不能解析上传附件；请去掉附件后再发送",
         ));
     }
-    if body.text.len() > 256 * 1024 {
+    if body.text.len() > 1024 * 1024 {
         return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "delivery_text_too_large",

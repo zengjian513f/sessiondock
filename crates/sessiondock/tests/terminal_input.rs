@@ -415,7 +415,7 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
             "invalid_terminal_input",
         ),
         (
-            json!({"data":"a".repeat(16 * 1024 + 1)}),
+            json!({"data":"a".repeat(1024 * 1024 + 1)}),
             StatusCode::PAYLOAD_TOO_LARGE,
             "terminal_input_too_large",
         ),
@@ -440,16 +440,16 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
     stale["keys"] = json!(["escape"]);
     let (status, body) = h.request("POST", "/api/term/send", stale).await;
     ok_receipt(status, &body, 1);
-    // Exactly 16 KiB is accepted.
+    // Exactly 1 MiB (ptyhost's own send ceiling) is accepted.
     let (status, body) = h
         .send(
             "page",
             &token,
             instance,
-            json!({"data":"a".repeat(16 * 1024)}),
+            json!({"data":"a".repeat(1024 * 1024)}),
         )
         .await;
-    ok_receipt(status, &body, 16 * 1024);
+    ok_receipt(status, &body, 1024 * 1024);
 
     // Rate: the window is per instance and counts every accepted request
     // above; wait for it to clear, then 16 succeed and the 17th is refused.
