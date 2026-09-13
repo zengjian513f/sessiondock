@@ -473,6 +473,11 @@ struct ExternalProcesses {
     raw: bool,
     hosted: bool,
     tmux: bool,
+    /// A running lifecycle host whose Codex process moved from its declared
+    /// parent session into this exact fork. The durable host identity stays
+    /// unchanged; takeover can reuse its launch lease instead of starting a
+    /// competing `codex resume`.
+    managed_fork: Option<(String, String)>,
 }
 
 async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProcesses, ApiError> {
@@ -529,6 +534,7 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
             raw: false,
             hosted: hosted_by_runtime,
             tmux: false,
+            managed_fork: None,
         });
     };
     let raw = !scan.scan.pids_of(&target).is_empty();
@@ -536,12 +542,40 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
     let pids = active.owned.get(uid).cloned().unwrap_or_default();
     let hosted = hosted_by_runtime || scan.scan.tree.hosted(&pids, &host_roots);
     let tmux = scan.scan.tree.in_tmux(&pids);
+    let by_sid = sessions
+        .iter()
+        .filter(|row| row.source == "codex" && !row.sid.is_empty())
+        .map(|row| (row.sid.as_str(), row))
+        .collect();
+    let ancestors = crate::runtime::procscan::codex_ancestor_sids(&target, &by_sid);
+    let managed_forks: Vec<(String, String)> = observed
+        .as_ref()
+        .into_iter()
+        .flat_map(|snapshot| snapshot.hosts.iter())
+        .filter_map(|host| {
+            let bound = host.bound_target()?;
+            if bound.source().as_str() != target.source
+                || !ancestors.contains(bound.sid())
+                || !scan
+                    .scan
+                    .tree
+                    .hosted(&pids, &std::collections::BTreeSet::from([host.summary.pid]))
+            {
+                return None;
+            }
+            Some((host.summary.name.clone(), bound.instance_id().to_owned()))
+        })
+        .collect();
     Ok(ExternalProcesses {
         scanner,
         pids,
         raw,
         hosted,
         tmux,
+        managed_fork: match managed_forks.as_slice() {
+            [only] => Some(only.clone()),
+            _ => None,
+        },
     })
 }
 fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
@@ -649,7 +683,26 @@ pub async fn takeover(
         .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
     let (scope, cwd) = resolve_resume(&state, body.uid).await?;
+    let source = source_of(&scope).ok_or_else(invalid)?;
     let processes = external_processes(&state, &scope.uid).await?;
+    if let Some((host, instance)) = &processes.managed_fork {
+        let records = service.list(0, usize::MAX).await.map_err(failure)?;
+        let mut matches = records.iter().filter(|record| {
+            record.host_name() == host
+                && record.instance_id() == instance
+                && record.spec().source() == source
+                && record.state() == crate::lifecycle::model::State::Running
+                && !record.cancel_requested()
+        });
+        if let Some(record) = matches.next()
+            && matches.next().is_none()
+        {
+            let mut value = project(record);
+            value["action"] = json!("reused");
+            value["followed_fork"] = json!(true);
+            return response(value, permit).await;
+        }
+    }
     if processes.raw && processes.pids.is_empty() {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -688,7 +741,6 @@ pub async fn takeover(
     } else {
         false
     };
-    let source = source_of(&scope).ok_or_else(invalid)?;
     let entry = select_entry(service, source, true)?.clone();
     let cwd = cwd.ok_or_else(|| {
         ApiError::new(
@@ -959,7 +1011,12 @@ pub async fn stop(
         .hosts
         .iter()
         .filter_map(|host| host.bound_target())
-        .filter(|target| target.uid() == uid)
+        .filter(|target| {
+            external.managed_fork.as_ref().map_or_else(
+                || target.uid() == uid,
+                |(name, instance)| target.name() == name && target.instance_id() == instance,
+            )
+        })
         .collect();
     if targets.is_empty() {
         let pids: Vec<i64> = external.pids.into_iter().filter(|pid| *pid > 0).collect();

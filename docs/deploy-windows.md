@@ -1,18 +1,12 @@
 # Windows 节点原生构建与滚动部署
 
-本文固化通过 Windows OpenSSH 会话构建和更新 SessionDock 节点的唯一推荐流程。
-生产地址、凭据和实际目录不进入仓库；下文的 `SD_SOURCE`、`SD_RUNTIME` 和
-`SD_BACKUP` 必须由操作者在目标机上设为经过核对的私有绝对路径。
+这是 Windows OpenSSH 的构建和更新流程。不要记录生产地址或凭据。
+`SD_SOURCE`、`SD_RUNTIME`、`SD_BACKUP` 必须是已核对的绝对路径。
 
 ## 1. OpenSSH 下直接使用真实 Rust 工具链
 
-Windows 的 `%USERPROFILE%\.cargo\bin\cargo.exe` 通常是 rustup shim。远程 SSH
-登录的挂载点信任策略可能允许 shim 本身启动，却拒绝它随后解析或启动另一个 shim，
-并返回 OS error 448（路径包含不受信任的装入点）。因此生产构建不得依赖 `PATH`，
-也不得使用 `cargo ...` 或 `rustup run ... cargo ...`。
-
-在远程 `cmd.exe` 会话中固定使用稳定 MSVC 工具链目录内的真实可执行文件，并显式
-指定真实 `rustc.exe`：
+Windows SSH 可能拒绝 rustup shim，并返回 OS error 448。因此直接调用稳定
+MSVC 工具链中的 `cargo.exe` 和 `rustc.exe`，不要依赖 `PATH`。
 
 ```bat
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
@@ -21,17 +15,15 @@ set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
 "%RUSTC%" --version
 ```
 
-任何一个文件不存在或版本检查失败时立即停止，不尝试其他随机入口，也不触碰运行目录。
-可以用 `rustup which cargo` 和 `rustup which rustc` 做只读诊断；其输出应落在同一个
-`stable-x86_64-pc-windows-msvc` 工具链目录，但构建命令仍直接调用上面的真实路径。
+文件缺失或版本检查失败时停止。`rustup which` 仅用于诊断。
 
-## 2. 只在隔离源码快照中构建
+## 2. 在独立构建目录中构建当前工作区
 
-先把待发布的精确提交复制到独立源码目录。未提交修复需要显式覆盖到该快照并记录；不要
-在生产运行目录中执行 Cargo，也不要让构建产物、测试状态或源码进入私有运行数据目录。
+复制当前工作区的全部内容，包括未提交改动。独立目录只防止构建污染运行目录；
+不得借此筛选源码。不要在生产运行目录中执行 Cargo。
 
 ```bat
-set "SD_SOURCE=<isolated-source-snapshot>"
+set "SD_SOURCE=<independent-build-directory>"
 cd /d "%SD_SOURCE%"
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
 set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
@@ -41,16 +33,13 @@ set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
 certutil -hashfile target\release\sessiondock.exe SHA256
 ```
 
-小修可以先运行对应的定向测试以快速发现问题，但发布前仍按当前批次要求完成规定的测试。
-只有测试、release 构建和 SHA-256 记录全部成功后，才进入部署阶段。错误 448 是构建环境
-错误，不是代码失败；按第 1 节纠正工具链路径后重新从隔离快照验证，禁止拿旧 EXE 冒充
-本次构建结果。
+测试、release 构建和 SHA-256 记录都成功后才能部署。错误 448 属于工具链问题；
+修正后重建，不得复用旧 EXE。
 
 ## 3. 先暂存，再停止 Web 服务
 
-将新 EXE 复制为运行目录中的临时文件，例如 `sessiondock.pending.exe`。先核对暂存文件
-哈希与第 2 节产物一致，再创建新的、不可复用的时间戳回滚目录，并复制当前线上 EXE。
-到这一步为止不停止服务，也不替换线上文件。
+把新 EXE 暂存为 `sessiondock.pending.exe`。核对哈希，再备份线上 EXE。
+完成前不要停止服务。
 
 ```bat
 set "SD_RUNTIME=<private-runtime-directory>"
@@ -60,25 +49,18 @@ mkdir "%SD_BACKUP%"
 copy /y "%SD_RUNTIME%\bin\sessiondock.exe" "%SD_BACKUP%\sessiondock.exe"
 ```
 
-停止和启动必须使用部署已有的监督器脚本或服务管理器。只停止 SessionDock Web 进程；
-不得 `taskkill` 独立的 `ptyhost.exe`，不得删除 host、lifecycle、delivery、state、audit、
-trash 或其他私有目录。
+使用现有监督器停止 SessionDock Web。不要停止 `ptyhost.exe`，也不要删除私有数据。
 
-停止成功后，将 `.pending.exe` 原子改名为 `sessiondock.exe`，再立即启动监督器。若替换、
-启动、配置或健康检查任一步失败，停止新 Web 进程，从 `SD_BACKUP` 恢复旧 EXE并重新启动。
+停止后原子替换 EXE并启动。任一步失败都从 `SD_BACKUP` 回滚。
 
 ## 4. 部署后验收
 
-每次更新至少核对：
+每次更新检查：
 
 1. Web 服务由既有监督器管理并处于健康状态；配置检查和 `/api/health` 成功。
 2. 线上 `sessiondock.exe` 的 SHA-256 等于第 2 节记录。
-3. 更新前后的 host 记录数、独立 `ptyhost.exe` PID、创建时间和 Windows Session ID
-   保持不变；Web 服务重启不应重启或收割受管 CLI。
-4. 使用只读或合成探针验证本次修复路径；不要为探针启动付费 CLI、创建真实会话或写入
-   真实附件。
-5. 在发布记录中保留回滚目录、最终哈希、健康结果及任何平台限制；由此发现的新工作
-   只写入根目录 `TODO.md`。
+3. host 记录数和既有 `ptyhost.exe` 的 PID、创建时间、Session ID 不变。
+4. 用只读或合成探针验证修复；不要创建付费会话或真实附件。
+5. 记录回滚目录、哈希、健康结果和平台限制；新工作写入 `TODO.md`。
 
-前端静态文件与 EXE 必须各自按实际改动决定是否部署。发现另一批并发更新时，不覆盖
-对方文件；先核对提交、线上哈希和文件归属，再合并为一份经过验证的发布快照。
+按当前工作区部署有改动的静态文件和 EXE。复制前确认构建输入未变化。

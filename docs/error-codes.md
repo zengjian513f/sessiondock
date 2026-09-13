@@ -894,7 +894,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `terminal_disabled`
 
-- 终端传输未启用：必须显式配置隔离的 ptyhost 目录 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L36
+- 终端传输未启用：必须配置私有 ptyhost 目录 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L36
 
 ### `unsupported_history`
 

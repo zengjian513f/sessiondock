@@ -787,7 +787,7 @@ impl Scan {
 
 /// Python `_codex_ancestor_sids`: the fork chain a Codex rollback branch can
 /// confirm within the current list.
-fn codex_ancestor_sids(
+pub(crate) fn codex_ancestor_sids(
     session: &SessionRow,
     by_sid: &HashMap<&str, &SessionRow>,
 ) -> BTreeSet<String> {

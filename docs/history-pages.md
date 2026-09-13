@@ -234,7 +234,7 @@ messages request retains the existing view behavior; the capability-gated
 legacy gap button no longer uses it. See
 [remaining media design](media-pagination-design.md).
 
-## Isolated checks
+## Fixture checks
 
 ```sh
 cargo test -p sessiondock sessions:: --locked

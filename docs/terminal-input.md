@@ -74,7 +74,7 @@ instance leaves the list, matching Python.
 
 ## Validation
 
-`cargo test -p sessiondock --test terminal_input --locked` (isolated
+`cargo test -p sessiondock --test terminal_input --locked` (temporary
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
 refusal without lease, after revoke and after exit, size limits and input bursts;
 skips when ptyhost is not built) plus five input unit tests, and
