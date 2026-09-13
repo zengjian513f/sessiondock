@@ -570,7 +570,7 @@ fn binding_intent_is_durable_exact_and_explicit_same_value_retries_do_not_reinte
 }
 
 #[test]
-fn binding_recovery_never_confirms_or_reissues_authority_and_old_handles_are_rejected() {
+fn binding_recovery_preserves_confirmation_without_reissuing_authority() {
     let (f, mut store, running, spec) = binding_fixture();
     let authority = store.begin_binding(&running, &spec).unwrap();
     drop(store);
@@ -603,7 +603,40 @@ fn binding_recovery_never_confirms_or_reissues_authority_and_old_handles_are_rej
             .binding()
             .unwrap()
             .state(),
-        BindingState::Uncertain
+        BindingState::Confirmed
+    );
+}
+
+#[test]
+fn process_confirmation_erased_by_schema_five_recovery_is_restored() {
+    let (f, mut store, running, spec) = binding_fixture();
+    let authority = store
+        .begin_binding_with(
+            &running,
+            &spec,
+            BindingMethod::Process,
+            Some("verified process evidence".into()),
+        )
+        .unwrap();
+    let confirmed = store
+        .finish_binding(authority, BindingObservation::Confirmed(spec))
+        .unwrap();
+    drop(store);
+    let mut raw: serde_json::Value = serde_json::from_slice(&f.bytes()).unwrap();
+    raw["records"][confirmed.record_id()]["state"] = serde_json::json!("uncertain");
+    raw["records"][confirmed.record_id()]["binding"]["state"] = serde_json::json!("uncertain");
+    fs::write(
+        f.ledger.join(LEDGER_FILENAME),
+        serde_json::to_vec(&raw).unwrap(),
+    )
+    .unwrap();
+
+    let mut reopened = LifecycleStore::open(&f.ledger).unwrap();
+    let recovered = reopened.get(confirmed.record_id()).unwrap();
+    assert_eq!(recovered.state(), State::Uncertain);
+    assert_eq!(
+        recovered.binding().unwrap().state(),
+        BindingState::Confirmed
     );
 }
 

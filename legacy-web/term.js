@@ -433,7 +433,7 @@ async function loadTermList() {
   // Declared launches leave the sidebar once their native record exists;
   // the selected pending page still has to follow that association.
   if (SessionDockCapabilities.config.backend === 'rust')
-    for (const row of T.pending) if ((row.declared_sid || row.binding?.state === 'confirmed') && !row.stale) resolveNewSession(row);
+    for (const row of T.pending) if (row.declared_sid || row.binding?.state === 'confirmed') resolveNewSession(row);
   restoreTermPane(S.sel, S.agent);
 }
 
@@ -1453,8 +1453,16 @@ async function resolveNewSession(info) {
     // WP-E: a pending Codex/Grok launch whose binding the server confirmed
     // (process evidence, or the operator dialog) is followed the same way.
     const associated = current && (current.declared_sid || current.binding?.state === 'confirmed');
-    const linked = associated && (T.list || []).find(row => row.name === current.name
+    const terminalLinked = associated && (T.list || []).find(row => row.name === current.name
       && row.instance_id === current.instance_id && row.uid);
+    // ptyhost removes its routing record immediately after exit. A durable
+    // binding still names the exact native row, so follow that history even
+    // when there is no terminal left to reopen.
+    const nativeLinked = current?.binding?.state === 'confirmed'
+      && S.sessions.find(row => row.uid === current.binding.uid
+        && row.source === current.binding.source
+        && String(row.sid) === String(current.binding.sid));
+    const linked = terminalLinked || nativeLinked;
     if (linked && S.sel === pendingId && !S.agent) {
       migrateComposerDraft(pendingId, linked.uid);
       // The pending view holds a launch-kind lease and socket; the native
@@ -1470,7 +1478,7 @@ async function resolveNewSession(info) {
       }
       T.uid = linked.uid;
       await openSession(linked.uid);
-      if (S.sel === linked.uid && !S.agent && reopen) await openTermPane(current.name);
+      if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
       T.pendingModes.delete(info.name);
       paintLive();
       return;

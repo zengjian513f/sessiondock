@@ -283,6 +283,26 @@ test('Rust pending rows require launch identity and never run native resolution 
   await loadFunction(context,'resolveNewSession',read('term.js'))(row);
 });
 
+test('confirmed pending binding follows native history after its host record exits', async () => {
+  const row={name:'node~pending-host',record_id:'receipt',launch_id:'launch',instance_id:'instance',
+    stale:true,binding:{state:'confirmed',source:'codex',sid:'native-sid',uid:'codex:node~native'}};
+  const calls=[];
+  const context=contextWithCapabilities(disabled,{
+    T:{list:[],pending:[row],views:new Map(),openViews:new Map(),pendingModes:new Map()},
+    S:{sel:'tmux:node~pending-host',agent:null,sessions:[{uid:'codex:node~native',source:'codex',sid:'native-sid'}]},
+    pendingUid:name=>`tmux:${name}`, migrateComposerDraft:(from,to)=>calls.push(['draft',from,to]),
+    openSession:async uid=>{calls.push(['open',uid]);context.S.sel=uid;},
+    paintLive:()=>calls.push(['paint']), openTermPane:()=>assert.fail('an exited host has no terminal to reopen'),
+    $:selector=>selector==='#termpane'?{classList:{contains:()=>false}}:null,
+  });
+  await loadFunction(context,'resolveNewSession',read('term.js'))(row);
+  assert.deepEqual(calls,[
+    ['draft','tmux:node~pending-host','codex:node~native'],
+    ['open','codex:node~native'],
+    ['paint'],
+  ]);
+});
+
 test('pending composer attachments carry the exact Rust launch receipt identity', async () => {
   const row={name:'node~pending-host',record_id:'receipt',instance_id:'instance'};
   let request;

@@ -11,8 +11,8 @@ own process evidence (`BindingMethod::Process`, `lifecycle::autobind`,
 described in [lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence-wp-e)).
 `VerifiedNativeBinding::from_process_evidence(scope, receipt, note)` replaces
 the operator confirmation with an evidence note naming the CLI pids under the host's child and the held native
-record; everything below — intent before host call, one bind per request,
-confirmation only by matching guarded Info, recovery to Uncertain — is
+record; everything below — intent before host call, one bind per request and
+confirmation only by matching guarded Info — is
 unchanged. `BindingRecord` carries `method`, `evidence` and `bound_at` (Unix
 seconds of the first confirmation); an operator retry of the same spec keeps
 the first method/evidence.
@@ -87,23 +87,27 @@ defined `cancel_requested:false`. Schema 5 (WP-E) adds `method:"operator"`,
 envelopes with missing required current fields or mixed schemas fail closed;
 ordinary extra fields follow Python's tolerant dictionary reads.
 
-On open, historical Intent and Confirmed binding states become Uncertain in the
-same durable recovery commit used for Starting/CancelRequested. No new binding
-authority is issued. Within one Web process an observed exit of the exact
+On open, historical Intent becomes Uncertain in the same durable recovery commit
+used for Starting/CancelRequested. A Confirmed binding survives restart because
+it records an association already established by guarded Info; it is not live
+control authority. No new binding authority is issued. Schema-5 process bindings
+that an older Web recovery downgraded are restored only when both their process
+evidence and original `bound_at` confirmation remain. An observed exit of the exact
 instance keeps a Confirmed binding on the Exited receipt (WP-E): that pair is
 the durable exit receipt `/api/live`, `session/stop` and the recycle bin fold
-into `exited`; cancellation and uncertainty still downgrade it. `get`, `list` and authorization only request guarded status;
+into `exited`; cancellation still downgrades it. `get`, `list` and authorization only request guarded status;
 they never send bind. Every probe clears its prior binding observation before
 network I/O, so timeout, shutdown, vanished host or known Child exit cannot reuse
-cached Confirmed data. A current matching Info may confirm the retained intent;
-missing/unbound/unsupported status makes it Uncertain. A conflicting or invalid
+cached host data. A current matching Info may confirm the retained intent;
+missing status makes lifecycle state Uncertain but preserves an already Confirmed
+association; unbound, conflicting or invalid status makes the binding Uncertain. A conflicting or invalid
 binding persists Uncertain, returns a typed conflict and retains the original spec.
 
-Binding survives Web restart only through the still-running exact host's in-memory
-state plus this ledger's durable intent. It is not a promise that an independently
-restarted host can recover the association. A new host instance at the same routing
-name does not inherit authority. Queries about cancelled/exited instances may
-retain or observe their old association, but never authorize bind or terminal use.
+Binding association survives Web restart in the ledger. Live terminal authority
+does not: it still requires fresh guarded status from the same running host
+instance. A new host instance at the same routing name does not inherit authority.
+Queries about cancelled/exited instances may retain or observe their old
+association, but never authorize bind or terminal use.
 
 ## Native terminal authorization after Web restart
 
