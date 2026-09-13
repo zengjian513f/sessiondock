@@ -58,6 +58,10 @@ see AGENTS.md) and skip only when the CLI is absent; no production data, native
 homes, or live sessions. Linux only. The MSVC `cargo check` is a cross-compile,
 not Windows runtime coverage.
 
+Windows 实机通过 OpenSSH 构建时，不得调用 `%USERPROFILE%\.cargo\bin` 中的 rustup
+shim；真实工具链选择、错误 448 的处理及构建后滚动更新见
+[Windows 节点原生构建与滚动部署](deploy-windows.md)。
+
 Typical time is the wall-clock measured on 2026-09-12 during the batch-19 and
 batch-20 acceptance runs on the development machine (release binary, warm page
 cache); suites that were not part of those runs are `n/a`.
