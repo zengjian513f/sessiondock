@@ -34,8 +34,6 @@ The full sweep is ~5 min even in parallel, so it is not a per-edit gate:
   HTTP suite that covers it (`--only <name>`). Do not reflexively full-sweep,
   push, and deploy-to-all after every small fix — the cost adds up; batch the
   full sweep, push, and deploy for when the work is ready to land.
-- **Landing / deploy** — the full default sweep (`python3 tests/run_validation.py`),
-  then push and deploy.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
   not unattended.

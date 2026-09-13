@@ -1221,7 +1221,9 @@ function showNewSessionStage(info) {
   selectPendingSidebarRow(S.sel, added);
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
-  const pendingTitle = info.title || `新建 ${src.name} 会话`;
+  const pendingTitle = info.state === 'uncertain'
+    ? `状态不确定 · ${info.title || `新建 ${src.name} 会话`}`
+    : (info.title || `新建 ${src.name} 会话`);
   $('#detail').innerHTML = `<div class="dhead"><div class="dtitle">
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
     <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>

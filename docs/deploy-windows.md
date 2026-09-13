@@ -6,13 +6,16 @@
 ## 1. OpenSSH 下直接使用真实 Rust 工具链
 
 Windows SSH 可能拒绝 rustup shim，并返回 OS error 448。因此直接调用稳定
-MSVC 工具链中的 `cargo.exe` 和 `rustc.exe`，不要依赖 `PATH`。
+MSVC 工具链中的 `cargo.exe`，并把 `RUSTC`、`RUSTDOC` 都指向该工具链；
+`cargo test` 的 doctest 会单独启动 `rustdoc.exe`。
 
 ```bat
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
 set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
+set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 "%SD_TOOLCHAIN%\bin\cargo.exe" --version
 "%RUSTC%" --version
+"%RUSTDOC%" --version
 ```
 
 文件缺失或版本检查失败时停止。`rustup which` 仅用于诊断。
@@ -27,6 +30,7 @@ set "SD_SOURCE=<independent-build-directory>"
 cd /d "%SD_SOURCE%"
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
 set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
+set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 
 "%SD_TOOLCHAIN%\bin\cargo.exe" test -p sessiondock --locked
 "%SD_TOOLCHAIN%\bin\cargo.exe" build -p sessiondock --release --locked
