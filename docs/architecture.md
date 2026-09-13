@@ -105,5 +105,5 @@ legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有�
 7. Rust 浏览器接口可与新前端一起演化；旧 Python Hub 兼容性需要单独的
    适配层和契约测试，当前健康检查的版本字段不代表旧节点协议兼容。
 
-实现状态、剩余协议差异和下一阶段入口以根目录
-[BACKEND_MIRGRATION_PLAN.md](../BACKEND_MIRGRATION_PLAN.md) 为准。
+当前实现合同以本文件及相应模块文档为准；未完成工作只记录在根目录
+[TODO.md](../TODO.md)，路由清单见 [route-ledger.md](route-ledger.md)。

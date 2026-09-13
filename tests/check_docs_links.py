@@ -2,7 +2,7 @@
 """Verify relative Markdown links and GitHub-style heading anchors.
 
 Default scan from the repo root (this file's parent): README.md, AGENTS.md,
-BACKEND_MIRGRATION_PLAN.md, docs/*.md, crates/ptyhost-client/README.md and
+TODO.md, MIGRATION_HISTORY.md, docs/*.md, crates/ptyhost-client/README.md and
 reference/README.md. Skip fenced code blocks and http(s)/mailto: targets.
 Relative targets resolve against the linking file; missing files or heading
 anchors are reported. Duplicate headings get -1, -2 suffixes.
@@ -21,7 +21,7 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULTS = (
-    "README.md", "AGENTS.md", "BACKEND_MIRGRATION_PLAN.md", "docs/*.md",
+    "README.md", "AGENTS.md", "TODO.md", "MIGRATION_HISTORY.md", "docs/*.md",
     "crates/ptyhost-client/README.md", "reference/README.md",
 )
 FENCE_RE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})")

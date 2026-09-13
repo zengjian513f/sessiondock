@@ -1,7 +1,7 @@
-# Onboarding: reading order
+# SessionDock onboarding
 
-Join the Python AgentHub → Rust SessionDock migration by reading in this order.
-This file is a map, not a product spec.
+Use this reading order when joining the standalone SessionDock project. This
+file is a map, not a product spec; historical migration material is optional.
 
 ## 1. What this repository is and is not
 
@@ -60,11 +60,10 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ## 5. How work is organized
 
-[BACKEND_MIRGRATION_PLAN.md](../BACKEND_MIRGRATION_PLAN.md) is the ledger.
-
-- [§6 milestones](../BACKEND_MIRGRATION_PLAN.md#6-实施步骤与完成标准) — M0–M8 plus stage-two Vue; checkboxes are the completion standard.
-- [§7 batch ledger](../BACKEND_MIRGRATION_PLAN.md#7-执行与验收记录) — Numbered batches: what shipped and how it was validated.
-- [tests/plan_status.py](../tests/plan_status.py) — Summarizes §6 checkboxes and the latest §7 batch: `python3 tests/plan_status.py`.
+- [TODO.md](../TODO.md) — The only unfinished-work list.
+- [route-ledger.md](route-ledger.md) — Compact route-family inventory checked against the router and legacy calls.
+- Current behavior lives in the relevant `docs/` contract and its tests. The archived
+  `MIGRATION_HISTORY.md` is not required reading and is never implementation authority.
 
 ## 6. Validate and run locally
 
@@ -80,7 +79,6 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 From the repo root. These are list/read-only: no build, no listener, no production data. Do not run `cargo` or a full `run_validation.py` until you own the `target/` lock.
 
 ```sh
-python3 tests/plan_status.py
 python3 tests/run_validation.py --list
 python3 tests/run_validation.py --dry-run
 python3 tests/check_docs_links.py

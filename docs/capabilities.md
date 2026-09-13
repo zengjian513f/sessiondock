@@ -66,7 +66,7 @@ A page without the tag (empty namespace) neither falls back nor copies. See
 | `files_jobs` | true when file writes are configured or terminal transport is available | enables the file job dialog | [files.md](files.md) |
 | `file_thumbnails` | `false` | skips grid `mode=thumbnail` `<img>` | [files.md](files.md) |
 | `mutations` | `false` | no `config`/`allows` gate | [metadata.md](metadata.md) |
-| `hub` | `false` | no `config`/`allows` gate (`agenthub-mode` is `local`) | [../BACKEND_MIRGRATION_PLAN.md](../BACKEND_MIRGRATION_PLAN.md) |
+| `hub` | `false` | no `config`/`allows` gate (`agenthub-mode` is `local`) | [hub.md](hub.md) |
 | `media` | `true` | no `config`/`allows` gate (local tokens still render) | [media.md](media.md) |
 | `media_remote` | `true` | browser renders HTTP(S) image references directly | [media.md](media.md) |
 | `media_lazy` | `true` | no eager `src`; GET on view + visible error/retry | [media.md](media.md) |

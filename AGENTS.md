@@ -33,17 +33,17 @@
   the sessions they create. This rule covers the CLI under test only.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
-- `origin` is the public GitHub repository `zengjian513f/sessiondock` (created
-  2026-09-13 from a single squashed initial commit; the batch history lives in
-  `BACKEND_MIRGRATION_PLAN.md`). Push when work lands or the user asks, not after
+- `origin` is the public GitHub repository `zengjian513f/sessiondock`. Push when
+  work lands or the user asks, not after
   every small fix; do not publish packages. Redeploying the running service
   (rebuild, replace the binary, restart) needs a user request per batch.
 
 ## Structure
 
-- Follow `BACKEND_MIRGRATION_PLAN.md` and update its implementation/validation
-  ledger as milestones land. First stage uses `legacy-web/`; framework migration
-  is second stage. Do not expand the Vue scaffold during backend migration.
+- Treat SessionDock as an independent project. Current contracts live in `docs/`
+  and unfinished work lives only in `TODO.md`; do not use the archived migration
+  history as current guidance. `legacy-web/` is the production frontend. Do not
+  expand the Vue scaffold unless the user selects that direction.
 - `crates/sessiondock`: Rust HTTP service. Keep transport handlers separate
   from session/domain logic and future ptyhost client code.
 - `crates/ptyhost`: imported independent session host. Preserve its local wire
@@ -99,7 +99,7 @@
   `tests/term_send_http_suite.py`, `tests/shutdown_suite.py`,
   `tests/restart_state_suite.py`, `tests/unicode_paths_suite.py`,
   `tests/budget_boundaries_suite.py`; each asserts what the code does and
-  reports doc discrepancies in its summary. Replacement aids:
+  reports doc discrepancies in its summary. Operational aids:
   `tests/python_route_gap.py` (Python routes vs Rust router),
   `tests/config_mapping.py` (Python knobs → Rust env vars),
   `tests/legacy_gating_check.py`, `docs/replacement-checklist.md`.
@@ -107,8 +107,8 @@
   `--tags`, `--only`, `--keep-going`, `--json PATH`, `--rerun-failed PATH`,
   `--dry-run`); it runs the Rust checks, Node contracts and every Python suite
   serially with per-suite logs under `target/validation/`. `docs/validation.md`
-  tabulates every suite. Report tools: `tests/plan_status.py` (ledger
-  progress), `tests/route_ledger.py` (router vs plan vs legacy calls),
+  tabulates every suite. Report tools: `tests/route_ledger.py` (router vs route
+  inventory vs legacy calls),
   `tests/legacy_asset_diff.py` (served vs frozen frontend),
   `tests/check_docs_links.py` (Markdown links/anchors; run before committing
   docs), `tests/bench_summary.py` (benchmark JSONL → comparison tables),

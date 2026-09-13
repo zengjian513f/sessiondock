@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Structural checks for BACKEND_MIRGRATION_PLAN.md so ledger edits stay consistent.
+"""Structural checks for the archived migration history.
 
 §7 `### 第N批：` (Chinese numerals 一…九十九) must increase without gaps;
 last H3 is `### 下一批的具体入口`; 第十一批+ need 验收/测试 and N项; §6
 checkboxes match `^- [( |x)] `; tables, ≤1200-char lines, relative links.
-CLI: plan_lint.py [--plan PATH] [--json]
+CLI: migration_history_lint.py [--plan PATH] [--json]
 """
 # run_validation: skip
 from __future__ import annotations
@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PLAN = ROOT / "BACKEND_MIRGRATION_PLAN.md"
+DEFAULT_PLAN = ROOT / "MIGRATION_HISTORY.md"
 NEXT_H3 = "### 下一批的具体入口"
 MAX_LEN = 1200
 DIGITS = {ch: i for i, ch in enumerate("一二三四五六七八九", 1)}
@@ -134,7 +134,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--plan", type=Path, default=DEFAULT_PLAN,
-        help="plan markdown (default: repo-root BACKEND_MIRGRATION_PLAN.md)",
+        help="historical migration markdown (default: repo-root MIGRATION_HISTORY.md)",
     )
     parser.add_argument("--json", dest="as_json", action="store_true",
                         help="print findings as JSON")

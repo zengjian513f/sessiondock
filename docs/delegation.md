@@ -76,8 +76,8 @@ of the verification commands.
 2. 通读文件：无网络访问、无写仓库外路径、无 `subprocess` 调用未授权命令、
    无新增依赖；风格与相邻脚本一致。
 3. 跑任务书里的验证命令，再跑一个真实子集（如 `--only node_contracts`）。
-4. 记入 `BACKEND_MIRGRATION_PLAN.md` 对应批次，注明"grok-4.6 headless 产出，
-   人工审阅"，提交信息同样注明来源。
+4. 在提交或 PR 说明中注明"grok-4.6 headless 产出，人工审阅"；只有确实尚未完成的
+   后续工作才写入根目录 `TODO.md`。
 5. 出现 `Memory flush started` 之类 grok 自身日志属正常；`GROK_EXIT` 非 0 或
    看门狗报停滞时读日志尾部判断是卡在权限还是任务本身。
 
@@ -93,7 +93,7 @@ of the verification commands.
 | 2026-09-12 | q77 `docs/validation.md` 套件表按 `run_validation.py --list` 重生成（68 → 表 67 行，去掉一行并行子代理的辅助脚本）| 380 s，rc=0；命令列与 `--list` 无差异，人工只删一行 |
 | 2026-09-12 | q75 `tests/meta_import.py`（Python `session-meta.json` → Rust `session-metadata.json` 离线转换，`--verify` 起隔离服务核对）、q76 `tests/cutover_preflight.py`（切流前环境体检，包一层 `sessiondock --check-config`）| 837 s / 747 s，260 / 259 行，rc=0，合成数据验证一次通过；人工只改一处（`starred` 缺时间戳时保留 `starred:true`）；记入 `docs/replacement-checklist.md` §4 |
 | 2026-09-12 | q74 `tests/shadow_compare.py`（M8 生产只读影子比对工具，操作者手动运行；接力波最后一个任务）| 978 秒，260 行（任务书上限），rc=0；grok 自己把 336 行压到限内；合成语料 10 PASS/3 DELTA/0 DIFF、无 flag exit 2 复验通过；人工审阅未改动，记入 `docs/replacement-checklist.md` §3 |
-| 2026-09-12 | 8 个并行任务：`tests/bench_summary.py`、`tests/plan_status.py`、`docs/validation.md`、`tests/check_docs_links.py`、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run` | 165–454 秒各自完成，8/8 一次通过验证命令；人工审阅只改了 `docs/validation.md` 里对临时样例路径的引用。bench_summary 复算结果与第十九批手工表一致；check_docs_links 对仓库 89 个链接 0 坏链并能识别人工坏链 |
+| 2026-09-12 | 8 个并行任务：`tests/bench_summary.py`、`tests/migration_history_status.py`（原 `plan_status.py`）、`docs/validation.md`、`tests/check_docs_links.py`、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run` | 165–454 秒各自完成，8/8 一次通过验证命令；人工审阅只改了 `docs/validation.md` 里对临时样例路径的引用。bench_summary 复算结果与第十九批手工表一致；check_docs_links 对仓库 89 个链接 0 坏链并能识别人工坏链 |
 
 ## 并行经验（8 路）
 
@@ -106,8 +106,6 @@ of the verification commands.
 
 ## 候选任务（待派）
 
-- `tests/run_validation.py` 输出对接 `plan_status.py`：把最近一次 `--json`
-  结果并入计划状态报告。
 - `tests/fixture_stats.py`：统计各 Python 套件生成的合成语料规模（会话数、
   记录数、字节），供文档引用。
 - 将 `docs/*.md` 中重复的预算数字（32 MiB、256 项等）抽成一张

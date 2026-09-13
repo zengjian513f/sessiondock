@@ -1,6 +1,8 @@
-# 后端迁移计划：Python AgentHub → Rust
+# Python AgentHub → Rust migration history
 
-> 文件名按本次任务约定保留 `MIRGRATION` 拼写。
+> 本文是已结束迁移阶段的历史归档，不是当前计划、合同或会话启动必读文件。
+> 当前未完成工作只记在 `TODO.md`；当前行为以代码、测试和 `docs/` 合同为准。
+>
 > 基线：原仓库提交 `ee2e373c134f4f16a3452ba35fa5346ea441fb9f`。
 > 第一阶段继续使用 legacy HTML/CSS/JavaScript；Vue/TypeScript 重构是第二阶段。
 > 本文同时记录实施状态；未勾选项不表示已经兼容。Rust 服务已作为独立用户级服务部署在本机私有前缀下与 Python 并行运行（2026-09-12）；切换生产流量仍是 M8 的单独授权步骤。
@@ -481,7 +483,7 @@
 - 结果 **19 PASS / 13 DELTA / 0 UNVERIFIED / 0 FAIL**。全部 DELTA 均为计划已声明的安全差异：祖先缺失/孤儿 fork/行中 cut 明确 501 而非静默截断、超预算 Write 的 `changes_unavailable_reason`、空 tool_result 不伪造 `[图片]`、Grok 记录 `ts` 保留、Codex/Grok 文本嗅探退出码为额外 `exit_code` 字段（`error` 标志两边一致）。修正了差异表中"Grok summary-only 暂不列表"的过期描述。
 - 新 `tests/run_validation.py`（grok-4.6 headless 产出，人工审阅）：声明式串行验证运行器，覆盖 cargo test/fmt/clippy/MSVC check/release 构建、运行时发现的 Node 合同与 Python 套件（parity 自动带 `--python-source`，`--browser`/`--binary` 按 argparse 探测，lifecycle `--native-binding` 变体），`--only/--skip/--tags/--list/--log-dir/--timeout-scale/--keep-going`，每套独立超时与日志，失败打印尾行，退出码。`--list` 解析出 34 套。
 - 验收（隔离 worktree、独立 target）：`cargo test -p sessiondock` 736 项全绿（lib 627）、tool/history/grok/media/names 差分与 history/search Chromium 通过；主工作区其余模块当时有其他批次的未完成改动，故本批以 HEAD+本批改动单独验证。未改原 Python，无付费 CLI。
-- 后续补充（grok-4.6 headless 8 路并行产出，人工审阅）：`tests/bench_summary.py`（基准 JSONL → 对照表，复算与第十九批手工表一致）、`tests/plan_status.py`（§6 勾选统计：38/60）、`docs/validation.md`（35 套件表）、`tests/check_docs_links.py`（89 链接 0 坏链）、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`（实现 29/501 17）、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run`。见 [docs/delegation.md](docs/delegation.md)。
+- 后续补充（grok-4.6 headless 8 路并行产出，人工审阅）：`tests/bench_summary.py`（基准 JSONL → 对照表，复算与第十九批手工表一致）、`tests/migration_history_status.py`（当时名为 `plan_status.py`；§6 勾选统计：38/60）、`docs/validation.md`（35 套件表）、`tests/check_docs_links.py`（89 链接 0 坏链）、`tests/legacy_asset_diff.py`、`tests/route_ledger.py`（实现 29/501 17）、`tests/rss_watch.py`、`run_validation.py --json/--rerun-failed/--dry-run`。见 [docs/delegation.md](docs/delegation.md)。
 
 ### 第二十二批：进程身份与运行/退出/未知三态
 
@@ -717,8 +719,8 @@ Python 仓库 2026-09-12 一天推进了 34 个提交（分层侧栏 `spawned_by
 ### 新建会话附件上传修复（2026-09-13）
 
 - 根因：新建页在原生记录落盘前使用 `tmux:<host>` 临时 UID，普通附件接口却只从原生 `SessionStore` 视图取 cwd，因此直接返回“会话不存在”；Python 基线会从 pending 记录的可信 cwd 上传。
-- 修复：legacy composer 对 Rust pending 行随上传附带 `record_id + instance_id`；节点以后端 lifecycle 回执核对完整临时 UID、record 和 instance，再复用同一受控 `agenthub_attachments/` 写入路径。Hub 保持由 scoped pending UID 选定节点，回执字段原样转发。已显式丢弃的回执不再授权；普通原生会话和 Python 页面协议不变。
-- 回归：Rust 单测覆盖回执/name/instance 精确匹配，HTTP 合成宿主在原生记录尚未产生时验证中文名附件写入及错误 instance 409，legacy 契约执行真实上传函数并断言 URL 携带三项身份；Hub 定向测试确认 scoped pending UID 选中节点且两项回执字段原样转发；原有文件写入集成 6 项继续通过。
+- 修复：legacy composer 对 Rust pending 行随上传附带 `record_id + instance_id`；节点以后端 lifecycle 回执核对完整临时 UID、record 和 instance，再复用同一受控 `agenthub_attachments/` 写入路径。旧 Hub/Python 页面只带服务端生成的 pending host UID 时，节点按 Python 基线从 lifecycle 账本唯一解析同一记录，不把客户端 cwd 当授权。Hub 保持由 scoped pending UID 选定节点，回执字段原样转发。已显式丢弃的回执不再授权；普通原生会话协议不变。
+- 回归：Rust 单测覆盖 pending UID 兼容解析及回执/name/instance 精确匹配，HTTP 合成宿主在原生记录尚未产生时验证新旧页面中文名附件写入及错误 instance 409，legacy 契约执行真实上传函数并断言 URL 携带三项身份；Hub 定向测试确认 scoped pending UID 选中节点且两项回执字段原样转发；原有文件写入集成 6 项继续通过。
 - 验收：Linux `cargo test --workspace --locked` 全绿（sessiondock 库 948 通过 / 5 忽略，ptyhost 61 / 1，其余 workspace target 无失败），Clippy `-D warnings`、fmt、release 构建通过；legacy 契约 51 / 51，`lifecycle_http_suite` 的真实合成宿主 pending 上传通过。Cetus 独立源码快照以 MSVC release 原生构建，新增定向单测通过（1 / 1）。
 - 部署：Lyra、Cygnus、Pavo、Cetus 的现有 SessionDock 节点已替换并重启健康；Linux 二进制 SHA-256 前缀 `6d6f18661fd0`，Windows `30d6ea458480`，四端 `term.js` 前缀 `0697f72ba757`。部署前后 Lyra 18 条宿主记录 / 13 个 ptyhost、Pavo 2 / 2、Cetus 3 / 2 保持，Cygnus原为 0 / 0；各端保留 `backup-pending-attachment-20260913-232552` 回滚副本。生产只读探针均由新 pending 分支返回 `launch_missing`，没有创建附件或会话。
 

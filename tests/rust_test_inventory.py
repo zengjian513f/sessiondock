@@ -5,7 +5,7 @@
 following `test result:` line; tests/<name>.rs is assigned by which crate
 directory contains that file. --source counts #[test]/#[tokio::test]/
 #[ignore under crates/*/src and crates/*/tests. Prints a Markdown table,
-per-crate totals, and a BACKEND_MIRGRATION_PLAN.md-style Chinese one-liner.
+per-crate totals, and a concise Chinese release-note line.
 """
 # run_validation: skip
 from __future__ import annotations
