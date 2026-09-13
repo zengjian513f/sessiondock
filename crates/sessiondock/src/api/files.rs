@@ -651,8 +651,56 @@ struct AttachmentQuery {
     agent: String,
     name: String,
     id: Option<String>,
+    record_id: String,
+    instance_id: String,
     #[allow(dead_code)]
     debug_run: String,
+}
+
+fn pending_attachment_cwd(
+    query: &AttachmentQuery,
+    record: &crate::lifecycle::model::Record,
+) -> Result<String, ApiError> {
+    if !query.agent.is_empty()
+        || query.record_id != record.record_id()
+        || query.instance_id != record.instance_id()
+        || query.uid.strip_prefix("tmux:") != Some(record.host_name())
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "launch_identity",
+            "创建回执与附件目标实例不匹配",
+        ));
+    }
+    // Python's pending store remains usable while its receipt exists, including
+    // the short resolved/exited retention window. Rust keeps historical ledger
+    // rows indefinitely, so only the explicit discard tombstone ends this grant.
+    if record.discarded() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "launch_not_ready",
+            "创建回执已被丢弃，不能上传附件",
+        ));
+    }
+    Ok(record.spec().cwd().to_string_lossy().into_owned())
+}
+
+async fn pending_attachment_scope(
+    state: &AppState,
+    query: &AttachmentQuery,
+) -> Result<Option<String>, ApiError> {
+    if !query.uid.starts_with("tmux:") {
+        return Ok(None);
+    }
+    if query.record_id.is_empty() || query.instance_id.is_empty() {
+        return Err(invalid());
+    }
+    let lifecycle = super::lifecycle::enabled(state)?;
+    let record = lifecycle
+        .get(query.record_id.clone())
+        .await
+        .map_err(super::lifecycle::failure)?;
+    pending_attachment_cwd(query, &record).map(Some)
 }
 
 /// Legacy composer: raw file body, with the native UID and filename in the
@@ -665,6 +713,10 @@ pub async fn upload_attachment(
     let Query(query) =
         Query::<AttachmentQuery>::try_from_uri(request.uri()).map_err(|_| invalid())?;
     validate_scope(&query.uid, &query.agent)?;
+    // A newly launched CLI has no native history UID yet. Its exact lifecycle
+    // receipt still carries the server-validated cwd; require both immutable
+    // receipt identities before granting the same attachment subdirectory.
+    let pending_cwd = pending_attachment_scope(&state, &query).await?;
     let limit = WriteService::BUG_REPORT_ATTACHMENT_MAX_BYTES;
     let too_large = || {
         ApiError::new(
@@ -694,14 +746,29 @@ pub async fn upload_attachment(
         .map_err(|_| too_large())?;
     let metadata = state.metadata.clone();
     work(&state, lease, move |store| {
-        let view = store.messages(
-            &query.uid,
-            &MessageQuery {
-                agent: query.agent.clone(),
-                ..Default::default()
-            },
-        )?;
-        let scope = scope(&view, &query.uid, &query.agent)?;
+        let view;
+        let empty_messages = [];
+        let (scope, record_metadata) = match pending_cwd.as_deref() {
+            Some(cwd) => (
+                FileScope {
+                    uid: &query.uid,
+                    agent: None,
+                    cwd,
+                    messages: &empty_messages,
+                },
+                false,
+            ),
+            None => {
+                view = store.messages(
+                    &query.uid,
+                    &MessageQuery {
+                        agent: query.agent.clone(),
+                        ..Default::default()
+                    },
+                )?;
+                (scope(&view, &query.uid, &query.agent)?, true)
+            }
+        };
         let mut upload = match writer.session_attachment_upload(
             &scope,
             query
@@ -716,7 +783,7 @@ pub async fn upload_attachment(
             Ok(upload) => upload,
             Err(error) => return Ok(write_error(error)),
         };
-        if let Some(metadata) = &metadata {
+        if record_metadata && let Some(metadata) = &metadata {
             use sha2::{Digest, Sha256};
             metadata
                 .record_attachment(
@@ -742,7 +809,7 @@ pub async fn upload_attachment(
                     )
                 })?;
         }
-        upload["recorded"] = json!(metadata.is_some());
+        upload["recorded"] = json!(record_metadata && metadata.is_some());
         Ok(([(header::CACHE_CONTROL, "no-store")], Json(upload)).into_response())
     })
     .await
@@ -821,4 +888,64 @@ pub async fn attachment(
         Ok(Json(upload).into_response())
     })
     .await
+}
+
+#[cfg(test)]
+mod attachment_scope_tests {
+    use super::*;
+    use crate::lifecycle::{
+        model::{LaunchSpec, Source},
+        store::LifecycleStore,
+    };
+
+    fn query(uid: String, record_id: String, instance_id: String) -> AttachmentQuery {
+        AttachmentQuery {
+            uid,
+            record_id,
+            instance_id,
+            name: "fixture.txt".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pending_attachment_scope_requires_the_exact_receipt_name_and_instance() {
+        let root = tempfile::tempdir().unwrap();
+        let ledger = root.path().join("lifecycle");
+        let cwd = root.path().join("work");
+        std::fs::create_dir(&cwd).unwrap();
+        let mut store = LifecycleStore::initialize(&ledger).unwrap();
+        let spec = LaunchSpec::new(Source::Codex, "fixture-adapter".into(), &cwd).unwrap();
+        let created = store.create("fixture-request", &spec).unwrap();
+        let mut valid = query(
+            format!("tmux:{}", created.record.host_name()),
+            created.record.record_id().into(),
+            created.record.instance_id().into(),
+        );
+
+        assert_eq!(
+            pending_attachment_cwd(&valid, &created.record).unwrap(),
+            cwd.to_string_lossy()
+        );
+
+        let starting = store.begin_start(created.prepared.unwrap()).unwrap();
+        let running = store.mark_running(starting).unwrap();
+        assert_eq!(
+            pending_attachment_cwd(&valid, &running).unwrap(),
+            cwd.to_string_lossy()
+        );
+
+        valid.instance_id = "0".repeat(32);
+        let error = pending_attachment_cwd(&valid, &running).unwrap_err();
+        assert_eq!(
+            (error.status, error.code),
+            (StatusCode::CONFLICT, "launch_identity")
+        );
+        valid.instance_id = running.instance_id().into();
+        valid.uid = "tmux:another-host".into();
+        assert_eq!(
+            pending_attachment_cwd(&valid, &running).unwrap_err().code,
+            "launch_identity"
+        );
+    }
 }

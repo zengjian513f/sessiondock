@@ -746,6 +746,26 @@ async fn uploads_stream_in_chunks_and_route_by_node_query() {
     let last = uploads.as_array().unwrap().last().unwrap().clone();
     assert_eq!(last[0]["uid"], json!(["claude:same-file-hash"]));
     assert_eq!(last[1], payload.len());
+    // Pending composer uploads select the node through the scoped tmux UID;
+    // immutable lifecycle receipt fields pass through without namespacing.
+    let pending = scoped(NID_A, "tmux:pending-host");
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!(
+            "/api/session/attachment?uid={pending}&record_id=receipt&instance_id=instance&name=pending.txt"
+        ))
+        .header("Host", "127.0.0.1")
+        .header("Content-Type", "text/plain")
+        .header("Content-Length", 1)
+        .body(Body::from("x"))
+        .unwrap();
+    let (status, answer) = json_of(hub.router.clone().oneshot(request).await.unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let uploads = hub.a.state()["uploads"].clone();
+    let last = uploads.as_array().unwrap().last().unwrap();
+    assert_eq!(last[0]["uid"], json!(["tmux:pending-host"]));
+    assert_eq!(last[0]["record_id"], json!(["receipt"]));
+    assert_eq!(last[0]["instance_id"], json!(["instance"]));
     // Bug-report uploads name the machine with ?node= and no session.
     let request = Request::builder()
         .method("POST")

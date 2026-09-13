@@ -3215,7 +3215,9 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
   attachment.error = '';
   render();
   const url = new URL(appUrl('api/session/attachment'));
-  url.searchParams.set('uid', uid);
+  for (const [key, value] of Object.entries(composerAttachmentIdentity(uid))) {
+    if (value) url.searchParams.set(key, value);
+  }
   url.searchParams.set('name', attachment.file.name || 'attachment');
   if (attachmentId) url.searchParams.set('id', attachmentId);
   if (node) url.searchParams.set('node', node);
@@ -3236,6 +3238,19 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
     render();
     throw error;
   }
+}
+
+function composerAttachmentIdentity(uid) {
+  const identity = {uid};
+  if (AgentHubCapabilities.config.backend !== 'rust' || !String(uid).startsWith('tmux:')) {
+    return identity;
+  }
+  const pending = (T.pending || []).find(row => pendingUid(row.name) === uid);
+  if (pending?.record_id && pending?.instance_id) {
+    identity.record_id = pending.record_id;
+    identity.instance_id = pending.instance_id;
+  }
+  return identity;
 }
 
 let composerSending = false;
