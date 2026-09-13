@@ -165,9 +165,7 @@ pub enum InputPayload {
     Text(String),
     /// Host key names already resolved by [`input::map_keys`].
     Keys(Vec<String>),
-    /// Batch 31 delivery driver: the host wraps the text in bracketed-paste
-    /// markers when the application enabled them; no Enter is implied. Bounded
-    /// by the delivery payload limit rather than the raw HTTP input limit.
+    /// The host wraps text in bracketed-paste markers; no Enter is implied.
     Paste(String),
 }
 

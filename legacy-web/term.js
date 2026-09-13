@@ -523,6 +523,7 @@ function termInputBody(name, body) {
     if (lease?.[key]) out[key] = lease[key];
   }
   if (Array.isArray(body.keys)) out.keys = body.keys;
+  else if (typeof body.paste === 'string') out.paste = body.paste;
   else if (body.enter === false && typeof body.text === 'string') out.data = body.text;
   else return null;
   return out;
@@ -2929,13 +2930,21 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         return false;
       }
     } else {
-      const body = termInputBody(name, keys ? { name, keys, uid } : { name, text });
+      const pendingText = !!text && uid.startsWith('tmux:');
+      const body = termInputBody(name, keys ? { name, keys, uid }
+        : pendingText ? { name, paste: text, uid } : { name, text });
       if (!body) {
         if (queuedId) discardQueuedUserMessage(uid, queuedId);
         alert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
         return false;
       }
       d = await post('api/term/send', body);
+      if (pendingText && !d.error) {
+        // Claude/Codex may briefly show a paste-burst marker. Sending Enter in
+        // the same tick can be swallowed while that marker is active.
+        await new Promise(resolve => setTimeout(resolve, 600));
+        d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
+      }
     }
   } catch (e) {
     if (queuedId) discardQueuedUserMessage(uid, queuedId);
