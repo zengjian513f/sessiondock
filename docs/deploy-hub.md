@@ -10,6 +10,7 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 
 ## 边界
 
+- 生产发布必须同批部署 Hub 和全部节点；任何一端未部署，发布都不算完成。
 - Hub 是独立二进制 `sessiondock-hub`，**不共享节点的任何私有目录**：不读会话根、host、delivery、
   lifecycle、state、audit（节点的）。它只拥有自己的注册表、缓存目录和（可选）审计目录。
 - 注册是**服务器端操作**：`sessiondock-hub register/remove/list`，网页上没有注册路由。节点凭据从
@@ -40,7 +41,7 @@ sessiondock-hub list           # 核对注册表（不含凭据）
 sessiondock-hub remove <NODE_ID>
 ```
 
-注册时 Hub 会打节点的 `/api/meta`，必须经过节点第二监听（带 token 与 `X-AgentHub-Protocol: 1`）、
+注册时 Hub 会打节点的 `/api/meta`，必须经过节点第二监听（带 token 与 `X-SessionDock-Protocol: 1`）、
 且节点自报 `mode:"local", protocol:1, node_id` 32 hex，否则拒绝。
 
 ## systemd 单元（样例）
