@@ -386,7 +386,7 @@ pub async fn send(
                 return Err(ApiError::new(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "terminal_input_too_large",
-                    "单次终端输入不能超过 16 KiB",
+                    "单次终端输入不能超过 1 MiB",
                 ));
             }
             InputPayload::Text(data)
@@ -398,7 +398,7 @@ pub async fn send(
                 input::KeyError::TooLarge => ApiError::new(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     "terminal_input_too_large",
-                    "单次终端输入不能超过 16 KiB",
+                    "单次终端输入不能超过 1 MiB",
                 ),
                 input::KeyError::Unknown(_) => invalid_input(
                     "不支持的按键名；可用：enter escape tab backspace delete insert space home end pageup pagedown up down left right f1-f12 ctrl-<字母>",

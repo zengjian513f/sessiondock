@@ -275,7 +275,7 @@ fn build_app(
             let client = ptyhost_client::HostClient::new(
                 directory,
                 ptyhost_client::Limits {
-                    max_line_bytes: 64 * 1024,
+                    max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                     max_directory_entries: 512,
                     operation_timeout: std::time::Duration::from_secs(2),
                     ..Default::default()
@@ -469,7 +469,7 @@ fn build_app(
             let client = ptyhost_client::HostClient::new(
                 host,
                 ptyhost_client::Limits {
-                    max_line_bytes: 64 * 1024,
+                    max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                     max_directory_entries: 512,
                     operation_timeout: std::time::Duration::from_secs(2),
                     ..Default::default()

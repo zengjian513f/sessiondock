@@ -1284,7 +1284,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn validate_launcher(
+    pub fn validate_launcher(
         &self,
         launcher: &crate::lifecycle::launcher::Config,
     ) -> io::Result<()> {
@@ -1305,17 +1305,15 @@ impl Config {
         }
         for root in &launcher.cwd_roots {
             let root = root.canonicalize().map_err(|_| invalid())?;
+            // SessionDock's own private directories must be disjoint from a cwd
+            // root in both directions: a CLI must never run inside them and the
+            // directory picker must never reach them.
             for boundary in [
-                Some(&self.web_dir),
-                self.roots.claude.as_ref(),
-                self.roots.codex.as_ref(),
-                self.roots.grok.as_ref(),
                 self.ptyhost_dir.as_ref(),
                 self.state_dir.as_ref(),
                 self.delivery_dir.as_ref(),
                 self.lifecycle_dir.as_ref(),
                 self.launcher_config.as_ref(),
-                self.codex_index.as_ref(),
             ]
             .into_iter()
             .flatten()
@@ -1324,6 +1322,29 @@ impl Config {
                     || boundary
                         .canonicalize()
                         .is_ok_and(|other| overlaps(&root, &other))
+                {
+                    return Err(invalid());
+                }
+            }
+            // The native CLI roots, the frontend and the Codex index only forbid
+            // a cwd root *inside* them. A cwd root that is their ancestor (the
+            // home directory, which contains ~/.claude, ~/.codex and ~/.grok) is
+            // exactly where Python resumes a session started from `~`; refusing
+            // it made every home-directory session unattachable.
+            for boundary in [
+                Some(&self.web_dir),
+                self.roots.claude.as_ref(),
+                self.roots.codex.as_ref(),
+                self.roots.grok.as_ref(),
+                self.codex_index.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if root.starts_with(absolute_components(boundary)?)
+                    || boundary
+                        .canonicalize()
+                        .is_ok_and(|other| root.starts_with(other))
                 {
                     return Err(invalid());
                 }

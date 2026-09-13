@@ -63,7 +63,7 @@ private administrator data.
 
 Retained directory/file handles let later validation detect replacement since
 construction. `validate_spec(&LaunchSpec)` requires the exact adapter ID and
-source, a cwd inside an authorized root, fresh no-symlink cwd ancestry, unchanged
+source, a cwd inside an authorized root (resolved through symlinks first, like Python's `resolve()`, then re-verified component by component), unchanged
 root/host-directory identities and unchanged host/selected-adapter file stamps.
 The HTTP layer may provide only source, allowlisted adapter ID, and cwd. Executable,
 arguments and environment come exclusively from the retained configuration.
@@ -114,7 +114,7 @@ with IDs unique across both tables and versioned like adapter IDs.
 ```
 
 What the configuration decides: the absolute executable (existing regular file,
-executable bit, no symlink, stamp re-verified before every launch), the fixed
+executable bit, symlinks resolved to the real file, stamp re-verified before every launch), the fixed
 `args` prefix, the `new_args`/`resume_args` templates, environment additions
 (`env`) and removals from the launcher-built environment (`env_remove`, e.g. the
 default `TERM`; must not overlap `env`), and per-profile `cwd_roots` that must

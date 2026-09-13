@@ -252,6 +252,70 @@ def builders():
         ids = mkdir(os.path.join(tmp, "ids"), 0o700)
         return token, os.path.join(ids, "node-id")
 
+    def launcher_env(tmp, cwd_root):
+        """Full private layout plus an initialized ledger and a schema-2 launcher whose
+        cwd root is `cwd_root(tmp)`; --check-config must cross-check it like startup."""
+        import shutil, json
+        def deep(path, mode=None):
+            os.makedirs(path)
+            if mode is not None:
+                os.chmod(path, mode)
+            return path
+        web = make_web(tmp)
+        home = deep(os.path.join(tmp, "home"))
+        roots = {n: deep(os.path.join(home, "." + n, sub))
+                 for n, sub in (("claude", "projects"), ("codex", "sessions"), ("grok", "sessions"))}
+        priv = {n: deep(os.path.join(tmp, "priv", n), 0o700)
+                for n in ("state", "delivery", "audit", "trash", "ptyhost", "lifecycle")}
+        bindir = deep(os.path.join(tmp, "bin"))
+        exe = {}
+        for n in ("ptyhost", "claude"):
+            exe[n] = os.path.join(bindir, n)
+            shutil.copyfile("/bin/sh", exe[n]); os.chmod(exe[n], 0o755)
+        root = cwd_root(tmp, home, priv)
+        launcher = os.path.join(tmp, "launcher.json")
+        with open(launcher, "w", encoding="utf-8") as fh:
+            json.dump({
+                "schema": 2, "host_binary": exe["ptyhost"], "host_dir": priv["ptyhost"],
+                "cwd_roots": [root], "adapters": [],
+                "profiles": [{"id": "claude-cli-v1", "source": "claude", "executable": exe["claude"],
+                              "args": [], "new_args": ["--session-id", "{session_id}"],
+                              "resume_args": ["--resume", "{sid}"],
+                              "env": {"PATH": "/usr/bin:/bin", "HOME": home},
+                              "cwd_roots": [root]}],
+            }, fh)
+        os.chmod(launcher, 0o600)
+        env = {
+            "SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": web,
+            "SESSIONDOCK_CLAUDE_ROOT": roots["claude"], "SESSIONDOCK_CODEX_ROOT": roots["codex"],
+            "SESSIONDOCK_GROK_ROOT": roots["grok"], "SESSIONDOCK_STATE_DIR": priv["state"],
+            "SESSIONDOCK_DELIVERY_DIR": priv["delivery"], "SESSIONDOCK_AUDIT_DIR": priv["audit"],
+            "SESSIONDOCK_TRASH_DIR": priv["trash"], "SESSIONDOCK_PTYHOST_DIR": priv["ptyhost"],
+            "SESSIONDOCK_LIFECYCLE_DIR": priv["lifecycle"], "SESSIONDOCK_LAUNCHER_CONFIG": launcher,
+        }
+        init = subprocess.run([default_binary(), "--initialize-lifecycle", priv["lifecycle"]],
+                              env={"PATH": os.environ["PATH"], **env}, capture_output=True, text=True, timeout=15)
+        if init.returncode:
+            raise RuntimeError(f"initialize-lifecycle failed: {init.stderr.strip()}")
+        return env
+
+    def launcher_cwd_root_home_ancestor_of_native_ok(tmp):
+        # Python never restricted a session's cwd; a session started from `~` resumes
+        # there. A cwd root that is an *ancestor* of the native roots is accepted and
+        # --check-config now reports the launcher cross-check.
+        env = launcher_env(tmp, lambda tmp, home, priv: home)
+        return env, 0, "", ["launcher=ok"]
+
+    def launcher_cwd_root_inside_native_root(tmp):
+        # ...but a cwd root *inside* a native root is still refused.
+        env = launcher_env(tmp, lambda tmp, home, priv: mkdir(os.path.join(home, ".claude", "projects", "proj")))
+        return env, 1, "stay outside private/native/frontend roots", []
+
+    def launcher_cwd_root_ancestor_of_state_dir(tmp):
+        # SessionDock's own private directories stay disjoint in both directions.
+        env = launcher_env(tmp, lambda tmp, home, priv: os.path.join(tmp, "priv"))
+        return env, 1, "stay outside private/native/frontend roots", []
+
     def node_env(tmp, **override):
         token, node_id = node_files(tmp)
         env = base(SESSIONDOCK_NODE_BIND="127.0.0.1:0", SESSIONDOCK_NODE_TOKEN_FILE=token,
@@ -522,6 +586,9 @@ def builders():
         ("proc_root_is_file", proc_root_is_file),
         ("grok_active_missing", grok_active_missing),
         ("grok_active_inside_native_root", grok_active_inside_native_root),
+        ("launcher_cwd_root_home_ancestor_of_native_ok", launcher_cwd_root_home_ancestor_of_native_ok),
+        ("launcher_cwd_root_inside_native_root", launcher_cwd_root_inside_native_root),
+        ("launcher_cwd_root_ancestor_of_state_dir", launcher_cwd_root_ancestor_of_state_dir),
         ("grok_active_ok", grok_active_ok),
         ("roots_ok", roots_ok),
         ("non_loopback_bind", non_loopback_bind),

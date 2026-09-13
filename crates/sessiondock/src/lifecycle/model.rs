@@ -248,6 +248,11 @@ impl LaunchSpec {
         if !valid_cwd(text) {
             return Err(Error::InvalidSpec);
         }
+        // Resolve symlinks first, as Python's `Path.resolve()` does: a session
+        // whose cwd goes through a linked project directory is legitimate. The
+        // canonical path is then checked component by component below.
+        let canonical = plain_canonical(cwd).ok_or(Error::InvalidSpec)?;
+        let cwd: &Path = &canonical;
         for ancestor in cwd.ancestors() {
             let metadata = fs::symlink_metadata(ancestor).map_err(|_| Error::InvalidSpec)?;
             if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -261,11 +266,7 @@ impl LaunchSpec {
                 }
             }
         }
-        let cwd = plain_canonical(cwd)
-            .ok_or(Error::InvalidSpec)?
-            .to_str()
-            .ok_or(Error::InvalidSpec)?
-            .to_owned();
+        let cwd = cwd.to_str().ok_or(Error::InvalidSpec)?.to_owned();
         let spec = Self {
             source,
             adapter_id,

@@ -296,7 +296,7 @@ impl LifecycleService {
                 launcher.host_dir(),
                 ptyhost_client::Limits {
                     operation_timeout: limits.probe_timeout,
-                    max_line_bytes: 64 * 1024,
+                    max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                     max_directory_entries: 512,
                     ..Default::default()
                 },

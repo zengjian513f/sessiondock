@@ -48,7 +48,7 @@ impl Default for BridgeLimits {
         Self {
             max_connections: 16,
             max_operations: 8,
-            max_input_bytes: 64 * 1024,
+            max_input_bytes: 1024 * 1024, // ptyhost's send/paste ceiling; Python bounds only the request body
             max_host_frame_bytes: 8 * 1024 * 1024,
             operation_timeout: Duration::from_secs(2),
             write_timeout: Duration::from_secs(2),
@@ -114,6 +114,11 @@ fn host_error(error: ptyhost_client::Error) -> TerminalError {
             "terminal_identity",
             "终端会话或进程实例已改变，请重新选择",
         ),
+        ptyhost_client::Error::LineTooLarge => TerminalError::new(
+            413,
+            "terminal_input_too_large",
+            "单次终端输入超过宿主控制通道上限",
+        ),
         _ => TerminalError::new(
             503,
             "terminal_unavailable",
@@ -178,8 +183,9 @@ pub enum InputPayload {
 }
 
 /// Delivery payloads are bounded by the Claude ledger (256 KiB), not by the
-/// 16 KiB raw HTTP input limit.
-pub const MAX_PASTE_BYTES: usize = 256 * 1024;
+/// 1 MiB raw HTTP input limit (ptyhost's own send/paste ceiling; Python
+/// only bounds the 4 MiB request body).
+pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 
 impl InputPayload {
     pub fn bytes(&self) -> usize {
@@ -247,7 +253,7 @@ impl TerminalService {
         let client = HostClient::new(
             directory,
             Limits {
-                max_line_bytes: 256 * 1024,
+                max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                 max_frame_bytes: limits.max_host_frame_bytes,
                 max_directory_entries: 10_000,
                 operation_timeout: limits.operation_timeout,
@@ -469,7 +475,7 @@ impl TerminalService {
             return Err(TerminalError::new(
                 413,
                 "terminal_input_too_large",
-                "单次终端输入不能超过 16 KiB",
+                "单次终端输入不能超过 1 MiB",
             ));
         }
         let operation = match payload {

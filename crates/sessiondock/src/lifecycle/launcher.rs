@@ -438,7 +438,13 @@ impl Launcher {
             return Err(Error::UnsafePath);
         }
         let entries = entries(&config);
-        let host_binary = CheckedFile::open(&config.host_binary, FileKind::Executable)?;
+        // Executables may be symlinks (npm/volta shims, WinGet links, `which`
+        // results): resolve them like Python's `shutil.which`, then apply the
+        // no-follow identity checks to the real file.
+        let host_binary = CheckedFile::open(
+            &resolved_executable(&config.host_binary)?,
+            FileKind::Executable,
+        )?;
         let host_directory = CheckedDirectory::open(&config.host_dir, true)?;
         let mut cwd_roots = Vec::new();
         for path in config.cwd_roots {
@@ -453,12 +459,18 @@ impl Launcher {
         }
         let mut adapters = BTreeMap::new();
         for config in config.adapters {
-            let executable = CheckedFile::open(&config.executable, FileKind::Executable)?;
+            let executable = CheckedFile::open(
+                &resolved_executable(&config.executable)?,
+                FileKind::Executable,
+            )?;
             adapters.insert(config.id.clone(), CheckedAdapter { config, executable });
         }
         let mut profiles = BTreeMap::new();
         for config in config.profiles {
-            let executable = CheckedFile::open(&config.executable, FileKind::Executable)?;
+            let executable = CheckedFile::open(
+                &resolved_executable(&config.executable)?,
+                FileKind::Executable,
+            )?;
             let mut roots = Vec::new();
             for path in &config.cwd_roots {
                 if !cwd_roots.iter().any(|root| path.starts_with(&root.path)) {
@@ -990,6 +1002,11 @@ fn overlap(first: &Path, second: &Path) -> bool {
 fn identity(metadata: &Metadata) -> (u64, u64) {
     (metadata.dev(), metadata.ino())
 }
+/// The real file behind a configured executable path (symlinks followed).
+fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
+    path.canonicalize().map_err(|_| Error::UnsafePath)
+}
+
 fn ordinary(metadata: &Metadata, directory: bool) -> Result<(), Error> {
     #[cfg(windows)]
     let reparse = cap_std::fs::MetadataExt::file_attributes(metadata) & 0x400 != 0;

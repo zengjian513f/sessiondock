@@ -174,11 +174,12 @@ fn constructor_rejects_symlinks_overlap_broad_roots_and_permissions() {
     let mut config = fixture.config.clone();
     config.cwd_roots = vec![alias];
     assert_eq!(Launcher::new(config).err(), Some(Error::UnsafePath));
+    // A symlinked executable resolves to the real file (Python `shutil.which`).
     let alias = fixture.directory.path().join("host-alias");
     symlink(&fixture.config.host_binary, &alias).unwrap();
     let mut config = fixture.config.clone();
     config.host_binary = alias;
-    assert_eq!(Launcher::new(config).err(), Some(Error::UnsafePath));
+    assert!(Launcher::new(config).is_ok());
     fs::set_permissions(&fixture.config.host_dir, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(
         Launcher::new(fixture.config.clone()).err(),

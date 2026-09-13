@@ -396,15 +396,18 @@ fn symlink_ancestors_ledger_links_and_hardlinks_fail_closed() {
     symlink(&outside, f.ledger.join(LEDGER_FILENAME)).unwrap();
     assert!(LifecycleStore::open(&f.ledger).is_err());
     assert_eq!(fs::read(&outside).unwrap(), before);
+    // A cwd reached through a symlink resolves to the real directory, as
+    // Python's `Path.resolve()` does; the ledger itself (above) stays no-follow.
+    let real = f.cwd.canonicalize().unwrap();
     let cwd_alias = f._temp.path().join("cwd-alias");
     symlink(&f.cwd, &cwd_alias).unwrap();
-    assert!(matches!(
-        LaunchSpec::new(Source::Claude, "allowed".into(), &cwd_alias),
-        Err(Error::InvalidSpec)
-    ));
+    let spec = LaunchSpec::new(Source::Claude, "allowed".into(), &cwd_alias).unwrap();
+    assert_eq!(std::path::Path::new(spec.cwd()), real);
     let parent_alias = f._temp.path().join("parent-alias");
     symlink(&f._temp, &parent_alias).unwrap();
-    assert!(LaunchSpec::new(Source::Claude, "allowed".into(), &parent_alias.join("work")).is_err());
+    let spec =
+        LaunchSpec::new(Source::Claude, "allowed".into(), &parent_alias.join("work")).unwrap();
+    assert_eq!(std::path::Path::new(spec.cwd()), real);
 }
 
 #[test]

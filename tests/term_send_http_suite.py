@@ -141,10 +141,10 @@ def run(opener, base, work, marker):
         if err.get("code") != "invalid_terminal_input":
             fail("unknown field", err.get("code"), raw)
         err, raw, _ = call(opener, base, "POST", "/api/term/send",
-                           send_body(rec, token, {"data": "a" * (17 * 1024)}, build), want=413)
+                           send_body(rec, token, {"data": "a" * (1024 * 1024 + 1)}, build), want=413)
         if err.get("code") != "terminal_input_too_large":
             fail("17 KiB", err.get("code"), raw)
-        passed("unknown key 400 / unknown JSON field 400 / 17 KiB data 413")
+        passed("unknown key 400 / unknown JSON field 400 / 1 MiB+1 data 413")
 
         time.sleep(1.1)
         saw_rate = False
