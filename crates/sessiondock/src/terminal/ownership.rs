@@ -259,7 +259,9 @@ pub enum RevocationReason {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Revocation {
     pub reason: RevocationReason,
-    /// Display-only address of the new claimant; absent on explicit release.
+    /// Display-only address of the new claimant; absent on explicit release,
+    /// and on replacement from the old page's own address (through the hub
+    /// every page of one user shares it, so the label would say nothing).
     pub new_ip: Option<IpAddr>,
     /// Same-page reconnects still stop the old transport but are silent in UI.
     pub notify: bool,
@@ -570,7 +572,7 @@ impl Registry {
         {
             binding.revoked.send_replace(Some(Revocation {
                 reason: RevocationReason::Replaced,
-                new_ip: Some(ip),
+                new_ip: Some(ip).filter(|new| *new != old.owner.ip),
                 notify: old.page != page,
             }));
         }
@@ -1214,6 +1216,23 @@ mod tests {
         assert_eq!(registry.owner("term").unwrap().unwrap().ip, ip(2));
         let second = registry.bind("term", "page-b", &second_token).unwrap();
         assert!(registry.is_current(&second).unwrap());
+    }
+
+    #[test]
+    fn force_from_the_same_address_notifies_without_an_address_label() {
+        let (registry, _) = setup(1);
+        let token = claim(&registry, "term", "page-a", ip(1), false);
+        let first = registry.bind("term", "page-a", &token).unwrap();
+        claim(&registry, "term", "page-b", ip(1), true);
+        assert_eq!(
+            *first.revocations().borrow(),
+            Some(Revocation {
+                reason: RevocationReason::Replaced,
+                new_ip: None,
+                notify: true
+            })
+        );
+        assert!(!registry.is_current(&first).unwrap());
     }
 
     #[test]

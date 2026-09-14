@@ -217,7 +217,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_attach`
 
-- 终端连接参数无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L187 → `GET /api/term/attach`
+- 终端连接参数无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L205 → `GET /api/term/attach`
 
 ### `invalid_audit_request`
 
@@ -229,7 +229,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_claim`
 
-- 终端预约请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L102 → `POST /api/term/claim`
+- 终端预约请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L116 → `POST /api/term/claim`
 
 ### `invalid_file_request`
 
@@ -279,7 +279,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_scroll`
 
-- 终端滚动请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L513 → `POST /api/term/scroll`
+- 终端滚动请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L531 → `POST /api/term/scroll`
 
 ### `invalid_search_query`
 
@@ -291,7 +291,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_terminal_input`
 
-- (dynamic) — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `invalid_input` L334
+- (dynamic) — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `invalid_input` L352
 
 ### `invalid_trash_request`
 
@@ -328,7 +328,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `websocket_required`
 
-- 需要有效的 WebSocket 升级请求 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L241 → `GET /api/term/attach`
+- 需要有效的 WebSocket 升级请求 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L259 → `GET /api/term/attach`
 
 ## 403 Forbidden
 
@@ -486,7 +486,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `terminal_missing`
 
-- 指定目录中没有这个终端 host — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L520 → `POST /api/term/scroll`
+- 指定目录中没有这个终端 host — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L538 → `POST /api/term/scroll`
 
 ## 409 Conflict
 
@@ -665,7 +665,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `terminal_binding_unavailable`
 
-- 无法确认会话与终端实例的唯一关联；请刷新，不会降级按名称连接。 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `binding_unavailable` L293
+- 无法确认会话与终端实例的唯一关联；请刷新，不会降级按名称连接。 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `binding_unavailable` L311
 
 ## 410 Gone
 
@@ -697,7 +697,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L99
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L961 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L93
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L96 → `POST /api/term/claim`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L110 → `POST /api/term/claim`
 - [`security.rs`](../crates/sessiondock/src/security.rs) `api_policy` L107
 
 ### `delivery_text_too_large`
@@ -755,7 +755,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 - 终端输入请求体过大
 - 单次终端输入不能超过 1 MiB
 - 单次终端粘贴不能超过 1 MiB
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L345, L374, L400, L412 → `POST /api/term/send`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L363, L392, L418, L430 → `POST /api/term/send`
 
 ### `too_many_events`
 
@@ -899,7 +899,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `terminal_disabled`
 
-- 终端传输未启用：必须显式配置隔离的 ptyhost 目录 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L38
+- 终端传输未启用：必须显式配置隔离的 ptyhost 目录 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L39
 
 ### `unsupported_history`
 
@@ -1103,9 +1103,9 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L111
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L406
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L348
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L250 → `GET /api/term/attach`
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L113 → `POST /api/term/claim`
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L441 → `POST /api/term/send`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L268 → `GET /api/term/attach`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L129 → `POST /api/term/claim`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L459 → `POST /api/term/send`
 
 ### `watch_closed`
 

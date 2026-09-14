@@ -73,7 +73,10 @@ Browser ownership is an in-memory page lease over a verified ptyhost instance.
 Claims, replacement, input and resize are serialized per host, and replacement
 prevents a stale lease from beginning another write. The independent host token
 and control framing are never exposed to the browser. Restarting the Web service
-invalidates browser leases without stopping ptyhost children. See
+invalidates browser leases without stopping ptyhost children. The owner address
+shown in takeover prompts is a display label: the node listener takes it from
+the hub's `X-Real-IP`, the browser listener only from the TCP peer, and neither
+uses it for identity or authorization. See
 [terminal-ownership.md](terminal-ownership.md).
 
 ## Launch allowlists

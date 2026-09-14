@@ -779,7 +779,9 @@ pub fn terminal_size(cols: u16, rows: u16) -> Result<TerminalSize, TerminalError
 struct Close {
     code: u16,
     reason: String,
-    notice: Option<IpAddr>,
+    /// The `revoked` notice label for the replaced page: the new claimant's
+    /// display address, or empty when it would only repeat the page's own.
+    notice: Option<String>,
 }
 
 impl Close {
@@ -800,15 +802,14 @@ impl Close {
         {
             return Self::new(4002, "launch retired");
         }
-        let notice = signal
-            .filter(|signal| signal.notify)
-            .and_then(|signal| signal.new_ip);
+        let Some(signal) = signal.filter(|signal| signal.notify) else {
+            return Self::new(4001, "replaced");
+        };
+        let label = signal.new_ip.map(|ip| ip.to_string()).unwrap_or_default();
         Self {
             code: 4001,
-            reason: notice
-                .map(|ip| format!("revoked:{ip}"))
-                .unwrap_or_else(|| "replaced".to_owned()),
-            notice,
+            reason: format!("revoked:{label}"),
+            notice: Some(label),
         }
     }
 }
@@ -997,8 +998,8 @@ async fn browser_output(
 
 async fn close_browser(sink: &mut SplitSink<WebSocket, Message>, close: Close) {
     let _ = timeout(CLOSE_TIMEOUT, async {
-        if let Some(ip) = close.notice {
-            let notice = serde_json::json!({"t":"revoked","ip":ip}).to_string();
+        if let Some(label) = close.notice {
+            let notice = serde_json::json!({"t":"revoked","ip":label}).to_string();
             let _ = sink.send(Message::Text(notice.into())).await;
         }
         let _ = sink

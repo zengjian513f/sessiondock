@@ -509,7 +509,8 @@ async fn takeover_revokes_old_socket_and_old_cleanup_cannot_release_replacement(
     let token = server.claim("page-b", true).await;
     let (code, reason, _) = closed(&mut first).await;
     assert_eq!(code, 4001);
-    assert!(reason.starts_with("revoked:"));
+    // Both pages claim from the same address, so the notice carries no label.
+    assert_eq!(reason, "revoked:");
     let mut second = server.connect("page-b", &token).await;
     assert_eq!(
         next(&mut second).await,
@@ -524,6 +525,88 @@ async fn takeover_revokes_old_socket_and_old_cleanup_cannot_release_replacement(
         Message::Binary(b"new owner".to_vec().into())
     );
     assert_eq!(host.seen.lock().await.len(), 1);
+}
+
+/// `X-Real-IP` labels a claim only through the authenticated node listener
+/// (the hub forwards the browser's address); the loopback listener ignores it.
+/// A conflict says whether the holder sits at the claimant's own address.
+#[cfg(unix)]
+#[tokio::test]
+async fn claim_labels_hub_traffic_by_forwarded_address_and_flags_same_address_conflicts() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use axum::extract::ConnectInfo;
+    use sessiondock::app_pair_with_shutdown;
+
+    const NODE_TOKEN: &str = "node-t0ken.node-t0ken.node-t0ken.node-t0ken~";
+    let host = FakeHost::new(ECHO).await;
+    let temp = tempfile::tempdir().unwrap();
+    let token_file = temp.path().join("node-token");
+    std::fs::write(&token_file, format!("{NODE_TOKEN}\n")).unwrap();
+    std::fs::set_permissions(&token_file, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let config = Config {
+        web_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../legacy-web"),
+        ptyhost_dir: Some(host.directory.path().to_owned()),
+        node_bind: Some("127.0.0.1:0".parse().unwrap()),
+        node_token_file: Some(token_file),
+        node_id_file: Some(temp.path().join("node-id")),
+        node_peers: vec!["10.100.100.0/24".parse().unwrap()],
+        ..Default::default()
+    };
+    let cancel = CancellationToken::new();
+    let (browser, node) = app_pair_with_shutdown(config, cancel.clone()).unwrap();
+    let node = node.expect("node router");
+    let claim = |router: &Router, hub: bool, real_ip: &str, page: &str, force: bool| {
+        let router = router.clone();
+        let mut builder = Request::builder()
+            .method("POST")
+            .uri("/api/term/claim")
+            .header("content-type", "application/json")
+            .header("x-real-ip", real_ip);
+        builder = if hub {
+            builder
+                .header("host", "10.100.100.2:8742")
+                .header("x-sessiondock-protocol", "1")
+                .header("x-sessiondock-node-token", NODE_TOKEN)
+        } else {
+            builder.header("host", "127.0.0.1:8742")
+        };
+        let mut request = builder
+            .body(Body::from(
+                json!({"name":NAME,"page":page,"force":force}).to_string(),
+            ))
+            .unwrap();
+        let peer: SocketAddr = if hub {
+            "10.100.100.1:40000"
+        } else {
+            "127.0.0.1:40000"
+        }
+        .parse()
+        .unwrap();
+        request.extensions_mut().insert(ConnectInfo(peer));
+        async move {
+            let response = router.oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+        }
+    };
+    let (status, body) = claim(&node, true, "203.0.113.7", "page-a", false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["owner"]["ip"], "203.0.113.7");
+    assert!(body.get("same_address").is_none());
+    let (status, body) = claim(&node, true, "203.0.113.7", "page-b", false).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["conflict"], true);
+    assert_eq!(body["owner"]["ip"], "203.0.113.7");
+    assert_eq!(body["same_address"], true);
+    let (status, body) = claim(&node, true, "198.51.100.4", "page-b", false).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["same_address"], false);
+    let (status, body) = claim(&browser, false, "203.0.113.9", "page-c", true).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["owner"]["ip"], "127.0.0.1");
+    cancel.cancel();
 }
 
 #[tokio::test]
