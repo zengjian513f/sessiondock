@@ -2131,7 +2131,7 @@ function restoreTermPane(uid, agent = null) {
     }
     const savedMode = T.openViews.get(name)?.mode;
     if (savedMode !== 'normal') {
-      openTermPane(name, false, 'collapsed');
+      openTermPane(name, false, 'collapsed', true);
       return;
     }
   }
@@ -2143,10 +2143,10 @@ function restoreTermPane(uid, agent = null) {
     return;
   }
   auditTermPane('restore', {target: name});
-  openTermPane(name, false);
+  openTermPane(name, false, null, true);
 }
 
-async function openTermPane(name, autoFocus = true, requestedMode = null) {
+async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false) {
   const existing = T.views.get(name);
   if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid && existing.bindingUid !== T.uid) {
     ConsoleUI.errors.set(T.uid, '同一实例的另一类控制台仍保持连接；请先在原页面操作中释放本页控制台，再打开。');
@@ -2154,7 +2154,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null) {
     return false;
   }
   const openEpoch = ++termOpenEpoch;
-  auditTermPane('open', {target: name, requested_mode: requestedMode, auto_focus: autoFocus});
+  auditTermPane('open', {target: name, requested_mode: requestedMode, auto_focus: autoFocus, auto});
   const focusSource = autoFocus ? document.activeElement : null;
   const saved = T.openViews.get(name);
   if (!MOBILE.matches && ['normal', 'collapsed', 'full'].includes(requestedMode)) {
@@ -2183,7 +2183,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null) {
     // 缓存 view 即使行列数相同也可能丢了 renderer surface；强制同步并重绘。
     fitTerm(true, true);                 // 连接前先确定尺寸，避免 80×24 → 实际尺寸的首屏跳变
     settleActivatedTermView(view);
-    if (view.ws?.readyState !== 1) await attachTerm(name);
+    if (view.ws?.readyState !== 1) await attachTerm(name, auto);
     else focusTermIfRequested(view);
   }
   return true;
@@ -2286,9 +2286,15 @@ function layoutTermPane() {
   }
 }
 
-async function claimTermOwnership(name, uid = T.uid, binding = {}) {
+// `auto`：由布局恢复（选中会话、刷新、题卡）自动打开的 pty。进入对话页不该被
+// 抢占问题打断：别处持有时静默放弃、留在对话页；只有用户主动打开 pty 才问。
+async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false) {
   let result = await post('api/term/claim', {name, page: TERM_PAGE_ID, ...binding});
   if (result.conflict) {
+    if (auto) {
+      auditTermPane('restore-held', {target: name, by: result.owner?.label || ''});
+      return null;
+    }
     const holder = describeTermTaker(result.owner?.label,
       result.same_address === false ? result.owner?.ip : '');
     if (!confirm(`该终端正由${holder}控制。\n\n是否抢占终端？`)) return null;
@@ -2354,17 +2360,17 @@ function recordHostExit(view, uid, event) {
   return true;
 }
 
-function attachTerm(name) {
+function attachTerm(name, auto = false) {
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
-  const job = attachOwnedTerm(view).finally(() => {
+  const job = attachOwnedTerm(view, true, auto).finally(() => {
     if (view.attachPromise === job) view.attachPromise = null;
   });
   view.attachPromise = job;
   return job;
 }
 
-async function attachOwnedTerm(view, allowRefresh = true) {
+async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   if (view.ended || view.retired) return false;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
@@ -2382,7 +2388,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
     // once before exposing the transient mismatch to the user.
     if (allowRefresh && typeof loadTermList === 'function' && !view.ended && !view.retired) {
       await loadTermList();
-      if (T.views.get(name) === view) return attachOwnedTerm(view, false);
+      if (T.views.get(name) === view) return attachOwnedTerm(view, false, auto);
     }
     ConsoleUI.errors.set(uid, '终端实例关联已失效，请刷新控制台状态。');
     renderTakeoverBtn();
@@ -2397,7 +2403,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
   if (active) activateTermView(view);
   cancelTermReconnect(view);
   dropTermSocket(view);
-  const token = await claimTermOwnership(name, uid, binding);
+  const token = await claimTermOwnership(name, uid, binding, auto);
   if (bound && T.views.get(name) !== view) return false;
   if (!token) {
     view.revoked = true;

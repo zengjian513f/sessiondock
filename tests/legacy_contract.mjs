@@ -102,6 +102,20 @@ test('terminal ownership force retry retains the exact captured binding', async 
   assert.equal(prompts[0], '该终端正由另一页面控制。\n\n是否抢占终端？');
 });
 
+test('an automatic pty restore never asks to take over a held terminal', async () => {
+  const calls = [];
+  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page',
+    auditTermPane: () => {},
+    confirm: () => assert.fail('entering the conversation view must not prompt'),
+    alert: () => assert.fail('entering the conversation view must not alert'),
+    post: async (_path, body) => {calls.push(body); return {conflict: true, owner: {ip: '203.0.113.7', label: 'iPhone · Safari'}, same_address: false};}});
+  loadFunction(context, 'describeTermTaker', read('term.js'));
+  const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
+  assert.equal(await claim('name', 'codex:uid', {uid: 'codex:uid', instance_id: 'i'}, true), null);
+  assert.equal(calls.length, 1, 'no force claim follows a silent decline');
+  assert.equal(calls[0].force, undefined);
+});
+
 test('terminal takeover prompts describe the taker only by what is meaningful', () => {
   const context = contextWithCapabilities(disabled, {});
   const describe = loadFunction(context, 'describeTermTaker', read('term.js'));
