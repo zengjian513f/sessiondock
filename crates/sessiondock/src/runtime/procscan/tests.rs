@@ -12,7 +12,7 @@ const SID_STOPPED: &str = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 const SID_GROK: &str = "01a09418-a82e-7370-9303-9c4fcf0b20c3";
 const SID_CLAUDE: &str = "c357894e-ac88-4c9e-823e-3b5a9c19b9c0";
 
-/// Python `FakeProc`: `cmdline`, `stat`, `environ`, `fd/` links.
+/// `cmdline`, `stat`, `environ`, `fd/` links.
 pub(crate) struct FakeProc {
     pub root: PathBuf,
 }
@@ -141,7 +141,7 @@ fn command_names_families_and_session_ids_follow_python() {
     assert_eq!(parse_parent("77 (x"), None);
 }
 
-/// Python `BareClaudeTests`: a bare `claude` matches only the session created
+/// A bare `claude` matches only the session created
 /// in its cwd within -5 s..30 s of the process start.
 #[test]
 fn bare_claude_matches_only_nearby_session_in_same_cwd() {
@@ -249,7 +249,7 @@ fn bare_claude_is_collected_with_cwd_and_start_time() {
     assert!(unclocked.scan().bare_claude.is_empty());
 }
 
-/// Python `InheritedSessionEnvTests`: a helper left behind by an exited CLI
+/// A helper left behind by an exited CLI
 /// still carries the session id but is not a running instance.
 #[test]
 fn orphaned_helper_does_not_keep_a_stopped_session_live() {
@@ -372,7 +372,7 @@ fn command_line_sid_beats_inherited_env_and_families_do_not_cross() {
     assert_eq!(scan.sids.get(SID_GROK), Some(&BTreeSet::from([120])));
 }
 
-/// Python `CodexForkOwnershipTests`: a process holding the whole fork chain
+/// A process holding the whole fork chain
 /// belongs to the deepest fork only; a separate ancestor process stays.
 #[test]
 fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
@@ -430,7 +430,7 @@ fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
     assert_eq!(active.owned[&other.uid], [-9]);
 }
 
-/// Python `GrokHeadlessLiveTests`: `grok -p` under Claude keeps the session
+/// `grok -p` under Claude keeps the session
 /// directory's `events.jsonl` open and inherits the parent's Claude id, which
 /// is not its identity.
 #[test]
@@ -524,7 +524,7 @@ fn events_jsonl_fd_marks_headless_grok_live_and_inherited_claude_id_is_not_grok_
     assert_eq!(scan.started_at(&[-300]), None);
 }
 
-/// Python `_note_grok_sessions`: the explicit active file names sessions with
+/// The explicit active file names sessions with
 /// no pid; both the list and the `{sessions: []}` shapes are read and a stale
 /// entry is kept as-is.
 #[test]
@@ -672,7 +672,7 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
     assert!(tree.in_tmux(&[13, 11]));
 }
 
-/// Python `SnapshotTests`: the TTL runs from completion, waiters share one
+/// The TTL runs from completion, waiters share one
 /// scan, `force` bypasses the TTL. `snapshot` answers `unsupported_platform`
 /// off Linux before it looks at any tree, synthetic ones included.
 #[cfg(target_os = "linux")]

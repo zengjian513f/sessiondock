@@ -531,7 +531,7 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
     );
 }
 
-/// Python `test_spawn_parent_is_recorded_once_and_enriches_rows`: the first
+/// The first
 /// relation is permanent, empty entries are skipped, other preferences never
 /// touch it, and the row carries it.
 #[test]
@@ -609,7 +609,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
         store.snapshot().unwrap().row("grok:child"),
         json!({"spawned_by":{"source":"claude","sid":"parent-sid"}})
     );
-    // Parent strings are retained as supplied, after Python-compatible trimming.
+    // Parent strings are retained as supplied, after trimming.
     for parent_value in [
         SpawnedBy {
             source: "claude".into(),

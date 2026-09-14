@@ -308,7 +308,7 @@ fn parse_context<'a>(
         let branch = if let Some(lineage) = &lineage {
             let id = claude::graph_id(record, options.agent);
             let abandoned = id.is_some_and(|id| lineage.abandoned.contains(id));
-            // Python `_read_one`: a graph node renders when it is on the
+            // A graph node renders when it is on the
             // active chain or below an abandoned input (`abandoned | offshoot`).
             if let Some(id) = id
                 && let Some(active) = &lineage.active

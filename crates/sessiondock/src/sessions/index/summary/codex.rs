@@ -68,7 +68,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let records = Records::parse(data, CODEX_HEAD_LINES);
     let mut hard_error: Option<String> = None;
 
-    // Head (Python `_raw_meta`): first session_meta, first model, first
+    // Head: first session_meta, first model, first
     // qualifying user message.
     let mut meta: Option<&Value> = None;
     let mut model = Value::Null;

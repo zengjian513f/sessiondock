@@ -53,7 +53,7 @@ pub struct Limits {
     /// its `dom.snapshot` receipts carry up to 40 x 4000 characters each; the
     /// body copy is transient and `content` is never retained.
     pub body_bytes: usize,
-    /// Events per request; more is `413` like the Python service.
+    /// Events per request; more is `413`.
     pub max_events: usize,
     /// Python `audit.QUEUE_LIMIT`; the Rust channel carries prepared batches.
     pub queue_batches: usize,

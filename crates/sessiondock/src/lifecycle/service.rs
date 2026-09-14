@@ -156,7 +156,7 @@ impl VerifiedNativeBinding {
     }
 }
 
-/// Python `term.graceful_stop`: two EOF (`C-d`) attempts of 1.2 s each before
+/// Two EOF (`C-d`) attempts of 1.2 s each before
 /// the host-performed stop. The Web process never signals a PID itself.
 pub const GRACEFUL_ATTEMPTS: u8 = 2;
 pub const GRACEFUL_WAIT: Duration = Duration::from_millis(1200);
@@ -340,7 +340,7 @@ impl LifecycleService {
         let first = candidates.next()?;
         candidates.next().is_none().then_some(first)
     }
-    /// Python-compatible absolute directory completion. It uses the same
+    /// Absolute directory completion. It uses the same
     /// admission path as other requests and does not touch ledger or host state.
     pub async fn complete_directories(
         &self,

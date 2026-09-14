@@ -424,7 +424,7 @@ async fn a_missing_cwd_basename_stays_text_even_when_other_directories_share_the
         let content = match index {
             150 => "a/same.png".to_owned(),
             151 => "b/same.png".to_owned(),
-            // A bare name in prose is text (Python `_RAW_PATH`); the Markdown
+            // A bare name in prose is text; the Markdown
             // spelling resolves only against cwd, where this file is absent.
             699 => "![shot](same.png)".to_owned(),
             _ => format!("plain synthetic row {index}"),

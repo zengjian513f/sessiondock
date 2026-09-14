@@ -13,7 +13,7 @@ of SessionDock's optional writable preference store.
 
 - Each JSON object with a nonempty string `id` and truthy `thread_name` assigns a name.
   The last qualifying row in **file order** wins, regardless of `updated_at`.
-  Non-string names use Python-compatible scalar text. Missing/empty fields,
+  Non-string names use scalar text. Missing/empty fields,
   malformed lines and non-object rows do not clear an earlier name.
 - Titles collapse whitespace and are clipped at 110 Unicode characters, plus
   an ellipsis when truncated. `renamed_to` retains the complete original name.

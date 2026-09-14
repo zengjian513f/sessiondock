@@ -45,12 +45,12 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
 | GET `/api/term/new-status` | `record_id`, `instance_id` | Refresh status of that exact recorded instance |
 | POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, guarded stop, verify exit |
-| POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` (Python `pending_store.discard`); 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
+| POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending`; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
 | POST `/api/session/stop` | `uid` | Stop a managed instance through guarded host control or terminate process IDs attributed to this exact external native session; an already-stopped session succeeds with `stopped:false` |
 | POST `/api/term/bind` | `record_id`, `instance_id`, `uid`, `operator_confirmed: true` | Validate a real main-session scope, persist one immutable intent, bind and observe |
 | GET `/api/term/list` | None | Native-bound sessions plus separate launch-only pending receipts, `resume_sources{claude,codex,grok}` and `backends` |
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
-| GET `/api/term/complete-dir` | `path`, optional `limit` | Python-compatible absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
+| GET `/api/term/complete-dir` | `path`, optional `limit` | Absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
 | POST `/api/term/backend` | `backend` | `{ok, backend:"ptyhost", backends}` for `ptyhost`/`host`, not persisted; `tmux` is 400 `backend_unsupported`, unknown 400 `backend_unknown` |
 
 The limited legacy diagnostics `_build`, `_trace_id`, `_page_id` are accepted but
@@ -154,7 +154,7 @@ match SID/file identity and ancestry, never ports or fuzzy command-line text.
 ## Stopping a session
 
 `POST /api/session/stop {uid, request_id?}` accepts unrelated dictionary
-members like Python; a valid optional request ID only adds managed-stop replay.
+members; a valid optional request ID only adds managed-stop replay.
 The UID is checked against the index's native catalog (404 `session_missing`),
 then resolved through a fresh guarded runtime observation and native process
 scan. Managed targets use `guarded_v1`; external targets use exact native
@@ -191,7 +191,7 @@ As in Python, stop ignores unrelated request fields and observes current state
 again on every call.
 No operator flag is required — Python's confirmation is the browser dialog.
 
-Browser leases: like Python, stop neither needs nor fails on a browser
+Browser leases: stop neither needs nor fails on a browser
 terminal lease. The EOF keys are server-originated host input; the WebSocket
 ends with the host's own exit marker, and the receipt path retires
 launch-derived leases exactly as `term/kill` does. A stop blocks the single

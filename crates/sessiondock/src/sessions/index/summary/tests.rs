@@ -1024,7 +1024,7 @@ fn grok_invalid_summary_is_unsupported_but_still_a_row() {
 }
 
 // ---------------------------------------------------------------------------
-// Claude torn / invalid lines are skipped like Python
+// Claude torn / invalid lines are skipped
 // `_head_lines` / `_tail_lines` and counted as one non-fatal note.
 // ---------------------------------------------------------------------------
 
@@ -1249,7 +1249,7 @@ fn claude_continued_in_sid_is_the_last_tail_record_with_a_truthy_id() {
         summary.warnings,
         ["跳过未知的Claude 记录类型：continued-in ×5"]
     );
-    // A non-string id is `str()`-ed like Python.
+    // A non-string id is `str()`-ed.
     let summary = summarize_bytes(
         "claude",
         claude_path(),

@@ -87,7 +87,7 @@ fn python_truthy(value: &Value) -> bool {
     }
 }
 
-/// The claimant's ownership label (Python `_display_ip`). Only the
+/// The claimant's ownership label. Only the
 /// authenticated node listener trusts the hub's forwarded `X-Real-IP` /
 /// `X-Forwarded-For`; on the browser listener the TCP peer is the label, so a
 /// page cannot pick its own. Display only — it never enters lease identity.
@@ -182,7 +182,7 @@ pub struct AttachQuery {
     record_id: Option<String>,
     launch_id: Option<String>,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[allow(dead_code)]
     debug_run: String,
 }
@@ -619,7 +619,7 @@ pub async fn list(
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let permit = super::lifecycle::admit(&state).await?;
-    // Python `str(Path.home())`: the frontend abbreviates cwd with it.
+    // The frontend abbreviates cwd with it.
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| home.to_string_lossy().into_owned())

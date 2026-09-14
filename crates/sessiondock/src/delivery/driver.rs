@@ -135,7 +135,7 @@ pub struct ScreenCapture {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComposerView {
     pub state: ComposerState,
-    /// Python-compatible nonreversible fingerprint of screen + cursor; this is
+    /// Nonreversible fingerprint of screen + cursor; this is
     /// the draft consent token and the domain's frame token.
     pub screen_token: String,
     /// Fingerprint of the composer rows + cursor only, used by the driver's
@@ -210,7 +210,7 @@ fn is_particle(ch: char) -> bool {
     ('\u{2800}'..='\u{28ff}').contains(&ch)
 }
 
-/// Python `codex_bridge._plain`: ANSI stripped, particle cells blanked in place.
+/// ANSI stripped, particle cells blanked in place.
 fn codex_plain(line: &str) -> String {
     strip_ansi(line)
         .chars()
@@ -223,12 +223,12 @@ pub fn codex_busy_screen(screen: &str) -> bool {
     CODEX_BUSY.is_match(&strip_ansi(screen))
 }
 
-/// Whether Claude visibly has a turn in progress (Python `busy_screen`).
+/// Whether Claude visibly has a turn in progress.
 pub fn busy_screen(screen: &str) -> bool {
     BUSY_STATUS.is_match(&strip_ansi(screen))
 }
 
-/// Visible characters with their SGR dim state (Python `_styled_chars`).
+/// Visible characters with their SGR dim state.
 fn styled_chars(text: &str) -> Vec<(char, bool)> {
     let mut result = Vec::new();
     let mut dim = false;
@@ -316,7 +316,7 @@ fn locate(clean_lines: &[String], cursor: (u16, u16)) -> Option<ComposerBlock> {
     })
 }
 
-/// Python `composer_state`: `empty`, `editing` or `unknown`, plus the visible
+/// `empty`, `editing` or `unknown`, plus the visible
 /// editor text and a composer-only fingerprint when the block is recognized.
 pub fn inspect(capture: &ScreenCapture) -> ComposerView {
     let screen_token = screen_fingerprint(&capture.text, capture.cursor);
@@ -416,7 +416,7 @@ fn nonblank(line: &str) -> bool {
     !line.trim().is_empty()
 }
 
-/// Locate the Codex composer block `[start, end]` (Python `composer_state`):
+/// Locate the Codex composer block `[start, end]`:
 /// the nonblank block immediately above a recognized status footer, or, when
 /// the short pane hides the footer, the block anchored by the cursor.
 fn locate_codex(

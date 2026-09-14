@@ -50,7 +50,7 @@ fn corpus(temp: &Path) -> Config {
             ..Default::default()
         },
         // The default is the system host name; pin the
-        // Python-shaped node name this test asserts.
+        // Node name this test asserts.
         hostname: "SessionDock".into(),
         ..Config::default()
     }

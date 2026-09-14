@@ -117,7 +117,7 @@ struct Agent {
     owner: Result<String, Unowned>,
 }
 
-/// Python's `by_sid`: non-subagent Codex entries by native sid.
+/// Non-subagent Codex entries by native sid.
 pub(super) fn mains_by_sid(
     entries: &BTreeMap<String, CandidateRef>,
 ) -> BTreeMap<&str, Vec<&CandidateRef>> {
@@ -378,7 +378,7 @@ impl<'a> Graph<'a> {
     }
 
     /// Metadata-only validation of the declared physical chain, nearest
-    /// parent first: what an open reads (Python `_history_segments`).
+    /// parent first: what an open reads.
     fn chain(&self, uid: &str) -> Result<Vec<(String, u64)>, SessionError> {
         let mut current = uid.to_owned();
         let mut chain = Vec::new();
@@ -406,7 +406,7 @@ impl<'a> Graph<'a> {
         if let Err(error) = self.chain(uid) {
             mark_unsupported(&mut row, &error.message);
         }
-        // Python `finalize_sessions`: main rows only; `title` here is the
+        // Main rows only; `title` here is the
         // root's base title, the name index overrides it afterwards.
         if entry.summary.agent.is_none() {
             let chain = lineage(entry, &self.mains);
@@ -428,7 +428,7 @@ impl<'a> Graph<'a> {
         row
     }
 
-    /// Python `agent_items[].active`: a Codex subagent's own turn state; a
+    /// A Codex subagent's own turn state; a
     /// Claude sidecar's turn state against its owner's stop notices.
     fn agent_active(&self, owner: &str, uid: &str) -> bool {
         let entry = &self.entries[uid];

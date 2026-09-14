@@ -23,7 +23,7 @@ const REFERENCE_KEYS: [&str; 4] = ["uid", "from_uid", "to_uid", "continued_in"];
 const OPAQUE_KEYS: [&str; 6] = ["data", "content", "input", "arguments", "raw", "resolved"];
 const MEDIA_PREFIX: &str = "/api/media/";
 
-/// A reference that cannot be scoped or unscoped (Python `ValueError`); the
+/// A reference that cannot be scoped or unscoped; the
 /// text is the user-facing 400 body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NamespaceError(&'static str);
@@ -178,7 +178,7 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
     Ok(Value::Object(result))
 }
 
-/// Python `walk`: scope reference keys, media `src` and `epoch` everywhere
+/// Scope reference keys, media `src` and `epoch` everywhere
 /// except inside opaque subtrees.
 fn walk(value: Value, nid: &str, strict: bool) -> Result<Value, NamespaceError> {
     match value {
@@ -224,7 +224,7 @@ fn lenient(
     }
 }
 
-/// Python `row`: stamp `node_id`/`node_name` on a row; a terminal row's
+/// Stamp `node_id`/`node_name` on a row; a terminal row's
 /// `name` and a trash row's `id` are scoped as well.
 pub fn decorate_row(
     row: &mut Map<String, Value>,

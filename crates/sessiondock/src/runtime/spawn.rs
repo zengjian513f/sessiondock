@@ -32,7 +32,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Python `_spawn_candidates`: every possible spawner uid along the chain.
+/// Every possible spawner uid along the chain.
 fn spawn_candidates(
     scan: &Scan,
     pid: u32,
@@ -149,7 +149,7 @@ struct Memo {
 }
 
 /// Records spawners into the metadata store: from the background tick and from
-/// `/api/live`. Results are memoised per scan (Python `_spawn_cache`) and
+/// `/api/live`. Results are memoised per scan and
 /// sessions already recorded are skipped before writing.
 pub struct SpawnWatcher {
     scanner: Arc<ProcScanner>,
@@ -190,7 +190,7 @@ impl SpawnWatcher {
         found
     }
 
-    /// Python `_record_spawn_parents`: returns how many sessions were newly recorded.
+    /// Returns how many sessions were newly recorded.
     pub fn record(
         &self,
         scan: &Arc<Scan>,
@@ -212,7 +212,7 @@ impl SpawnWatcher {
         self.metadata.record_spawn_parents(&fresh)
     }
 
-    /// Python `_spawn_watch_tick`: list, scan (shared 3 s cache), record.
+    /// List, scan (shared 3 s cache), record.
     pub async fn tick(
         self: &Arc<Self>,
         reader: &crate::state::Reader,
@@ -241,7 +241,7 @@ impl SpawnWatcher {
         .map_err(|_| "spawn watch tick failed".to_owned())?
     }
 
-    /// Python `_spawn_watch_loop`: headless sessions an agent fans out often
+    /// Headless sessions an agent fans out often
     /// live and die while no page is open, so the service looks on its own at
     /// a fixed cadence; the scan shares the `/api/live` cache, so an open page
     /// costs almost nothing extra. Diagnostic only: a failed tick is dropped.

@@ -1,5 +1,5 @@
 //! Read-only live status; never upgrades observations into CLI authority.
-//! Managed host observations and Python-shaped native process discovery are
+//! Managed host observations and native process discovery are
 //! merged into the legacy `uids` / `tmux_uids` / `started_at` envelope.
 
 use std::{
@@ -124,7 +124,7 @@ pub async fn live(
         "unavailable_reason":UNCONFIGURED,
         "uids":[],"tmux_uids":[],"started_at":{},"managed":null});
     // Managed running uids in list-independent order, their start times, the
-    // host session roots (Python `term_host.hosts`) and the uids the host
+    // host session roots and the uids the host
     // records declare (Python's pane named for a session).
     let mut managed_running: Vec<String> = Vec::new();
     let mut managed_started: BTreeMap<String, f64> = BTreeMap::new();
@@ -321,7 +321,7 @@ fn inherits_pane(
     false
 }
 
-/// Python `_continued_origin`: the first listed row whose `continued_in`
+/// The first listed row whose `continued_in`
 /// names this Claude session; other sources have none.
 fn continued_origin<'a>(
     sessions: &'a [SessionRow],

@@ -49,7 +49,7 @@ fn default_schema() -> u32 {
 /// Private administrator configuration; intentionally not Debug or Serialize.
 /// Schema 1 carries only fixed-argv `adapters`; schema 2 additionally allows
 /// per-source CLI `profiles`. A bug-report worker launches the source's one
-/// configured CLI exactly like `term/create` (Python `WORKER_SOURCES`); a
+/// configured CLI exactly like `term/create`; a
 /// leftover `bug_report_profiles` table is ignored like any
 /// other unknown key.
 #[derive(Clone, Deserialize)]
@@ -335,7 +335,7 @@ impl Launcher {
         metadata
     }
 
-    /// Python-compatible shell-style completion for any absolute directory.
+    /// Shell-style completion for any absolute directory.
     pub fn complete_directories(&self, text: &str, limit: usize) -> Result<Vec<String>, Error> {
         if text.chars().count() > 4096 {
             return Err(Error::InvalidSpec);
@@ -484,7 +484,7 @@ fn spawn_detached(mut command: Command) -> std::io::Result<Child> {
 /// service) and out of the service's job object, so that a job-terminated
 /// service leaves the host alive — Python `term_host._spawn`. A job that
 /// forbids breakaway makes `CreateProcess` refuse with access denied; the host
-/// is then started inside the job rather than not at all, again like Python.
+/// is then started inside the job rather than not at all.
 #[cfg(windows)]
 fn spawn_detached(mut command: Command) -> std::io::Result<Child> {
     use std::os::windows::process::CommandExt;

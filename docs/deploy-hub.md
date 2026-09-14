@@ -27,7 +27,7 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 | `SESSIONDOCK_HUB_BIND` | Hub 监听，必须 loopback；默认 `127.0.0.1:8742` |
 | `SESSIONDOCK_HUB_NODES` | `hub-nodes.json` 注册表；默认 `~/.local/share/sessiondock/hub-nodes.json`，接受普通文件路径 |
 | `SESSIONDOCK_HUB_CACHE_DIR` | 离线会话快照目录；缺省是注册表旁的 `hub-cache` |
-| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR；默认 `127.0.0.0/8,::1/128,10.0.0.0/24`，与 Python 一致 |
+| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR；默认 `127.0.0.0/8,::1/128,10.0.0.0/24` |
 | `SESSIONDOCK_WEB_DIR` | 前端快照（hub 模式），默认 `legacy-web` |
 | `SESSIONDOCK_AUDIT_DIR` | 记 `hub.node.*.changed`（可选，按需创建目录） |
 

@@ -70,7 +70,7 @@ policy (a leftover `bug_report_profiles` key is ignored).
 
 ## Validation
 
-Synthetic tests cover Python-compatible argv defaults, inherited environment
+Synthetic tests cover argv defaults, inherited environment
 cleanup, legacy configuration loading, unrestricted canonical working
 directories, symlink completion, tab-containing directory names, resource
 replacement detection, and receipt identity.

@@ -2537,7 +2537,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
       ConsoleUI.errors.set(uid, reason);
       // The host-performed stop (`session/stop` escalation, `term/kill`)
       // retires the lease before the exit is observed: close the pane like a
-      // host exit (Python parity) and keep the final output in the retained
+      // host exit and keep the final output in the retained
       // view; the explanation goes to the notice, not over the CLI's screen.
       view.keepOutput = true;
       if (T.name === name) closeTermPane(true);

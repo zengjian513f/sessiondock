@@ -268,7 +268,7 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
             .status(),
         StatusCode::NOT_FOUND
     );
-    // `debug_run` is a list-view selector (Python `filter_rows`), not a
+    // `debug_run` is a list-view selector, not a
     // gate: the detail routes ignore it, and the list answers an empty
     // view for an id no registry knows.
     assert_eq!(

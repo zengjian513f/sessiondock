@@ -38,7 +38,7 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 **注册**（服务器端操作，网页无此路由）`register(client, Registration{name,url,token,color,id})`：
 名称去空白、1–80 字符；token 满足上面的文法；url `rstrip('/')` 后必须是
 `http(s)://<字面 IP>[:端口]`（无路径/凭据/query/fragment，`/` 结尾允许，端口 1–65535，
-HTTP 缺省 80、HTTPS 缺省 443，IPv6 用 `[…]`），且 IP 落在允许网络内（CIDR 列表，严格形式：主机位非零即拒绝；缺省与 Python 相同：
+HTTP 缺省 80、HTTPS 缺省 443，IPv6 用 `[…]`），且 IP 落在允许网络内（CIDR 列表，严格形式：主机位非零即拒绝；缺省：
 `127.0.0.0/8,::1/128,10.0.0.0/24`）。随后请求节点
 `/api/meta`，必须 `mode:"local"`、`protocol:1`、`node_id` 32 hex，否则
 `节点认证或协议检查失败，请先升级节点并配置凭据`；以 `node_id` 为主键替换同 id 条目
@@ -137,8 +137,8 @@ SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）
 | 变量 | 含义 | 校验（`Config::validate_node`，`--check-config` 同样执行且不写任何文件） |
 | --- | --- | --- |
 | `SESSIONDOCK_NODE_BIND` | 第二监听地址（WireGuard 接口 IP:端口） | 与 `SESSIONDOCK_BIND` 不同 |
-| `SESSIONDOCK_NODE_TOKEN_FILE` | 节点凭据文件（Python `--node-token-file`） | 文件内容去首尾空白后为 `[A-Za-z0-9._~+/=-]{32,256}`（`NodeToken::load`） |
-| `SESSIONDOCK_NODE_ID_FILE` | 节点身份文件（Python `--node-id-file`） | 已存在则必须是 32 位小写十六进制（只读），不存在则启动时由 `identity::node_id` 创建父目录并以 `O_EXCL` 0600 生成 |
+| `SESSIONDOCK_NODE_TOKEN_FILE` | 节点凭据文件 | 文件内容去首尾空白后为 `[A-Za-z0-9._~+/=-]{32,256}`（`NodeToken::load`） |
+| `SESSIONDOCK_NODE_ID_FILE` | 节点身份文件 | 已存在则必须是 32 位小写十六进制（只读），不存在则启动时由 `identity::node_id` 创建父目录并以 `O_EXCL` 0600 生成 |
 | `SESSIONDOCK_NODE_PEERS` | 允许的来源网段（严格 CIDR，逗号分隔） | 主机位非零即拒绝；空表拒绝；没有缺省值 |
 
 `--check-config` 额外打印 `node_bind` / `node_token_file` / `node_id_file` /

@@ -53,7 +53,7 @@ pub const OWNERSHIP_EPOCH: &str = "guarded_v1";
 pub struct ExecutorLimits {
     /// Concurrent HTTP send/draft/retry operations across all sessions.
     pub workers: usize,
-    /// Python `CONFIRM_TIMEOUT`: after this long without acknowledgment the
+    /// After this long without acknowledgment the
     /// fixed confirmation fence is re-read, at most once per interval.
     pub confirm_timeout: Duration,
     /// Automatic native tracking stops after this window; the receipt keeps
@@ -167,7 +167,7 @@ impl TargetResolver for ManagedResolver {
     }
 }
 
-/// Python-shaped failure: `{error, code, ...extra}` with an HTTP status.
+/// Failure: `{error, code, ...extra}` with an HTTP status.
 #[derive(Clone, Debug)]
 pub struct Failure {
     pub status: u16,
@@ -748,7 +748,7 @@ impl DeliveryExecutor {
                 token: request.overwrite_draft.clone(),
             }
         } else {
-            // Python `overwrite_draft`: consent is checked and the approved
+            // Consent is checked and the approved
             // draft cleared before anything is persisted, so a refused or
             // changed draft leaves no receipt behind.
             if let Some(conflict) = self
@@ -788,7 +788,7 @@ impl DeliveryExecutor {
         self.reply_item(session, &request_id).await
     }
 
-    /// Python `SendDriver.overwrite_draft`: returns the 409 body when the
+    /// Returns the 409 body when the
     /// composer holds an unapproved draft or the approved one could not be
     /// cleared; `None` means the composer is empty/unknown and sending may go on.
     async fn overwrite_draft(
@@ -1412,7 +1412,7 @@ impl DeliveryExecutor {
         let lease = self.driver.acquire(&target, page_lease.as_ref()).await?;
         let probe = self.inspect(session.provider.composer(), &lease).await;
         self.driver.release(lease).await;
-        // Python `composer_probe`: a failed capture is `unknown`, not an error.
+        // A failed capture is `unknown`, not an error.
         let mut body = json!({"ok": true, "draft_state": "unknown"});
         if let Ok(view) = probe {
             body = json!({"ok": true});

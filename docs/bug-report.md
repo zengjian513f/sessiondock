@@ -14,8 +14,8 @@ dependency is configured.
 
 | Setting | Meaning |
 | --- | --- |
-| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/sessiondock/bug-reports`). Created as needed and chmodded to `0700` on Unix. |
-| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `sessiondock_attachments/`. Ordinary filesystem paths are accepted. |
+| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root. Created as needed and chmodded to `0700` on Unix. |
+| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates: the worker's cwd and the parent of `sessiondock_attachments/`. Ordinary filesystem paths are accepted. |
 
 The two variables are all-or-nothing (`--check-config` prints
 `bug_report_dir=` / `bug_report_repo=`). The route additionally needs the

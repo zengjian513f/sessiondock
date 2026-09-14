@@ -442,7 +442,7 @@ pub(super) fn absolute_path(raw: &str, cwd: &str) -> Result<PathBuf, FileError> 
     base.join(path).canonicalize().map_err(FileError::io)
 }
 
-/// Python `path_for`: normpath first, resolve parents, retain a final symlink.
+/// Normpath first, resolve parents, retain a final symlink.
 pub(super) fn mutation_path(raw: &str) -> Result<PathBuf, FileError> {
     validate_path_text(raw)?;
     #[cfg(windows)]

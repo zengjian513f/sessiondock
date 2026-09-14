@@ -22,7 +22,7 @@ Ordinary user text is not image authority.
 ## File references
 
 File references are registered lazily through the selected session's file
-service. Registration passes the original reference so Python-compatible path
+service. Registration passes the original reference so path
 handling performs percent decoding exactly once. Relative paths resolve as in
 Python, `file://` references use their parsed path, and symlinks and hard links
 are followed. Local reads do not require a configured file root. HTTP(S) URLs

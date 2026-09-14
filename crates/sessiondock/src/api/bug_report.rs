@@ -1,4 +1,4 @@
-//! `POST /api/bug-report` (Python `_bug_report`) and the
+//! `POST /api/bug-report` and the
 //! `uid=bug-report` branch of `POST /api/session/attachment` (Python's raw
 //! upload special case). Validation, status codes and the 202/500 shapes
 //! follow Python; the bundle and the worker live in `bug_report`.
@@ -255,7 +255,7 @@ pub async fn report(
     }
 }
 
-/// Python `index.get(uid)`: the published list row, `{}` when absent.
+/// The published list row, `{}` when absent.
 async fn session_row(state: &AppState, uid: &str) -> Value {
     let wanted = uid.to_owned();
     state
@@ -274,7 +274,7 @@ async fn session_row(state: &AppState, uid: &str) -> Value {
         .unwrap_or_else(|_| json!({}))
 }
 
-/// Python `send_protocol.snapshot(source, uid)`: the delivery ledger's view
+/// The delivery ledger's view
 /// of the session, `{}` when there is no ledger or the session is unknown.
 async fn outbox_snapshot(state: &AppState, uid: &str) -> Value {
     let Some(delivery) = &state.delivery else {

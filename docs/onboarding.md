@@ -42,7 +42,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Delivery
 
-- [delivery.md](delivery.md) — Codex/Claude receipt machines and Python-compatible delivery behavior.
+- [delivery.md](delivery.md) — Codex/Claude receipt machines and delivery behavior.
 - [delivery-store.md](delivery-store.md) — Durable delivery ledger and recovery semantics.
 - [delivery-engine.md](delivery-engine.md) — Exclusive owner of the store and both machines.
 - [delivery-service.md](delivery-service.md) — Serialized async committed-outbox reads and executor access.
@@ -53,7 +53,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Files, diagnostics, capabilities, security
 
-- [files.md](files.md) — Python-compatible file navigation, attachments, uploads and write operations.
+- [files.md](files.md) — file navigation, attachments, uploads and write operations.
 - [diagnostics.md](diagnostics.md) — Bounded `POST /api/audit/browser`; unset keeps `audit:false` and 501.
 - [capabilities.md](capabilities.md) — HTML / `/api/meta` flags; a missing key stays allowed.
 - [security-model.md](security-model.md) — Trust boundaries: loopback, fail-closed, not a sandbox.

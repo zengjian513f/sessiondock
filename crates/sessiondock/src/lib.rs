@@ -188,7 +188,7 @@ pub async fn prepare_app(
             if let Some(executor) = &built.executor {
                 executor.spawn_tracker();
             }
-            // Python `_spawn_watch_loop`: the 10 s spawner tick, same context.
+            // The 10 s spawner tick, same context.
             if let Some(start) = built.spawn_watch {
                 start.watcher.spawn_loop(start.reader, shutdown_for_watch);
             }

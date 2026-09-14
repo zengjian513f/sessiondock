@@ -73,7 +73,7 @@ impl StopScan {
     }
 }
 
-/// Python `_collect_agent_stops`: merge one main-transcript line into the
+/// Merge one main-transcript line into the
 /// scan. Copies of a notice text count only at their first-seen time; a
 /// foreground Agent result is a stop unless it is only `async_launched`.
 pub fn collect(raw: &[u8], scan: &mut StopScan) {
@@ -136,7 +136,7 @@ pub fn collect(raw: &[u8], scan: &mut StopScan) {
     }
 }
 
-/// Python `_claude_agent_stops`: bring `scan` up to the owner file at
+/// Bring `scan` up to the owner file at
 /// `stamp`, reading only the bytes after the last consumed LF. A file that
 /// is a different inode or shorter than what was consumed is rescanned from
 /// the start; a file that cannot be opened at that inode leaves the scan as
@@ -205,7 +205,7 @@ fn read_lines(file: &mut std::fs::File, size: u64, scan: &mut StopScan) -> Resul
     Ok(())
 }
 
-/// Python `_ts_after`: both `norm_ts`/`iso_seconds` texts as instants;
+/// Both `norm_ts`/`iso_seconds` texts as instants;
 /// unparsable values are never later.
 pub fn ts_after(later: &str, earlier: &str) -> bool {
     match (

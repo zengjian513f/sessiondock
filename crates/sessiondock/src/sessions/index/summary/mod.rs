@@ -29,15 +29,15 @@ use super::Stamp;
 use crate::sessions::SessionError;
 use crate::sessions::providers::Skipped;
 
-/// Python `HEAD_BYTES`: the metadata head read never exceeds this.
+/// The metadata head read never exceeds this.
 pub const HEAD_BYTES: u64 = 96 * 1024;
-/// Python `TAIL_BYTES`: rename/custom-title records are appended at the end.
+/// Rename/custom-title records are appended at the end.
 pub const TAIL_BYTES: u64 = 512 * 1024;
 /// Python `_head_lines(path)` default: Claude reads 40 pieces.
 pub const CLAUDE_HEAD_LINES: usize = 40;
 /// Python `CodexAdapter._raw_meta` reads 120 pieces.
 pub const CODEX_HEAD_LINES: usize = 120;
-/// Python `_first_jsonl_timestamp`: a Claude sidecar's created time comes
+/// A Claude sidecar's created time comes
 /// from its first 8 pieces.
 pub const CLAUDE_AGENT_CREATED_LINES: usize = 8;
 /// The bytes the index read from one data file, plus the stamp of the file
@@ -121,7 +121,7 @@ pub struct RowSummary {
     pub agent: Option<AgentMeta>,
     pub grok: Option<GrokMeta>,
     /// Claude main transcripts: the last tail `continued-in` record's
-    /// `continuedInSessionId` (Python `continued_in_sid`); the graph turns
+    /// `continuedInSessionId`; the graph turns
     /// it into the row's `continued_in` uid when that sid is indexed.
     pub continued_in_sid: Option<String>,
     /// Native session identity from the records seen (scope rules of
@@ -209,7 +209,7 @@ pub struct Region {
     pub corrupt: Vec<u64>,
 }
 
-/// Python `_head_lines`: the first `limit` newline-separated pieces of the
+/// The first `limit` newline-separated pieces of the
 /// head blob. Blank pieces count toward the limit but produce nothing; an
 /// unterminated final piece (cut at `HEAD_BYTES` or still being appended) is
 /// never decoded.
@@ -224,7 +224,7 @@ pub fn parse_head(blob: &[u8], limit: usize) -> Region {
     region
 }
 
-/// Python `_tail_lines`: every complete line of the tail blob; when the tail
+/// Every complete line of the tail blob; when the tail
 /// starts inside the file its first piece is a partial record and dropped.
 pub fn parse_tail(blob: &[u8], tail_start: u64) -> Region {
     let mut region = Region::default();
@@ -324,8 +324,8 @@ impl Records {
         )
     }
 
-    /// Complete lines seen that are not JSON objects. Skipped like Python
-    /// `_head_lines`/`_tail_lines`; `skipped_warnings` reports the count.
+    /// Complete lines seen that are not JSON objects. Skipped by the
+    /// head/tail line readers; `skipped_warnings` reports the count.
     pub fn corrupt_lines(&self) -> usize {
         self.head
             .corrupt
@@ -463,7 +463,7 @@ pub fn py_splitlines(text: &str) -> Vec<&str> {
     lines
 }
 
-/// Python `_clip`: whitespace-normalized, at most `n` characters plus `…`.
+/// Whitespace-normalized, at most `n` characters plus `…`.
 pub fn clip(text: &str, n: usize) -> String {
     let joined = text
         .split(py_is_space)
@@ -477,7 +477,7 @@ pub fn clip(text: &str, n: usize) -> String {
     }
 }
 
-/// Python `_norm_ts`: a native timestamp as an RFC 3339 UTC instant with
+/// A native timestamp as an RFC 3339 UTC instant with
 /// millisecond precision, or `None` when it is falsy or unparsable.
 pub fn norm_ts(value: &Value) -> Option<String> {
     if !truthy(value) {
@@ -533,7 +533,7 @@ fn parse_iso(text: &str) -> Option<DateTime<Utc>> {
         .map(|date| date.and_utc())
 }
 
-/// Python `_iso(st.st_mtime)`: file time truncated to whole seconds.
+/// File time truncated to whole seconds.
 pub fn iso_seconds(mtime_ns: u128) -> String {
     let seconds = i64::try_from(mtime_ns / 1_000_000_000).unwrap_or(i64::MAX);
     DateTime::from_timestamp(seconds, 0)
@@ -570,13 +570,13 @@ static PAIRED_TAG: LazyLock<Regex> = LazyLock::new(|| {
 static SHORT_TAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"<[^>]{1,40}>").expect("static regex"));
 
-/// Python `_is_injected`: searches the first 2000 characters.
+/// Searches the first 2000 characters.
 pub fn is_injected(text: &str) -> bool {
     let window: String = text.chars().take(2000).collect();
     INJECTED.is_match(&window)
 }
 
-/// Python `_is_timeline_protocol`: a CLI protocol block at the very start.
+/// A CLI protocol block at the very start.
 pub fn is_timeline_protocol(text: &str) -> bool {
     TIMELINE_PROTOCOL.is_match(text)
 }

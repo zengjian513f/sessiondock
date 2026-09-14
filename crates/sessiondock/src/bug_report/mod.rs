@@ -1,4 +1,4 @@
-//! Bug-report bundles and their CLI workers (Python `bug_report.py`).
+//! Bug-report bundles and their CLI workers.
 //!
 //! `create` writes one private directory `<dir>/BUG-YYYYMMDD-HHMMSS-hex6/`
 //! (0700) holding `description.md`, `browser-state.json`, `events.jsonl` (the
@@ -7,7 +7,7 @@
 //! the Rust build), copies of the composer uploads under `attachments/`,
 //! `worker-prompt.md` and `manifest.json`. `worker::launch` then starts an
 //! ordinary lifecycle launch of the source's configured CLI (the same one
-//! `term/create` starts, on the CLI's own default model like Python) and
+//! `term/create` starts, on the CLI's own default model) and
 //! injects the prompt through the terminal driver's paste + Enter two-step
 //! persistence; the outcome lands in the manifest as
 //! `submitted` / `submitted_unconfirmed` / `failed`.
@@ -21,7 +21,7 @@
 
 pub mod worker;
 
-// POSIX output permissions (Python `test_bug_report.py`).
+// POSIX output permissions.
 #[cfg(all(test, unix))]
 mod tests;
 
@@ -271,7 +271,7 @@ impl BugReportService {
         )
     }
 
-    /// Python `resolve_attachments`: the composer-style list `[{path, number,
+    /// The composer-style list `[{path, number,
     /// name, kind, mime, size}]`; every path must already lie inside the
     /// repository's attachment directory after resolving links.
     pub fn resolve_attachments(&self, items: &Value) -> Result<Vec<Attachment>, String> {
@@ -367,7 +367,7 @@ impl BugReportService {
         Ok(resolved)
     }
 
-    /// Python `bug_report.create`: the private bundle, written before any
+    /// The private bundle, written before any
     /// worker starts. Blocking (git subprocesses, audit scan): run on the
     /// blocking executor.
     pub fn create(&self, audit: &AuditService, input: CreateInput) -> Result<Report, CreateError> {
@@ -549,7 +549,7 @@ pub fn report_id_ok(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Python `attachment_block`: the `附件N: ./path` lines the composer appends.
+/// The `附件N: ./path` lines the composer appends.
 pub fn attachment_block(attachments: &[(Attachment, String)]) -> String {
     attachments
         .iter()
@@ -610,7 +610,7 @@ pub fn worker_prompt(
     )
 }
 
-/// Python `_copy_into_bundle`: hard-link or copy each upload as
+/// Hard-link or copy each upload as
 /// `attachments/NN-<name>`; returns each attachment with its bundle file.
 fn copy_into_bundle(
     report_dir: &Path,
@@ -639,7 +639,7 @@ fn copy_into_bundle(
     Ok(saved)
 }
 
-/// Python `_command`: one bounded subprocess with cwd = the repository.
+/// One bounded subprocess with cwd = the repository.
 pub fn command(cwd: &Path, argv: &[&str]) -> Value {
     let started = Instant::now();
     let spawned = Command::new(argv[0])
@@ -747,7 +747,7 @@ pub fn redact(value: &Value) -> Value {
     walk(value, 0)
 }
 
-/// Python `json.dumps(sort_keys=True)`: object keys in sorted order at every level.
+/// Object keys in sorted order at every level.
 fn sorted(value: &Value) -> Value {
     match value {
         Value::Object(map) => {
@@ -764,14 +764,14 @@ fn sorted(value: &Value) -> Value {
     }
 }
 
-/// Python `_write_json`: redacted, indented, sorted keys, trailing newline.
+/// Redacted, indented, sorted keys, trailing newline.
 pub fn write_json(path: &Path, value: &Value) -> io::Result<()> {
     let text = serde_json::to_string_pretty(&sorted(&redact(value)))
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     write_text(path, &format!("{text}\n"))
 }
 
-/// Python `_write_text`: a private temp file in the same directory, then rename.
+/// A private temp file in the same directory, then rename.
 pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
     let name = path
         .file_name()
@@ -806,7 +806,7 @@ pub fn write_text(path: &Path, text: &str) -> io::Result<()> {
     result
 }
 
-/// Python `update_manifest`: read-modify-write of the top-level keys.
+/// Read-modify-write of the top-level keys.
 pub fn update_manifest(report_dir: &Path, changes: Value) -> io::Result<()> {
     let path = report_dir.join("manifest.json");
     let mut value = fs::read_to_string(&path)

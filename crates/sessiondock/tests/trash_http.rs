@@ -393,7 +393,7 @@ async fn delete_list_restore_purge_round_trip_for_all_three_sources() {
     assert_eq!(again["code"], "not_found");
 
     // Codex rollout; the Grok session moves as a whole directory
-    // (Python parity) — attachment included, nothing left in the native root.
+    // — attachment included, nothing left in the native root.
     let (status, body) = delete(&app, &format!("/api/session/{codex}?force=1")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["files"], 1);

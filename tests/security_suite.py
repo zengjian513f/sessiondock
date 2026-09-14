@@ -158,7 +158,7 @@ def run(host, port):
     if status != 501:
         fail("terminal body policy", f"HTTP {status} (want disabled terminal 501)", raw)
     passed("terminal body policy")
-    # `debug_run` is the list-view selector (Python `filter_rows`), not a
+    # `debug_run` is the list-view selector, not a
     # policy gate: an id no registry knows is an empty view, HTTP 200.
     status, raw = call(host, port, "GET", "/api/sessions?debug_run=abc")
     try:

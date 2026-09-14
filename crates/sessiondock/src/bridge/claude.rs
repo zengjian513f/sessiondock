@@ -1,4 +1,4 @@
-//! Claude question cards (Python `sessiondock/claude_bridge.py`).
+//! Claude question cards.
 //!
 //! Claude Code shows an `AskUserQuestion` dialog in its TUI before the
 //! `tool_use` record reaches the transcript. The `sessiondock claude-hook`
@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 /// Subdirectory of `SESSIONDOCK_STATE_DIR` that holds one file per session.
 pub const PROMPTS_DIRNAME: &str = "claude-prompts";
-/// Python `claude_bridge.VERSION`: files with another version are ignored.
+/// Files with another version are ignored.
 pub const VERSION: u64 = 1;
 /// The hook subcommand name (`sessiondock claude-hook`).
 pub const HOOK_SUBCOMMAND: &str = "claude-hook";
@@ -57,7 +57,7 @@ fn text(value: &Value) -> String {
     }
 }
 
-/// Python `_questions`: the normalized question rows of a `tool_input`.
+/// The normalized question rows of a `tool_input`.
 /// Rows without a `question` are dropped; string options become
 /// `{label, description: ""}`; `multiSelect`/`multiple` become `multiple`.
 pub fn questions(tool_input: &Value) -> Vec<Value> {
@@ -119,7 +119,7 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
-/// Python `_atomic_json`: unchanged content is not rewritten (its mtime is the
+/// Unchanged content is not rewritten (its mtime is the
 /// revision browsers poll), else a private temp file replaces the target.
 fn atomic_json(path: &Path, value: &Value) -> io::Result<()> {
     let parent = path
@@ -187,7 +187,7 @@ impl PromptStore {
         &self.directory
     }
 
-    /// Python `_path`: only a plain session id names a file.
+    /// Only a plain session id names a file.
     pub fn path(&self, session_id: &str) -> Option<PathBuf> {
         SESSION_ID
             .is_match(session_id)
@@ -200,7 +200,7 @@ impl PromptStore {
         serde_json::from_slice(&data).ok()
     }
 
-    /// Python `prompt`: the parsed file when it carries this version and at
+    /// The parsed file when it carries this version and at
     /// least one question; anything else (missing, malformed, stale) is `None`.
     pub fn prompt(&self, session_id: &str) -> Option<Value> {
         let value = self.read(session_id)?;
@@ -209,7 +209,7 @@ impl PromptStore {
         (version_ok && has_questions).then_some(value)
     }
 
-    /// Python `revision`: `(mtime_ns, size)` of the file, `None` when absent.
+    /// `(mtime_ns, size)` of the file, `None` when absent.
     pub fn revision(&self, session_id: &str) -> Option<Revision> {
         let metadata = fs::metadata(self.path(session_id)?).ok()?;
         let modified_ns = metadata
@@ -224,7 +224,7 @@ impl PromptStore {
         })
     }
 
-    /// Python `clear`: remove the file. With a `tool_use_id` the file is only
+    /// Remove the file. With a `tool_use_id` the file is only
     /// removed when it records that same id (or none at all).
     pub fn clear(&self, session_id: &str, tool_use_id: &str) -> bool {
         let Some(path) = self.path(session_id) else {
@@ -240,7 +240,7 @@ impl PromptStore {
         fs::remove_file(path).is_ok()
     }
 
-    /// Python `settle`: mark the native dialog finished (`submitted` /
+    /// Mark the native dialog finished (`submitted` /
     /// `cancelled`) but keep the file. Claude appends the `tool_use` /
     /// `tool_result` records seconds after the Post hook; deleting here would
     /// let the page fall back from the question to a false "Working".
@@ -265,7 +265,7 @@ impl PromptStore {
         atomic_json(&path, &current).is_ok()
     }
 
-    /// Python `handle`: one hook payload from Claude's stdin.
+    /// One hook payload from Claude's stdin.
     pub fn handle(&self, data: &Value) {
         let session_id = data.get("session_id").map(text).unwrap_or_default();
         let Some(path) = self.path(&session_id) else {
@@ -308,7 +308,7 @@ impl PromptStore {
     }
 }
 
-/// Python `settings_path`: the hooks-only settings document Claude receives
+/// The hooks-only settings document Claude receives
 /// through `--settings`. `command` is the absolute `sessiondock` binary and
 /// `args` the exec-form subcommand (`claude-hook --state-dir DIR`), so the
 /// hook does not depend on the CLI's cleared environment or on Python.

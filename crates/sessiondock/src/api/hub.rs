@@ -3,7 +3,7 @@
 //! `/api/nodes` with the settings-page display/order writes, the five
 //! aggregated reads and three split writes (`hub::aggregate`), browser audit
 //! fan-out, and everything else resolved to one machine and proxied
-//! (`hub::proxy`). One dispatcher, like Python: an unmatched path is not a
+//! (`hub::proxy`). One dispatcher: an unmatched path is not a
 //! 404 but a request that must name exactly one machine.
 //!
 //! Gate (before any handler): loopback `Host`, no hub protocol headers, no

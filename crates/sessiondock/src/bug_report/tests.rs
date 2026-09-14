@@ -129,7 +129,7 @@ async fn bundle_filters_related_events_and_captures_context() {
     assert_eq!(manifest["terminal_file"], "terminal.txt");
     assert_eq!(manifest["attachments"], json!([]));
     assert_eq!(manifest["repository"], fixture.repo.to_str().unwrap());
-    // Secrets are redacted in every bundle document (Python `audit.sanitize`).
+    // Secrets are redacted in every bundle document.
     assert_eq!(manifest["outbox"]["outbox"][0]["secret"], "<redacted>");
     assert_eq!(manifest["outbox"]["outbox"][0]["state"], "confirming");
     let rows: Vec<Value> = fs::read_to_string(directory.join("events.jsonl"))

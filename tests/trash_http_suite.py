@@ -138,7 +138,7 @@ def configured(opener, base, corpus, trash):
     need("claude-main" not in listed(opener, base)[0], "sessions", "trashed uid still listed")
     passed("delete: 200 files cover main+sidecars; gone from corpus; under trash/<id>/manifest.json")
     passed("session disappears from /api/sessions")
-    # Python parity: a Grok session moves as its whole directory, so
+    # A Grok session moves as its whole directory, so
     # every file inside it — extra.bin included — travels with the entry.
     extra = corpus.paths["grok-keep"] / "extra.bin"
     grok_dir = corpus.paths["grok-keep"]

@@ -182,7 +182,7 @@ fn unknown_fields_are_ignored_and_executables_remain_checked() {
         launcher.complete_directories(&text, 24).unwrap(),
         vec![format!("{text}nested/")]
     );
-    // A symlinked executable resolves to the real file (Python `shutil.which`).
+    // A symlinked executable resolves to the real file.
     let alias = fixture.directory.path().join("host-alias");
     symlink(&fixture.config.host_binary, &alias).unwrap();
     let mut config = fixture.config.clone();

@@ -21,7 +21,7 @@ pub struct Assets {
     entries: BTreeMap<String, Asset>,
 }
 
-/// Which service serves the page (Python `server.HUB_MODE`).
+/// Which service serves the page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Local,

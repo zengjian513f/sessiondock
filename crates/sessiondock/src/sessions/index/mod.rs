@@ -64,7 +64,7 @@
 //!   are kept verbatim, Claude `cwd` falls back to the tail majority and then
 //!   the project directory name.
 //! - Native ids and conflicts come from the head/tail records seen.
-//! - A Codex head is 120 pieces (Python `_raw_meta`), a Claude head 40.
+//! - A Codex head is 120 pieces, a Claude head 40.
 
 pub mod agent_stops;
 pub mod graph;
@@ -141,7 +141,7 @@ pub struct CandidateRef {
     /// Root owner uid of a healthy agent (the main session it is listed under).
     pub owner: Option<String>,
     /// Why an agent has no owner: 409 ambiguous Codex id, or 501 when its owner
-    /// is not indexed (no row at all, like Python) or the relation is broken.
+    /// is not indexed (no row at all) or the relation is broken.
     /// Opening the agent's uid directly answers with this error.
     pub owner_error: Option<SessionError>,
     pub summary: Arc<RowSummary>,

@@ -1789,7 +1789,7 @@ fn relocate_entry(
 /// Python `ATTACHMENT_MAX_BYTES`; the API derives its body cap from this value.
 const BUG_REPORT_ATTACHMENT_MAX_BYTES: usize = 512 * 1024 * 1024;
 
-/// Python `_attachment_name`: keep a readable file name that can neither
+/// Keep a readable file name that can neither
 /// take part in path resolution nor exceed filesystem limits.
 fn attachment_name(raw: &str) -> String {
     let base = raw

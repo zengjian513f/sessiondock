@@ -66,7 +66,7 @@ fn codex_meta(sid: &str, extra: Value) -> Value {
     codex_row("session_meta", payload, 0)
 }
 
-/// The history_parity / sessions_list_suite corpora, written like the Python
+/// The history_parity / sessions_list_suite corpora, written the way those
 /// helpers do (every source, agents, forks, orphans, cycles, bad cuts, Grok).
 struct Corpus {
     root: PathBuf,
@@ -2276,7 +2276,7 @@ print(json.dumps(rows, ensure_ascii=False, default=str))
 // through `Index::refresh`.
 // ---------------------------------------------------------------------------
 
-/// Python `ClaudeAgentItemTests`: one project, one owner transcript and its
+/// One project, one owner transcript and its
 /// `subagents/agent-*.jsonl` + `.meta.json` sidecars.
 struct AgentCorpus {
     root: PathBuf,
@@ -2906,7 +2906,7 @@ fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
             continued("sid-dangling", "sid-nowhere", "2026-09-12T12:00:00Z"),
         ]),
     );
-    // Names itself: dropped (Python `target != row["uid"]`).
+    // Names itself: dropped.
     let selfish = project.join("sid-self.jsonl");
     write(
         &selfish,

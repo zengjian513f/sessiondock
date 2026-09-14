@@ -56,7 +56,7 @@ pub struct Config {
     /// Source networks the node listener accepts (strict CIDR list); every
     /// other peer is 403 before the token is looked at.
     pub node_peers: Vec<PeerNetwork>,
-    /// Bug-report bundles (Python `bug_report.REPORT_ROOT`): an
+    /// Bug-report bundles: an
     /// configured bundle directory. Set together with the repository or not
     /// at all; unset keeps
     /// `capabilities.bug_report` false and `POST /api/bug-report` 501.

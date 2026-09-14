@@ -32,7 +32,7 @@ use std::{
     },
 };
 
-/// Python `media.MAX_ITEM`: one decoded image may be at most 32 MiB.
+/// One decoded image may be at most 32 MiB.
 pub const MAX_IMAGE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_ENCODED_BYTES: usize = MAX_IMAGE_BYTES * 4 / 3 + 16;
 pub const MAX_CACHE_BYTES: usize = 128 * 1024 * 1024;

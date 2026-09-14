@@ -147,7 +147,7 @@ optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
 - Text writes reproduce the stale-build gate before any terminal access:
   `_build` ≠ served build → `409 {code:"stale_build", reload:true, build}`.
 - `request_id`: an empty value mints a UUID; otherwise keep the first 128
-  Unicode characters, including whitespace and punctuation, like Python. Retry
+  Unicode characters, including whitespace and punctuation. Retry
   and discard use the returned ID exactly without trimming or truncation. A different
   payload for a known ID → `400 request_conflict` ("重复发送 ID 对应了不同消息").
   A **replay of the same ID/payload is a status lookup**, never a second paste;
@@ -165,7 +165,7 @@ optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
 
 Body: `uid`, `name`, optional `lease`. Returns `200 {ok:true, draft_state}` plus
 `{draft_conflict:true, draft_token}` while editing; a failed capture is
-`{draft_state:"unknown"}` (Python `composer_probe`), never an error.
+`{draft_state:"unknown"}`, never an error.
 
 ### `POST /api/session/outbox/retry`
 
@@ -179,7 +179,7 @@ has already left the outbox → `404`. Same stale-build gate as send.
 
 Body: `uid`, `id`. Dismisses the row (hides it, cancels an unwritten waiter),
 keeps the deduplication tombstone (a later replay of the ID is still a lookup),
-never cancels Claude. Unknown/already-gone row → `404` (Python parity).
+never cancels Claude. Unknown/already-gone row → `404`.
 
 `GET /api/session/outbox` is unchanged (read-only projection). The front-end
 retires its **optimistic** row from the native SSE record independently; the

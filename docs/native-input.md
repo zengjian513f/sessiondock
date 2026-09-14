@@ -5,7 +5,7 @@ line checkpoints and source stamps, and response reads verify that the selected
 file still has the indexed stamp. Append and replacement invalidate cached
 views so a response is never assembled from two file versions.
 
-Native paths use ordinary Python-compatible file semantics. Symlinked parent or
+Native paths use ordinary file semantics. Symlinked parent or
 leaf paths and hard links are readable. Lexical `.` and `..` components are not
 accepted in an indexed absolute path, and an opened object must be a regular
 file. These checks preserve the indexed path and version contract; they do not

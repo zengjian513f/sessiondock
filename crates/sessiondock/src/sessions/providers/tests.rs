@@ -769,7 +769,7 @@ fn codex_current_cli_record_event_and_item_kinds_are_skipped_with_warnings() {
     assert!(meta.get("migration_warnings").is_none());
 }
 
-/// Python `_EXIT_CODE`: `"exit_code": N` or `exit[ed][ with][ code| status] N`
+/// `"exit_code": N` or `exit[ed][ with][ code| status] N`
 /// with exactly one space before the number. Grok's `exit: 1` output header
 /// is not a code (`exit_code: null`, `error: false`), while a Claude Bash
 /// result saying `exited with code 2` is an error with that code.

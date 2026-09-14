@@ -92,7 +92,7 @@ Draft consent is identical to Claude: `draft-status` → `{draft_state}` plus
 and no receipt; with it the approved draft is cleared (`C-u C-k`) and verified
 empty before the paste.
 
-## Native acknowledgment: Python-compatible causal text matching
+## Native acknowledgment: causal text matching
 
 The tracker polls every attempted Codex receipt that is `Uncertain` and not
 dismissed. For each tick `codex_adapter::ReplayClock::plan(policy,
@@ -102,7 +102,7 @@ delivered_ms, now)` decides:
 |---|---|
 | `Watch` | `InspectNative{replay:false}`; the read is skipped when the committed end has not moved past the watch cursor, otherwise `observe` from the **fixed** boundary |
 | `Replay` (overdue ≥ 8 s, at most every 8 s) | `InspectNative{replay:true}`; always `observe` from the fixed boundary |
-| `Expired` (one hour) | polling stops; the row keeps its state and issue and is not retryable (Python `tracked`) |
+| `Expired` (one hour) | polling stops; the row keeps its state and issue and is not retryable |
 
 `delivered_ms` is the receipt's durable `created_ms` (the Submit clock, never
 later than the Enter clock; Python `_tracked_since` also falls back to
@@ -149,7 +149,7 @@ they differ from Claude's:
 |---|---|
 | `send` | `item.state` is the Codex projection: `queued`/`failed` with `attempts 0` before a write, `failed` with `attempts 1` and `error "发送结果待核对；禁止自动重试"` once pasted (legacy `codexNeedsInspection`: "终端写入待核对", 检查终端/移除). Replay of a confirmed/hidden ID → `state:"confirmed"`, no text. `name` mismatch → `409 terminal_unlinked "Codex 终端会话未连接…"`. |
 | `draft-status` | identical (`empty`/`editing`+token/`unknown`) |
-| `outbox/retry` | only a `failed` row with `attempts 0` (`FailedBeforeWrite`, or a `DraftConflict` with its token) re-inspects; anything attempted → `409 "消息已经写入终端或仍在确认，禁止重复发送"`; unknown → `404 "待发送消息不存在"`. The console draft is probed before the retry like Python. |
+| `outbox/retry` | only a `failed` row with `attempts 0` (`FailedBeforeWrite`, or a `DraftConflict` with its token) re-inspects; anything attempted → `409 "消息已经写入终端或仍在确认，禁止重复发送"`; unknown → `404 "待发送消息不存在"`. The console draft is probed before the retry. |
 | `outbox/discard` | Python `_discard_message` for Codex: a pre-write row is discarded (tombstone kept); an attempted row, including an in-flight prepare/Enter, is **dismissed** (hidden, state, operation revision and dedup identity kept); authorized callbacks may settle once, and dismissal never resends; a missing/already removed ID → `200 {ok, uid, outbox…}` (idempotent, unlike Claude's 404). |
 
 `GET /api/session/outbox` is unchanged. The legacy composer needs no change:

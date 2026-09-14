@@ -225,7 +225,7 @@ def main():
                 assert process.poll() == 0, process.poll()
                 page.wait_for_function("instance => !(T.list || []).some(row => row.instance_id === instance)",
                                        arg=instance, timeout=10000)
-                # A full exit closes the pane (Python parity);
+                # A full exit closes the pane;
                 # the key bar is gone with it, so nothing can type, reclaim or
                 # relaunch into the vanished instance.
                 expect(page.locator("#termpane")).to_be_hidden()

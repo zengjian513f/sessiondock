@@ -206,7 +206,7 @@ async fn exact_association_is_visible_only_inside_partial_managed_snapshot() {
     let (status, body, no_store) = get(&app, "/api/live").await;
     assert_eq!(status, StatusCode::OK);
     assert!(no_store);
-    // A synthetic PID can never be verified, so the Python-compatible process
+    // A synthetic PID can never be verified, so the process
     // scan keeps the running list empty while the managed details stay visible.
     assert_eq!(body["known"], true);
     assert_eq!(body["enabled"], true);

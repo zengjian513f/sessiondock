@@ -705,7 +705,7 @@ async fn codex_swallowed_enter_stays_uncertain_retry_refused_dismiss_hides() {
         assert!(state.pasted.is_empty() && state.keys.is_empty());
     }
 
-    // Dismiss hides the row (Python `9b1c2fd`), keeps the tombstone; a second
+    // Dismiss hides the row, keeps the tombstone; a second
     // discard is idempotent `ok` like Python's Codex handler.
     let discard = harness.exec().discard(&harness.uid, "codex-req-0006").await;
     assert_eq!(discard.status, 200, "{}", discard.body);

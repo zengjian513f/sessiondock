@@ -195,7 +195,7 @@ def run(opener, base, audit, uid):
         fail("click", "coordinates", json.dumps(click["data"]).encode())
     text = click["data"].get("text")
     if text != "Open session " + "字" * 1100:
-        fail("click", "text must retain Python-compatible input", json.dumps(click["data"]).encode())
+        fail("click", "text must retain input", json.dumps(click["data"]).encode())
     header = snap["data"].get("header_state")
     if not isinstance(header, dict) or header.get("selected") != uid:
         fail("dom.snapshot", "header_state object", json.dumps(snap["data"]).encode())

@@ -152,7 +152,7 @@ impl Plan {
                 }
             }
             "grok" => {
-                // Python parity: the whole session directory moves
+                // The whole session directory moves
                 // (events/updates/prompt_context/... included), not only the
                 // two files the index reads.
                 push(origin.clone(), FileRole::Directory)?;
