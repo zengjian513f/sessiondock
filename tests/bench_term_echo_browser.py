@@ -38,6 +38,7 @@ printf 'RS_SHELL_READY\\n'
 while IFS= read -r command; do
   case "$command" in
     burst*) seq 1 "${command#burst }"; printf 'RS_BURST_DONE\\n' ;;
+    frame) printf '\\033[?2026h\\033[2K\\033[1A'; sleep 0.01; printf '\\033[2K\\033[0GRS_FRAME_'; sleep 0.01; printf 'DONE\\033[?2026l\\n' ;;
     quit) exit 0 ;;
   esac
 done
@@ -106,6 +107,30 @@ BATCH_MODE = """mode => {
   };
   if (!policies[mode]) throw new Error('unknown batch mode ' + mode);
   globalThis.writeTermOutput = policies[mode];
+}"""
+
+# One DEC 2026 frame deliberately split into three PTY packets: how many times
+# xterm moved its cursor (and so its IME textarea) while the frame arrived.
+# The echoed command line accounts for one move of its own.
+FRAME_BENCH = """async () => {
+  const view = [...T.views.values()][0];
+  const term = view.term, ws = view.ws, enc = new TextEncoder();
+  const buffer = term.buffer.active;
+  const text = () => Array.from({length: buffer.length}, (_, i) => buffer.getLine(i)?.translateToString(true) || '').join('\\n');
+  let moves = 0;
+  const counting = term.onCursorMove(() => moves++);
+  const done = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { sub.dispose(); reject(new Error('frame timeout')); }, 10000);
+    const sub = term.onWriteParsed(() => {
+      if (!text().includes('RS_FRAME_DONE')) return;
+      clearTimeout(timer); sub.dispose(); resolve();
+    });
+  });
+  ws.send(enc.encode('frame\\r'));
+  await done;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  counting.dispose();
+  return moves;
 }"""
 
 BURST_BENCH = """async lines => {
@@ -209,7 +234,9 @@ def main():
                                   f"p99={percentile(samples, .99):.1f}ms max={max(samples):.1f}ms "
                                   f"mean={statistics.fmean(samples):.1f}ms")
                             elapsed = page.evaluate(BURST_BENCH, args.burst)
-                            print(f"{mode:6} round {round_index + 1} burst lines={args.burst} {elapsed:.0f}ms")
+                            moves = page.evaluate(FRAME_BENCH)
+                            print(f"{mode:6} round {round_index + 1} burst lines={args.burst} {elapsed:.0f}ms; "
+                                  f"3-packet DEC 2026 frame cursorMoves={moves}")
                     page.evaluate("[...T.views.values()][0].ws.send(new TextEncoder().encode('quit\\r'))")
                     assert not errors, errors
                 finally:

@@ -95,7 +95,13 @@ there is no page-side merge timer. xterm's own write buffer coalesces parsing
 per frame and honours DEC 2026 synchronized output, which Claude Code and Codex
 wrap their redraws in, so a redraw split across PTY packets still paints once.
 The former 20 ms merge cost every keystroke echo a full timer wait
-(`tests/bench_term_echo_browser.py`: localhost p50 ≈ 30 ms → < 1 ms).
+(`tests/bench_term_echo_browser.py`: localhost p50 ≈ 30 ms → < 1 ms). The one
+exception is an open `?2026h` frame: its packets are held and handed to xterm
+as a single write once `?2026l` arrives (100 ms / 256 KiB fallback), because
+xterm moves its hidden IME textarea to the cursor cell after every parsed
+write regardless of 2026, and browser widgets anchored to that textarea (touch
+selection handles) would otherwise chase the cursor through each packet of a
+redraw. Echo carries no 2026 and is never held (`legacy_pure_contract.mjs`).
 Partial ptyhost frame reads have no deadline; ordinary control operations use the
 same 10-second timeout. Normal EOF preserves final output, while
 revocation and shutdown cancel the bridge promptly.

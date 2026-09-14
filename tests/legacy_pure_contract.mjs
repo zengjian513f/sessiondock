@@ -380,3 +380,83 @@ test('composer attachment paths follow the destination node, including Windows d
   assert.equal(prompt('', [{path: String.raw`C:\work\a b.txt`}]), '附件1: ' + String.raw`C:\work\a b.txt`);
   assert.equal(prompt('unchanged'), 'unchanged');
 });
+
+test('console output: plain chunks go straight to xterm, a DEC 2026 frame is written whole', () => {
+  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
+  const timers = [];
+  const context = ctx({
+    document: {documentElement: {dataset: {theme: 'dark'}}},
+    setTimeout: (callback, ms) => { timers.push({callback, ms}); return timers.length; },
+    clearTimeout: id => { if (timers[id - 1]) timers[id - 1].cleared = true; },
+  });
+  for (const name of ['TERM_SYNC_HOLD_MAX', 'TERM_SYNC_HOLD_MS', 'stripOscColorSets', 'terminalColorChunk',
+    'termSyncFrameOpen', 'flushTermSyncHold', 'dropTermSyncHold', 'writeTermOutput']) {
+    load(context, name, term);
+  }
+  const {writeTermOutput, flushTermSyncHold, dropTermSyncHold, TERM_SYNC_HOLD_MAX} = context;
+  const view = () => {
+    const writes = [];
+    return {writes, term: {write: s => writes.push(s)}, ansiTail: '', syncHold: null, syncHoldTimer: null};
+  };
+  const H = '\x1b[?2026h', L = '\x1b[?2026l';
+
+  // Keystroke echo and ordinary output never wait.
+  let v = view();
+  writeTermOutput(v, 'a');
+  writeTermOutput(v, '\x1b[31mb\x1b[0m');
+  same(v.writes, ['a', '\x1b[31mb\x1b[0m']);
+  assert.equal(timers.length, 0);
+
+  // One frame over three packets: nothing reaches xterm until ?2026l, then one write.
+  v = view();
+  writeTermOutput(v, H + '\x1b[2K\x1b[1A');
+  writeTermOutput(v, '\x1b[2K\x1b[0Gredrawn');
+  same(v.writes, []);
+  assert.equal(timers.length, 1);
+  writeTermOutput(v, ' tail' + L + 'after');
+  same(v.writes, [H + '\x1b[2K\x1b[1A\x1b[2K\x1b[0Gredrawn tail' + L + 'after']);
+  assert.equal(timers[0].cleared, true);
+  writeTermOutput(v, 'x');
+  same(v.writes.slice(1), ['x']);
+
+  // A complete frame inside one packet is not held; a packet that closes one
+  // frame and opens the next is held from that point.
+  v = view();
+  writeTermOutput(v, H + 'whole' + L);
+  same(v.writes, [H + 'whole' + L]);
+  writeTermOutput(v, H + 'first' + L + H + 'second');
+  same(v.writes.slice(1), []);
+  writeTermOutput(v, L);
+  same(v.writes.slice(1), [H + 'first' + L + H + 'second' + L]);
+
+  // ?2026h split across packets is completed by terminalColorChunk's tail
+  // buffer before the frame check sees it.
+  v = view();
+  writeTermOutput(v, 'p\x1b[?20');
+  same(v.writes, ['p']);
+  writeTermOutput(v, '26h\x1b[2Kq');
+  same(v.writes, ['p']);
+  writeTermOutput(v, L);
+  same(v.writes, ['p', H + '\x1b[2Kq' + L]);
+
+  // Fallback: the hold timer or the size cap flushes an unterminated frame.
+  v = view();
+  writeTermOutput(v, H + 'stuck');
+  timers.at(-1).callback();
+  same(v.writes, [H + 'stuck']);
+  assert.equal(v.syncHold, null);
+  writeTermOutput(v, 'more');
+  same(v.writes, [H + 'stuck', 'more']);
+  v = view();
+  writeTermOutput(v, H + 'a'.repeat(TERM_SYNC_HOLD_MAX));
+  same(v.writes.map(w => w.length), [H.length + TERM_SYNC_HOLD_MAX]);
+
+  // Reattach drops a half frame silently; close flushes it.
+  v = view();
+  writeTermOutput(v, H + 'dropped');
+  dropTermSyncHold(v);
+  same(v.writes, []);
+  writeTermOutput(v, H + 'closing');
+  flushTermSyncHold(v);
+  same(v.writes, [H + 'closing']);
+});
