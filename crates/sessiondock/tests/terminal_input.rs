@@ -616,6 +616,104 @@ async fn input_requires_the_exact_current_lease_and_stops_after_revoke_or_exit()
     assert!(host.child.try_wait().unwrap().unwrap().success());
 }
 
+/// The conversation view's Esc, question cards and Grok text arrive with an
+/// empty token and the pinned identity (`term.js termRowBinding`): written
+/// while nobody holds the lease, the documented ownership conflict while any
+/// page does, never a name-only write.
+#[tokio::test]
+async fn a_page_without_a_lease_writes_under_the_ordinary_claimant_rule() {
+    let Some(binary) = ptyhost_binary() else {
+        eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
+        return;
+    };
+    let h = Harness::new().await;
+    let instance = "synthetic-input-instance-0004";
+    let mut host = RealHost::spawn(&binary, &h, instance).await;
+
+    // Grok's composer: a bracketed paste, then Enter as a separate request.
+    let (status, body) = h.send("page", "", instance, json!({"paste":"ping"})).await;
+    ok_receipt(status, &body, 4);
+    let (status, body) = h
+        .send("page", "", instance, json!({"keys":["enter"]}))
+        .await;
+    ok_receipt(status, &body, 1);
+    // No identity or the wrong instance: refused before any host write.
+    let (status, body) = h
+        .request(
+            "POST",
+            "/api/term/send",
+            json!({"name":NAME,"page":"page","token":"","keys":["enter"],"_build":h.build}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "terminal_binding_unavailable");
+    let (status, body) = h
+        .send(
+            "page",
+            "",
+            "synthetic-input-instance-9999",
+            json!({"keys":["enter"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "terminal_binding_unavailable");
+
+    // Nothing lingers: the console claims without conflict, and replay shows
+    // the shell answered the lease-less submit.
+    let token = h.claim("page", instance, false).await;
+    let mut ws = h.connect("page", &token, instance).await;
+    read_until(&mut ws, "RS_PING_OK").await;
+
+    // While a page holds the lease, another page without one is refused with
+    // the owner, exactly as a reliable send would be; the holder keeps typing.
+    let (status, body) = h
+        .send("other", "", instance, json!({"keys":["enter"]}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "terminal_ownership");
+    assert!(
+        body["error"].as_str().unwrap().contains("其他页面持有"),
+        "{body}"
+    );
+    let (status, body) = h
+        .send("page", &token, instance, json!({"data":"ping"}))
+        .await;
+    ok_receipt(status, &body, 4);
+    let (status, body) = h
+        .send("page", &token, instance, json!({"keys":["enter"]}))
+        .await;
+    ok_receipt(status, &body, 1);
+    read_until(&mut ws, "RS_PING_OK").await;
+
+    // Closing the console releases the lease; the lease-less path writes again
+    // and the shell's own quit ends the host.
+    drop(ws);
+    timeout(Duration::from_secs(10), async {
+        loop {
+            let (status, body) = h.send("page", "", instance, json!({"data":"quit"})).await;
+            if status == StatusCode::OK {
+                ok_receipt(status, &body, 4);
+                break;
+            }
+            assert_eq!(body["code"], "terminal_ownership", "{body}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the bound lease must be released after the socket closes");
+    let (status, body) = h
+        .send("page", "", instance, json!({"keys":["enter"]}))
+        .await;
+    ok_receipt(status, &body, 1);
+    host.wait_exit().await;
+    let (status, body) = h
+        .send("page", "", instance, json!({"keys":["enter"]}))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["code"], "terminal_binding_unavailable");
+    assert!(host.child.try_wait().unwrap().unwrap().success());
+}
+
 #[tokio::test]
 async fn reservation_input_reports_a_gone_instance_after_exit() {
     let Some(binary) = ptyhost_binary() else {

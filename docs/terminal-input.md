@@ -19,12 +19,26 @@ revoked/replaced token or binding mismatch → 409, host record gone or exited
 while a lease is held → 410 `terminal_exited`. Raw (unbound) targets are
 re-probed like raw attach: a launch identity → 409, exited → 410.
 
+A page that holds no lease for the terminal — the conversation view with the
+console closed or open on another device, where Python simply ran `tmux
+send-keys` — sends an **empty `token`** with the pinned identity. The route
+then resolves the instance exactly as a claim would (runtime catalog and
+lifecycle authorization for native targets, the lifecycle receipt for launch
+targets) and `TerminalService::send_input_unleased` applies the delivery
+executor's ordinary-claimant rule under the per-name gate: any current lease
+(another page's console or reservation, or a server send in flight) is
+409 `terminal_ownership` naming the owner IP, otherwise the write goes through
+the pinned instance like a leased input. Nothing is reserved or minted, so no
+token can linger; without an identity there is no name-only write
+(409 `terminal_binding_unavailable`).
+
 ## `POST /api/term/send`
 
 Body (`deny_unknown_fields`): `name`, `page`, `token`, the identity fields
 above, optional `agent` (accepted, ignored, ≤ 256), and exactly one of
-`data` (UTF-8 string sent as-is, no bracketed paste, no implicit Enter) or
-`keys` (array of named keys). `data` reproduces the legacy stale-build gate
+`data` (UTF-8 string sent as-is, no bracketed paste, no implicit Enter),
+`paste` (the host's bracketed-paste path, no implicit Enter) or `keys` (array
+of named keys). `data` and `paste` reproduce the legacy stale-build gate
 (`_build` ≠ served build → 409 `{code:"stale_build", reload:true, build}`);
 keys are not gated, as in Python. Success:
 `200 {ok:true, bytes, acknowledged:true, processed:"unknown"}` with
@@ -65,21 +79,34 @@ rows.
 
 Under `terminal_input: true` (set when the terminal transport is configured)
 `term.js` attaches the lease (`name/page/token` plus the identity fields) to
-the two HTTP paths it already used: `onData` while a scroll request is
-pending sends `{data}`, and the mobile key bar's `sendToSession(null, keys)`
-sends `{keys}`. Python-served pages keep the original bodies. A text submit
-with Enter in Rust mode explains that reliable send is not available instead
-of posting. After a host exit the key bar silently does nothing once the
-instance leaves the list, matching Python.
+the HTTP paths it already used: `onData` while a scroll request is pending
+sends `{data}`, and `sendToSession(null, keys)` — the mobile key bar, the
+composer's Esc, the question cards — sends `{keys}`. When this page holds no
+lease (`termInputBody` finds no `inputLease`), the body carries an empty token
+and the pane row's identity (`termRowBinding`), and the server decides as
+above. Text on the raw path — a pending console before its first native
+record, or a source without reliable send such as Grok — is Python's
+`submit_text`: a bracketed `{paste}`, then `{keys:["Enter"]}` 600 ms later so
+a paste-burst marker cannot swallow it. A Claude/Codex text submit is the
+reliable-send composer instead. Python-served pages keep the original bodies.
+After a host exit the key bar silently does nothing once the instance leaves
+the list, matching Python.
 
 ## Validation
 
 `cargo test -p sessiondock --test terminal_input --locked` (temporary
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
-refusal without lease, after revoke and after exit, size limits and input bursts;
-skips when ptyhost is not built) plus five input unit tests, and
+refusal without lease, after revoke and after exit, size limits and input bursts,
+the lease-less page written only while nobody holds the lease and refused with
+the owner otherwise; skips when ptyhost is not built) plus five input unit tests, and
 `python3 tests/terminal_input_browser.py` (desktop HTTP `data` while a scroll
 is pending, 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
-claim/input after exit, composer hidden, fixture bytes unchanged).
+claim/input after exit, composer hidden, fixture bytes unchanged);
+`python3 tests/send_browser.py` (the composer's Esc from a second page refused
+with the owner while the first page's console holds the lease, and written
+from a 390 px page with no console open); `python3 tests/grok_raw_send_browser.py`
+(Grok composer text from a 390 px page without a console: paste + Enter with
+an empty token and the pane identity, no claim, no reliable-send call, the
+shell's reply visible once the console opens).
 Out of scope: reliable send, Escape's activity side effects, `text`+`enter`
 submit semantics, tmux copy-mode.

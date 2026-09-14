@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use crate::{
     error::ApiError,
     state::AppState,
-    terminal::{ExpectedTarget, InputPayload, TerminalError, TerminalService, input},
+    terminal::{
+        ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget, input,
+    },
 };
 
 impl From<TerminalError> for ApiError {
@@ -295,9 +297,11 @@ fn binding_unavailable() -> ApiError {
     )
 }
 
-/// HTTP input under the same lease as WebSocket attach. Exactly one of `data`,
-/// `paste` or `keys` is accepted. `paste` uses the host's bracketed-paste path;
-/// pending-session composers send Enter separately after its acknowledgement.
+/// HTTP input under the same lease as WebSocket attach, or — with an empty
+/// `token` and the pinned identity — from a page holding no lease, refused
+/// while any lease exists. Exactly one of `data`, `paste` or `keys` is
+/// accepted. `paste` uses the host's bracketed-paste path; composers on the
+/// raw path send Enter separately after its acknowledgement.
 #[derive(Deserialize)]
 pub struct SendRequest {
     name: String,
@@ -435,7 +439,34 @@ pub async fn send(
     let receipt = tokio::select! {
         biased;
         _ = state.shutdown.cancelled() => return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
-        result = service.send_input(&body.name, &body.page, &body.token, expected, payload) => result?,
+        result = async {
+            if !body.token.is_empty() {
+                return service
+                    .send_input(&body.name, &body.page, &body.token, expected, payload)
+                    .await
+                    .map_err(ApiError::from);
+            }
+            // An empty token is a page that holds no console lease here (the
+            // conversation view's Esc, question cards and Grok text). The
+            // pinned instance is resolved exactly like a claim; the service
+            // then applies the ordinary-claimant rule under the per-name gate.
+            match (&body.uid, &body.instance_id, &body.record_id, &body.launch_id) {
+                (Some(uid), Some(instance), None, None) => {
+                    let observed = super::runtime::observe(&state).await?.ok_or_else(binding_unavailable)?;
+                    let target = observed.hosts.iter().filter_map(|host| host.bound_target()).find(|target|
+                        target.name() == body.name && target.uid() == uid && target.instance_id() == instance
+                    ).ok_or_else(binding_unavailable)?;
+                    authorize_native(&state, target).await?;
+                    service.send_input_unleased(UnleasedTarget::Native(target), payload).await.map_err(ApiError::from)
+                }
+                (None, Some(instance), Some(record), Some(launch)) => {
+                    let target = launch_target(&state, &body.name, record, launch, instance).await?;
+                    service.send_input_unleased(UnleasedTarget::Launch(&target), payload).await.map_err(ApiError::from)
+                }
+                // Without a lease there is no name-only write to a host.
+                _ => Err(binding_unavailable()),
+            }
+        } => result?,
     };
     Ok((
         StatusCode::OK,
