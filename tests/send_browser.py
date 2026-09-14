@@ -9,8 +9,11 @@ this page's own console lease, the outbox row shows "状态待核对" until the
 fake CLI's native `user` record arrives over SSE, then the row is replaced by
 the real message. A console draft asks for consent (the real confirm dialog)
 and is cleared before the prompt is pasted. A second page without a lease
-sees the documented ownership error while the first page holds the console.
-Finally a 390 px page sends from the composer through the server-held lease.
+sees the documented ownership error while the first page holds the console —
+for the composer's send and for its Esc, which is raw input with an empty
+token and the pane's identity. Finally a 390 px page with no console open
+anywhere sends Esc through the pinned instance and a prompt through the
+server-held lease.
 """
 import base64
 import hashlib
@@ -306,6 +309,26 @@ def main():
                         assert dialogs[before][0] == "alert", dialogs[before:]
                     assert not any(x.get("text") == "blocked by the other console" for x in sends), sends
                     assert page_two.locator("#msgs .client-outbox").count() == 0
+                    # The composer's Esc is raw input from a page without a lease:
+                    # an empty token plus the pane's pinned identity. While this
+                    # page's console holds the lease it is the same ownership
+                    # refusal naming the owner, never the "credential format"
+                    # error a blank token used to hit, and it reaches the user.
+                    raw = []
+                    other.on("request", lambda request: raw.append(request.post_data_json)
+                             if urlsplit(request.url).path == "/api/term/send" else None)
+                    before = len(dialogs)
+                    with page_two.expect_response(lambda response: urlsplit(response.url).path == "/api/term/send", timeout=20000) as escaped:
+                        page_two.locator("#cesc").click()
+                    assert escaped.value.status == 409 and escaped.value.json()["code"] == "terminal_ownership", escaped.value.text()
+                    assert raw[-1]["token"] == "" and raw[-1]["keys"] == ["Escape"], raw[-1]
+                    assert raw[-1]["uid"] == uid and raw[-1]["instance_id"] == receipt["instance_id"], raw[-1]
+                    assert "record_id" not in raw[-1] and "launch_id" not in raw[-1], raw[-1]
+                    deadline = time.monotonic() + 10
+                    while len(dialogs) <= before and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                    assert dialogs[before:] and dialogs[before][0] == "alert" and "其他页面持有" in dialogs[before][1], dialogs[before:]
+                    assert "凭证格式" not in dialogs[before][1], dialogs[before:]
                     listed = wait_server_outbox_empty(other, base, uid)
                     other.close()
                     assert not errors, errors
@@ -319,6 +342,16 @@ def main():
                     expect(page.locator("#composer")).to_be_visible()
                     bounds = page.locator("#composer").bounding_box()
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
+                    # Esc from the phone with no console open anywhere: written
+                    # through the pinned instance under the ordinary-claimant
+                    # rule, and nothing lingers to conflict with the send below.
+                    raw = []
+                    mobile.on("request", lambda request: raw.append(request.post_data_json)
+                              if urlsplit(request.url).path == "/api/term/send" else None)
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/send", timeout=20000) as escaped:
+                        page.locator("#cesc").click()
+                    assert escaped.value.status == 200 and escaped.value.json()["ok"] is True, escaped.value.text()
+                    assert raw[-1]["token"] == "" and raw[-1]["keys"] == ["Escape"] and raw[-1]["uid"] == uid, raw[-1]
                     page.locator("#cinput").fill("from the phone")
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/send", timeout=20000) as sent:
                         page.locator("#csend").click()
@@ -350,7 +383,8 @@ def main():
     print("PASS send browser: composer send under the page's console lease confirmed by the fake CLI's "
           "native record over SSE (optimistic outbox row replaced by the history message, server ledger "
           "emptied by the tracker), a second page refused with the terminal_ownership error on both composer "
-          "calls while the console is held, a 390 px composer send through the server-claimed lease, "
+          "calls and its Esc refused with the owner while the console is held, a 390 px Esc and composer "
+          "send with no console open anywhere (raw input and the server-claimed lease), "
           "and desktop/mobile JSON+image attachments with upload-error draft retention and retry")
 
 

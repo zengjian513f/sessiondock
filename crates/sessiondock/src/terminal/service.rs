@@ -198,6 +198,50 @@ pub struct InputReceipt {
     pub bytes: usize,
 }
 
+/// The pinned instance a lease-less HTTP input writes to. Raw name-only hosts
+/// are deliberately absent: without a lease there is no downgrade by name.
+pub enum UnleasedTarget<'a> {
+    Native(&'a BoundTarget),
+    Launch(&'a LaunchTarget),
+}
+
+impl UnleasedTarget<'_> {
+    fn name(&self) -> &str {
+        match self {
+            Self::Native(target) => target.name(),
+            Self::Launch(target) => target.name(),
+        }
+    }
+}
+
+/// Shared payload validation of the leased and lease-less HTTP input paths.
+fn input_operation(payload: InputPayload) -> Result<(usize, ControlOp), TerminalError> {
+    let bytes = payload.bytes();
+    if bytes == 0 {
+        return Err(TerminalError::new(
+            400,
+            "terminal_input_empty",
+            "终端输入为空",
+        ));
+    }
+    if bytes > payload.limit() {
+        return Err(TerminalError::new(
+            413,
+            "terminal_input_too_large",
+            "单次终端输入不能超过 1 MiB",
+        ));
+    }
+    let operation = match payload {
+        InputPayload::Text(text) => ControlOp::Send { text },
+        InputPayload::Keys(keys) => ControlOp::Keys { keys },
+        InputPayload::Paste(text) => ControlOp::Paste {
+            text,
+            bracketed: true,
+        },
+    };
+    Ok((bytes, operation))
+}
+
 impl TerminalService {
     pub fn new(directory: PathBuf) -> Result<Self, TerminalError> {
         Self::with_limits(directory, BridgeLimits::default())
@@ -412,32 +456,73 @@ impl TerminalService {
     ) -> Result<InputReceipt, TerminalError> {
         ownership::validate_name(name)?;
         ownership::validate_page(page)?;
-        let bytes = payload.bytes();
-        if bytes == 0 {
-            return Err(TerminalError::new(
-                400,
-                "terminal_input_empty",
-                "终端输入为空",
-            ));
-        }
-        if bytes > payload.limit() {
-            return Err(TerminalError::new(
-                413,
-                "terminal_input_too_large",
-                "单次终端输入不能超过 1 MiB",
-            ));
-        }
-        let operation = match payload {
-            InputPayload::Text(text) => ControlOp::Send { text },
-            InputPayload::Keys(keys) => ControlOp::Keys { keys },
-            InputPayload::Paste(text) => ControlOp::Paste {
-                text,
-                bracketed: true,
-            },
-        };
+        let (bytes, operation) = input_operation(payload)?;
         self.request_under_lease(name, page, token, expected, operation)
             .await
             .map(|_| InputReceipt { bytes })
+    }
+
+    /// Raw HTTP input from a page that holds no lease for this terminal: a
+    /// conversation view whose console is open elsewhere or not at all (the
+    /// composer's Esc, a question card, a Grok text submit). It follows the
+    /// delivery executor's ordinary-claimant rule instead of the Python
+    /// backend's unauthenticated `send-keys`: under the per-name gate, any
+    /// current lease — another page's console, a reservation, or a server
+    /// send in flight — is the documented ownership conflict, and otherwise
+    /// the write goes through the pinned instance exactly like a leased
+    /// input. Nothing is reserved or minted: the gate already serializes this
+    /// write against claims and leased input, so no token can leak or linger.
+    pub async fn send_input_unleased(
+        &self,
+        target: UnleasedTarget<'_>,
+        payload: InputPayload,
+    ) -> Result<InputReceipt, TerminalError> {
+        let name = target.name();
+        ownership::validate_name(name)?;
+        let (bytes, operation) = input_operation(payload)?;
+        let gate = self.gate(name)?;
+        let _gate = gate.lock().await;
+        if let Some(owner) = self.registry.owner(name)? {
+            return Err(TerminalError::new(
+                409,
+                "terminal_ownership",
+                format!(
+                    "终端控制权正由其他页面持有（{}）；请从持有控制台的页面发送，或先释放/接管该控制台",
+                    owner.ip
+                ),
+            ));
+        }
+        let observation = self.client.probe(name).await.map_err(host_error)?;
+        let result = match target {
+            UnleasedTarget::Native(target) => {
+                let fresh = BoundTarget::from_observation(
+                    &observation,
+                    target.source(),
+                    target.sid(),
+                    target.uid(),
+                )
+                .map_err(host_error)?;
+                if fresh.name() != target.name()
+                    || fresh.instance_id() != target.instance_id()
+                    || fresh.origin_launch_id() != target.origin_launch_id()
+                {
+                    return Err(host_error(ptyhost_client::Error::IdentityChanged));
+                }
+                self.client.request_bound(&fresh, operation).await
+            }
+            UnleasedTarget::Launch(target) => {
+                self.registry.check_launch(target)?;
+                let fresh = LaunchTarget::from_observation(
+                    &observation,
+                    target.source(),
+                    target.launch_id(),
+                    target.instance_id(),
+                )
+                .map_err(host_error)?;
+                self.client.request_launch(&fresh, operation).await
+            }
+        };
+        result.map_err(input_error).map(|_| InputReceipt { bytes })
     }
 
     /// Batch 31 delivery driver: the host's screen model plus cursor and
