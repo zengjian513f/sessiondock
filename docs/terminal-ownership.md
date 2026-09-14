@@ -102,6 +102,9 @@ xterm moves its hidden IME textarea to the cursor cell after every parsed
 write regardless of 2026, and browser widgets anchored to that textarea (touch
 selection handles) would otherwise chase the cursor through each packet of a
 redraw. Echo carries no 2026 and is never held (`legacy_pure_contract.mjs`).
+That textarea also carries `writingsuggestions="false"`: Edge 124+ otherwise
+parks its inline Compose (Copilot) button — a blue dot — and text prediction
+on the focused field, which here is a hidden one-cell box at the cursor.
 Partial ptyhost frame reads have no deadline; ordinary control operations use the
 same 10-second timeout. Normal EOF preserves final output, while
 revocation and shutdown cancel the bridge promptly.

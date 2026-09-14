@@ -1901,6 +1901,10 @@ function ensureTerm(name) {
     } catch { view.unicode11 = null; }
   }
   term.open(host);
+  // Edge 在任何聚焦的可编辑元素插入点旁挂一个 Copilot“撰写”浮动按钮（一个蓝点），
+  // 它会贴着 xterm 这个隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
+  // 同时关掉文本预测；其它浏览器忽略。
+  term.textarea?.setAttribute('writingsuggestions', 'false');
   // Claude Code uses OSC 52 after mouse selection. xterm parses the sequence
   // but has no browser clipboard policy of its own, so the embedding page must
   // opt in before Ctrl+V can paste the selected text back into the PTY.

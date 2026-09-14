@@ -153,6 +153,8 @@ def main():
                 page.evaluate(write_terminal, f"\x1b]52;c;{encoded}\x1b\\")
                 page.wait_for_function("expected => navigator.clipboard.readText().then(text => text === expected)", arg=copied)
                 keyboard = page.locator("#termpane .xterm-helper-textarea")
+                # Edge's inline Compose button and text prediction stay off the IME textarea.
+                assert keyboard.get_attribute("writingsuggestions") == "false"
                 keyboard.press("Control+V")
                 keyboard.press("Enter")
                 xterm_contains(page, "RS_OSC52_OK")
