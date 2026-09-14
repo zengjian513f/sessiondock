@@ -368,6 +368,10 @@ fn headers_display_ip_and_sse_rewrite() {
     browser.insert("content-type", HeaderValue::from_static("application/json"));
     browser.insert("x-sessiondock-page", HeaderValue::from_static("p1"));
     browser.insert("range", HeaderValue::from_static("bytes=0-1"));
+    browser.insert(
+        "user-agent",
+        HeaderValue::from_static("Mozilla/5.0 (iPhone)"),
+    );
     browser.insert("cookie", HeaderValue::from_static("secret"));
     browser.insert("upgrade", HeaderValue::from_static("websocket"));
     browser.insert("sec-websocket-key", HeaderValue::from_static("k"));
@@ -378,6 +382,7 @@ fn headers_display_ip_and_sse_rewrite() {
             ("Content-Type".to_string(), "application/json".to_string()),
             ("X-SessionDock-Page".to_string(), "p1".to_string()),
             ("Range".to_string(), "bytes=0-1".to_string()),
+            ("User-Agent".to_string(), "Mozilla/5.0 (iPhone)".to_string()),
             ("X-Real-IP".to_string(), "10.0.0.9".to_string()),
         ]
     );

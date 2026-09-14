@@ -322,8 +322,8 @@ capabilities.js 读取前把路径补进 `storage_namespace`（对应 Python 按
 离线且 `recheck` 仍失败 → 503 `{error,node_offline,node_id,offline_since}`；
 `send/outbox/retry/term/send/term/create` 校 `body._build == 前端 build`，否则 409
 `{reload:true,build}`。`proxy` 带节点头转发，透传 `Content-Type,X-SessionDock-Page,X-SessionDock-Trace,
-X-SessionDock-Build,Range`、加 `X-Real-IP`（`_display_ip`：`X-Real-IP`→首个 `X-Forwarded-For`→TCP
-对端）：JSON 经 `public_payload` 改写并带 `X-SessionDock-Decoded-Length`；`text/event-stream` 按
+X-SessionDock-Build,Range,User-Agent`（后者只供终端 ownership 的设备标签）、加 `X-Real-IP`
+（`_display_ip`：`X-Real-IP`→首个 `X-Forwarded-For`→TCP 对端）：JSON 经 `public_payload` 改写并带 `X-SessionDock-Decoded-Length`；`text/event-stream` 按
 `data:` 行改写（45 s 读超时）；WebSocket `/api/term/attach` 101 后用 `hyper::upgrade::on` +
 `hyper_util::rt::TokioIo` 拿到浏览器连接，和 H2 客户端 `Body::into_raw` 交还的节点 TCP/TLS 流做
 `tokio::io::copy_bidirectional` 裸转发（预读字节先发）；其它正文流式透传并保留

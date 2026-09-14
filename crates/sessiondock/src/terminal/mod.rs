@@ -18,11 +18,12 @@
 //! host's write acknowledgement only; it never claims the CLI consumed the
 //! bytes and enables no send ledger or composer.
 
+pub mod device;
 pub mod input;
 pub mod ownership;
 mod service;
 
-pub use ownership::ExpectedTarget;
+pub use ownership::{Claimant, ExpectedTarget};
 pub use service::{
     BridgeLimits, InputPayload, InputReceipt, MAX_PASTE_BYTES, PreparedAttachment, TerminalError,
     TerminalService, UnleasedTarget, terminal_size,

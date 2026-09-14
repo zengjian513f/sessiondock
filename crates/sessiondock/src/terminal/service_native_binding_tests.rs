@@ -3,6 +3,7 @@
 use super::*;
 use ptyhost_client::Source;
 use serde_json::{Value, json};
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tempfile::TempDir;
 use tokio::{

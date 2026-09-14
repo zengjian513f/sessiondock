@@ -563,7 +563,12 @@ async fn cancel_replay_retries_local_retirement_after_busy_without_retrying_kill
         let target = target.clone();
         tokio::spawn(async move {
             terminal
-                .claim_launch(target, "before-cancel", "127.0.0.1".parse().unwrap(), false)
+                .claim_launch(
+                    target,
+                    "before-cancel",
+                    "127.0.0.1".parse::<std::net::IpAddr>().unwrap(),
+                    false,
+                )
                 .await
         })
     };
@@ -584,7 +589,12 @@ async fn cancel_replay_retries_local_retirement_after_busy_without_retrying_kill
     assert_eq!(cancelled.state(), State::Uncertain);
     assert!(cancelled.cancel_requested());
     let error = terminal
-        .claim_launch(target, "after-cancel", "127.0.0.1".parse().unwrap(), true)
+        .claim_launch(
+            target,
+            "after-cancel",
+            "127.0.0.1".parse::<std::net::IpAddr>().unwrap(),
+            true,
+        )
         .await
         .err()
         .unwrap();

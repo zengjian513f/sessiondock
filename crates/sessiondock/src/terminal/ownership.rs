@@ -142,10 +142,43 @@ impl Clock for SystemClock {
     }
 }
 
+/// Who is claiming, as the takeover prompts describe it: the display
+/// address (`api::terminal::claimant_ip`) and the coarse device label from
+/// the browser's `User-Agent` (`device::device_label`), empty when unknown.
+/// Neither is identity; a bare address is an unlabeled claimant such as the
+/// server's own delivery lease.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Claimant {
+    pub ip: IpAddr,
+    pub label: String,
+}
+
+impl From<IpAddr> for Claimant {
+    fn from(ip: IpAddr) -> Self {
+        Self {
+            ip,
+            label: String::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PublicOwner {
     pub ip: IpAddr,
+    /// Device label of the holder, `""` when its client gave none.
+    pub label: String,
     pub since: f64,
+}
+
+impl PublicOwner {
+    /// `"<label>，<ip>"` / `"<ip>"` for messages that name the holder.
+    pub fn describe(&self) -> String {
+        if self.label.is_empty() {
+            self.ip.to_string()
+        } else {
+            format!("{}，{}", self.label, self.ip)
+        }
+    }
 }
 
 // Intentionally not Debug or Serialize. The only string exposure is in an
@@ -263,6 +296,8 @@ pub struct Revocation {
     /// and on replacement from the old page's own address (through the hub
     /// every page of one user shares it, so the label would say nothing).
     pub new_ip: Option<IpAddr>,
+    /// Device label of the new claimant, `""` when unknown or on release.
+    pub new_label: String,
     /// Same-page reconnects still stop the old transport but are silent in UI.
     pub notify: bool,
 }
@@ -453,32 +488,44 @@ impl Registry {
         &self,
         name: &str,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, OwnershipError> {
-        self.claim_target(name, page, ip, force, LeaseTarget::Raw)
+        self.claim_target(name, page, claimant.into(), force, LeaseTarget::Raw)
     }
 
     pub(super) fn claim_bound(
         &self,
         target: Arc<BoundTarget>,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, OwnershipError> {
         let name = target.name().to_owned();
-        self.claim_target(&name, page, ip, force, LeaseTarget::Native(target))
+        self.claim_target(
+            &name,
+            page,
+            claimant.into(),
+            force,
+            LeaseTarget::Native(target),
+        )
     }
 
     pub(super) fn claim_launch(
         &self,
         target: Arc<LaunchTarget>,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, OwnershipError> {
         let name = target.name().to_owned();
-        self.claim_target(&name, page, ip, force, LeaseTarget::Launch(target))
+        self.claim_target(
+            &name,
+            page,
+            claimant.into(),
+            force,
+            LeaseTarget::Launch(target),
+        )
     }
 
     pub(super) fn check_launch(&self, target: &LaunchTarget) -> Result<(), OwnershipError> {
@@ -510,6 +557,7 @@ impl Registry {
             binding.revoked.send_replace(Some(Revocation {
                 reason: RevocationReason::LaunchRetired,
                 new_ip: None,
+                new_label: String::new(),
                 notify: false,
             }));
         }
@@ -520,7 +568,7 @@ impl Registry {
         &self,
         name: &str,
         page: &str,
-        ip: IpAddr,
+        claimant: Claimant,
         force: bool,
         target: LeaseTarget,
     ) -> Result<ClaimResponse, OwnershipError> {
@@ -531,7 +579,8 @@ impl Registry {
         let token = LeaseToken::generate()?;
         let sample = self.sample()?;
         let owner = PublicOwner {
-            ip,
+            ip: claimant.ip,
+            label: claimant.label,
             since: sample.unix_seconds,
         };
         let old = {
@@ -572,7 +621,8 @@ impl Registry {
         {
             binding.revoked.send_replace(Some(Revocation {
                 reason: RevocationReason::Replaced,
-                new_ip: Some(ip).filter(|new| *new != old.owner.ip),
+                new_ip: Some(owner.ip).filter(|new| *new != old.owner.ip),
+                new_label: owner.label.clone(),
                 notify: old.page != page,
             }));
         }
@@ -727,6 +777,7 @@ impl Registry {
             binding.revoked.send_replace(Some(Revocation {
                 reason: RevocationReason::Released,
                 new_ip: None,
+                new_label: String::new(),
                 notify: false,
             }));
         }
@@ -1087,13 +1138,24 @@ mod tests {
     #[test]
     fn claim_exposes_only_its_own_token_and_public_owner() {
         let (registry, _) = setup(2);
-        let first = registry.claim("term", "page-a", ip(1), false).unwrap();
+        let first = registry
+            .claim(
+                "term",
+                "page-a",
+                Claimant {
+                    ip: ip(1),
+                    label: "iPhone · Safari".into(),
+                },
+                false,
+            )
+            .unwrap();
         assert_eq!(first.owner().ip, ip(1));
+        assert_eq!(first.owner().describe(), "iPhone · Safari，192.0.2.1");
         let json = first.into_api_json();
         assert_eq!(json["ok"], true);
         assert_eq!(
             json["owner"],
-            json!({"ip":"192.0.2.1","since":1_700_000_000.0})
+            json!({"ip":"192.0.2.1","label":"iPhone · Safari","since":1_700_000_000.0})
         );
         let token = json["token"].as_str().unwrap();
         assert_eq!(token.len(), 64);
@@ -1209,6 +1271,7 @@ mod tests {
             Some(Revocation {
                 reason: RevocationReason::Replaced,
                 new_ip: Some(ip(2)),
+                new_label: String::new(),
                 notify: true
             })
         );
@@ -1223,14 +1286,29 @@ mod tests {
         let (registry, _) = setup(1);
         let token = claim(&registry, "term", "page-a", ip(1), false);
         let first = registry.bind("term", "page-a", &token).unwrap();
-        claim(&registry, "term", "page-b", ip(1), true);
+        registry
+            .claim(
+                "term",
+                "page-b",
+                Claimant {
+                    ip: ip(1),
+                    label: "Windows · Chrome".into(),
+                },
+                true,
+            )
+            .unwrap();
         assert_eq!(
             *first.revocations().borrow(),
             Some(Revocation {
                 reason: RevocationReason::Replaced,
                 new_ip: None,
+                new_label: "Windows · Chrome".into(),
                 notify: true
             })
+        );
+        assert_eq!(
+            registry.owner("term").unwrap().unwrap().describe(),
+            "Windows · Chrome，192.0.2.1"
         );
         assert!(!registry.is_current(&first).unwrap());
     }
@@ -1248,6 +1326,7 @@ mod tests {
             Some(Revocation {
                 reason: RevocationReason::Replaced,
                 new_ip: Some(ip(2)),
+                new_label: String::new(),
                 notify: false
             })
         );
@@ -1309,6 +1388,7 @@ mod tests {
             Some(Revocation {
                 reason: RevocationReason::Released,
                 new_ip: None,
+                new_label: String::new(),
                 notify: false
             })
         );

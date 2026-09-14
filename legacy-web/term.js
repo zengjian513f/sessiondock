@@ -2313,10 +2313,9 @@ function layoutTermPane() {
 async function claimTermOwnership(name, uid = T.uid, binding = {}) {
   let result = await post('api/term/claim', {name, page: TERM_PAGE_ID, ...binding});
   if (result.conflict) {
-    // 经 hub 访问时同一用户的每个页面都是同一个地址，这时地址说明不了什么，
-    // 只有服务端明确说持有者在别的地址时才写出来。
-    const where = result.owner?.ip && result.same_address === false ? `（${result.owner.ip}）` : '';
-    if (!confirm(`该终端正由另一页面控制${where}。\n\n是否抢占终端？`)) return null;
+    const holder = describeTermTaker(result.owner?.label,
+      result.same_address === false ? result.owner?.ip : '');
+    if (!confirm(`该终端正由${holder}控制。\n\n是否抢占终端？`)) return null;
     result = await post('api/term/claim', {name, page: TERM_PAGE_ID, force: true, ...binding});
   }
   if (result.error || !result.token) {
@@ -2328,15 +2327,22 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}) {
   return result.token;
 }
 
-function handleTermRevoked(view, ip = '') {
+// 抢占方的描述：浏览器拿不到主机名/用户名，服务端能给的只有 User-Agent 推出的
+// 设备标签（"iPhone · Safari"）和地址；经 hub 访问时同一用户各页面地址相同，
+// 所以服务端只在地址与本页不同时才给出地址。两样都没有就只说"另一页面"。
+function describeTermTaker(label = '', ip = '') {
+  const where = ip ? `（${ip}）` : '';
+  return label ? ` ${label}${where} ` : `另一页面${where}`;
+}
+
+function handleTermRevoked(view, ip = '', by = '') {
   if (view.revoked) return;
   view.revoked = true;
-  auditTermPane('revoked', {target: view.name, by: ip});
+  auditTermPane('revoked', {target: view.name, by: ip, label: by});
   cancelTermReconnect(view);
   if (T.name === view.name) closeTermPane();
   try { view.ws?.close(); } catch {}
-  // 服务端只在抢占方地址与本页不同时才给出地址。
-  alert(`终端已在别处被抢占${ip ? `（${ip}）` : ''}，本页面的终端已关闭。`);
+  alert(`终端已被${describeTermTaker(by, ip)}抢占，本页面的终端已关闭。`);
 }
 
 function recordHostExit(view, uid, event) {
@@ -2474,7 +2480,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
       try {
         const message = JSON.parse(e.data);
         if (message?.t === 'revoked') {
-          handleTermRevoked(view, message.ip);
+          handleTermRevoked(view, message.ip, message.by);
           return;
         }
       } catch { /* 普通终端字符串按原样渲染 */ }
