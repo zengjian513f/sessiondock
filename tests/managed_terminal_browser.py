@@ -72,7 +72,7 @@ def main():
                             second.locator("#a-term").click()
                             second.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
                             expect(page.locator("#termpane")).to_be_hidden()
-                            assert any("接管" in message for message in revoked),revoked
+                            assert any("抢占" in message and "本页面的终端已关闭" in message for message in revoked),revoked
                             second.wait_for_function("[...T.views.values()].some(v=>v.term?.buffer?.active && Array.from({length:v.term.buffer.active.length},(_,i)=>v.term.buffer.active.getLine(i)?.translateToString()||'').join('\\n').includes('RS_SHELL_READY'))")
                             second.bring_to_front()
                             second.locator("#termpane .xterm-helper-textarea").press_sequentially("next")

@@ -83,6 +83,12 @@ fragmented messages have no separate aggregate application cap.
 
 PTY output is forwarded in order and backpressure waits for the browser. There is
 no fixed queued-output count and no two-second backpressure disconnect policy.
+The page writes every WebSocket frame straight into xterm (`writeTermOutput`);
+there is no page-side merge timer. xterm's own write buffer coalesces parsing
+per frame and honours DEC 2026 synchronized output, which Claude Code and Codex
+wrap their redraws in, so a redraw split across PTY packets still paints once.
+The former 20 ms merge cost every keystroke echo a full timer wait
+(`tests/bench_term_echo_browser.py`: localhost p50 ≈ 30 ms → < 1 ms).
 Partial ptyhost frame reads have no deadline; ordinary control operations use the
 same 10-second timeout. Normal EOF preserves final output, while
 revocation and shutdown cancel the bridge promptly.
