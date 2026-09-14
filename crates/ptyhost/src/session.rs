@@ -225,7 +225,30 @@ fn current_boot_id() -> Option<String> {
         let value = value.trim();
         (!value.is_empty()).then(|| value.to_owned())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // `kern.bootsessionuuid` is minted per boot, like Linux's boot_id.
+        let mut buffer = [0u8; 64];
+        let mut length = buffer.len();
+        // SAFETY: the name is NUL-terminated; the kernel writes at most
+        // `length` bytes into `buffer` and updates `length`.
+        let rc = unsafe {
+            libc::sysctlbyname(
+                c"kern.bootsessionuuid".as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                &mut length,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc != 0 || length == 0 || length > buffer.len() {
+            return None;
+        }
+        let value = std::str::from_utf8(&buffer[..length]).ok()?;
+        let value = value.trim_end_matches('\0').trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         None
     }

@@ -26,6 +26,10 @@ ROLLOUT="$1"
 turn=0
 while IFS= read -r line; do
   ts=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
+  case "$ts" in
+    *N*) # BSD date (macOS) has no %N: take milliseconds from python3 instead
+      ts=$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z")') ;;
+  esac
   case "$line" in
     finish)
       printf '{"timestamp":"%s","type":"event_msg","payload":{"type":"task_complete","turn_id":"fake-turn-%s","duration_ms":1}}\n' "$ts" "$turn" >> "$ROLLOUT"

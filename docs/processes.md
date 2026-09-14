@@ -110,8 +110,14 @@ a pass), and the start time is the creation `FILETIME` of `GetProcessTimes`
 in 100 ns units after the Unix epoch, so `latest_start_for` and `started_at`
 keep their meaning with a clock of `boot_time 0` and `10_000_000` ticks per
 second (`process_identity: "windows_process_times"`). Nothing enumerates the
-process table. Other platforms return `unsupported_platform`: the absence of
-a process table is never an exit.
+process table. macOS asks libproc for the named PID's `proc_bsdinfo`
+(`proc_pidinfo(PROC_PIDTBSDINFO)`, the query behind `ps`): a zombie reads as
+`not_visible`, an `EPERM` refusal from the kernel counts as `not_owned` under the
+owner check (otherwise `unreadable`), the owner check compares the effective
+uid, and the start time is `pbi_start_tvsec/tvusec` in microseconds after the
+Unix epoch (`boot_time 0`, `1_000_000` ticks per second,
+`process_identity: "macos_proc_pidinfo"`). Other platforms return
+`unsupported_platform`: the absence of a process table is never an exit.
 
 Per native UID the snapshot folds the evidence into exactly one of:
 
@@ -152,7 +158,7 @@ host directory it answers `enabled:true`, `known:true`, `partial:true` (with an
 `unavailable_reason` explaining that only explicit host instances are
 observed), `uids` = UIDs currently `running`, `started_at[uid]` from the
 verified child start time, and `managed` carrying `process_identity`
-(`linux_proc`, `windows_process_times` or `unsupported`), `observed_at`, the host rows (each with
+(`linux_proc`, `windows_process_times`, `macos_proc_pidinfo` or `unsupported`), `observed_at`, the host rows (each with
 `process:{status: verified|unverifiable{reason}|reaped|unchecked, child, host}`
 and `started_at`), `sessions[uid] = {state, evidence|reason, host,
 instance_id, pid, started_at}`, `unlisted`, and `cache:{hit, age_ms, ttl_ms}`.

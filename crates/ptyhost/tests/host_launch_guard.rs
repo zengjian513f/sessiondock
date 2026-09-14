@@ -28,12 +28,18 @@ struct Host {
 
 impl Host {
     fn new(metadata: Value) -> Self {
+        // The wall clock alone is not unique across parallel tests (macOS
+        // reports microseconds); a per-process counter keeps directories apart.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("ptyhost-launch-{}-{nonce}", std::process::id()));
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "ptyhost-launch-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&directory)
