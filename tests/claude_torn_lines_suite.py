@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract: Claude torn JSONL lines and broken lineage (batch 35 R5).
+"""HTTP contract: Claude torn JSONL lines and broken lineage.
 
 A non-JSON line is skipped (`跳过无效的JSONL 记录 ×N`); a parentUuid chain that
 reaches a missing uuid stops with `Claude 祖先链在 <uuid> 处中断，之前的记录不在当前时间线`;
@@ -115,7 +115,7 @@ def run(opener, base, corpus: Corpus):
         excerpt = json.dumps(row, ensure_ascii=False).encode()
         if row.get("supported") is not True:
             fail("supported", f"{sid} supported is not true", excerpt)
-        # Batch 44 WP-C: a supported list row carries no migration_warnings
+        # A supported list row carries no migration_warnings
         # (Python rows have none); every note lives in the detail meta.
         if "migration_warnings" in row:
             fail("warnings", f"{sid} supported row carries migration_warnings", excerpt)

@@ -272,7 +272,7 @@ def build_claude(corpus):
     corpus.expected[CLAUDE_AGENT] = []
 
     sid = "claude-events"
-    # Batch 33: current Claude Code kinds in their observed positions —
+    # Current Claude Code kinds in their observed positions —
     # session-level control records first, an attachment chain between the
     # user record and its reply, atis-latch/file-history-delta/cost-state after.
     env_chain, env_tip = claude_attachment_chain(sid, "e-u0", "e-env", kinds=CLAUDE_ATTACHMENT_KINDS)
@@ -359,7 +359,7 @@ def verify_claude(report, corpus, base, opener, adapters, rows):
                      ("user", True), ("queue_operation", False), ("command", False), ("assistant", True), ("assistant", True)], kinds
     assert response["activity"]["state"] == "aborted" and response["message_total"] == 6
     assert response["meta"]["title"] == "Events renamed"
-    # Batch 33: the current-CLI kinds were skipped like Python, counted per
+    # The current-CLI kinds were skipped like Python, counted per
     # kind on the row, and the reply's lineage resolved through the attachments.
     assert rows[sid].get("supported") is True and response["meta"].get("supported") is True, rows[sid].get("migration_warnings")
     expected_warnings = ["跳过未知的Claude 记录类型：mode ×1", "跳过未知的Claude 记录类型：permission-mode ×1",
@@ -367,7 +367,7 @@ def verify_claude(report, corpus, base, opener, adapters, rows):
                          *(f"跳过未知的Claude attachment 类型：{kind} ×{2 if kind in ('hook_success', 'diagnostics') else 1}" for kind in CLAUDE_ATTACHMENT_KINDS),
                          "跳过未知的Claude 记录类型：atis-latch ×4", "跳过未知的Claude 记录类型：file-history-delta ×1",
                          "跳过未知的Claude 记录类型：cost-state ×1"]
-    # Batch 44 WP-C: the notes live in the detail meta only; a supported list
+    # The notes live in the detail meta only; a supported list
     # row carries no migration_warnings (Python rows have none).
     assert "migration_warnings" not in rows[sid], rows[sid].get("migration_warnings")
     assert response["meta"].get("migration_warnings") == expected_warnings
@@ -422,7 +422,7 @@ def verify_claude(report, corpus, base, opener, adapters, rows):
             report.ok("claude list metadata: sid/title(custom-title)/cwd/branch/created/updated/agent_items identical for four sessions")
 
     sid = "claude-missing-parent"
-    # Batch 35 R5: the walk from the tip stops at the unknown parent exactly
+    # The walk from the tip stops at the unknown parent exactly
     # like Python _active_lineage; the reachable part is the timeline, the
     # session stays supported and the break is a warning (row: the summary
     # sees no lineage; detail: the exact text).
@@ -432,7 +432,7 @@ def verify_claude(report, corpus, base, opener, adapters, rows):
     assert response["meta"].get("supported") is True
     assert response["meta"].get("migration_warnings") == ["Claude 祖先链在 ghost-parent 处中断，之前的记录不在当前时间线"], response["meta"].get("migration_warnings")
     if adapters:
-        compare_view(report, f"claude {sid} reachable timeline above a missing ancestor (batch 35, was DELTA 501)",
+        compare_view(report, f"claude {sid} reachable timeline above a missing ancestor (was DELTA 501)",
                      python_read(adapters, "claude", corpus.paths[sid]), response)
     else:
         report.ok(f"claude {sid}: reachable timeline above a missing ancestor with a warning (Rust-only run)")
@@ -523,7 +523,7 @@ def build_codex(corpus):
                codex_row("response_item", {"type": "function_call_output", "call_id": "l2-call", "turn_id": "l2-1",
                                            "output": "Script completed\nOutput:\n" + json.dumps({"output": "l2", "exit_code": 0, "wall_time_seconds": 0.5})}),
                codex_row("response_item", {"type": "web_search_call", "turn_id": "l2-1"}),
-               # Batch 33: current rollouts interleave telemetry/item records.
+               # Current rollouts interleave telemetry/item records.
                *codex_telemetry_rows("l2-1"),
                codex_row("response_item", {"type": "message", "role": "assistant", "phase": "final_answer", "turn_id": "l2-1", "content": "L2 answer"}),
                codex_event("task_complete", turn_id="l2-1", duration_ms=300),
@@ -953,7 +953,7 @@ def build_grok(corpus):
         {"type": "assistant", "content": "Grok answer after envelopes"},
         {"type": "user", "content": "<environment_context>hidden</environment_context>", "prompt_index": 3},
         {"type": "system", "content": "Grok system notice"},
-        # Batch 33: unknown Grok record kinds are skipped like Python's if/elif chain.
+        # Unknown Grok record kinds are skipped like Python's if/elif chain.
         {"type": "usage", "prompt_tokens": 3, "completion_tokens": 4},
         {"type": "usage", "prompt_tokens": 5, "completion_tokens": 6},
         {"type": "checkpoint", "id": "synthetic"},
@@ -1114,7 +1114,7 @@ def verify_batch35(report, corpus, base, opener, adapters, rows):
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# Scenario 7 (batch 36, WP-D): Esc-interrupted Claude turns with tools,
+# Scenario 7: Esc-interrupted Claude turns with tools,
 # thinking, a compact boundary above them, and the interrupt-as-sibling
 # corner. Expectations derived from the Python adapter (d16c5e1).
 # --------------------------------------------------------------------------
@@ -1204,13 +1204,13 @@ def verify_claude_interrupts(report, corpus, base, opener, adapters, rows):
             assert turns == ["u0", "u0", "u1", "u1"], turns
         assert response["activity"]["state"] == "working" and response["activity"]["turn_id"] == ("u1" if sid == "claude-esc-sibling" else "u2"), (sid, response["activity"])
         if adapters:
-            compare_view(report, f"claude {sid} interrupted turn (batch 36)", python_read(adapters, "claude", corpus.paths[sid]), response)
+            compare_view(report, f"claude {sid} interrupted turn", python_read(adapters, "claude", corpus.paths[sid]), response)
     report.ok("batch-36 Claude interrupted turns: tools/thinking under the cut-short input stay visible under its turn id, the native interrupt "
               "record is the aborted status, a compact boundary and last-prompt above it change nothing, an interrupt as the unanswered sibling renders only the status")
 
 
 # --------------------------------------------------------------------------
-# Scenario 7 (batch 36, WP-G): Codex multi-chunk tool-output envelopes
+# Scenario 7: Codex multi-chunk tool-output envelopes
 # --------------------------------------------------------------------------
 
 CHUNKS_SID = "codex-envelope-chunks"
@@ -1277,7 +1277,7 @@ def classify_codex_chunks(rust_rows):
     expectations = chunk_expectations()
 
     def classify(index, key, left, right):
-        # Documented DELTA (docs/migration.md, batch 36 WP-G): Python shows one
+        # Documented DELTA: Python shows one
         # chunk's output/exit_code/wall time, Rust the concatenation of every
         # chunk with the last exit code and the summed duration. Anything
         # else on these rows is a real difference.
@@ -1319,7 +1319,7 @@ def verify_codex_chunks(report, corpus, base, opener, adapters, rows):
         python_results = {row["call_id"]: row for row in python[0] if row.get("role") == "tool_result"}
         for call_id, (_, expected, _) in expectations.items():
             assert python_results[call_id]["text"] == expected["text"], (call_id, "reference adapter changed its chunk choice", python_results[call_id]["text"])
-        compare_view(report, f"codex {CHUNKS_SID} multi-chunk envelopes (batch 36)", python, response, classify=classify_codex_chunks(messages))
+        compare_view(report, f"codex {CHUNKS_SID} multi-chunk envelopes", python, response, classify=classify_codex_chunks(messages))
         report.delta(f"codex {CHUNKS_SID}: Python `_tool_output` shows one chunk per result (last chunk when the joined text ends with a chunk, "
                      f"first envelope part otherwise), Rust concatenates every chunk's output in part order with the last exit_code and summed duration_s")
     report.ok(f"codex {CHUNKS_SID}: {len(expectations)} multi-chunk results (2/3/5 chunks, exit_code only on the last, trailing empty/{{}}/image part, "
@@ -1371,7 +1371,7 @@ def main():
             verify_batch35(report, corpus, base, opener, adapters, rows)
             verify_claude_interrupts(report, corpus, base, opener, adapters, rows)
             verify_codex_chunks(report, corpus, base, opener, adapters, rows)
-            report.ok("current-CLI kinds (batch 33): Claude control/attachment records, Codex telemetry/item records and unknown Grok "
+            report.ok("current-CLI kinds: Claude control/attachment records, Codex telemetry/item records and unknown Grok "
                       "records are skipped like Python with counted migration_warnings; claude-events/codex-l2/grok-chat stay supported")
         assert all(path.read_bytes() == old for path, old in before.items()), "reads modified synthetic native history"
     print(f"SUMMARY {len(report.passes)} PASS, {len(report.deltas)} DELTA, {len(report.unverified_lines)} UNVERIFIED, {len(report.failures)} FAIL"

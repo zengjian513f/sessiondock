@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exited pending receipts can be discarded and leave /api/term/list.pending (batch 44 WP-E)."""
+"""Exited pending receipts can be discarded and leave /api/term/list.pending."""
 from __future__ import annotations
 import argparse, json, os, subprocess, sys, tempfile, time
 from pathlib import Path

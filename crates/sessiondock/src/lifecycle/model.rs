@@ -261,7 +261,7 @@ impl LaunchSpec {
 /// Windows `canonicalize` answers `\\?\C:\…`; the launcher roots are written
 /// `C:\…`, Node keeps whatever cwd it is started in and Claude derives its
 /// project directory name from that, so a verbatim disk prefix is folded back
-/// (WP-W). Other prefixes (UNC, devices) stay as they are and match no root.
+/// Other prefixes (UNC, devices) stay as they are and match no root.
 pub(super) fn plain_canonical(path: &Path) -> Option<std::path::PathBuf> {
     let canonical = path.canonicalize().ok()?;
     #[cfg(windows)]

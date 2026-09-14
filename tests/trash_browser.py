@@ -110,7 +110,7 @@ def main():
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     dialogs = Dialogs(page)
                     page.goto(base, wait_until="networkidle")
-                    expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+                    expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
 
                     # Delete after the ordinary confirmation.
                     uid = corpus.uid("claude-abandoned")

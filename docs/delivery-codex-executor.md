@@ -1,8 +1,8 @@
-# Codex reliable send (batch 32)
+# Codex reliable send
 
-Batch 32 wires the [Codex delivery domain](delivery.md) and the
+This wires the [Codex delivery domain](delivery.md) and the
 [Codex native acknowledgment adapter](delivery-codex-ack.md) into the same
-executor, terminal driver and four HTTP routes that batch 31 built for Claude
+executor, terminal driver and four HTTP routes built for Claude
 ([delivery-executor.md](delivery-executor.md)). A Codex session on a managed
 instance is now a send target; Grok remains `501 delivery_source_unsupported`.
 Nothing in this batch confirms from screen text: a receipt becomes acknowledged
@@ -142,7 +142,7 @@ rewritten/truncated rollout, and anything past the one-hour window.
 ## HTTP: the same four routes, Python's Codex bodies
 
 Under `outbox:true` (ledger + terminal transport configured) the routes accept
-a Codex UID with batch 31's bodies; codes follow Python's Codex handlers where
+a Codex UID with the Claude bodies; codes follow Python's Codex handlers where
 they differ from Claude's:
 
 | Route | Codex-specific behaviour |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Codex CLI approval-card acceptance (WP-G), cheapest configuration.
+"""Real Codex CLI approval-card acceptance, cheapest configuration.
 
 Like `send_codex_real.py` (isolated `CODEX_HOME` reusing `auth.json`
 read-only, throwaway cwd, `gpt-5.6-luna` with `model_reasoning_effort="low"`,

@@ -536,7 +536,7 @@ fn claude_corrupt_lines_are_notes_but_shape_errors_are_hard_failures_with_no_not
     bytes.extend(b"{not json}\n");
     bytes.extend(b"[1, 2]\n");
     let summary = summarize_bytes("claude", claude_path(), &bytes, None);
-    // Batch 35: skipped like Python `_head_lines`; counted after the kinds.
+    // Skipped like Python `_head_lines`; counted after the kinds.
     assert!(summary.supported(), "{:?}", summary.unsupported);
     assert_eq!(
         summary.warnings,
@@ -976,7 +976,7 @@ fn grok_rows_come_from_summary_json_with_python_fallbacks() {
             "跳过未知的Grok 记录类型：checkpoint ×1"
         ]
     );
-    // WP-E: the validated summary's `info.id` is the Grok native identity.
+    // The validated summary's `info.id` is the Grok native identity.
     assert_eq!(summary.native_id.as_deref().ok(), Some("grok-summary"));
     assert_eq!(summary.declared_ids, vec!["grok-summary".to_owned()]);
 
@@ -1017,14 +1017,14 @@ fn grok_invalid_summary_is_unsupported_but_still_a_row() {
         summary.unsupported.as_deref(),
         Some("Grok summary.json 的 info 必须是对象或 null")
     );
-    // Batch 35: a corrupt chat line is a note, never a hard failure.
+    // A corrupt chat line is a note, never a hard failure.
     let corrupt = summarize_bytes("grok", grok_path(), b"{bad\n", Some(b"{}"));
     assert!(corrupt.supported(), "{:?}", corrupt.unsupported);
     assert_eq!(corrupt.warnings, ["跳过无效的JSONL 记录 ×1"]);
 }
 
 // ---------------------------------------------------------------------------
-// Batch 35 (WP-C): Claude torn / invalid lines are skipped like Python
+// Claude torn / invalid lines are skipped like Python
 // `_head_lines` / `_tail_lines` and counted as one non-fatal note.
 // ---------------------------------------------------------------------------
 
@@ -1092,7 +1092,7 @@ fn claude_torn_nul_line_is_one_note_and_the_row_stays_supported() {
 }
 
 // ---------------------------------------------------------------------------
-// Batch 36 (WP-C): turn state of agent files and the Claude `continued-in` sid.
+// Turn state of agent files and the Claude `continued-in` sid.
 // ---------------------------------------------------------------------------
 
 fn sidecar_path() -> &'static Path {

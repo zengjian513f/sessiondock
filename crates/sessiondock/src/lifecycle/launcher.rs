@@ -50,7 +50,7 @@ fn default_schema() -> u32 {
 /// Schema 1 carries only fixed-argv `adapters`; schema 2 additionally allows
 /// per-source CLI `profiles`. A bug-report worker launches the source's one
 /// configured CLI exactly like `term/create` (Python `WORKER_SOURCES`); a
-/// leftover `bug_report_profiles` table from batch 41 is ignored like any
+/// leftover `bug_report_profiles` table is ignored like any
 /// other unknown key.
 #[derive(Clone, Deserialize)]
 pub struct Config {

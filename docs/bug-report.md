@@ -1,4 +1,4 @@
-# Bug reports and their CLI workers (batch 41, M7)
+# Bug reports and their CLI workers (M7)
 
 `POST /api/bug-report` (Python `server._bug_report` / `bug_report.py` at
 `e5b023a`) captures a self-contained diagnostic bundle and starts a managed
@@ -31,7 +31,7 @@ configured CLI, selected exactly as `POST /api/term/create` selects it
 There is no worker-specific profile and no model policy: the worker is the
 same session the user would start from the picker, launched with the
 repository as cwd. A source without a unique configured CLI answers
-`503 本机找不到 <source> 命令`. (Batch 41 had shipped a per-source
+`503 本机找不到 <source> 命令`. (An earlier build had shipped a per-source
 `bug_report_profiles` table pinned to the cheapest test model; that confused
 the real-CLI *test* rule of AGENTS.md with production and was removed. A
 leftover `bug_report_profiles` key in `launcher.json` is ignored.)
@@ -108,7 +108,7 @@ other session `uid` uses the conversation attachment upload contract of
    report_id, title: "处理 <id>", worker_status, worker_error}` is remembered
    per lifecycle record (`BugReportService::pending_decoration`, rebuilt from
    manifests at start, `worker_status`/`worker_error` mirroring every
-   manifest `status`/`error` update — WP-E) and merged into the worker's
+   manifest `status`/`error` update) and merged into the worker's
    `/api/term/list` pending row; the legacy pending page and sidebar row show
    it (`正在注入缺陷报告提示词`, `提示词已提交`, `提示词注入失败：…`).
    Manifest `status: starting`; audit `bug_report.worker_started`.
@@ -120,7 +120,7 @@ other session `uid` uses the conversation attachment upload contract of
    `editing` frame on a fresh instance is a failure (`新建 … 会话出现了意外草稿`).
    State changes are audited as `bug_report.worker_probe`.
 3. Injection as server-originated host input through the launch guard
-   (`request_launch`, WP-E — the same path `session/stop` uses for its EOF
+   (`request_launch` — the same path `session/stop` uses for its EOF
    keys; Python's `tmux send-keys` needed no page console either). No browser
    lease is claimed, so a page that opened the console from the toast keeps
    it and watches the prompt arrive; `manifest.injection.origin` records

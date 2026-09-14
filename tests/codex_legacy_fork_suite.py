@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract for legacy self-contained Codex forks (batch 35 R1/R2/R3).
+"""HTTP contract for legacy self-contained Codex forks.
 
 R1: the first session_meta is the identity; later session_meta records are
 skipped as exactly `跳过重复的Codex session_meta ×N` and `supported` stays true.
@@ -144,7 +144,7 @@ def run(opener, base, corpus):
         excerpt = json.dumps(row, ensure_ascii=False).encode()
         if row.get("supported") is not True:
             fail("r1", f"{sid} supported={row.get('supported')}", excerpt)
-        # Batch 44 WP-C: the duplicate-meta notes live in the detail meta only.
+        # The duplicate-meta notes live in the detail meta only.
         if "migration_warnings" in row:
             fail("r1", f"{sid} supported row carries migration_warnings", excerpt)
         detail, draw = fetch(opener, base, "/api/messages/" + quote(corpus.uid(sid), safe=":"))

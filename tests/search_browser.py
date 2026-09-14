@@ -28,7 +28,7 @@ def corpus(root):
     data.put("search-main", "claude", rows, [])
     data.put("search-broken", "claude", [
         claude_row("search-broken", "user", "u0", None, "Unsupported synthetic history"),
-        # Scalar content is unreadable for Python too (unknown kinds are skipped since batch 33).
+        # Scalar content is unreadable for Python too (unknown kinds are skipped).
         {"type": "user", "message": {"role": "user", "content": 42}}], [])
     data.put("codex-search", "codex", [
         codex_row("session_meta", {"id": "codex-search", "cwd": "/synthetic/search"}),
@@ -60,7 +60,7 @@ def main():
                     response.headers.get("content-type", ""))) if "/api/search?" in response.url else None)
                 page.goto(base, wait_until="networkidle")
                 assert page.evaluate("SessionDockCapabilities.allows('search')") is True
-                expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+                expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                 page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("Needle Cat cat")
 

@@ -282,7 +282,7 @@ fn plan_uses_inventory_paths_including_aliases() {
         plan.bytes(),
         plan.files.iter().map(|f| f.stamp.size).sum::<u64>()
     );
-    // WP-E (Python parity): a Grok session is its whole directory; the
+    // Python parity: a Grok session is its whole directory; the
     // reported bytes are the regular files below it.
     let grok = tree.grok_session("g", true);
     let plan = Plan::derive(&grok, &tree.roots).unwrap();
@@ -355,7 +355,7 @@ fn delete_restore_purge_round_trip_keeps_unnamed_files_and_refuses_conflicts() {
     assert!(!claude_origin.exists());
     let agents_dir = claude_origin.with_extension("").join("subagents");
     assert!(agents_dir.is_dir() && fs::read_dir(&agents_dir).unwrap().count() == 0);
-    // WP-E: the whole Grok directory moved (Python parity), every file with it.
+    // The whole Grok directory moved (Python parity), every file with it.
     let grok_dir = Path::new(grok["path"].as_str().unwrap());
     assert!(!grok_dir.exists(), "grok directory moves whole");
     let grok_entry = outcome.deleted.iter().find(|d| d.uid == "grok:g").unwrap();

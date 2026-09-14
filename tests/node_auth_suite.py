@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract of the node listener (batch 38 H1): `SESSIONDOCK_NODE_BIND`
+"""HTTP contract of the node listener: `SESSIONDOCK_NODE_BIND`
 with token file, id file and peer networks; `X-SessionDock-Node-Token` +
 `X-SessionDock-Protocol: 1` from an allowed peer, 403 otherwise; the loopback
 listener keeps refusing hub headers; the node listener serves `/api` only.

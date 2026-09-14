@@ -1,4 +1,4 @@
-//! Bug-report bundles and their CLI workers (batch 41, Python `bug_report.py`).
+//! Bug-report bundles and their CLI workers (Python `bug_report.py`).
 //!
 //! `create` writes one private directory `<dir>/BUG-YYYYMMDD-HHMMSS-hex6/`
 //! (0700) holding `description.md`, `browser-state.json`, `events.jsonl` (the
@@ -165,7 +165,7 @@ impl CreateError {
 struct WorkerNote {
     report_id: String,
     title: String,
-    /// Latest manifest `status` / `error` (WP-E): shown on the pending row
+    /// Latest manifest `status` / `error`: shown on the pending row
     /// and the pending page so an injection failure is visible in the UI.
     status: String,
     error: Option<String>,
@@ -250,7 +250,7 @@ impl BugReportService {
         );
     }
 
-    /// Mirror the manifest's `status`/`error` for the pending row (WP-E).
+    /// Mirror the manifest's `status`/`error` for the pending row.
     fn note_status(&self, record_id: &str, status: &str, error: Option<&str>) {
         let mut workers = self.workers.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(note) = workers.get_mut(record_id) {

@@ -113,7 +113,7 @@ def row_ok(rows, sid, supported, needle, raw):
     row = rows.get(sid)
     if not isinstance(row, dict) or bool(row.get("supported")) is not supported:
         fail(sid, f"supported={None if not row else row.get('supported')} want {supported}", raw)
-    # Batch 44 WP-C: only an unsupported row carries migration_warnings (its reason).
+    # Only an unsupported row carries migration_warnings (its reason).
     if supported and "migration_warnings" in row:
         fail(sid, "supported row must not carry migration_warnings", raw)
     warn = " ".join(str(x) for x in (row.get("migration_warnings") or []))

@@ -945,7 +945,7 @@ fn directory_completion_matches_python() {
 
 #[test]
 fn a_leftover_bug_report_profiles_table_is_ignored() {
-    // Batch 41 shipped a per-source worker profile table with a fixed
+    // An earlier build shipped a per-source worker profile table with a fixed
     // cheapest-model policy; both are gone. Deployed launcher files that
     // still carry the key load like any file with an unknown key, and the
     // worker selects the source's one CLI exactly like `term/create`.

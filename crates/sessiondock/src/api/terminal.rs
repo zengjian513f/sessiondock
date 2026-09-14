@@ -656,7 +656,7 @@ pub async fn list(
             .list(0, 128)
             .await
             .map_err(super::lifecycle::failure)?;
-        // Batch 41: a bug-report worker's row carries Python's pending record
+        // A bug-report worker's row carries Python's pending record
         // fields (`kind`, `title` "处理 <id>", `report_id`) so the sidebar
         // names the report instead of "新建 … 会话".
         let now = std::time::SystemTime::now()

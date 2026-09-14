@@ -1,4 +1,4 @@
-//! `POST /api/bug-report` end to end (batch 41): the HTTP router, an isolated
+//! `POST /api/bug-report` end to end: the HTTP router, an isolated
 //! ptyhost, the lifecycle launcher with one Claude profile, the audit
 //! log and the fake Claude CLI from `tests/fake_claude_cli.py`. The worker's
 //! prompt is pasted into the fake composer, confirmed from the synthetic

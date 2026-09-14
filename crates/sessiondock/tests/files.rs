@@ -79,8 +79,8 @@ impl Fixture {
                 json!({"type":"session_meta","timestamp":"2026-09-12T00:00:00Z","payload":{"id":"unsupported","cwd":cwd}}),
                 message("`note.txt`"),
                 // A scalar `content` is a shape the Python adapter cannot read
-                // either; it stays a hard failure (batch 33 only turned unknown
-                // record kinds into skips, batch 35 the copied Codex metas).
+                // either; it stays a hard failure (only unknown
+                // record kinds and copied Codex metas are skipped).
                 json!({"type":"response_item","timestamp":"2026-09-12T00:00:01Z","payload":{"type":"message","role":"user","content":42}}),
             ],
         );

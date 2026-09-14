@@ -1,4 +1,4 @@
-//! The hub's HTTP surface (batch 40 H4) against two or three
+//! The hub's HTTP surface against two or three
 //! `tests/hub_fake_node.py` nodes: the `test_hub.py` dispatch/proxy cases —
 //! page in hub mode, `/api/meta`, `/api/nodes`, the gate, resolve
 //! uniqueness (400), offline 503 shape, `_build` 409, JSON/SSE rewrite, raw

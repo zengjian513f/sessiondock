@@ -298,7 +298,7 @@ fn same_length_middle_edit_is_detected_beyond_head_and_tail() {
 #[test]
 fn malformed_complete_record_is_noted_but_shape_errors_fail_closed_then_recover_after_repair() {
     let (_temp, file, store, uid) = setup();
-    // Batch 35: a line that is not a JSON object is skipped like Python
+    // A line that is not a JSON object is skipped like Python
     // `_iter_records`; the row and the detail both note it.
     append(&file, b"not-json\n");
     let batch = store.messages(&uid, &MessageQuery::default()).unwrap();
@@ -531,7 +531,7 @@ fn codex_inheritance_keeps_leaf_offsets_and_ignores_parent_tail_appends() {
     assert_eq!(before["meta"]["root_sid"], "parent");
     assert_eq!(before["meta"]["fork_depth"], 1);
     // Unknown semantics after the fixed cutoff cannot contaminate this view;
-    // since batch 33 the parent itself stays supported with a skip warning.
+    // the parent itself stays supported with a skip warning.
     append(&parent, b"{\"type\":\"future-unsupported\"}\n");
     let idle = store.messages(&uid, &continuation(&before)).unwrap();
     assert_eq!(idle["reset"], false);

@@ -592,7 +592,7 @@ pub(super) fn output(value: &Value) -> Result<(String, Value), String> {
 /// newlines), `exit_code` is the last chunk's, `duration_s` sums every
 /// chunk's `wall_time_seconds`, and an MCP `isError` in any chunk marks the
 /// result. The reference adapter shows a single chunk instead (documented
-/// superset, docs/migration.md).
+/// superset).
 fn chunked<'a>(chunks: impl Iterator<Item = &'a Chunk<'a>>) -> Result<(String, Value), String> {
     let mut text = String::new();
     let (mut exit_code, mut duration, mut error) = (None, None, false);

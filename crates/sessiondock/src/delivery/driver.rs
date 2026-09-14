@@ -1,4 +1,4 @@
-//! Terminal driver for the delivery executor (batch 31 Claude, batch 32 Codex).
+//! Terminal driver for the delivery executor.
 //!
 //! The driver owns nothing durable. It captures the host's screen model,
 //! recognizes Claude's composer the way the Python bridge does (rules, `❯`,

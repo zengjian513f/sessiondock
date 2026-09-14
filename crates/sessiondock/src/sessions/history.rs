@@ -1071,7 +1071,7 @@ mod tests {
         );
         let mut inventory = inventory(&[("parent", parent), ("child", child)]);
         let original = resolve(&inventory, "child", "").unwrap();
-        // Batch 33: an unknown record kind after the cutoff is skipped with a
+        // An unknown record kind after the cutoff is skipped with a
         // warning, so the parent stays readable and the child's identity holds.
         let unknown = codex(
             "parent",
@@ -1131,7 +1131,7 @@ mod tests {
 
     #[test]
     fn unreadable_record_inside_parent_prefix_fails_closed_but_a_skipped_line_does_not() {
-        // Batch 35: a line that is not a JSON object inside the fixed prefix
+        // A line that is not a JSON object inside the fixed prefix
         // is skipped like Python; a record the reference adapter cannot read
         // either still refuses the inherited prefix.
         for (line, expected) in [(b"not-json\n".as_slice(), None), (UNREADABLE, Some(501))] {

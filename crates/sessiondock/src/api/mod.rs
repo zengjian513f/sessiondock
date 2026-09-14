@@ -60,7 +60,7 @@ pub fn router() -> Router<AppState> {
         .route("/media/{token}", get(media::get))
         .route("/session/input-history", get(read::input_history))
         .route("/session/outbox", get(delivery::outbox))
-        // Batch 31: Claude reliable send on managed instances; 501 until both
+        // Claude reliable send on managed instances; 501 until both
         // the delivery ledger and the terminal transport are configured.
         .route(
             "/session/send",
@@ -163,7 +163,7 @@ pub fn router() -> Router<AppState> {
                 "/api/term/bind",
             ))),
         )
-        // WP-E: drop a finished pending receipt from the sidebar (Python
+        // Drop a finished pending receipt from the sidebar (Python
         // `pending_store.discard`); never kills or deletes anything.
         .route(
             "/term/discard",
@@ -233,7 +233,7 @@ pub fn router() -> Router<AppState> {
                 "/api/trash/purge",
             ))),
         )
-        // Batch 41: 501 `bug_report_disabled` until the bundle directory,
+        // 501 `bug_report_disabled` until the bundle directory,
         // repository, audit, terminal, lifecycle and worker profiles exist.
         .route(
             "/bug-report",
@@ -260,7 +260,7 @@ async fn meta(State(state): State<AppState>) -> Json<Value> {
         Some(node) => (crate::hub::PROTOCOL, json!(node.node_id)),
         None => (0, Value::Null),
     };
-    // Batch 44 WP-A: no `migration` disclaimer — this is the replacement
+    // No `migration` disclaimer — this is the replacement
     // service, and `capabilities.stage` says so.
     Json(json!({
         "build": state.assets.build, "hostname": &*state.hostname, "mode": "local",

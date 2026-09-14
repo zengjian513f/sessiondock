@@ -1060,7 +1060,7 @@ fn claude_pin_is_applied_or_retired_with_an_explicit_reason() {
 }
 
 // ---------------------------------------------------------------------------
-// Batch 35 (WP-C): broken Claude lineage renders the reachable part with a
+// Broken Claude lineage renders the reachable part with a
 // warning, exactly like Python `_active_lineage` (verified against the
 // reference adapter on the same synthetic records).
 // ---------------------------------------------------------------------------
@@ -1220,7 +1220,7 @@ fn claude_pin_target_on_a_truncated_lineage_uses_the_reachable_part() {
 }
 
 // ---------------------------------------------------------------------------
-// Batch 36 (WP-D): Claude interrupted turns stay visible — Python d16c5e1
+// Claude interrupted turns stay visible — Python d16c5e1
 // `_active_lineage` (interrupt_nodes / abandoned via interrupt ancestry /
 // offshoot / deferred_abort) and `_read_one` (filter, `starts_turn = not
 // is_interrupt`, `interrupted` texts, deferred `aborted`). Every expected
@@ -1694,7 +1694,7 @@ fn claude_interrupt_rules_keep_the_lineage_warnings() {
 }
 
 // ---------------------------------------------------------------------------
-// Batch 36 (WP-G): Codex multi-part tool outputs (`custom_tool_call_output`
+// Codex multi-part tool outputs (`custom_tool_call_output`
 // whose `output` is `[header, chunk, chunk, …]`, one stringified envelope per
 // streamed chunk) show every chunk's output in part order; `exit_code` is the
 // last chunk's, `duration_s` the sum. The reference adapter shows one chunk
@@ -1815,7 +1815,7 @@ fn codex_single_chunk_and_wrapped_outputs_are_unchanged() {
     assert_eq!(result.message["error"], false);
 }
 
-// ---------------------------------------------------------------- Grok (WP-K)
+// ---------------------------------------------------------------- Grok
 // Python 16cc89c `tests/test_adapters.py` GrokAdapterTests: the in-flight
 // `user_query` envelope and its neighbours.
 
@@ -1893,4 +1893,4 @@ fn grok_user_query_prefix_suffix_and_image_blocks_are_independent() {
         );
     }
 }
-// ---------------------------------------------------------------- end Grok (WP-K)
+// ---------------------------------------------------------------- end Grok

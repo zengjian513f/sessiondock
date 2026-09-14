@@ -224,7 +224,7 @@ impl RawIndex {
         self.probe_digest
     }
     /// Physical start of the record that ends at `end`: the previous LF
-    /// checkpoint, or zero for the first line (delivery evidence, batch 30).
+    /// checkpoint, or zero for the first line (delivery evidence).
     pub(super) fn record_start(&self, end: u64) -> u64 {
         match self
             .checkpoints

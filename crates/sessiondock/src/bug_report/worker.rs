@@ -15,7 +15,7 @@
 //! `failed` when a step could not be taken. A crash between the persisted
 //! paste and Enter leaves `injecting` in the manifest and is never resumed.
 //!
-//! WP-E: the paste and Enter are server-originated host input through the
+//! The paste and Enter are server-originated host input through the
 //! launch guard (`request_launch`), exactly like `session/stop`'s EOF keys —
 //! Python's `tmux send-keys` never needed the page's console either. The
 //! worker therefore holds no browser lease: a page that opened the console

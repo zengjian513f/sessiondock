@@ -43,7 +43,7 @@ pub struct Config {
     pub proc_root: PathBuf,
     /// Optional override for Python's `~/.grok/active_sessions.json`.
     pub grok_active: Option<PathBuf>,
-    /// Second listener for Hub traffic (batch 38 H1). Honoured only together
+    /// Second listener for Hub traffic. Honoured only together
     /// with the token file, the id file and the peer networks; any subset of
     /// the four is a startup error. Never a substitute for the loopback bind.
     pub node_bind: Option<SocketAddr>,
@@ -56,7 +56,7 @@ pub struct Config {
     /// Source networks the node listener accepts (strict CIDR list); every
     /// other peer is 403 before the token is looked at.
     pub node_peers: Vec<PeerNetwork>,
-    /// Bug-report bundles (batch 41, Python `bug_report.REPORT_ROOT`): an
+    /// Bug-report bundles (Python `bug_report.REPORT_ROOT`): an
     /// configured bundle directory. Set together with the repository or not
     /// at all; unset keeps
     /// `capabilities.bug_report` false and `POST /api/bug-report` 501.
@@ -88,7 +88,7 @@ pub struct Config {
     /// search-text cache; 0 disables warm-up (`SESSIONDOCK_SEARCH_WARMUP`,
     /// default 300).
     pub search_warmup_secs: u64,
-    /// Pool, page, runtime and cache budgets (batch 44 WP-A):
+    /// Pool, page, runtime and cache budgets:
     /// `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`;
     /// probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS`
     /// events per history page (default 2000), `SESSIONDOCK_ASYNC_WORKERS`
@@ -461,7 +461,7 @@ impl Config {
                     )
                 })
         }
-        // Batch 44 WP-A: pool budgets; the derived pools follow `Pools`.
+        // Pool budgets; the derived pools follow `Pools`.
         if let Some(value) = env::var_os("SESSIONDOCK_READ_WORKERS") {
             config.pools.read_workers =
                 at_least("SESSIONDOCK_READ_WORKERS", &value, Pools::MIN_READ_WORKERS)?;

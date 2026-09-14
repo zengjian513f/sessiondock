@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract: Codex fork whose forked_from_id ≠ history_base.thread_id (batch 35 R2/R3).
+"""HTTP contract: Codex fork whose forked_from_id ≠ history_base.thread_id.
 
 R2: history_base.thread_id supplies the inherited prefix [0, end_byte_offset) even
 when forked_from_id names a different thread; a null history_base with

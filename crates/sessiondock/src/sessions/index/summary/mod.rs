@@ -1,4 +1,4 @@
-//! Bounded per-file row summaries (batch 34, WP-A).
+//! Bounded per-file row summaries.
 //!
 //! One native file is summarized from exactly two bounded reads — the first
 //! [`HEAD_BYTES`] (at most [`CLAUDE_HEAD_LINES`] / [`CODEX_HEAD_LINES`]

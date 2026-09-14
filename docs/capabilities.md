@@ -15,7 +15,7 @@ storage namespace. A present tag must
 files:false, configuration_error:true}` so the page does not start unsupported
 background work. Only then does `#backend-notice` appear, saying
 “能力配置无效，请检查服务配置。” — a healthy SessionDock page has no
-standing banner (batch 44 WP-A: it is the replacement, not a development build).
+standing banner (it is the replacement, not a development build).
 
 `storage_namespace` is `"sessiondock."`. The parser uses a configured non-empty
 string and otherwise defaults to `"sessiondock."`.
@@ -33,7 +33,7 @@ read helper for `store.get`, `nodesOff` and typography.
 | `backend` | `"rust"` | identifies the server implementation | [architecture.md](architecture.md) |
 | `stage` | `"replacement"` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `read_only` | `false` (`true` only in the fail-closed fallback above) | `true` never comes from the server; the fallback shows `#backend-notice` | [architecture.md](architecture.md) |
-| `storage_namespace` | `"sessiondock."` | `localStorage` prefix (above) | [migration.md](migration.md) |
+| `storage_namespace` | `"sessiondock."` | `localStorage` prefix (above) | [architecture.md](architecture.md) |
 | `sessions` | `true` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `watch` | `true` | no `config`/`allows` gate (SSE is always on) | [architecture.md](architecture.md) |
 | `search` | `true` | else title-only filter, no NDJSON `/api/search` | [architecture.md](architecture.md) |

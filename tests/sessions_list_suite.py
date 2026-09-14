@@ -5,12 +5,12 @@ Synthetic temp fixtures and an isolated loopback Rust server only. The list is
 the lazy index (docs/read-model.md): no session cap, 1001 physical sessions are
 listed in full; a supported row carries the physical `cursor: {end, head}` and
 gains `anchor` only once the session has been opened (docs/history-pages.md).
-Batch 35: a Codex file with copied ancestor session_meta records and a Claude
+A Codex file with copied ancestor session_meta records and a Claude
 file with one torn NUL line list as supported with the exact counted warnings
 (`跳过重复的Codex session_meta ×N`, `跳过无效的JSONL 记录 ×N`); orphan agents
 (Claude sidecar without owner, Codex subagent whose parent is absent) are not
 rows and their physical UID is a typed 501.
-Batch 36: every `agent_items[]` entry carries `active` — a Claude sidecar whose
+Every `agent_items[]` entry carries `active` — a Claude sidecar whose
 last turn is open and whose owner has no later stop notice, a Codex subagent
 whose last turn-boundary event is `task_started`; a Claude row whose tail
 names a `continued-in` session carries `continued_in` (the uid) only when that
@@ -32,7 +32,7 @@ KEYS = ("uid", "source", "sid", "title", "cwd", "created", "updated", "size")
 LISTED = {"claude-parent", "claude-cli-current", "codex-parent", "codex-fork", "grok-summary",
           "codex-dup-meta", "claude-torn-tail", "claude-live-owner", "claude-continued-parent",
           "claude-continued-child", "claude-continued-dangling"}
-# Batch 35 R4: never rows; their physical UID answers a typed 501.
+# Never rows; their physical UID answers a typed 501.
 ORPHANS = ("claude-orphan", "codex-orphan-agent")
 DUP_META_WARNINGS = ["跳过重复的Codex session_meta ×2"]
 TORN_WARNINGS = ["跳过无效的JSONL 记录 ×1"]
@@ -91,7 +91,7 @@ def build(root):
     agent_path.with_suffix(".meta.json").write_text(
         json.dumps({"description": "sidecar", "agentType": "reviewer"}))
     (root / "claude/project-history/empty-zero.jsonl").write_bytes(b"")
-    # Batch 33: a current Claude Code 2.1.x transcript (control records, an
+    # A current Claude Code 2.1.x transcript (control records, an
     # attachment chain between the user record and its reply, turn-tail
     # records) is listed as supported with counted skip warnings.
     sid = "claude-cli-current"
@@ -130,7 +130,7 @@ def build(root):
         "created_at": "2026-09-11T08:00:00Z", "updated_at": "2026-09-11T08:30:00Z",
         "current_model_id": "grok-test", "agent_name": "grok-branch"}), encoding="utf-8")
     corpus.paths["grok-summary"] = gdir
-    # Batch 35: an old-style self-contained Codex fork (own meta with null
+    # An old-style self-contained Codex fork (own meta with null
     # history_base, then the two ancestors' session_meta records copied in,
     # the parent gone), a Claude transcript with one torn NUL line whose
     # lineage stays intact, and two orphan agents.
@@ -159,7 +159,7 @@ def build(root):
         stamp(codex_message("assistant", "orphan agent a"), "2026-09-11T09:40:01Z")], [])
     for sid in ORPHANS:
         corpus.hidden.add(sid)
-    # Batch 36: an owner with a running sidecar (open turn, no notice), a
+    # An owner with a running sidecar (open turn, no notice), a
     # stopped one (open turn, a later notice) and a finished one (end_turn); a
     # Codex subagent still in its turn; a continued-in pair and a dangling one.
     sid = "claude-live-owner"
@@ -322,7 +322,7 @@ def run(opener, base, corpus):
     if rebuilt.get("sig") != data["sig"] or "sessions" not in rebuilt:
         fail("sig", "force=1 must rebuild the full snapshot", rraw)
     passed("sig unchanged and force rebuild")
-    # Batch 36: a stop notice appended to the owner flips its running sidecar
+    # A stop notice appended to the owner flips its running sidecar
     # (incremental scan of the owner file), and a later sidecar record flips
     # it back (woken by SendMessage); both change the signature.
     owner = corpus.paths["claude-live-owner"]

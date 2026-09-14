@@ -1,4 +1,4 @@
-//! Configuration of the `sessiondock-hub` binary (batch 40 H4). Separate from
+//! Configuration of the `sessiondock-hub` binary. Separate from
 //! the node's `Config`: the hub owns no session root, host, ledger or state
 //! directory — only the registry file, its cache, the allowed node networks,
 //! the frontend snapshot and an optional diagnostics directory. Loopback only,

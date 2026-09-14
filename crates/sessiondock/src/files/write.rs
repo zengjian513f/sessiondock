@@ -1784,7 +1784,7 @@ fn relocate_entry(
     Err(keep_exhausted())
 }
 
-// ---- batch 41: bug-report attachments ----------------------------------------
+// ---- Bug-report attachments ----------------------------------------
 
 /// Python `ATTACHMENT_MAX_BYTES`; the API derives its body cap from this value.
 const BUG_REPORT_ATTACHMENT_MAX_BYTES: usize = 512 * 1024 * 1024;

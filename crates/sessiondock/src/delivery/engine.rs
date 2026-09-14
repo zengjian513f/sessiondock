@@ -713,7 +713,7 @@ impl DeliveryEngine {
             },
         })
     }
-    /// Executor hooks (batch 31): committed Claude receipts for the trusted
+    /// Executor hooks: committed Claude receipts for the trusted
     /// in-process executor, which needs states, draft tokens, cursors and
     /// timestamps to schedule inspection and answer HTTP replays. These are
     /// full private rows (they carry prompt text) and must never be serialized
@@ -740,7 +740,7 @@ impl DeliveryEngine {
         rows.sort_by_key(|row| row.sequence);
         Ok(rows)
     }
-    /// Executor hooks (batch 32): committed Codex receipts, same trust rules
+    /// Executor hooks: committed Codex receipts, same trust rules
     /// as the Claude accessors above (private rows, never serialized).
     pub fn codex_receipt(&mut self, id: &str) -> Result<Option<codex::Receipt>, Error> {
         self.check()?;

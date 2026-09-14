@@ -119,13 +119,13 @@ aliases. Historical names belong only in migration records.
 
 **Pending identity.** Create/attach key is the receipt + `launch_id` + `instance_id` tuple (`new_pending` for Codex/Grok). It never authorizes native binding or reliable send. See [pending](lifecycle-http.md#pending-terminal-identity-and-cancellation).
 
-**Declared identity.** `declared_sid` / `declared_uid` on a launch (`new_assigned` or resume). Binding a launch that already declared identity is `409 launch_identity_declared`. See [launch kinds](lifecycle-http.md#launch-identity-kinds-batch-24).
+**Declared identity.** `declared_sid` / `declared_uid` on a launch (`new_assigned` or resume). Binding a launch that already declared identity is `409 launch_identity_declared`. See [launch kinds](lifecycle-http.md#launch-identity-kinds).
 
-**Running.** Host Info `exited:false` and verified child/host identity for a uniquely matched UID (`evidence:"host_info"`). See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Running.** Host Info `exited:false` and verified child/host identity for a uniquely matched UID (`evidence:"host_info"`). See [three states](processes.md#process-identity-and-the-three-run-states).
 
-**Exited.** Host `exited:true`, a confirmed lifecycle exit receipt for the same instance, or (Linux, this Web process only) a previously verified identity gone from `/proc`. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Exited.** Host `exited:true`, a confirmed lifecycle exit receipt for the same instance, or (Linux, this Web process only) a previously verified identity gone from `/proc`. See [three states](processes.md#process-identity-and-the-three-run-states).
 
-**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). Managed observations retain this state when they cannot prove running or exited. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). Managed observations retain this state when they cannot prove running or exited. See [three states](processes.md#process-identity-and-the-three-run-states).
 
 ## Delivery
 
@@ -139,6 +139,6 @@ aliases. Historical names belong only in migration records.
 
 **Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
 
-**DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [media parity](media-parity.md).
+**DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [validation](validation.md).
 
 **UNVERIFIED.** A parity difference that is not a documented DELTA and not a clear FAIL. Advanced history parity requires every remaining difference to be a DELTA, never UNVERIFIED. See [validation](../AGENTS.md#validation).

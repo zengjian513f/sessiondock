@@ -26,7 +26,7 @@ pub(super) struct Lineage {
     pub tip: Option<String>,
     /// Graph node → parent after compact reconnection; pin validation only.
     pub parents: HashMap<String, Option<String>>,
-    /// Non-fatal `migration_warnings` of the walk (batch 35): where it
+    /// Non-fatal `migration_warnings` of the walk: where it
     /// stopped short of a root exactly like Python `_active_lineage`.
     pub warnings: Vec<String>,
 }
@@ -229,7 +229,7 @@ fn signal<'a>(record: &'a Value, agent: &str) -> Option<&'a str> {
 }
 
 /// Python `_active_lineage` over the main-session (or one agent's) records.
-/// A broken chain is a warning, never a failure (batch 35).
+/// A broken chain is a warning, never a failure.
 pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Lineage {
     let mut parents = HashMap::<String, Option<String>>::new();
     let mut users = HashMap::<String, (Option<String>, u64)>::new();

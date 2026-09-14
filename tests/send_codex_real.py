@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Codex CLI reliable-send acceptance (batch 32), cheapest configuration.
+"""Real Codex CLI reliable-send acceptance, cheapest configuration.
 
 Part of normal validation per AGENTS.md: it always uses the cheapest Codex
 configuration (`--model gpt-5.6-luna` with `-c model_reasoning_effort="low"`,

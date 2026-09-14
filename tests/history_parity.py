@@ -119,14 +119,14 @@ def codex_message(role, text, ordinal=1):
 
 
 def torn_line(record, nul=4096, tail=48):
-    """One crash-time torn JSONL line (batch 35): a zero-filled block followed by
+    """One crash-time torn JSONL line: a zero-filled block followed by
     the tail of a record and its newline. json.loads rejects it; Python skips it."""
     return b"\x00" * nul + encoded(record)[-tail:]
 
 
 def unreadable_claude_row(sid, uid, parent):
     """A Claude record neither implementation can read (scalar message.content):
-    the canonical unsupported fixture since batch 33."""
+    the canonical unsupported fixture."""
     return {"type": "user", "uuid": uid, "parentUuid": parent, "sessionId": sid,
             "timestamp": "2026-09-11T10:00:00Z", "isSidechain": False,
             "message": {"role": "user", "content": 42}}
@@ -143,7 +143,7 @@ class Corpus:
     paths: dict[str, Path] = field(default_factory=dict)
     expected: dict[str, list[str]] = field(default_factory=dict)
     owners: dict[str, str] = field(default_factory=dict)
-    # Native files that are never a list row (orphan agents, batch 35 R4).
+    # Native files that are never a list row (orphan agents).
     hidden: set[str] = field(default_factory=set)
 
     def put(self, sid, source, rows, expected, *, parent=None):
@@ -170,7 +170,7 @@ class Corpus:
         return (self.uid(owner), urlencode({"agent": sid})) if owner else (self.uid(sid), "")
 
 
-# Batch 35: shapes observed on the real read roots (795 rows) that the Python
+# Shapes observed on the real read roots (795 rows) that the Python
 # adapters read and the pre-batch-35 Rust backend rejected. Shapes only; every
 # expectation below was derived by running the Python adapter on these files.
 BATCH35_CODEX_ROWS = ("codex-legacy-root", "codex-legacy-mid", "codex-legacy-fork", "codex-legacy-orphan",
@@ -308,7 +308,7 @@ def write_batch35_shapes(corpus: Corpus):
     return written
 
 
-# Batch 36 (WP-D): Esc-interrupted Claude turns stay visible (Python d16c5e1).
+# Esc-interrupted Claude turns stay visible (Python d16c5e1).
 # Shapes only; every expectation was derived by running the Python adapter
 # on these files (texts in file order, statuses excluded; `""` is the
 # turn_duration event).
@@ -590,10 +590,10 @@ def verify(corpus, base, opener, python_source=None):
     public_sids = {"claude-branch", "claude-compact", "claude-current-compact", "claude-abandoned",
                    "claude-cli-current", "codex-parent", "codex-fork", "codex-grandchild", "codex-cli-current",
                    *BATCH35_ROWS, *BATCH36_ROWS}
-    # Ownership cycles stay visible as unsupported rows (batch 35 R4 KEEP).
+    # Ownership cycles stay visible as unsupported rows.
     unsupported_agents = {"codex-cycle-a", "codex-cycle-b"}
     # Agents whose owner is not in the root are not rows at all (Python
-    # behaviour, batch 35 R4); their physical UID still answers a typed 501.
+    # behaviour); their physical UID still answers a typed 501.
     hidden_agents = {"codex-orphan-agent", *BATCH35_HIDDEN}
     assert hidden_agents == corpus.hidden, sorted(corpus.hidden)
     listed = get_json(opener, base, "/api/sessions?force=1")
@@ -617,7 +617,7 @@ def verify(corpus, base, opener, python_source=None):
             assert body.get("error") and body.get("code"), (sid, "typed 501 body", body)
         else:
             raise AssertionError("orphan agent UID returned fake supported history")
-    # Batch 35: real-root shapes Python reads. Identity is the first
+    # Real-root shapes Python reads. Identity is the first
     # session_meta (later copies are counted, not fatal); a null history_base
     # fork is self-contained; a torn line / broken lineage is a warning.
     for sid, expected_warnings in (
@@ -629,7 +629,7 @@ def verify(corpus, base, opener, python_source=None):
             ("claude-torn", ["跳过无效的JSONL 记录 ×1"]),
             ("claude-lost-leaf", []), ("claude-cycle", [])):
         assert rows[sid].get("supported") is True, (sid, rows[sid].get("migration_warnings"))
-        # Batch 44 WP-C: supported rows carry no migration_warnings (Python has
+        # Supported rows carry no migration_warnings (Python has
         # none); the notes are asserted on the detail meta below.
         assert "migration_warnings" not in rows[sid], (sid, rows[sid].get("migration_warnings"))
         del expected_warnings
@@ -658,7 +658,7 @@ def verify(corpus, base, opener, python_source=None):
     assert rows["codex-legacy-orphan"]["forked_from_id"] == "codex-legacy-gone"
     assert {item["id"] for item in rows["codex-legacy-root"]["agent_items"]} == {"codex-copied-agent"}, rows["codex-legacy-root"].get("agent_items")
     assert not rows["codex-legacy-fork"].get("agent_items") and not rows["codex-legacy-orphan"].get("agent_items")
-    # Batch 33: unknown record/attachment kinds of current CLI versions are
+    # Unknown record/attachment kinds of current CLI versions are
     # skipped like Python; the row stays supported and counts what it skipped.
     for sid, expected_warnings in (
             ("claude-cli-current", [
@@ -685,7 +685,7 @@ def verify(corpus, base, opener, python_source=None):
         assert rows[sid]["fork_depth"] == depth
         assert rows[sid]["created"] == rows["codex-parent"]["created"]
 
-    # Batch 36: the Esc-interrupted turn is visible with `interrupted` on its
+    # The Esc-interrupted turn is visible with `interrupted` on its
     # input only, keeps its own turn id, and the `aborted` of a turn with
     # native records below it is the interrupt record's (activity stays the
     # replacement's `working`). Expectations from the Python adapter.
@@ -819,8 +819,8 @@ def verify(corpus, base, opener, python_source=None):
     delta = api(opener, base, uid, cursor_query(after))
     assert delta["reset"] is False and visible(delta) == ["Codex incremental leaf answer"]
     # Records after a fork's fixed cutoff belong only to the parent view. An
-    # unknown record kind there is skipped with a warning (batch 33, like
-    # Python), so is a duplicate session_meta (batch 35 R1: the first one is
+    # unknown record kind there is skipped with a warning (like
+    # Python), so is a duplicate session_meta (the first one is
     # the identity, later copies are counted), and a hard failure (scalar
     # content, which Python cannot read either) makes only the parent
     # unsupported; none may poison the valid inherited prefix or change its

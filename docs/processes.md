@@ -86,7 +86,7 @@ child exit at observation time. Missing/refused endpoints, auth failures, invali
 protocol, replacement races, and timeout mean `unknown`, not exited. Linux tests
 do not establish Windows or macOS execution coverage.
 
-## Process identity and the three run states (batch 22)
+## Process identity and the three run states
 
 On Linux the runtime additionally captures a `ProcessIdentity {pid, start_time}`
 for the host's child and for the host itself, reading only
@@ -100,7 +100,7 @@ the child started no later than five seconds after the record was written
 lines and requires exact equality (`mismatch`). Identities are compared in ticks,
 never in converted wall-clock seconds.
 
-On Windows (WP-W) the same evidence comes from the kernel's process object:
+On Windows the same evidence comes from the kernel's process object:
 the PID is opened with `PROCESS_QUERY_LIMITED_INFORMATION` only, a process
 that has already exited but whose PID is still reserved by an open handle
 (this service's own retained `Child` included) reads as `not_visible`, the

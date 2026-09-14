@@ -16,7 +16,7 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 - 注册是**服务器端操作**：`sessiondock-hub register/remove/list`，网页上没有注册路由。节点凭据从
   文件读（`--token-file`），绝不进程列表可见。
 - Hub↔节点走私网（WireGuard）；节点开**第二监听**（`SESSIONDOCK_NODE_BIND` 等，见
-  [security-model.md](security-model.md#node-listener-hub-traffic-batch-38-h1)），Hub 以私网字面 IP 注册节点。
+  [security-model.md](security-model.md#node-listener-hub-traffic)），Hub 以私网字面 IP 注册节点。
 - 缺任何必填配置即启动失败（fail closed）。启动前先 `sessiondock-hub --check-config`（与启动同样的
   校验，只打印生效值，不绑不注册不开审计）。
 

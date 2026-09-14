@@ -1,4 +1,4 @@
-//! WP-E: process-evidence binding of a pending Codex launch, the finished
+//! Process-evidence binding of a pending Codex launch, the finished
 //! receipt's discard/archive rules, and the server-side `/proc` pairing.
 //!
 //! The "CLI" is a private bash script that re-executes itself under argv0

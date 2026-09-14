@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex reliable send through the real legacy composer (batch 32).
+"""Codex reliable send through the real legacy composer.
 
 A synthetic Codex rollout is resumed through the existing console button
 (`/api/term/takeover`, schema-2 profile `resume ["resume","{sid}"]`) against

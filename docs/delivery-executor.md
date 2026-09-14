@@ -1,10 +1,10 @@
-# Claude reliable send (batch 31)
+# Claude reliable send
 
-Batch 31 connects the [pure Claude domain](delivery.md), the
+This connects the [pure Claude domain](delivery.md), the
 [durable store](delivery-store.md), the [engine](delivery-engine.md) and the
 [async service](delivery-service.md) to a real terminal driver, a native
 acknowledgment adapter and the four Python send routes, for **Claude main
-sessions on managed instances**. Batch 32 reuses the same executor, driver
+sessions on managed instances**. Codex reuses the same executor, driver
 and routes for Codex main sessions — see
 [delivery-codex-executor.md](delivery-codex-executor.md); Grok reliable send
 is not enabled. Nothing in this batch fabricates confirmation from screen
@@ -14,9 +14,9 @@ text: a receipt becomes confirmed only from the session's own JSONL.
 
 | File | Role |
 |---|---|
-| `delivery/driver.rs` | `TerminalDriver` trait + `HostTerminalDriver`: capture screen+cursor, recognize Claude's composer (`inspect`; batch 32 adds `inspect_codex`/`inspect_for`), paste, press keys, acquire/release a server-owned lease over the existing terminal service |
+| `delivery/driver.rs` | `TerminalDriver` trait + `HostTerminalDriver`: capture screen+cursor, recognize Claude's composer (`inspect`, `inspect_codex`/`inspect_for`), paste, press keys, acquire/release a server-owned lease over the existing terminal service |
 | `delivery/claude_adapter.rs` | Turn one checked read of the session's committed `user` inputs into the Claude Machine's `UserEvidence` (association `VerifiedEnter`) |
-| `delivery/executor.rs` | `DeliveryExecutor`: drives engine dispatch batches, per-session serialization, bounded admission, the confirmation/tracking loop; `ManagedResolver` resolves the unique managed instance; batch 32 generalizes it over a `Provider` (Claude / Codex) |
+| `delivery/executor.rs` | `DeliveryExecutor`: drives engine dispatch batches, per-session serialization, bounded admission, the confirmation/tracking loop; `ManagedResolver` resolves the unique managed instance; generalized over a `Provider` (Claude / Codex) |
 | `sessions::claude_native_inputs` | Checked, restamped read of the current fence and the human `user` inputs committed after a fence (no ad-hoc file reads) |
 | `api/delivery.rs` | `POST /api/session/send`, `/draft-status`, `/outbox/retry`, `/outbox/discard` |
 
@@ -235,9 +235,9 @@ production host is used.
   the login read-only, proxy variables passed through); it skips with a
   printed reason when the binary is absent or a standalone call cannot
   authenticate. Grok is not a send target; the Codex real-CLI suite
-  (`tests/send_codex_real.py`, batch 32) skips with the printed reason when
+  (`tests/send_codex_real.py`) skips with the printed reason when
   `codex` is absent, unauthenticated or over its usage limit.
-- Grok reliable send: no executor is wired. Codex is wired in batch 32
+- Grok reliable send: no executor is wired. Codex is wired
   ([delivery-codex-executor.md](delivery-codex-executor.md)).
 - Uploaded attachment preview metadata is preserved with the receipt.
 - Native queue (`enqueue`/`dequeue`/`popAll`) association, `/rename`,

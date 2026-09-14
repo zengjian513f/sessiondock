@@ -94,7 +94,7 @@ only exact module temporary names. Envelope schema 3 contains format
 `sessiondock-lifecycle`, a monotonic revision, and full records keyed by generated
 record ID. Each record retains the original request/spec and its own revision.
 There is no receipt deletion, compaction, TTL, tombstone expiry or capacity eviction.
-Schema 5 (WP-E) adds three display fields to every record — `created_at`
+Schema 5 adds three display fields to every record — `created_at`
 (Unix seconds the intent was persisted), `finished_at` (set once by the
 transition into Exited or Failed) and `discarded` (`discard(record_id)`,
 allowed only for Exited/Failed receipts or ones with `cancel_requested`,
@@ -143,7 +143,7 @@ writes preserve every receipt and idempotency key; they neither expire entries
 nor silently evict records when the ledger grows. Whole snapshots are still
 cloned and rewritten, so this is not a high-throughput journal design.
 
-The durable backend runs on Unix and, since WP-W, on Windows. Unix syncs the
+The durable backend runs on Unix and on Windows. Unix syncs the
 temp file, renames it and then flushes the directory handle; Windows syncs the
 temp file and renames it through `MoveFileEx(REPLACE_EXISTING)` — std offers
 no directory handle to flush there, NTFS journals the rename itself, and file

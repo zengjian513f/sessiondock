@@ -1,4 +1,4 @@
-//! Codex reliable send end to end (batch 32): the HTTP router, an isolated
+//! Codex reliable send end to end: the HTTP router, an isolated
 //! ptyhost, the lifecycle launcher and the delivery ledger, with the fake
 //! Codex CLI from `tests/fake_codex_cli.py` as the only "CLI". Corpus rollouts
 //! are resumed through a schema-2 profile (`resume_args ["resume","{sid}"]`);

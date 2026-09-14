@@ -355,7 +355,7 @@ fn claude_probe_sees_the_placeholder_and_the_cleared_composer() {
         Draft::Editing
     );
     // The real Claude 2.1 styled screen encodes the placeholder's spaces as
-    // cursor-forward moves and the prompt gap as NBSP (WP-E acceptance
+    // cursor-forward moves and the prompt gap as NBSP (acceptance
     // capture); the ANSI strip must not hide the placeholder.
     let real = capture(
         &format!(

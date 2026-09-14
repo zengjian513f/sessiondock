@@ -21,7 +21,7 @@ Hub protocol/token headers are rejected on the ordinary listener because Hub
 traffic has its own authenticated node listener. API responses use `no-store`
 and `nosniff` defaults.
 
-## Node listener (hub traffic, batch 38 H1)
+## Node listener (hub traffic)
 
 The node listener requires `SESSIONDOCK_NODE_BIND`, token file, node-id file and
 peer networks together. It validates the TCP peer against the configured CIDRs,
@@ -101,7 +101,7 @@ of unrelated APIs.
 `?debug_run=<id>` selects the same test-session view as Python. Missing or damaged
 registry data behaves as an empty registry. An unknown run produces an empty view
 rather than an authorization error. See
-[read-model.md](read-model.md#debug_run-视图python-agenthubdebug_runspy).
+[read-model.md](read-model.md#debug_run-视图python-debug_runspy).
 
 ## 501 ledger (unimplemented writes)
 

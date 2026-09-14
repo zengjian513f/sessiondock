@@ -32,7 +32,7 @@ SessionDock 节点通信只走 `10.66.66.0/24`。另一条中继路径上的 `19
 服务路由（经本 mesh，不用单独的中继路径）：
 
 - Hub 访问各节点第二监听：TCP `8743`。形状见 [deploy-hub.md](deploy-hub.md) 与
-  [security-model.md](security-model.md#node-listener-hub-traffic-batch-38-h1)。
+  [security-model.md](security-model.md#node-listener-hub-traffic)。
 - Cetus 管理 SSH：`10.66.66.10` 端口 `22`。
 - Orion 仍是遗留 Python 节点，可能离线。
 

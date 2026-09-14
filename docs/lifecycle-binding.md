@@ -6,9 +6,9 @@ not proof that a CLI in the host created that native history, accepted a prompt,
 or acknowledged reliable delivery. There is no filename/name-based discovery,
 native history write, or model CLI invocation.
 
-WP-E adds a second asserting party with the same durable path: the server's
+A second asserting party uses the same durable path: the server's
 own process evidence (`BindingMethod::Process`, `lifecycle::autobind`,
-described in [lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence-wp-e)).
+described in [lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence)).
 `VerifiedNativeBinding::from_process_evidence(scope, receipt, note)` replaces
 the operator confirmation with an evidence note naming the CLI pids under the host's child and the held native
 record; everything below — intent before host call, one bind per request and
@@ -25,7 +25,7 @@ scope and the private receipt to
 `VerifiedNativeBinding::from_scope(&scope, &record, operator_confirmed)`.
 This constructor rejects missing confirmation, subagents, source disagreement,
 non-Running/cancelled receipts and malformed identifiers. Grok is bindable
-since WP-E (its native scope is `summary.json` `info.id`).
+(its native scope is `summary.json` `info.id`).
 It does not reread native files: the caller owns current catalog validation and
 HTTP authorization. `NativeScope` is trusted internal input, not an HTTP body.
 
@@ -82,7 +82,7 @@ taken effect even when its response was lost. This is not exactly-once execution
 Schema 3 adds the required nullable `binding` field. Strict valid schema-1 and
 schema-2 ledgers migrate durably by adding `binding:null`, preserving all prior
 requests, identities and cancellation flags. Schema 1 also receives the previously
-defined `cancel_requested:false`. Schema 5 (WP-E) adds `method:"operator"`,
+defined `cancel_requested:false`. Schema 5 adds `method:"operator"`,
 `evidence:null` and `bound_at:null` to every migrated binding object. Old
 envelopes with missing required current fields or mixed schemas fail closed;
 ordinary extra fields follow Python's tolerant dictionary reads.
@@ -93,7 +93,7 @@ it records an association already established by guarded Info; it is not live
 control authority. No new binding authority is issued. Schema-5 process bindings
 that an older Web recovery downgraded are restored only when both their process
 evidence and original `bound_at` confirmation remain. An observed exit of the exact
-instance keeps a Confirmed binding on the Exited receipt (WP-E): that pair is
+instance keeps a Confirmed binding on the Exited receipt: that pair is
 the durable exit receipt `/api/live`, `session/stop` and the recycle bin fold
 into `exited`; cancellation still downgrades it. `get`, `list` and authorization only request guarded status;
 they never send bind. Every probe clears its prior binding observation before

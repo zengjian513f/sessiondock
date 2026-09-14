@@ -1,4 +1,4 @@
-//! Codex executor tests (batch 32): real engine/ledger/session store, a fake
+//! Codex executor tests: real engine/ledger/session store, a fake
 //! terminal driver that plays the Codex TUI (a `›` composer with a model
 //! footer, braille particle glyphs, a dim placeholder) and appends the real
 //! rollout shape for every Enter (`turn_context`, `task_started`, the user

@@ -136,7 +136,7 @@ pub(super) fn project(record: &Record) -> Value {
         }
     };
     // `method` is who asserted the association: the operator dialog, or the
-    // server's own process evidence (WP-E); `evidence` / `bound_at` are the
+    // server's own process evidence; `evidence` / `bound_at` are the
     // persisted note and confirmation time of the latter.
     let binding = record.binding().map(|binding| {
         json!({"source":binding.spec().source(),

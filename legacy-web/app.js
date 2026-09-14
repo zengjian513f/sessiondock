@@ -6,7 +6,7 @@ const SOURCES = Object.freeze(Object.fromEntries(
   }])));
 
 // 所有界面状态都落 localStorage, 刷新后原样恢复
-// 读取缺失时回退到 Python 前缀下的同名键并一次性搬到新键（batch 44 WP-F）；写只写新键。
+// 读取缺失时回退到 Python 前缀下的同名键并一次性搬到新键；写只写新键。
 const store = {
   get(k, d) {
     try {
@@ -2161,7 +2161,7 @@ const pendingUid = name => `tmux:${name}`;
 function pendingTmuxSessions() {
   if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
   return T.pending.flatMap(t => {
-    // A receipt whose binding the server confirmed (WP-E) is represented by
+    // A receipt whose binding the server confirmed is represented by
     // the native row it binds, exactly like a declared Claude identity.
     const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
     if (!SOURCES[t.source] || (declared && S.sessions.some(s =>

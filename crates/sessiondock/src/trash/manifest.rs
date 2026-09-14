@@ -112,16 +112,16 @@ pub enum EntryState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileRole {
-    /// The session transcript (Claude/Codex JSONL; before WP-E also Grok
+    /// The session transcript (Claude/Codex JSONL; older entries also Grok
     /// `chat_history.jsonl`).
     Data,
-    /// Grok `summary.json` (entries written before WP-E).
+    /// Grok `summary.json` (older entries).
     Summary,
     /// A subagent transcript owned by the session.
     Agent,
     /// A Claude subagent `.meta.json` sidecar.
     AgentMeta,
-    /// A whole Grok session directory (WP-E; Python moves the directory).
+    /// A whole Grok session directory (Python moves the directory).
     Directory,
 }
 

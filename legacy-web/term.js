@@ -497,7 +497,7 @@ function takenOver(uid) {
   return linkedTermSession(uid)?.name || null;
 }
 
-/** Rust `outbox` (batch 31): the reliable-send routes act under this page's
+/** Rust `outbox`: the reliable-send routes act under this page's
  *  own instance lease when the console is open here, so sending from the
  *  composer never conflicts with our own console. Without a lease the server
  *  claims for itself and reports any other page's lease as an ownership
@@ -1474,7 +1474,7 @@ async function resolveNewSession(info) {
     // by the runtime catalog (same host name + instance nonce, immutable
     // metadata), never by cwd/time/filename; follow it to the real session
     // while keeping this page's existing pending terminal view.
-    // WP-E: a pending Codex/Grok launch whose binding the server confirmed
+    // A pending Codex/Grok launch whose binding the server confirmed
     // (process evidence, or the operator dialog) is followed the same way.
     const associated = current && (current.declared_sid || current.binding?.state === 'confirmed');
     const terminalLinked = associated && (T.list || []).find(row => row.name === current.name

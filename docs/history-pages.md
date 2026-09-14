@@ -1,11 +1,11 @@
 # Session list, views and finite history pages
 
 The read model behind `/api/sessions`, `/api/messages/{uid}` and the history
-pages is the lazy index plus on-demand views of [read-model.md](read-model.md)
-(batch 34). This file is the wire contract of the three routes as the
+pages is the lazy index plus on-demand views of [read-model.md](read-model.md).
+This file is the wire contract of the three routes as the
 facade `sessions::SessionStore` now serves them: what a list row carries, how a
 session is opened, which per-session codes ask the client to retry, and the
-finite history pages of batch 14. Nothing here is a frontend framework, a
+finite history pages. Nothing here is a frontend framework, a
 native-span parser or a large-image promise.
 
 ## The list: index rows plus the physical cursor
@@ -25,7 +25,7 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   `renamed_at/renamed_to`, Claude `continued_in`) plus `supported` as the
   head (96 KiB, ≤ 40/120 pieces) and tail (512 KiB) can tell it;
   `migration_warnings` (the fatal reason) only on an unsupported row, the
-  non-fatal notes live in the detail `meta` alone (batch 44 WP-C).
+  non-fatal notes live in the detail `meta` alone.
 - **Agent items.** Each `agent_items[]` entry carries `id/title/type/active/
   path/cwd/model/created/updated/size` (plus `supported`, `migration_warnings`
   when unsupported, and the cursor rule below). `active` follows Python: a Codex subagent whose
@@ -65,8 +65,8 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   always carries the projected pin state.
 
 What a summary cannot know (deltas from the old full parse, all documented
-in [read-model.md](read-model.md) and the batch-34 ledger): Claude lineage
-notes (missing ancestor, cycle, missing declared leaf — batch 35: non-fatal,
+in [read-model.md](read-model.md)): Claude lineage
+notes (missing ancestor, cycle, missing declared leaf — non-fatal,
 the timeline is the reachable part) and content-block notes surface in the
 detail `meta.migration_warnings` when the session is opened, the row lists
 like Python's;
@@ -133,9 +133,9 @@ record, index or projected-message byte quotas. The default view LRU uses
 16 entries / 128 MiB accounting and the AST cache uses 64 MiB; these affect
 retention, not whether history can be read. See [read-model.md](read-model.md).
 
-## Finite history pages (batch 14)
+## Finite history pages
 
-Batch 14 adds the Rust-only `history_pages: true` capability. The legacy UI uses
+The Rust-only `history_pages: true` capability is declared. The legacy UI uses
 it to fill its middle-history gap incrementally; Python without the capability
 retains its existing full-history behavior. No frontend framework is introduced.
 
@@ -197,7 +197,7 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
 ### Page grouping targets
 
 - Each page selects at most `SESSIONDOCK_HISTORY_PAGE_EVENTS` events (default
-  2000, 1–10000; batch 44 WP-A, was a fixed 200), 128 typed native image
+  2000, 1–10000), 128 typed native image
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
@@ -224,8 +224,8 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   selected display page. Existing media authorization and blob-cache eviction
   apply.
 
-Batch 15 adds lazy media materialization to the selected page; see [media.md](media.md).
-Batch 20 shares this grant store with per-message media continuation
+Lazy media materialization applies to the selected page; see [media.md](media.md).
+The same grant store serves per-message media continuation
 (`media_more` / `GET /api/messages/{uid}/media-page`): a message initially
 displays at most 16 typed images and continuation exposes the rest. Page byte,
 image and event targets only group transport responses; they do not reject a
@@ -252,7 +252,7 @@ Fixtures cover multi-page reconstruction, shared offsets, inherited end-zero
 events, 257 images, checkpoint changes, token scope/lifetime/eviction, byte
 budgets and retained response ownership. Browser checks use temporary synthetic
 histories and the actual legacy renderer, not a production session or model CLI.
-Batch 15 tightened the browser pause hook to the actual renderer's Promise/timer
+The browser pause hook is tied to the actual renderer's Promise/timer
 call and additionally checks unpublished DOM plus the render generation. A loose
 whole-stack match could pause a nested helper instead; earlier passing results
 alone did not establish that the renderer was genuinely suspended. Page insertion

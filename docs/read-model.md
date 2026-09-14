@@ -1,9 +1,8 @@
 # 读模型设计：惰性索引 + 按需视图
 
 这是会话读模型（列表、详情、分页、SSE、搜索、运行时身份的数据来源）的
-**唯一有效设计**。它取代了 2026-09-12 之前的"冻结库存"（全量启动解析），
-那套设计只保留在 [superseded/frozen-inventory.md](superseded/frozen-inventory.md)
-供查阅，不再是任何代码或文档的依据。
+**唯一有效设计**。它取代了 2026-09-12 之前的"冻结库存"（全量启动解析）；
+那套设计已废弃，不再是任何代码或文档的依据。
 
 ## 原则
 
@@ -18,7 +17,7 @@
 5. **没有人为的历史容量上限。** 不以单文件、单记录、记录数、事件数或索引
    大小拒绝读取；实际分配和 I/O 失败仍正常报告。
 6. **搜索不重复解析。** 每个主会话的可搜索正文按文件版本持久化在搜索文本
-   缓存里（WP-B，见下文"搜索"）；一次搜索只读缓存、只解析版本变了的会话，
+   缓存里（见下文"搜索"）；一次搜索只读缓存、只解析版本变了的会话，
    投影结果不留驻，命中语义与逐文件流式扫描完全一致。
 7. **多线程用在读摘要上。** 头/尾读取在有界阻塞线程池上并行；并行不是用来给
    全量解析提速的。
@@ -62,7 +61,7 @@
   头部 `sessionId`）；Codex 子代理 rollout 归属（头部元数据）；fork 父子
   （`history_base`/`forked_from`）。规则与 [history-pages.md](history-pages.md)
   中记录的一致，输入改为摘要。
-- **子代理运行态与续写**（`index/agent_stops`，第三十六批）：`agent_items[].active`
+- **子代理运行态与续写**（`index/agent_stops`）：`agent_items[].active`
   与 Python 一致——Codex 看子代理 rollout 尾部最后一条回合边界 `event_msg`
   （`task_started`/`turn_started` 开、`task_complete`/`turn_complete`/`turn_aborted` 关）；
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
@@ -119,7 +118,7 @@
 - 每文件解析（`parse_candidate`）与视图组合分离：leaf/owner 解析进文件 LRU，
   继承前缀按父文件 stamp 缓存，父文件 tail 追加不重读前缀，前缀改写改变
   身份并重置游标。
-- 打开视图时列表的新鲜度（第四十四批 WP-A）：`open` 复用 3 s 内（`OPEN_TTL`）
+- 打开视图时列表的新鲜度：`open` 复用 3 s 内（`OPEN_TTL`）
   的索引快照——视图自己 `stat` 它显示的文件，新文件 / 归属变化在几秒内仍会出现；
   视图读到比索引更新的字节时仍立即重扫一次，`meta` 与字节始终一致（节流过一次，
   撤回）。`/api/sessions` 与列表调用仍按索引自己的 500 ms 窗口；
@@ -127,12 +126,12 @@
   每个文件的 stamp 都与上次相同（且名称索引未变），直接复用上一份快照，不重建
   行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
 
-## debug_run 视图（Python `agenthub/debug_runs.py`）
+## debug_run 视图（Python `debug_runs.py`）
 
 - 注册表 `<SESSIONDOCK_STATE_DIR>/debug-runs.json`，与 Python 同格式
   （`{"version":1,"runs":{<run_id>:{"root":…,"created":…,"sessions":[{source,cwd,sid,uid,name}]}}}`），
   由测试工具（monkey）写入、本服务只读，`stat` 变化即重载；缺失/损坏 = 空注册表。
-  `tests/meta_import.py` 把 Python 的 `~/.local/share/agenthub/debug-runs.json` 一并搬运。
+  `tests/meta_import.py` 把 Python 的 `debug-runs.json` 注册表一并搬运。
 - 匹配（`sessions/debug_runs.rs`，Python `_match`）：行的 `uid`/`sid`/`name` 命中某 run
   的 sessions，或 `cwd`（`normpath`）等于/位于某 run 的 `root` 之下；多个 run 命中时取
   注册表顺序最靠前者。
@@ -146,7 +145,7 @@
 ## 搜索
 
 真实读根（803 会话、3.4 GB）上逐文件流式投影一次要 40 s 以上（Python 用
-`~/.cache/agenthub/search-text` 的 gzip 缓存只要 1–4 s），所以搜索文本按会话
+`search-text` 的 gzip 缓存只要 1–4 s），所以搜索文本按会话
 持久化（`search/cache.rs`、`search/service.rs`，2026-09-13）。命中语义、结果
 顺序、片段、`scanned`/`truncated` 与逐文件顺序扫描完全一致，只是正文的来源变了。
 
@@ -225,7 +224,7 @@
 由最后一个值胜出。工具 envelope 不另设层数、候选数或累计 replay work 门槛，
 媒体也不增加 Python 没有的单图容量拒绝。
 
-## 常驻内存预算（第四十四批 WP-A）
+## 常驻内存预算
 
 两个 LRU 缓存决定解析结果的保留量。单用户机器上的默认值如下，启动时由
 环境变量覆盖（`--check-config` 回显）：
@@ -236,7 +235,7 @@
 | 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节 |
 | 解码 AST 缓存 | 64 MiB | `SESSIONDOCK_AST_CACHE_MB`（0 = 不保留，追加全量重解码） | `serde_json::Value` 树的估重 |
 
-实测（真实根，2026-09-13，[performance.md](performance.md#常驻内存第四十四批-wp-a)）：
+实测（真实根，2026-09-13，[performance.md](performance.md#常驻内存)）：
 一个视图的常驻 ≈ 记账字节的 1.2–1.6 倍（文本会话）到 ≈ 文件大小的 1.6 倍
 （截图密集的 Codex 会话：≤ 2 MiB 的内嵌图片以 base64 驻留在视图里，这是
 [media.md](media.md) 的媒体口径，不在本包范围）。AST 缓存只对小于其预算的文件

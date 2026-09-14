@@ -124,7 +124,7 @@ def main():
                     notice = page.locator("#session-stop-notice")
                     expect(notice).to_be_visible()
                     expect(notice).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
-                    # WP-E: the pane closes on exit (Python parity) and the console
+                    # The pane closes on exit (Python parity) and the console
                     # button stays usable as "接管会话" because the source has a
                     # resume-capable profile; the exit explanation is remembered,
                     # the instance leaves the list and the header action flips

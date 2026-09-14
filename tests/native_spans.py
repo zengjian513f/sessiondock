@@ -125,7 +125,7 @@ def spellings(binary):
         ('aliases', [alias], True),
         ('conflict', [conflict], True),
         ('tutorial', [{'type':'text', 'text':'TUTORIAL', 'image_url':'data:image/png;base64,' + data}], 'tutorial'),
-        # Batch 34 (WP-B): a giant string outside a reviewed media position is
+        # A giant string outside a reviewed media position is
         # plain text materialized from the checked range, never an image
         # source — the tool call renders, with no media registered.
         ('arguments', [{'type':'tool_use', 'id':'t', 'name':'example', 'input':{'image':image('claude', data)}}], None),

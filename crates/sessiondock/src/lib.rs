@@ -2,9 +2,9 @@
 //! `app` is synchronous and rejects lifecycle/delivery configuration; `prepare_app`
 //! opens existing private ledgers before publishing routes. Caller owns shutdown
 //! of delivery, lifecycle, and audit. No home discovery, CLI launch, or ledger init.
-//! With a node identity configured (batch 38 H1) the same state also backs a
+//! With a node identity configured the same state also backs a
 //! second router for the node listener (`node_auth` gate, no static page).
-//! The hub binary (batch 40 H4) has its own configuration and router:
+//! The hub binary has its own configuration and router:
 //! `hub_config::HubConfig` + `hub_api::hub_app`.
 
 mod api;
@@ -183,7 +183,7 @@ pub async fn prepare_app(
     .and_then(|result| result);
     match result {
         Ok(built) => {
-            // Batch 31: native tracking runs on this runtime, spawned here from
+            // Native tracking runs on this runtime, spawned here from
             // the async context rather than the blocking build thread.
             if let Some(executor) = &built.executor {
                 executor.spawn_tracker();
@@ -192,7 +192,7 @@ pub async fn prepare_app(
             if let Some(start) = built.spawn_watch {
                 start.watcher.spawn_loop(start.reader, shutdown_for_watch);
             }
-            // WP-E: process-evidence binding of pending Codex/Grok launches
+            // Process-evidence binding of pending Codex/Grok launches
             // (Python's `new-status` resolution); no-op unless lifecycle,
             // managed runtime and the process scan are all configured.
             lifecycle::autobind::spawn(built.state);
@@ -321,7 +321,7 @@ fn build_app(
         .map_or(serde_json::json!(false), |service| service.capabilities());
     capabilities["file_thumbnails"] = serde_json::json!(false);
     capabilities["outbox_read"] = serde_json::json!(delivery.is_some());
-    // Batch 31: the legacy composer/outbox needs both the initialized ledger
+    // The legacy composer/outbox needs both the initialized ledger
     // and the terminal transport (managed instances only).
     capabilities["outbox"] = serde_json::json!(delivery.is_some() && terminal.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
@@ -355,7 +355,7 @@ fn build_app(
         ))
     });
     capabilities["live"] = serde_json::json!(proc_scan.is_some());
-    // Batch 41: true only with the bundle directory, repository, audit log,
+    // True only with the bundle directory, repository, audit log,
     // terminal transport and lifecycle service together; which CLI a worker
     // runs is decided per request from the source (503 when none).
     capabilities["bug_report"] = serde_json::json!(
@@ -365,7 +365,7 @@ fn build_app(
             && terminal.is_some()
             && lifecycle.is_some()
     );
-    // Node identity (batch 38 H1): configuration proved the four settings come
+    // Node identity: configuration proved the four settings come
     // together; the id is minted here (O_EXCL 0600) on first start. `hub`
     // stays false — a node is not a hub.
     let node = match (&config.node_token_file, &config.node_id_file) {
@@ -382,7 +382,7 @@ fn build_app(
         &config.hostname,
         &capabilities,
     )?);
-    // Batch 44 WP-A: one configurable read pool; the
+    // One configurable read pool; the
     // response/probe pools are derived by the documented ratios. The cache
     // budgets are process-wide and fixed by the first app built.
     let pools = config.pools.clone();
@@ -398,7 +398,7 @@ fn build_app(
         workers: Arc::new(Semaphore::new(pools.read_workers)),
     };
     let runtime_probes = Arc::new(Semaphore::new(pools.runtime_probes()));
-    // WP-B: the search-text cache (persistent only with the explicit
+    // The search-text cache (persistent only with the explicit
     // directory) and its own parse budget; the warm-up thread (persistent
     // cache only) stops with the shutdown token.
     let search = Arc::new(search::service::SearchService::open(
@@ -420,7 +420,7 @@ fn build_app(
         watcher: watcher.clone(),
         reader: reader.clone(),
     });
-    // Batch 41: every dependency of a bug-report worker must be configured —
+    // Every dependency of a bug-report worker must be configured —
     // the bundle directory and repository, the audit log (events.jsonl is the
     // core of a report), the terminal transport and the lifecycle service —
     // else the route stays 501 `bug_report_disabled`.
@@ -467,7 +467,7 @@ fn build_app(
         }
         _ => None,
     };
-    // WP-G: live question cards (Claude hook files under the state dir) and
+    // Live question cards (Claude hook files under the state dir) and
     // Codex approvals (read-only screen capture of the managed instance).
     let prompts = Arc::new(
         bridge::LivePrompts::new(config.state_dir.as_deref(), config.ptyhost_dir.as_deref())

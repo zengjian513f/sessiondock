@@ -98,7 +98,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     } else {
         skipped_warnings("grok", &records)
     };
-    // WP-E: the session directory's `summary.json` declares its own id
+    // The session directory's `summary.json` declares its own id
     // (`info.id`, the value Grok's `--session-id`/`--resume` name), so a
     // Grok main session has a native scope for binding, stop and takeover.
     // A summary that failed validation declares nothing.

@@ -82,7 +82,7 @@ enum Query {
         after_sequence: u64,
         limit: usize,
     },
-    /// Executor hook (batch 31): one trusted closure with exclusive engine
+    /// Executor hook: one trusted closure with exclusive engine
     /// access on the same single blocking worker, under the same admission
     /// and shutdown rules as a read. It replies through its own channel; the
     /// empty JSON reply only carries the permit until the caller drops it.
@@ -178,7 +178,7 @@ impl DeliveryService {
         })
         .await
     }
-    /// Trusted in-process executor access (batch 31). The closure runs on the
+    /// Trusted in-process executor access. The closure runs on the
     /// coordinator's blocking worker with exclusive `&mut DeliveryEngine`; it
     /// is serialized with every read, admitted through the same capacity, and
     /// refused after shutdown. Nothing here performs terminal or native I/O;

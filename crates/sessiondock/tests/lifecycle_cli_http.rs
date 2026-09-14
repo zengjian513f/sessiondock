@@ -580,7 +580,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
     assert_eq!(backend["code"], "backend_unsupported");
     let (status, _) = post(&router, "/api/term/backend", json!({"backend":"screen"})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    // Managed stop (batch 29): the resumed fake CLI exits on Ctrl-D; the
+    // Managed stop: the resumed fake CLI exits on Ctrl-D; the
     // later exact kill below then finishes on an already exited receipt.
     let (status, stopped) = post(
         &router,

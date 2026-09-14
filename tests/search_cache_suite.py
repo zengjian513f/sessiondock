@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Search-text cache contract (WP-B) over the search_suite fixtures; no Chromium.
+"""Search-text cache contract over the search_suite fixtures; no Chromium.
 
 Explicit directory and cache entries, cold/hot result identity,
 append/rewrite invalidation, cached unsupported sessions, restart reuse, LRU

@@ -67,7 +67,7 @@ agent ownership semantics remain unchanged.
 
 - `size` is Python's `_dir_size`: regular files under the session directory
   are included recursively. The additive `chat_exists` stays; `size_scope` is
-  gone (batch 44 WP-C).
+  gone.
 - Summary and chat inputs have no additional Rust-only size, depth or entry
   gates.
 - A malformed summary contributes no metadata, matching Python. Readable

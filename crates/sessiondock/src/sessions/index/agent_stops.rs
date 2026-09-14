@@ -1,5 +1,5 @@
-//! Claude subagent stop points from the owner's main transcript (batch 36,
-//! WP-C; Python `_claude_agent_stops` / `_collect_agent_stops`).
+//! Claude subagent stop points from the owner's main transcript
+//! (Python `_claude_agent_stops` / `_collect_agent_stops`).
 //!
 //! A subagent that stops (finished, failed, killed, gone with its process)
 //! makes the parent write a `<task-notification>` or the foreground `Agent`

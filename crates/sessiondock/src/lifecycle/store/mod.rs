@@ -13,7 +13,7 @@ use std::{
 };
 
 pub const LEDGER_FILENAME: &str = "lifecycle-ledger.json";
-/// Current ledger envelope schema. Schema 5 (WP-E) adds `finished_at` /
+/// Current ledger envelope schema. Schema 5 adds `finished_at` /
 /// `discarded` to every record and `method` / `evidence` / `bound_at` to a
 /// binding; older envelopes migrate strictly on open.
 pub const SCHEMA: u32 = 5;

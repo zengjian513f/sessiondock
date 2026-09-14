@@ -62,8 +62,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 - [TODO.md](../TODO.md) — The only unfinished-work list.
 - [route-ledger.md](route-ledger.md) — Compact route-family inventory checked against the router and legacy calls.
-- Current behavior lives in the relevant `docs/` contract and its tests. The archived
-  `MIGRATION_HISTORY.md` is not required reading and is never implementation authority.
+- Current behavior lives in the relevant `docs/` contract and its tests.
 
 ## 6. Validate and run locally
 

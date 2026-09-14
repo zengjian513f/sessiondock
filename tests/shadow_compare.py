@@ -35,7 +35,7 @@ def clip(v, n=96):
     return t if len(t) <= n else t[:n] + "…"
 
 def multi_chunk(source, L, R):
-    """docs/migration.md batch 36 (WP-G): a multi-part Codex/Grok tool output.
+    """A multi-part Codex/Grok tool output.
     Python `_tool_output` shows one chunk's `output` (the last chunk when the
     joined text ends with a chunk, otherwise the first envelope part); Rust
     shows the concatenation of every chunk in part order, so Python's text is

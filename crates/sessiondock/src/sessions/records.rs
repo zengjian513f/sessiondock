@@ -14,7 +14,7 @@ pub(super) use native_records::scan_native_records;
 #[cfg(test)]
 mod scanner_contract_tests;
 
-/// Runtime AST budget (batch 44 WP-A): `SESSIONDOCK_AST_CACHE_MB`.
+/// Runtime AST budget: `SESSIONDOCK_AST_CACHE_MB`.
 fn max_weight() -> usize {
     budgets::caches().ast_bytes
 }
