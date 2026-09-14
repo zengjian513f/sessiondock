@@ -40,6 +40,13 @@ The page then says "已被 iPhone · Safari 抢占" or, with no label, "已被�
 抢占", appending the address only when the server marked it as elsewhere.
 Server-side messages name the holder as `"<label>，<ip>"` (`PublicOwner::describe`).
 
+Only an explicit pty open asks. A pty the page restores on its own — selecting
+a session whose console was remembered open, a reload, the collapsed pane
+behind a question card — claims without `force` and, on a conflict, silently
+stays in the conversation view (`claimTermOwnership(..., auto)`; audit
+`terminal.pane restore-held`); the console button then opens it explicitly
+with the usual prompt.
+
 ## Identity, secrecy, and validation
 
 Ownership combines page ID, a random server token and a server connection ID.
