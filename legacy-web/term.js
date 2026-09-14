@@ -2,8 +2,6 @@
 
 // 接管会话: 在服务端把它用 tmux resume 起来, 然后把终端嵌在会话详情底部。
 // 会话跑在 tmux 里, 所以关掉页面/重启 sessiondock 都不会打断它。
-const TERM_RENDER_BATCH_MS = 20;
-const TERM_RENDER_BATCH_MAX = 32 * 1024;
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
 const TERM_CONNECT_TIMEOUT_MS = 15_000;
@@ -1880,7 +1878,7 @@ function ensureTerm(name) {
   view = {
     name, host, term, fit, ws: null, connectTimer: null, reconnectTimer: null,
     reconnectDelay: 500, scrollPos: 0, ansiTail: '',
-    outputBuffer: '', outputTimer: null, fitFrame: null,
+    fitFrame: null,
     lastResizeKey: '', lastResizeWs: null,
     activationEpoch: 0,
     attachPromise: null, revoked: false,
@@ -2004,38 +2002,16 @@ function ensureTerm(name) {
   return view;
 }
 
-function flushTermOutput(view) {
-  if (!view) return;
-  if (view.outputTimer) clearTimeout(view.outputTimer);
-  view.outputTimer = null;
-  let s = view.outputBuffer;
-  view.outputBuffer = '';
-  if (!s) return;
+// 每个 WebSocket 包原样立即交给 xterm，页面这层不再攒 20 ms 合帧：xterm 自己
+// 的 WriteBuffer 已按帧合并解析，Claude Code / Codex 的整屏重画都包在
+// DEC 2026（synchronized output）里，由 xterm 压到一帧内绘制，不会再画出
+// “先清行后重写”的中间态。攒批只会让每次按键回显固定多等一个定时器
+// （实测 localhost p50 从 ~30 ms 降到 <1 ms，见 tests/bench_term_echo_browser.py）。
+function writeTermOutput(view, chunk) {
+  if (!chunk) return;
   // 亮色页面只反射“深底/浅字”的显式颜色；Codex 已是浅色的 diff 保持原样。
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
-  view.term.write(terminalColorChunk(view, s));
-}
-
-function queueTermOutput(view, chunk) {
-  if (!chunk) return;
-  view.outputBuffer += chunk;
-  // 重连时可能一次回放上万行历史；大块数据立即交给 xterm 分片解析，不能让
-  // 随后的实时输入输出排在一个巨型合帧后面。
-  if (view.outputBuffer.length >= TERM_RENDER_BATCH_MAX) {
-    flushTermOutput(view);
-    return;
-  }
-  if (view.outputTimer) return;
-  // Claude TUI 的一次重画常拆成多个 PTY 包（先清行、再写新内容）。合并到同一
-  // 浏览器帧，避免把清除后的中间态画出来，看上去像终端忽宽忽窄。
-  view.outputTimer = setTimeout(() => flushTermOutput(view), TERM_RENDER_BATCH_MS);
-}
-
-function clearTermOutput(view) {
-  if (!view) return;
-  if (view.outputTimer) clearTimeout(view.outputTimer);
-  view.outputTimer = null;
-  view.outputBuffer = '';
+  view.term.write(terminalColorChunk(view, chunk));
 }
 
 function termPaneRenderable(view = currentTermViewObject()) {
@@ -2433,7 +2409,6 @@ async function attachOwnedTerm(view, allowRefresh = true) {
   // Rust raw HTTP input reuses this exact page lease and binding tuple; the
   // server still decides, so a revoked/expired token simply gets refused.
   view.inputLease = bound ? { token, ...binding } : null;
-  clearTermOutput(view);
   view.ansiTail = '';
   view.selectionLocked = false;
   view.selectionSnapshot = null;
@@ -2490,7 +2465,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
       ? new TextEncoder().encode(e.data).length : e.data.byteLength;
     outputChunks++;
     if (!outputTimer) outputTimer = setTimeout(flushOutputAudit, 750);
-    queueTermOutput(view, s);
+    writeTermOutput(view, s);
   };
   ws.onopen = () => {
     if (view.ws !== ws) return;
@@ -2511,8 +2486,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
     ConsoleUI.errors.set(uid,
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
-    queueTermOutput(view, dec.decode());
-    flushTermOutput(view);
+    writeTermOutput(view, dec.decode());
     flushOutputAudit();
     browserAuditEvent('terminal.closed', {
       name, code: event.code, reason: event.reason, clean: event.wasClean,
