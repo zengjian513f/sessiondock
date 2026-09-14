@@ -68,8 +68,8 @@ def check_page(page, nodes, hub):
     assert all(name in side for name in ("NodeA", "NodeB", "Vega")), side
     assert len(set(page.evaluate("S.sessions.map(s => s.uid)"))) == 3
     page.wait_for_function('document.querySelector("#session-total").textContent === "3"')
-    # Machine filter: double-click keeps one machine, a click adds another.
-    page.get_by_role("button", name="NodeB 1", exact=True).dblclick()
+    # Machine filter: right-click keeps one machine, while an ordinary click adds another.
+    page.get_by_role("button", name="NodeB 1", exact=True).click(button="right")
     page.wait_for_function('visible().length === 1')
     assert page.locator("#session-total").inner_text() == "1"
     page.get_by_role("button", name="NodeA 1", exact=True).click()
@@ -77,6 +77,48 @@ def check_page(page, nodes, hub):
     assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.nodesOff'))") == [NID["c"]]
     page.get_by_role("button", name="Vega 1", exact=True).click()
     page.wait_for_function('visible().length === 3')
+    node_a = page.get_by_role("button", name="NodeA 1", exact=True)
+    node_a.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 40,
+                                          "button": 0, "clientX": 20, "clientY": 20})
+    page.wait_for_timeout(550)
+    node_a.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 40,
+                                        "button": 0, "clientX": 20, "clientY": 20})
+    node_a.dispatch_event("click")
+    assert page.evaluate("[...Nodes.off].sort()") == [NID["b"], NID["c"]]
+    page.get_by_role("button", name="NodeB 1", exact=True).click()
+    page.get_by_role("button", name="Vega 1", exact=True).click()
+    page.wait_for_function('visible().length === 3')
+    page.get_by_role("button", name="NodeB 1", exact=True).dblclick()
+    page.wait_for_function('visible().length === 3')
+    page.wait_for_function("""nid => document.querySelector(
+      `#node-chips button[data-node="${nid}"]`)?.title ===
+      '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
+    assert page.get_by_role("button", name="NodeB 1", exact=True).get_attribute("title") == \
+        "点击选择或取消；右键或长按只选这台机器"
+
+    # Agent Type has the same exclusive gesture. Give the three synthetic rows distinct types
+    # locally, then verify both desktop right-click and touch long-press (including the browser's
+    # trailing click, which must not undo the exclusive choice).
+    page.evaluate("""() => {
+      const types = ['claude', 'codex', 'grok'];
+      S.sessions.forEach((row, index) => { row.source = types[index]; });
+      renderChips(); renderSide();
+    }""")
+    page.locator('#chips button[data-source="codex"]').click(button="right")
+    assert page.evaluate("[...S.off].sort()") == ["claude", "grok"]
+    grok = page.locator('#chips button[data-source="grok"]')
+    grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
+                                        "button": 0, "clientX": 20, "clientY": 20})
+    page.wait_for_timeout(550)
+    grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
+                                      "button": 0, "clientX": 20, "clientY": 20})
+    grok.dispatch_event("click")
+    assert page.evaluate("[...S.off].sort()") == ["claude", "codex"]
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["claude", "codex"]
+    page.evaluate("""() => {
+      S.off.clear(); store.set('off', []); loadSessions(true);
+    }""")
+    page.wait_for_function("S.sessions.length === 3 && S.sessions.every(row => row.source === 'claude')")
     # Search streams NDJSON progress; a slow machine keeps the bar visible.
     page.locator("#q").fill("needle")
     page.locator("#q").press("Enter")
