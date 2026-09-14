@@ -9,7 +9,7 @@ use axum::{
         rejection::{JsonRejection, QueryRejection},
         ws::{WebSocketUpgrade, rejection::WebSocketUpgradeRejection},
     },
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
@@ -17,9 +17,11 @@ use serde_json::{Value, json};
 
 use crate::{
     error::ApiError,
+    hub::proxy::display_ip,
     state::AppState,
     terminal::{
-        ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget, input,
+        Claimant, ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
+        device::device_label, input,
     },
 };
 
@@ -85,9 +87,22 @@ fn python_truthy(value: &Value) -> bool {
     }
 }
 
+/// The claimant's ownership label (Python `_display_ip`). Only the
+/// authenticated node listener trusts the hub's forwarded `X-Real-IP` /
+/// `X-Forwarded-For`; on the browser listener the TCP peer is the label, so a
+/// page cannot pick its own. Display only — it never enters lease identity.
+fn claimant_ip(hub: bool, headers: &HeaderMap, peer: Option<IpAddr>) -> IpAddr {
+    let untrusted = HeaderMap::new();
+    display_ip(if hub { headers } else { &untrusted }, peer)
+        .parse()
+        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
+}
+
 pub async fn claim(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    headers: HeaderMap,
     body: Result<Json<ClaimRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let service = enabled(&state)?;
@@ -105,18 +120,29 @@ pub async fn claim(
             "终端预约请求格式无效",
         )
     })?;
-    let ip = peer
-        .map(|Extension(ConnectInfo(address))| address.ip())
-        .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    let ip = claimant_ip(
+        hub.is_some(),
+        &headers,
+        peer.map(|Extension(ConnectInfo(address))| address.ip()),
+    );
+    let claimant = Claimant {
+        ip,
+        label: device_label(
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default(),
+        ),
+    };
     let result = tokio::select! {
         biased;
         _ = state.shutdown.cancelled() => return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
         result = async {
             match (&body.uid,&body.instance_id,&body.record_id,&body.launch_id) {
-                (None,None,None,None) => service.claim(&body.name,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from),
+                (None,None,None,None) => service.claim(&body.name,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from),
                 (None,Some(instance),Some(record),Some(launch)) => {
                     let target=launch_target(&state,&body.name,record,launch,instance).await?;
-                    service.claim_launch(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
+                    service.claim_launch(target,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 (Some(uid),Some(instance),None,None) => {
                     let observed=super::runtime::observe(&state).await?.ok_or_else(binding_unavailable)?;
@@ -124,19 +150,21 @@ pub async fn claim(
                         target.name()==body.name && target.uid()==uid && target.instance_id()==instance
                     ).ok_or_else(binding_unavailable)?;
                     authorize_native(&state,target).await?;
-                    service.claim_bound(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
+                    service.claim_bound(target,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 _ => Err(binding_unavailable()),
             }
         } => result?,
     };
     let status = StatusCode::from_u16(result.status()).unwrap_or(StatusCode::SERVICE_UNAVAILABLE);
-    Ok((
-        status,
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(result.into_api_json()),
-    )
-        .into_response())
+    // A holder at the claimant's own display address is "another page", not a
+    // place: the page then drops the address from its takeover prompt.
+    let same_address = status == StatusCode::CONFLICT && result.owner().ip == ip;
+    let mut body = result.into_api_json();
+    if let (StatusCode::CONFLICT, Value::Object(fields)) = (status, &mut body) {
+        fields.insert("same_address".into(), Value::Bool(same_address));
+    }
+    Ok((status, [(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
 
 #[derive(Deserialize)]

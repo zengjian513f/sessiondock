@@ -54,12 +54,14 @@ pub const BUILD_CHECKED_PATHS: [&str; 4] = [
     "/api/term/create",
 ];
 /// Browser headers passed through to the node; `X-Real-IP` is added.
-pub const FORWARDED_HEADERS: [&str; 5] = [
+/// `User-Agent` only feeds the terminal ownership device label.
+pub const FORWARDED_HEADERS: [&str; 6] = [
     "Content-Type",
     "X-SessionDock-Page",
     "X-SessionDock-Trace",
     "X-SessionDock-Build",
     "Range",
+    "User-Agent",
 ];
 /// Node headers a streamed (non-JSON, non-SSE) answer keeps.
 pub const STREAMED_HEADERS: [&str; 7] = [

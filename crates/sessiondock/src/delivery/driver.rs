@@ -699,7 +699,7 @@ impl HostTerminalDriver {
                 code: "terminal_ownership",
                 message: format!(
                     "终端控制权正由其他页面持有（{}）；请从持有控制台的页面发送，或先释放/接管该控制台",
-                    owner.ip
+                    owner.describe()
                 ),
                 ambiguous: false,
                 owner_ip: Some(owner.ip),
