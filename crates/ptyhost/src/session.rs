@@ -187,6 +187,9 @@ pub struct Session {
     native_binding: guard::binding::State,
     directory: PathBuf,
     created: u64,
+    /// Stable for one Linux boot. A later client can use this to retire a
+    /// pre-reboot record even if its numeric PID has already been reused.
+    boot_id: Option<String>,
     token: String,
     history: usize,
     size: Mutex<(u16, u16)>,
@@ -213,6 +216,19 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn current_boot_id() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let value = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_owned())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 fn atomic_write(path: &Path, data: &str) -> std::io::Result<()> {
@@ -306,6 +322,7 @@ impl Session {
             native_binding: guard::binding::State::default(),
             directory,
             created: now_secs(),
+            boot_id: current_boot_id(),
             token,
             history,
             size: Mutex::new((cols.max(1), rows.max(1))),
@@ -412,6 +429,9 @@ impl Session {
             "backend": "ptyhost",
         });
         let map = info.as_object_mut().unwrap();
+        if let Some(boot_id) = &self.boot_id {
+            map.insert("boot_id".into(), json!(boot_id));
+        }
         if cfg!(windows) {
             map.insert("port".into(), json!(*lock(&self.port)));
             map.insert("token".into(), json!(self.token));

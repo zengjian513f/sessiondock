@@ -25,7 +25,7 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 - `NodeToken::load(path)`：整文件去首尾空白后必须匹配 `[A-Za-z0-9._~+/=-]{32,256}`；
   `verify()` 用 `subtle::ConstantTimeEq` 常量时间比较（长度不同即不匹配，与
   `secrets.compare_digest` 一致）；`Debug` 输出脱敏。
-- 与 Python 的 `_allowed()` 规则（带 `X-AgentHub-Protocol` 必须同时带正确 token 且协议为
+- 与 Python 的 `_allowed()` 规则（带 `X-SessionDock-Protocol` 必须同时带正确 token 且协议为
   `"1"`）由 H1 的 `node_auth` 中间件实现，本模块只提供校验原语。
 
 ## 注册表（`registry.rs`）
@@ -114,8 +114,8 @@ client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件�
   `Content-Length`（多值必须相同）；否则读到对端关闭；`100 Continue` 跳过；
 - 状态行与每条响应头分别以 64 KiB 为界，响应头最多 100 条；不对全部响应头另设累计上限；
 - JSON 正文上限 `JSON_LIMIT` = 64 MiB，超限是 `invalid_response`，绝不部分解析；
-- 请求头/目标含 CR/LF 直接拒绝；每个请求都带 `X-AgentHub-Node-Token`、
-  `X-AgentHub-Protocol: 1`、`Accept-Encoding: identity`，未指定 `Connection` 时加
+- 请求头/目标含 CR/LF 直接拒绝；每个请求都带 `X-SessionDock-Node-Token`、
+  `X-SessionDock-Protocol: 1`、`Accept-Encoding: identity`，未指定 `Connection` 时加
   `Connection: close`（WebSocket 升级由调用方给 `Connection: Upgrade`）。
 
 接口：`Client::json()`（一次 JSON 往返）、`Client::open()`（返回带流式 `Body` 的
@@ -128,8 +128,8 @@ TCP/TLS 流与已预读字节供 101 升级双向转发）、`Client::connect()`
 
 ## 节点侧：第二监听与鉴权（H1，`config.rs` / `api/node_auth.rs` / `lib.rs` / `main.rs`）
 
-节点不放宽 loopback 监听：`security.rs::local_only` 对任何 `x-agenthub-protocol` /
-`x-agenthub-node-token` 头仍答 403 `hub_unsupported`（带真凭据也一样）。Hub 流量走
+节点不放宽 loopback 监听：`security.rs::local_only` 对任何 `x-sessiondock-protocol` /
+`x-sessiondock-node-token` 头仍答 403 `hub_unsupported`（带真凭据也一样）。Hub 流量走
 **第二监听**，四个变量必须同时给出，缺任何一个都是启动错误
 （`SESSIONDOCK_NODE_BIND, SESSIONDOCK_NODE_TOKEN_FILE, SESSIONDOCK_NODE_ID_FILE and
 SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）：
@@ -150,7 +150,7 @@ SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）
 
 1. TCP 对端地址（不看代理头；`::ffff:` 映射还原为 IPv4）∈ `SESSIONDOCK_NODE_PEERS`，否则
    `{"error":"forbidden","code":"node_peer_denied"}`；
-2. `X-AgentHub-Protocol` 恰为 `1`，且 `X-AgentHub-Node-Token` 与凭据常量时间相等
+2. `X-SessionDock-Protocol` 恰为 `1`，且 `X-SessionDock-Node-Token` 与凭据常量时间相等
    （`NodeToken::verify`），否则 `{"error":"node authentication required","code":"node_auth_required"}`
    （Python `/api/meta` 的原文）。
 
@@ -283,9 +283,9 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 **注册是服务器端操作**（Python 的 `Registry` 类，网页无注册路由）：子命令
 `sessiondock-hub register --name --url --token-file [--color] [--id]`（token 从文件读，绝不进
 进程列表）、`remove <nid>`、`list`。`register` 调 `Registry::register`，注册时打节点的
-`/api/meta` 必须经过节点的**第二监听**（带 `X-AgentHub-Node-Token` 与 `X-AgentHub-Protocol: 1`）。
+`/api/meta` 必须经过节点的**第二监听**（带 `X-SessionDock-Node-Token` 与 `X-SessionDock-Protocol: 1`）。
 
-**页面（`assets.rs` 的 `Mode::Hub`）**：同一份 legacy-web 快照，`__AGENTHUB_MODE__=hub`、
+**页面（`assets.rs` 的 `Mode::Hub`）**：同一份 legacy-web 快照，`__SESSIONDOCK_MODE__=hub`、
 hostname `SessionDock`、能力声明 `hub_capabilities()`（`backend:rust, hub:true,
 storage_namespace:"sessiondock.hub.", history_pages, media_continuation`——每机能力
 terminal/outbox/files/trash/live/audit 都不声明，页面按每台机器的 `/api/term/list.capabilities`
@@ -321,9 +321,9 @@ capabilities.js 读取前把路径补进 `storage_namespace`（对应 Python 按
 400 `操作必须明确指定同一台机器`，附件来自另一台 → 400 `附件来自另一台机器`。机器未注册 → 404；
 离线且 `recheck` 仍失败 → 503 `{error,node_offline,node_id,offline_since}`；
 `send/outbox/retry/term/send/term/create` 校 `body._build == 前端 build`，否则 409
-`{reload:true,build}`。`proxy` 带节点头转发，透传 `Content-Type,X-AgentHub-Page,X-AgentHub-Trace,
-X-AgentHub-Build,Range`、加 `X-Real-IP`（`_display_ip`：`X-Real-IP`→首个 `X-Forwarded-For`→TCP
-对端）：JSON 经 `public_payload` 改写并带 `X-AgentHub-Decoded-Length`；`text/event-stream` 按
+`{reload:true,build}`。`proxy` 带节点头转发，透传 `Content-Type,X-SessionDock-Page,X-SessionDock-Trace,
+X-SessionDock-Build,Range`、加 `X-Real-IP`（`_display_ip`：`X-Real-IP`→首个 `X-Forwarded-For`→TCP
+对端）：JSON 经 `public_payload` 改写并带 `X-SessionDock-Decoded-Length`；`text/event-stream` 按
 `data:` 行改写（45 s 读超时）；WebSocket `/api/term/attach` 101 后用 `hyper::upgrade::on` +
 `hyper_util::rt::TokioIo` 拿到浏览器连接，和 H2 客户端 `Body::into_raw` 交还的节点 TCP/TLS 流做
 `tokio::io::copy_bidirectional` 裸转发（预读字节先发）；其它正文流式透传并保留

@@ -62,6 +62,10 @@ Partial ptyhost frame reads have no deadline; ordinary control operations use th
 same 10-second timeout as Python. Normal EOF preserves final output, while
 revocation and shutdown cancel the bridge promptly.
 
+The browser abandons an attach that remains in WebSocket `CONNECTING` for 15
+seconds, refreshes host liveness and enters the normal reconnect path. This
+transport timeout does not imply that the independent ptyhost process exited.
+
 `/api/term/list` publishes fresh observed sessions plus Python-compatible pending
 and source information. Explicit stop and force takeover cover managed and
 external sessions through lifecycle discovery; resume creates a newly observed

@@ -22,6 +22,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::any,
 };
+use futures_util::StreamExt;
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -515,6 +516,7 @@ async fn handle(
         client,
         &target,
         &node,
+        state.shutdown.clone(),
         Forward {
             method: method.as_str(),
             path: &resolved.path,
@@ -538,9 +540,11 @@ async fn aggregated(state: &HubState, path: &str, query: &Params) -> Result<Resp
         "/api/sessions" => aggregate::sessions(registry, client, query).await?,
         "/api/search" if aggregate::progress_requested(query) => {
             let stream = aggregate::search_stream(registry.clone(), client.clone(), query)?;
-            let body = Body::from_stream(futures_util::StreamExt::map(stream, |line| {
-                Ok::<_, std::io::Error>(axum::body::Bytes::from(line))
-            }));
+            let body = Body::from_stream(
+                stream
+                    .take_until(state.shutdown.clone().cancelled_owned())
+                    .map(|line| Ok::<_, std::io::Error>(axum::body::Bytes::from(line))),
+            );
             let mut response = (StatusCode::OK, body).into_response();
             let headers = response.headers_mut();
             headers.insert(

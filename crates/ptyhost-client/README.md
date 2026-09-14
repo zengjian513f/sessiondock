@@ -29,6 +29,10 @@ It does **not** connect, inspect PIDs, delete stale files, or prove the host is
 alive. Missing directories are empty; malformed/name-mismatched/symlink metadata
 is skipped. Other discovery errors and budgets are explicit. A synthetic PID is
 not interpreted as a dead process, including on macOS where `/proc` is absent.
+After a failed exact-instance probe, the lifecycle caller may explicitly invoke
+`retire_if_local_process_dead`: on Linux it removes only the same unchanged record
+whose boot ID differs, whose legacy creation time predates this boot, or whose
+host PID is gone/zombie. Missing exact random launch names also mean exited.
 
 Tokens are private deserialization-only data, never part of Debug/Serialize
 public DTOs. `argv`, `sock`, `port`, and untyped `meta` are also omitted from
@@ -54,8 +58,9 @@ treat it as a verified association.
 Observation is not control authority. PID and creation time cannot prove a
 persistent instance; absent launcher nonce remains explicitly unknown. Neither
 a record's existence nor a failed Info probe proves a running/exited child.
-This crate performs no `/proc` probes, fallback name-prefix associations, or
-record cleanup; process-identity verification lives in the server runtime.
+Ordinary discovery performs no `/proc` probes, fallback name-prefix associations,
+or cleanup. The explicit dead-record reconciliation above is separate from
+runtime association and never treats a live but unreachable process as exited.
 
 `BoundTarget::from_observation` additionally requires explicit protocol capability
 and a launcher nonce, then pins the caller's exact full native source/SID/UID.

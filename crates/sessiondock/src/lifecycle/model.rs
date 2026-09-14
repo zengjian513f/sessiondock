@@ -547,7 +547,10 @@ impl Record {
             || !identifier(&self.request_id, 8, 128)
             || !nonce(&self.launch_id)
             || !nonce(&self.instance_id)
-            || !self.host_name.strip_prefix("sessiondock-").is_some_and(nonce)
+            || !self
+                .host_name
+                .strip_prefix("sessiondock-")
+                .is_some_and(nonce)
             || self.revision == 0
             || (self.state == State::Failed) != self.failure.is_some()
             || (self.state == State::CancelRequested && !self.cancel_requested)

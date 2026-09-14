@@ -1,7 +1,9 @@
 # Controlled process observations
 
 This optional capability only observes configured host records. It does not
-discover CLI homes, control processes, clean records, or grant terminal access.
+discover CLI homes, control processes, or grant terminal access. Ordinary
+inventory reads do not clean records; lifecycle recovery may retire an exact
+unchanged Linux record after the operating system proves its host process dead.
 It requires `SESSIONDOCK_PTYHOST_DIR`; unset disables host observations. External CLI processes use the
 Python-shaped native scan of [liveness.md](liveness.md), which `/api/live`
 merges with the observations described here.
@@ -9,7 +11,7 @@ merges with the observations described here.
 ## Evidence, not name inference
 
 The Python backend names existing terminal sessions using
-`agenthub-{source}-{sid[:8]}`. Its `term_host.new_session` invocation does not
+`sessiondock-{source}-{sid[:8]}`. Its `term_host.new_session` invocation does not
 currently supply ptyhost's `--meta` argument. The Python live subsystem's
 process arguments, environment, file descriptors, working directories and time
 heuristics live in the separate scan ([liveness.md](liveness.md)); none of them

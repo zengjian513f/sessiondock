@@ -134,7 +134,7 @@ are idempotent, conflicting chunks fail without rewriting accepted bytes.
 Conversation attachments use `POST /api/session/attachment?uid=...&name=...`
 with the raw file body (including files whose MIME type is `application/json`).
 The server resolves the selected native session's cwd and saves files under
-`agenthub_attachments/<id>/`; no client cwd or prior file-browser grant is needed.
+`sessiondock_attachments/<id>/`; no client cwd or prior file-browser grant is needed.
 Write service configuration is still required. An optional `id` groups a draft's
 files, identical files are reused, and different content with the same name gets
 a numbered suffix. Metadata records the resulting path when configured. The
@@ -143,8 +143,8 @@ uid, and `uid=bug-report` retains its dedicated configured repository.
 
 Upload responses include the destination node's `path_style` (`windows` or
 `posix`) and a native `relative_path`. The composer inserts Windows paths as
-`.\agenthub_attachments\<id>\<name>` and POSIX paths as
-`./agenthub_attachments/<id>/<name>`, regardless of the browser's OS. For older
+`.\sessiondock_attachments\<id>\<name>` and POSIX paths as
+`./sessiondock_attachments/<id>/<name>`, regardless of the browser's OS. For older
 nodes without `path_style`, Windows drive and UNC absolute paths identify the
 convention. Windows canonical drive paths are returned with the ordinary drive
 spelling, so `\\?\C:\…` does not defeat configured-root comparisons. Spaces and Unicode names stay intact; these are references in the

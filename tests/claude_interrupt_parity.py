@@ -29,10 +29,11 @@ sys.dont_write_bytecode = True
 from history_parity import (  # noqa: E402
     BINARY as DEBUG_BINARY, REPO, Corpus, get_json, isolated_server)
 from provider_parity import load_adapters  # noqa: E402
+from python_oracle import discover_source  # noqa: E402
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
-PYTHON_SOURCE = REPO.parent / "sessiondock"
+PYTHON_SOURCE = discover_source(REPO)
 CASES = ("interrupted-sibling", "fast-escape", "two-level-offshoot", "deferred-abort")
 
 

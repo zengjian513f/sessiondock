@@ -219,7 +219,7 @@ renders the Codex layout (particle rows, `›` with a dim placeholder, `model ·
 cwd` footer, `Working … esc to interrupt` while delayed) and appends the real
 rollout shape (`turn_context`, `task_started`, user `response_item` with the
 passthrough turn ID, `user_message`, optional assistant reply,
-`task_complete`) to the resumed rollout under `AGENTHUB_TEST_CODEX_ROOT`;
+`task_complete`) to the resumed rollout under `SESSIONDOCK_TEST_CODEX_ROOT`;
 knobs `--delay`, `--swallow N`, `--no-turn-id`, `--duplicate`, `--reply`,
 `--busy-footer`.
 

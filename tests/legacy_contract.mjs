@@ -42,10 +42,10 @@ test('local media tokens render without granting remote image requests', () => {
   assert.equal(loadFunction(python, 'safeMediaSrc')('https://example.com/pixel.png'), 'https://example.com/pixel.png');
 });
 
-test('a page without capabilities retains the Python behavior', () => {
+test('a page without declared capabilities uses SessionDock defaults', () => {
   const {SessionDockCapabilities: caps} = contextWithCapabilities();
   assert.equal(caps.declared, false);
-  assert.equal(caps.namespace, '');
+  assert.equal(caps.namespace, 'sessiondock.');
   for (const name of ['audit', 'live', 'outbox', 'files', 'search', 'terminal', 'watch']) {
     assert.equal(caps.allows(name), true, name);
   }
@@ -206,6 +206,47 @@ test('a stale Rust terminal view cannot reconnect to a replacement instance', as
   const result = await loadFunction(context, 'attachOwnedTerm', read('term.js'))({name: 'pane', instanceId: 'old-instance'});
   assert.equal(result, false);
   assert.match(errors.get('codex:uid'), /实例关联已失效/);
+});
+
+test('a WebSocket stuck connecting is retired through the normal reconnect path', async () => {
+  let callback, timer = 0;
+  const calls = [], errors = new Map();
+  const ws = {readyState: 1, close: () => calls.push('close')};
+  const view = {name: 'pane', ws, connectTimer: null,
+    term: {write: text => calls.push(['write', text])}};
+  const T = {name: 'pane', ws, views: new Map([['pane', view]])};
+  const context = contextWithCapabilities(disabled, {
+    TERM_CONNECT_TIMEOUT_MS: 15000, T, ConsoleUI: {errors},
+    setTimeout: (fn, delay) => { callback = fn; calls.push(['timer', delay]); return ++timer; },
+    clearTimeout: id => calls.push(['clear', id]), renderTakeoverBtn: () => calls.push('render'),
+    browserAuditEvent: (...args) => calls.push(['audit', ...args]),
+    pollLive: async force => calls.push(['poll', force]),
+    scheduleTermReconnect: target => calls.push(['reconnect', target]),
+  });
+  context.cancelTermConnectTimeout = loadFunction(context, 'cancelTermConnectTimeout', read('term.js'));
+  const arm = loadFunction(context, 'armTermConnectTimeout', read('term.js'));
+
+  arm(view, ws, 'tmux:uid', 'connection');
+  assert.deepEqual(calls.slice(0, 2), [['clear', null], ['timer', 15000]]);
+  callback();
+  assert.equal(view.ws, ws, 'an already-open socket is never expired');
+  assert.equal(calls.includes('close'), false);
+
+  ws.readyState = 0;
+  arm(view, ws, 'tmux:uid', 'connection');
+  callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(view.connectTimer, null);
+  assert.equal(view.ws, null);
+  assert.equal(T.ws, null);
+  assert.match(errors.get('tmux:uid'), /建立超时.*自动重试/);
+  assert.equal(calls.filter(call => call === 'close').length, 1);
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'write' && /建立超时/.test(call[1])));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'audit'
+    && call[1] === 'terminal.connect_timeout' && call[2].timeout_ms === 15000
+    && call[4].uid === 'tmux:uid' && call[4].connectionId === 'connection'));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'poll' && call[1] === true));
+  assert.ok(calls.some(call => Array.isArray(call) && call[0] === 'reconnect' && call[1] === view));
 });
 
 test('manual terminal capability does not enable the reliable-send composer', async () => {
@@ -533,8 +574,8 @@ test('the installable shell is SessionDock', () => {
   assert.match(index, /<meta name="apple-mobile-web-app-title" content="SessionDock">/);
   assert.match(index, /data-app-name="SessionDock" data-storage-key="sessiondock\.pwa-install-dismissed"/);
   assert.match(index, /localStorage\.getItem\(prefix \+ 'theme'\)/);
-  for (const page of ['files.html', 'file.html']) assert.doesNotMatch(read(page), /<title>[^<]*SessionDock/);
-  assert.doesNotMatch(read('file.js') + read('files.js'), /· SessionDock'/);
+  for (const page of ['files.html', 'file.html']) assert.match(read(page), /<title>[^<]*SessionDock/);
+  assert.match(read('file.js') + read('files.js'), /· SessionDock'/);
 });
 
 test('all pages load the optional contract before their consumers', () => {

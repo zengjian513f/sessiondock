@@ -64,7 +64,7 @@ Run module regressions with
 Configuration isolation regressions run with
 `cargo test -p sessiondock --lib config::tests --locked`.
 After building the server, run
-`python3 tests/names_parity.py --python-source ../agenthub --browser` for
+`python3 tests/names_parity.py --python-source PATH --browser` for
 synthetic adapter differential checks and real legacy Chromium behavior.
 The Python checkout is imported only as adapter code, with every native root,
 name-index path, and cross-session lookup explicitly restricted to this tool's

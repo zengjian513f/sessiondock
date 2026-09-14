@@ -28,5 +28,5 @@ message JSON. Literal user-written `[图片]` text is preserved.
 Run the differential only after building the server:
 
 ```bash
-python3 tests/media_parity.py --python-source ../agenthub
+python3 tests/media_parity.py --python-source PATH
 ```

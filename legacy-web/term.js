@@ -4,6 +4,9 @@
 // 会话跑在 tmux 里, 所以关掉页面/重启 sessiondock 都不会打断它。
 const TERM_RENDER_BATCH_MS = 20;
 const TERM_RENDER_BATCH_MAX = 32 * 1024;
+// Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
+// WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
+const TERM_CONNECT_TIMEOUT_MS = 15_000;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
@@ -1727,10 +1730,12 @@ function legacyCopyText(text, term) {
   });
   document.body.appendChild(input);
   input.select();
-  try { document.execCommand('copy'); } finally {
+  let copied = false;
+  try { copied = document.execCommand('copy'); } finally {
     input.remove();
     term.focus();
   }
+  return copied;
 }
 
 function copyTermSelection(term) {
@@ -1742,6 +1747,56 @@ function copyTermSelection(term) {
     else legacyCopyText(text, term);
   } catch {
     legacyCopyText(text, term);
+  }
+  return true;
+}
+
+function decodeOsc52Clipboard(payload) {
+  const separator = payload.indexOf(';');
+  if (separator < 0) return null;
+  const selection = payload.slice(0, separator);
+  const encoded = payload.slice(separator + 1);
+  // Reading the workstation clipboard back into a remote process would leak
+  // local data. OSC 52 set/clear is supported; the `?` query is intentionally
+  // consumed without a reply.
+  if (encoded === '?') return {selection, query: true};
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 === 1) return null;
+  try {
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+    return {selection, text: new TextDecoder().decode(bytes), bytes: bytes.length};
+  } catch {
+    return null;
+  }
+}
+
+function handleOsc52Clipboard(view, payload) {
+  const decoded = decodeOsc52Clipboard(payload);
+  const audit = (status, method = '') => browserAuditEvent('terminal.clipboard', {
+    name: view.name, operation: decoded?.query ? 'query' : 'write', status, method,
+    selection: String(decoded?.selection || '').slice(0, 16), bytes: decoded?.bytes || 0,
+  }, null, {uid: T.uid || '', connectionId: view.auditConnectionId || '',
+    severity: status === 'failed' || status === 'malformed' ? 'warning' : 'info'});
+  if (!decoded) {
+    audit('malformed');
+    return true;
+  }
+  if (decoded.query) {
+    audit('ignored');
+    return true;
+  }
+  const fallback = () => {
+    if (legacyCopyText(decoded.text, view.term)) audit('copied', 'execCommand');
+    else audit('failed');
+  };
+  try {
+    const writing = navigator.clipboard?.writeText(decoded.text);
+    if (writing) Promise.resolve(writing).then(
+      () => audit('copied', 'clipboard'), fallback,
+    );
+    else fallback();
+  } catch {
+    fallback();
   }
   return true;
 }
@@ -1805,7 +1860,7 @@ function ensureTerm(name) {
   });
   const fit = new FitAddon.FitAddon();
   view = {
-    name, host, term, fit, ws: null, reconnectTimer: null,
+    name, host, term, fit, ws: null, connectTimer: null, reconnectTimer: null,
     reconnectDelay: 500, scrollPos: 0, ansiTail: '',
     outputBuffer: '', outputTimer: null, fitFrame: null,
     lastResizeKey: '', lastResizeWs: null,
@@ -1825,6 +1880,10 @@ function ensureTerm(name) {
     } catch { view.unicode11 = null; }
   }
   term.open(host);
+  // Claude Code uses OSC 52 after mouse selection. xterm parses the sequence
+  // but has no browser clipboard policy of its own, so the embedding page must
+  // opt in before Ctrl+V can paste the selected text back into the PTY.
+  view.osc52 = term.parser.registerOscHandler(52, payload => handleOsc52Clipboard(view, payload));
   // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
   // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
   // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
@@ -1874,6 +1933,14 @@ function ensureTerm(name) {
     if (copy && term.hasSelection()) {
       if (e.type === 'keydown' && !e.repeat) copyTermSelection(term);
       return false;                       // 有选区时绝不能把 Ctrl+C 送给 Claude/Codex
+    }
+    const paste = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'v';
+    if (paste) {
+      if (e.type === 'keydown') {
+        view.selectionLocked = false;
+        view.selectionSnapshot = null;
+      }
+      return false;                       // 交给浏览器派发 paste，xterm 再做 bracketed paste
     }
     if (e.type === 'keydown' && !['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
       view.selectionLocked = false;
@@ -2399,6 +2466,8 @@ async function attachOwnedTerm(view, allowRefresh = true) {
     queueTermOutput(view, s);
   };
   ws.onopen = () => {
+    if (view.ws !== ws) return;
+    cancelTermConnectTimeout(view);
     browserAuditEvent('terminal.opened', {name, cols, rows}, null,
       {uid: T.uid || '', connectionId});
     if (T.name === name) {
@@ -2411,6 +2480,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
   };
   ws.onclose = event => {
     if (view.ws !== ws) return;           // 主动换 socket 后，旧 close 事件作废
+    cancelTermConnectTimeout(view);
     ConsoleUI.errors.set(uid,
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
@@ -2477,6 +2547,7 @@ async function attachOwnedTerm(view, allowRefresh = true) {
     browserAuditEvent('terminal.error', {name}, null,
       {uid: T.uid || '', connectionId, severity: 'error'});
   };
+  armTermConnectTimeout(view, ws, uid, connectionId);
   return true;
 }
 
@@ -2523,8 +2594,38 @@ function cancelTermReconnect(view = currentTermViewObject()) {
   view.reconnectTimer = null;
 }
 
+function cancelTermConnectTimeout(view = currentTermViewObject()) {
+  if (!view) return;
+  clearTimeout(view.connectTimer);
+  view.connectTimer = null;
+}
+
+/** 浏览器对 WebSocket 握手没有超时；永久 CONNECTING 必须退出本次租约并重走
+ *  现有的存活核对/重连链路，不能据此把独立的 ptyhost 进程判成已退出。 */
+function armTermConnectTimeout(view, ws, uid, connectionId) {
+  cancelTermConnectTimeout(view);
+  view.connectTimer = setTimeout(() => {
+    view.connectTimer = null;
+    if (view.ws !== ws || ws.readyState !== 0) return;
+    view.ws = null;                       // 先作废，随后 close 事件不能重复安排重连
+    if (T.name === view.name) T.ws = null;
+    const reason = '控制台连接建立超时；已中止本次连接并自动重试。';
+    ConsoleUI.errors.set(uid, reason);
+    renderTakeoverBtn();
+    try { view.term.write(`\r\n\x1b[33m⚠ ${reason}\x1b[0m\r\n`); } catch {}
+    browserAuditEvent('terminal.connect_timeout', {
+      name: view.name, timeout_ms: TERM_CONNECT_TIMEOUT_MS,
+    }, null, {uid: uid || '', connectionId, severity: 'warning'});
+    try { ws.close(); } catch {}
+    Promise.resolve(pollLive(true)).finally(() => {
+      if (T.views.get(view.name) === view && !view.ws) scheduleTermReconnect(view);
+    });
+  }, TERM_CONNECT_TIMEOUT_MS);
+}
+
 function dropTermSocket(view = currentTermViewObject()) {
   if (!view) return;
+  cancelTermConnectTimeout(view);
   const ws = view.ws;
   view.ws = null;                        // 先失效引用，close 回调便不会误判成意外断线
   if (T.name === view.name) T.ws = null;

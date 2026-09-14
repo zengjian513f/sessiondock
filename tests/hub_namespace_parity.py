@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Python-oracle parity corpus for the hub wire namespace (`federation.public_payload`).
 
-Loads `<python-source>/sessiondock/federation.py` in-process (no package import, no
+Loads the selected checkout's `federation.py` in-process (no package import, no
 server) and runs a fixed payload corpus through `public_payload`, recording the
 scoped payload — or the `ValueError` text — per case. The corpus covers every
 rewritten key (uid/from_uid/to_uid/continued_in, media `src`, `epoch`), the
@@ -15,7 +15,7 @@ DIFF. This script keeps that fixture honest: without `--write` it regenerates
 the expectations from the oracle and fails when the committed fixture differs
 (the Python source moved, or the corpus changed without a rewrite).
 
-    python3 tests/hub_namespace_parity.py --python-source ../sessiondock [--write]
+    python3 tests/hub_namespace_parity.py --python-source PATH [--write]
 """
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ import json
 import sys
 from pathlib import Path
 
+from python_oracle import discover_source, source_file
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/hub_namespace_cases.json"
 NID = "a" * 32
@@ -35,10 +37,11 @@ MEDIA = "/api/media/" + "d" * 32
 
 
 def load_oracle(source: Path):
-    path = source / "sessiondock/federation.py"
-    if not path.is_file():
-        raise SystemExit(f"FAIL oracle: {path} not found")
-    spec = importlib.util.spec_from_file_location("sessiondock_federation_oracle", path)
+    try:
+        path = source_file(source, "federation.py")
+    except (OSError, RuntimeError) as error:
+        raise SystemExit(f"FAIL oracle: {error}") from None
+    spec = importlib.util.spec_from_file_location("_sessiondock_federation_oracle", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -191,8 +194,8 @@ def build(oracle):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--python-source", default=str(ROOT.parent / "sessiondock"),
-                    help="directory containing sessiondock/federation.py (the oracle)")
+    ap.add_argument("--python-source", default=str(discover_source(ROOT)),
+                    help="checkout containing the Python federation oracle")
     ap.add_argument("--fixture", type=Path, default=FIXTURE)
     ap.add_argument("--write", action="store_true", help="rewrite the fixture from the oracle")
     args = ap.parse_args()

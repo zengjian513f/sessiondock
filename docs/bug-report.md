@@ -14,8 +14,8 @@ dependency is configured.
 
 | Setting | Meaning |
 | --- | --- |
-| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/agenthub/bug-reports`). Created as needed and chmodded to `0700` on Unix. |
-| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `agenthub_attachments/`. Ordinary filesystem paths are accepted. |
+| `SESSIONDOCK_BUG_REPORT_DIR` | Bundle root (Python `~/.local/share/sessiondock/bug-reports`). Created as needed and chmodded to `0700` on Unix. |
+| `SESSIONDOCK_BUG_REPORT_REPO` | The repository the worker investigates (Python `PROJECT_ROOT`): the worker's cwd and the parent of `sessiondock_attachments/`. Ordinary filesystem paths are accepted. |
 
 The two variables are all-or-nothing (`--check-config` prints
 `bug_report_dir=` / `bug_report_repo=`). The route additionally needs the
@@ -83,7 +83,7 @@ become `<redacted>` at every level; paths are kept.
 ### Attachments
 
 `resolve_attachments` follows Python: at most 12 items, each `path` resolving
-to an existing regular file below `<repo>/agenthub_attachments/` (a symlink is
+to an existing regular file below `<repo>/sessiondock_attachments/` (a symlink is
 accepted when its resolved target remains below that root), `number` from the
 item or the position, `mime` ≤ 100 chars,
 `kind` ∈ image/video/audio else `file`, `name` ≤ 200 chars, `relative_path`
@@ -91,7 +91,7 @@ relative to the repository. The prompt lists them as `附件N: ./<relative_path>
 
 `POST /api/session/attachment?uid=bug-report&name=<file>[&id=N]` is Python's
 raw upload special case: the request body is the file, written through the
-file write service into `<repo>/agenthub_attachments/<id>/<name>` (`id` is
+file write service into `<repo>/sessiondock_attachments/<id>/<name>` (`id` is
 `[1-9]\d{0,8}` or the next free batch number; the name is sanitized like
 Python `_attachment_name`; identical content is reused, a clash becomes
 `stem__N.suffix`; nothing is ever overwritten). Response: Python's `{ok, name,

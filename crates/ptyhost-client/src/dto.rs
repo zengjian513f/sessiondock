@@ -151,6 +151,8 @@ pub(crate) struct HostRecord {
     #[serde(default)]
     pub created: u64,
     #[serde(default)]
+    pub boot_id: Option<String>,
+    #[serde(default)]
     pub attached: bool,
     #[serde(default)]
     pub cwd: String,
@@ -173,6 +175,7 @@ impl HostRecord {
             && self.host_pid == other.host_pid
             && self.pid == other.pid
             && self.created == other.created
+            && self.boot_id == other.boot_id
             && self.sock == other.sock
             && self.port == other.port
             && self.token == other.token

@@ -31,7 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fixture_gen import SOURCES, generate
 from history_parity import (BATCH35_ROWS, BINARY as DEBUG, REPO, Corpus, claude_row, codex_message,
                             codex_row, encoded, get_json, isolated_server)
-from provider_parity import load_adapters
+from provider_parity import adapter_module, load_adapters
+from python_oracle import source_file
 
 RELEASE = REPO / "target/release" / DEBUG.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG
@@ -83,7 +84,7 @@ def value(row, key):
 
 def bind(python_source, root):
     inst = load_adapters(python_source, fixture_root=root)
-    mod = sys.modules["sessiondock.adapters"]
+    mod = adapter_module(inst)
     mod.media.register_path = lambda *a, **k: None
     for name, methods in (("claude", ("list_sessions",)), ("grok", ("list_sessions",)),
                           ("codex", ("list_sessions", "scan_sessions", "_find_session_path"))):
@@ -142,7 +143,7 @@ def edges(corpus, python_source):
                    "forked_from_id": "codex-edge-parent", "history_mode": "paginated",
                    "history_base": {"thread_id": "codex-edge-parent", "end_byte_offset": cut}}),
         codex_message("user", "fork q")], [])
-    text = (python_source / "sessiondock/adapters.py").read_text(encoding="utf-8")
+    text = source_file(python_source, "adapters.py").read_text(encoding="utf-8")
     block = text[text.find("class CodexAdapter"):text.find("class GrokAdapter")]
     if "ai-title" in block or "aiTitle" in block:
         sid = "codex-tail-rename"

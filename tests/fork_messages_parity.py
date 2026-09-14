@@ -23,6 +23,7 @@ from history_parity import (
     BINARY as DEBUG_BINARY, REPO, Corpus, codex_message, codex_row, encoded,
     get_json, isolated_server)
 from provider_parity import load_adapters
+from python_oracle import discover_source
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
@@ -122,7 +123,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
+    parser.add_argument("--python-source", type=Path, default=discover_source(REPO))
     args = parser.parse_args()
     if args.fixtures_only is not None:
         root = args.fixtures_only.expanduser().resolve()
