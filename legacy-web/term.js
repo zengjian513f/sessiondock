@@ -512,18 +512,36 @@ function termSendLease(name) {
   return { lease: out };
 }
 
+/** The pane's pinned identity for a page that holds no console lease here:
+ *  the native `uid`+`instance_id` or the launch triple, exactly what attach
+ *  would claim. The server then writes under its ordinary-claimant rule
+ *  (refused while any page or server send holds the lease) instead of the
+ *  Python backend's unauthenticated `send-keys`. */
+function termRowBinding(name, uid) {
+  const pending = String(uid || '').startsWith('tmux:');
+  const row = (pending ? (T.pending || []) : (T.list || [])).find(row => row.name === name);
+  if (!row?.instance_id) return null;
+  if (row.record_id && row.launch_id && !row.stale) {
+    return { record_id: row.record_id, launch_id: row.launch_id, instance_id: row.instance_id };
+  }
+  return row.uid ? { uid: row.uid, instance_id: row.instance_id } : null;
+}
+
 /** Rust `terminal_input`: raw HTTP text/keys under this page's exact terminal
- *  lease. Only the two legacy HTTP paths change shape (named keys, and raw
- *  text with `enter:false`); a text submit with Enter is the reliable-send
- *  composer (see `termSendLease`), so it returns null instead of a body.
- *  Python-served pages and undeclared capabilities keep the original body. */
+ *  lease, or with an empty token plus the pane's pinned identity when the
+ *  console is not open on this page (the composer's Esc and question cards,
+ *  Grok text). Only the legacy HTTP shapes change (named keys, a bracketed
+ *  `paste`, and raw text with `enter:false`); a Claude/Codex text submit is
+ *  the reliable-send composer (see `termSendLease`), so a bare `text` returns
+ *  null. Python-served pages and undeclared capabilities keep the body. */
 function termInputBody(name, body) {
   if (SessionDockCapabilities.config.backend !== 'rust'
       || !SessionDockCapabilities.allows('terminal_input')) return body;
   const lease = T.views.get(name)?.inputLease;
+  const identity = lease || termRowBinding(name, body.uid);
   const out = { name, page: TERM_PAGE_ID, token: lease?.token || '' };
   for (const key of ['uid', 'instance_id', 'record_id', 'launch_id']) {
-    if (lease?.[key]) out[key] = lease[key];
+    if (identity?.[key]) out[key] = identity[key];
   }
   if (Array.isArray(body.keys)) out.keys = body.keys;
   else if (typeof body.paste === 'string') out.paste = body.paste;
@@ -3044,17 +3062,20 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         return false;
       }
     } else {
-      const pendingText = !!text && uid.startsWith('tmux:');
+      // Text on the raw path — a pending console before its first native
+      // record, or a source without reliable send such as Grok — is Python's
+      // `submit_text`: a bracketed paste, then Enter once the CLI took it.
+      const rawText = !!text;
       const body = termInputBody(name, keys ? { name, keys, uid }
-        : pendingText ? { name, paste: text, uid } : { name, text });
+        : rawText ? { name, paste: text, uid } : { name, text });
       if (!body) {
         if (queuedId) discardQueuedUserMessage(uid, queuedId);
         alert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
         return false;
       }
       d = await post('api/term/send', body);
-      if (pendingText && !d.error) {
-        // Claude/Codex may briefly show a paste-burst marker. Sending Enter in
+      if (rawText && !d.error) {
+        // The CLI may briefly show a paste-burst marker. Sending Enter in
         // the same tick can be swallowed while that marker is active.
         await new Promise(resolve => setTimeout(resolve, 600));
         d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
