@@ -204,6 +204,37 @@ impl HostClient {
         .map_err(|_| Error::Timeout)?
     }
 
+    /// Retire an exact local host record only when the operating system proves
+    /// that its process belongs to an earlier boot or no longer exists. A
+    /// missing record is also a conclusive exit for a caller holding the exact
+    /// random launch name. Protocol errors with a live PID remain untouched.
+    pub async fn retire_if_local_process_dead(&self, name: &str) -> Result<bool> {
+        validate_name(name)?;
+        timeout(self.limits.operation_timeout, async {
+            let Some(before) = self.read_record(name).await? else {
+                return Ok(true);
+            };
+            if !local_process_dead(&before).await {
+                return Ok(false);
+            }
+
+            // Refuse to clean a record replaced while process evidence was
+            // collected. Generated lifecycle names are never intentionally
+            // reused, but the reread also covers manual replacement.
+            let Some(after) = self.read_record(name).await? else {
+                return Ok(true);
+            };
+            if !before.same_identity(&after) {
+                return Ok(false);
+            }
+            let _ = fs::remove_file(self.directory.join(format!("{name}.json"))).await;
+            let _ = fs::remove_file(self.directory.join(format!("{name}.sock"))).await;
+            Ok(true)
+        })
+        .await
+        .map_err(|_| Error::Timeout)?
+    }
+
     /// Read the reviewed metadata a record declares, without connecting or
     /// probing liveness. It reports what an unreachable host claimed; the
     /// caller must not treat it as a verified association.
@@ -423,6 +454,46 @@ impl HostClient {
         #[cfg(not(unix))]
         Err(Error::InvalidEndpoint)
     }
+}
+
+#[cfg(target_os = "linux")]
+async fn local_process_dead(record: &HostRecord) -> bool {
+    if let (Some(record_boot), Ok(current_boot)) = (
+        record.boot_id.as_deref(),
+        fs::read_to_string("/proc/sys/kernel/random/boot_id").await,
+    ) && record_boot != current_boot.trim()
+    {
+        return true;
+    }
+
+    // Records written before boot_id was added can still be assigned to an
+    // earlier boot using the kernel boot time and ptyhost's creation timestamp.
+    if record.created != 0
+        && let Ok(stat) = fs::read_to_string("/proc/stat").await
+        && let Some(booted) = stat.lines().find_map(|line| {
+            line.strip_prefix("btime ")
+                .and_then(|value| value.parse::<u64>().ok())
+        })
+        && record.created < booted
+    {
+        return true;
+    }
+
+    match fs::read_to_string(format!("/proc/{}/stat", record.host_pid)).await {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Ok(stat) => {
+            stat.rfind(')')
+                .and_then(|at| stat.get(at + 2..))
+                .and_then(|rest| rest.split_whitespace().next())
+                == Some("Z")
+        }
+        _ => false,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn local_process_dead(_record: &HostRecord) -> bool {
+    false
 }
 
 fn check_ok(value: &Value) -> Result<()> {

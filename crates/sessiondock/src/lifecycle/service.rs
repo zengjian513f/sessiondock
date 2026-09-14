@@ -819,6 +819,20 @@ impl Core {
                     Err(_) => Observation::Unavailable,
                 }
             }
+            _ if record.state() != State::Starting => match self
+                .client
+                .retire_if_local_process_dead(record.host_name())
+                .await
+            {
+                Ok(true) => {
+                    self.targets.remove(record.record_id());
+                    Observation::Exited
+                }
+                _ => Observation::Unavailable,
+            },
+            // A freshly spawned ptyhost has not necessarily written its record
+            // before the first readiness probe. The owned live child remains
+            // authoritative while Starting; missing metadata is not an exit.
             _ => Observation::Unavailable,
         }
     }

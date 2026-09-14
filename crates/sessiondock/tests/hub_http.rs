@@ -1100,6 +1100,30 @@ async fn bulk_writes_trash_and_audit_route_by_machine() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_ends_an_open_hub_sse_response() {
+    let hub = Hub::new().await;
+    hub.a.set(json!({"pause_stream": true}));
+    let a = scoped(NID_A, "claude:same-file-hash");
+    let response = request(
+        &hub.router,
+        "GET",
+        &format!("/api/watch?uid={a}&start=0"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    hub.shutdown.cancel();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("open SSE body ignored hub shutdown")
+            .is_none()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn websocket_is_copied_raw_after_the_101() {
     let hub = Hub::new().await;
     let port = hub.listen().await;

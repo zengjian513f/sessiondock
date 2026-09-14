@@ -8,8 +8,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from route_ledger import ROUTER, api_path, loose_match, rust_inventory
+from python_oracle import discover_source, package_dir
 
-PY = Path(__file__).resolve().parents[2] / "sessiondock" / "sessiondock"
+ROOT = Path(__file__).resolve().parents[1]
+PY = package_dir(discover_source(ROOT), ("server.py", "hub.py"))
 SKIP = {"_json", "_send", "_audit_begin", "_audit_body", "_allowed", "_static", "read_body"}
 PREFIX = {"/api/media": "{token}", "/api/messages": "{uid}", "/api/session": "{uid}"}
 RUST_RE = re.compile(r'\.route\(\s*"([^"]+)"\s*,\s*(get|post|put|delete|patch|any)\s*\(')

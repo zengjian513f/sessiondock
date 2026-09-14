@@ -100,7 +100,7 @@ that inherited a pane through `continued_in` (below).
   origin's Claude is a barrier between it and the pane root; the list shows
   only the continued session, so the console follows it. The origin owns a
   pane when a verified host record declares its uid (Python's pane named
-  `agenthub-claude-<sid[:8]>`; Rust never matches names, the launcher's
+  `sessiondock-claude-<sid[:8]>`; Rust never matches names, the launcher's
   metadata is the declaration) or one of its own CLI processes descends from
   a host's session root. Only Claude sessions look for an origin; a spawned
   grandchild is not a continuation and never inherits. Without a configured

@@ -112,7 +112,6 @@ def main():
                 chunk_requests = [url for url in requests if "/api/session/files/upload?" in url]
                 assert len(chunk_requests) == 2, chunk_requests
                 assert not list((write / ".sessiondock-upload").iterdir())
-                assert not (write / ".sessiondock-upload").exists()
                 # submit() opened the task drawer: the upload shows as completed.
                 expect(manager.locator("#tasks-dialog")).to_be_visible()
                 expect(manager.locator("#tasks-list")).to_contain_text("上传")

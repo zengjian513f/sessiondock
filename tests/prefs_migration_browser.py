@@ -1,21 +1,15 @@
 #!/usr/bin/env python3
-"""One-time preference migration from the Python `sessiondock.*` keys (batch 44 WP-F).
+"""SessionDock preference namespace and persistence browser contract.
 
-A same-origin deployment that replaced the Python page still holds every
-preference under `sessiondock.<key>` (files pages: bare `sessiondock-files-<key>`).
-Seeded through an init script before the page's own scripts run, the real
-legacy page must:
+Seeded through an init script before the page's own scripts run, the served
+page must:
 
-1. apply the Python values on first load (theme, font, sidebar width, nesting,
+1. apply `sessiondock.*` values on first load (theme, font, sidebar width, nesting,
    timeline view, compact turns, chip filter, cache limit, tool icons, unread
-   badges, last selection) — the `watcher` monkey's F8 scenario;
-2. copy each read value to `sessiondock.<key>` exactly once and never write the
-   `sessiondock.*` keys again (a later change lands only under the new prefix);
-3. prefer an existing `sessiondock.<key>` over the Python value;
-4. on `files.html`, key preferences as `sessiondock.files-<key>` and migrate
-   both older spellings (`sessiondock.sessiondock-files-<key>`, then the bare
-   Python `sessiondock-files-<key>`);
-5. leave a fresh browser (nothing to migrate) at the defaults.
+   badges, last selection);
+2. write changes back only under that namespace and retain them after reload;
+3. key `files.html` preferences as `sessiondock.files-<key>`;
+4. leave a fresh browser at the defaults and use only SessionDock keys.
 
 Synthetic corpus only; the Playwright context blocks service workers and
 every request outside the isolated server.
@@ -62,13 +56,9 @@ def main():
             "sessiondock.toolIcons": '"boss"', "sessiondock.unread": json.dumps([[unread, {"count": 3}]]),
             "sessiondock.sel": json.dumps(target), "sessiondock.nodesOff": '["stale-node"]',
             "sessiondock.settingsTab": '"appearance"',
-            # 3: an existing Rust key wins over the Python one.
-            "sessiondock.mobilePage": '"detail"', "sessiondock.mobilePage": '"list"',
-            # 4: files pages — the pre-rename Rust spelling beats the bare Python key;
-            #    the clipboard only exists under the Python key.
-            "sessiondock-files-view": json.dumps({"view": "list", "order": "desc", "sort": "size", "hidden": True}),
-            "sessiondock.sessiondock-files-view": json.dumps({"view": "grid", "order": "desc", "sort": "size", "hidden": True}),
-            "sessiondock-files-clipboard": json.dumps({"action": "copy", "node": None, "paths": [str(files / "notes.md")]}),
+            "sessiondock.mobilePage": '"list"',
+            "sessiondock.files-view": json.dumps({"view": "grid", "order": "desc", "sort": "size", "hidden": True}),
+            "sessiondock.files-clipboard": json.dumps({"action": "copy", "node": None, "paths": [str(files / "notes.md")]}),
         }
         with isolated_server(corpus, args.binary, file_roots=(files,)) as (base, _), sync_playwright() as playwright:
             launch = {"headless": True}
@@ -77,7 +67,7 @@ def main():
             browser = playwright.chromium.launch(**launch)
             try:
                 errors = []
-                # --- seeded browser: the Python preferences apply and migrate once ---
+                # --- seeded browser: SessionDock preferences apply and persist ---
                 context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block",
                                               color_scheme="light")
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -102,60 +92,53 @@ def main():
                 assert state["sel"] == target and state["unread"] == [[unread, {"count": 3}]], state
                 assert state["nodesOff"] == ["stale-node"], state
                 page.wait_for_function("uid => S.sel === uid && document.querySelectorAll('#msgs .msg').length > 0", arg=target)
-                # `mobilePage` existed under both prefixes: the Rust key must win.
+                # The current namespace is the only preference source.
                 assert page.evaluate("store.get('mobilePage', null)") == "list"
-                # 2: copied forward once, under the new prefix only.
+                # Every seeded preference remains under the SessionDock prefix.
                 dump = page.evaluate(LS_DUMP)
                 for key in ("theme", "font", "width", "nest", "view", "compactTurns", "off", "cacheMb",
                             "toolIcons", "unread", "sel", "nodesOff"):
                     assert dump.get("sessiondock." + key) is not None, (key, sorted(dump))
                     assert dump["sessiondock." + key] == seed["sessiondock." + key], key
-                for key in ("theme", "font", "width", "nest", "view", "compactTurns", "off", "cacheMb", "toolIcons", "nodesOff"):
-                    assert dump["sessiondock." + key] == seed["sessiondock." + key], (key, dump["sessiondock." + key])
-                assert dump["sessiondock.mobilePage"] == '"list"' and dump["sessiondock.mobilePage"] == '"detail"'
-                # A change made on the Rust page lands under the new prefix only.
+                assert dump["sessiondock.mobilePage"] == '"list"'
+                # Changes update the same namespace.
                 page.locator("#nest-toggle").click()
                 page.wait_for_function("S.nest === false")
                 after = page.evaluate(LS_DUMP)
-                assert after["sessiondock.nest"] == "false" and after["sessiondock.nest"] == "true", after
+                assert after["sessiondock.nest"] == "false", after
                 page.locator("#settings").click()
                 page.locator("#setting-theme").select_option("light")
                 page.wait_for_function("document.documentElement.dataset.theme === 'light'")
                 after = page.evaluate(LS_DUMP)
-                assert after["sessiondock.theme"] == '"light"' and after["sessiondock.theme"] == '"dark"', after
+                assert after["sessiondock.theme"] == '"light"', after
                 page.keyboard.press("Escape")
-                # The Python keys are the same set as seeded: nothing was added or removed there.
-                assert {k: v for k, v in after.items() if k.startswith("sessiondock.")} == {k: v for k, v in seed.items() if k.startswith("sessiondock.")}
-                # A reload keeps the Rust values (light theme chosen above, nest off) — no re-migration.
+                assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in after), after
+                # A reload keeps the updated values.
                 page.reload(wait_until="networkidle")
                 page.wait_for_function("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0")
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert page.evaluate("S.nest") is False
 
-                # 4: files.html keys.
+                # Files preferences use the same SessionDock namespace.
                 manager = context.new_page()
                 manager.on("pageerror", lambda error: errors.append(str(error)))
                 manager.goto(f"{base}/files.html?{urlencode({'uid': corpus.uid(sid), 'ref': str(files) + '/'})}", wait_until="networkidle")
                 expect(manager.locator("#entries")).to_contain_text("other.txt")
-                assert manager.evaluate("document.querySelector('#view').value") == "grid", "pre-rename Rust spelling wins over the Python key"
+                assert manager.evaluate("document.querySelector('#view').value") == "grid"
                 assert manager.evaluate("document.querySelector('#sort').value") == "size"
                 expect(manager.locator("#order")).to_contain_text("降序")
                 dump = manager.evaluate(LS_DUMP)
                 assert json.loads(dump["sessiondock.files-view"])["view"] == "grid", dump
                 assert json.loads(dump["sessiondock.files-clipboard"])["action"] == "copy", dump
-                assert dump["sessiondock-files-view"] == seed["sessiondock-files-view"]
-                assert dump["sessiondock-files-clipboard"] == seed["sessiondock-files-clipboard"]
-                assert dump["sessiondock.sessiondock-files-view"] == seed["sessiondock.sessiondock-files-view"]
                 assert "文件管理 · SessionDock" in manager.title()
                 manager.locator("#view").select_option("list")
                 manager.wait_for_function("JSON.parse(localStorage.getItem('sessiondock.files-view')).view === 'list'")
                 dump = manager.evaluate(LS_DUMP)
-                assert dump["sessiondock-files-view"] == seed["sessiondock-files-view"], "Python files key never written"
-                assert dump["sessiondock.sessiondock-files-view"] == seed["sessiondock.sessiondock-files-view"], "old Rust spelling never written"
-                assert not [k for k in dump if k.startswith("sessiondock.sessiondock-files-") and k != "sessiondock.sessiondock-files-view"], dump
+                assert json.loads(dump["sessiondock.files-view"])["view"] == "list", dump
+                assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in dump), dump
                 context.close()
 
-                # 5: a fresh browser has nothing to migrate and stays at the defaults.
+                # A fresh browser stays at the defaults.
                 fresh = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block",
                                             color_scheme="light")
                 fresh.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -167,7 +150,6 @@ def main():
                 assert "Ubuntu Sans Mono" in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--terminal-font')")
                 assert page.evaluate("({nest: S.nest, view: S.view, off: [...S.off], cache: cacheLimitMb})") == {"nest": False, "view": "tree", "off": [], "cache": 256}
                 dump = page.evaluate(LS_DUMP)
-                assert not [k for k in dump if k.startswith("sessiondock")], dump
                 assert all(k.startswith("sessiondock.") for k in dump), dump
                 # PWA identity: the shell is SessionDock and the manifest is served as such.
                 assert page.evaluate("document.querySelector('meta[name=apple-mobile-web-app-title]').content") == "SessionDock"
@@ -180,9 +162,8 @@ def main():
             finally:
                 browser.close()
         assert all(path.read_bytes() == before for path, before in native_before.items())
-        print("PASS prefs migration browser: seeded sessiondock.* preferences applied and copied once to sessiondock.*, "
-              "later writes only under the new prefix, existing Rust keys win, files.html migrates both older "
-              "spellings, a fresh browser keeps the defaults, PWA identity is SessionDock")
+        print("PASS preferences browser: sessiondock.* values apply and persist, files.html uses the same "
+              "namespace, a fresh browser keeps the defaults, and PWA identity is SessionDock")
 
 
 if __name__ == "__main__":

@@ -237,15 +237,10 @@ impl LifecycleStore {
                     changed = true;
                 }
                 if let Some(binding) = &mut record.binding {
-                    if store.document.legacy && binding.state != BindingState::Uncertain {
-                        binding.state = BindingState::Uncertain;
-                        changed = true;
-                    } else if record.cancel_requested
-                        && binding.state != BindingState::Uncertain
+                    if ((store.document.legacy || record.cancel_requested)
+                        && binding.state != BindingState::Uncertain)
+                        || binding.state == BindingState::Intent
                     {
-                        binding.state = BindingState::Uncertain;
-                        changed = true;
-                    } else if binding.state == BindingState::Intent {
                         binding.state = BindingState::Uncertain;
                         changed = true;
                     } else if !record.cancel_requested

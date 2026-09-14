@@ -11,6 +11,7 @@ bar issues no request for the vanished instance and nothing reclaims it (HTTP
 reliable-send composer stays hidden.
 """
 from contextlib import contextmanager
+import base64
 import json
 import os
 from pathlib import Path
@@ -40,6 +41,7 @@ printf 'RS_SHELL_READY\\n'
 while IFS= read -r command; do
   case "$command" in
     ping) printf 'RS_PING_OK\\n' ;;
+    osc52) printf 'RS_OSC52_OK\\n' ;;
     "\t") printf 'RS_TAB_OK\\n' ;;
     *"[A") printf 'RS_UP_OK\\n' ;;
     quit) printf 'RS_SHELL_DONE\\n'; exit 0 ;;
@@ -135,6 +137,26 @@ def main():
                 open_console(page, uid)
                 expect(page.locator("#composer")).to_be_hidden()
 
+                # ---- Remote OSC 52 copy: Claude emits this after a mouse
+                # selection. The embedding page writes it to the browser
+                # clipboard, then ordinary Ctrl+V follows xterm's paste path.
+                origin = f"{urlsplit(base).scheme}://{urlsplit(base).netloc}"
+                context.grant_permissions(["clipboard-read", "clipboard-write"], origin=origin)
+                page.evaluate("navigator.clipboard.writeText('sentinel')")
+                write_terminal = """payload => new Promise(resolve =>
+                  [...T.views.values()][0].term.write(payload, resolve))"""
+                page.evaluate(write_terminal, "\x1b]52;c;?\x07")
+                page.evaluate(write_terminal, "\x1b]52;c;not-base64!\x1b\\")
+                assert page.evaluate("navigator.clipboard.readText()") == "sentinel"
+                copied = "osc52"
+                encoded = base64.b64encode(copied.encode()).decode()
+                page.evaluate(write_terminal, f"\x1b]52;c;{encoded}\x1b\\")
+                page.wait_for_function("expected => navigator.clipboard.readText().then(text => text === expected)", arg=copied)
+                keyboard = page.locator("#termpane .xterm-helper-textarea")
+                keyboard.press("Control+V")
+                keyboard.press("Enter")
+                xterm_contains(page, "RS_OSC52_OK")
+
                 # ---- Desktop: keystrokes while a wheel request is pending go over HTTP.
                 held = []
                 page.route("**/api/term/scroll", lambda route: held.append(route))
@@ -145,7 +167,6 @@ def main():
                 while not held and time.monotonic() < deadline:
                     page.wait_for_timeout(25)
                 assert held, "the legacy wheel handler must request term/scroll for a ptyhost row"
-                keyboard = page.locator("#termpane .xterm-helper-textarea")
                 keyboard.press_sequentially("ping")
                 keyboard.press("Enter")
                 assert not sends, "no send may fire before the pending scroll settles"
@@ -219,8 +240,9 @@ def main():
                 assert corpus.paths[sid].read_bytes() == native
             finally:
                 browser.close()
-    print("PASS terminal input browser: terminal_input capability, desktop HTTP text while scroll pending, "
-          "mobile key bar HTTP keys, exact lease body, no input/reclaim after exit, composer hidden, native fixture unchanged")
+    print("PASS terminal input browser: OSC 52 clipboard + Ctrl+V, terminal_input capability, "
+          "desktop HTTP text while scroll pending, mobile key bar HTTP keys, exact lease body, "
+          "no input/reclaim after exit, composer hidden, native fixture unchanged")
 
 
 if __name__ == "__main__":

@@ -2,13 +2,14 @@
 
 Defaults come from `state::capabilities()`. `lib.rs` then overwrites configured
 flags after opening optional services. `assets.rs` injects the JSON as
-`<meta name="agenthub-capabilities">` (also `/api/meta`).
+`<meta name="sessiondock-capabilities">` (also `/api/meta`).
 `allows(name)` is `config[name] !== false`, so a missing key stays allowed.
 
 ## Meta tag, `storage_namespace`, fail-closed
 
-`legacy-web/capabilities.js` is the only parser. A Python-served page has **no**
-such tag (`declared:false`) and keeps historical behaviour. A present tag must
+`legacy-web/capabilities.js` is the only parser. A page without the tag uses
+the permissive fallback (`declared:false`) while retaining the SessionDock
+storage namespace. A present tag must
 `JSON.parse` to a non-array object; otherwise it **fails closed**:
 `{read_only:true, live:false, outbox:false, audit:false, search:false,
 files:false, configuration_error:true}` so the page does not start unsupported
@@ -16,25 +17,14 @@ background work. Only then does `#backend-notice` appear, saying
 “能力配置无效，请检查服务配置。” — a healthy SessionDock page has no
 standing banner (batch 44 WP-A: it is the replacement, not a development build).
 
-`storage_namespace` is `"sessiondock."`. The parser uses a non-empty string,
-else `"sessiondock."` when `backend==="rust"`, else `""`.
-`AgentHubCapabilities.namespace` prefixes `localStorage` in `nodes.js` /
+`storage_namespace` is `"sessiondock."`. The parser uses a configured non-empty
+string and otherwise defaults to `"sessiondock."`.
+`SessionDockCapabilities.namespace` prefixes `localStorage` in `nodes.js` /
 `app.js` (`STORAGE_PREFIX`), `typography.js`, the theme bootstrap in
-`index.html`, and `files.js` (`<namespace>files-<key>`), so Rust keys never
-collide with Python `agenthub.` (hub `agenthub.hub.<path>.` applies only if the
-namespace is empty).
-
-Batch 44 WP-F adds the one-time migration for a same-origin replacement:
-`AgentHubCapabilities.stored(key, prefix = namespace)` reads `<prefix><key>`
-and, only when the Rust namespace is set and the value is missing, reads the
-Python key of the same page (`agenthub.<key>`, hub `agenthub.hub.<path>.<key>`),
-copies it to the Rust key and returns it; the Python key is never written.
-Every preference read (`store.get`, `nodesOff`, `font`, the pre-capabilities
-theme bootstrap with the same inline rule, and `files.js` with the extra
-pre-rename spelling `<namespace>agenthub-files-<key>` before the bare Python
-`agenthub-files-<key>`) goes through it; writes stay on the Rust key only.
-A page without the tag (empty namespace) neither falls back nor copies. See
-[migration.md](migration.md).
+`index.html`, and `files.js` (`<namespace>files-<key>`). Reads and writes use
+only these SessionDock keys; there is no compatibility namespace or copy-forward
+path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
+read helper for `store.get`, `nodesOff` and typography.
 
 ## Flags
 
@@ -66,7 +56,7 @@ A page without the tag (empty namespace) neither falls back nor copies. See
 | `files_jobs` | true when file writes are configured or terminal transport is available | enables the file job dialog | [files.md](files.md) |
 | `file_thumbnails` | `false` | skips grid `mode=thumbnail` `<img>` | [files.md](files.md) |
 | `mutations` | `false` | no `config`/`allows` gate | [metadata.md](metadata.md) |
-| `hub` | `false` | no `config`/`allows` gate (`agenthub-mode` is `local`) | [hub.md](hub.md) |
+| `hub` | `false` | no `config`/`allows` gate (`sessiondock-mode` is `local`) | [hub.md](hub.md) |
 | `media` | `true` | no `config`/`allows` gate (local tokens still render) | [media.md](media.md) |
 | `media_remote` | `true` | browser renders HTTP(S) image references directly | [media.md](media.md) |
 | `media_lazy` | `true` | no eager `src`; GET on view + visible error/retry | [media.md](media.md) |

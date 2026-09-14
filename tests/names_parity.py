@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import importlib
 import json
 import os
 from pathlib import Path
@@ -22,7 +21,7 @@ from urllib.parse import urlencode
 from urllib.request import ProxyHandler, build_opener
 
 from history_parity import BINARY, REPO, Corpus, codex_row, codex_message, encoded, get_json, cursor_query
-from provider_parity import NoRedirects, api, load_adapters, normalized
+from provider_parity import NoRedirects, adapter_module, api, load_adapters, normalized
 
 
 def write_index(path, rows):
@@ -119,7 +118,7 @@ def parity(corpus, base, opener, index, rows, python_source):
     assert actual["unicode"]["title"] == "名称" * 55 + "…"
     if python_source:
         adapter = load_adapters(python_source, fixture_root=corpus.root, codex_paths=corpus.paths)["codex"]
-        module = importlib.import_module("sessiondock.adapters")
+        module = adapter_module({"claude": adapter})
         module.CODEX_INDEX = index
         # Restore ONLY the name reader, after every native root and inherited
         # path lookup was sandboxed by the shared adapter-only helper.
