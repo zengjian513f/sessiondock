@@ -5,6 +5,10 @@
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
 const TERM_CONNECT_TIMEOUT_MS = 15_000;
+// DEC 2026 同步帧在页面这层暂存的上限：超过就先交给 xterm（它自己对 2026 还有
+// 1 s 兜底），不让一个没收尾的帧无限占住输出。
+const TERM_SYNC_HOLD_MAX = 256 * 1024;
+const TERM_SYNC_HOLD_MS = 100;
 const TERM_LAYOUT_POLICY_VERSION = 2;
 // 每次页面加载独立生成；不写 local/sessionStorage，复制标签页也不会复制归属。
 const TERM_PAGE_ID = window.__sessiondockPageId || crypto.randomUUID?.()
@@ -275,7 +279,7 @@ function terminalColorChunk(view, s) {
   s = (view.ansiTail || '') + s;
   view.ansiTail = '';
   // PTY/WebSocket 可能恰好在 CSI/OSC 中间断包，留下不完整尾巴等下一块再处理。
-  const tail = s.match(/\x1b(?:\[[0-9;:]*|\][^\x07\x1b]*)$/)?.[0] || '';
+  const tail = s.match(/\x1b(?:\[[?0-9;:]*|\][^\x07\x1b]*)$/)?.[0] || '';
   if (tail) {
     view.ansiTail = tail;
     s = s.slice(0, -tail.length);
@@ -1884,6 +1888,7 @@ function ensureTerm(name) {
     attachPromise: null, revoked: false,
     focusRequest: null, resumeFocus: false,
     renderer: 'dom', webgl: null, unicode11: null,
+    syncHold: null, syncHoldTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
   };
   T.views.set(name, view);
@@ -2011,7 +2016,43 @@ function writeTermOutput(view, chunk) {
   if (!chunk) return;
   // 亮色页面只反射“深底/浅字”的显式颜色；Codex 已是浅色的 diff 保持原样。
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
-  view.term.write(terminalColorChunk(view, chunk));
+  chunk = terminalColorChunk(view, chunk);
+  if (!chunk) return;
+  // 唯一的例外：一个 ?2026h 打开、还没 ?2026l 收尾的同步帧整帧攒住再写。xterm
+  // 的绘制虽然已按 2026 合帧，但它每 parse 一个 write 就把隐藏的输入 textarea
+  // 挪到当时的光标格；Claude 的一帧常拆成几个包，中间光标在清行时来回跳，
+  // 浏览器贴在 textarea 上的原生小部件（触屏选择把手等）就跟着满屏乱闪。
+  // 按键回显不带 2026，仍然直写。
+  if (view.syncHold !== null) {
+    view.syncHold += chunk;
+  } else if (termSyncFrameOpen(chunk)) {
+    view.syncHold = chunk;
+    view.syncHoldTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_HOLD_MS);
+  } else {
+    view.term.write(chunk);
+    return;
+  }
+  if (termSyncFrameOpen(view.syncHold) && view.syncHold.length < TERM_SYNC_HOLD_MAX) return;
+  flushTermSyncHold(view);
+}
+
+// 最后一个 ?2026h 之后没有 ?2026l 就算帧还开着。
+function termSyncFrameOpen(s) {
+  return s.lastIndexOf('\x1b[?2026h') > s.lastIndexOf('\x1b[?2026l');
+}
+
+function flushTermSyncHold(view) {
+  if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  view.syncHoldTimer = null;
+  const held = view.syncHold;
+  view.syncHold = null;
+  if (held) view.term.write(held);
+}
+
+function dropTermSyncHold(view) {
+  if (view.syncHoldTimer) clearTimeout(view.syncHoldTimer);
+  view.syncHoldTimer = null;
+  view.syncHold = null;
 }
 
 function termPaneRenderable(view = currentTermViewObject()) {
@@ -2415,6 +2456,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   // Rust raw HTTP input reuses this exact page lease and binding tuple; the
   // server still decides, so a revoked/expired token simply gets refused.
   view.inputLease = bound ? { token, ...binding } : null;
+  dropTermSyncHold(view);
   view.ansiTail = '';
   view.selectionLocked = false;
   view.selectionSnapshot = null;
@@ -2493,6 +2535,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
     writeTermOutput(view, dec.decode());
+    flushTermSyncHold(view);
     flushOutputAudit();
     browserAuditEvent('terminal.closed', {
       name, code: event.code, reason: event.reason, clean: event.wasClean,
