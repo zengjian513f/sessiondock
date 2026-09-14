@@ -54,7 +54,7 @@ def main():
                 page.on("request", lambda request: requests.append(request.url))
                 response = page.goto(base, wait_until="networkidle")
                 assert response.status == 200
-                expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+                expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
 
                 def select(sid, text):
                     page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()

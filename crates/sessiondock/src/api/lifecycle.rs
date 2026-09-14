@@ -136,7 +136,7 @@ pub(super) fn project(record: &Record) -> Value {
         }
     };
     // `method` is who asserted the association: the operator dialog, or the
-    // server's own process evidence (WP-E); `evidence` / `bound_at` are the
+    // server's own process evidence; `evidence` / `bound_at` are the
     // persisted note and confirmation time of the latter.
     let binding = record.binding().map(|binding| {
         json!({"source":binding.spec().source(),
@@ -296,7 +296,7 @@ pub struct CreateRequest {
 
 /// Exactly one interactive entry must match the source; a resume additionally
 /// requires resume support. Legacy `adapter_id` input is ignored because the
-/// Python endpoint selects commands solely from its fixed source table.
+/// endpoint selects commands solely from its fixed source table.
 fn select_entry(
     service: &LifecycleService,
     source: Source,
@@ -510,7 +510,7 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
         .unwrap_or_default();
     let scan = match scanner.snapshot(true).await {
         Ok(scan) => Some(scan),
-        // Off `/proc`, Python uses psutil and treats an unavailable provider as
+        // Off `/proc`, an unavailable provider is treated as
         // an empty observation. With no exact PID evidence this path can still
         // reuse or start a managed host, but can never signal a process.
         Err(crate::runtime::procscan::ScanError::UnsupportedPlatform) => None,
@@ -664,7 +664,7 @@ pub struct TakeoverRequest {
     #[serde(default)]
     _page_id: String,
 }
-/// Python takeover: reuse a managed console, ask before replacing an external
+/// Takeover: reuse a managed console, ask before replacing an external
 /// CLI, then resume the exact catalog identity in its recorded cwd.
 pub async fn takeover(
     State(state): State<AppState>,
@@ -767,12 +767,12 @@ pub struct CompleteDirQuery {
     #[serde(default)]
     limit: Option<usize>,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[serde(default)]
     #[allow(dead_code)]
     debug_run: String,
 }
-/// Python-compatible absolute-directory completion, with the typed spelling
+/// Absolute-directory completion, with the typed spelling
 /// preserved.
 pub async fn complete_dir(
     State(state): State<AppState>,
@@ -848,7 +848,7 @@ pub struct StatusQuery {
     record_id: String,
     instance_id: String,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[serde(default)]
     #[allow(dead_code)]
     debug_run: String,
@@ -897,7 +897,7 @@ pub async fn cancel(
     response(project(&record), permit).await
 }
 
-/// Python `pending_store.discard` for the Rust receipt ledger: a finished
+/// Discard for the Rust receipt ledger: a finished
 /// (Exited/Failed) or durably cancelled receipt leaves the sidebar's pending
 /// list. The receipt itself stays queryable through `term/new-status`; a
 /// receipt whose instance may still run is 409 and must be stopped first.
@@ -945,7 +945,7 @@ fn invalid_stop() -> ApiError {
         "停止请求格式或会话 UID 无效",
     )
 }
-/// Python `_stop_session`: use guarded host control for a managed instance and
+/// Use guarded host control for a managed instance and
 /// the same native SID/file/process-tree evidence for an external CLI.
 pub async fn stop(
     State(state): State<AppState>,
@@ -969,7 +969,7 @@ pub async fn stop(
     })?;
     diagnostics([&body._build, &body._trace_id, &body._page_id]).map_err(|_| invalid_stop())?;
     let uid = body.uid;
-    // Index catalog: an unknown UID is 404 like Python's "会话不存在".
+    // Index catalog: an unknown UID is 404 ("会话不存在").
     // Subagent/unsupported/ambiguous rows proceed to the runtime lookup, which
     // can only ever match a verified main-session scope.
     let known = {

@@ -9,7 +9,7 @@ mode/permission-mode/bridge-session/agent-name/atis-latch/file-history-delta/
 cost-state and an attachment chain between each user record and its reply;
 Codex token_usage_record/inter_agent_communication_metadata/event_msg
 item_completed/response_item agent_message) so the read model's skip policy
-(batch 33) is exercised; --plain omits them. --head-tail-edges also writes five
+ is exercised; --plain omits them. --head-tail-edges also writes five
 seeded list-summary boundary sessions (claude-edge-tail-title, claude-edge-big-head,
 claude-edge-tail-cwd, codex-edge-big-line, codex-edge-fork). --batch35-shapes
 also writes the batch-35 real-root shapes from history_parity.write_batch35_shapes

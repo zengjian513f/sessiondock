@@ -38,12 +38,11 @@ pub struct Config {
     /// Directory for the session recycle bin. Unset keeps the
     /// `trash` capability disabled and the delete/trash routes `501`.
     pub trash_dir: Option<PathBuf>,
-    /// Process table to scan; `/proc` by default and a synthetic tree in tests
-    /// (Python `PROC_FS`).
+    /// Process table to scan; `/proc` by default and a synthetic tree in tests.
     pub proc_root: PathBuf,
-    /// Optional override for Python's `~/.grok/active_sessions.json`.
+    /// Optional override for `~/.grok/active_sessions.json`.
     pub grok_active: Option<PathBuf>,
-    /// Second listener for Hub traffic (batch 38 H1). Honoured only together
+    /// Second listener for Hub traffic. Honoured only together
     /// with the token file, the id file and the peer networks; any subset of
     /// the four is a startup error. Never a substitute for the loopback bind.
     pub node_bind: Option<SocketAddr>,
@@ -56,13 +55,13 @@ pub struct Config {
     /// Source networks the node listener accepts (strict CIDR list); every
     /// other peer is 403 before the token is looked at.
     pub node_peers: Vec<PeerNetwork>,
-    /// Bug-report bundles (batch 41, Python `bug_report.REPORT_ROOT`): an
+    /// Bug-report bundles: an
     /// configured bundle directory. Set together with the repository or not
     /// at all; unset keeps
     /// `capabilities.bug_report` false and `POST /api/bug-report` 501.
     pub bug_report_dir: Option<PathBuf>,
-    /// The repository a bug-report worker investigates (Python
-    /// `PROJECT_ROOT`): the worker's cwd and the parent of
+    /// The repository a bug-report worker investigates:
+    /// the worker's cwd and the parent of
     /// `sessiondock_attachments/`.
     pub bug_report_repo: Option<PathBuf>,
     /// Exact public authorities an authenticating reverse proxy forwards
@@ -71,7 +70,7 @@ pub struct Config {
     /// the gate loopback-only.
     pub public_hosts: Vec<String>,
     /// The name the page, `<title>`, `/api/meta` and `/api/nodes` show for
-    /// this machine (Python `socket.gethostname()`): `SESSIONDOCK_HOSTNAME`
+    /// this machine: `SESSIONDOCK_HOSTNAME`
     /// when set, else the system host name, else `SessionDock`.
     pub hostname: String,
     /// Persistent search-text cache (`docs/read-model.md` "搜索"). Unset keeps
@@ -88,7 +87,7 @@ pub struct Config {
     /// search-text cache; 0 disables warm-up (`SESSIONDOCK_SEARCH_WARMUP`,
     /// default 300).
     pub search_warmup_secs: u64,
-    /// Pool, page, runtime and cache budgets (batch 44 WP-A):
+    /// Pool, page, runtime and cache budgets:
     /// `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`;
     /// probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS`
     /// events per history page (default 2000), `SESSIONDOCK_ASYNC_WORKERS`
@@ -461,7 +460,7 @@ impl Config {
                     )
                 })
         }
-        // Batch 44 WP-A: pool budgets; the derived pools follow `Pools`.
+        // Pool budgets; the derived pools follow `Pools`.
         if let Some(value) = env::var_os("SESSIONDOCK_READ_WORKERS") {
             config.pools.read_workers =
                 at_least("SESSIONDOCK_READ_WORKERS", &value, Pools::MIN_READ_WORKERS)?;

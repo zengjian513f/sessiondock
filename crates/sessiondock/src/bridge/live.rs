@@ -1,11 +1,11 @@
-//! The live `prompt` of a session view (Python `server._session_prompt`).
+//! The live `prompt` of a session view.
 //!
 //! `LivePrompts` answers `/api/messages` and `/api/watch` for one main
 //! session: a Claude session reads its question-card file
 //! (`bridge::claude`, cleared once the matching native answer/tool_result is
-//! in the records — Python `_claude_prompt`); a Codex session reads the
-//! approval dialog off its managed instance's screen (`bridge::codex`,
-//! Python `_codex_prompt`); a subagent view or any other source has no
+//! in the records); a Codex session reads the
+//! approval dialog off its managed instance's screen (`bridge::codex`);
+//! a subagent view or any other source has no
 //! prompt. Nothing here sends keys: answering goes through `/api/term/send`
 //! under the page's own lease exactly like the native console.
 
@@ -20,9 +20,9 @@ use serde_json::Value;
 use super::{claude::PromptStore, claude::Revision, codex};
 use crate::{sessions::ViewSnapshot, state::AppState};
 
-/// Python `_codex_prompt` re-looks the pane up once per second while missing.
+/// Re-looks the pane up once per second while missing.
 const CODEX_LOOKUP_INTERVAL: Duration = Duration::from_secs(1);
-/// Python `term.capture_plain(pane, 80)`: the last 80 joined scrollback rows.
+/// The last 80 joined scrollback rows.
 const CODEX_CAPTURE_LINES: usize = 80;
 
 /// Which live prompt a view can have. `None` for subagents and other sources.
@@ -33,7 +33,7 @@ pub enum PromptScope {
 }
 
 impl PromptScope {
-    /// Python `_session_prompt`: only a main Claude/Codex session; the SID
+    /// Only a main Claude/Codex session; the SID
     /// comes from the validated records of this exact view, never the client.
     pub fn of(snapshot: &ViewSnapshot) -> Option<Self> {
         let scope = snapshot.native_scope().ok()?;
@@ -100,12 +100,12 @@ impl LivePrompts {
         self.claude.as_ref()
     }
 
-    /// Python `claude_bridge.revision`: the file stamp the SSE loop polls.
+    /// The file stamp the SSE loop polls.
     pub fn claude_revision(&self, sid: &str) -> Option<Revision> {
         self.claude.as_ref()?.revision(sid)
     }
 
-    /// Python `claude_bridge.prompt`: the file as is, for `prompt_only` packets.
+    /// The file as is, for `prompt_only` packets.
     pub fn claude_prompt_raw(&self, sid: &str) -> Value {
         self.claude
             .as_ref()
@@ -113,7 +113,7 @@ impl LivePrompts {
             .unwrap_or(Value::Null)
     }
 
-    /// Python `_claude_prompt`: the card stays until the matching native
+    /// The card stays until the matching native
     /// answer really is in the records. Claude does not always emit
     /// `PostToolUseFailure` when the dialog is dismissed with Esc, but the
     /// failed `tool_result` with the same `tool_use_id` always lands; the id is
@@ -140,7 +140,7 @@ impl LivePrompts {
         prompt
     }
 
-    /// Python `_codex_prompt`: the approval visible on the unique managed
+    /// The approval visible on the unique managed
     /// instance of this UID, `None` (JSON null) when there is no instance, the
     /// capture fails (a vanishing pane is a normal exit race) or the screen
     /// shows no dialog.
@@ -184,7 +184,7 @@ impl LivePrompts {
         }
     }
 
-    /// Python `_session_prompt` for one packet: the value the `prompt` field
+    /// The value the `prompt` field
     /// carries (JSON null when there is none).
     pub async fn current(
         &self,

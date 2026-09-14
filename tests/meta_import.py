@@ -157,7 +157,7 @@ DEBUG_RUNS_MAX = 64 * 1024 * 1024
 
 
 def convert_debug_runs(path, warns):
-    """Python `debug_runs._read`: `{"version":1,"runs":{...}}`, anything else empty.
+    """`{"version":1,"runs":{...}}`, anything else empty.
 
     Runs are copied verbatim (root, created, sessions[{source,cwd,sid,uid,name}]);
     a run whose id Python would refuse, or that is not an object, is dropped with

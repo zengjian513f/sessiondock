@@ -220,8 +220,8 @@ pub(crate) fn failure(status: u16, code: &str, message: &str) -> Value {
     json!({"alt":"会话图片","error":{"status":status,"code":code,"message":message}})
 }
 
-/// A text-discovered reference that Python's `media.register_path` would also
-/// register nothing for (missing file, no cwd for a relative path, not a
+/// A text-discovered reference that registration would
+/// yield nothing for (missing file, no cwd for a relative path, not a
 /// regular file, over the shared 32 MiB limit, unparsable path): the message
 /// keeps its text and no placeholder is projected. Other failures stay visible
 /// so the operator can act on the reason.

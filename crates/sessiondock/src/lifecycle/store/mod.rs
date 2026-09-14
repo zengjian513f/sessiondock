@@ -13,7 +13,7 @@ use std::{
 };
 
 pub const LEDGER_FILENAME: &str = "lifecycle-ledger.json";
-/// Current ledger envelope schema. Schema 5 (WP-E) adds `finished_at` /
+/// Current ledger envelope schema. Schema 5 adds `finished_at` /
 /// `discarded` to every record and `method` / `evidence` / `bound_at` to a
 /// binding; older envelopes migrate strictly on open.
 pub const SCHEMA: u32 = 5;
@@ -737,7 +737,7 @@ fn random() -> Result<String, Error> {
     getrandom::fill(&mut bytes).map_err(|_| Error::RandomUnavailable)?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
-/// Mint a private request key when a Python-compatible caller omits one.
+/// Mint a private request key when a caller omits one.
 /// Explicit request IDs still retain the durable replay behavior.
 pub fn fresh_request_id() -> Result<String, Error> {
     random()

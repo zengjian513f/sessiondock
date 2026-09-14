@@ -14,7 +14,7 @@ pub(super) use native_records::scan_native_records;
 #[cfg(test)]
 mod scanner_contract_tests;
 
-/// Runtime AST budget (batch 44 WP-A): `SESSIONDOCK_AST_CACHE_MB`.
+/// Runtime AST budget: `SESSIONDOCK_AST_CACHE_MB`.
 fn max_weight() -> usize {
     budgets::caches().ast_bytes
 }
@@ -91,7 +91,7 @@ pub(crate) struct Batch {
     pub records: Vec<(Value, u64)>,
     pub sidecars: BTreeMap<u64, Vec<native_images::Sidecar>>,
     pub error: Option<String>,
-    /// Complete lines that are not JSON objects, skipped like the Python
+    /// Complete lines that are not JSON objects, skipped
     /// adapters' `_iter_records` (bytes stay in the physical index).
     pub invalid: usize,
     committed: usize,
@@ -229,8 +229,8 @@ impl RecordCache {
 
 /// One bounded complete record at a time. An oversized partial tail is scanned
 /// and hashed but does not fail history until its LF commits it. A complete
-/// line that is not a JSON object is skipped and counted (`invalid`), like
-/// the Python adapters do; only the record budgets are hard errors.
+/// line that is not a JSON object is skipped and counted (`invalid`);
+/// only the record budgets are hard errors.
 pub(super) struct Decoder {
     records: Vec<(Value, u64)>,
     sidecars: BTreeMap<u64, Vec<native_images::Sidecar>>,

@@ -1,11 +1,11 @@
 # Session list, views and finite history pages
 
 The read model behind `/api/sessions`, `/api/messages/{uid}` and the history
-pages is the lazy index plus on-demand views of [read-model.md](read-model.md)
-(batch 34). This file is the wire contract of the three routes as the
+pages is the lazy index plus on-demand views of [read-model.md](read-model.md).
+This file is the wire contract of the three routes as the
 facade `sessions::SessionStore` now serves them: what a list row carries, how a
 session is opened, which per-session codes ask the client to retry, and the
-finite history pages of batch 14. Nothing here is a frontend framework, a
+finite history pages. Nothing here is a frontend framework, a
 native-span parser or a large-image promise.
 
 ## The list: index rows plus the physical cursor
@@ -19,16 +19,16 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   (stars, fork visibility, timeline pins) and **before** any view-derived
   decoration; `built_at` and `sig` are kept while the rows are unchanged, so a
   forced rescan that finds nothing new republishes the same document.
-- Row fields are the Python `list_sessions` fields (`uid/source/sid/title/cwd/
+- Row fields are the list-row fields (`uid/source/sid/title/cwd/
   created/updated/size/model/branch`, topology `agent_items/forked_from_id/
   history_base/root_sid/fork_depth`, Grok `chat_exists`, Codex
   `renamed_at/renamed_to`, Claude `continued_in`) plus `supported` as the
   head (96 KiB, ≤ 40/120 pieces) and tail (512 KiB) can tell it;
   `migration_warnings` (the fatal reason) only on an unsupported row, the
-  non-fatal notes live in the detail `meta` alone (batch 44 WP-C).
+  non-fatal notes live in the detail `meta` alone.
 - **Agent items.** Each `agent_items[]` entry carries `id/title/type/active/
   path/cwd/model/created/updated/size` (plus `supported`, `migration_warnings`
-  when unsupported, and the cursor rule below). `active` follows Python: a Codex subagent whose
+  when unsupported, and the cursor rule below). `active`: a Codex subagent whose
   last turn-boundary `event_msg` is `task_started`/`turn_started`; a Claude
   sidecar whose last user/assistant record is not an assistant `end_turn` and
   whose owner has no later stop notice for it (`<task-notification>` task-id
@@ -37,8 +37,8 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   incrementally for that, only when such a sidecar exists
   ([read-model.md](read-model.md)). `created`/`updated` are the sidecar's
   first/last record times (meta.json mtime, then `updated`, as fallbacks).
-  The agent view's `meta` is the owner row with the item's fields applied
-  (Python `session_view`); it keeps the owner's `agent_items`.
+  The agent view's `meta` is the owner row with the item's fields applied;
+  it keeps the owner's `agent_items`.
 - **Continuations.** A Claude main row whose tail holds a `continued-in`
   record carries `continued_in` = the uid of the listed Claude session with
   that sid (same source, this index; a self-reference or an unlisted sid
@@ -55,7 +55,7 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   already has otherwise, and detects growth from `end`/`head`. Consequence:
   the first growth of a session nobody opened in this process is fetched as a
   reset (no unread increment for that one event); once opened, rows carry the
-  anchor and behaviour equals Python's. A Grok session without a chat file
+  anchor. A Grok session without a chat file
   publishes `{end: 0, head: <hash of nothing>}`.
 - **Timeline pins.** A Claude main session with a persisted pin publishes
   `timeline_pin: {target, tip, stale_end, pinned_at, native_rewind:false}`;
@@ -65,11 +65,11 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   always carries the projected pin state.
 
 What a summary cannot know (deltas from the old full parse, all documented
-in [read-model.md](read-model.md) and the batch-34 ledger): Claude lineage
-notes (missing ancestor, cycle, missing declared leaf — batch 35: non-fatal,
+in [read-model.md](read-model.md)): Claude lineage
+notes (missing ancestor, cycle, missing declared leaf — non-fatal,
 the timeline is the reachable part) and content-block notes surface in the
-detail `meta.migration_warnings` when the session is opened, the row lists
-like Python's;
+detail `meta.migration_warnings` when the session is opened; the row lists
+carry none;
 unknown-kind warning counts on files larger than 512 KiB come from the head
 and tail only. There is no fixed file/record/checkpoint/event count quota on
 open, nor a session count, total-byte or directory-entry cap on the list.
@@ -82,13 +82,13 @@ own file (an `agent_items` id, never a client path) and the persisted pin;
 `Views` re-`stat`s those files, extends from the last committed offset on an
 append (full old-prefix digest verification, reused ASTs) and rebuilds on a
 rewrite, truncation or pin change. The response keeps the batch-2 shape:
-`meta` (the published row, `agent` views per Python `session_view`),
+`meta` (the published row, `agent` views),
 `version{size,mtime,head}`, `reset/start/end/anchor`, `messages`,
 `message_total`, `partial`, `activity_changed/activity`; `meta.cursor` is the
 view's `{end, head, anchor}`.
 
-**Claude timeline rules** (Python `_active_lineage`/`_read_one` at e5b023a,
-`sessions/providers/claude.rs`): the transcript is an append-only tree, and
+**Claude timeline rules** (`sessions/providers/claude.rs`):
+the transcript is an append-only tree, and
 the view is the chain from the current tip (the last graph record, or the
 `last-prompt` leaf, or a persisted pin) to its root — a completed old branch
 left behind by a double-Esc rewind is hidden. Three kinds of off-chain
@@ -118,7 +118,7 @@ Per-session codes (they concern this one session; the list is unaffected):
 | 409 | ambiguous native id among indexed files (`父线程 ID 在已配置索引中存在歧义`, duplicate Codex agent id), Claude sidecar `sessionId` ≠ owner's | show the reason; it clears when the duplicate goes away |
 | 501 `unsupported_history` | the projection failed closed: corrupt line, scalar `content`, missing Claude ancestor/cycle, Codex parent unindexed / subagent file / bad `history_base` | show the reason |
 | 503 | the file (or a parent prefix) changed while it was being read (`会话在读取期间变化，请重试`) | retry; the next open extends from the new stamp |
-| 413 | one decoded image exceeds Python's 32 MiB media limit | inspect that image; ordinary history has no fixed file/record/page-size rejection |
+| 413 | one decoded image exceeds the 32 MiB media limit | inspect that image; ordinary history has no fixed file/record/page-size rejection |
 
 An open within the index TTL that fails with 404/409/501/503 triggers one
 forced rescan and retry, so SSE-only clients discover new parent/agent files
@@ -133,11 +133,11 @@ record, index or projected-message byte quotas. The default view LRU uses
 16 entries / 128 MiB accounting and the AST cache uses 64 MiB; these affect
 retention, not whether history can be read. See [read-model.md](read-model.md).
 
-## Finite history pages (batch 14)
+## Finite history pages
 
-Batch 14 adds the Rust-only `history_pages: true` capability. The legacy UI uses
-it to fill its middle-history gap incrementally; Python without the capability
-retains its existing full-history behavior. No frontend framework is introduced.
+The Rust-only `history_pages: true` capability is declared. The legacy UI uses
+it to fill its middle-history gap incrementally.
+No frontend framework is introduced.
 
 ### Wire contract
 
@@ -197,7 +197,7 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
 ### Page grouping targets
 
 - Each page selects at most `SESSIONDOCK_HISTORY_PAGE_EVENTS` events (default
-  2000, 1–10000; batch 44 WP-A, was a fixed 200), 128 typed native image
+  2000, 1–10000), 128 typed native image
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
@@ -224,8 +224,8 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   selected display page. Existing media authorization and blob-cache eviction
   apply.
 
-Batch 15 adds lazy media materialization to the selected page; see [media.md](media.md).
-Batch 20 shares this grant store with per-message media continuation
+Lazy media materialization applies to the selected page; see [media.md](media.md).
+The same grant store serves per-message media continuation
 (`media_more` / `GET /api/messages/{uid}/media-page`): a message initially
 displays at most 16 typed images and continuation exposes the rest. Page byte,
 image and event targets only group transport responses; they do not reject a
@@ -252,7 +252,7 @@ Fixtures cover multi-page reconstruction, shared offsets, inherited end-zero
 events, 257 images, checkpoint changes, token scope/lifetime/eviction, byte
 budgets and retained response ownership. Browser checks use temporary synthetic
 histories and the actual legacy renderer, not a production session or model CLI.
-Batch 15 tightened the browser pause hook to the actual renderer's Promise/timer
+The browser pause hook is tied to the actual renderer's Promise/timer
 call and additionally checks unpublished DOM plus the render generation. A loose
 whole-stack match could pause a nested helper instead; earlier passing results
 alone did not establish that the renderer was genuinely suspended. Page insertion

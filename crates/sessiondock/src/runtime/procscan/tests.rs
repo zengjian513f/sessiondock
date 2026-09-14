@@ -1,4 +1,4 @@
-//! Python `tests/test_live.py` over a synthetic process tree (`FakeProc`):
+//! Tests over a synthetic process tree (`FakeProc`):
 //! only the files `_scan` and the ancestry walks read exist. No real CLI, no
 //! real `/proc` except the final Linux smoke test, which reads it and nothing
 //! else.
@@ -12,7 +12,7 @@ const SID_STOPPED: &str = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 const SID_GROK: &str = "01a09418-a82e-7370-9303-9c4fcf0b20c3";
 const SID_CLAUDE: &str = "c357894e-ac88-4c9e-823e-3b5a9c19b9c0";
 
-/// Python `FakeProc`: `cmdline`, `stat`, `environ`, `fd/` links.
+/// `cmdline`, `stat`, `environ`, `fd/` links.
 pub(crate) struct FakeProc {
     pub root: PathBuf,
 }
@@ -141,7 +141,7 @@ fn command_names_families_and_session_ids_follow_python() {
     assert_eq!(parse_parent("77 (x"), None);
 }
 
-/// Python `BareClaudeTests`: a bare `claude` matches only the session created
+/// A bare `claude` matches only the session created
 /// in its cwd within -5 s..30 s of the process start.
 #[test]
 fn bare_claude_matches_only_nearby_session_in_same_cwd() {
@@ -249,7 +249,7 @@ fn bare_claude_is_collected_with_cwd_and_start_time() {
     assert!(unclocked.scan().bare_claude.is_empty());
 }
 
-/// Python `InheritedSessionEnvTests`: a helper left behind by an exited CLI
+/// A helper left behind by an exited CLI
 /// still carries the session id but is not a running instance.
 #[test]
 fn orphaned_helper_does_not_keep_a_stopped_session_live() {
@@ -366,13 +366,13 @@ fn command_line_sid_beats_inherited_env_and_families_do_not_cross() {
     assert_eq!(scan.sids.get(SID_CLAUDE), Some(&BTreeSet::from([110])));
     // 120 owns the companion id; its inherited Claude id is refused (main,
     // families differ). 130's helper env resolves to its CLI ancestor 120;
-    // Python only applies the family check to main processes, so the helper's
+    // The family check applies only to main processes, so the helper's
     // inherited Grok id is attributed to 120 as well (owner is not grok).
     assert_eq!(scan.sids.get(SID_STOPPED), Some(&BTreeSet::from([120])));
     assert_eq!(scan.sids.get(SID_GROK), Some(&BTreeSet::from([120])));
 }
 
-/// Python `CodexForkOwnershipTests`: a process holding the whole fork chain
+/// A process holding the whole fork chain
 /// belongs to the deepest fork only; a separate ancestor process stays.
 #[test]
 fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
@@ -430,7 +430,7 @@ fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
     assert_eq!(active.owned[&other.uid], [-9]);
 }
 
-/// Python `GrokHeadlessLiveTests`: `grok -p` under Claude keeps the session
+/// `grok -p` under Claude keeps the session
 /// directory's `events.jsonl` open and inherits the parent's Claude id, which
 /// is not its identity.
 #[test]
@@ -524,7 +524,7 @@ fn events_jsonl_fd_marks_headless_grok_live_and_inherited_claude_id_is_not_grok_
     assert_eq!(scan.started_at(&[-300]), None);
 }
 
-/// Python `_note_grok_sessions`: the explicit active file names sessions with
+/// The explicit active file names sessions with
 /// no pid; both the list and the `{sessions: []}` shapes are read and a stale
 /// entry is kept as-is.
 #[test]
@@ -576,7 +576,7 @@ fn scan_with(proc: &FakeProc, grok_active: Option<&Path>) -> Scan {
     )
 }
 
-/// Python `term_tmux.hosts` / `term_host.hosts`: `tmux_uids` means a tmux
+/// `tmux_uids` means a tmux
 /// server or a managed host's session root is an ancestor.
 #[test]
 fn tmux_and_host_ancestry_are_bounded_walks() {
@@ -617,7 +617,7 @@ fn tmux_and_host_ancestry_are_bounded_walks() {
     assert_eq!(tree.cli_ancestor(20 + 12), None);
 }
 
-/// Python 16cc89c `tests/test_host.py` PaneOwnershipTests: a pane belongs to
+/// The PaneOwnershipTests cases: a pane belongs to
 /// its own CLI only. Tree: tmux 5 → root sh 10 → claude 11 → bash 12 →
 /// grok 13 → codebase-memory 14; claude's tool shell 12 is claude's, the
 /// `grok -p` 13 and its child are not this pane's session — but from grok's
@@ -672,7 +672,7 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
     assert!(tree.in_tmux(&[13, 11]));
 }
 
-/// Python `SnapshotTests`: the TTL runs from completion, waiters share one
+/// The TTL runs from completion, waiters share one
 /// scan, `force` bypasses the TTL. `snapshot` answers `unsupported_platform`
 /// off Linux before it looks at any tree, synthetic ones included.
 #[cfg(target_os = "linux")]
@@ -739,7 +739,7 @@ fn real_proc_scan_is_bounded_and_fast() {
     );
 }
 
-/// The one deliberate widening of Python's fd rule: a `*.jsonl` under a
+/// The one deliberate widening of the fd rule: a `*.jsonl` under a
 /// configured read root counts like one under the literal home markers.
 #[test]
 fn open_jsonl_under_a_configured_root_counts_like_a_home_marker() {
@@ -773,7 +773,7 @@ fn open_jsonl_under_a_configured_root_counts_like_a_home_marker() {
         [marker.to_owned(), inside.to_string_lossy().into_owned()]
     );
     assert_eq!(scan.paths[marker], BTreeSet::from([100]));
-    // Without configured roots only the markers count (Python's rule).
+    // Without configured roots only the markers count.
     let plain = proc.scan();
     assert_eq!(plain.paths.keys().collect::<Vec<_>>(), [marker]);
 }

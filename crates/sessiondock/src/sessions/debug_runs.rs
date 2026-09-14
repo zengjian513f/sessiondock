@@ -1,19 +1,19 @@
-//! Debug-run registry (Python `sessiondock/debug_runs.py`): paid monkey/test
+//! Debug-run registry: paid monkey/test
 //! sessions registered under a run id stay out of the ordinary views, and
 //! `?debug_run=<id>` shows exactly that run.
 //!
-//! The registry is `<SESSIONDOCK_STATE_DIR>/debug-runs.json` in Python's
+//! The registry is `<SESSIONDOCK_STATE_DIR>/debug-runs.json` in the fixed
 //! format — `{"version":1,"runs":{<run_id>:{"root":…,"created":…,
 //! "sessions":[{source,cwd,sid,uid,name}]}}}` — written by the test tooling
-//! (never by this service) and reloaded whenever its `stat` changes, like
-//! Python's mtime reload. A missing, unreadable or malformed file is an
+//! (never by this service) and reloaded whenever its `stat` changes.
+//! A missing, unreadable or malformed file is an
 //! empty registry: nothing is hidden and every `debug_run` view is empty.
 //!
-//! Matching is Python's `_match`: a row's `uid`, `sid` or `name` found in a
+//! Matching: a row's `uid`, `sid` or `name` found in a
 //! run's session list, or its `cwd` equal to / under a run's root; the run
 //! registered first (registry order) wins. `filter_rows` keeps the rows that
 //! match no run for the default view, and only the rows of `run_id` for a
-//! debug view (an unknown or malformed id yields nothing, as in Python).
+//! debug view (an unknown or malformed id yields nothing).
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 pub const DEBUG_RUNS_FILENAME: &str = "debug-runs.json";
-/// `?debug_run=<id>` of a raw query string (Python `_debug_run`: the first
+/// `?debug_run=<id>` of a raw query string (the first
 /// 64 characters). Valid ids are `[A-Za-z0-9_-]`, so no percent-decoding
 /// is needed: an encoded or otherwise malformed id names no run.
 pub fn debug_run_of(query: Option<&str>) -> String {
@@ -71,7 +71,7 @@ pub(crate) fn normpath(path: &str) -> String {
     }
 }
 
-/// Python `_abspath`: normalize an absolute path lexically; a relative one
+/// Normalize an absolute path lexically; a relative one
 /// is resolved against the process working directory.
 fn abspath(path: &str) -> String {
     if path.starts_with('/') {
@@ -90,7 +90,7 @@ struct Root {
     run_id: String,
 }
 
-/// The registry pre-resolved into lookup tables (Python `_build_index`).
+/// The registry pre-resolved into lookup tables.
 #[derive(Default)]
 pub struct RunIndex {
     roots: Vec<Root>,
@@ -111,7 +111,7 @@ impl RunIndex {
             index.ids.insert(run_id.clone());
             let root = text(&run["root"]);
             // A root that is relative or unnormalized could never equal a
-            // normalized absolute cwd, so it is dropped (Python drops it too).
+            // normalized absolute cwd, so it is dropped.
             if !root.is_empty() && root == normpath(root) && root.starts_with('/') {
                 let prefix = if root.ends_with('/') {
                     root.to_owned()
@@ -151,12 +151,12 @@ impl RunIndex {
         self.roots.is_empty() && self.tables.values().all(HashMap::is_empty)
     }
 
-    /// Python `get(run_id) is not None`: a well-formed, registered id.
+    /// A well-formed, registered id.
     pub fn known(&self, run_id: &str) -> bool {
         valid_id(run_id) && self.ids.contains(run_id)
     }
 
-    /// Python `_match`: the run this row belongs to, if any.
+    /// The run this row belongs to, if any.
     pub fn run_for<'a>(&'a self, row: &Value) -> Option<&'a str> {
         let mut best: Option<&(usize, String)> = None;
         for key in ["uid", "sid", "name"] {
@@ -195,7 +195,6 @@ impl RunIndex {
         }
     }
 
-    /// Python `filter_rows`.
     pub fn filter_rows(&self, rows: Vec<Value>, run_id: &str) -> Vec<Value> {
         if run_id.is_empty() && self.is_empty() {
             return rows;
@@ -230,7 +229,7 @@ fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("")
 }
 
-/// Parse a registry document (Python `_read`): anything but a well-formed
+/// Parse a registry document: anything but a well-formed
 /// `{"runs": {…}}` is the empty registry.
 pub(crate) fn parse(bytes: &[u8]) -> RunIndex {
     let Ok(raw) = serde_json::from_slice::<Value>(bytes) else {
@@ -359,7 +358,7 @@ mod tests {
         let index = registry();
         assert!(!index.is_empty());
         assert!(index.known("run-a") && index.known("run-b"));
-        // Python `get`: a run that is not an object is `None`, so unknown.
+        // A run that is not an object is `None`, so unknown.
         assert!(!index.known("bad") && !index.known("missing") && !index.known("bad id!"));
         assert_eq!(index.run_for(&json!({"uid": "claude:a1"})), Some("run-a"));
         assert_eq!(index.run_for(&json!({"sid": "sid-b1"})), Some("run-b"));
@@ -387,7 +386,7 @@ mod tests {
             Some("run-a")
         );
         assert_eq!(index.run_for(&json!({"cwd": "relative/root/x"})), None);
-        // Python drops a root that is not already normalized (`_build_index`).
+        // A root that is not already normalized is dropped.
         assert_eq!(index.run_for(&json!({"cwd": "/tmp/trail/x"})), None);
     }
 

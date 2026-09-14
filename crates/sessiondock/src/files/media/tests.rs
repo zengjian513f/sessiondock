@@ -246,8 +246,8 @@ fn markdown_bare_file_urls_and_typed_refs_share_identical_media_normalization() 
         .scoped_media(&fixture.scope(&messages), &[])
         .unwrap();
     assert!(scoped.image(&percent_uri).is_ok());
-    assert!(scoped.image(percent.to_str().unwrap()).is_err()); // Python unquotes plain paths too.
-    assert!(scoped.image(&hash_uri).is_err()); // Python decodes the URL before dropping its fragment.
+    assert!(scoped.image(percent.to_str().unwrap()).is_err()); // Plain paths are unquoted too.
+    assert!(scoped.image(&hash_uri).is_err()); // The URL is decoded before dropping its fragment.
     // The ordinary file API still does not expand URL references.
     assert!(
         fixture
@@ -297,7 +297,7 @@ fn image_bytes_are_not_guessed_by_extension_and_size_is_bounded_before_reading()
 
 #[test]
 fn bare_image_names_resolve_against_cwd_only_without_a_directory_sweep() {
-    // Python `media.register_path` joins a bare name with the session cwd; a
+    // A bare name is joined with the session cwd; a
     // mentioned directory is a `resolve-files` rule, not a media rule, so the
     // child of `pictures/` is not found through its parent's mention.
     let fixture = Fixture::new();
@@ -381,7 +381,7 @@ fn symlinks_special_files_and_replaced_parent_never_bypass_image_checks_but_hard
         scoped.image("socket.png").err().unwrap().code,
         "file_special_forbidden"
     );
-    // Python's bug-report attachments are hard links into the project tree:
+    // Bug-report attachments are hard links into the project tree:
     // a multiply linked regular file inside the root is readable as an image.
     let mut hard = scoped.image("hard.png").unwrap();
     let mut bytes = Vec::new();

@@ -1,4 +1,4 @@
-//! Python `tests/test_bug_report.py` semantics for the bundle, the
+//! Semantics for the bundle, the
 //! attachments and the composer probes. The worker's
 //! HTTP flow against a fake CLI is `tests/bug_report_http.rs`.
 
@@ -129,7 +129,7 @@ async fn bundle_filters_related_events_and_captures_context() {
     assert_eq!(manifest["terminal_file"], "terminal.txt");
     assert_eq!(manifest["attachments"], json!([]));
     assert_eq!(manifest["repository"], fixture.repo.to_str().unwrap());
-    // Secrets are redacted in every bundle document (Python `audit.sanitize`).
+    // Secrets are redacted in every bundle document.
     assert_eq!(manifest["outbox"]["outbox"][0]["secret"], "<redacted>");
     assert_eq!(manifest["outbox"]["outbox"][0]["state"], "confirming");
     let rows: Vec<Value> = fs::read_to_string(directory.join("events.jsonl"))
@@ -355,7 +355,7 @@ fn claude_probe_sees_the_placeholder_and_the_cleared_composer() {
         Draft::Editing
     );
     // The real Claude 2.1 styled screen encodes the placeholder's spaces as
-    // cursor-forward moves and the prompt gap as NBSP (WP-E acceptance
+    // cursor-forward moves and the prompt gap as NBSP (acceptance
     // capture); the ANSI strip must not hide the placeholder.
     let real = capture(
         &format!(
@@ -465,10 +465,10 @@ fn manifest_updates_merge_and_redact() {
     assert_eq!(manifest["status"], "submitted");
     assert_eq!(manifest["keep"], 1);
     assert_eq!(manifest["cookie"], "<redacted>");
-    // Python's list: `token` (the worker's launch identity) is kept, keys are not.
+    // The list: `token` (the worker's launch identity) is kept, keys are not.
     assert_eq!(manifest["worker"]["token"], "sid-1");
     assert_eq!(manifest["worker"]["api_key"], "<redacted>");
-    // Corrupt manifest: rewritten from the changes alone (Python behaviour).
+    // Corrupt manifest: rewritten from the changes alone.
     fs::write(dir.join("manifest.json"), "not json").unwrap();
     update_manifest(dir, json!({"status": "failed"})).unwrap();
     assert_eq!(read_json(&dir.join("manifest.json"))["status"], "failed");

@@ -1,4 +1,4 @@
-//! Session recycle-bin HTTP routes, using Python-compatible delete protection.
+//! Session recycle-bin HTTP routes, using delete protection.
 
 use std::sync::Arc;
 
@@ -380,7 +380,7 @@ pub async fn purge(
         )
     })??;
     if single.is_some() && !explicit_list && outcome.removed == 0 {
-        // Python answered a single missing id with 404; keep that for legacy.
+        // A single missing id is answered with 404; keep that for legacy.
         if let Some(first) = outcome.failed.first()
             && first["code"] == "entry_not_found"
         {

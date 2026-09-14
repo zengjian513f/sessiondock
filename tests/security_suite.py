@@ -128,7 +128,7 @@ def run(host, port):
     for header in ("x-sessiondock-protocol", "x-sessiondock-node-token"):
         assert_err(host, port, "hub headers", "GET", "/api/health", 403, "hub_unsupported",
                    {header: "1"})
-    # Batch 38 H1: hub traffic has its own listener; on loopback a well-formed
+    # Hub traffic has its own listener; on loopback a well-formed
     # credential pair is still refused before any handler, on every route.
     pair = {"x-sessiondock-protocol": "1", "x-sessiondock-node-token": "a" * 48}
     for path in ("/api/meta", "/api/sessions", "/api/nodes", "/"):
@@ -152,13 +152,13 @@ def run(host, port):
     if status != 413 or code_of(body_of(buf)) != "body_too_large":
         fail("body too large", f"HTTP {status} code={code_of(body_of(buf))!r}", buf)
     passed("body too large")
-    # Python's terminal handlers do not impose the metadata route's body cap.
+    # Terminal handlers do not impose the metadata route's body cap.
     payload = json.dumps({"uid": "claude:missing", "future": "x" * (BODY_MAX + 1)}).encode()
     status, raw = call(host, port, "POST", "/api/term/takeover", star, payload)
     if status != 501:
         fail("terminal body policy", f"HTTP {status} (want disabled terminal 501)", raw)
     passed("terminal body policy")
-    # `debug_run` is the list-view selector (Python `filter_rows`), not a
+    # `debug_run` is the list-view selector, not a
     # policy gate: an id no registry knows is an empty view, HTTP 200.
     status, raw = call(host, port, "GET", "/api/sessions?debug_run=abc")
     try:

@@ -182,7 +182,7 @@ fn unknown_fields_are_ignored_and_executables_remain_checked() {
         launcher.complete_directories(&text, 24).unwrap(),
         vec![format!("{text}nested/")]
     );
-    // A symlinked executable resolves to the real file (Python `shutil.which`).
+    // A symlinked executable resolves to the real file.
     let alias = fixture.directory.path().join("host-alias");
     symlink(&fixture.config.host_binary, &alias).unwrap();
     let mut config = fixture.config.clone();
@@ -797,7 +797,7 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             .err(),
         Some(Error::InvalidSpec)
     );
-    // Grok receives a new SID and supports the same `--resume` form as Python.
+    // Grok receives a new SID and supports the `--resume` form.
     let grok_new = LaunchSpec::profile_new(Source::Grok, "grok-cli-v1".into(), &work).unwrap();
     launcher.validate_spec(&grok_new).unwrap();
     fs::remove_dir_all(root.join("ledger")).unwrap();
@@ -945,7 +945,7 @@ fn directory_completion_matches_python() {
 
 #[test]
 fn a_leftover_bug_report_profiles_table_is_ignored() {
-    // Batch 41 shipped a per-source worker profile table with a fixed
+    // An earlier build shipped a per-source worker profile table with a fixed
     // cheapest-model policy; both are gone. Deployed launcher files that
     // still carry the key load like any file with an unknown key, and the
     // worker selects the source's one CLI exactly like `term/create`.

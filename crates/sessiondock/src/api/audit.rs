@@ -1,10 +1,10 @@
 //! `POST /api/audit/browser`: bounded browser diagnostics intake.
 //!
-//! Status contract (kept compatible with the Python handler and the legacy
+//! Status contract (kept compatible with the legacy
 //! page, which treats any non-2xx answer as "retry this batch later"):
 //! `501` unconfigured, `202 {"ok":true,"accepted":N,"skipped":K,"dropped":B}`
 //! (dropped batches still answer `202` so the page does not resend them),
-//! `400` malformed body, `413` body over Python's route limit or more than the
+//! `400` malformed body, `413` body over the route limit or more than the
 //! event cap, and `503` during shutdown.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

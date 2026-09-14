@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""HTTP contract for legacy self-contained Codex forks (batch 35 R1/R2/R3).
+"""HTTP contract for legacy self-contained Codex forks.
 
 R1: the first session_meta is the identity; later session_meta records are
 skipped as exactly `跳过重复的Codex session_meta ×N` and `supported` stays true.
 R2: history_base null + forked_from_id set → the file is self-contained (no
 inherited prefix, never an error).
-R3: list rows walk forked_from_id like Python CodexAdapter.finalize_sessions
+R3: list rows walk forked_from_id
 (a missing parent ends the chain; size = own + Σ min(end_byte_offset or 0,
 parent.size); history_base null therefore adds 0).
 """
@@ -144,7 +144,7 @@ def run(opener, base, corpus):
         excerpt = json.dumps(row, ensure_ascii=False).encode()
         if row.get("supported") is not True:
             fail("r1", f"{sid} supported={row.get('supported')}", excerpt)
-        # Batch 44 WP-C: the duplicate-meta notes live in the detail meta only.
+        # The duplicate-meta notes live in the detail meta only.
         if "migration_warnings" in row:
             fail("r1", f"{sid} supported row carries migration_warnings", excerpt)
         detail, draw = fetch(opener, base, "/api/messages/" + quote(corpus.uid(sid), safe=":"))

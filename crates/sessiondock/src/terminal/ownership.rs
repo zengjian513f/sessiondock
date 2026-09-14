@@ -250,7 +250,7 @@ impl ClaimResponse {
         }
     }
 
-    /// Batch 31: the delivery executor is itself a claimant (a server-held
+    /// The delivery executor is itself a claimant (a server-held
     /// lease around one send). Like `into_api_json`, this is the only other
     /// way the secret leaves the registry; it is consumed, never logged.
     pub fn into_server_token(self) -> Result<String, PublicOwner> {

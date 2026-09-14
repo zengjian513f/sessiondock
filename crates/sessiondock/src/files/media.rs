@@ -97,7 +97,7 @@ impl ScopedFiles<'_> {
     pub(crate) fn identity(&self) -> (&str, Option<&str>) {
         (self.scope.uid, self.scope.agent)
     }
-    /// Media paths resolve directly against cwd, as in Python register_path.
+    /// Media paths resolve directly against cwd.
     pub(crate) fn image(&self, reference: &str) -> Result<CheckedImage, FileError> {
         let reference = normalize_media_ref(reference)?;
         // Missing references should not probe any paths in the branch.

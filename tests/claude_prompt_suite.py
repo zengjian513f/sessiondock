@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""HTTP contract of the live `prompt` field (WP-G): `sessiondock claude-hook`,
+"""HTTP contract of the live `prompt` field: `sessiondock claude-hook`,
 `--write-bridge-settings`, `/api/messages` and `/api/watch` `prompt` /
 `prompt_only` packets, and the "cleared once the native answer is recorded"
 rule. Synthetic Claude/Codex fixtures, loopback only, no CLI, no Chromium.
 
-Python reference: `sessiondock/claude_bridge.py` (hook file semantics) and
-`server._claude_prompt` / `_session_prompt` (JSON shape, clearing rule).
+Hook file semantics, JSON shape, and
+the clearing rule.
 """
 from __future__ import annotations
 
@@ -129,7 +129,7 @@ def main():
                                "options": [{"label": "红", "description": "暖色"}, {"label": "蓝", "description": ""}]}]}
         if {k: v for k, v in card.items() if k != "created"} != want or not isinstance(card.get("created"), int):
             fail("card shape differs from claude_bridge.py", card)
-        hook(state, question_payload())  # a repeated PreToolUse rewrites (new `created`), like Python
+        hook(state, question_payload())  # a repeated PreToolUse rewrites (new `created`)
         if json.loads(prompt_file.read_text())["state"] != "waiting":
             fail("repeated PreToolUse keeps the card waiting")
         hook(state, settle_payload("PostToolUse", tool="another-tool"))
@@ -217,7 +217,7 @@ def main():
                 page = get(host, port, f"/api/messages/{q}?window=1")
                 if page["prompt"] != card:
                     fail("windowed read carries the card too", page)
-                # A subagent view never carries the field (Python: only `if not agent`).
+                # A subagent view never carries the field.
                 # (No agent in this fixture: the query still must not 500.)
                 hook(state, settle_payload("PostToolUse"))
                 frame = sse_next(conn, resp, time.monotonic() + 5)

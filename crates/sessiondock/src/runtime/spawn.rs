@@ -1,5 +1,4 @@
-//! Which session started a running session (Python `live.spawn_parents` and
-//! `server._spawn_watch_loop`).
+//! Which session started a running session.
 //!
 //! A CLI main process's ancestor chain carries the clues: an ancestor is itself
 //! another session's CLI main process, or some level's environment names another
@@ -23,7 +22,7 @@ use indexmap::IndexMap;
 use super::procscan::{ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow};
 use crate::metadata::{MetadataError, MetadataStore, SpawnedBy};
 
-/// Python `SPAWN_WATCH_INTERVAL`.
+/// Ten-second background tick.
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(10);
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -32,7 +31,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Python `_spawn_candidates`: every possible spawner uid along the chain.
+/// Every possible spawner uid along the chain.
 fn spawn_candidates(
     scan: &Scan,
     pid: u32,
@@ -82,7 +81,7 @@ fn spawn_candidates(
     found
 }
 
-/// Python `spawn_parents` without the per-scan memo: `{uid: {source, sid}}`
+/// `{uid: {source, sid}}` without a per-scan memo
 /// for every owned session whose chain names another listed session.
 pub fn spawn_parents(
     scan: &Scan,
@@ -149,7 +148,7 @@ struct Memo {
 }
 
 /// Records spawners into the metadata store: from the background tick and from
-/// `/api/live`. Results are memoised per scan (Python `_spawn_cache`) and
+/// `/api/live`. Results are memoised per scan and
 /// sessions already recorded are skipped before writing.
 pub struct SpawnWatcher {
     scanner: Arc<ProcScanner>,
@@ -190,7 +189,7 @@ impl SpawnWatcher {
         found
     }
 
-    /// Python `_record_spawn_parents`: returns how many sessions were newly recorded.
+    /// Returns how many sessions were newly recorded.
     pub fn record(
         &self,
         scan: &Arc<Scan>,
@@ -212,7 +211,7 @@ impl SpawnWatcher {
         self.metadata.record_spawn_parents(&fresh)
     }
 
-    /// Python `_spawn_watch_tick`: list, scan (shared 3 s cache), record.
+    /// List, scan (shared 3 s cache), record.
     pub async fn tick(
         self: &Arc<Self>,
         reader: &crate::state::Reader,
@@ -241,7 +240,7 @@ impl SpawnWatcher {
         .map_err(|_| "spawn watch tick failed".to_owned())?
     }
 
-    /// Python `_spawn_watch_loop`: headless sessions an agent fans out often
+    /// Headless sessions an agent fans out often
     /// live and die while no page is open, so the service looks on its own at
     /// a fixed cadence; the scan shares the `/api/live` cache, so an open page
     /// costs almost nothing extra. Diagnostic only: a failed tick is dropped.

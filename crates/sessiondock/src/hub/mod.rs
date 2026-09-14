@@ -2,10 +2,9 @@
 //! with its health monitor, the hub→node HTTP client, the wire namespace,
 //! the aggregation of the five read routes plus the per-machine writes, and
 //! the single-machine proxy.
-//! Python `sessiondock/hub.py` and `sessiondock/federation.py` are the oracle.
 //!
 //! Nothing here binds a listener or touches session roots. The node side
-//! (second listener, `node_auth`) and the hub binary (`api::hub`, batch 40)
+//! (second listener, `node_auth`) and the hub binary (`api::hub`)
 //! wire these pieces: `Registry::open(path, networks, cache_dir)
 //! .with_public_payload(namespace::public_payload)` +
 //! `Monitor::spawn(registry, client, shutdown)`, then `aggregate::*` for the

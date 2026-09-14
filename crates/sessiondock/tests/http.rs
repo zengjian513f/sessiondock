@@ -248,7 +248,7 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
     assert_eq!(batch["messages"].as_array().unwrap().len(), 2);
     assert_eq!(batch["messages"][0]["text"], "迁移测试问题");
     assert!(batch.get("outbox").is_none());
-    // Python sets `prompt` on every main view (null without a live card).
+    // `prompt` is set on every main view (null without a live card).
     assert!(batch["prompt"].is_null());
     let history =
         json_body(get(&app, &format!("/api/session/input-history?uid={uid}")).await).await;
@@ -268,7 +268,7 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
             .status(),
         StatusCode::NOT_FOUND
     );
-    // `debug_run` is a list-view selector (Python `filter_rows`), not a
+    // `debug_run` is a list-view selector, not a
     // gate: the detail routes ignore it, and the list answers an empty
     // view for an id no registry knows.
     assert_eq!(
@@ -338,7 +338,7 @@ async fn sse_publishes_changed_agent_menu_even_when_leaf_cursor_is_unchanged() {
         ),
     )
     .unwrap();
-    // Batch 44 WP-A: the publisher reuses a list up to 3 s old (`OPEN_TTL`)
+    // The publisher reuses a list up to 3 s old (`OPEN_TTL`)
     // instead of walking the roots every 500 ms, so a new agent file shows
     // up within ~3.5 s rather than ~1 s.
     let packet = tokio::time::timeout(Duration::from_secs(8), body.frame())

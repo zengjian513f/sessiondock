@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Claude CLI question-card acceptance (WP-G), cheapest configuration.
+"""Real Claude CLI question-card acceptance, cheapest configuration.
 
 Like `send_claude_real.py` (isolated `CLAUDE_CONFIG_DIR` reusing the login
 read-only, throwaway cwd, `claude-haiku-4-5-20251001 --effort low`, everything

@@ -1,4 +1,4 @@
-// SessionDock's own Cache Storage name: a same-origin Python deployment keeps
+// SessionDock's own Cache Storage name: a same-origin predecessor deployment keeps
 // its `sessiondock-shell-*` caches and neither side's activate step deletes the other's.
 const CACHE_PREFIX = 'sessiondock-shell-';
 const CACHE_NAME = `${CACHE_PREFIX}v1`;

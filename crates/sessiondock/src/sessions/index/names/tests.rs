@@ -226,8 +226,8 @@ fn own_nearest_ancestor_and_agent_titles() {
     );
 }
 
-/// Batch 35: the inherited title follows `forked_from_id` (Python
-/// `finalize_sessions`), not `history_base.thread_id` — a rewind past the
+/// The inherited title follows `forked_from_id`,
+/// not `history_base.thread_id` — a rewind past the
 /// parent's fork point reads R's bytes but is Q's child.
 #[test]
 fn inherited_title_follows_forked_from_id_not_history_base() {
@@ -365,7 +365,7 @@ fn follows_symlinks_and_hardlinks_while_tracking_replacements() {
     );
 }
 
-/// Python `CodexAdapter.read`: a renamed main session carries the local
+/// A renamed main session carries the local
 /// `/rename <name>` as an inferred, uncounted `command` event at
 /// `renamed_at`, before the first later message; a full read shows it, an
 /// append never re-sends it, search does not match it, agents and unnamed
@@ -441,7 +441,7 @@ fn renamed_codex_sessions_carry_the_inferred_rename_command_event() {
         .unwrap();
     assert_eq!(append["reset"], false);
     assert_eq!(append["messages"], json!([]));
-    // Not searchable (Python `search_only`), not on agents or timeless names.
+    // Not searchable, not on agents or timeless names.
     let snapshot = service.snapshot(&uid, "").unwrap();
     assert!(
         snapshot

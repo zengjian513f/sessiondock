@@ -1,5 +1,5 @@
 //! An authenticated file browser keeps its directory grant after the original
-//! directory is renamed or removed, as Python's file manager does. Each API
+//! directory is renamed or removed. Each API
 //! request still resolves the selected native session before consulting it.
 use super::{FileError, FileScope, FileService, ResolvedTarget};
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
@@ -154,8 +154,8 @@ impl FileService {
         match navigation.filter(|value| !value.is_empty()) {
             Some(path) => self.navigation(path),
             // The grant survives a renamed/deleted entry, but it is not a
-            // cached resolution of that reference. Python resolves a fresh
-            // click against the current selected session cwd and filesystem.
+            // cached resolution of that reference. A fresh click is resolved
+            // against the current selected session cwd and filesystem.
             None => self.target(scope, reference, None),
         }
     }

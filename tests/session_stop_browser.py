@@ -6,7 +6,7 @@ A synthetic Codex session is resumed through the existing console button
 "停止会话" action then posts `/api/session/stop` with a `request_id`, the page
 shows which stage ended the instance (graceful), the console turns into the
 exit explanation and the action flips to "删除会话". A session that has no
-running instance succeeds as a Python-compatible no-op. The
+running instance succeeds as a no-op. The
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
 """
@@ -124,7 +124,7 @@ def main():
                     notice = page.locator("#session-stop-notice")
                     expect(notice).to_be_visible()
                     expect(notice).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
-                    # WP-E: the pane closes on exit (Python parity) and the console
+                    # The pane closes on exit and the console
                     # button stays usable as "接管会话" because the source has a
                     # resume-capable profile; the exit explanation is remembered,
                     # the instance leaves the list and the header action flips
@@ -146,7 +146,7 @@ def main():
                     live = json.loads(opener.open(base + "/api/live?force=1", timeout=10).read())
                     assert live["managed"]["sessions"][codex_uid]["state"] == "exited", live["managed"]["sessions"]
 
-                    # ---- A session without any running instance follows Python:
+                    # ---- A session without any running instance:
                     # stopping succeeds as a no-op and the stale live marker clears.
                     # `S.live` can hold stale entries in Rust mode (no live poll), so the
                     # stop control can still be reached for such a session.

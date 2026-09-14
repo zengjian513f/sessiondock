@@ -16,7 +16,7 @@
   };
   const preferences = {...{sort:'name', order:'asc', view:'list', hidden:true}, ...restore('view', {})};
   // Rust declares `files_write` (actions, conflicts, chunk size, trash delete).
-  // A Python page has no declaration and keeps every original behavior.
+  // A page with no declaration keeps every original behavior.
   const writeCaps = SessionDockCapabilities.config.files_write;
   const supports = action => !writeCaps || !Array.isArray(writeCaps.actions) || writeCaps.actions.includes(action);
   const UPLOAD_CHUNK = writeCaps && Number.isInteger(writeCaps.chunk_bytes) && writeCaps.chunk_bytes > 0 ? writeCaps.chunk_bytes : 8*1024*1024;
@@ -142,7 +142,7 @@
     document.title = title + ' · 文件管理 · SessionDock'; document.querySelector('h1').textContent = title;
     $('breadcrumbs').replaceChildren(); let path = '';
     // Rust reports the development root that bounds navigation (`root`);
-    // crumbs above it are labels, not links. Python has no such bound.
+    // crumbs above it are labels, not links.
     const root = typeof result.root === 'string' && result.root ? result.root.replace(/\/+$/, '') : '';
     const reachable = crumb => !root || crumb === root || crumb.startsWith(root + '/');
     for (const [index,name] of ['根目录', ...segments].entries()) {

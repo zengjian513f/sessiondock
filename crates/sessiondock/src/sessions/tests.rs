@@ -298,7 +298,7 @@ fn same_length_middle_edit_is_detected_beyond_head_and_tail() {
 #[test]
 fn malformed_complete_record_is_noted_but_shape_errors_fail_closed_then_recover_after_repair() {
     let (_temp, file, store, uid) = setup();
-    // Batch 35: a line that is not a JSON object is skipped like Python
+    // A line that is not a JSON object is skipped
     // `_iter_records`; the row and the detail both note it.
     append(&file, b"not-json\n");
     let batch = store.messages(&uid, &MessageQuery::default()).unwrap();
@@ -531,7 +531,7 @@ fn codex_inheritance_keeps_leaf_offsets_and_ignores_parent_tail_appends() {
     assert_eq!(before["meta"]["root_sid"], "parent");
     assert_eq!(before["meta"]["fork_depth"], 1);
     // Unknown semantics after the fixed cutoff cannot contaminate this view;
-    // since batch 33 the parent itself stays supported with a skip warning.
+    // the parent itself stays supported with a skip warning.
     append(&parent, b"{\"type\":\"future-unsupported\"}\n");
     let idle = store.messages(&uid, &continuation(&before)).unwrap();
     assert_eq!(idle["reset"], false);
@@ -549,8 +549,8 @@ fn codex_inheritance_keeps_leaf_offsets_and_ignores_parent_tail_appends() {
         parent_row["migration_warnings"],
         json!(["跳过未知的Codex 记录类型：future-unsupported ×1"])
     );
-    // A later session_meta in the parent tail is skipped and counted like
-    // Python's `and not meta`; it is confined to the parent view and row.
+    // A later session_meta in the parent tail is skipped and counted;
+    // it is confined to the parent view and row.
     append(
         &parent,
         b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"parent\"}}\n",
@@ -1405,7 +1405,7 @@ fn persisted_timeline_pin_equals_pure_options_resets_cursors_and_retires_explici
     assert_eq!(fs::read(&file).unwrap(), expected);
 }
 
-/// Python `debug_runs.filter_rows` over the published list: the registry
+/// Over the published list: the registry
 /// beside the metadata hides registered runs from the ordinary view, a
 /// `debug_run` view shows exactly that run, the view is re-signed and fork
 /// parents are re-derived among the visible rows. Rows carry
@@ -1499,7 +1499,7 @@ fn list_view_applies_the_debug_run_registry_beside_the_metadata() {
     assert_ne!(run_1["sig"], run_2["sig"]);
     assert!(uids(&store.list_view(false, "unknown").unwrap()).is_empty());
     assert!(uids(&store.list_view(false, "bad id!").unwrap()).is_empty());
-    // Supported rows carry no `migration_warnings` (Python has none); the
+    // Supported rows carry no `migration_warnings`; the
     // detail `meta` keeps the non-fatal notes.
     assert!(default["sessions"][0].get("migration_warnings").is_none());
     assert_eq!(default["sessions"][0]["supported"], true);

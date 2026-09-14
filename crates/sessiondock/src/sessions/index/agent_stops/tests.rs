@@ -1,4 +1,4 @@
-//! Python `ClaudeAgentItemTests` mechanics at the scan level: notice
+//! The ClaudeAgentItemTests mechanics at the scan level: notice
 //! de-duplication by text and first-seen time, foreground results,
 //! `async_launched`, incremental reads of complete lines only, rescans on
 //! shrink and inode change, the record budget.
@@ -19,14 +19,14 @@ fn notice_text(agent: &str, status: &str) -> String {
     )
 }
 
-/// Python `notice(ts, agent_id, status, shape="attachment")`.
+/// An attachment-shaped task-notification notice.
 fn attachment_notice(ts: &str, agent: &str, status: &str) -> Value {
     json!({"type": "attachment", "timestamp": ts,
         "attachment": {"type": "queued_command", "commandMode": "task-notification",
                        "prompt": notice_text(agent, status), "timestamp": ts}})
 }
 
-/// Python `notice(..., shape="user")`.
+/// A user-shaped task-notification notice.
 fn user_notice(ts: &str, agent: &str, status: &str) -> Value {
     json!({"type": "user", "timestamp": ts,
         "message": {"role": "user", "content": notice_text(agent, status)}})
@@ -36,7 +36,7 @@ fn queue_operation(ts: &str, operation: &str, text: &str) -> Value {
     json!({"type": "queue-operation", "operation": operation, "timestamp": ts, "content": text})
 }
 
-/// Python `agent_result(ts, agent_id, status, tool_use_id)`.
+/// A foreground Agent result with status and agentId.
 fn agent_result(ts: &str, agent: &str, status: &str) -> Value {
     json!({"type": "user", "timestamp": ts,
         "message": {"role": "user", "content": [
@@ -78,7 +78,7 @@ fn notices_and_foreground_results_are_stops_but_async_launch_is_not() {
         agent_result("2026-09-12T01:12:00.200Z", "foreground", "completed"),
         // A background Bash task-id never matches a subagent but is recorded.
         attachment_notice("2026-09-12T01:13:00.000Z", "b7f1a2", "completed"),
-        // No timestamp: ignored like Python (`if not ts: return`).
+        // No timestamp: ignored (`if not ts: return`).
         json!({"type": "user", "message": {"role": "user",
             "content": notice_text("untimed", "completed")}}),
         // Not an object / not JSON: ignored.
@@ -115,7 +115,7 @@ fn notices_and_foreground_results_are_stops_but_async_launch_is_not() {
 
 #[test]
 fn copies_of_one_notice_count_at_their_first_seen_time_only() {
-    // Python `test_late_copies_of_a_notice_and_refusal_do_not_flip_a_running_agent`.
+    // Late copies of a notice and a refusal do not flip a running agent.
     let text = notice_text("worker", "completed");
     let scan = feed(&[
         queue_operation("2026-09-12T00:19:00.650Z", "enqueue", &text),
@@ -161,7 +161,7 @@ fn an_earlier_copy_written_later_lowers_the_stop_to_the_notices_maximum() {
         attachment_notice("2026-09-12T00:10:00.000Z", "worker", "completed"),
     ]);
     assert_eq!(stops(&scan), [("worker", "2026-09-12T00:20:00.000Z")]);
-    // Python recomputes from notices alone: a foreground result set earlier
+    // The stop is recomputed from notices alone: a foreground result set earlier
     // is replaced by the notices' maximum, exactly like `_collect_agent_stops`.
     let scan = feed(&[
         agent_result("2026-09-12T00:50:00.000Z", "worker", "completed"),
@@ -282,7 +282,7 @@ fn lines(values: &[Value]) -> Vec<u8> {
 
 #[test]
 fn update_reads_only_new_complete_lines_and_rescans_on_shrink() {
-    // Python `test_stop_notices_are_read_incrementally_and_only_from_complete_lines`.
+    // Stop notices are read incrementally and only from complete lines.
     let owner = Owner::new();
     let head = lines(&[
         json!({"type": "user", "timestamp": "2026-09-12T00:00:00.000Z",

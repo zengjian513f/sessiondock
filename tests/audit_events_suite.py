@@ -3,7 +3,7 @@
 
 A JSON batch {page_id, uid, _build, events:[{event, ts, uid, data, content}]} is
 admitted when SESSIONDOCK_AUDIT_DIR is configured; the directory is created
-and chmodded like Python's audit store. Unknown event
+and chmodded. Unknown event
 names matching the intake alphabet are accepted. Each event is written as
 structured metadata only (no free-form content) to browser-YYYY-MM-DD.jsonl,
 with the top-level page_id copied onto every row. Named events
@@ -195,7 +195,7 @@ def run(opener, base, audit, uid):
         fail("click", "coordinates", json.dumps(click["data"]).encode())
     text = click["data"].get("text")
     if text != "Open session " + "字" * 1100:
-        fail("click", "text must retain Python-compatible input", json.dumps(click["data"]).encode())
+        fail("click", "text must retain input", json.dumps(click["data"]).encode())
     header = snap["data"].get("header_state")
     if not isinstance(header, dict) or header.get("selected") != uid:
         fail("dom.snapshot", "header_state object", json.dumps(snap["data"]).encode())

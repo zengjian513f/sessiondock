@@ -539,7 +539,7 @@ async fn unconsumed_responses_queue_until_body_drop_or_consumption_releases_perm
     let _test = TEST_GATE.acquire().await.unwrap();
     let fixture = Fixture::new(true);
     let record = fixture.seed();
-    // Batch 44 WP-A sizes the response pool from the read workers
+    // The response pool is sized from the read workers
     // (`Pools::responses`); pin four readers so the pool is the eight permits
     // this test counts.
     let mut config = fixture.config();
@@ -710,7 +710,7 @@ async fn bind_rejects_missing_native_evidence_subagents_and_grok_without_startin
             "orphan subagents are no rows"
         );
         if row["source"] == "grok" {
-            // WP-E: a Grok main session verifies through summary.json
+            // A Grok main session verifies through summary.json
             // `info.id`; binding it to this Codex receipt is a source
             // disagreement, refused before any host or ledger write.
             assert_eq!(
@@ -727,7 +727,7 @@ async fn bind_rejects_missing_native_evidence_subagents_and_grok_without_startin
         identities.push((uid, AssociationReason::UnsupportedNative));
     }
     let grok_uid = grok_uid.expect("grok row listed");
-    // Batch 35: a subagent whose parent is not indexed is not listed, but
+    // A subagent whose parent is not indexed is not listed, but
     // its uid (the index's path hash) stays a catalogued, bind-rejected agent.
     let child = format!(
         "codex:{}",

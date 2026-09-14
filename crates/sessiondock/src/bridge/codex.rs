@@ -1,4 +1,4 @@
-//! Codex command approvals (Python `codex_bridge.approval_prompt`).
+//! Codex command approvals.
 //!
 //! Codex writes `request_user_input` questions to its rollout, but a command
 //! approval lives only on the TUI screen. This parser is deliberately strict:
@@ -24,7 +24,7 @@ static FOOTER: LazyLock<Regex> = LazyLock::new(|| {
 static SHORTCUT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\s*\((y|p|esc)\)\s*$").expect("shortcut"));
 
-/// Python `_option_text`: compact Chinese labels that keep Codex's meaning.
+/// Compact Chinese labels that keep Codex's meaning.
 fn option_text(text: &str, key: &str) -> (String, String) {
     let folded = text.split_whitespace().collect::<Vec<_>>().join(" ");
     let low = folded.to_lowercase();
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(options[1]["label"], "始终允许");
         assert_eq!(options[2]["label"], "拒绝");
         assert_eq!(options[2]["description"], "取消命令，并告诉 Codex 调整方案");
-        // Python: sha256 of "heading\nenvironment\ncommand\nkey:label…"[:16].
+        // sha256 of "heading\nenvironment\ncommand\nkey:label…"[:16].
         assert_eq!(prompt["id"], "codex-approval:8d35d794399d229d");
     }
 

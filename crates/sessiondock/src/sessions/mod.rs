@@ -46,7 +46,7 @@ use sha1::{Digest, Sha1};
 
 pub(crate) use index::{CandidateRef, IndexSnapshot};
 
-/// Resident-memory hygiene (batch 44 WP-A). glibc keeps freed memory in
+/// Resident-memory hygiene. glibc keeps freed memory in
 /// per-thread arenas and rarely returns it on its own; with 256 runtime
 /// threads a dropped 300 MB projection stayed in RSS. `malloc_trim(0)` walks
 /// every arena and gives free pages back, so an explicit trim after each
@@ -72,7 +72,7 @@ pub(crate) mod budgets {
     const KIB: usize = 1024;
     const MIB: usize = 1024 * KIB;
     /// 视图缓存：LRU 条数 + 序列化消息合计字节（默认值；运行时以
-    /// [`caches()`] 为准，第四十四批 WP-A 可用环境变量覆盖）。
+    /// [`caches()`] 为准，可用环境变量覆盖）。
     pub const VIEW_CACHE_ENTRIES: usize = 16;
     pub const VIEW_CACHE_BYTES: usize = 128 * MIB;
     pub const INLINE_STRING_BYTES: usize = 2 * MIB;
@@ -84,7 +84,7 @@ pub(crate) mod budgets {
     pub const AST_CACHE_ENTRIES: usize = 8;
     pub const AST_CACHE_BYTES: usize = 64 * MIB;
 
-    /// Resident-memory budgets of the two in-process caches (batch 44 WP-A).
+    /// Resident-memory budgets of the two in-process caches.
     /// Fixed once at startup from `Config::caches`; `caches()` before
     /// `configure` (library tests) yields the defaults above.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,7 +122,7 @@ pub(crate) mod budgets {
 }
 
 const CURSOR_SCHEMA: &str = "rs-m2-1";
-/// How old the published list may be when a view is opened (batch 44 WP-A);
+/// How old the published list may be when a view is opened;
 /// `/api/sessions` keeps the index's own 500 ms window.
 const OPEN_TTL: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -143,7 +143,7 @@ pub struct NativeScope {
     pub agent_id: Option<String>,
 }
 
-/// Delivery executor evidence (batch 31): one physical checkpoint of a Claude
+/// Delivery executor evidence: one physical checkpoint of a Claude
 /// main session, in the same terms the message cursor uses. `source_identity`
 /// is the validated view identity, never a display SID or file name.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -329,7 +329,7 @@ pub struct SearchPool {
 
 impl Drop for SearchPool {
     /// A search streamed and dropped up to every session's projection; give
-    /// that heap back once, when the whole scan is over (batch 44 WP-A).
+    /// that heap back once, when the whole scan is over.
     fn drop(&mut self) {
         memory::release();
     }
@@ -364,8 +364,8 @@ impl SessionSnapshot {
     }
 }
 
-/// One debug-run view of a published list (Python `filter_rows` +
-/// `_view_signature`), kept while the list, the registry and the run id are
+/// One debug-run view of a published list,
+/// kept while the list, the registry and the run id are
 /// the same so the polling default view costs no re-filtering.
 struct Filtered {
     published: Arc<Published>,
@@ -583,7 +583,7 @@ impl SessionStore {
     /// The list for liveness pairing (`/api/live`, the spawner tick): rows
     /// up to `OPEN_TTL` old are good enough to pair processes with sessions,
     /// so the 3 s poll shares one walk with the SSE publisher instead of
-    /// forcing its own every time the roots changed (batch 44 WP-A).
+    /// forcing its own every time the roots changed.
     pub fn list_recent(&self) -> Result<Value, SessionError> {
         let published = self.publish_within(false, OPEN_TTL)?;
         let mut document = (*published.document).clone();
@@ -594,11 +594,11 @@ impl SessionStore {
     }
 
     /// `/api/sessions` for one view: the published list with the debug-run
-    /// registry applied (Python `debug_runs.filter_rows` — the ordinary view
+    /// registry applied (the ordinary view
     /// hides every registered run, `debug_run` shows only that run), fork
     /// parents re-derived among the visible rows and the document re-signed
     /// over the visible rows plus the run id (`_view_signature`). Rows carry
-    /// no `migration_warnings` unless unsupported (Python has none); the
+    /// no `migration_warnings` unless unsupported; the
     /// detail `meta` keeps them all.
     pub fn list_view(&self, force: bool, debug_run: &str) -> Result<Value, SessionError> {
         self.list_view_unless(force, debug_run, "")
@@ -606,7 +606,7 @@ impl SessionStore {
 
     /// `list_view`, except that when the view's signature equals `sig` the
     /// caller gets `{"unchanged": true, "sig": …}` without the document being
-    /// cloned, decorated or serialized (batch 44 WP-A: the legacy page polls
+    /// cloned, decorated or serialized (the legacy page polls
     /// `/api/sessions?sig=` every 8 s from every tab; the signature covers
     /// rows and metadata only, never view decorations).
     pub fn list_view_unless(
@@ -631,7 +631,7 @@ impl SessionStore {
                 None => {
                     let mut rows = runs.filter_rows(published.rows().to_vec(), debug_run);
                     if let Some(metadata) = &published.metadata {
-                        // Python computes fork parents over the filtered
+                        // Fork parents are computed over the filtered
                         // topology: a parent whose only fork is hidden is
                         // an ordinary row in this view.
                         metadata.enrich(&mut rows);
@@ -688,7 +688,7 @@ impl SessionStore {
     }
 
     /// `search_pool` for one debug-run view: only the rows that view lists
-    /// are candidates (Python filters the results and `total_pool` alike).
+    /// are candidates (the results and `total_pool` alike).
     pub fn search_pool_view(&self, debug_run: &str) -> Result<SearchPool, SessionError> {
         let published = self.publish(false)?;
         let rows = self
@@ -831,7 +831,7 @@ impl SessionStore {
             // the last walk and this open): rescan once so the row the view
             // reports as `meta` (size, updated, title, chat_exists) describes
             // the same bytes. The cached view is reused, only its row changes.
-            // (Pacing this rescan was tried in batch 44 and rejected: the
+            // (Pacing this rescan was tried and rejected: the
             // read-model tests and docs promise that `meta` and the bytes
             // agree; the walk+rebuild per observed append stays, see
             // docs/performance.md.)
@@ -862,7 +862,7 @@ impl SessionStore {
     ) -> Result<Prepared, SessionError> {
         // A view opens against a list up to OPEN_TTL old: new files, changed
         // ownership and duplicate SIDs still show up within seconds, while the
-        // view itself re-`stat`s the files it displays (batch 44 WP-A).
+        // view itself re-`stat`s the files it displays.
         let published = self.publish_within(force, ttl)?;
         match prepare(&published, uid, agent) {
             Ok(prepared) => Ok(prepared),
@@ -880,7 +880,7 @@ impl SessionStore {
         self.snapshot(uid, agent)?.native_scope()
     }
 
-    /// Delivery executor read (batch 31); see `ViewSnapshot::claude_native_inputs`.
+    /// Delivery executor read; see `ViewSnapshot::claude_native_inputs`.
     /// Run on the bounded blocking reader executor.
     pub fn claude_native_inputs(
         &self,
@@ -1054,7 +1054,7 @@ fn timeline_pin_row(row: &mut Value, index: &IndexSnapshot, metadata: &MetadataS
 /// Public list rows carry `migration_warnings` only when unsupported (the
 /// fatal reason, like the batch-35 contract); the non-fatal notes of a
 /// supported row (and of its `agent_items`) stay in the detail `meta` only.
-/// Python rows have no such field, and nothing in the frontend reads it.
+/// Nothing in the frontend reads it.
 pub(crate) fn strip_row_warnings(document: &mut Value) {
     fn strip(row: &mut Value) {
         if row["supported"] != false
@@ -1143,9 +1143,9 @@ pub(crate) fn path_text(path: &Path) -> std::borrow::Cow<'_, str> {
     let text = path.to_string_lossy();
     #[cfg(windows)]
     {
-        // Python's `str(Path.resolve())` uses an ordinary drive/UNC spelling,
+        // `str(Path.resolve())` uses an ordinary drive/UNC spelling,
         // while Rust canonicalize returns the Win32 verbatim `\\?\` form.
-        // UIDs are a hash of Python's spelling and must stay identical whether
+        // UIDs are a hash of that spelling and must stay identical whether
         // the caller passes a configured path or its canonicalized equivalent.
         if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
             return format!("\\\\{rest}").replace('/', "\\").into();

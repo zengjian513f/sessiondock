@@ -154,7 +154,7 @@ fn project_ranges(
                     ));
                     prepared.push(image);
                 }
-                // Python registers nothing for a text reference that does not
+                // Nothing is registered for a text reference that does not
                 // resolve to an image file: keep the text, project no
                 // placeholder. Typed native references keep their error slot.
                 Err(error) if native_position.is_none() && media::silent_failure(&error) => {

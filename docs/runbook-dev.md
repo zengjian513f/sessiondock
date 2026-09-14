@@ -45,7 +45,7 @@ hostname and can be overridden with `SESSIONDOCK_HOSTNAME`.
 Use a private development tree for synthetic ptyhost, delivery, lifecycle, audit,
 trash and bug-report data. The runtime follows each module's documented format;
 it does not impose a blanket disjoint-root or 0700 policy on otherwise valid
-Python layouts.
+layouts.
 
 **Metadata — `SESSIONDOCK_STATE_DIR`.** Metadata reloads on every operation.
 Missing, damaged or unsupported data behaves as empty; external edits are

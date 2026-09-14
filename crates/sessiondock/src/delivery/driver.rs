@@ -1,7 +1,7 @@
-//! Terminal driver for the delivery executor (batch 31 Claude, batch 32 Codex).
+//! Terminal driver for the delivery executor.
 //!
 //! The driver owns nothing durable. It captures the host's screen model,
-//! recognizes Claude's composer the way the Python bridge does (rules, `❯`,
+//! recognizes Claude's composer (rules, `❯`,
 //! dim suggestions, cursor position) and Codex's composer the way
 //! `codex_bridge.composer_state` does (status footer or cursor-anchored block,
 //! `›`/`»` marker, dim placeholder, braille particle glyphs blanked), pastes
@@ -135,7 +135,7 @@ pub struct ScreenCapture {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ComposerView {
     pub state: ComposerState,
-    /// Python-compatible nonreversible fingerprint of screen + cursor; this is
+    /// Nonreversible fingerprint of screen + cursor; this is
     /// the draft consent token and the domain's frame token.
     pub screen_token: String,
     /// Fingerprint of the composer rows + cursor only, used by the driver's
@@ -173,8 +173,8 @@ static BUSY_STATUS: LazyLock<Regex> = LazyLock::new(|| {
 /// The transient paste-burst indicator both TUIs show while a bracketed paste
 /// is still being ingested (Claude Code on Windows ConPTY keeps it up well
 /// after the text is in the buffer). An Enter sent while it shows is swallowed
-/// into the paste, so the composer is not "ready" until it clears — Python
-/// `term_submit._PASTING` (BUG-20260913-093411-0837da).
+/// into the paste, so the composer is not "ready" until it clears
+/// (BUG-20260913-093411-0837da).
 static PASTING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)Pasting[\u{2026}.]+").expect("pasting regex"));
 
@@ -204,13 +204,13 @@ pub fn strip_ansi(text: &str) -> String {
 
 /// Codex 0.154 animates braille "particles" (U+2800–U+28FF) through the
 /// composer's padding rows and the blank cells of its input row in ordinary
-/// RGB colours (Python fix `9b1c2fd`). They are never text: blank them before
+/// RGB colours. They are never text: blank them before
 /// locating the block and skip them when deciding whether it holds a draft.
 fn is_particle(ch: char) -> bool {
     ('\u{2800}'..='\u{28ff}').contains(&ch)
 }
 
-/// Python `codex_bridge._plain`: ANSI stripped, particle cells blanked in place.
+/// ANSI stripped, particle cells blanked in place.
 fn codex_plain(line: &str) -> String {
     strip_ansi(line)
         .chars()
@@ -223,12 +223,12 @@ pub fn codex_busy_screen(screen: &str) -> bool {
     CODEX_BUSY.is_match(&strip_ansi(screen))
 }
 
-/// Whether Claude visibly has a turn in progress (Python `busy_screen`).
+/// Whether Claude visibly has a turn in progress.
 pub fn busy_screen(screen: &str) -> bool {
     BUSY_STATUS.is_match(&strip_ansi(screen))
 }
 
-/// Visible characters with their SGR dim state (Python `_styled_chars`).
+/// Visible characters with their SGR dim state.
 fn styled_chars(text: &str) -> Vec<(char, bool)> {
     let mut result = Vec::new();
     let mut dim = false;
@@ -316,7 +316,7 @@ fn locate(clean_lines: &[String], cursor: (u16, u16)) -> Option<ComposerBlock> {
     })
 }
 
-/// Python `composer_state`: `empty`, `editing` or `unknown`, plus the visible
+/// `empty`, `editing` or `unknown`, plus the visible
 /// editor text and a composer-only fingerprint when the block is recognized.
 pub fn inspect(capture: &ScreenCapture) -> ComposerView {
     let screen_token = screen_fingerprint(&capture.text, capture.cursor);
@@ -416,7 +416,7 @@ fn nonblank(line: &str) -> bool {
     !line.trim().is_empty()
 }
 
-/// Locate the Codex composer block `[start, end]` (Python `composer_state`):
+/// Locate the Codex composer block `[start, end]`:
 /// the nonblank block immediately above a recognized status footer, or, when
 /// the short pane hides the footer, the block anchored by the cursor.
 fn locate_codex(
@@ -524,7 +524,7 @@ fn locate_codex(
     Some((start, end))
 }
 
-/// Python `codex_bridge.composer_state` on one capture: `empty`, `editing` or
+/// Composer state on one capture: `empty`, `editing` or
 /// `unknown`, plus the visible (non-dim, particle-free) editor text and a
 /// composer-only fingerprint when the block is recognized. A lagging capture
 /// is never a known composer.
@@ -588,7 +588,7 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
     }
 }
 
-/// Python `composer_probe` fingerprint: sha256 of `x\0y\0screen`.
+/// Fingerprint: sha256 of `x\0y\0screen`.
 pub fn screen_fingerprint(screen: &str, cursor: (u16, u16)) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{}\0{}\0", cursor.0, cursor.1).as_bytes());

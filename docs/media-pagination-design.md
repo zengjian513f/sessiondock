@@ -13,7 +13,7 @@ cursors.
 
 Media descriptors remain lazy. Embedded and file-backed sources are registered
 without decoding all images into the history response, and each GET enforces
-Python's 32 MiB decoded-image limit. Cache eviction may discard old materialized
+the 32 MiB decoded-image limit. Cache eviction may discard old materialized
 blobs or descriptors, but cache pressure does not impose an input-count or
 batch-byte admission rule. Concurrent GETs may all complete; borrowed blobs and
 temporary retention overruns do not produce a busy response.

@@ -57,7 +57,7 @@ impl NodeIdentity {
     }
 }
 
-/// `::ffff:a.b.c.d` is the IPv4 peer it wraps (Python `_client_ip`).
+/// `::ffff:a.b.c.d` is the IPv4 peer it wraps.
 fn unmap(address: IpAddr) -> IpAddr {
     match address {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, IpAddr::V4),

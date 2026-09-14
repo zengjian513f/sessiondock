@@ -1,10 +1,10 @@
 //! Request-shape validation and structured-metadata sanitization.
 //!
-//! Wire contract (compatible with the Python `_browser_audit` handler):
+//! Wire contract:
 //! the body is one JSON object `{page_id|_page_id, uid, _build, _trace_id,
 //! events:[{event, ts, uid, trace_id, request_id, connection_id, severity,
 //! build, data, content}]}`. `content` and unknown keys are not retained.
-//! Invalid events are skipped, not fatal, exactly as in Python; only a
+//! Invalid events are skipped, not fatal; only a
 //! structurally malformed body is rejected.
 
 use std::{
@@ -36,7 +36,7 @@ const SECRET_KEYS: [&str; 11] = [
     "refresh-token",
 ];
 
-/// Structural rejections. Codes mirror the Python responses: a bad body is
+/// Structural rejections. A bad body is
 /// `400`, too many events is `413`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rejection {
@@ -204,7 +204,7 @@ fn record(item: &Value, batch: &Envelope<'_>) -> Option<Value> {
     }))
 }
 
-/// Python `audit.sanitize`: redact secret keys and stop recursion after depth 12.
+/// Redact secret keys and stop recursion after depth 12.
 pub fn sanitize(value: &Value, depth: usize) -> Value {
     if depth > DATA_DEPTH_MAX {
         return Value::String("<depth-limit>".into());

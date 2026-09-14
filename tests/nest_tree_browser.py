@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Sidebar nesting (Python nest_tree_e2e port): subagents and spawned sessions indent under their spawner.
+"""Sidebar nesting: subagents and spawned sessions indent under their spawner.
 
 Isolated Rust server over a synthetic corpus, Playwright Chromium, desktop and 390 px. Every field the
 tree reads is published by this backend from the corpus itself: ``spawned_by`` is seeded into
 session-metadata.json (the record the process scan writes once), ``agent_items[].active`` is the
-sidecar's open turn (batch 36), and ``continued_in`` is the tail ``continued-in`` record. Mid-test
+sidecar's open turn, and ``continued_in`` is the tail ``continued-in`` record. Mid-test
 list changes are made on disk and reach the page through a forced rescan plus the page's own sig
 poll. The synthetic corpus has no matching CLI process, so the real live endpoint stays empty.
 """

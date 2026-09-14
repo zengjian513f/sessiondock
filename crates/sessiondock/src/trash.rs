@@ -1,5 +1,5 @@
 //! Session recycle bin. Native files move into recoverable entries; fork
-//! parents and currently running sessions remain protected as in Python.
+//! parents and currently running sessions remain protected.
 
 pub mod manifest;
 mod plan;
@@ -143,7 +143,7 @@ pub struct Refused {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct DeleteOutcome {
     pub deleted: Vec<Deleted>,
-    /// Python policy refusals: protected parents and running sessions.
+    /// Policy refusals: protected parents and running sessions.
     pub skipped: Vec<Refused>,
     /// Missing sessions and filesystem failures.
     pub failed: Vec<Refused>,

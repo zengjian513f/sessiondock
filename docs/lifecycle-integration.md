@@ -34,10 +34,10 @@ because the browser supplies a UID. A name is an endpoint locator only.
 1. Resolve a server-configured CLI and an absolute working
    directory. Browser requests cannot provide executable paths, shell snippets,
    arbitrary argv/environment, or credentials. Adapter versions/parameters and
-   capability advertisements must reflect verified contracts, not old Python
+   capability advertisements must reflect verified contracts, not old
    invocation patterns alone.
    Legacy `adapter_id` input does not select a command; source selection follows
-   Python's fixed CLI table.
+   the fixed CLI table.
 2. Persist the canonical specification and generated launch/instance identities.
    The same request and specification return the prior receipt; a conflicting
    specification is rejected. Do not evict idempotency records silently when the

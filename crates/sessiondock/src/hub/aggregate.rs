@@ -43,7 +43,7 @@ pub const TRASH_DIR: &str = "所选机器的本地回收站";
 /// Browser query pairs in wire order (`parse_qs(keep_blank_values=True)`).
 pub type Params = [(String, String)];
 
-/// Rejected input (Python `ValueError` → 400 `{"error": text}`).
+/// Rejected input (400 `{"error": text}`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AggregateError(pub String);
 
@@ -359,7 +359,7 @@ fn term_list_body(registry: &Registry, answers: &[Answer]) -> Value {
             && let Some(entries) = data.get("sources").and_then(Value::as_object)
         {
             for (source, available) in entries {
-                // Python `sources.get(source, False) or available`.
+                // Use `available` unless this source is already truthy.
                 if !sources.get(source).is_some_and(truthy) {
                     sources.insert(source.clone(), available.clone());
                 }
@@ -776,8 +776,7 @@ pub async fn purge_all(
 
 /// The list signature: sha256 of the sorted-key JSON of the body with the
 /// node rows reduced to `{id, name, online}`, first 24 hex digits. Only ever
-/// compared with a value this hub produced, so it need not match Python's
-/// bytes.
+/// compared with a value this hub produced.
 fn signature(result: &Map<String, Value>) -> String {
     let mut stable = result.clone();
     let nodes: Vec<Value> = result
@@ -835,7 +834,7 @@ fn sorted_json(value: &Value, out: &mut String) {
     }
 }
 
-/// Python `sum(...)` over JSON numbers: an integer while every term is one,
+/// Sum over JSON numbers: an integer while every term is one,
 /// a float otherwise; missing or non-numeric terms count as 0.
 fn sum<'a>(values: impl Iterator<Item = Option<&'a Value>>) -> Value {
     let mut integer: i64 = 0;

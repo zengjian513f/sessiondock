@@ -1,5 +1,4 @@
-//! Claude subagent stop points from the owner's main transcript (batch 36,
-//! WP-C; Python `_claude_agent_stops` / `_collect_agent_stops`).
+//! Claude subagent stop points from the owner's main transcript.
 //!
 //! A subagent that stops (finished, failed, killed, gone with its process)
 //! makes the parent write a `<task-notification>` or the foreground `Agent`
@@ -35,7 +34,7 @@ static NOTICE: LazyLock<Regex> = LazyLock::new(|| {
 static TASK_ID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<task-id>([A-Za-z0-9_-]{1,64})</task-id>").expect("static regex")
 });
-// Python's `b"..." in raw` pre-checks; literal regexes so the substring
+// The `b"..." in raw` pre-checks; literal regexes so the substring
 // search is vectorized (the scan touches every byte of a cold owner file).
 static HAS_TASK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new("<task-id>").expect("literal"));
 static HAS_AGENT_ID: LazyLock<Regex> =
@@ -43,7 +42,7 @@ static HAS_AGENT_ID: LazyLock<Regex> =
 static HAS_TOOL_RESULT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#""tool_result""#).expect("literal"));
 
-/// Scan state of one owner file (Python's `_agent_stops[path]` entry).
+/// Scan state of one owner file.
 #[derive(Clone, Debug, Default)]
 pub struct StopScan {
     /// The file version the consumed bytes belong to; a different inode or a
@@ -73,7 +72,7 @@ impl StopScan {
     }
 }
 
-/// Python `_collect_agent_stops`: merge one main-transcript line into the
+/// Merge one main-transcript line into the
 /// scan. Copies of a notice text count only at their first-seen time; a
 /// foreground Agent result is a stop unless it is only `async_launched`.
 pub fn collect(raw: &[u8], scan: &mut StopScan) {
@@ -136,7 +135,7 @@ pub fn collect(raw: &[u8], scan: &mut StopScan) {
     }
 }
 
-/// Python `_claude_agent_stops`: bring `scan` up to the owner file at
+/// Bring `scan` up to the owner file at
 /// `stamp`, reading only the bytes after the last consumed LF. A file that
 /// is a different inode or shorter than what was consumed is rescanned from
 /// the start; a file that cannot be opened at that inode leaves the scan as
@@ -205,7 +204,7 @@ fn read_lines(file: &mut std::fs::File, size: u64, scan: &mut StopScan) -> Resul
     Ok(())
 }
 
-/// Python `_ts_after`: both `norm_ts`/`iso_seconds` texts as instants;
+/// Both `norm_ts`/`iso_seconds` texts as instants;
 /// unparsable values are never later.
 pub fn ts_after(later: &str, earlier: &str) -> bool {
     match (

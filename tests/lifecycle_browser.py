@@ -103,7 +103,7 @@ def main(bind_native=False):
                             assert bad.status in [400,409]
                             assert not any(key in receipt for key in ["uid","sid","argv","env","token","port","sock"])
                         elif bind_native:
-                            # WP-E: a confirmed binding is represented by the native
+                            # A confirmed binding is represented by the native
                             # row; the pending row is gone from the sidebar and the
                             # native console claims through the native lease.
                             expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
@@ -147,7 +147,7 @@ def main(bind_native=False):
                             assert bound.value.json()["binding"]["state"]=="confirmed",bound.value.text()
                             expect(page.locator("#native-bind-dialog")).not_to_be_visible()
                             page.set_viewport_size({"width":1280,"height":900})
-                            # WP-E: the page follows the confirmed binding by itself —
+                            # The page follows the confirmed binding by itself —
                             # the pending (launch-kind) socket is released, the native
                             # session opens and its console is claimed through the
                             # native lease; the pending row leaves the sidebar.

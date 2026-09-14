@@ -111,7 +111,7 @@ def parity(corpus, cases, base, opener, python_source):
         assert meta["path"] == str(path) and meta["chat_exists"] == chat.exists()
         assert batch["version"]["exists"] == chat.exists()
         assert (batch["version"]["mtime"] is None) == (not chat.exists())
-        # Batch 44 WP-C: Python `_dir_size`, the whole session directory.
+        # Python `_dir_size`, the whole session directory.
         size = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
         assert meta["size"] == size and "size_scope" not in meta, (meta["size"], size)
         if not chat.exists() or not chat.stat().st_size:
@@ -158,7 +158,7 @@ def parity(corpus, cases, base, opener, python_source):
     original = summary.read_bytes()
     for invalid in (b"{broken", b"null", b'{"info":42}'):
         summary.write_bytes(invalid)
-        # Batch 34: an invalid summary fails only its own session. The list
+        # An invalid summary fails only its own session. The list
         # still publishes (one file never fails the list) with the row marked
         # unsupported and the reason in migration_warnings; opening it is 503.
         expect_error(opener, base, "/api/messages/" + uid(path), 503)

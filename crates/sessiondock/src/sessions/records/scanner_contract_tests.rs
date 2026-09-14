@@ -1,6 +1,6 @@
 //! Independent differential contract against serde_json, using only synthetic
 //! repository fixtures and deterministic in-memory input. No provider execution,
-//! native-home discovery, Python service, or image decoding is involved.
+//! native-home discovery, or image decoding is involved.
 
 use super::scanner::{ErrorKind, Limits, scan};
 use serde_json::{Map, Value, json};

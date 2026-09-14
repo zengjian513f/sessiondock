@@ -344,7 +344,7 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     let claude_uid = uid_of(&router, CLAUDE_SID).await;
     assert_eq!(uid_of(&router, CODEX_SID).await, fixture.codex_uid);
 
-    // Python looks up the stringified UID first, so malformed and unknown IDs
+    // The stringified UID is looked up first, so malformed and unknown IDs
     // are both ordinary missing sessions.
     for (body, expected, code) in [
         (
@@ -363,8 +363,8 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
         assert_eq!(reply["code"], code, "{reply}");
     }
 
-    // Unknown keys and an unusable optional request id are ignored like
-    // Python's dictionary body handling.
+    // Unknown keys and an unusable optional request id are ignored in
+    // dictionary body handling.
     for body in [
         json!({"uid":fixture.other_codex_uid,"request_id":"stop-extra","force":true}),
         json!({"uid":fixture.other_codex_uid,"request_id":""}),
@@ -383,7 +383,7 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     .await;
     assert_eq!(status, StatusCode::OK, "{reply}");
     assert_eq!(reply["stopped"], false);
-    // The Python page's bare body works the same way (no request_id needed).
+    // A bare body works the same way (no request_id needed).
     let (status, reply) = post(
         &router,
         "/api/session/stop",
@@ -408,7 +408,7 @@ async fn managed_instances_stop_through_the_host_and_external_sessions_are_refus
     let live = wait_live_state(&router, &fixture.codex_uid, "running").await;
     assert_eq!(live["uids"], json!([fixture.codex_uid]));
 
-    // request_id is an ignored browser field, matching Python.
+    // request_id is an ignored browser field.
     let started = Instant::now();
     let (status, stopped) = post(
         &router,

@@ -11,7 +11,7 @@ use sessiondock::{config::Config, sessions::SessionRoots};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use tower::ServiceExt;
 
-// Encoded once from 3x2 solid RGB pixels. The matching Python fixtures are
+// Encoded once from 3x2 solid RGB pixels. The matching fixtures are
 // independently decoded in real Chromium, including both two-frame animations.
 const GIF: &str = "R0lGODdhAwACAIEAAOYeCgAAAAAAAAAAACwAAAAAAwACAAAIBgABCBwYEAA7";
 const GIF_ANIMATED: &str = "R0lGODlhAwACAIEAAOYeCgAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACAAAACwAAAAAAwACAAAIBgABCBwYEAAh+QQBDAABACwAAAAAAwACAIEKHuYAAAAAAAAAAAAIBgABCBwYEAA7";

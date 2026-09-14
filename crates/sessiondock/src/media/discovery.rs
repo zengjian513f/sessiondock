@@ -91,7 +91,7 @@ pub(crate) fn discover(message: &Value) -> Vec<Discovered> {
     }
     found
 }
-/// Python's `_RAW_PATH` only treats `~`, `/`, `./` and `../` prefixed tokens as
+/// Only `~`, `/`, `./` and `../` prefixed tokens are treated as
 /// image paths in prose (a Windows drive spelling is the Rust equivalent); a
 /// bare `shot.png` in a sentence is text, not a media reference.
 fn raw_path_shape(reference: &str) -> bool {
@@ -274,7 +274,7 @@ mod tests {
             pairs("tool", "![image](./out(1).avif) ./ignored.bmp"),
             vec![("./out(1).avif".into(), false)]
         );
-        // Bare names in prose are text (Python `_RAW_PATH` needs ~ / ./ ../).
+        // Bare names in prose are text (a raw path needs ~ / ./ ../).
         assert!(pairs("user", "see shot.png and 图.jpg").is_empty());
         assert_eq!(
             pairs(

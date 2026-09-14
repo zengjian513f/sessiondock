@@ -54,7 +54,7 @@ impl Fixture {
                 grok: None,
             },
             // The 1500-row fixture expects a 200-event page after the
-            // 600-event window (batch 44 WP-A made the default page 2000).
+            // 600-event window (the default page is 2000).
             pools: sessiondock::config::Pools {
                 history_page_events: 200,
                 ..Default::default()

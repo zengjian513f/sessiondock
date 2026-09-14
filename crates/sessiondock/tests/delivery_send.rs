@@ -1,4 +1,4 @@
-//! Claude reliable send end to end (batch 31): the HTTP router, an isolated
+//! Claude reliable send end to end: the HTTP router, an isolated
 //! ptyhost, the lifecycle launcher and the delivery ledger, with the fake
 //! Claude CLI from `tests/fake_claude_cli.py` as the only "CLI". It renders a
 //! Claude-like composer and appends synthetic native `user` records for every
@@ -481,7 +481,7 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
     assert_eq!(media["item"]["media"][0]["token"], "abc");
     wait_confirmed(&app, &uid, "send-request-0002", Duration::from_secs(10)).await;
 
-    // Wrong terminal name and unknown session follow the Python codes.
+    // Wrong terminal name and unknown session follow the codes.
     let (status, unlinked) = post(&router, "/api/session/send",
         json!({"uid":uid,"name":"sessiondock-claude-other","text":"x","request_id":"send-request-0003","_build":app.build})).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -700,7 +700,7 @@ async fn busy_tui_confirms_late_and_swallowed_line_stays_uncertain_across_restar
     let raw = fs::read_to_string(fixture.jsonl(&sid)).unwrap();
     assert_eq!(raw.lines().count(), 1);
 
-    // Discard retires the receipt; a second discard is 404 like Python.
+    // Discard retires the receipt; a second discard is 404.
     let (status, discard) = post(
         &router,
         "/api/session/outbox/discard",
@@ -780,7 +780,7 @@ async fn send_routes_are_501_without_the_ledger_or_transport() {
     shutdown.cancel();
 }
 
-/// Frozen Python server uses str(value or "") before enqueue's character slice.
+/// The server uses str(value or "") before enqueue's character slice.
 /// Raw request bodies preserve large integer spelling and duplicate map keys.
 #[tokio::test]
 async fn python_json_request_ids_and_ignored_outbox_query_fields() {
@@ -883,7 +883,7 @@ async fn python_json_request_ids_and_ignored_outbox_query_fields() {
     .await;
     assert_eq!(status, StatusCode::OK, "{queried}");
     assert_eq!(queried, baseline);
-    // Unknown UIDs use Python's unsupported-source empty snapshot.
+    // Unknown UIDs use the unsupported-source empty snapshot.
     let (status, unknown) = get(
         &router,
         "/api/session/outbox?uid=claude:does-not-exist&future=1",

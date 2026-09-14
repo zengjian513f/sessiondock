@@ -19,16 +19,16 @@ Vue `web/` 仅保留第二阶段骨架。
 使用已验证快照的 NativeScope，且与可靠发送能力分离。host 输出则由每客户端
 独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 
-第八批新增独立 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库。
+独立的 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库：
 前者在没有SID/UID时验证真实启动实例，后者在持久化Prepared/Starting后才返回
-一次性授权，并将崩溃后的Starting恢复为Uncertain。第九批已接显式版本化
+一次性授权，并将崩溃后的Starting恢复为Uncertain。已接显式版本化
 launcher、排队 coordinator 和 pending HTTP/WS；独立 child reaper 保留
 进程句柄，Web退出不杀host。取消先保存意图、退休输入租约，再一次guarded kill，
 未确认退出仍是Uncertain；4002退休通知不冒充进程退出。
 native BoundTarget不接受launch身份替代，详见
 [生命周期接线合同](lifecycle-integration.md)。
 
-第十批在host内增加独立write-once native binding，不修改immutable meta/record。
+host内有独立的write-once native binding，不修改immutable meta/record。
 服务schema3保存操作者确认的关联意图，guarded Info才能确认完整原生身份；
 恢复与离线先降Uncertain。NativeScope证明记录身份，不证明进程归属，因此禁止
 自动猜测；新绑定使用同snapshot的真实ID目录，旧metadata目录与其分离。
@@ -37,9 +37,9 @@ pending租约不升级，衍生native租约仍受launch退休及持久取消约�
 读工作池 `SESSIONDOCK_READ_WORKERS`（默认 `clamp(核数/2, 8, 32)`）个 blocking
 worker；请求排队直到取得许可或自身取消。探测、
 历史页/媒体/文件写/生命周期响应池按比例派生（表见
-[performance.md](performance.md#并发预算第四十四批-wp-a)）；搜索不占读池。
+[performance.md](performance.md#并发预算)）；搜索不占读池。
 同一文件版本复用解析结果。`/api/meta` 声明 `stage:"replacement"`、
-`read_only:false`——这是 Python 服务的替代品，前端没有常驻横幅。
+`read_only:false`——这是替代服务，前端没有常驻横幅。
 `observe::WatchHub` 为每个 `(uid,agent)` 共享一次500ms版本读取，最多2个后台
 工作准入；Tokio watch只保留最新不可变快照，每个浏览器按自己的checkpoint
 生成增量，慢读者不堆积旧版本。首次并发订阅合并、最后订阅回收、错误重试
@@ -53,7 +53,7 @@ checkpoint仍核对投影。
 设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图）：
 
 - `sessions/index`：列表只做目录遍历、`stat` 与每文件有界头/尾摘要（头 96 KiB
-  ≤ 40 条、尾 512 KiB，与 Python `list_sessions` 同一推导），按 stamp 缓存，
+  ≤ 40 条、尾 512 KiB，与 `list_sessions` 同一推导），按 stamp 缓存，
   并行读取；没有启动解析，没有会话数/总字节上限，单个文件的变化只影响它自己。
 - `sessions/views`：只在打开会话时经 `records`/`native_input`/`providers` 流式
   解析这一个文件，增量续读，进有界 LRU；游标、锚点、pin、原生输入证据等每视图
@@ -63,10 +63,9 @@ checkpoint仍核对投影。
 - `sessions/mod.rs` 的 `SessionStore` 只是门面：列表 = 索引行 + 元数据装饰 +
   重签名（打开会话不改变 `sig`）；打开 = 从索引取候选文件，经 `views` 打开；
   运行时目录、回收站文件集、续接身份都取自索引，不解析文件。
-- 原生数据永不被修改。废弃的"冻结库存"设计见
-  [superseded/frozen-inventory.md](superseded/frozen-inventory.md)。
+- 原生数据永不被修改。
 
-## 搜索与工具展示（第三批）
+## 搜索与工具展示
 
 - 搜索对完整语义正文匹配（按 `updated` 倒序），不对原始 JSONL 匹配；正文来自
   按文件版本持久化的搜索文本缓存（[read-model.md](read-model.md#搜索)：
@@ -89,7 +88,7 @@ checkpoint仍核对投影。
 需求每次只在blocking任务读取64KiB。未轮询Body不开始读，取消后尚未结束的
 读取继续持有permit，避免慢下载挤占普通历史worker。文件作业与缩略图另行实现。
 
-第四批新增可选 `MetadataStore`：每次操作重读当前文件，并以原子替换持久化。
+可选的 `MetadataStore`：每次操作重读当前文件，并以原子替换持久化。
 列表、详情、搜索和 SSE 从同一元数据版本装饰读模型；偏好变化不修改消息 anchor。
 legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有消息正文；子代理名称
 更新已经过无列表刷新、无reload的实际SSE/DOM回归。
@@ -102,7 +101,7 @@ legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有�
 5. xterm 和 WebSocket 的生命周期由终端管理模块负责。终端字节不经过
    全局深层响应式状态；切换视图不等于销毁连接。
 6. ptyhost 继续每会话一个独立进程。Web 服务重启不得终止 CLI 会话。
-7. Rust 浏览器接口可与新前端一起演化；旧 Python Hub 兼容性需要单独的
+7. Rust 浏览器接口可与新前端一起演化；旧 Hub 兼容性需要单独的
    适配层和契约测试，当前健康检查的版本字段不代表旧节点协议兼容。
 
 当前实现合同以本文件及相应模块文档为准；未完成工作只记录在根目录

@@ -1,4 +1,4 @@
-//! Lazy session index (batch 34, WP-A): directory walk + `stat` + bounded
+//! Lazy session index: directory walk + `stat` + bounded
 //! per-file head/tail summaries, cached by file stamp, read in parallel.
 //! Design: docs/read-model.md. No startup parse, no session or byte caps,
 //! one file's change never fails the list. Summaries are the only source for
@@ -23,9 +23,9 @@
 //!
 //! `refresh(false)` returns the previous snapshot within [`CHECK_TTL`] unless
 //! the Codex name index changed; `refresh(true)` rescans. A rescan is a
-//! directory walk (the same recursive shapes Python scans) plus one `stat`
+//! directory walk (the recursive shapes) plus one `stat`
 //! per file. File symlinks and Claude project/session directory aliases are
-//! followed like Python's `glob`; recursive Codex directory aliases are not
+//! followed (`glob`); recursive Codex directory aliases are not
 //! entered. Only files whose stamp
 //! (`dev/ino/size/mtime_ns`) changed are re-read, on a bounded pool of
 //! [`DEFAULT_WORKERS`] threads, each read bounded to the head/tail sizes in
@@ -40,7 +40,7 @@
 //! Persisted metadata enrichment (stars, fork visibility, pins) is applied by
 //! the facade on top of `sessions()`; it uses [`signed_document`] to re-sign.
 //!
-//! One more bounded read serves `agent_items[].active` (batch 36): for each
+//! One more bounded read serves `agent_items[].active`: for each
 //! Claude main transcript that owns a sidecar whose last turn is open, the
 //! stop notices are scanned from the owner file incrementally by committed
 //! offset ([`agent_stops`]), cached by the owner's stamp, in the same
@@ -57,14 +57,14 @@
 //!   appear on the detail view only. Unknown-kind counts are exact for files the tail covers whole
 //!   (≤ 512 KiB) and partial otherwise; they count records regardless of the
 //!   active lineage. Complete native files are opened on demand.
-//! - Python-parity corrections of the old rows: Codex main `updated` is the
-//!   file mtime (Python `_iso(st_mtime)`, whole seconds), a Codex rollout
+//! - Corrections of the old rows: Codex main `updated` is the
+//!   file mtime (whole seconds), a Codex rollout
 //!   without a user message is titled `(无标题) <stem[:16]>`, Claude titles
 //!   follow `_title_from_text` (first plain line, 90 chars) and custom titles
 //!   are kept verbatim, Claude `cwd` falls back to the tail majority and then
 //!   the project directory name.
 //! - Native ids and conflicts come from the head/tail records seen.
-//! - A Codex head is 120 pieces (Python `_raw_meta`), a Claude head 40.
+//! - A Codex head is 120 pieces, a Claude head 40.
 
 pub mod agent_stops;
 pub mod graph;
@@ -141,7 +141,7 @@ pub struct CandidateRef {
     /// Root owner uid of a healthy agent (the main session it is listed under).
     pub owner: Option<String>,
     /// Why an agent has no owner: 409 ambiguous Codex id, or 501 when its owner
-    /// is not indexed (no row at all, like Python) or the relation is broken.
+    /// is not indexed (no row at all) or the relation is broken.
     /// Opening the agent's uid directly answers with this error.
     pub owner_error: Option<SessionError>,
     pub summary: Arc<RowSummary>,
@@ -433,7 +433,7 @@ impl Index {
     }
 
     /// `refresh` with a caller-chosen reuse window: the previous snapshot is
-    /// returned while it is younger than `ttl` (batch 44 WP-A: opening a
+    /// returned while it is younger than `ttl` (opening a
     /// view tolerates a few seconds of list staleness — the view `stat`s its
     /// own files — so the SSE publisher's 500 ms probes stop walking the
     /// roots every time).
@@ -457,7 +457,7 @@ impl Index {
             return Ok(snapshot.clone());
         }
         let discovered = self.discover()?;
-        // Unchanged walk (batch 44 WP-A): the same files with the same stamps
+        // Unchanged walk: the same files with the same stamps
         // and the same names file describe the snapshot already published —
         // every row, cut and stop scan is a function of those stamps. Skip the
         // rebuild (graph, rows, serialization, signature) and only refresh
@@ -904,7 +904,7 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Every `*.jsonl` under the root, like Python `rglob`.
+    /// Every `*.jsonl` under the root, recursively.
     fn codex(&mut self, dir: &Dir, relative: PathBuf) -> Result<(), SessionError> {
         let path = self.root.join(&relative);
         for (name, stamp) in files(dir, &path) {
@@ -956,7 +956,7 @@ impl Walk<'_> {
                     Ok(metadata) if metadata.is_file() => {
                         file_metadata(&chat_path).ok().map(|meta| Stamp::of(&meta))
                     }
-                    // Python GrokAdapter.read uses Path.is_file(): a missing,
+                    // A missing,
                     // inaccessible, or non-file chat is an empty history.
                     _ => None,
                 };
@@ -976,7 +976,7 @@ impl Walk<'_> {
     }
 }
 
-/// Python `GrokAdapter._dir_size` (`rglob("*")`): the bytes of every regular
+/// The bytes of every regular
 /// file under the Grok session directory, recursively. Symlinked directories
 /// are not entered (`rglob` recurses with `follow_symlinks=False`), a
 /// symlinked file counts its target's size like `Path.is_file()`; the walk
@@ -1025,8 +1025,8 @@ fn directory_size_in(dir: &Dir, total: &mut u64) {
     }
 }
 
-/// Open an indexed path with the same link-following behavior as Python's
-/// `open()`. The path itself must still have been discovered below `root`.
+/// Open an indexed path with link-following.
+/// The path itself must still have been discovered below `root`.
 fn open_indexed(root: &Path, path: &Path) -> std::io::Result<std::fs::File> {
     path.strip_prefix(root)
         .map_err(|_| std::io::Error::other("path outside root"))?;
@@ -1247,7 +1247,7 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
         data: data_file,
         sidecar: sidecar_bytes,
     });
-    // Python's Grok `size` is the whole session directory (updates.jsonl,
+    // Grok `size` is the whole session directory (updates.jsonl,
     // events, tool definitions…), refreshed with the summary/chat stamps
     // exactly as here: the cached summary carries the size read with it.
     if candidate.source == "grok"

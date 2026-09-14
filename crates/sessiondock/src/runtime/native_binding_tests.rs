@@ -225,8 +225,8 @@ async fn missing_unsupported_and_subagent_native_entries_fail_explicit_binding()
                     json!({"type":"session_meta","payload":{"id":SID,"thread_source":"subagent","parent_thread_id":"absent-parent"}}),
                 ],
             ),
-            // The bound file's unique identity (its first session_meta,
-            // batch 35) is not the SID the binding claims.
+            // The bound file's unique identity (its first
+            // session_meta) is not the SID the binding claims.
             _ => write(
                 &fixture._native.path().join("file-label.jsonl"),
                 &[header("conflicting-native-id", "second")],
@@ -297,7 +297,7 @@ async fn new_host_without_explicit_binding_preserves_legacy_native_metadata_sema
     }
 }
 
-/// WP-E: a Grok main session has a verified scope (`summary.json`
+/// A Grok main session has a verified scope (`summary.json`
 /// `info.id`), so both a legacy declared metadata host and an explicit
 /// binding resolve to it.
 #[tokio::test]

@@ -138,7 +138,7 @@ def configured(opener, base, corpus, trash):
     need("claude-main" not in listed(opener, base)[0], "sessions", "trashed uid still listed")
     passed("delete: 200 files cover main+sidecars; gone from corpus; under trash/<id>/manifest.json")
     passed("session disappears from /api/sessions")
-    # WP-E (Python parity): a Grok session moves as its whole directory, so
+    # A Grok session moves as its whole directory, so
     # every file inside it — extra.bin included — travels with the entry.
     extra = corpus.paths["grok-keep"] / "extra.bin"
     grok_dir = corpus.paths["grok-keep"]
@@ -201,7 +201,7 @@ def configured(opener, base, corpus, trash):
     need(aged.get("ok") is True and isinstance(aged.get("remaining"), int), "days", "days purge must report remaining", raw)
     passed("purge by id 200, unknown id 404, days reports remaining")
     # A symlink inside a Grok directory travels as a link (never followed):
-    # the directory rename moves it whole, like Python's shutil.move.
+    # the directory rename moves it whole.
     chat = corpus.paths["grok-link"] / "chat_history.jsonl"
     chat.unlink()
     os.symlink(corpus.paths["grok-link"] / "summary.json", chat)

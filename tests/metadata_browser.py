@@ -32,7 +32,7 @@ def main():
                     for page in pages:
                         page.on("pageerror", lambda error: errors.append(str(error)))
                         page.goto(base, wait_until="networkidle")
-                        expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+                        expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                         page.locator(f'#side .item[data-uid="{corpus.uid("claude-branch")}"]').click()
                         expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
                         page.wait_for_function("_es && _es.readyState === EventSource.OPEN")

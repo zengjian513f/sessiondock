@@ -206,7 +206,7 @@ async fn exact_association_is_visible_only_inside_partial_managed_snapshot() {
     let (status, body, no_store) = get(&app, "/api/live").await;
     assert_eq!(status, StatusCode::OK);
     assert!(no_store);
-    // A synthetic PID can never be verified, so the Python-compatible process
+    // A synthetic PID can never be verified, so the process
     // scan keeps the running list empty while the managed details stay visible.
     assert_eq!(body["known"], true);
     assert_eq!(body["enabled"], true);
@@ -301,7 +301,7 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     assert_eq!(host.accepted.load(Ordering::SeqCst), 1);
     // A fresh (claim-grade) observation takes the second admission permit;
     // another observer waits for capacity instead of becoming a request-level
-    // refusal that Python does not have.
+    // refusal.
     let third = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, "/api/term/list").await })

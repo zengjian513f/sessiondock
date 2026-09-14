@@ -16,7 +16,7 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 - 注册是**服务器端操作**：`sessiondock-hub register/remove/list`，网页上没有注册路由。节点凭据从
   文件读（`--token-file`），绝不进程列表可见。
 - Hub↔节点走私网（WireGuard）；节点开**第二监听**（`SESSIONDOCK_NODE_BIND` 等，见
-  [security-model.md](security-model.md#node-listener-hub-traffic-batch-38-h1)），Hub 以私网字面 IP 注册节点。
+  [security-model.md](security-model.md#node-listener-hub-traffic)），Hub 以私网字面 IP 注册节点。
 - 缺任何必填配置即启动失败（fail closed）。启动前先 `sessiondock-hub --check-config`（与启动同样的
   校验，只打印生效值，不绑不注册不开审计）。
 
@@ -27,7 +27,7 @@ Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后�
 | `SESSIONDOCK_HUB_BIND` | Hub 监听，必须 loopback；默认 `127.0.0.1:8742` |
 | `SESSIONDOCK_HUB_NODES` | `hub-nodes.json` 注册表；默认 `~/.local/share/sessiondock/hub-nodes.json`，接受普通文件路径 |
 | `SESSIONDOCK_HUB_CACHE_DIR` | 离线会话快照目录；缺省是注册表旁的 `hub-cache` |
-| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR；默认 `127.0.0.0/8,::1/128,10.0.0.0/24`，与 Python 一致 |
+| `SESSIONDOCK_HUB_NETWORKS` | 可注册的节点 CIDR；默认 `127.0.0.0/8,::1/128,10.0.0.0/24` |
 | `SESSIONDOCK_WEB_DIR` | 前端快照（hub 模式），默认 `legacy-web` |
 | `SESSIONDOCK_AUDIT_DIR` | 记 `hub.node.*.changed`（可选，按需创建目录） |
 

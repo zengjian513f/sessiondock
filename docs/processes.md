@@ -5,14 +5,14 @@ discover CLI homes, control processes, or grant terminal access. Ordinary
 inventory reads do not clean records; lifecycle recovery may retire an exact
 unchanged Linux record after the operating system proves its host process dead.
 It requires `SESSIONDOCK_PTYHOST_DIR`; unset disables host observations. External CLI processes use the
-Python-shaped native scan of [liveness.md](liveness.md), which `/api/live`
+Native scan of [liveness.md](liveness.md), which `/api/live`
 merges with the observations described here.
 
 ## Evidence, not name inference
 
-The Python backend names existing terminal sessions using
-`sessiondock-{source}-{sid[:8]}`. Its `term_host.new_session` invocation does not
-currently supply ptyhost's `--meta` argument. The Python live subsystem's
+Legacy-created terminal sessions are named
+`sessiondock-{source}-{sid[:8]}` and were started without ptyhost's `--meta`
+argument. The live subsystem's
 process arguments, environment, file descriptors, working directories and time
 heuristics live in the separate scan ([liveness.md](liveness.md)); none of them
 is imported into this catalog.
@@ -86,7 +86,7 @@ child exit at observation time. Missing/refused endpoints, auth failures, invali
 protocol, replacement races, and timeout mean `unknown`, not exited. Linux tests
 do not establish Windows or macOS execution coverage.
 
-## Process identity and the three run states (batch 22)
+## Process identity and the three run states
 
 On Linux the runtime additionally captures a `ProcessIdentity {pid, start_time}`
 for the host's child and for the host itself, reading only
@@ -100,7 +100,7 @@ the child started no later than five seconds after the record was written
 lines and requires exact equality (`mismatch`). Identities are compared in ticks,
 never in converted wall-clock seconds.
 
-On Windows (WP-W) the same evidence comes from the kernel's process object:
+On Windows the same evidence comes from the kernel's process object:
 the PID is opened with `PROCESS_QUERY_LIMITED_INFORMATION` only, a process
 that has already exited but whose PID is still reserved by an open handle
 (this service's own retained `Child` included) reads as `not_visible`, the

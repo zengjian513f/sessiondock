@@ -1,13 +1,13 @@
-//! The bug-report worker (Python `bug_report.launch` / `_inject_worker`).
+//! The bug-report worker.
 //!
 //! `launch` creates an ordinary managed instance through the lifecycle service
 //! with the source's one configured CLI (what `term/create` would start, on
-//! the CLI's default model like Python), records the pending decoration and
+//! the CLI's default model), records the pending decoration and
 //! starts one injection task. The task waits for the CLI's composer to be empty and
 //! settled (`delivery::driver` composer models for Claude/Codex, screen
 //! stability for Grok), then under its own launch lease persists a step,
 //! pastes, verifies the paste on screen, persists, presses Enter, persists,
-//! and follows Python's bounded Enter-resend while the draft visibly stays.
+//! and follows the bounded Enter-resend while the draft visibly stays.
 //! Confirmation never comes from the screen: the manifest says `submitted`
 //! only when the prompt is found in a native `user` record (Claude: the
 //! declared session id; Codex/Grok: a session of that source created under
@@ -15,9 +15,9 @@
 //! `failed` when a step could not be taken. A crash between the persisted
 //! paste and Enter leaves `injecting` in the manifest and is never resumed.
 //!
-//! WP-E: the paste and Enter are server-originated host input through the
+//! The paste and Enter are server-originated host input through the
 //! launch guard (`request_launch`), exactly like `session/stop`'s EOF keys —
-//! Python's `tmux send-keys` never needed the page's console either. The
+//! they never need the page's console. The
 //! worker therefore holds no browser lease: a page that opened the console
 //! from the toast keeps it and watches the prompt arrive, and the injection
 //! cannot fail because the page got there first.
@@ -50,11 +50,11 @@ use crate::{
 /// Origin label recorded in audit rows for the worker's server-originated
 /// input (no browser lease is claimed under this name any more).
 pub const PAGE: &str = "sessiondock-bug-report";
-/// Python `_inject_worker(timeout=90.0)`.
+/// How long injection waits for a ready composer.
 pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
-/// Python `SETTLE_SECONDS`.
+/// How long an empty composer or stable frame must last before paste.
 pub const SETTLE: Duration = Duration::from_millis(600);
-/// Python `CONFIRM_ATTEMPTS` / `CONFIRM_WAIT_SECONDS`.
+/// Bounded Enter-resend: 4 attempts, 1 s apart.
 pub const CONFIRM_ATTEMPTS: usize = 4;
 pub const CONFIRM_WAIT: Duration = Duration::from_secs(1);
 /// How long the pasted text may take to appear on screen before Enter.
@@ -100,7 +100,7 @@ impl WorkerContext {
     }
 }
 
-/// Python `launch`: the pending instance is running and the injection task
+/// The pending instance is running and the injection task
 /// is started; the returned object is the route's `worker`.
 pub async fn launch(
     ctx: &WorkerContext,
@@ -473,7 +473,7 @@ impl Injection {
         .await
     }
 
-    /// Python `_confirm_submission`: the composer must be empty again; while
+    /// The composer must be empty again; while
     /// the pasted draft visibly stays after a second, Enter is resent a
     /// bounded number of times. Any other frame is watched, never typed into.
     async fn confirm_cleared(
@@ -626,7 +626,7 @@ enum HostInputError {
     Failed(String),
 }
 
-/// Python `draft_state`.
+/// Composer draft: empty, editing, or unknown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Draft {
     Empty,
@@ -645,7 +645,7 @@ impl Draft {
 }
 
 /// Composer probe: the delivery driver's composer model for Claude/Codex,
-/// Python's `_ScreenProbe` (frame stability) for Grok.
+/// Frame-stability probe for Grok.
 pub enum Probe {
     Composer {
         kind: ComposerKind,
@@ -722,7 +722,7 @@ impl Probe {
         }
     }
 
-    /// Python's post-paste probe: `editing` while the draft is still there,
+    /// Post-paste probe: `editing` while the draft is still there,
     /// `empty` once the composer cleared, `unknown` for any other frame.
     pub fn after_enter(&mut self, capture: &ScreenCapture, prompt: &str, report_id: &str) -> Draft {
         if capture.lag.is_some_and(|lag| lag > 0) {
@@ -791,7 +791,7 @@ pub fn screen_shows(screen: &str, prompt: &str, report_id: &str) -> bool {
     !tail.is_empty() && plain.contains(&tail)
 }
 
-/// Python `_ScreenProbe`: a non-blank frame that stopped changing is
+/// A non-blank frame that stopped changing is
 /// "empty"; after the paste the frame equal to the pasted one is "editing"
 /// and any other non-blank frame counts as moved on.
 #[derive(Default)]

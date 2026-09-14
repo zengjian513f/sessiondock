@@ -239,7 +239,7 @@ fn single_text_wrappers_work_but_multiple_giant_pieces_or_unconsumed_fields_fail
     ] {
         assert_eq!(prepare(output).unwrap().1.len(), 1);
     }
-    // Batch 36 (WP-G): every part of a multi-part output is its own reviewed
+    // Every part of a multi-part output is its own reviewed
     // position, so the giant part decodes in place next to a small one; an
     // MCP content array with more than one giant block still fails.
     let (value, sidecars, _) =

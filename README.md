@@ -9,8 +9,7 @@
 [docs/route-ledger.md](docs/route-ledger.md)，术语见
 [docs/glossary.md](docs/glossary.md)，模块地图见
 [docs/module-map.md](docs/module-map.md)，能力开关见
-[docs/capabilities.md](docs/capabilities.md)。Python → Rust 的批次过程仅保留在
-`MIGRATION_HISTORY.md`，不作为当前设计或状态来源。
+[docs/capabilities.md](docs/capabilities.md)。
 
 ## 目录
 
@@ -103,7 +102,7 @@ node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs tests/med
 cargo build -p sessiondock --locked
 python3 tests/legacy_browser.py
 
-# 第二批历史回归：自行创建人工历史和临时 Rust 服务。
+# 历史回归：自行创建人工历史和临时 Rust 服务。
 python3 tests/history_parity.py --python-source PATH
 python3 tests/history_browser.py
 python3 tests/history_pages_browser.py
@@ -113,7 +112,7 @@ python3 tests/media_formats_browser.py
 python3 tests/media_files_browser.py
 python3 tests/media_parity.py --python-source PATH
 
-# 第三批：真实搜索UI与工具渲染/可选Python差分。
+# 真实搜索UI与工具渲染/可选Python差分。
 python3 tests/search_browser.py
 python3 tests/tool_parity.py --python-source PATH --browser
 python3 tests/metadata_browser.py
@@ -151,6 +150,6 @@ Rust 运行依赖，也不是所有历史格式已兼容的证明**。
 第二阶段 Vue 骨架仍可在 `web/` 执行 `npm ci && npm test && npm run build`。
 当前不做前端框架重构。平台限制见对应合同。
 
-架构见 [docs/architecture.md](docs/architecture.md)，导入来源见
-[docs/migration.md](docs/migration.md)。
+架构见 [docs/architecture.md](docs/architecture.md)，冻结前端参考见
+[reference/README.md](reference/README.md)。
 合成读取基准与尚存的重解析成本见 [docs/performance.md](docs/performance.md)。

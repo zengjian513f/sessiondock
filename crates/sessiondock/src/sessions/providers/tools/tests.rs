@@ -261,7 +261,7 @@ fn part(text: impl std::fmt::Display) -> Value {
     json!({"type": "input_text", "text": text.to_string()})
 }
 
-/// Batch 36 (WP-G): every chunk of a multi-part `exec` result is shown, in
+/// Every chunk of a multi-part `exec` result is shown, in
 /// part order, as the recorded concatenation; `exit_code` is the last chunk's
 /// and `duration_s` the sum. The reference adapter shows one chunk only.
 #[test]

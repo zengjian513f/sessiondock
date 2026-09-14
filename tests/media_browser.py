@@ -245,7 +245,7 @@ def main():
                     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.locator(".mobile-back").click()
                 page.locator(f'#side .item[data-uid="{uid(corpus, "claude-invalid")}"]').click()
-                # Python ignores malformed media and keeps the history readable.
+                # Malformed media is ignored and the history is kept readable.
                 expect(page.locator("#detail")).not_to_contain_text("读取失败")
                 expect(page.locator("#msgs img")).to_have_count(0)
                 expect(page.locator("#migration-read-error")).to_have_count(0)

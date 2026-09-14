@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # run_validation: skip
-"""Fake Codex CLI for reliable-send tests (batch 32). Never a model binary.
+"""Fake Codex CLI for reliable-send tests. Never a model binary.
 
 Launched by the lifecycle launcher exactly like a real profile (`resume <sid>`
 on a session the frozen inventory already lists; `-c key=value`, `--model` and

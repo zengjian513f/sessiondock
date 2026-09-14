@@ -1,11 +1,11 @@
-# Hub：注册表、健康监控、节点客户端、命名空间、聚合、代理与 `sessiondock-hub`（第三十八批 H2、第三十九批 H3、第四十批 H4）
+# Hub：注册表、健康监控、节点客户端、命名空间、聚合、代理与 `sessiondock-hub`
 
 `crates/sessiondock/src/hub/` 是多机 Hub 的数据层：注册表（`registry.rs`）、
 监控任务（`Monitor`）、Hub→节点 HTTP 客户端（`client.rs`）、节点身份/凭据文件
 （`identity.rs`）、线上命名空间（`namespace.rs`）、五条读路由的聚合与三条分拆写
-（`aggregate.rs`）以及对单台机器的代理（`proxy.rs`）。对照 Python `agenthub/hub.py` 的
+（`aggregate.rs`）以及对单台机器的代理（`proxy.rs`）。对照 `hub.py` 的
 `Registry`（73–492 行）与 `HubHandler.dispatch/selected/aggregate/search_aggregate/
-bulk_*/purge_all/resolve/proxy`（518–1076 行），以及 `agenthub/federation.py`。数据层不绑定
+bulk_*/purge_all/resolve/proxy`（518–1076 行），以及 `federation.py`。数据层不绑定
 监听、不读会话根；H4 的 `api/hub.rs` + `bin/sessiondock-hub.rs`（见「Hub 二进制」一节）把这些拼起来，
 Hub 侧的两个数据构造函数是：
 
@@ -25,7 +25,7 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 - `NodeToken::load(path)`：整文件去首尾空白后必须匹配 `[A-Za-z0-9._~+/=-]{32,256}`；
   `verify()` 用 `subtle::ConstantTimeEq` 常量时间比较（长度不同即不匹配，与
   `secrets.compare_digest` 一致）；`Debug` 输出脱敏。
-- 与 Python 的 `_allowed()` 规则（带 `X-SessionDock-Protocol` 必须同时带正确 token 且协议为
+- 鉴权规则（带 `X-SessionDock-Protocol` 必须同时带正确 token 且协议为
   `"1"`）由 H1 的 `node_auth` 中间件实现，本模块只提供校验原语。
 
 ## 注册表（`registry.rs`）
@@ -38,7 +38,7 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 **注册**（服务器端操作，网页无此路由）`register(client, Registration{name,url,token,color,id})`：
 名称去空白、1–80 字符；token 满足上面的文法；url `rstrip('/')` 后必须是
 `http(s)://<字面 IP>[:端口]`（无路径/凭据/query/fragment，`/` 结尾允许，端口 1–65535，
-HTTP 缺省 80、HTTPS 缺省 443，IPv6 用 `[…]`），且 IP 落在允许网络内（CIDR 列表，严格形式：主机位非零即拒绝；缺省与 Python 相同：
+HTTP 缺省 80、HTTPS 缺省 443，IPv6 用 `[…]`），且 IP 落在允许网络内（CIDR 列表，严格形式：主机位非零即拒绝；缺省：
 `127.0.0.0/8,::1/128,10.0.0.0/24`）。随后请求节点
 `/api/meta`，必须 `mode:"local"`、`protocol:1`、`node_id` 32 hex，否则
 `节点认证或协议检查失败，请先升级节点并配置凭据`；以 `node_id` 为主键替换同 id 条目
@@ -52,7 +52,7 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 **显示属性** `update_display(nid, name?, color?, enabled?)`：名称非空且 ≤ 80 字符、不得与
 其他机器同名；颜色同上，空串清除；`enabled=false` 视同不存在（清缓存与健康状态，监控
 不再探它），`enabled=true` 恢复并重新加载磁盘快照、`nudge()`。`reorder(ids)` 必须是
-全部机器（含停用）各一次的排列；`reorder_json` 附带 Python 的形状检查文案。
+全部机器（含停用）各一次的排列；`reorder_json` 附带形状检查文案。
 `remove(nid)` 删除条目、缓存、健康状态和快照。
 
 **视图**：`all()`/`get()` 只含启用机器（聚合、监控、代理、uid 解析用）；`find()` 含停用
@@ -60,7 +60,7 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 `online:null`）；`machines()` = 全部机器加 `enabled`，停用者 `online:null`。两者都不含
 `url`/`token`。
 
-**健康**（`Health`，键与 Python 的 dict 相同）：成功 →
+**健康**（`Health`）：成功 →
 `{online:true,last_seen,checked_at}`（其余字段清空）；失败（搜索除外）→
 `strikes+1`、`failed_since` 取首次失败时刻、`error`/`error_code`/`failed_path`/`checked_at`；
 之前在线且 `strikes < OFFLINE_STRIKES(2)` 时 `online` 仍为 `true`（一次慢答不置灰），
@@ -94,20 +94,20 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 接收端关闭即中止读取。
 
 **监控** `Monitor::spawn(registry, client, shutdown)`：启动即 `check_all`，随后每
-`PROBE_INTERVAL`（10 s）或被 `nudge()` 唤醒时再跑；`spawn` 时丢弃此前积累的 nudge
-（Python `start_monitor` 清事件）；`stop()`/shutdown 取消并等待。
+`PROBE_INTERVAL`（10 s）或被 `nudge()` 唤醒时再跑；`spawn` 时丢弃此前积累的 nudge；
+`stop()`/shutdown 取消并等待。
 
 ## 节点 HTTP 客户端（`client.rs`）
 
 **依赖决定：手写 HTTP/1.1，通过 `native-tls`/`tokio-native-tls` 支持 HTTPS，不引入
-`hyper-util` legacy client。** Python 只用
-`http.client`；Rust 端需要的也只是 GET/POST + 三种正文框架，而 `hyper-util` 的
+`hyper-util` legacy client。**
+Rust 端需要的也只是 GET/POST + 三种正文框架，而 `hyper-util` 的
 client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件。手写版本在
 `tokio::net::TcpStream` 上保证：
 
 - 目标永远是注册表校验过的字面 `SocketAddr`：无 DNS、无 rebinding；
 - 不跟随重定向（3xx 只是一个非 200 状态）；`Accept-Encoding: identity`；
-- 每个 socket 操作都有空闲超时，与 Python 的 socket timeout 同义：连接 5 s；JSON 请求
+- 每个 socket 操作都有空闲超时：连接 5 s；JSON 请求
   读 5 s；搜索流行间 60 s；代理 10 s、`/api/watch` 45 s（常量 `PROXY_TIMEOUT`/
   `WATCH_TIMEOUT` 供 H4 用）；
 - 响应框架按 `http.client` 规则：1xx/204/304/HEAD 无正文；`Transfer-Encoding: chunked`；
@@ -137,8 +137,8 @@ SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）
 | 变量 | 含义 | 校验（`Config::validate_node`，`--check-config` 同样执行且不写任何文件） |
 | --- | --- | --- |
 | `SESSIONDOCK_NODE_BIND` | 第二监听地址（WireGuard 接口 IP:端口） | 与 `SESSIONDOCK_BIND` 不同 |
-| `SESSIONDOCK_NODE_TOKEN_FILE` | 节点凭据文件（Python `--node-token-file`） | 文件内容去首尾空白后为 `[A-Za-z0-9._~+/=-]{32,256}`（`NodeToken::load`） |
-| `SESSIONDOCK_NODE_ID_FILE` | 节点身份文件（Python `--node-id-file`） | 已存在则必须是 32 位小写十六进制（只读），不存在则启动时由 `identity::node_id` 创建父目录并以 `O_EXCL` 0600 生成 |
+| `SESSIONDOCK_NODE_TOKEN_FILE` | 节点凭据文件 | 文件内容去首尾空白后为 `[A-Za-z0-9._~+/=-]{32,256}`（`NodeToken::load`） |
+| `SESSIONDOCK_NODE_ID_FILE` | 节点身份文件 | 已存在则必须是 32 位小写十六进制（只读），不存在则启动时由 `identity::node_id` 创建父目录并以 `O_EXCL` 0600 生成 |
 | `SESSIONDOCK_NODE_PEERS` | 允许的来源网段（严格 CIDR，逗号分隔） | 主机位非零即拒绝；空表拒绝；没有缺省值 |
 
 `--check-config` 额外打印 `node_bind` / `node_token_file` / `node_id_file` /
@@ -151,13 +151,12 @@ SESSIONDOCK_NODE_PEERS must be set together (the node listener fails closed)`）
 1. TCP 对端地址（不看代理头；`::ffff:` 映射还原为 IPv4）∈ `SESSIONDOCK_NODE_PEERS`，否则
    `{"error":"forbidden","code":"node_peer_denied"}`；
 2. `X-SessionDock-Protocol` 恰为 `1`，且 `X-SessionDock-Node-Token` 与凭据常量时间相等
-   （`NodeToken::verify`），否则 `{"error":"node authentication required","code":"node_auth_required"}`
-   （Python `/api/meta` 的原文）。
+   （`NodeToken::verify`），否则 `{"error":"node authentication required","code":"node_auth_required"}`。
 
 之后仍走两端共享的 `security::api_policy`（`sec-fetch-site: cross-site` 403、Origin 必须等于
 Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见 read-model.md），只是不做 loopback Host 检查——Hub 以私网 IP
 访问节点。`/api/meta` 在两个监听上都报 `protocol: 1` 与文件里的 `node_id`（未配置身份时仍是
-`protocol: 0, node_id: null`）；loopback 上的 `/api/nodes` 变为 Python 节点模式的
+`protocol: 0, node_id: null`）；loopback 上的 `/api/nodes` 变为
 `{mode:"local", nodes:[{id, name: hostname, online:true}]}`；`capabilities.hub` 恒为 false
 （节点不是 Hub）。`main.rs` 先绑定两个 socket 再开始服务：节点监听绑定失败即启动失败，不会
 退化成只有 loopback 的服务；两个监听共用同一个关停信号。
@@ -180,7 +179,7 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   空值原样返回；uid 缺 `<source>:` → `invalid session reference`（qualify）/
   `missing session source`（split）；`split` 要求节点段是 32 hex 且本地段非空，否则
   `missing or invalid machine reference`。错误类型 `NamespaceError`，`message()` 即
-  Python 的 `ValueError` 文案，H4 映射为 400 `{"error": …}`。
+  错误文案，H4 映射为 400 `{"error": …}`。
 - `public_payload(data, node, path)`（`registry::PublicPayload` 形状）：
   `federation.public_payload` 的 `walk` + 按路径装饰。`walk` 只改写键
   `uid/from_uid/to_uid/continued_in`（非空字符串）、`src`（以 `/api/media/` 开头）、
@@ -192,13 +191,12 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   行（terminal）；`/api/term/create|takeover|new-status` 顶层（terminal）+ 真值
   `session`；`/api/bug-report` 真值 `worker`（terminal）；`/api/trash` 的 `items`
   （trash）；`/api/messages/*`、`/api/watch` 的真值 `meta`。
-- **与 Python 的唯一差异**：Python 遇到无法加前缀的 uid（缺 `<source>:`）抛
-  `ValueError`，整个节点答复按 `invalid_response` 失败；注册表钩子是不可失败的函数，
-  `public_payload` 把这样的引用原样保留、其余照常改写。要 Python 的行为用
-  `try_public_payload`（返回 `Result`）。非字符串的终端名 Python 会 `str()` 后拼接，
+- 无法加前缀的 uid（缺 `<source>:`）：注册表钩子是不可失败的函数，
+  `public_payload` 把这样的引用原样保留、其余照常改写；要让整个节点答复按
+  `invalid_response` 失败，用 `try_public_payload`（返回 `Result`）。非字符串的终端名
   Rust 不动；真实节点只发字符串。
 - 奇偶校验：`tests/hub_namespace_parity.py --python-source <pyhead>` 在进程内
-  `importlib` 加载 `agenthub/federation.py`，把固定语料（51 例：每个改写键、嵌套但
+  `importlib` 加载 `federation.py`，把固定语料（51 例：每个改写键、嵌套但
   不透明的子树、媒体 src、epoch、终端名、回收站 id、每条装饰路径、顶层标量/数组、
   非 ASCII，含 5 例 Python 抛错）跑过 oracle 写成
   `tests/fixtures/hub_namespace_cases.json`（`--write`），默认模式重新生成并比对已提交
@@ -209,8 +207,8 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
 ## 聚合（`aggregate.rs`）
 
 输入统一是浏览器 query 的键值对 `&[(String, String)]`（`Params`，wire 顺序）；输出
-`serde_json::Value`；被拒绝的输入是 `AggregateError`（`message()` = Python
-`ValueError` 文案 → 400 `{"error": …}`）。
+`serde_json::Value`；被拒绝的输入是 `AggregateError`（`message()` =
+错误文案 → 400 `{"error": …}`）。
 
 **选择**：`selected(registry, query)`：无 `nodes` → 全部启用机器；`nodes=a,b`（空项忽略，
 `nodes=` 选空）按注册表顺序过滤，含未注册/停用 id → `筛选包含未注册的机器`。
@@ -223,11 +221,11 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
 答复后的健康状态）。
 
 - `sessions(registry, client, query)`：行 = 各机 `sessions` 拼接，按
-  `(updated, uid)` 降序（Python `reverse=True`，注意与本地列表的 uid 升序不同）；
+  `(updated, uid)` 降序（注意与本地列表的 uid 升序不同）；
   `truncated = any`、`truncated_nodes`、`total_pool = sum`。`sig` = 把 `nodes` 行缩成
   `{id,name,online}` 后按排序键 JSON 求 sha256 前 24 hex；与 `?sig=` 相同则只回
   `{unchanged:true, sig, nodes, errors}`，否则附 `sig`、`built_at`。sig 只和本实现
-  自己产生的值比较，不与 Python 的字节相同（切换时浏览器多刷一次整表）。
+  自己产生的值比较（切换时浏览器多刷一次整表）。
 - `search(registry, client, query)`：`progress` ≠ `1` 的 JSON 版，形状同上但无 sig。
 - `live`：`uids/tmux_uids` 只拼接答复成功的机器；`started_at` 合并。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
@@ -277,10 +275,9 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 
 注册表、缓存与审计路径使用普通文件系统路径语义：相对路径、`..`、符号链接以及目录重叠都不在
 配置阶段额外拒绝。注册表和快照仍以 `0600` 模式创建临时文件后替换目标；已有文件的权限不作为
-启动门槛，实际文件读写错误按相应操作返回。该行为对应 Python `Path` / `mkdir(parents=True)` /
-`os.open(..., 0o600)` 的组合。
+启动门槛，实际文件读写错误按相应操作返回。
 
-**注册是服务器端操作**（Python 的 `Registry` 类，网页无注册路由）：子命令
+**注册是服务器端操作**（网页无注册路由）：子命令
 `sessiondock-hub register --name --url --token-file [--color] [--id]`（token 从文件读，绝不进
 进程列表）、`remove <nid>`、`list`。`register` 调 `Registry::register`，注册时打节点的
 `/api/meta` 必须经过节点的**第二监听**（带 `X-SessionDock-Node-Token` 与 `X-SessionDock-Protocol: 1`）。
@@ -289,10 +286,10 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 hostname `SessionDock`、能力声明 `hub_capabilities()`（`backend:rust, hub:true,
 storage_namespace:"sessiondock.hub.", history_pages, media_continuation`——每机能力
 terminal/outbox/files/trash/live/audit 都不声明，页面按每台机器的 `/api/term/list.capabilities`
-逐条降级，和 Python 的 hub 页面一样；`media_lazy` 有意不声明，否则页面会在 hub 判断前把
+逐条降级；`media_lazy` 有意不声明，否则页面会在 hub 判断前把
 `/api/nodes/<nid>/api/media/…` 源置空）。Hub 页面的 storage 命名空间是
 `sessiondock.hub.<location.pathname>.`——快照不知道挂载路径，注入一段脚本在主题脚本和
-capabilities.js 读取前把路径补进 `storage_namespace`（对应 Python 按 `location.pathname` 区分
+capabilities.js 读取前把路径补进 `storage_namespace`（按 `location.pathname` 区分
 不同挂载点的 hub）。
 
 **分发（`api/hub.rs::dispatch`，对照 `HubHandler.dispatch`）**：一个网关 + 一个分发器。网关
@@ -331,7 +328,7 @@ X-SessionDock-Build,Range,User-Agent`（后者只供终端 ownership 的设备�
 Accept-Ranges`；附件上传（`attachment`/`files/upload`）按 `Content-Length` 分块转发（≤
 `ATTACHMENT_MAX_BYTES` = 512 MiB），超限先拒。
 
-**与 Python 的差异**：WebSocket 用裸 TCP 双向拷贝（Python 做法，101 后不解帧），HTTP 客户端手写、
+WebSocket 用裸 TCP 双向拷贝（101 后不解帧），HTTP 客户端手写、
 仅字面 IP、不跟随重定向（见「节点 HTTP 客户端」）；这些沿用 H2 的既有决定，H4 不引入新差异。
 
 ## 验证
@@ -371,7 +368,7 @@ Accept-Ranges`；附件上传（`attachment`/`files/upload`）按 `Content-Lengt
   parse_qs/quote/unquote 往返、显式/display 路由、resolve 唯一节点与去限定、mixed/foreign/missing
   拒绝、`_node`/`node` 与显式路由、file_navigation 三种放行/拦截、`_page_nodes` LRU 与 browser
   audit 分组（含 pending uid 落最近机器）、上游头/`display_ip`/SSE `data:` 改写、ClientError 映射；
-  hub_config loopback bind、前端目录检查，以及注册表/缓存/审计的 Python 路径语义。
+  hub_config loopback bind、前端目录检查，以及注册表/缓存/审计的路径语义。
 - `cargo test -p sessiondock --test hub_http --locked`（8 例）：对两台 `tests/hub_fake_node.py`
   复刻 `test_hub.py` 的 dispatch/proxy 用例——hub 模式页面 + 命名空间脚本、`/api/meta`、`/api/nodes`
   无凭据、网关（Host/hub 头/跨源/无注册路由）、resolve 唯一节点与 400/404、`_build` 409、

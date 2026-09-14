@@ -30,7 +30,7 @@ aliases. Historical names belong only in migration records.
 
 **Index (lazy).** The session list source: directory walk + stat + a bounded head (96 KiB, ≤ 40 records) and tail (512 KiB) summary per file, cached by file stamp (dev/ino/size/mtime_ns), read in parallel; no startup parse, no session/byte caps, one file's change never fails the list. Ownership/fork graphs, native ids for the runtime catalog, lifecycle resume and trash file sets come from these summaries. See [read model](read-model.md).
 
-**Row summary.** The per-file result of the bounded head/tail read: title (custom > ai > generated), cwd, branch, created, model, native id, fork/agent relations, `supported` and `migration_warnings`. Derivations mirror the Python adapters' `list_sessions`. See [read model](read-model.md).
+**Row summary.** The per-file result of the bounded head/tail read: title (custom > ai > generated), cwd, branch, created, model, native id, fork/agent relations, `supported` and `migration_warnings`. Derivations mirror the adapters' `list_sessions`. See [read model](read-model.md).
 
 **Logical view.** On-demand projection of one opened session's selected branch/agent: events, parent cuts and native-scope evidence, built only when the session is opened and kept in a bounded LRU; the session list never builds views. See [read model](read-model.md).
 
@@ -66,7 +66,7 @@ aliases. Historical names belong only in migration records.
 
 **Native span.** Private `TextSpan`/`NativeSpan`: physical quote range, decoded length/SHA-1 and optional `DecodePlan`. GET re-checks full current-branch membership; a private text span is not filesystem or image authority. See [spans](native-input.md#tool-envelopes-and-native-images).
 
-**Inline image.** Image data embedded in native history. Python’s 32 MiB decoded-image limit applies equally to inline data and retained native spans. See [media limits](media.md#size-and-cache-behavior).
+**Inline image.** Image data embedded in native history. The 32 MiB decoded-image limit applies equally to inline data and retained native spans. See [media limits](media.md#size-and-cache-behavior).
 
 **File reference.** Markdown or raw path discovered in projected text, or a typed native file block. Discovery does not open files; HTTP resolves the reference against the selected session and its working directory. See [text discovery](media.md#file-references).
 
@@ -89,7 +89,7 @@ aliases. Historical names belong only in migration records.
 
 **Subagent.** Child agent owned through inventory (`?agent=`), not by joining paths. `forked_from_id` on a subagent is ownership, not necessarily history; subagents cannot be the main native bind. See [native scope](delivery-scope.md#trusted-native-scope-selection).
 
-**Sidechain.** Claude side branch in the main view; it does not choose the main leaf. Compact/rewind/sidechain chains are covered by advanced parity, not by guessing hidden Python trees. See [read model](read-model.md).
+**Sidechain.** Claude side branch in the main view; it does not choose the main leaf. Compact/rewind/sidechain chains are covered by advanced parity, not by guessing hidden trees. See [read model](read-model.md).
 
 **Compaction.** Claude compact events that rejoin across the tree and hide finished abandoned branches (two compact forms). Codex also filters compacted/internal context. See [read model](read-model.md).
 
@@ -119,13 +119,13 @@ aliases. Historical names belong only in migration records.
 
 **Pending identity.** Create/attach key is the receipt + `launch_id` + `instance_id` tuple (`new_pending` for Codex/Grok). It never authorizes native binding or reliable send. See [pending](lifecycle-http.md#pending-terminal-identity-and-cancellation).
 
-**Declared identity.** `declared_sid` / `declared_uid` on a launch (`new_assigned` or resume). Binding a launch that already declared identity is `409 launch_identity_declared`. See [launch kinds](lifecycle-http.md#launch-identity-kinds-batch-24).
+**Declared identity.** `declared_sid` / `declared_uid` on a launch (`new_assigned` or resume). Binding a launch that already declared identity is `409 launch_identity_declared`. See [launch kinds](lifecycle-http.md#launch-identity-kinds).
 
-**Running.** Host Info `exited:false` and verified child/host identity for a uniquely matched UID (`evidence:"host_info"`). See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Running.** Host Info `exited:false` and verified child/host identity for a uniquely matched UID (`evidence:"host_info"`). See [three states](processes.md#process-identity-and-the-three-run-states).
 
-**Exited.** Host `exited:true`, a confirmed lifecycle exit receipt for the same instance, or (Linux, this Web process only) a previously verified identity gone from `/proc`. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Exited.** Host `exited:true`, a confirmed lifecycle exit receipt for the same instance, or (Linux, this Web process only) a previously verified identity gone from `/proc`. See [three states](processes.md#process-identity-and-the-three-run-states).
 
-**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). Managed observations retain this state when they cannot prove running or exited. See [three states](processes.md#process-identity-and-the-three-run-states-batch-22).
+**Unknown.** Typed reason (`no_instance`, unreachable, duplicate, unverifiable, unsupported platform, …). Managed observations retain this state when they cannot prove running or exited. See [three states](processes.md#process-identity-and-the-three-run-states).
 
 ## Delivery
 
@@ -139,6 +139,6 @@ aliases. Historical names belong only in migration records.
 
 **Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
 
-**DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [media parity](media-parity.md).
+**DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [validation](validation.md).
 
 **UNVERIFIED.** A parity difference that is not a documented DELTA and not a clear FAIL. Advanced history parity requires every remaining difference to be a DELTA, never UNVERIFIED. See [validation](../AGENTS.md#validation).

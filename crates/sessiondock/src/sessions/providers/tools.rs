@@ -335,7 +335,7 @@ pub(super) fn question(name: &str, value: &Value) -> Option<(String, Vec<Value>)
     ))
 }
 
-/// Python `_stringify` recursively joins arrays, takes a block's `text`, and
+/// Recursively joins arrays, takes a block's `text`, and
 /// serializes other objects. Image-shaped blocks retain the visible placeholder.
 fn output_text(value: &Value) -> Result<String, String> {
     match value {
@@ -534,7 +534,7 @@ pub(super) fn sanitize_output_with_media(
                 }
                 // Text blocks need no copy because they never enter the
                 // cleaned chunk array. Other serializable parts follow
-                // Python `_stringify` rather than rejecting the tool result.
+                // `_stringify` rather than rejecting the tool result.
                 let text_block = matches!(
                     part["type"].as_str(),
                     Some("text" | "input_text" | "output_text" | "summary_text")
@@ -567,7 +567,7 @@ pub(super) fn sanitize_output_with_media(
 pub(super) fn output(value: &Value) -> Result<(String, Value), String> {
     if let Some(chunks) = chunk_envelopes(value)? {
         // Validate that every other part can be rendered using the same
-        // Python-compatible fallback; text blocks need no copy here.
+        // Fallback; text blocks need no copy here.
         for part in value.as_array().into_iter().flatten() {
             if !is_output_envelope(part)
                 && !matches!(
@@ -592,7 +592,7 @@ pub(super) fn output(value: &Value) -> Result<(String, Value), String> {
 /// newlines), `exit_code` is the last chunk's, `duration_s` sums every
 /// chunk's `wall_time_seconds`, and an MCP `isError` in any chunk marks the
 /// result. The reference adapter shows a single chunk instead (documented
-/// superset, docs/migration.md).
+/// superset).
 fn chunked<'a>(chunks: impl Iterator<Item = &'a Chunk<'a>>) -> Result<(String, Value), String> {
     let mut text = String::new();
     let (mut exit_code, mut duration, mut error) = (None, None, false);

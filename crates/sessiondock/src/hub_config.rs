@@ -1,4 +1,4 @@
-//! Configuration of the `sessiondock-hub` binary (batch 40 H4). Separate from
+//! Configuration of the `sessiondock-hub` binary. Separate from
 //! the node's `Config`: the hub owns no session root, host, ledger or state
 //! directory — only the registry file, its cache, the allowed node networks,
 //! the frontend snapshot and an optional diagnostics directory. Loopback only,
@@ -20,7 +20,7 @@ pub struct HubConfig {
     /// `SESSIONDOCK_HUB_NODES`: the registry file (`hub-nodes.json`).
     pub nodes_file: PathBuf,
     /// `SESSIONDOCK_HUB_CACHE_DIR`: offline session snapshots; default
-    /// `hub-cache` next to the registry file (Python's layout).
+    /// `hub-cache` next to the registry file.
     pub cache_dir: PathBuf,
     /// `SESSIONDOCK_HUB_NETWORKS`: CIDR list a node may be registered from.
     pub networks: Vec<Network>,

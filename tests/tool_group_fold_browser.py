@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tool groups (Python tool_group_fold_e2e port): a group the user opened stays open when later
+"""Tool groups: a group the user opened stays open when later
 tools or results append; the tail group opens while streaming and seals when the turn ends.
 
 Isolated Rust server over the shared synthetic corpus; the checks run against the page's own

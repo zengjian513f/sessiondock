@@ -30,7 +30,7 @@ use serde_json::{Value, json};
 
 use crate::{error::ApiError, state::AppState};
 
-/// Match each Python handler's request-body policy, including raw uploads.
+/// Match each handler's request-body policy, including raw uploads.
 pub(crate) fn request_body_limit(path: &str) -> usize {
     match path {
         "/api/session/files/upload" => files::UPLOAD_BODY_LIMIT,
@@ -60,7 +60,7 @@ pub fn router() -> Router<AppState> {
         .route("/media/{token}", get(media::get))
         .route("/session/input-history", get(read::input_history))
         .route("/session/outbox", get(delivery::outbox))
-        // Batch 31: Claude reliable send on managed instances; 501 until both
+        // Claude reliable send on managed instances; 501 until both
         // the delivery ledger and the terminal transport are configured.
         .route(
             "/session/send",
@@ -163,8 +163,8 @@ pub fn router() -> Router<AppState> {
                 "/api/term/bind",
             ))),
         )
-        // WP-E: drop a finished pending receipt from the sidebar (Python
-        // `pending_store.discard`); never kills or deletes anything.
+        // Drop a finished pending receipt from the sidebar;
+        // never kills or deletes anything.
         .route(
             "/term/discard",
             post(lifecycle::discard).layer(axum::extract::DefaultBodyLimit::max(
@@ -233,7 +233,7 @@ pub fn router() -> Router<AppState> {
                 "/api/trash/purge",
             ))),
         )
-        // Batch 41: 501 `bug_report_disabled` until the bundle directory,
+        // 501 `bug_report_disabled` until the bundle directory,
         // repository, audit, terminal, lifecycle and worker profiles exist.
         .route(
             "/bug-report",
@@ -252,7 +252,7 @@ pub fn node_router() -> Router<AppState> {
         .fallback(node_not_found)
 }
 
-/// Python node mode: `protocol: 1` and the persistent `node_id` once the
+/// Node mode: `protocol: 1` and the persistent `node_id` once the
 /// identity is configured; `0`/`null` otherwise so no hub registers this
 /// service by accident.
 async fn meta(State(state): State<AppState>) -> Json<Value> {
@@ -260,7 +260,7 @@ async fn meta(State(state): State<AppState>) -> Json<Value> {
         Some(node) => (crate::hub::PROTOCOL, json!(node.node_id)),
         None => (0, Value::Null),
     };
-    // Batch 44 WP-A: no `migration` disclaimer — this is the replacement
+    // No `migration` disclaimer — this is the replacement
     // service, and `capabilities.stage` says so.
     Json(json!({
         "build": state.assets.build, "hostname": &*state.hostname, "mode": "local",

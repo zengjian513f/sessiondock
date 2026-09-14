@@ -8,7 +8,7 @@ agents, a torn Claude line, a missing leaf, a parent cycle), lists each source
 through the Python adapters (advanced_parity load + shadow_compare bind),
 fetches isolated GET /api/sessions?force=1, and compares uid/source/sid/title/
 cwd/created/updated/size/model/branch/forked_from_id/root_sid/fork_depth/
-agent_items/supported/migration_warnings plus (batch 36) `continued_in` and
+agent_items/supported/migration_warnings plus `continued_in` and
 every `agent_items[]` entry's `active`/`created`/`updated`. Same UTC instant
 is equal. Remaining `updated` timestamp mismatches (mtime vs last-record,
 seconds vs millis) are the documented DELTA; everything else DIFF. Orphan
@@ -40,7 +40,7 @@ FIELDS = ("uid", "source", "sid", "title", "cwd", "created", "updated", "size",
           "model", "branch", "forked_from_id", "root_sid", "fork_depth", "agent_items", "supported",
           "migration_warnings", "continued_in", "agent_states")
 DELTA = {"updated"}
-# Python has no migration_warnings, and since batch 44 (WP-C) neither does a
+# Python has no migration_warnings, and neither does a
 # supported Rust row: the non-fatal counts live in the detail meta only (see
 # advanced_parity / history_parity). Both sides therefore compare as "absent"
 # on supported rows; an unsupported Rust row carries its fatal reason.
@@ -67,7 +67,7 @@ def value(row, key):
     if key == "agent_items":
         return sorted(str(x.get("id")) for x in (row.get("agent_items") or []) if x.get("id"))
     if key == "agent_states":
-        # Batch 36: `active` is a plain bool on both sides; created/updated
+        # `active` is a plain bool on both sides; created/updated
         # are the same instant (Python local-tz ISO, Rust UTC millis).
         return {str(x.get("id")): {"active": x.get("active"), "created": instant(x.get("created")),
                                    "updated": instant(x.get("updated"))}

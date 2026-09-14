@@ -67,7 +67,7 @@ impl Fixture {
                 codex: Some(self.root.join("codex")),
                 grok: None,
             },
-            // Batch 44 WP-A: the default page is 2000 events and pools queue
+            // The default page is 2000 events and pools queue
             // for up to 10 s; this suite walks 200-event pages against the
             // original 4-reader / 8-response sizing with queued admission
             pools: sessiondock::config::Pools {

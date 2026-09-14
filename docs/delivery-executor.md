@@ -1,10 +1,10 @@
-# Claude reliable send (batch 31)
+# Claude reliable send
 
-Batch 31 connects the [pure Claude domain](delivery.md), the
+This connects the [pure Claude domain](delivery.md), the
 [durable store](delivery-store.md), the [engine](delivery-engine.md) and the
 [async service](delivery-service.md) to a real terminal driver, a native
-acknowledgment adapter and the four Python send routes, for **Claude main
-sessions on managed instances**. Batch 32 reuses the same executor, driver
+acknowledgment adapter and the four send routes, for **Claude main
+sessions on managed instances**. Codex reuses the same executor, driver
 and routes for Codex main sessions — see
 [delivery-codex-executor.md](delivery-codex-executor.md); Grok reliable send
 is not enabled. Nothing in this batch fabricates confirmation from screen
@@ -14,9 +14,9 @@ text: a receipt becomes confirmed only from the session's own JSONL.
 
 | File | Role |
 |---|---|
-| `delivery/driver.rs` | `TerminalDriver` trait + `HostTerminalDriver`: capture screen+cursor, recognize Claude's composer (`inspect`; batch 32 adds `inspect_codex`/`inspect_for`), paste, press keys, acquire/release a server-owned lease over the existing terminal service |
+| `delivery/driver.rs` | `TerminalDriver` trait + `HostTerminalDriver`: capture screen+cursor, recognize Claude's composer (`inspect`, `inspect_codex`/`inspect_for`), paste, press keys, acquire/release a server-owned lease over the existing terminal service |
 | `delivery/claude_adapter.rs` | Turn one checked read of the session's committed `user` inputs into the Claude Machine's `UserEvidence` (association `VerifiedEnter`) |
-| `delivery/executor.rs` | `DeliveryExecutor`: drives engine dispatch batches, per-session serialization, bounded admission, the confirmation/tracking loop; `ManagedResolver` resolves the unique managed instance; batch 32 generalizes it over a `Provider` (Claude / Codex) |
+| `delivery/executor.rs` | `DeliveryExecutor`: drives engine dispatch batches, per-session serialization, bounded admission, the confirmation/tracking loop; `ManagedResolver` resolves the unique managed instance; generalized over a `Provider` (Claude / Codex) |
 | `sessions::claude_native_inputs` | Checked, restamped read of the current fence and the human `user` inputs committed after a fence (no ad-hoc file reads) |
 | `api/delivery.rs` | `POST /api/session/send`, `/draft-status`, `/outbox/retry`, `/outbox/discard` |
 
@@ -48,10 +48,10 @@ receipt. Duplicate, unmatched, exited or unauthorized instances are
 
 ## Composer inspection and draft consent
 
-The driver reproduces the Python bridge's composer model on the host **screen
+The driver reproduces the composer model on the host **screen
 capture**: two rule lines around a `❯` editor row, dim suggestion text vs a real
 draft, and cursor position deciding `empty` / `editing` / `unknown` when colour
-information is absent. The consent token is the Python fingerprint —
+information is absent. The consent token is the fingerprint —
 `sha256(cursor_x \0 cursor_y \0 screen)` — returned as `draft_token` and reused
 as the domain's frame token.
 
@@ -62,7 +62,7 @@ refuses to treat a lagging capture (`lag > 0`) as a known composer — it return
 `unknown`, so an unread editor is never mistaken for empty, and it aborts a
 prepare/Enter whose `dropped` counter moved between capture and write.
 
-Draft flow, matching Python `overwrite_draft`:
+Draft flow for `overwrite_draft`:
 
 1. `draft-status` returns `{draft_state}` plus `{draft_conflict:true, draft_token}`
    while editing.
@@ -123,31 +123,30 @@ checked readers (`claude_native_inputs`), never an ad-hoc read:
   Claude TUI supplies no request-ID echo.
 
 The tracker re-reads from the advancing watch cursor; when a receipt is overdue
-(Python `CONFIRM_TIMEOUT`, 8 s) it re-reads from the **fixed confirmation
+(8 s) it re-reads from the **fixed confirmation
 fence**, rate-limited to once per interval. Automatic tracking stops after a
 one-hour window (annotating the receipt once with the domain's timeout issue,
 without making it retryable). A dismissed (discarded) receipt is dropped from
 automatic tracking so a later identical human input acknowledges the next
 receipt, not the tombstone.
 
-## HTTP contract vs Python
+## HTTP contract
 
 All four routes are JSON, same-origin/loopback, `Cache-Control: no-store`, and
 return `501 delivery_send_disabled` unless **both** the delivery ledger and the
 terminal transport are configured (capability `outbox:true`). Bodies accept the
-Python fields; unknown fields (`activity`, `cursor`, `page_id`, diagnostics) are
+request fields; unknown fields (`activity`, `cursor`, `page_id`, diagnostics) are
 ignored; the page's own lease is an added optional `lease` object.
 
 ### `POST /api/session/send`
 
 Body: `uid`, `name`, `text`, `request_id`, `overwrite_draft`, `media`,
-optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
-`_queue_claude_message`:
+optional `lease`, `_build`. Behaviour:
 
 - Text writes reproduce the stale-build gate before any terminal access:
   `_build` ≠ served build → `409 {code:"stale_build", reload:true, build}`.
 - `request_id`: an empty value mints a UUID; otherwise keep the first 128
-  Unicode characters, including whitespace and punctuation, like Python. Retry
+  Unicode characters, including whitespace and punctuation. Retry
   and discard use the returned ID exactly without trimming or truncation. A different
   payload for a known ID → `400 request_conflict` ("重复发送 ID 对应了不同消息").
   A **replay of the same ID/payload is a status lookup**, never a second paste;
@@ -165,7 +164,7 @@ optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
 
 Body: `uid`, `name`, optional `lease`. Returns `200 {ok:true, draft_state}` plus
 `{draft_conflict:true, draft_token}` while editing; a failed capture is
-`{draft_state:"unknown"}` (Python `composer_probe`), never an error.
+`{draft_state:"unknown"}`, never an error.
 
 ### `POST /api/session/outbox/retry`
 
@@ -179,7 +178,7 @@ has already left the outbox → `404`. Same stale-build gate as send.
 
 Body: `uid`, `id`. Dismisses the row (hides it, cancels an unwritten waiter),
 keeps the deduplication tombstone (a later replay of the ID is still a lookup),
-never cancels Claude. Unknown/already-gone row → `404` (Python parity).
+never cancels Claude. Unknown/already-gone row → `404`.
 
 `GET /api/session/outbox` is unchanged (read-only projection). The front-end
 retires its **optimistic** row from the native SSE record independently; the
@@ -235,9 +234,9 @@ production host is used.
   the login read-only, proxy variables passed through); it skips with a
   printed reason when the binary is absent or a standalone call cannot
   authenticate. Grok is not a send target; the Codex real-CLI suite
-  (`tests/send_codex_real.py`, batch 32) skips with the printed reason when
+  (`tests/send_codex_real.py`) skips with the printed reason when
   `codex` is absent, unauthenticated or over its usage limit.
-- Grok reliable send: no executor is wired. Codex is wired in batch 32
+- Grok reliable send: no executor is wired. Codex is wired
   ([delivery-codex-executor.md](delivery-codex-executor.md)).
 - Uploaded attachment preview metadata is preserved with the receipt.
 - Native queue (`enqueue`/`dequeue`/`popAll`) association, `/rename`,

@@ -62,7 +62,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .or_else(|| text_if_truthy(&info["session_summary"]))
         .unwrap_or_else(|| directory.chars().take(8).collect());
     let cwd = text_if_truthy(&base["cwd"]).unwrap_or_else(|| unquote(&project));
-    // Python: chat mtime, or the summary's when the chat does not exist yet.
+    // Chat mtime, or the summary's when the chat does not exist yet.
     let fallback_mtime = input
         .data
         .as_ref()
@@ -98,7 +98,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     } else {
         skipped_warnings("grok", &records)
     };
-    // WP-E: the session directory's `summary.json` declares its own id
+    // The session directory's `summary.json` declares its own id
     // (`info.id`, the value Grok's `--session-id`/`--resume` name), so a
     // Grok main session has a native scope for binding, stop and takeover.
     // A summary that failed validation declares nothing.

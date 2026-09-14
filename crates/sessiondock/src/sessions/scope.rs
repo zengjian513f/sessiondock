@@ -15,7 +15,7 @@ pub(crate) struct CatalogEntry {
     pub subagent: bool,
 }
 
-/// WP-E: a Grok main session's identity is the validated `summary.json`
+/// A Grok main session's identity is the validated `summary.json`
 /// `info.id` (the value `grok --session-id`/`--resume` name); the chat file
 /// declares nothing. The index summary derives the same value.
 pub(super) fn grok_native_identity(
@@ -55,7 +55,7 @@ pub(super) fn native_identity(
         let value = if source == "claude" {
             record.get("sessionId")
         } else if record["type"] == "session_meta" {
-            // Python `_raw_meta` (`and not meta`): the first session_meta is
+            // The first session_meta is
             // the only identity; old-style forks and subagent rollouts copy
             // their ancestors' metas after it, and those ids are not this file's.
             if codex_meta_seen {

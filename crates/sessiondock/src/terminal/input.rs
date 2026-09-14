@@ -76,7 +76,7 @@ const CONTROL: [&str; 26] = [
 /// Resolve one request key name. Accepts the host's own tmux-style names
 /// exactly (`Enter`, `PPage`, `C-c`) and lower-case aliases (`enter`,
 /// `pageup`, `ctrl-c`, `^c`). Every other nonempty host-valid key is forwarded
-/// literally, matching Python and ptyhost's `key_bytes` fallback.
+/// literally, matching ptyhost's `key_bytes` fallback.
 pub fn map_key(raw: &str) -> Option<MappedKey> {
     if raw.is_empty() || raw.len() > 256 {
         return None;
@@ -91,7 +91,7 @@ pub fn map_key(raw: &str) -> Option<MappedKey> {
     }
     // One ASCII letter or digit is typed literally, which is also what the
     // host does with it: the Codex question menu answers with `1`–`9` and a
-    // command approval with its `y` / `p` mnemonic (WP-G question cards).
+    // command approval with its `y` / `p` mnemonic (question cards).
     if let [byte] = raw.as_bytes()
         && byte.is_ascii_alphanumeric()
         && let Some(index) = LITERAL.find(*byte as char)

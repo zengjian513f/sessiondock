@@ -1,13 +1,13 @@
 //! Hub → node HTTP/1.1 client: one connection per request over a plain or
 //! system-validated TLS socket, written by hand.
 //!
-//! Python's hub uses `http.client` and nothing more, so the Rust side does the
-//! same instead of pulling `hyper-util`'s legacy client (pool, resolver, tower,
+//! The client is hand-written instead of pulling `hyper-util`'s legacy
+//! client (pool, resolver, tower,
 //! tracing) into the lock file for a handful of GET/POSTs. What the hand-written
 //! client guarantees: the target is always a literal `SocketAddr` taken from a
 //! validated registry URL (no DNS, no rebinding); a 3xx is just a non-200
 //! status, never followed; `Accept-Encoding: identity` keeps bodies plain;
-//! every socket operation carries an idle timeout exactly like Python's socket
+//! every socket operation carries an idle
 //! timeout (connect 5 s; reads 5 s for JSON, 60 s while a search streams,
 //! 10/45 s for proxied requests); JSON bodies are capped at `JSON_LIMIT` and an
 //! oversize body is an invalid response, never a partial parse.
@@ -175,7 +175,7 @@ pub fn request_failure(
     }
 }
 
-/// Python prints `{timeout}`: `5` for an integer, `0.2` for a float.
+/// `{timeout}`: `5` for an integer, `0.2` for a float.
 fn seconds(timeout: Duration) -> String {
     let secs = timeout.as_secs_f64();
     if secs.fract() == 0.0 {

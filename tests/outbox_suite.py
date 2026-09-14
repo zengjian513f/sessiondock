@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only GET /api/session/outbox contract on an isolated loopback server.
 
-Disabled 501, empty initialized ledger, Python-compatible empty snapshots for
+Disabled 501, empty initialized ledger, empty snapshots for
 unknown UIDs, ignored extra query fields, and a fresh epoch after restart.
 Synthetic temp fixtures only; no production directories.
 """

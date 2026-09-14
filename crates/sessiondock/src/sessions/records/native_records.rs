@@ -8,7 +8,7 @@ const SMALL: usize = 64 * 1024;
 mod replay_source;
 
 /// Why a complete line produced no row: not a JSON object (skipped and
-/// counted like the Python adapters), or a media failure that still fails the
+/// counted), or a media failure that still fails the
 /// session (KEEP).
 enum Rejected {
     Invalid,
@@ -160,7 +160,7 @@ pub(in crate::sessions) fn scan_native_records(
             match decoded {
                 Ok((row, sidecars)) if row.is_object() => {
                     // Saturating accounting; the cache applies its budget at
-                    // `retain` (batch 44 WP-A: budgets are per cache, not global).
+                    // `retain` (budgets are per cache, not global).
                     decoder.weight = decoder
                         .weight
                         .saturating_add(value_weight(&row))
