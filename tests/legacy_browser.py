@@ -80,6 +80,32 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text(answer)
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_be_enabled()
+
+                # A Codex side thread can exist only in the live TUI while this
+                # conversation remains bound to its main native record. The UI
+                # must explain that split, then clear the explanation as soon as
+                # the TUI reports main again. This injects view state only; no CLI
+                # or production terminal is opened by the isolated fixture.
+                codex_row = page.locator('#side .item[data-uid^="codex:"]')
+                codex_uid = codex_row.get_attribute("data-uid")
+                codex_row.click()
+                page.evaluate("""uid => {
+                  T.views.set('test-side-thread', {
+                    bindingUid: uid, codexSideThread: true, ended: false, retired: false,
+                  });
+                  renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
+                }""", codex_uid)
+                expect(page.locator(".terminal-thread-notice")).to_contain_text(
+                    "终端当前位于 Codex side thread")
+                expect(page.locator(".terminal-thread-notice")).to_contain_text("Ctrl+/")
+                expect(page.locator(".terminal-thread-notice button")).to_have_text("查看 side thread")
+                page.evaluate("""uid => {
+                  T.views.get('test-side-thread').codexSideThread = false;
+                  renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
+                  T.views.delete('test-side-thread');
+                }""", codex_uid)
+                expect(page.locator(".terminal-thread-notice")).to_have_count(0)
+                page.locator('#side .item[data-uid^="claude:"]').click()
                 page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                 page.locator("#a-term").hover()
                 expect(page.locator("#console-toast")).to_contain_text("只读")
@@ -150,7 +176,7 @@ def main():
                 if os.name != "nt":
                     assert process.returncode == 0
                 browser.close()
-                print("PASS legacy browser: native fixtures, SSE append/partial/reset, explicit errors/retry, console, mobile/dark, shutdown")
+                print("PASS legacy browser: native fixtures, Codex side-thread notice, SSE append/partial/reset, explicit errors/retry, console, mobile/dark, shutdown")
         finally:
             if process.poll() is None:
                 process.terminate()

@@ -6560,6 +6560,25 @@ function pruneQuestionFormDrafts(uid, activeId = '') {
   }
 }
 
+function renderTerminalThreadNotice(uid = S.sel) {
+  const box = $('#msgs');
+  if (!box) return;
+  box.querySelectorAll('.terminal-thread-notice').forEach(node => node.remove());
+  if (S.agent || uid !== S.sel || sessiondockCli(uid)?.source !== 'codex'
+      || !globalThis.codexSideThreadVisible?.(uid)) return;
+  const notice = el('div', 'terminal-thread-notice');
+  notice.setAttribute('role', 'status');
+  const copy = el('div', 'terminal-thread-copy');
+  copy.appendChild(el('strong', '', '终端当前位于 Codex side thread'));
+  copy.appendChild(el('span', '',
+    '此会话框仍跟随 main thread，因此不会显示 side 内容。在终端按 Ctrl+/ 可切回 main thread。'));
+  const inspect = el('button', '', '查看 side thread');
+  inspect.type = 'button';
+  inspect.onclick = () => globalThis.revealNativeTerminal?.(uid);
+  notice.append(copy, inspect);
+  box.appendChild(notice);
+}
+
 function renderConversationTail(activity, uid = S.sel) {
   const box = $('#msgs');
   if (!box) return;
@@ -6605,6 +6624,7 @@ function renderConversationTail(activity, uid = S.sel) {
   } else {
     renderActivity(activity);
   }
+  renderTerminalThreadNotice(uid);
   renderQueuedMessages(uid);
   refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');
