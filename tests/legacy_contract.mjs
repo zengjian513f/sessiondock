@@ -283,6 +283,29 @@ test('Rust pending rows require launch identity and never run native resolution 
   await loadFunction(context,'resolveNewSession',read('term.js'))(row);
 });
 
+test('Hub pending lifecycle writes retain their explicit machine', async () => {
+  const node='a'.repeat(32);
+  const row={name:`${node}~pending-host`,node_id:node,record_id:'receipt',
+    launch_id:'launch',instance_id:'instance',running:true,stale:false};
+  const calls=[];
+  const context=contextWithCapabilities(disabled,{
+    HUB_MODE:true,T:{pending:[row]},post:async(path,body)=>{calls.push([path,body]);return {ok:true,running:false};},
+    discardAbandonedNewSession:()=>calls.push(['discarded']),confirm:()=>true,
+    loadTermList:async()=>{},pendingUid:name=>`tmux:${name}`,S:{sel:''},$:()=>null,alert:assert.fail,
+  });
+  await loadFunction(context,'stopPendingSession',read('term.js'))(row,null);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())),[
+    'api/term/kill',{record_id:'receipt',instance_id:'instance',_node:node},
+  ]);
+  row.running=true;
+  await loadFunction(context,'discardPendingSession',read('term.js'))(row);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+    ['api/term/kill',{record_id:'receipt',instance_id:'instance',_node:node}],
+    ['api/term/discard',{record_id:'receipt',instance_id:'instance',_node:node}],
+    ['discarded'],
+  ]);
+});
+
 test('confirmed pending binding follows native history after its host record exits', async () => {
   const row={name:'node~pending-host',record_id:'receipt',launch_id:'launch',instance_id:'instance',
     stale:true,binding:{state:'confirmed',source:'codex',sid:'native-sid',uid:'codex:node~native'}};

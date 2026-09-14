@@ -1356,7 +1356,8 @@ async function stopPendingSession(info, button) {
     if (!confirm('停止这个明确创建的终端实例？创建回执和草稿会保留。')) return;
     if (button) button.disabled = true;
     try {
-      const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id});
+      const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
+        ...(HUB_MODE ? {_node: info.node_id} : {})});
       if (result.error) throw new Error(result.error);
       const current = T.pending.find(row => row.record_id === info.record_id);
       if (current) Object.assign(current, result);
@@ -1378,11 +1379,13 @@ async function discardPendingSession(info) {
     // view through `term/discard`; a running one must be stopped first.
     const current = T.pending.find(row => row.record_id === info.record_id) || info;
     if (current.running && !current.stale) {
-      const result = await post('api/term/kill', {record_id: current.record_id, instance_id: current.instance_id});
+      const result = await post('api/term/kill', {record_id: current.record_id, instance_id: current.instance_id,
+        ...(HUB_MODE ? {_node: current.node_id} : {})});
       if (result.error) throw new Error(result.error);
       Object.assign(current, result);
     }
-    const dropped = await post('api/term/discard', {record_id: current.record_id, instance_id: current.instance_id});
+    const dropped = await post('api/term/discard', {record_id: current.record_id, instance_id: current.instance_id,
+      ...(HUB_MODE ? {_node: current.node_id} : {})});
     if (dropped.error) throw new Error(dropped.error);
     discardAbandonedNewSession(info);
     return;
