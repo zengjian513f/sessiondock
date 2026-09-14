@@ -673,7 +673,9 @@ fn cli_main_process_between_a_pid_and_its_pane_root_is_a_barrier() {
 }
 
 /// Python `SnapshotTests`: the TTL runs from completion, waiters share one
-/// scan, `force` bypasses the TTL.
+/// scan, `force` bypasses the TTL. `snapshot` answers `unsupported_platform`
+/// off Linux before it looks at any tree, synthetic ones included.
+#[cfg(target_os = "linux")]
 #[tokio::test]
 async fn snapshot_ttl_single_flight_and_force() {
     let temp = tempfile::tempdir().unwrap();

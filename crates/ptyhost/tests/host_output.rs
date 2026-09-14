@@ -18,12 +18,18 @@ struct Host {
 
 impl Host {
     fn start() -> Self {
+        // The wall clock alone is not unique across parallel tests (macOS
+        // reports microseconds); a per-process counter keeps directories apart.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("ptyhost-output-{}-{nonce}", std::process::id()));
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "ptyhost-output-{}-{nonce}-{sequence}",
+            std::process::id()
+        ));
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&directory)
@@ -230,6 +236,10 @@ fn exit_owned_shell(host: &Host, reader: &mut BufReader<UnixStream>) {
     }
 }
 
+// macOS revokes the slave tty when the session leader exits (`revoke(2)`), so
+// a descriptor held elsewhere can neither keep the PTY open nor write a tail:
+// the master reads EOF at once and these two Linux drain contracts do not apply.
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn child_exit_does_not_discard_pty_tail_delayed_beyond_two_hundred_ms() {
     let mut host = Host::start();
@@ -257,6 +267,7 @@ fn child_exit_does_not_discard_pty_tail_delayed_beyond_two_hundred_ms() {
     assert!(exit.get("reason").is_none());
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn a_pty_that_never_reaches_eof_exits_with_an_explicit_incomplete_marker() {
     let host = Host::start();

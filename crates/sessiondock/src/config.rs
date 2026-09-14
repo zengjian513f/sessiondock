@@ -99,14 +99,29 @@ pub struct Config {
     pub pools: Pools,
 }
 
-/// The kernel's host name (Linux `/proc/sys/kernel/hostname`, else the
-/// `HOSTNAME` variable, else Windows' `COMPUTERNAME`); `SessionDock` when
-/// none is available.
+/// The kernel's host name (Linux `/proc/sys/kernel/hostname`, other Unix
+/// `gethostname(2)`, else the `HOSTNAME` variable, else Windows'
+/// `COMPUTERNAME`); `SessionDock` when none is available.
 pub fn system_hostname() -> String {
     let read = || {
         #[cfg(target_os = "linux")]
         if let Ok(name) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
             return Some(name);
+        }
+        #[cfg(all(unix, not(target_os = "linux")))]
+        {
+            // launchd starts services without HOSTNAME; ask the kernel.
+            let mut buffer = [0u8; 256];
+            // SAFETY: the kernel writes at most `buffer.len()` bytes.
+            let rc = unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
+            if rc == 0 {
+                let end = buffer.iter().position(|b| *b == 0).unwrap_or(buffer.len());
+                if let Ok(name) = std::str::from_utf8(&buffer[..end])
+                    && !name.trim().is_empty()
+                {
+                    return Some(name.to_owned());
+                }
+            }
         }
         env::var("HOSTNAME")
             .ok()

@@ -50,7 +50,7 @@ fn host_gone(info: &Value) -> bool {
     if pid <= 0 {
         return true;
     }
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     {
         // 僵尸也算结束：它的 /proc 条目要等父进程收尸才消失。
         if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -61,10 +61,50 @@ fn host_gone(info: &Value) -> bool {
         }
         true
     }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // 没有 /proc（macOS 等）：信号 0 探活，ESRCH 才算结束；EPERM 说明进程
+        // 还在只是不属于我们。僵尸在 macOS 上 kill(0) 仍成功，交给 sysctl 判断。
+        let pid = match libc::pid_t::try_from(pid) {
+            Ok(pid) => pid,
+            Err(_) => return true,
+        };
+        // SAFETY: signal 0 delivers nothing; it only checks that the PID exists.
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            return macos_zombie(pid);
+        }
+        #[cfg(not(target_os = "macos"))]
+        false
+    }
     #[cfg(not(unix))]
     {
         false
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_zombie(pid: libc::pid_t) -> bool {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is one proc_bsdinfo; libproc writes at most `size` bytes.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written != size {
+        return false;
+    }
+    // SAFETY: the kernel filled the whole structure.
+    unsafe { info.assume_init() }.pbi_status == libc::SZOMB
 }
 
 fn remove_session_files(dir: &Path, name: &str) {

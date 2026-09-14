@@ -491,7 +491,94 @@ async fn local_process_dead(record: &HostRecord) -> bool {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS: a record from another boot session is dead; otherwise ask libproc
+/// (the query behind `ps`) whether the host PID still names a live process.
+#[cfg(target_os = "macos")]
+async fn local_process_dead(record: &HostRecord) -> bool {
+    if let (Some(record_boot), Some(current_boot)) = (record.boot_id.as_deref(), macos_boot_id())
+        && record_boot != current_boot
+    {
+        return true;
+    }
+    if record.created != 0
+        && let Some(booted) = macos_boot_time()
+        && record.created < booted
+    {
+        return true;
+    }
+    let Ok(pid) = libc::pid_t::try_from(record.host_pid) else {
+        return true;
+    };
+    if pid <= 0 {
+        return true;
+    }
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: the buffer is one proc_bsdinfo; libproc writes at most `size` bytes.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if written <= 0 {
+        return std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    }
+    if written != size {
+        return false;
+    }
+    // SAFETY: the kernel filled the whole structure.
+    unsafe { info.assume_init() }.pbi_status == libc::SZOMB
+}
+
+#[cfg(target_os = "macos")]
+fn macos_boot_id() -> Option<String> {
+    let mut buffer = [0u8; 64];
+    let mut length = buffer.len();
+    // SAFETY: NUL-terminated name; the kernel writes at most `length` bytes.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"kern.bootsessionuuid".as_ptr(),
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || length == 0 || length > buffer.len() {
+        return None;
+    }
+    let value = std::str::from_utf8(&buffer[..length]).ok()?;
+    let value = value.trim_end_matches('\0').trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+/// `kern.boottime` in Unix seconds (Linux `btime`).
+#[cfg(target_os = "macos")]
+fn macos_boot_time() -> Option<u64> {
+    let mut value = std::mem::MaybeUninit::<libc::timeval>::uninit();
+    let mut length = std::mem::size_of::<libc::timeval>();
+    // SAFETY: NUL-terminated name; the kernel writes one timeval at most.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            c"kern.boottime".as_ptr(),
+            value.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || length != std::mem::size_of::<libc::timeval>() {
+        return None;
+    }
+    // SAFETY: the kernel filled the whole timeval.
+    u64::try_from(unsafe { value.assume_init() }.tv_sec).ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 async fn local_process_dead(_record: &HostRecord) -> bool {
     false
 }
