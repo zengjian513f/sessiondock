@@ -2313,8 +2313,10 @@ function layoutTermPane() {
 async function claimTermOwnership(name, uid = T.uid, binding = {}) {
   let result = await post('api/term/claim', {name, page: TERM_PAGE_ID, ...binding});
   if (result.conflict) {
-    const ownerIp = result.owner?.ip || '另一地址';
-    if (!confirm(`该终端正由 ${ownerIp} 控制。\n\n是否抢占终端？`)) return null;
+    // 经 hub 访问时同一用户的每个页面都是同一个地址，这时地址说明不了什么，
+    // 只有服务端明确说持有者在别的地址时才写出来。
+    const where = result.owner?.ip && result.same_address === false ? `（${result.owner.ip}）` : '';
+    if (!confirm(`该终端正由另一页面控制${where}。\n\n是否抢占终端？`)) return null;
     result = await post('api/term/claim', {name, page: TERM_PAGE_ID, force: true, ...binding});
   }
   if (result.error || !result.token) {
@@ -2333,7 +2335,8 @@ function handleTermRevoked(view, ip = '') {
   cancelTermReconnect(view);
   if (T.name === view.name) closeTermPane();
   try { view.ws?.close(); } catch {}
-  alert(`终端已被 ${ip || '另一页面'} 接管，本页面的终端已关闭。`);
+  // 服务端只在抢占方地址与本页不同时才给出地址。
+  alert(`终端已在别处被抢占${ip ? `（${ip}）` : ''}，本页面的终端已关闭。`);
 }
 
 function recordHostExit(view, uid, event) {
