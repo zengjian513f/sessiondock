@@ -30,6 +30,8 @@ import threading
 import time
 from datetime import datetime
 
+from python_oracle import discover_source
+
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_PY = {
     "append_benchmark.py",
@@ -169,10 +171,18 @@ def run_one(suite, env, log_dir, scale):
     return "FAIL", elapsed, f"exit {proc.returncode}"
 
 
-def prepare_env(kind, base, chrome):
+def prepare_env(suite, base, chrome):
     env = dict(base)
+    kind = suite["kind"]
     if kind == "python" and chrome and not env.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
         env["PLAYWRIGHT_CHROMIUM_EXECUTABLE"] = chrome
+    # A broken physical Vulkan device can stop Chromium's animation frames,
+    # which makes Playwright wait forever for otherwise stable click targets.
+    # Browser suites test UI behavior, so prefer the distro software ICD when
+    # it is available; explicit operator settings still win.
+    software_vulkan = Path("/usr/share/vulkan/icd.d/lvp_icd.json")
+    if suite.get("browser") and software_vulkan.is_file():
+        env.setdefault("VK_ICD_FILENAMES", str(software_vulkan))
     return env
 
 
@@ -196,7 +206,7 @@ def main(argv=None):
     parser.add_argument("--timeout-scale", type=float, default=1.0)
     parser.add_argument("--keep-going", action="store_true")
     parser.add_argument("--binary", default="target/release/sessiondock")
-    parser.add_argument("--python-source", default="../sessiondock")
+    parser.add_argument("--python-source", default=str(discover_source(ROOT)))
     parser.add_argument("--json", type=Path, metavar="PATH")
     parser.add_argument("--rerun-failed", type=Path, metavar="PATH")
     parser.add_argument("--dry-run", action="store_true")
@@ -269,7 +279,7 @@ def main(argv=None):
         if args.dry_run:
             status, elapsed, reason = "DRY", 0.0, None
         else:
-            status, elapsed, reason = run_one(suite, prepare_env(suite["kind"], env, chrome),
+            status, elapsed, reason = run_one(suite, prepare_env(suite, env, chrome),
                                               log_dir, args.timeout_scale)
         with lock:
             extra = f"  {reason}" if reason else ""

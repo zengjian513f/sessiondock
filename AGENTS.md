@@ -4,6 +4,11 @@
 
 - This is an independent repository. Do not modify the sibling Python project
   or its deployment while working here unless the user explicitly requests it.
+- AgentHub is the name of the retired predecessor project, not a SessionDock
+  compatibility surface. No code, tests, configuration, static assets, or
+  frozen source references may contain `agent*hub` identifiers or branding.
+  Markdown may use the old name only where it is necessary for an accurate
+  historical description.
 - Production runs as user unit `sessiondock.service` under `/srv/sessiondock`,
   behind the authenticated `/sessiondock/` proxy. Its writable directories are
   private; CLI roots stay read-only. Do not stop Python or change proxy traffic
@@ -38,11 +43,11 @@
   protocol and process lifetime unless a task explicitly changes them.
 - `crates/ptyhost-client`: explicit-directory local protocol library. It must not
   launch processes, auto-clean unknown host records, or expose host credentials.
-- `legacy-web` is the production frontend, based on Python `agenthub/static`
-  `e5b023a`. Keep changes small and capability-gated. Missing row fields degrade
-  like Python. Keep console explanations and outbox data visible. Preferences
-  use `AgentHubCapabilities.stored`: read the old `agenthub.*` key once, then
-  write only `sessiondock.*`. `tests/brand_names_check.py` checks shell branding.
+- `legacy-web` is the production frontend, based on the predecessor Python
+  frontend at `e5b023a`. Keep changes small and capability-gated. Missing row
+  fields degrade like Python. Keep console explanations and outbox data visible.
+  Preferences use `SessionDockCapabilities.stored` and only `sessiondock.*`
+  keys. `tests/brand_names_check.py` checks the complete tracked source tree.
 - `web/src/api`: wire types, runtime validation, and network clients.
 - `web/src/domain`: framework-independent state transitions and protocol logic.
 - `web/src/stores`: small Pinia stores, split by responsibility.
@@ -71,9 +76,9 @@
   `--tags` or `--only` to narrow it. See `docs/validation.md` for every suite.
 - Before committing docs, run `python3 tests/check_docs_links.py`.
 - History changes: `python3 tests/history_parity.py` and
-  `python3 tests/history_browser.py`; optionally pass `--python-source ../agenthub`
+  `python3 tests/history_browser.py`; optionally pass `--python-source PATH`
   to the parity tool for adapter-only comparison against synthetic data.
-  `python3 tests/advanced_parity.py --python-source ../agenthub` covers multi-level
+  `python3 tests/advanced_parity.py --python-source PATH` covers multi-level
   compaction/rewind/sidechains, fork-of-fork with subagents, rich tool cases and
   Grok envelopes; every difference must be a documented DELTA, never UNVERIFIED.
 - Behavioral authority: match the frozen Python oracle for this batch. Remove

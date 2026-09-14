@@ -4,9 +4,10 @@
 import argparse, json, re, sys
 from pathlib import Path
 import env_reference
+from python_oracle import discover_source, package_dir
 
 ROOT = Path(__file__).resolve().parents[1]
-PY = ROOT.parent / "sessiondock"
+PY = discover_source(ROOT)
 MODS = ("server.py", "term.py", "term_host.py", "files.py", "media.py",
         "audit.py", "trash.py", "session_meta.py")
 HEAD = ("Python knob", "Source", "Purpose (from help/comment)", "Rust variable", "Status")
@@ -129,8 +130,9 @@ def scan(text, source, shell=False):
 
 def python_knobs():
     rows = scan(read(PY / "run.sh"), "run.sh", True)
+    package = package_dir(PY)
     for name in MODS:
-        rows.extend(scan(read(PY / "sessiondock" / name), name))
+        rows.extend(scan(read(package / name), name))
     return rows
 
 def collect_rows():

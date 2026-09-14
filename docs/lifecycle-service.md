@@ -99,8 +99,11 @@ Prepared after a crash remains non-reauthorizing and may be cancelled; any new
 request is an explicit new intent, not an automatic retry. Historical Running
 is not presented as live without a fresh exact status check. Guarded explicit
 host exit or an exact owned Child exit can prove Exited. Unreachable endpoints,
-wrong instances, missing guards and socket errors prove only Uncertain. An
-Uncertain non-cancelled record may recover to Running with fresh exact evidence.
+wrong instances and missing guards prove only Uncertain while the recorded local
+host process remains alive. On Linux, a missing exact random host record, a
+boot-ID mismatch, a legacy record older than the current boot, or a gone/zombie
+recorded host PID proves Exited and retires its stale record/socket. An Uncertain
+non-cancelled record may recover to Running with fresh exact evidence.
 
 ## Durable cancellation and schema compatibility
 
@@ -149,7 +152,7 @@ old authorities and all injected cancellation persistence-failure boundaries.
 
 The ignored `explicit_free_shell_creation_survives_response_drop_and_shutdown_then_cancels_exact_host`
 test requires both `SESSIONDOCK_TEST_PTYHOST_BINARY` and
-`AGENTHUB_TEST_FREE_SHELL_BINARY` as explicit absolute binary paths. It runs only an
+`SESSIONDOCK_TEST_FREE_SHELL_BINARY` as explicit absolute binary paths. It runs only an
 temporary free shell in private directories, verifies response-drop
 ownership, live-host survival across service shutdown/reopen, and exact guarded
 cancellation. Never substitute a model CLI or a production host directory.

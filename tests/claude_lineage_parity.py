@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from history_parity import (  # noqa: E402
     BINARY as DEBUG_BINARY, REPO, Corpus, claude_row, encoded, get_json, isolated_server)
 from provider_parity import load_adapters  # noqa: E402
+from python_oracle import discover_source  # noqa: E402
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
@@ -135,7 +136,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR",
                         help="write the synthetic corpus into DIR, print file paths, exit 0")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
+    parser.add_argument("--python-source", type=Path, default=discover_source(REPO))
     args = parser.parse_args()
     if args.fixtures_only is not None:
         args.fixtures_only.mkdir(parents=True, exist_ok=True)

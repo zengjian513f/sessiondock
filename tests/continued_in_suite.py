@@ -22,10 +22,11 @@ from history_parity import (
     BINARY as DEBUG_BINARY, REPO, Corpus, claude_row, encoded, get_json,
     isolated_server)
 from provider_parity import load_adapters
+from python_oracle import discover_source
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
-PYTHON_SOURCE = REPO.parent / "sessiondock"
+PYTHON_SOURCE = discover_source(REPO)
 SIDS = ("A", "B", "C", "D")
 ABSENT = "sid-absent"
 

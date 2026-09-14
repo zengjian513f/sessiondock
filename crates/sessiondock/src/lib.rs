@@ -74,14 +74,7 @@ pub fn app_pair_with_shutdown(
         ));
     }
     let terminal = prepare_terminal(&config)?;
-    let built = build_app(
-        config,
-        shutdown.clone(),
-        None,
-        None,
-        terminal,
-        Vec::new(),
-    )?;
+    let built = build_app(config, shutdown.clone(), None, None, terminal, Vec::new())?;
     // The synchronous factory runs inside test runtimes; without one the
     // `/api/live` handler still records spawners on every call.
     if let Some(start) = built.spawn_watch

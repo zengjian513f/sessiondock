@@ -38,7 +38,7 @@ point-in-time checks cannot prevent a malicious same-user rename race.
 - The same request ID with any different source, adapter or cwd returns Conflict.
 
 IDs/nonces use 128 bits of operating-system randomness. A host name has the fixed
-`agenthub-` prefix and a fresh random suffix; it is a routing label, not process
+`sessiondock-` prefix and a fresh random suffix; it is a routing label, not process
 identity. Future host operations must also guard the immutable instance_id.
 
 `begin_start(PreparedAuthority)` consumes that non-Clone token, verifies its
@@ -91,7 +91,7 @@ process-observation provenance must be established above this store.
 
 The dedicated directory contains `lifecycle-ledger.json`, `.lifecycle.lock`, and
 only exact module temporary names. Envelope schema 3 contains format
-`agenthub-lifecycle`, a monotonic revision, and full records keyed by generated
+`sessiondock-lifecycle`, a monotonic revision, and full records keyed by generated
 record ID. Each record retains the original request/spec and its own revision.
 There is no receipt deletion, compaction, TTL, tombstone expiry or capacity eviction.
 Schema 5 (WP-E) adds three display fields to every record — `created_at`

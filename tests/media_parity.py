@@ -32,6 +32,7 @@ from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, isola
 from media_browser import PNG, JPEG, GREEN, TOKEN, image, native_bytes, route
 from media_formats_browser import FORMATS, excessive_gif
 from provider_parity import normalized
+from python_oracle import package_dir as oracle_package_dir
 
 
 def forbidden(*args, **kwargs):
@@ -51,10 +52,7 @@ def python_only():
 
 def load_python(source, root):
     source = source.resolve(strict=True)
-    package_dir = source / "sessiondock"
-    for name in ("adapters.py", "media.py"):
-        if not (package_dir / name).is_file():
-            raise ValueError("--python-source must contain sessiondock/adapters.py and media.py")
+    package_dir = oracle_package_dir(source, ("adapters.py", "media.py"))
     namespace = "_sessiondock_synthetic_media_parity"
     package = types.ModuleType(namespace)
     package.__path__ = [str(package_dir)]

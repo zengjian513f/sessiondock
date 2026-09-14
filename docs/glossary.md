@@ -9,12 +9,10 @@ Contract terms from repository docs and code comments only; not a product spec.
 Browser storage, install metadata and service names use the same name. UIDs did
 not change during the rename. See [environment.md](environment.md).
 
-**Kept `agenthub` identifiers.** Compatibility names are not branding. Keep
-existing `X-AgentHub-*` headers, `__AGENTHUB_*` template markers,
-`agenthub-*` DOM/storage keys, `AgentHub*` JavaScript names, `AGENTHUB_*`
-environment and test hooks, and `agenthub-delivery` / `agenthub-lifecycle`
-ledger tags. Keep Python paths and `reference/legacy-web/` unchanged. Renaming
-these values would break peers, tests, stored preferences or deployed ledgers.
+**No predecessor aliases.** Current HTTP headers, template markers, DOM and
+storage keys, JavaScript globals, environment/test hooks and ledger format tags
+all use SessionDock names. The runtime does not accept or emit compatibility
+aliases. Historical names belong only in migration records.
 
 ## Identifiers
 

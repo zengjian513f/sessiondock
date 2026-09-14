@@ -186,9 +186,10 @@ def browser_check(corpus, cases, base):
         try:
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
-            context.add_init_script("""(() => { window.__grokPackets = []; const Native = window.EventSource;
+            context.add_init_script("""(() => { window.__grokPackets = []; window.__grokErrors = []; const Native = window.EventSource;
               window.EventSource = class extends Native { constructor(url, options) { super(url, options);
                 this.addEventListener('message', e => { try { window.__grokPackets.push(JSON.parse(e.data)); } catch {} });
+                this.addEventListener('migration-error', e => { window.__grokErrors.push(e.data); });
               }}; })();""")
             page = context.new_page()
             errors = []
@@ -211,16 +212,21 @@ def browser_check(corpus, cases, base):
             expect(page.locator(".dtitle h2")).to_contain_text("Grok SSE summary changed", timeout=10000)
             expect(item.locator(".t")).to_have_text("Grok SSE summary changed")
             page.wait_for_function("window.__grokPackets.some(p => p.meta?.title === 'Grok SSE summary changed' && p.reset === false && p.messages.length === 0)")
+            page.evaluate("window.__grokPackets = []")
             chat.write_bytes(encoded({"type": "user", "content": "Browser Grok appended body", "prompt_index": 1}))
             expect(page.locator("#msgs")).to_contain_text("Browser Grok appended body", timeout=10000)
+            # Synchronize on the actual EventSource packet, not only the DOM
+            # update, before changing the summary again.
+            page.wait_for_function("window.__grokPackets.some(p => p.messages?.some(m => m.text === 'Browser Grok appended body'))")
             summary.write_bytes(b"{broken")
-            expect(page.locator("#migration-read-error")).to_be_visible(timeout=10000)
+            # A 503 migration event is transient: keep the last snapshot and
+            # reconnect with backoff instead of pausing on a retry banner.
+            page.wait_for_function("window.__grokErrors.length > 0")
+            expect(page.locator("#migration-read-error")).to_have_count(0)
             expect(page.locator("#msgs")).to_contain_text("Browser Grok appended body")
             expect(page.locator("#a-term")).to_be_visible()
             summary.write_text(json.dumps(updated), encoding="utf-8")
-            page.locator("#migration-read-error button").click()
-            expect(page.locator("#migration-read-error")).to_have_count(0)
-            page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+            page.wait_for_function("_es && _es.readyState === EventSource.OPEN", timeout=10000)
             page.evaluate("window.__grokPackets = []")
             chat.unlink()  # Exact temporary fixture created above.
             page.wait_for_function("window.__grokPackets.some(p => p.meta?.chat_exists === false && p.version?.mtime === null && p.end === 0)")

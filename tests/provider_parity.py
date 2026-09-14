@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
-import importlib
 import ipaddress
 import json
 from pathlib import Path
@@ -23,6 +22,8 @@ import sys
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
+
+from python_oracle import import_oracle_module, package_dir
 
 sys.dont_write_bytecode = True
 
@@ -96,12 +97,8 @@ def fixture_paths() -> dict[str, Path]:
 def load_adapters(source: Path, *, fixture_root: Path = FIXTURES,
                   codex_paths: dict[str, Path] | None = None):
     source = source.resolve(strict=True)
-    if not (source / "sessiondock/adapters.py").is_file():
-        raise RuntimeError("--python-source must select the Python source checkout")
-    sys.path.insert(0, str(source))
-    adapters = importlib.import_module("sessiondock.adapters")
-    if Path(adapters.__file__).resolve() != (source / "sessiondock/adapters.py").resolve():
-        raise RuntimeError("a different sessiondock package was already imported")
+    package_dir(source, ("adapters.py",))
+    adapters = import_oracle_module(source, "adapters")
     # Import only defines these paths; before any adapter method can use one,
     # replace every discovery root with this tool's fixed synthetic fixture tree.
     fixture_root = fixture_root.resolve(strict=True)
@@ -140,6 +137,11 @@ def load_adapters(source: Path, *, fixture_root: Path = FIXTURES,
     instances["codex"]._name_event = lambda sid: None
     instances["codex"]._thread_names = lambda: {}
     return instances
+
+
+def adapter_module(instances):
+    """Return the dynamically named module backing loaded adapter instances."""
+    return sys.modules[type(instances["claude"]).__module__]
 
 
 def normalized(message: dict) -> dict:

@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from advanced_parity import classify_grok, classify_tools, python_read
 from history_parity import REPO
-from provider_parity import NoRedirects, load_adapters
+from provider_parity import NoRedirects, adapter_module, load_adapters
 
 SOURCES = ("claude", "codex", "grok")
 PLAN = ("生产数据只读影子比对。 Isolated loopback "
@@ -127,7 +127,7 @@ def server(binary, roots):
 
 def bind_adapters(python_source, roots):
     inst = load_adapters(python_source, fixture_root=python_source)
-    mod = sys.modules["sessiondock.adapters"]
+    mod = adapter_module(inst)
     for src, path in roots.items():
         setattr(mod, src.upper() + "_ROOT", path.resolve(strict=True))
     mod.media.register_path = lambda *a, **k: None

@@ -84,7 +84,7 @@ agent ownership semantics remain unchanged.
 ## Validation
 
 Run `cargo test -p sessiondock --locked sessions::` and build the server.
-Then run `python3 tests/grok_parity.py --python-source ../agenthub --browser`.
+Then run `python3 tests/grok_parity.py --python-source PATH --browser`.
 The Python checkout is adapter-only and read-only. Tests create all data in a
 temporary directory and bind the server to loopback. They access no CLI homes,
 paid CLIs, production hosts, or active sessions.

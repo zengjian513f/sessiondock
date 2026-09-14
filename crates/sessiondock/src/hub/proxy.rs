@@ -30,6 +30,7 @@ use futures_util::StreamExt;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 
 use super::{
     client::{Client, ClientError, JSON_LIMIT, PROXY_TIMEOUT, Request, Target, WATCH_TIMEOUT},
@@ -676,6 +677,7 @@ pub async fn proxy(
     client: &Client,
     target: &Target,
     node: &Node,
+    shutdown: CancellationToken,
     forward: Forward<'_>,
 ) -> Result<Response, ProxyError> {
     let websocket = forward.path == "/api/term/attach";
@@ -797,7 +799,10 @@ pub async fn proxy(
                 if !prefetched.is_empty() && browser.write_all(&prefetched).await.is_err() {
                     return;
                 }
-                let _ = tokio::io::copy_bidirectional(&mut browser, &mut upstream).await;
+                tokio::select! {
+                    _ = shutdown.cancelled() => {}
+                    _ = tokio::io::copy_bidirectional(&mut browser, &mut upstream) => {}
+                }
                 let _ = browser.shutdown().await;
                 let _ = upstream.shutdown().await;
             });
@@ -829,7 +834,12 @@ pub async fn proxy(
         let stream = async_stream::stream! {
             // A read error or an unrewritable data line ends the stream; the
             // loop condition handles Ok(None)/Err, the body handles the rewrite.
-            while let Ok(Some(line)) = body.read_line(SSE_LINE_LIMIT).await {
+            loop {
+                let line = tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    line = body.read_line(SSE_LINE_LIMIT) => line,
+                };
+                let Ok(Some(line)) = line else { break };
                 match rewrite_sse_line(line, &node, &path) {
                     Ok(line) => yield Ok::<Bytes, std::io::Error>(Bytes::from(line)),
                     Err(_) => break,
@@ -853,7 +863,12 @@ pub async fn proxy(
     reply_headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     let mut body = response.into_body();
     let stream = async_stream::stream! {
-        while let Ok(Some(chunk)) = body.read().await {
+        loop {
+            let chunk = tokio::select! {
+                _ = shutdown.cancelled() => break,
+                chunk = body.read() => chunk,
+            };
+            let Ok(Some(chunk)) = chunk else { break };
             yield Ok::<Bytes, std::io::Error>(Bytes::from(chunk));
         }
     };

@@ -18,7 +18,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from history_parity import (BINARY as DEBUG, REPO, Corpus, codex_message,
                             codex_row, encoded, get_json, isolated_server)
-from provider_parity import load_adapters
+from provider_parity import adapter_module, load_adapters
+from python_oracle import discover_source
 
 RELEASE = REPO / "target/release" / DEBUG.name
 BINARY = RELEASE if RELEASE.is_file() else DEBUG
@@ -119,7 +120,7 @@ def build(root):
 
 def bind(python_source, root):
     inst = load_adapters(python_source, fixture_root=root)
-    cls = sys.modules["sessiondock.adapters"].CodexAdapter
+    cls = adapter_module(inst).CodexAdapter
     inst["codex"].list_sessions = cls.list_sessions.__get__(inst["codex"])
     inst["codex"].scan_sessions = cls.scan_sessions.__get__(inst["codex"])
     return inst
@@ -197,7 +198,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
     parser.add_argument("--fixtures-only", type=Path, metavar="DIR")
-    parser.add_argument("--python-source", type=Path, default=REPO.parent / "sessiondock")
+    parser.add_argument("--python-source", type=Path, default=discover_source(REPO))
     args = parser.parse_args(argv)
     if args.fixtures_only is not None:
         root = args.fixtures_only.expanduser().resolve()

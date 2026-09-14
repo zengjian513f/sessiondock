@@ -158,7 +158,8 @@ struct Peer {
 impl Peer {
     async fn new(f: &Fixture, record: &Record) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let raw = json!({"name":record.host_name(),"host_pid":10,"pid":11,"created":12,"cols":80,"rows":24,"port":listener.local_addr().unwrap().port(),"token":"PRIVATE_HOST_TOKEN","meta":{"source":"codex","launch_id":record.launch_id(),"instance_id":record.instance_id()},"argv":["PRIVATE_ARG"]});
+        let process = std::process::id();
+        let raw = json!({"name":record.host_name(),"host_pid":process,"pid":process,"created":0,"cols":80,"rows":24,"port":listener.local_addr().unwrap().port(),"token":"PRIVATE_HOST_TOKEN","meta":{"source":"codex","launch_id":record.launch_id(),"instance_id":record.instance_id()},"argv":["PRIVATE_ARG"]});
         let path = f
             .config
             .host_dir
@@ -1010,7 +1011,7 @@ async fn binding_intent_recovery_only_observes_and_missing_ledger_cannot_authori
 }
 
 #[tokio::test]
-async fn list_and_last_handle_drop_releases_store_without_kill() {
+async fn missing_local_hosts_become_exited_and_last_handle_drop_releases_store_without_kill() {
     let (_gate, f) = fixture().await;
     for index in 0..5 {
         f.seed(&format!("request-list-{index}"), State::Running);
@@ -1025,7 +1026,7 @@ async fn list_and_last_handle_drop_releases_store_without_kill() {
         records
             .iter()
             .filter(|r| r.record_id() != prepared.record_id())
-            .all(|r| r.state() == State::Uncertain)
+            .all(|r| r.state() == State::Exited)
     );
     assert_eq!(
         service
@@ -1045,6 +1046,51 @@ async fn list_and_last_handle_drop_releases_store_without_kill() {
     .unwrap()
     .unwrap();
     drop(LifecycleStore::open(&f.ledger).unwrap());
+}
+
+#[tokio::test]
+async fn dead_resume_receipt_does_not_block_a_new_resume_attempt() {
+    let (_gate, mut f) = fixture().await;
+    f.config.schema = 2;
+    f.config.profiles.push(launcher::CliProfile {
+        id: "profile-v1".into(),
+        source: Source::Codex,
+        executable: f.temp.path().join("bin/adapter"),
+        args: vec![],
+        new_args: vec![],
+        resume_args: vec![],
+        env: BTreeMap::new(),
+        env_remove: vec![],
+    });
+    let spec = LaunchSpec::resume(
+        Source::Codex,
+        "profile-v1".into(),
+        &f.temp.path().join("work"),
+        "native-session-1".into(),
+        "codex:native-session-1".into(),
+    )
+    .unwrap();
+    let old = {
+        let mut store = LifecycleStore::open(&f.ledger).unwrap();
+        let created = store.create("old-resume-request", &spec).unwrap();
+        let starting = store.begin_start(created.prepared.unwrap()).unwrap();
+        store.mark_running(starting).unwrap()
+    };
+
+    let service = f.open(limits()).await;
+    let replacement = service
+        .create("new-resume-request".into(), spec)
+        .await
+        .unwrap();
+    assert_ne!(replacement.record_id(), old.record_id());
+    // The synthetic executable cannot run; reaching Failed proves the old
+    // missing instance was reconciled and did not return launch_conflict.
+    assert_eq!(replacement.state(), State::Failed);
+    assert_eq!(
+        service.get(old.record_id().into()).await.unwrap().state(),
+        State::Exited
+    );
+    service.shutdown().await.unwrap();
 }
 
 #[tokio::test]

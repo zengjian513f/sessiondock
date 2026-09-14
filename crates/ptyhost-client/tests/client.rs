@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ptyhost_client::{
     CaptureKind, ControlOp, ControlReply, Error, HostClient, HostEvent, Limits, TerminalSize,
@@ -90,9 +90,9 @@ async fn discovery_is_read_only_and_redacts_private_metadata() {
     let rows = client.discover().await.unwrap();
     assert_eq!(
         rows.iter().map(|row| row.name.as_str()).collect::<Vec<_>>(),
-        [NAME, "other"]
+        ["other", NAME]
     );
-    assert_eq!(rows[0].server, "ptyhost");
+    assert_eq!(rows[1].server, "ptyhost");
     let public = serde_json::to_string(&rows).unwrap();
     for secret in [
         TOKEN,
@@ -114,6 +114,58 @@ async fn discovery_is_read_only_and_redacts_private_metadata() {
     assert!(client.session("missing").await.unwrap().is_none());
     let missing = HostClient::new(directory.path().join("absent"), Limits::default()).unwrap();
     assert!(missing.discover().await.unwrap().is_empty());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn proven_dead_local_records_are_retired_but_live_process_records_remain() {
+    let directory = tempfile::tempdir().unwrap();
+    let client = HostClient::new(directory.path(), Limits::default()).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let boot_id = tokio::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+        .await
+        .unwrap();
+
+    let mut prior_boot = record("prior-boot", 54321);
+    prior_boot["host_pid"] = json!(std::process::id());
+    prior_boot["created"] = json!(now);
+    prior_boot["boot_id"] = json!("00000000-0000-0000-0000-000000000000");
+    put_record(directory.path(), "prior-boot", prior_boot).await;
+    tokio::fs::write(directory.path().join("prior-boot.sock"), b"stale")
+        .await
+        .unwrap();
+    assert!(
+        client
+            .retire_if_local_process_dead("prior-boot")
+            .await
+            .unwrap()
+    );
+    assert!(!directory.path().join("prior-boot.json").exists());
+    assert!(!directory.path().join("prior-boot.sock").exists());
+
+    let mut gone = record("gone", 54321);
+    gone["host_pid"] = json!(u32::MAX);
+    gone["created"] = json!(now);
+    put_record(directory.path(), "gone", gone).await;
+    assert!(client.retire_if_local_process_dead("gone").await.unwrap());
+    assert!(!directory.path().join("gone.json").exists());
+
+    let mut live = record("live", 54321);
+    live["host_pid"] = json!(std::process::id());
+    live["created"] = json!(now);
+    live["boot_id"] = json!(boot_id.trim());
+    put_record(directory.path(), "live", live).await;
+    assert!(!client.retire_if_local_process_dead("live").await.unwrap());
+    assert!(directory.path().join("live.json").exists());
+    assert!(
+        client
+            .retire_if_local_process_dead("missing")
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]

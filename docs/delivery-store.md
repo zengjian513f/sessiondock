@@ -23,7 +23,7 @@ resulting effects. A retried persistence proposal does not resend terminal input
 
 ## One envelope, existing provider schemas
 
-`delivery-ledger.json` contains `format: "agenthub-delivery"`, `schema: 1`,
+`delivery-ledger.json` contains `format: "sessiondock-delivery"`, `schema: 1`,
 `codex`, `claude`, `codex_previous`, and `claude_previous`. The format identifier
 preserves compatibility with deployed ledgers. One atomic replacement updates
 both provider snapshots, retaining the unchanged provider.

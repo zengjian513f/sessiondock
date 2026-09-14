@@ -104,18 +104,18 @@ cargo build -p sessiondock --locked
 python3 tests/legacy_browser.py
 
 # 第二批历史回归：自行创建人工历史和临时 Rust 服务。
-python3 tests/history_parity.py --python-source ../agenthub
+python3 tests/history_parity.py --python-source PATH
 python3 tests/history_browser.py
 python3 tests/history_pages_browser.py
 python3 tests/media_browser.py
 python3 tests/media_lazy_browser.py
 python3 tests/media_formats_browser.py
 python3 tests/media_files_browser.py
-python3 tests/media_parity.py --python-source ../agenthub
+python3 tests/media_parity.py --python-source PATH
 
 # 第三批：真实搜索UI与工具渲染/可选Python差分。
 python3 tests/search_browser.py
-python3 tests/tool_parity.py --python-source ../agenthub --browser
+python3 tests/tool_parity.py --python-source PATH --browser
 python3 tests/metadata_browser.py
 python3 tests/files_browser.py
 python3 tests/terminal_browser.py
@@ -124,8 +124,8 @@ python3 tests/managed_terminal_browser.py
 python3 tests/terminal_exit_browser.py
 python3 tests/lifecycle_browser.py
 python3 tests/lifecycle_browser.py --native-binding
-python3 tests/names_parity.py --python-source ../agenthub --browser
-python3 tests/grok_parity.py --python-source ../agenthub --browser
+python3 tests/names_parity.py --python-source PATH --browser
+python3 tests/grok_parity.py --python-source PATH --browser
 ```
 
 浏览器路径可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定。测试不调用模型、
@@ -134,7 +134,7 @@ python3 tests/grok_parity.py --python-source ../agenthub --browser
 可选的 Python 差分检查（先按上面的仓库 fixture 目录启动 Rust）：
 
 ```sh
-python3 tests/provider_parity.py --python-source ../agenthub --base-url http://127.0.0.1:8741
+python3 tests/provider_parity.py --python-source PATH --base-url http://127.0.0.1:8741
 ```
 
 此工具只读取三个人工 fixture 并调用原 Python adapter；是开发验证，**不是

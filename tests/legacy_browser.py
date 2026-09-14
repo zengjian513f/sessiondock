@@ -137,7 +137,11 @@ def main():
                 expect(page.locator("#a-term")).to_be_enabled()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 assert not errors, errors
-                for suffix in ["/api/audit/browser", "/api/live", "/api/session/outbox", "/api/session/resolve-files"]:
+                # Linux advertises native liveness and therefore requests
+                # `/api/live`; the other optional services remain disabled.
+                if sys.platform.startswith("linux"):
+                    assert any("/api/live" in url for url in requests), requests
+                for suffix in ["/api/audit/browser", "/api/session/outbox", "/api/session/resolve-files"]:
                     assert not any(suffix in url for url in requests), (suffix, requests)
 
                 # Shutdown must finish even while a browser still holds its SSE connection.
