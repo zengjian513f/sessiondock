@@ -4,7 +4,7 @@
 Uses only generated temporary Claude/Codex/Grok records and the explicit Rust
 binary on loopback. Native files are changed only by this test's owned mutation
 helper; every HTTP response is followed by an exact byte-integrity check.
-No Python adapters, CLI, model request, or production input is used.
+No adapters, CLI, model request, or production input is used.
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def message(source, sid, index, text):
 
 
 def unreadable(source, sid, index):
-    """A complete record the Python adapters raise on too: scalar content."""
+    """A complete record that cannot be read: scalar content."""
     row=message(source, sid, index, "")
     if source=="claude":
         row["message"]["content"]=42

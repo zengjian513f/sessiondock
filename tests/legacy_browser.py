@@ -110,8 +110,8 @@ def main():
                 assert page.locator("#msgs").inner_text().count("SSE 半行中文追加只出现一次") == 1
 
                 # Unreadable native grammar must not leave a silently stale 'live'
-                # transcript. Unknown record kinds are skipped like
-                # Python, so the trigger is a scalar `content` (unreadable for both).
+                # transcript. Unknown record kinds are skipped,
+                # so the trigger is a scalar `content` (unreadable).
                 unsupported = json.dumps({"type": "user", "sessionId": "legacy",
                     "message": {"role": "user", "content": 42}}) + "\n"
                 with path.open("ab") as stream:

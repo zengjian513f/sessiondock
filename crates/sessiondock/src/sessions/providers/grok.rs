@@ -132,7 +132,7 @@ pub(super) fn metadata(path: &Path, summary: &Value, fallback: &str) -> Value {
     let cwd = nonempty(&summary["info"]["cwd"])
         .map(str::to_owned)
         .unwrap_or_else(|| unquote(&project));
-    // Python's mtime fallback uses _iso(...timespec='seconds'), independently
+    // The mtime fallback uses _iso(...timespec='seconds'), independently
     // for created and updated. Do not substitute native message timestamps.
     let fallback = chrono::DateTime::parse_from_rfc3339(fallback)
         .ok()

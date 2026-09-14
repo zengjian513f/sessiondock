@@ -446,7 +446,7 @@ fn extract(
             continue;
         };
         let prefix: Vec<String> = wrapper.into_iter().map(str::to_owned).collect();
-        // Python media.from_block uses `or` for aliases and returns after the
+        // Uses `or` for aliases and returns after the
         // first usable source. Later conflicting spellings are never a reason
         // to reject the record.
         let data = ["data", "base64"].into_iter().find_map(|key| {
@@ -529,7 +529,7 @@ fn extract(
     let Node::String(Text::Span(span)) = removed else {
         return Ok(None);
     };
-    // Later aliases are ignored by Python's first-match parser. Remove only
+    // Later aliases are ignored by the first-match parser. Remove only
     // their private scanner spans so they are neither materialized as public
     // JSON nor treated as validation constraints.
     strip_spanned_aliases(node);

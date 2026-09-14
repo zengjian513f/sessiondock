@@ -1,7 +1,7 @@
 # Development metadata store
 
 This module persists SessionDock-owned preferences only. It never discovers CLI
-homes, migrates Python state, writes native transcripts, sends terminal input,
+homes, migrates predecessor state, writes native transcripts, sends terminal input,
 or starts a CLI. Enabling metadata does not enable general session mutations.
 
 ## Directory and schema
@@ -18,7 +18,7 @@ Files:
 - `debug-runs.json` (optional, foreign): the debug-run registry, tolerated here
   and read by `sessions::debug_runs` only.
 
-The independent Rust schema starts at version 1; this is not Python's version 1.
+The independent Rust schema starts at version 1.
 
 ```json
 {
@@ -90,7 +90,7 @@ covered by tests, and `meta.timeline_pin` is published on the session row.
 The semantic anchor carries the pin stamp, so pinning, unpinning and
 retirement produce a reset rather than a diff. A pin retires as soon as any
 lineage signal appears after `stale_end` (a graph node or `last-prompt`, the
-same rule Python's effective-tip computation uses): the native records become
+same rule the effective-tip computation uses): the native records become
 authoritative again and the row reports `timeline_pin.retired: true` with
 `retired_reason` ∈ `native_confirmed` (the signal is the tip itself),
 `native_continued` (the first new node's parent is the tip — the CLI really
@@ -101,8 +101,8 @@ Pins never write native files and never signal the CLI; every response says
 
 Legacy, under `timeline_pin: true`, offers a "回到此处" action under user
 messages and a notice explaining that only the display is pinned and the CLI
-was not rewound, plus the retirement reason when present; Python pages are
-unchanged. Validation: metadata/provider/session unit tests,
+was not rewound, plus the retirement reason when present.
+Validation: metadata/provider/session unit tests,
 `cargo test -p sessiondock --test rewind_http --locked` and
 `python3 tests/rewind_browser.py` (pin → trimmed history + explanation,
 SSE retirement `native_advanced`, reload keeps state, 390 px pin/unpin, Web
@@ -119,7 +119,7 @@ clue is ignored, and entries with an empty uid/source/sid are skipped. The value
 and native session id, not a UID, and the spawner row may no longer exist.
 `enrich`/`enrich_one` put the object on the row as `spawned_by`; there is no
 HTTP route to set or clear it, and stars/visibility/pins never touch it.
-`tests/meta_import.py` carries Python's identical key over unchanged.
+`tests/meta_import.py` carries the identical key over unchanged.
 
 ```json
 "grok:example": {"spawned_by": {"source": "claude", "sid": "8accf618-…"}}
@@ -129,7 +129,7 @@ HTTP route to set or clear it, and stars/visibility/pins never touch it.
 
 An in-process mutex serializes metadata updates. Each read and update reloads
 external edits, retaining the current immutable snapshot when the file is unchanged.
-Malformed or unsupported documents follow Python's empty-read behavior.
+Malformed or unsupported documents follow empty-read behavior.
 
 Writes use a unique temporary file in the same directory, flush it, and replace
 the metadata entry atomically. Failure before replacement preserves the previous

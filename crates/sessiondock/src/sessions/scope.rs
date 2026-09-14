@@ -55,7 +55,7 @@ pub(super) fn native_identity(
         let value = if source == "claude" {
             record.get("sessionId")
         } else if record["type"] == "session_meta" {
-            // Python `_raw_meta` (`and not meta`): the first session_meta is
+            // The first session_meta is
             // the only identity; old-style forks and subagent rollouts copy
             // their ancestors' metas after it, and those ids are not this file's.
             if codex_meta_seen {

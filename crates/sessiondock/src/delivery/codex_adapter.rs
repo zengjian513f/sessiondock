@@ -21,12 +21,12 @@ use crate::sessions::{NativeCheckpoint, TailError, TailRecord, ViewSnapshot};
 /// A terminal write older than this is
 /// overdue and may be re-checked from the fixed boundary. Not a failure timeout.
 pub const CONFIRM_TIMEOUT_MS: u64 = 8_000;
-/// Python `_poll_outbox` spaces fixed-boundary replays by `CONFIRM_TIMEOUT`.
+/// Fixed-boundary replays are spaced by `CONFIRM_TIMEOUT`.
 pub const REPLAY_INTERVAL_MS: u64 = 8_000;
 /// Automatic tracking stops one hour after
 /// delivery. The receipt keeps its state; it does not become retryable.
 pub const TRACK_WINDOW_MS: u64 = 3_600_000;
-/// Python `_outbox_loop` wakes every 500 ms; the Rust inventory refresh shares
+/// The inventory refresh wakes every 500 ms; it shares
 /// the same 500 ms TTL, so polling faster observes nothing new.
 pub const POLL_INTERVAL_MS: u64 = 500;
 
@@ -75,7 +75,7 @@ pub struct Delivered {
 pub enum TimestampCheck {
     /// A parsable timestamp not earlier than the delivery time.
     Verified,
-    /// No parsable timestamp on the record. Like Python's `_causal`, this
+    /// No parsable timestamp on the record. This
     /// passes the time check; the physical boundary still applies.
     Absent,
 }
@@ -186,7 +186,7 @@ pub fn observe(snapshot: &ViewSnapshot, boundary: &Boundary, delivered: &Deliver
     }
 
     // Codex trims both ends before writing the rollout; internal whitespace
-    // and newlines stay significant. Python walks native rows in order,
+    // and newlines stay significant. Walks native rows in order,
     // skips pre-delivery timestamps, and retires the first causal match.
     let mut skipped_earlier = 0_u32;
     let record = tail.records.iter().find(|record| {
@@ -300,7 +300,7 @@ fn parse_rfc3339_ms(text: &str) -> Option<u64> {
         .and_then(|date| u64::try_from(date.timestamp_millis()).ok())
 }
 
-/// Python `_poll_outbox` scheduling for one tracked Codex receipt.
+/// Replay scheduling for one tracked Codex receipt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReplayPolicy {
     pub confirm_timeout_ms: u64,

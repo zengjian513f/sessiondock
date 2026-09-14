@@ -1,6 +1,6 @@
 //! Process-evidence binding of pending Codex/Grok launches.
 //!
-//! Python's `new-status` resolution associates a fresh `codex`/`grok` pane
+//! `new-status` resolution associates a fresh `codex`/`grok` pane
 //! with the native record that appeared after the first prompt: same cwd,
 //! not in the `before` set and — for Codex — the rollout held open by a
 //! process inside the pane's tree (`term.process_belongs_to`). Rust never
@@ -12,9 +12,9 @@
 //! 3. the `/proc` scan of [`crate::runtime::procscan`] (the same one
 //!    `/api/live` uses): every indexed session of the receipt's source one
 //!    of whose owned processes — CLI main process or helper holding the
-//!    native record, exactly Python's `pids_of` → `process_belongs_to` with
+//!    native record, `pids_of` → `process_belongs_to` with
 //!    `abs(pid)` — is, or descends from, that child with no other CLI main
-//!    process in between (Python's `descendant_of` barrier);
+//!    process in between (the `descendant_of` barrier);
 //! 4. exactly one such session, whose native scope the index verifies.
 //!
 //! Then the ordinary `bind` path runs with `BindingMethod::Process`: the
@@ -37,8 +37,8 @@ use crate::{
     state::AppState,
 };
 
-/// Poll cadence while unbound pending receipts exist (Python's page polled
-/// `new-status` every 750 ms). Each pass forces a fresh scan (≈ 60–70 ms on
+/// Poll cadence while unbound pending receipts exist.
+/// Each pass forces a fresh scan (≈ 60–70 ms on
 /// this machine) so a rollout the CLI just opened is seen at once.
 pub const TICK: Duration = Duration::from_millis(1500);
 /// Idle cadence when nothing is pending.
@@ -259,11 +259,11 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
     Ok(Some(bound))
 }
 
-/// Python `procs.descendant_of(pid, root, barrier=live.is_cli_process)`:
+/// `descendant_of(pid, root, barrier=live.is_cli_process)`:
 /// `abs(pid)` is, or descends from, the host's child within 16 levels; an
 /// intermediate CLI main process (not the start, not the root) cuts the
 /// relation — a `grok -p` the pane's CLI spawned belongs to that CLI's console.
-/// Helpers (negative scan pids) count exactly like Python's `pids_of` set.
+/// Helpers (negative scan pids) count in the `pids_of` set.
 fn descends_from(tree: &crate::runtime::procscan::ProcTree, pid: i64, root: u32) -> bool {
     let Ok(mut current) = u32::try_from(pid.unsigned_abs()) else {
         return false;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The hub page (Python hub_e2e port): `sessiondock-hub` in front of three fake nodes.
+"""The hub page: `sessiondock-hub` in front of three fake nodes.
 
 Machine filter chips, per-machine nesting under the hub namespace (identical native ids on
 different machines never cross-nest), NDJSON search with visible progress and a per-machine

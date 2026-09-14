@@ -1,4 +1,4 @@
-//! Python `tests/test_live.py` over a synthetic process tree (`FakeProc`):
+//! Tests over a synthetic process tree (`FakeProc`):
 //! only the files `_scan` and the ancestry walks read exist. No real CLI, no
 //! real `/proc` except the final Linux smoke test, which reads it and nothing
 //! else.
@@ -366,7 +366,7 @@ fn command_line_sid_beats_inherited_env_and_families_do_not_cross() {
     assert_eq!(scan.sids.get(SID_CLAUDE), Some(&BTreeSet::from([110])));
     // 120 owns the companion id; its inherited Claude id is refused (main,
     // families differ). 130's helper env resolves to its CLI ancestor 120;
-    // Python only applies the family check to main processes, so the helper's
+    // The family check applies only to main processes, so the helper's
     // inherited Grok id is attributed to 120 as well (owner is not grok).
     assert_eq!(scan.sids.get(SID_STOPPED), Some(&BTreeSet::from([120])));
     assert_eq!(scan.sids.get(SID_GROK), Some(&BTreeSet::from([120])));
@@ -576,7 +576,7 @@ fn scan_with(proc: &FakeProc, grok_active: Option<&Path>) -> Scan {
     )
 }
 
-/// Python `term_tmux.hosts` / `term_host.hosts`: `tmux_uids` means a tmux
+/// `tmux_uids` means a tmux
 /// server or a managed host's session root is an ancestor.
 #[test]
 fn tmux_and_host_ancestry_are_bounded_walks() {
@@ -617,7 +617,7 @@ fn tmux_and_host_ancestry_are_bounded_walks() {
     assert_eq!(tree.cli_ancestor(20 + 12), None);
 }
 
-/// Python 16cc89c `tests/test_host.py` PaneOwnershipTests: a pane belongs to
+/// The PaneOwnershipTests cases: a pane belongs to
 /// its own CLI only. Tree: tmux 5 → root sh 10 → claude 11 → bash 12 →
 /// grok 13 → codebase-memory 14; claude's tool shell 12 is claude's, the
 /// `grok -p` 13 and its child are not this pane's session — but from grok's
@@ -739,7 +739,7 @@ fn real_proc_scan_is_bounded_and_fast() {
     );
 }
 
-/// The one deliberate widening of Python's fd rule: a `*.jsonl` under a
+/// The one deliberate widening of the fd rule: a `*.jsonl` under a
 /// configured read root counts like one under the literal home markers.
 #[test]
 fn open_jsonl_under_a_configured_root_counts_like_a_home_marker() {
@@ -773,7 +773,7 @@ fn open_jsonl_under_a_configured_root_counts_like_a_home_marker() {
         [marker.to_owned(), inside.to_string_lossy().into_owned()]
     );
     assert_eq!(scan.paths[marker], BTreeSet::from([100]));
-    // Without configured roots only the markers count (Python's rule).
+    // Without configured roots only the markers count.
     let plain = proc.scan();
     assert_eq!(plain.paths.keys().collect::<Vec<_>>(), [marker]);
 }

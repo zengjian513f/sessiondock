@@ -79,14 +79,13 @@ pub fn split(value: &str, uid: bool) -> Result<(String, String), NamespaceError>
 /// `federation.public_payload`: scope the protocol fields of a node answer
 /// for `path`. Signature of `registry::PublicPayload`, so it can be
 /// installed with `Registry::with_public_payload`. A reference the node
-/// itself could not scope (a uid without `<source>:`) is left as it is —
-/// Python fails the whole request instead; `try_public_payload` reports it.
+/// itself could not scope (a uid without `<source>:`) is left as it is;
+/// `try_public_payload` reports it.
 pub fn public_payload(data: Value, node: &Node, path: &str) -> Value {
     rewrite(data, node, path, false).unwrap_or_else(|_| unreachable!("lenient rewrite never fails"))
 }
 
-/// `public_payload` that refuses a payload with an unscopable reference,
-/// like Python's `ValueError`.
+/// `public_payload` that refuses a payload with an unscopable reference.
 pub fn try_public_payload(data: Value, node: &Node, path: &str) -> Result<Value, NamespaceError> {
     rewrite(data, node, path, true)
 }
@@ -98,7 +97,7 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
         return Ok(scoped);
     };
     if path == "/api/sessions" || path == "/api/search" {
-        // Python: `result.get("sessions", result.get("results", []))`.
+        // `sessions` if present, otherwise `results`.
         let key = if result.contains_key("sessions") {
             "sessions"
         } else {
@@ -268,7 +267,7 @@ pub fn decorate_rows(
     Ok(())
 }
 
-/// Python truthiness of a JSON value.
+/// Truthiness of a JSON value.
 pub(super) fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,

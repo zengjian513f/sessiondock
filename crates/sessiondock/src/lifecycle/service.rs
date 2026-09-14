@@ -328,7 +328,7 @@ impl LifecycleService {
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
     }
-    /// Python's fixed source table: the one configured CLI of `source`
+    /// Fixed source table: the one configured CLI of `source`
     /// (resume-capable when `resume`), `None` when the source has none or
     /// more than one. `term/create` and the bug-report worker both select
     /// through this, so a worker runs exactly what the picker would start.
@@ -413,8 +413,8 @@ impl LifecycleService {
             _ => Err(Error::WorkerFailed),
         }
     }
-    /// Drop a finished or durably cancelled receipt from the pending view
-    /// (Python `pending_store.discard`). The receipt stays queryable; a
+    /// Drop a finished or durably cancelled receipt from the pending view.
+    /// The receipt stays queryable; a
     /// receipt whose instance may still run is refused, never killed.
     pub async fn discard(
         &self,
@@ -429,8 +429,8 @@ impl LifecycleService {
             _ => Err(Error::WorkerFailed),
         }
     }
-    /// Stop the managed instance the caller resolved for `uid` (Python
-    /// `_stop_session` parity, host-only): EOF keys through the guarded input
+    /// Stop the managed instance the caller resolved for `uid`
+    /// (host-only): EOF keys through the guarded input
     /// path, then the same guarded stop `cancel` performs for launched
     /// receipts, or the host's own `kill` for a guarded instance without a
     /// receipt.
@@ -657,7 +657,7 @@ impl Core {
         let created = self
             .work(move |store| {
                 // HTTP specs are deserialized before this blocking worker.
-                // Normalize a live cwd here just like Python Path.resolve().
+                // Normalize a live cwd here.
                 // Keep the original spelling when it no longer exists so an
                 // exact replay can still return its durable receipt.
                 let spec = LaunchSpec::with_launch(
@@ -1203,8 +1203,8 @@ impl Core {
             self.persist_exit(record.as_ref()).await;
             return Ok(finish(outcome, StopStage::AlreadyExited));
         }
-        // Graceful stage: EOF through the guarded input path, exactly like
-        // Python's `send_keys(name, "C-d")`, bounded per attempt. A failed send
+        // Graceful stage: EOF through the guarded input path,
+        // sending `C-d`, bounded per attempt. A failed send
         // is not exit evidence; only the exact instance's status is.
         for _ in 0..GRACEFUL_ATTEMPTS {
             if self.stop.is_cancelled() {

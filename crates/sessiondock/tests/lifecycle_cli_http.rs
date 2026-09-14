@@ -455,7 +455,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
     assert_eq!(status, StatusCode::CONFLICT, "{bound}");
 
     // Managed takeover reuses the existing host even with force, and optional
-    // request IDs or unrelated JSON members do not add Python-absent gates.
+    // request IDs or unrelated JSON members do not add extra gates.
     for (body, expected) in [
         (
             json!({"uid":fixture.codex_uid,"request_id":"cli-force","force":true}),

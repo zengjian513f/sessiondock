@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sidebar pointer interactions (Python side_drag_e2e port); isolated Rust server, no CLI.
+"""Sidebar pointer interactions; isolated Rust server, no CLI.
 
 A phone held sideways (or a tablet) is wider than the 720px mobile breakpoint, so it gets the
 desktop split layout with the ``#drag`` divider between the session list and the detail pane. A

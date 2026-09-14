@@ -12,7 +12,7 @@ its current version; missing sessions and actual service errors remain errors.
 `POST /api/session/send` submits prompt text and opaque media metadata under a
 request ID. The executor uses the session's terminal association and persists
 its receipt, writes input, then checks the native queue or transcript using the
-provider's Python confirmation rules. Retrying an existing ID returns its receipt;
+provider's confirmation rules. Retrying an existing ID returns its receipt;
 changing that ID's payload is a conflict. Uploaded attachment paths are already
 part of the text.
 

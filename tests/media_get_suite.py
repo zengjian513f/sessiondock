@@ -157,8 +157,8 @@ def run(opener, base, corpus, files):
     passed("embedded GET type/length/bytes/sha256")
     passed("Cache-Control private, no-store")
     passed("warm GET identical bytes")
-    # Python accepts any nonempty, decodable base64 bytes with a supported
-    # declared image MIME; it does not parse the image format before serving.
+    # Any nonempty, decodable base64 bytes with a supported declared
+    # image MIME are accepted; the image format is not parsed before serving.
     opaque = token_of(items[5], "opaque", rawb)
     code, headers, body = media_get(opener, base, opaque)
     if code != 200 or headers.get("content-type") != "image/png" or body != b64("AAAA"):

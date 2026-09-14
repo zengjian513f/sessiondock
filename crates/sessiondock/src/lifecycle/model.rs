@@ -64,7 +64,7 @@ pub enum BindingState {
 /// Who asserted the association. `Operator` is the explicit confirmation
 /// dialog; `Process` is the server's own process-tree/file-descriptor
 /// evidence (the launched host's child holds the native record open), the
-/// Rust counterpart of Python's `new-status` resolution.
+/// `new-status` resolution.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingMethod {
@@ -131,7 +131,7 @@ impl Launch {
     fn validate(&self, source: Source) -> Result<(), Error> {
         let ok = match self {
             Self::Fixed => true,
-            // Python assigns a UUID to Claude and Grok; Codex discovers its
+            // A UUID is assigned to Claude and Grok; Codex discovers its
             // thread identity after launch.
             Self::NewPending => source == Source::Codex,
             Self::NewAssigned => source != Source::Codex,
@@ -208,7 +208,7 @@ impl LaunchSpec {
         if text.is_empty() || text.contains('\0') || !cwd.is_absolute() {
             return Err(Error::InvalidSpec);
         }
-        // Resolve symlinks like Python's `Path.resolve()`. The cwd is a process
+        // Resolve symlinks. The cwd is a process
         // launch location; it does not authorize any file API or native root.
         let canonical = plain_canonical(cwd).ok_or(Error::InvalidSpec)?;
         let cwd: &Path = &canonical;
@@ -282,7 +282,7 @@ pub(super) fn plain_canonical(path: &Path) -> Option<std::path::PathBuf> {
     Some(canonical)
 }
 
-/// Python `Path.expanduser`, including `~name` through the system account
+/// Expand `~`, including `~name` through the system account
 /// database on Unix. This only resolves a home name; it grants no authority.
 pub(crate) fn expand_user(path: &Path) -> Option<std::path::PathBuf> {
     let text = path.to_str()?;

@@ -2,8 +2,8 @@
 # run_validation: skip
 """A fake SessionDock node for hub tests: stdlib HTTP server, one synthetic session.
 
-Port of the Python project's `tests/hub_fixture.py NodeHandler` without any
-dependency on the Python package. Never starts a CLI or reads real sessions.
+A NodeHandler without any
+package dependency. Never starts a CLI or reads real sessions.
 Answers `/api/meta`, `/api/sessions?sig=`, `/api/live`, `/api/term/list`,
 `/api/search` (JSON or NDJSON with `progress=1`), `/api/messages/<uid>`,
 `/api/watch` SSE, `/api/media/*`, `/api/trash`, the POST routes the hub

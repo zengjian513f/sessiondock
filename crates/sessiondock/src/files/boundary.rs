@@ -80,7 +80,7 @@ pub(super) fn ordinary(metadata: &Metadata) -> Result<(), FileError> {
     Ok(())
 }
 /// Mutation checks the named entry itself; symlinks and hard-link aliases are
-/// valid rename/trash sources, just as Python's `path_for(...).lstat()`.
+/// valid rename/trash sources.
 pub(super) fn unshared(metadata: &Metadata) -> Result<(), FileError> {
     if metadata.is_symlink() || metadata.is_file() || metadata.is_dir() {
         Ok(())
@@ -414,7 +414,7 @@ pub(super) fn absolute_navigation(raw: &str) -> Result<PathBuf, FileError> {
 }
 pub(super) fn absolute_path(raw: &str, cwd: &str) -> Result<PathBuf, FileError> {
     validate_path_text(raw)?;
-    // Python excludes URLs when resolving an initial conversation reference.
+    // URLs are excluded when resolving an initial conversation reference.
     // Granted directory navigation and mutations accept literal colon names.
     if raw.contains("://") {
         return Err(FileError::new(

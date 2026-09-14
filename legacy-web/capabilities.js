@@ -1,6 +1,6 @@
 'use strict';
 
-// Optional development-backend contract. An ordinary Python-served page has
+// Optional development-backend contract. An ordinary page has
 // no such meta tag and retains all existing behavior.
 globalThis.SessionDockCapabilities = (() => {
   const meta = document.querySelector('meta[name="sessiondock-capabilities"]');

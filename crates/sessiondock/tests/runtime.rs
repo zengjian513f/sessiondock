@@ -301,7 +301,7 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     assert_eq!(host.accepted.load(Ordering::SeqCst), 1);
     // A fresh (claim-grade) observation takes the second admission permit;
     // another observer waits for capacity instead of becoming a request-level
-    // refusal that Python does not have.
+    // refusal.
     let third = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, "/api/term/list").await })

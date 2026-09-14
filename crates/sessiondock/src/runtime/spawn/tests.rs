@@ -1,4 +1,4 @@
-//! Python `SpawnParentTests` over the synthetic tree, plus the write-once
+//! The SpawnParentTests cases over the synthetic tree, plus the write-once
 //! recording through a private metadata directory.
 
 use std::{fs, sync::Arc};
@@ -19,7 +19,7 @@ const SID_WEB: &str = "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
 const SID_TMUX: &str = "ffffffff-6666-4666-8666-ffffffffffff";
 const SID_SUBAGENT_CHILD: &str = "77777777-7777-4777-8777-777777777777";
 
-/// The Python fixture: a user's Claude whose Bash tool ran `codex exec`, which
+/// The fixture: a user's Claude whose Bash tool ran `codex exec`, which
 /// sent a Grok through ptyhost (adopted by systemd, CLI env stripped, host env
 /// kept), a Claude-spawned child Claude, a Codex-subagent-spawned Claude, a
 /// web-created session (no identity in the host env) and a tmux session whose
@@ -254,7 +254,7 @@ fn private_dir(path: &std::path::Path) {
     }
 }
 
-/// Python `test_results_are_memoised_per_scan_and_skip_recorded` plus the
+/// Memoised per scan and skip recorded, plus the
 /// metadata write-once rule through the store.
 #[test]
 fn results_are_memoised_per_scan_and_recorded_once() {

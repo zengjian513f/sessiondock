@@ -1,7 +1,7 @@
 //! Terminal driver for the delivery executor.
 //!
 //! The driver owns nothing durable. It captures the host's screen model,
-//! recognizes Claude's composer the way the Python bridge does (rules, `❯`,
+//! recognizes Claude's composer (rules, `❯`,
 //! dim suggestions, cursor position) and Codex's composer the way
 //! `codex_bridge.composer_state` does (status footer or cursor-anchored block,
 //! `›`/`»` marker, dim placeholder, braille particle glyphs blanked), pastes
@@ -173,8 +173,8 @@ static BUSY_STATUS: LazyLock<Regex> = LazyLock::new(|| {
 /// The transient paste-burst indicator both TUIs show while a bracketed paste
 /// is still being ingested (Claude Code on Windows ConPTY keeps it up well
 /// after the text is in the buffer). An Enter sent while it shows is swallowed
-/// into the paste, so the composer is not "ready" until it clears — Python
-/// `term_submit._PASTING` (BUG-20260913-093411-0837da).
+/// into the paste, so the composer is not "ready" until it clears
+/// (BUG-20260913-093411-0837da).
 static PASTING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)Pasting[\u{2026}.]+").expect("pasting regex"));
 
@@ -204,7 +204,7 @@ pub fn strip_ansi(text: &str) -> String {
 
 /// Codex 0.154 animates braille "particles" (U+2800–U+28FF) through the
 /// composer's padding rows and the blank cells of its input row in ordinary
-/// RGB colours (Python fix `9b1c2fd`). They are never text: blank them before
+/// RGB colours. They are never text: blank them before
 /// locating the block and skip them when deciding whether it holds a draft.
 fn is_particle(ch: char) -> bool {
     ('\u{2800}'..='\u{28ff}').contains(&ch)
@@ -524,7 +524,7 @@ fn locate_codex(
     Some((start, end))
 }
 
-/// Python `codex_bridge.composer_state` on one capture: `empty`, `editing` or
+/// Composer state on one capture: `empty`, `editing` or
 /// `unknown`, plus the visible (non-dim, particle-free) editor text and a
 /// composer-only fingerprint when the block is recognized. A lagging capture
 /// is never a known composer.
@@ -588,7 +588,7 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
     }
 }
 
-/// Python `composer_probe` fingerprint: sha256 of `x\0y\0screen`.
+/// Fingerprint: sha256 of `x\0y\0screen`.
 pub fn screen_fingerprint(screen: &str, cursor: (u16, u16)) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("{}\0{}\0", cursor.0, cursor.1).as_bytes());

@@ -56,7 +56,7 @@ pub(super) struct Skipped {
     /// Records/blocks of kinds beyond the listed bound.
     overflow: usize,
     /// Codex `session_meta` records after the first (copied ancestor metas
-    /// of old-style forks and subagent rollouts; Python `and not meta`).
+    /// of old-style forks and subagent rollouts; `and not meta`).
     duplicate_codex_meta: usize,
     /// Complete lines the record scanner could not decode as JSON objects.
     invalid_lines: usize,
@@ -740,7 +740,7 @@ impl Parser<'_> {
         let payload = &record["payload"];
         let ts = normalized(&record["timestamp"]);
         if kind == "session_meta" {
-            // Python `_read_file` (`and not session_meta`): only the first
+            // Only the first
             // session_meta is this file's identity; old-style forks and
             // subagent rollouts copy their ancestors' metas after it.
             if self.codex_meta_seen {
@@ -1182,10 +1182,10 @@ impl Parser<'_> {
     }
 }
 
-/// Python `_EXIT_CODE` over the first 400 characters, case-insensitively:
+/// Exit code over the first 400 characters, case-insensitively:
 /// `"exit_code"\s*:\s*(-?\d+)` or `\bexit(?:ed)?(?: with)?(?: code| status)? (-?\d+)`
 /// — the plain form needs exactly one space before the number, so `exit: 1`
-/// (Grok's output header) is not a code, exactly as in Python.
+/// (Grok's output header) is not a code.
 fn output_exit_code(text: &str) -> Option<i64> {
     fn integer(value: &str) -> Option<i64> {
         let end = value

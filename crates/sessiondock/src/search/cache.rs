@@ -11,7 +11,7 @@
 //! an unreadable fork is not re-streamed by every search. A changed session is
 //! parsed again whole and transiently: incremental decoding would need its
 //! decoded records kept resident (several times the file), which the memory
-//! rule of docs/read-model.md forbids and Python does not do either. Files are
+//! rule of docs/read-model.md forbids. Files are
 //! private (an existing 0700 directory of its own, entries 0600,
 //! same-directory temporary + rename); the directory is bounded in bytes with
 //! least-recently-used eviction. Nothing here reads native history: the
@@ -39,8 +39,7 @@ use crate::sessions::SearchVersion;
 /// Bump when `search::body`'s text or the header format changes; the build
 /// fingerprint already covers parser changes between binaries.
 pub const SCHEMA: u32 = 1;
-/// Memory-only cap when no directory is configured (Python's in-memory
-/// `SEARCH_CACHE_MEMORY_BYTES`).
+/// Memory-only cap when no directory is configured.
 pub const MEMORY_ONLY_BYTES: u64 = 64 * 1024 * 1024;
 /// One parse slot covers this many bytes of native input; larger files take
 /// proportionally more slots so concurrent cold parses stay bounded in RSS

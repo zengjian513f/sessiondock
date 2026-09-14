@@ -20,9 +20,8 @@ of SessionDock's optional writable preference store.
 - A valid `updated_at` supplies `renamed_at` and `renamed_to`; invalid or missing
   timestamps leave both null, but the name still overrides the title. Supported
   timestamps are RFC 3339, naive ISO date/time (assumed UTC), calendar dates,
-  and Unix seconds/milliseconds. Responses normalize them to UTC milliseconds;
-  Python emits equivalent instants in its local offset. Exotic Python
-  `fromisoformat` forms (such as ISO week dates) are not emulated.
+  and Unix seconds/milliseconds. Responses normalize them to UTC milliseconds.
+  Exotic `fromisoformat` forms (such as ISO week dates) are not emulated.
 - A main session's own name wins. Otherwise, a validated fork inherits the
   nearest explicitly named main ancestor, or retains its native root title.
   Only a session's own entry supplies its `renamed_at`/`renamed_to` fields.
@@ -37,12 +36,12 @@ of SessionDock's optional writable preference store.
   retains its captured names instead of mixing name revisions.
 
 Malformed JSON lines and invalid UTF-8 are skipped using the same per-line
-fallback as Python. A missing file is an empty name index, so native titles
+fallback. A missing file is an empty name index, so native titles
 remain available. A complete final JSON line does not require a newline.
 
 ## Read boundary and budgets
 
-The configured path is opened as an ordinary file, matching Python. Symlinks
+The configured path is opened as an ordinary file. Symlinks
 and hard links are followed. The opened file and its stamp are checked before
 and after reading so a mixed-version snapshot is never published. No native
 file is written.

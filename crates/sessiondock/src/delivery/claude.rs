@@ -28,7 +28,7 @@ pub struct Target {
     pub ownership_epoch: String,
 }
 
-/// Opaque outbox preview metadata. Python persists every JSON value supplied
+/// Opaque outbox preview metadata. Persists every JSON value supplied
 /// by the composer; the uploaded file path is already part of `text` and this
 /// value is never a second terminal input channel.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

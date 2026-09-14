@@ -229,8 +229,8 @@ impl RecordCache {
 
 /// One bounded complete record at a time. An oversized partial tail is scanned
 /// and hashed but does not fail history until its LF commits it. A complete
-/// line that is not a JSON object is skipped and counted (`invalid`), like
-/// the Python adapters do; only the record budgets are hard errors.
+/// line that is not a JSON object is skipped and counted (`invalid`);
+/// only the record budgets are hard errors.
 pub(super) struct Decoder {
     records: Vec<(Value, u64)>,
     sidecars: BTreeMap<u64, Vec<native_images::Sidecar>>,

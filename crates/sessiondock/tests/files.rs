@@ -78,8 +78,8 @@ impl Fixture {
             &[
                 json!({"type":"session_meta","timestamp":"2026-09-12T00:00:00Z","payload":{"id":"unsupported","cwd":cwd}}),
                 message("`note.txt`"),
-                // A scalar `content` is a shape the Python adapter cannot read
-                // either; it stays a hard failure (only unknown
+                // A scalar `content` is a shape that cannot be read;
+                // it stays a hard failure (only unknown
                 // record kinds and copied Codex metas are skipped).
                 json!({"type":"response_item","timestamp":"2026-09-12T00:00:01Z","payload":{"type":"message","role":"user","content":42}}),
             ],
@@ -735,8 +735,8 @@ async fn browser_info_describes_link_leaves_only_after_a_directory_grant() {
     assert!(info.get("preview").is_none());
     assert!(!dangling.exists());
 
-    // A mentioned direct reference still needs a resolvable file, exactly as
-    // Python files.resolve does; the browser grant does not weaken that route.
+    // A mentioned direct reference still needs a resolvable file;
+    // the browser grant does not weaken that route.
     let direct = get(
         &app,
         &route(false, uid, "./dangling-link", &[("mode", "info")]),
@@ -797,7 +797,7 @@ async fn browser_info_describes_link_leaves_only_after_a_directory_grant() {
         linked["size"],
         fs::symlink_metadata(&linked_text).unwrap().len()
     );
-    // Python describes the link's suffix, not the target's suffix.
+    // The link's suffix is described, not the target's suffix.
     let pdf = value(get(&app, &info_uri(&pdf_name)).await).await;
     assert_eq!(pdf["kind"], "symlink");
     assert_eq!(pdf["preview"], "application/pdf");

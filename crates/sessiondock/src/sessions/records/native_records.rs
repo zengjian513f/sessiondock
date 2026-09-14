@@ -8,7 +8,7 @@ const SMALL: usize = 64 * 1024;
 mod replay_source;
 
 /// Why a complete line produced no row: not a JSON object (skipped and
-/// counted like the Python adapters), or a media failure that still fails the
+/// counted), or a media failure that still fails the
 /// session (KEEP).
 enum Rejected {
     Invalid,

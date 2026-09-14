@@ -409,7 +409,7 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
         assert_eq!(got, status, "{body}");
         assert_eq!(body["code"], code, "{body}");
     }
-    // Python and the host type unknown nonempty key names literally.
+    // The host types unknown nonempty key names literally.
     for key in ["typed literally", "C-Escape"] {
         let (status, body) = h
             .send("page", &token, instance, json!({"keys":[key]}))
@@ -447,7 +447,7 @@ async fn text_and_named_keys_reach_the_isolated_shell_under_bounds() {
         .await;
     ok_receipt(status, &body, 1024 * 1024);
 
-    // Python imposes no per-second input count: bursts over the former limit
+    // There is no per-second input count: bursts over the former limit
     // all reach the same leased host.
     for index in 0..32 {
         let (status, body) = h

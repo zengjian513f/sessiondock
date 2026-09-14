@@ -201,7 +201,7 @@ def configured(opener, base, corpus, trash):
     need(aged.get("ok") is True and isinstance(aged.get("remaining"), int), "days", "days purge must report remaining", raw)
     passed("purge by id 200, unknown id 404, days reports remaining")
     # A symlink inside a Grok directory travels as a link (never followed):
-    # the directory rename moves it whole, like Python's shutil.move.
+    # the directory rename moves it whole.
     chat = corpus.paths["grok-link"] / "chat_history.jsonl"
     chat.unlink()
     os.symlink(corpus.paths["grok-link"] / "summary.json", chat)

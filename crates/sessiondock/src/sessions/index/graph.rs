@@ -1,5 +1,4 @@
-//! Ownership and fork graph over row summaries
-//! (lineage like Python `finalize_sessions`).
+//! Ownership and fork graph over row summaries.
 //!
 //! Summaries are the only input: Claude sidecars belong to the main
 //! transcript named by their path, Codex subagent rollouts to the thread
@@ -8,11 +7,11 @@
 //! - the *physical* chain (`history_base`): the fixed prefix an open reads
 //!   and the catalog validates; its cut must end on a line boundary of an
 //!   indexed main file (KEEP: 501/503/413 mark the row unsupported);
-//! - the *logical* lineage (`forked_from_id`): what Python decorates the
-//!   row with (`root_sid`, `fork_depth`, `created`, `title`, `size`); a
+//! - the *logical* lineage (`forked_from_id`): the row is decorated
+//!   with (`root_sid`, `fork_depth`, `created`, `title`, `size`); a
 //!   missing parent just ends it, nothing here is an error.
 //!
-//! An agent whose owner is not indexed is no row at all (Python drops it);
+//! An agent whose owner is not indexed is no row at all;
 //! ambiguous ids, ownership cycles and depth overflow stay visible
 //! `supported:false` rows with the same warning text as today. Healthy
 //! agents are reachable only as `agent_items` of their owner, each with
@@ -20,8 +19,8 @@
 //! state and the owner's stop notices in `agent_stops`).
 //!
 //! A Claude main row whose tail names a `continued-in` session carries
-//! `continued_in` = the uid of the main Claude row with that sid (Python
-//! `ClaudeAdapter.finalize_sessions`: `by_sid` over the rows in path order,
+//! `continued_in` = the uid of the main Claude row with that sid (`by_sid`
+//! over the rows in path order,
 //! the last one wins, a self-reference is dropped); absent when unindexed.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -95,7 +94,7 @@ pub fn mark_unsupported(row: &mut Value, message: &str) {
 /// Why an agent has no owner.
 #[derive(Clone)]
 enum Unowned {
-    /// The owner is not indexed at all: Python never lists such an agent,
+    /// The owner is not indexed at all: such an agent is never listed,
     /// so it is no row, only the typed error an open by uid answers with.
     Missing(SessionError),
     /// Ambiguous owner, cycle or depth: a visible `supported:false` row.
@@ -134,7 +133,7 @@ pub(super) fn mains_by_sid(
     mains
 }
 
-/// Python `finalize_sessions`' fork chain, nearest parent first:
+/// Fork chain, nearest parent first:
 /// `forked_from_id` resolved among the main Codex rows by sid (exactly one
 /// match), ending at a missing or ambiguous parent or a sid already seen.
 pub(super) fn lineage<'a>(
@@ -165,7 +164,7 @@ pub(super) fn lineage<'a>(
     }
 }
 
-/// Python's logical size: Σ over the chain of
+/// The logical size: Σ over the chain of
 /// `min(cur.history_base.end_byte_offset or 0, parent.size)` with `cur`
 /// starting at the row and moving to each parent in turn (a null
 /// `history_base` adds 0 and the walk goes on).
@@ -189,7 +188,7 @@ struct Graph<'a> {
     entries: &'a BTreeMap<String, CandidateRef>,
     sids: BTreeMap<(&'a str, &'a str), Vec<String>>,
     mains: BTreeMap<&'a str, Vec<&'a CandidateRef>>,
-    /// Python's Claude `by_sid`: main transcripts by sid, the last in path
+    /// Claude `by_sid`: main transcripts by sid, the last in path
     /// order winning (`continued_in` targets).
     claude_by_sid: BTreeMap<&'a str, &'a str>,
     agents: BTreeMap<String, Agent>,
@@ -229,7 +228,7 @@ impl<'a> Graph<'a> {
             .values()
             .filter(|entry| entry.source == "claude" && entry.summary.agent.is_none())
             .collect();
-        // Python sorts owners as path strings (`sorted(owners)`).
+        // Owners are sorted as path strings (`sorted(owners)`).
         claude_mains.sort_by(|left, right| left.path.as_os_str().cmp(right.path.as_os_str()));
         for entry in claude_mains {
             if !entry.summary.sid.is_empty() {
@@ -299,8 +298,8 @@ impl<'a> Graph<'a> {
         graph
     }
 
-    /// A Codex subagent's owner by its declared parent thread id. Python
-    /// looks the id up by sid and drops the agent when nothing matches.
+    /// A Codex subagent's owner by its declared parent thread id.
+    /// Looked up by sid; dropped when nothing matches.
     fn agent_owner(&self, entry: &CandidateRef) -> Result<String, Unowned> {
         let parent = entry
             .summary
@@ -528,7 +527,7 @@ fn base_row(entry: &CandidateRef) -> Value {
 }
 
 /// `history::history_link` over a summary: the declared fixed-prefix parent
-/// (Python `_history_segments`: `history_base.thread_id or forked_from_id`,
+/// (`history_base.thread_id or forked_from_id`,
 /// `limit = end_byte_offset`). A null `history_base` inherits nothing, so a
 /// fork without one is self-contained, and `forked_from_id` may name a
 /// different thread than `history_base.thread_id` (a rewind past the

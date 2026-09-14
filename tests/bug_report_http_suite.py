@@ -199,8 +199,8 @@ def run(opener, base, root, repo):
                       raw=b"\x89PNG\x09", content_type="image/png")
     if other.get("name") != "截图__1.png":
         fail("attachment upload", "different content not numbered", raw)
-    # Exercise a large upload through the complete HTTP path. Python permits
-    # attachments up to 512 MiB.
+    # Exercise a large upload through the complete HTTP path. Attachments
+    # up to 512 MiB are permitted.
     large_bytes = b"attachment-body-parity\n" * (33 * 1024 * 1024 // 23 + 1)
     large, raw = call(opener, base, "POST", "/api/session/attachment?uid=bug-report&name=large.bin",
                       raw=large_bytes, content_type="application/octet-stream")
@@ -339,7 +339,7 @@ def main():
             cfg.chmod(0o600)
             return cfg
         # The worker runs the source's one configured CLI on its default
-        # model, exactly what /api/term/create starts (Python WORKER_SOURCES).
+        # model, exactly what /api/term/create starts.
         good = launcher("launcher.json", [
             prof("claude-cli-v1", "claude", "fake-claude", ["--reply"], env_c),
             prof("codex-cli-v1", "codex", "fake-codex", [], env_x),

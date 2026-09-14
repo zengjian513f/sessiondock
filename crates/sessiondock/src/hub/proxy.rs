@@ -178,7 +178,7 @@ pub fn quote(value: &str, safe: &str) -> String {
     out
 }
 
-/// Why a request could not be forwarded. `Invalid` is Python's
+/// Why a request could not be forwarded. `Invalid` is
 /// `ValueError`/`TypeError`/`KeyError` (400 with the text); `Upstream` is an
 /// `OSError`/`HTTPException` before the answer started (502).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -210,7 +210,7 @@ impl From<namespace::NamespaceError> for ProxyError {
     }
 }
 
-/// Transport failures are 502 like Python's `OSError`; a node body that is
+/// Transport failures are 502; a node body that is
 /// too large is the `ValueError("节点响应过大")` → 400.
 impl From<ClientError> for ProxyError {
     fn from(error: ClientError) -> Self {
@@ -730,7 +730,7 @@ pub async fn proxy(
             while remaining > 0 {
                 let chunk = match stream.next().await {
                     Some(Ok(chunk)) => chunk,
-                    // Python: `ConnectionError("upload interrupted")` → 502.
+                    // Interrupted upload → 502.
                     Some(Err(_)) | None => return Err(ProxyError::Upstream),
                 };
                 if chunk.is_empty() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract: Claude subagent aliases follow Python's normal path handling.
+"""HTTP contract: Claude subagent aliases follow normal path handling.
 
 A continued session may link the origin's sidecar into its own subagents/
 directory. In-root and external aliases to regular sidecar files are listed;

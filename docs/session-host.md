@@ -8,7 +8,7 @@ cargo build -p ptyhost --locked
 cargo test -p ptyhost --locked
 ```
 
-**默认目录属于仍在运行的 Python 前身服务。** 开发命令必须指定私有 `--dir`。
+**默认目录属于仍在运行的前身服务。** 开发命令必须指定私有 `--dir`。
 
 ```sh
 # 从仓库根目录执行；只查看新项目的开发目录。

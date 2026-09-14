@@ -225,7 +225,7 @@ fn codex_ack_fake_cli_records_are_classified_through_the_real_reader_path() {
         Outcome::Absent(Absence { skipped_earlier: 0 })
     );
 
-    // Python keeps row order: the first causal matching record still wins.
+    // Row order is kept: the first causal matching record still wins.
     fixture.submit(&["hello from the web<NL>  second line", "finish"]);
     assert!(matches!(
         fixture.observe(&boundary, text).outcome,

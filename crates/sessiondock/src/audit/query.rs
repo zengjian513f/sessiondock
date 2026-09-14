@@ -1,12 +1,12 @@
 //! Bug-report audit: server-side structured events into the same JSONL
 //! segments the browser intake writes, and the time-window query a diagnostic
-//! bundle needs (Python `EventStore.record` / `EventStore.query`).
+//! bundle needs.
 //!
 //! A server event goes through the same queue as a browser batch: `try_send`,
 //! never a wait for disk, counted as dropped when the queue is full. Only
 //! structured metadata is stored; there is no
-//! `content` blob, which is the documented difference from Python's SQLite
-//! store. The query reads the segment files of the window's dates line by
+//! `content` blob.
+//! The query reads the segment files of the window's dates line by
 //! line and returns matching rows in file order (ascending `seq`).
 
 use std::{
@@ -21,10 +21,10 @@ use serde_json::{Value, json};
 
 use super::{AuditService, Batch, intake, writer};
 
-/// Python `query(limit=100_000)` for the bug-report window.
+/// Row cap (100_000) for the bug-report window.
 pub const MAX_QUERY_ROWS: usize = 100_000;
 
-/// One server-side event. Strings are clipped like Python's audit row fields;
+/// One server-side event. Strings are clipped like audit row fields;
 /// `data` is sanitized like browser `data`.
 pub struct ServerEvent<'a> {
     pub event: &'a str,
@@ -124,7 +124,7 @@ pub fn server_record(event: &ServerEvent<'_>, now: SystemTime) -> Option<Value> 
     }))
 }
 
-/// Python `bug_report.create`'s relevance test: any identity in common with
+/// Relevance test: any identity in common with
 /// the report, or the row belongs to the report itself.
 #[derive(Clone, Debug, Default)]
 pub struct QueryFilter {

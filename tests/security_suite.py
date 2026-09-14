@@ -152,7 +152,7 @@ def run(host, port):
     if status != 413 or code_of(body_of(buf)) != "body_too_large":
         fail("body too large", f"HTTP {status} code={code_of(body_of(buf))!r}", buf)
     passed("body too large")
-    # Python's terminal handlers do not impose the metadata route's body cap.
+    # Terminal handlers do not impose the metadata route's body cap.
     payload = json.dumps({"uid": "claude:missing", "future": "x" * (BODY_MAX + 1)}).encode()
     status, raw = call(host, port, "POST", "/api/term/takeover", star, payload)
     if status != 501:

@@ -1,5 +1,4 @@
-//! Claude subagent stop points from the owner's main transcript
-//! (Python `_claude_agent_stops` / `_collect_agent_stops`).
+//! Claude subagent stop points from the owner's main transcript.
 //!
 //! A subagent that stops (finished, failed, killed, gone with its process)
 //! makes the parent write a `<task-notification>` or the foreground `Agent`
@@ -35,7 +34,7 @@ static NOTICE: LazyLock<Regex> = LazyLock::new(|| {
 static TASK_ID: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<task-id>([A-Za-z0-9_-]{1,64})</task-id>").expect("static regex")
 });
-// Python's `b"..." in raw` pre-checks; literal regexes so the substring
+// The `b"..." in raw` pre-checks; literal regexes so the substring
 // search is vectorized (the scan touches every byte of a cold owner file).
 static HAS_TASK_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new("<task-id>").expect("literal"));
 static HAS_AGENT_ID: LazyLock<Regex> =
@@ -43,7 +42,7 @@ static HAS_AGENT_ID: LazyLock<Regex> =
 static HAS_TOOL_RESULT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#""tool_result""#).expect("literal"));
 
-/// Scan state of one owner file (Python's `_agent_stops[path]` entry).
+/// Scan state of one owner file.
 #[derive(Clone, Debug, Default)]
 pub struct StopScan {
     /// The file version the consumed bytes belong to; a different inode or a

@@ -62,7 +62,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .or_else(|| text_if_truthy(&info["session_summary"]))
         .unwrap_or_else(|| directory.chars().take(8).collect());
     let cwd = text_if_truthy(&base["cwd"]).unwrap_or_else(|| unquote(&project));
-    // Python: chat mtime, or the summary's when the chat does not exist yet.
+    // Chat mtime, or the summary's when the chat does not exist yet.
     let fallback_mtime = input
         .data
         .as_ref()

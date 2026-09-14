@@ -10,9 +10,9 @@ merges with the observations described here.
 
 ## Evidence, not name inference
 
-The Python backend names existing terminal sessions using
-`sessiondock-{source}-{sid[:8]}`. Its `term_host.new_session` invocation does not
-currently supply ptyhost's `--meta` argument. The Python live subsystem's
+Legacy-created terminal sessions are named
+`sessiondock-{source}-{sid[:8]}` and were started without ptyhost's `--meta`
+argument. The live subsystem's
 process arguments, environment, file descriptors, working directories and time
 heuristics live in the separate scan ([liveness.md](liveness.md)); none of them
 is imported into this catalog.

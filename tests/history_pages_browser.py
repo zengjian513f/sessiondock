@@ -3,7 +3,7 @@
 
 Only owned synthetic native records are appended/rewritten. Network deferrals
 retain real server responses; injected 404/409/410 cases test recovery controls.
-No Python service, native home, CLI or paid call is used.
+No predecessor service, native home, CLI or paid call is used.
 """
 from __future__ import annotations
 

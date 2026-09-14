@@ -244,7 +244,7 @@ impl NativeImage {
     }
 }
 
-/// Python media._remote: preserve an HTTP(S) URL for the browser to load.
+/// Preserve an HTTP(S) URL for the browser to load.
 pub(crate) fn remote_reference(reference: &str) -> bool {
     let Some((scheme, rest)) = reference.split_once("://") else {
         return false;
@@ -285,7 +285,7 @@ fn decoded_length(encoded: &str) -> Result<usize, MediaError> {
     Ok(length)
 }
 
-/// Python accepts trailing padding after a complete four-character group.
+/// Trailing padding after a complete four-character group is accepted.
 /// Partial groups still require canonical padding; the decoder validates them.
 fn python_base64_payload(encoded: &str) -> &str {
     let unpadded = encoded.trim_end_matches('=');

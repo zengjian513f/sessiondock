@@ -29,7 +29,7 @@ pub const HOOK_SUBCOMMAND: &str = "claude-hook";
 static SESSION_ID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_-]{6,128}$").expect("session id regex"));
 
-/// File revision the SSE loop compares (Python `revision`: `(mtime_ns, size)`).
+/// File revision the SSE loop compares: `(mtime_ns, size)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Revision {
     pub modified_ns: i128,
@@ -107,7 +107,7 @@ pub fn questions(tool_input: &Value) -> Vec<Value> {
     out
 }
 
-/// Python truthiness of a JSON value.
+/// JSON truthiness: null, false, 0, and empty string/array/object are false.
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -311,7 +311,7 @@ impl PromptStore {
 /// The hooks-only settings document Claude receives
 /// through `--settings`. `command` is the absolute `sessiondock` binary and
 /// `args` the exec-form subcommand (`claude-hook --state-dir DIR`), so the
-/// hook does not depend on the CLI's cleared environment or on Python.
+/// hook does not depend on the CLI's cleared environment.
 pub fn settings(command: &Path, state_dir: &Path) -> Value {
     let hook = json!({
         "type": "command",

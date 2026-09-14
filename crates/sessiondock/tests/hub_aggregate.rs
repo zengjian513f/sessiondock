@@ -1,5 +1,5 @@
-//! Hub aggregation against two `tests/hub_fake_node.py` nodes (the port of the
-//! Python project's `hub_fixture.NodeHandler`): the `test_hub.py` aggregate
+//! Hub aggregation against two `tests/hub_fake_node.py` nodes: the
+//! `test_hub.py` aggregate
 //! cases — identity across machines, `sig`/`unchanged`, the `nodes` filter,
 //! offline nodes as partial answers with stale cached rows, term/list
 //! capabilities, trash totals, the NDJSON search stream and the writes split
@@ -472,7 +472,7 @@ async fn term_list_reports_capabilities_per_machine_and_unions_sources() {
     backends.sort();
     assert_eq!(backends, ["ptyhost", "tmux"]);
 
-    // The backend is each machine's own setting; sources union like Python's `or`.
+    // The backend is each machine's own setting; sources union with `or`.
     hub.b.set(
         json!({"backend": "ptyhost", "term_sources": {"claude": false, "grok": true},
                      "term_enabled": false, "term_reason": "no tmux"}),

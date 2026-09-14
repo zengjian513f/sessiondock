@@ -1,7 +1,7 @@
 # Session files and directory browsing
 
-The file service follows the Python `files.py`, `file_manager.py` and server
-`_file_access` contract. It supports referenced-file reads, directory browsing,
+The file service follows the file-access contract.
+It supports referenced-file reads, directory browsing,
 file previews/downloads, new files/directories, rename, move, upload and scoped
 trash. Unimplemented copy/archive/restore/job-retry operations remain explicit
 501 responses.
@@ -10,7 +10,7 @@ trash. Unimplemented copy/archive/restore/job-retry operations remain explicit
 
 A direct file reference must occur in the complete selected session/agent
 history. Paths in tool arguments, Markdown links, quoted paths and line-number
-suffixes use the Python reference rules. A basename must itself be mentioned;
+suffixes use the reference rules. A basename must itself be mentioned;
 its existing candidates are canonicalized and must identify one distinct file.
 Referenced directories supply direct-child candidates, without recursive search.
 Unavailable candidates are skipped; cwd supplies relative-path context and does
@@ -40,7 +40,7 @@ grants last for the lifetime of the process.
 
 ## Filesystem checks and platform behavior
 
-Reads resolve symbolic links like Python `Path.resolve()`, including symlink
+Reads resolve symbolic links, including symlink
 ancestors followed by `..`. Every resulting component is then opened through
 checked directory handles with no-follow operations. Reads retain the actual
 file handle and recheck ancestor/leaf identity and metadata during transfer;
@@ -64,12 +64,12 @@ the checked parent handles. An in-progress upload cannot silently switch to a
 replacement destination directory, while a fresh request can resolve that new
 directory normally.
 
-Python's `Manager.guard` exclusions remain: modifying the filesystem root, the
+The exclusions remain: modifying the filesystem root, the
 user's home directory itself, or the private file-manager state (including its
 ancestors or descendants) is refused. Navigation and ordinary reads are not
-restricted by these mutation checks. Names follow Python's single-component
+restricted by these mutation checks. Names follow the single-component
 rules: nonempty, at most 255 bytes, not `.`/`..`, and no slash, backslash or NUL.
-Input paths use the Python 4096-character/NUL checks; relative references use
+Input paths use the 4096-character/NUL checks; relative references use
 only the session cwd. `~/` references use the process's configured home.
 
 ## Representation and resource policy
@@ -80,7 +80,7 @@ only the session cwd. `~/` references use the process's configured home.
 | `GET /api/session/file` | Exact selected-history reference; raw response, info, preview or download. |
 | `GET /api/session/files` | Directory browser grant plus optional absolute navigation; sorted pages of 1–500 entries. |
 | `mode=info` | 1 MiB text preview, replacement characters for invalid UTF-8, explicit truncation; NUL-containing text is unsupported. |
-| Raw file open | Python's 32 MiB limit; HTML/SVG/scripts are served as text rather than executable origin content. |
+| Raw file open | The 32 MiB limit; HTML/SVG/scripts are served as text rather than executable origin content. |
 | Download/media preview | Streamed from checked handles. PDF preview verifies the PDF marker. |
 | HEAD/Range | Representation headers without HEAD body; one byte range, explicit 416 for invalid/unsatisfiable ranges. |
 
@@ -88,8 +88,7 @@ Directory enumeration is paginated. Reference scanning traverses the complete
 selected history, using an explicit stack for nested JSON. Basename and directory
 indexes are built once per batch. Media references instead resolve directly
 against the session cwd, with percent decoding and home
-expansion. Name/type sorting currently uses Unicode lowercase, where Python uses
-Unicode casefold.
+expansion. Name/type sorting currently uses Unicode lowercase.
 
 Responses retain no-store, nosniff, safe content dispositions and the existing
 content-security policy. Non-PDF content is sandboxed; PDF preview permits the
@@ -101,7 +100,7 @@ Linux acceptance does not establish Windows/macOS runtime behavior.
 
 `POST /api/session/files/action` accepts `mkdir`, `new-file`, `rename`, `move`,
 `delete`, `upload` and `cancel`. Every action is tied to the validated browser
-scope. `mode=jobs` lists that scope's jobs, up to Python's 100 displayed rows.
+scope. `mode=jobs` lists that scope's jobs, up to the 100 displayed rows.
 Jobs belonging to another scope remain inaccessible.
 
 Conflict policies are `error`, `skip`, `keep` and `replace`. Replace first moves
@@ -115,7 +114,7 @@ creation is a conflict, not permission to overwrite it.
 
 Cross-device moves copy into a temporary directory on the destination device,
 verify the source, and atomically publish the completed entry. The original
-then goes into scoped trash so it remains recoverable, matching Python.
+then goes into scoped trash so it remains recoverable.
 Cross-device trash also copies before removing the original. Recursive copying
 preserves link leaves (including dangling/absolute links), file permissions and
 timestamps; checked source trees are revalidated before removal.
@@ -126,7 +125,7 @@ moves an entry there rather than unlinking it. Upload partials live in a private
 publication can stay on that filesystem; they never use `/.sessiondock-upload`
 merely because navigation now reaches the volume root.
 
-Defaults match Python: up to 2000 selected items, 1 TiB per upload, 8 MiB per
+Defaults: up to 2000 selected items, 1 TiB per upload, 8 MiB per
 chunk, 512 MiB per conversation or bug-report attachment and 100,000 keep-name attempts. Upload jobs remain available until explicitly handled. Upload offsets,
 optional hashes and declared sizes are validated; duplicated acknowledged chunks
 are idempotent, conflicting chunks fail without rewriting accepted bytes.

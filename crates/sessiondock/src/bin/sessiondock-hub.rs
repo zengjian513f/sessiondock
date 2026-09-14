@@ -1,7 +1,7 @@
 //! The multi-machine hub.
 //! Loopback only, behind the authenticated reverse proxy; it owns no session
 //! root, host, ledger or state directory — only its registry, cache and page.
-//! Registration is a server-side operation like Python's `Registry` class:
+//! Registration is a server-side operation:
 //! `register` / `remove` / `list` subcommands, never an HTTP route.
 //! `--check-config` validates `SESSIONDOCK_HUB_*` like startup and exits.
 use std::{error::Error, ffi::OsString};

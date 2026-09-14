@@ -114,7 +114,7 @@ binary’s numbers as the final release.
   `scanner_cpu_benchmark` is parse/output-drop only, not HTTP or native I/O;
   `read_benchmark.py` is also not a parser-only timing.
 - Never report a non-200 response as a successful timing sample. A 413 is
-  expected only when one decoded image exceeds Python's 32 MiB item limit.
+  expected only when one decoded image exceeds the 32 MiB item limit.
 
 No paid CLI, native homes, production services, or real history.
 

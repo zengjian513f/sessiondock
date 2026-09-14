@@ -612,7 +612,7 @@ test('file resolution is gated and Python console availability remains unchanged
   const start = 'function consoleUnavailableReason';
   const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (SessionDockCapabilities.config.backend === 'rust' && !linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
-  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // Like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // An exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
   assert.ok(read('nodes.js').includes(exitGuard));
   const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
@@ -735,7 +735,7 @@ test('a plain stream error never pauses; a rejected stream is probed and reopene
   assert.match(context.migrationReadFailures.get('codex:fixture').message, /probe 501/);
   assert.equal(reopens(), pending, 'no reconnect scheduled for a paused view');
   assert.equal(context._es, null);
-  // Python pages keep the fixed 1.5 s reopen.
+  // Pages without the capability keep the fixed 1.5 s reopen.
   const python = migrationContext({EventSource: FakeEventSource, window: {EventSource: true},
     AUDIT_PAGE_ID: 'fixture', browserAuditEvent: () => {}, appUrl: value => value,
     setTimeout: (callback, delay) => {timers.push({callback, delay}); return timers.length;}}, undefined);
@@ -916,7 +916,7 @@ test('Rust HTTP errors retain backend details, while Python keeps its original m
 test('Python pages do not gain migration pausing or change their retry policy', () => {
   const context = migrationContext({}, undefined);
   // Passing undefined selects the helper default, so explicitly use the real
-  // no-meta contract here to exercise the inherited Python path.
+  // no-meta contract here to exercise the inherited default path.
   context.SessionDockCapabilities = contextWithCapabilities().SessionDockCapabilities;
   assert.equal(context.reportMigrationReadFailure('codex:fixture', null, new Error('network')), null);
   assert.equal(context.migrationReadPaused('codex:fixture', null), false);

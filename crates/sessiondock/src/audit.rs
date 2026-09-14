@@ -4,14 +4,14 @@
 //! `POST /api/audit/browser`. When `SESSIONDOCK_AUDIT_DIR` is configured,
 //! diagnostics are queued without waiting for disk:
 //!
-//! * The HTTP route applies Python's 4 MiB body and 100-event limits.
+//! * The HTTP route applies the 4 MiB body and 100-event limits.
 //! * Only structured metadata survives. The client `content` field is parsed
 //!   with the request but is not retained. Secret keys are redacted and nested
-//!   diagnostic data stops after Python's depth 12.
+//!   diagnostic data stops after depth 12.
 //! * The writer is a dedicated OS thread fed by a `std::sync::mpsc` channel
-//!   using Python's 20,000-item queue bound. Producers use `try_send`.
+//!   using the 20,000-item queue bound. Producers use `try_send`.
 //! * Records are appended to one JSONL file per UTC day. Matching daily files
-//!   older than Python's 14-day retention window are removed.
+//!   older than the 14-day retention window are removed.
 //! * Durability policy: every batch is written with one `write_all`; the file is
 //!   `fdatasync`ed when the writer has been idle for one second after writes,
 //!   when a segment is rotated out, and during graceful shutdown. Losing the
@@ -45,17 +45,17 @@ use tokio_util::sync::CancellationToken;
 
 pub use intake::{Batch, Rejection};
 
-/// Python's protocol limits plus shutdown and fault-injection controls.
+/// Protocol limits plus shutdown and fault-injection controls.
 #[derive(Clone)]
 pub struct Limits {
-    /// Route body limit. It matches the Python service's 4 MiB because the
+    /// Route body limit. It is 4 MiB because the
     /// legacy page re-queues and retries any non-2xx batch indefinitely and
     /// its `dom.snapshot` receipts carry up to 40 x 4000 characters each; the
     /// body copy is transient and `content` is never retained.
     pub body_bytes: usize,
     /// Events per request; more is `413`.
     pub max_events: usize,
-    /// Python `audit.QUEUE_LIMIT`; the Rust channel carries prepared batches.
+    /// Bound on queued prepared batches.
     pub queue_batches: usize,
     /// How long graceful shutdown waits for the writer to drain.
     pub shutdown_deadline: Duration,
@@ -401,7 +401,7 @@ impl Drop for AuditService {
     }
 }
 
-/// Prepare the configured directory as Python's audit store does.
+/// Prepare the configured directory.
 pub fn validate_directory(path: &Path) -> io::Result<PathBuf> {
     std::fs::create_dir_all(path)?;
     #[cfg(unix)]

@@ -335,7 +335,7 @@ pub(super) fn question(name: &str, value: &Value) -> Option<(String, Vec<Value>)
     ))
 }
 
-/// Python `_stringify` recursively joins arrays, takes a block's `text`, and
+/// Recursively joins arrays, takes a block's `text`, and
 /// serializes other objects. Image-shaped blocks retain the visible placeholder.
 fn output_text(value: &Value) -> Result<String, String> {
     match value {
@@ -534,7 +534,7 @@ pub(super) fn sanitize_output_with_media(
                 }
                 // Text blocks need no copy because they never enter the
                 // cleaned chunk array. Other serializable parts follow
-                // Python `_stringify` rather than rejecting the tool result.
+                // `_stringify` rather than rejecting the tool result.
                 let text_block = matches!(
                     part["type"].as_str(),
                     Some("text" | "input_text" | "output_text" | "summary_text")

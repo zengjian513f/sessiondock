@@ -1,4 +1,4 @@
-//! Python-style metadata reads and atomic replacement in the configured directory.
+//! Metadata reads and atomic replacement in the configured directory.
 
 use super::{METADATA_FILENAME, MetadataError, MetadataSnapshot, SCHEMA_VERSION, model::Document};
 use sha1::{Digest, Sha1};
@@ -45,9 +45,9 @@ impl Disk {
         let Ok(bytes) = fs::read(self.directory.join(METADATA_FILENAME)) else {
             return Ok((MetadataSnapshot::empty(), None));
         };
-        // Python session_meta._read treats an unavailable, malformed or
-        // unsupported document as empty. Deserialize through Value so repeated
-        // JSON keys have Python's last-value behavior.
+        // An unavailable, malformed or unsupported document is treated
+        // as empty. Deserialize through Value so repeated
+        // JSON keys have last-value behavior.
         let document = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
             .and_then(|value| serde_json::from_value::<Document>(value).ok())

@@ -8,10 +8,9 @@ of its own. Nothing here makes a receipt `acknowledged`. It is wired
 into the shared executor ([delivery-codex-executor.md](delivery-codex-executor.md)),
 which submits the adapter's causal `PossibleTextMatch` evidence directly.
 
-The audited Python baseline is `send_queue.observe` plus the `_poll_outbox`
-loop in `server.py`; see [delivery.md](delivery.md) for that audit. This
-adapter keeps Python's text-and-time rule behind the server-captured native
-cursor and terminal ownership checks.
+The adapter keeps the text-and-time rule behind the server-captured native
+cursor and terminal ownership checks. See [delivery.md](delivery.md) for that
+audit.
 
 ## Where the records come from
 
@@ -45,7 +44,7 @@ unfinished trailing line is not committed and therefore not a record.
 | Outcome | When | Mapping to `delivery/codex.rs` |
 | --- | --- | --- |
 | `Possible(PossibleMatch)` | Exactly one real `user` record after the boundary whose text equals the delivered text after trimming only both ends, with a timestamp not earlier than `delivered_ms` (or no parsable timestamp). | `evidence: AckEvidence` with `Correlation::PossibleTextMatch`, `real_user_input: true`, `validated_confirmation` = the boundary cursor, `record: NativeAcceptance { source_identity, record_id: "codex-line:<start>-<end>", start, end, turn_id }`. `Machine::acknowledge` retires the receipt after the same boundary, media and one-record-per-receipt checks used for stronger evidence. `completion: Option<CompletionEvidence>` carries a later `task_complete`/`turn_aborted` status of the record's own turn (`Succeeded`/`Failed`/`Stopped`). |
-| `Absent(Absence { skipped_earlier })` | Nothing qualifying after the boundary. `skipped_earlier` counts identical user records whose timestamps precede delivery; they are skipped like Python's `_causal`. | Nothing to apply; the caller may `AdvanceWatch` to `watch`. |
+| `Absent(Absence { skipped_earlier })` | Nothing qualifying after the boundary. `skipped_earlier` counts identical user records whose timestamps precede delivery; they are skipped. | Nothing to apply; the caller may `AdvanceWatch` to `watch`. |
 | `Uncertain(CheckpointMismatch)` | The file was rewritten or truncated below the boundary, or the logical view changed. | `NativeReset` at most; the confirmation fence never moves. |
 | `Uncertain(ForeignScope)` | The view is not the Codex main session named by the payload UID and the boundary's `source_identity`, or is a child agent view. | Nothing. |
 | `Uncertain(UnmatchableText)` | Whitespace-only text can never match. | Nothing. Opaque media preview metadata does not block text confirmation. |
@@ -67,27 +66,26 @@ with role `user` that are neither developer prompts, rebuilt instruction blocks
 `event_msg` `user_message` telemetry, assistant output, tool calls, status
 events and inferred `/rename` events are not user records.
 
-## Comparison with Python `observe`
+## Comparison with `observe`
 
-| Python | Rust | Reason |
+| Observe | Adapter | Reason |
 | --- | --- | --- |
-| Matching text retires the first causal row (`rows.pop`); the receipt is deleted. | `PossibleTextMatch` acknowledges the first matching receipt after its fixed pre-injection cursor; a native record cannot acknowledge two receipts. | Matches Python's trimmed-text and causal-boundary behavior while preserving one-record-per-receipt ordering. |
+| Matching text retires the first causal row (`rows.pop`); the receipt is deleted. | `PossibleTextMatch` acknowledges the first matching receipt after its fixed pre-injection cursor; a native record cannot acknowledge two receipts. | Matches the trimmed-text and causal-boundary behavior while preserving one-record-per-receipt ordering. |
 | Matches over the messages the current read returned, from the advancing watch cursor on ordinary ticks. | Always classifies the full range after the **fixed** confirmation boundary, and the boundary must revalidate as a committed checkpoint each time. | A watch-only read can miss an earlier duplicate; a moved or rewritten prefix must not be silently accepted. |
 | First record whose text matches and whose timestamp passes wins; earlier-timestamped duplicates are skipped and later ones confirm. | Same, within the fixed validated confirmation range. | Parity. |
 | Accepts `user` and `command` roles. | Accepts projected `user` records only. | The Rust projection emits no native `command` role for Codex; inferred rename events are not native records. |
 | Absent/invalid timestamps pass `_causal`. | Same: `TimestampCheck::Absent` passes, but is reported. The projection normalizes valid stamps to RFC 3339 UTC milliseconds and nulls invalid ones. | Parity as documented; the physical boundary still applies. |
 | Boundary is a wall-clock `after_ts` plus a browser-supplied cursor. | Boundary is the server-validated `NativeCursor` captured from the frozen view plus the server's Enter clock. | Browser cursors and clocks are not evidence. |
-| Attachments are not compared. | Same: opaque media preview metadata is carried on the evidence while text remains the native confirmation key. | The composer already included uploaded paths in the submitted text, matching Python's delivery path. |
+| Attachments are not compared. | Same: opaque media preview metadata is carried on the evidence while text remains the native confirmation key. | The composer already included uploaded paths in the submitted text. |
 
 Equal parts: trimming is both ends only (internal spaces and newlines stay
-significant), and the comparison is on the projected text, exactly as Python
-compares `messages_for` output.
+significant), and the comparison is on the projected text.
 
 ## Polling constants and the replay helper
 
-`ReplayPolicy`/`ReplayClock` reproduce the Python schedule without a timer:
+`ReplayPolicy`/`ReplayClock` reproduce the schedule without a timer:
 
-| Constant | Value | Python source |
+| Constant | Value | Source |
 | --- | --- | --- |
 | `CONFIRM_TIMEOUT_MS` | 8 000 | `send_queue.CONFIRM_TIMEOUT = 8.0`: after this a write is overdue, never failed |
 | `REPLAY_INTERVAL_MS` | 8 000 | `_poll_outbox` spaces fixed-cursor replays by `CONFIRM_TIMEOUT` (`_CODEX_CONFIRM_REPLAY_AT`) |

@@ -1,7 +1,7 @@
 # HTTP route ledger
 
 This is the compact route-family inventory used by `tests/route_ledger.py`.
-It describes the standalone SessionDock product, not Python-to-Rust migration
+It describes the standalone SessionDock product, not migration
 progress. Concrete behavior and capability gates live in the module contracts
 linked from [the documentation index](README.md).
 

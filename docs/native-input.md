@@ -17,8 +17,8 @@ large string bodies remain source spans.
 
 ## Structural JSON
 
-The streaming scanner accepts the same JSON structure used by Python's
-`json.loads`: nesting, node count, object key count, key length and number length
+The streaming scanner accepts any well-formed JSON document:
+nesting, node count, object key count, key length and number length
 do not have separate SessionDock quotas. Duplicate object keys use the last
 value. Syntax and UTF-8 errors remain errors.
 
@@ -30,7 +30,7 @@ This mechanism is storage and version validation, not an input-size policy.
 ## Tool envelopes and native images
 
 Stringified tool-result envelopes are recursively decoded for every candidate
-that Python recognizes. There is no SessionDock-specific envelope-layer,
+that is recognized. There is no SessionDock-specific envelope-layer,
 candidate-count or range-size quota, and the streaming parser continues through
 all input blocks and lines.
 Ordinary giant text is materialized and shown instead of turning an otherwise
@@ -38,7 +38,7 @@ valid record into an unsupported-history error.
 
 Image authorization remains structural: only provider-recognized image fields
 can produce native media. Text that merely resembles a data URL stays text.
-Each decoded image retains Python's `media.MAX_ITEM` limit of 32 MiB. Invalid or
+Each decoded image retains the 32 MiB limit. Invalid or
 unsupported image candidates do not reject the surrounding session record.
 
 Source offsets, hashes, MIME evidence and the current selected branch are

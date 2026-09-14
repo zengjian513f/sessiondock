@@ -52,7 +52,7 @@ pub const NODE_PALETTE: [&str; 8] = [
 ];
 /// Paths whose last good answer is served while the node is offline.
 pub const CACHED_PATHS: [&str; 2] = ["/api/sessions", "/api/term/list"];
-/// Python's default node networks: loopback plus the deployment WireGuard /24.
+/// Default node networks: loopback plus the deployment WireGuard /24.
 pub const DEFAULT_NETWORKS: &str = "127.0.0.0/8,::1/128,10.0.0.0/24";
 const NAME_LIMIT: usize = 80;
 const CACHE_LIMIT: usize = 128;
@@ -228,7 +228,7 @@ pub struct NodeRow {
 }
 
 /// Node health as the monitor last saw it. Serialized keys are merged into
-/// the public node rows exactly like Python's health dict.
+/// the public node rows.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Health {
     /// `None` until the monitor has checked the node.
@@ -297,7 +297,7 @@ fn identity_payload(data: Value, _node: &Node, _path: &str) -> Value {
     data
 }
 
-/// Streamed search events (`progress` / `matches` callbacks in Python).
+/// Streamed search events (`progress` / `matches` callbacks).
 #[derive(Clone, Debug, PartialEq)]
 pub enum SearchEvent {
     Progress { done: u64, total: u64 },
@@ -1173,7 +1173,7 @@ impl Registry {
         Ok(inner.nodes.iter().map(|node| node.id.clone()).collect())
     }
 
-    /// `reorder` from a JSON body value with Python's shape check.
+    /// `reorder` from a JSON body value with a shape check.
     pub fn reorder_json(&self, ids: &Value) -> Result<Vec<String>, RegistryError> {
         let ids: Vec<String> = ids
             .as_array()
@@ -1188,8 +1188,8 @@ impl Registry {
     }
 }
 
-/// Deep copy of the last good answer with rows marked stale (Python
-/// `stale_payload`); a terminal list additionally reports itself disabled.
+/// Deep copy of the last good answer with rows marked stale;
+/// a terminal list additionally reports itself disabled.
 pub fn stale_payload(path: &str, cached: Option<&(f64, Value)>) -> Value {
     let mut data = cached
         .map(|(_, data)| data.clone())
@@ -1226,7 +1226,7 @@ fn sessions_key(nid: &str) -> CacheKey {
     (nid.to_string(), "/api/sessions".to_string(), String::new())
 }
 
-/// Python truthiness of a JSON value.
+/// Truthiness of a JSON value.
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -1246,7 +1246,7 @@ fn number(value: &Value) -> Option<f64> {
     }
 }
 
-/// Python `int(value)` for progress counters.
+/// `int(value)` for progress counters.
 fn integer(value: &Value) -> Option<u64> {
     match value {
         Value::Number(number) => number

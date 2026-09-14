@@ -27,7 +27,7 @@ pub(super) struct Lineage {
     /// Graph node → parent after compact reconnection; pin validation only.
     pub parents: HashMap<String, Option<String>>,
     /// Non-fatal `migration_warnings` of the walk: where it
-    /// stopped short of a root exactly like Python `_active_lineage`.
+    /// stopped short of a root.
     pub warnings: Vec<String>,
 }
 
@@ -133,9 +133,9 @@ fn chain_contains(parents: &HashMap<String, Option<String>>, from: &str, wanted:
     false
 }
 
-/// Apply a persisted pin to the main-session records. Mirrors the Python
-/// `_claude_effective_tip` rule: any lineage signal recorded after the pinned
-/// boundary makes native records authoritative again; unlike Python, the
+/// Apply a persisted pin to the main-session records.
+/// Any lineage signal recorded after the pinned
+/// boundary makes native records authoritative again; the
 /// supersession is reported explicitly instead of silently. Pure: no writes.
 pub(super) fn apply_pin(records: &[(Value, u64)], tip: &str, stale_end: u64) -> PinOutcome {
     let Graph { parents, ordered } = graph(records, "");
@@ -228,7 +228,7 @@ fn signal<'a>(record: &'a Value, agent: &str) -> Option<&'a str> {
     }
 }
 
-/// Python `_active_lineage` over the main-session (or one agent's) records.
+/// Lineage over the main-session (or one agent's) records.
 /// A broken chain is a warning, never a failure.
 pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Lineage {
     let mut parents = HashMap::<String, Option<String>>::new();

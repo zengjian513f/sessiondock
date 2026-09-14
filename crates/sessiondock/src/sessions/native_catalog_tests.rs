@@ -109,8 +109,8 @@ fn duplicate_and_conflicting_files_cannot_be_filtered_into_a_unique_native_ident
     let good = root.join("good.jsonl");
     let conflict = root.join("conflict.jsonl");
     write(&good, &[codex("shared-real-id", "good-display")]);
-    // A Codex file's identity is its FIRST session_meta only (Python
-    // `and not meta`); the copied second meta is not a declaration, so the
+    // A Codex file's identity is its FIRST session_meta only;
+    // the copied second meta is not a declaration, so the
     // two files collide on `shared-real-id` and neither is unique.
     write(
         &conflict,

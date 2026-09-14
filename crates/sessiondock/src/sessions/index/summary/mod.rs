@@ -3,10 +3,10 @@
 //! One native file is summarized from exactly two bounded reads — the first
 //! [`HEAD_BYTES`] (at most [`CLAUDE_HEAD_LINES`] / [`CODEX_HEAD_LINES`]
 //! newline-separated pieces) and the last [`TAIL_BYTES`] (complete records
-//! only; a partial first line is dropped) — the same regions the Python
-//! adapters' `_head_lines` / `_tail_lines` read. Every derived field follows
+//! only; a partial first line is dropped) — the same
+//! head and tail regions. Every derived field follows
 //! the corresponding `list_sessions` rule of the reference adapter; the
-//! helpers in this module reproduce the Python string primitives those rules
+//! helpers in this module reproduce the string primitives those rules
 //! depend on (`_norm_ts`, `_iso`, `_clip`, `_title_from_text`, `_is_injected`,
 //! `_claude_bash_input`, `_claude_bash_output`, `_flatten_content`).
 //!
@@ -33,9 +33,9 @@ use crate::sessions::providers::Skipped;
 pub const HEAD_BYTES: u64 = 96 * 1024;
 /// Rename/custom-title records are appended at the end.
 pub const TAIL_BYTES: u64 = 512 * 1024;
-/// Python `_head_lines(path)` default: Claude reads 40 pieces.
+/// Claude reads 40 pieces.
 pub const CLAUDE_HEAD_LINES: usize = 40;
-/// Python `CodexAdapter._raw_meta` reads 120 pieces.
+/// Codex reads 120 pieces.
 pub const CODEX_HEAD_LINES: usize = 120;
 /// A Claude sidecar's created time comes
 /// from its first 8 pieces.
@@ -78,7 +78,7 @@ pub struct CodexMeta {
     /// A `session_meta` header was seen (today's rows carry
     /// `forked_from_id`/`history_base` only then).
     pub has_meta: bool,
-    /// Python `str(meta.get("forked_from_id") or "")`.
+    /// `forked_from_id` as text, empty when absent.
     pub forked_from_id: String,
     /// `history_base` when it is an object, otherwise `null`.
     pub history_base: Value,
@@ -92,8 +92,8 @@ pub struct AgentMeta {
     pub id: String,
     pub title: String,
     pub kind: String,
-    /// The agent's last turn is not closed (Python `_claude_agent_tail` /
-    /// `_codex_agent_tail`): Claude — the last user/assistant record is not
+    /// The agent's last turn is not closed:
+    /// Claude — the last user/assistant record is not
     /// an assistant `end_turn`; Codex — the last turn-boundary `event_msg` is
     /// `task_started`/`turn_started`. A Codex item is `active` exactly then;
     /// a Claude item also needs the owner's stop notices (`agent_stops`).
@@ -190,13 +190,13 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
 }
 
 // ---------------------------------------------------------------------------
-// Head/tail record parsing (Python `_head_lines` / `_tail_lines` regions).
+// Head/tail record parsing (head / tail regions).
 // ---------------------------------------------------------------------------
 
 /// One complete JSON object record with its physical start offset.
 pub struct Record {
     pub start: u64,
-    /// Newline-separated piece index inside its region (Python line limits
+    /// Newline-separated piece index inside its region (line limits
     /// count pieces, blank ones included).
     pub line: usize,
     pub value: Value,
@@ -392,10 +392,10 @@ pub fn native_identity<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// Python value primitives.
+// Value primitives.
 // ---------------------------------------------------------------------------
 
-/// Python truthiness of a JSON value.
+/// Truthiness of a JSON value.
 pub fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -407,7 +407,7 @@ pub fn truthy(value: &Value) -> bool {
     }
 }
 
-/// Python `str(value)` for the scalar shapes that reach a row field.
+/// String form of a scalar JSON value that reaches a row field.
 pub fn py_str(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -424,7 +424,7 @@ pub fn text_if_truthy(value: &Value) -> Option<String> {
     truthy(value).then(|| py_str(value))
 }
 
-/// Python `str.isspace` (Unicode White_Space plus the C0 separators 1C–1F).
+/// Whitespace (Unicode White_Space plus the C0 separators 1C–1F).
 pub fn py_is_space(c: char) -> bool {
     c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
 }
@@ -433,7 +433,7 @@ pub fn py_strip(text: &str) -> &str {
     text.trim_matches(py_is_space)
 }
 
-/// Python `str.splitlines()` boundaries.
+/// Line-split boundaries.
 pub fn py_splitlines(text: &str) -> Vec<&str> {
     let mut lines = Vec::new();
     let mut start = 0;
@@ -542,7 +542,7 @@ pub fn iso_seconds(mtime_ns: u128) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Python text primitives used by title derivation.
+// Text primitives used by title derivation.
 // ---------------------------------------------------------------------------
 
 static INJECTED: LazyLock<Regex> = LazyLock::new(|| {
@@ -581,7 +581,6 @@ pub fn is_timeline_protocol(text: &str) -> bool {
     TIMELINE_PROTOCOL.is_match(text)
 }
 
-/// Python `_claude_bash_input`.
 pub fn claude_bash_input(text: &str) -> Option<String> {
     let captures = BASH_INPUT.captures(text)?;
     let decoded = html_escape::decode_html_entities(captures.get(1).map_or("", |m| m.as_str()));
@@ -596,7 +595,7 @@ pub fn claude_bash_input(text: &str) -> Option<String> {
     })
 }
 
-/// Whether Python `_claude_bash_output` returns a value: only an exact
+/// Whether a match is returned: only an exact
 /// sequence of `<bash-stdout>`/`<bash-stderr>` envelopes (case-insensitive,
 /// paired with their own closing tag) and nothing but whitespace around them.
 pub fn claude_bash_output_matches(text: &str) -> bool {
@@ -668,7 +667,6 @@ fn strip_paired_tags(text: &str) -> String {
     out
 }
 
-/// Python `_title_from_text`.
 pub fn title_from_text(text: &str) -> String {
     let text = strip_paired_tags(text);
     let text = SHORT_TAG.replace_all(&text, " ");
@@ -691,7 +689,7 @@ pub fn title_from_text(text: &str) -> String {
     }
 }
 
-/// Python `_flatten_content` restricted to `kind == "text"` parts, joined
+/// Restricted to `kind == "text"` parts, joined
 /// with newlines. Shapes the reference adapter cannot read either (a scalar
 /// `content`, a non-string `text`) are the same hard failures as today.
 pub fn flatten_text(content: &Value) -> Result<String, String> {
@@ -728,7 +726,7 @@ fn push_text_block(block: &Value, parts: &mut Vec<String>) -> Result<(), String>
     Ok(())
 }
 
-/// Python `_is_codex_protocol_injection("user", text, native_meta)`.
+/// True for `goal.internal_context` or a leading CLI protocol block.
 pub fn is_codex_protocol_injection(text: &str, native_meta: &Value) -> bool {
     native_meta["content_item_kinds"]
         .as_array()
@@ -766,7 +764,7 @@ pub fn unquote(name: &str) -> String {
 }
 
 /// Last record (file order) whose timestamp normalizes, tail first, then the
-/// head as the bounded stand-in for Python's backward whole-file scan.
+/// head as the bounded stand-in for the backward whole-file scan.
 pub fn latest_timestamp(records: &Records) -> Option<String> {
     records
         .tail

@@ -4,8 +4,8 @@
 `prompt_only` packets, and the "cleared once the native answer is recorded"
 rule. Synthetic Claude/Codex fixtures, loopback only, no CLI, no Chromium.
 
-Python reference: `sessiondock/claude_bridge.py` (hook file semantics) and
-`server._claude_prompt` / `_session_prompt` (JSON shape, clearing rule).
+Hook file semantics, JSON shape, and
+the clearing rule.
 """
 from __future__ import annotations
 
@@ -217,7 +217,7 @@ def main():
                 page = get(host, port, f"/api/messages/{q}?window=1")
                 if page["prompt"] != card:
                     fail("windowed read carries the card too", page)
-                # A subagent view never carries the field (Python: only `if not agent`).
+                # A subagent view never carries the field.
                 # (No agent in this fixture: the query still must not 500.)
                 hook(state, settle_payload("PostToolUse"))
                 frame = sse_next(conn, resp, time.monotonic() + 5)

@@ -28,7 +28,7 @@ def corpus(root):
     data.put("search-main", "claude", rows, [])
     data.put("search-broken", "claude", [
         claude_row("search-broken", "user", "u0", None, "Unsupported synthetic history"),
-        # Scalar content is unreadable for Python too (unknown kinds are skipped).
+        # Scalar content is unreadable (unknown kinds are skipped).
         {"type": "user", "message": {"role": "user", "content": 42}}], [])
     data.put("codex-search", "codex", [
         codex_row("session_meta", {"id": "codex-search", "cwd": "/synthetic/search"}),

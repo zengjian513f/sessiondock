@@ -26,7 +26,7 @@ static MEDIA_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
 static FILE_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?i)\bfile://[^\s<>`\"'，。；、！？()\[\]{}]+"#).unwrap());
 
-/// Decode a local media path as Python media.register_path does.
+/// Decode a local media path.
 pub(crate) fn normalize_media_ref(raw: &str) -> Result<String, FileError> {
     let raw = raw.trim().trim_matches(['<', '>']);
     if raw.is_empty() {

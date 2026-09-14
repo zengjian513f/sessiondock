@@ -278,7 +278,7 @@ impl TerminalService {
             directory,
             Limits {
                 max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
-                // The host wire carries a u32 length and Python applies no
+                // The host wire carries a u32 length and there is no
                 // smaller attachment-frame policy.
                 max_frame_bytes: u32::MAX as usize,
                 operation_timeout: limits.operation_timeout,
@@ -464,8 +464,8 @@ impl TerminalService {
     /// Raw HTTP input from a page that holds no lease for this terminal: a
     /// conversation view whose console is open elsewhere or not at all (the
     /// composer's Esc, a question card, a Grok text submit). It follows the
-    /// delivery executor's ordinary-claimant rule instead of the Python
-    /// backend's unauthenticated `send-keys`: under the per-name gate, any
+    /// delivery executor's ordinary-claimant rule: under the per-name
+    /// gate, any
     /// current lease — another page's console, a reservation, or a server
     /// send in flight — is the documented ownership conflict, and otherwise
     /// the write goes through the pinned instance exactly like a leased
@@ -931,8 +931,8 @@ async fn browser_input(
                         Ok(size) => HostInput::Resize(size),
                         Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
                     },
-                    // Python treats every other text frame, including JSON
-                    // that is not a valid resize, as literal PTY input.
+                    // Every other text frame, including JSON that is not
+                    // a valid resize, is treated as literal PTY input.
                     Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
                 }
             }

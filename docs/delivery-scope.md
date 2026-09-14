@@ -63,8 +63,8 @@ records can simultaneously declare the parent's `sessionId`. The cursor's
 session ID. A scope built from any of those display/cursor fields can miss
 existing receipts because the delivery engine compares every scope field.
 
-The Python outbox endpoint historically filters only by owner UID and ignores
-the agent query; Python SSE omits its outbox driver for child views. That does
+Filtering only by owner UID and ignoring
+the agent query, and omitting the outbox driver for child views, does
 not establish a child-delivery scope contract. Rust resolves the full native
 identity explicitly and never substitutes the main outbox for a child scope.
 
@@ -77,4 +77,4 @@ session IDs, incomplete tails, immutable old snapshots, cached reads, Codex
 native IDs versus display aliases, and explicit unsupported Grok scope.
 Ordinary history/display and byte cursors remain unchanged in these scenarios.
 Fixtures live only in private temporary directories. No native CLI homes,
-production sessions, Python state, network or paid agent CLI is accessed.
+production sessions, predecessor state, network or paid agent CLI is accessed.

@@ -6,7 +6,7 @@ const SOURCES = Object.freeze(Object.fromEntries(
   }])));
 
 // 所有界面状态都落 localStorage, 刷新后原样恢复
-// 读取缺失时回退到 Python 前缀下的同名键并一次性搬到新键；写只写新键。
+// 读取缺失时回退到旧前缀下的同名键并一次性搬到新键；写只写新键。
 const store = {
   get(k, d) {
     try {
@@ -1406,7 +1406,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     if (S.sel === uid && S.agent === agent) {
       // Rust keeps SSE live during explicit window reloads and native resets.
       // Publish the new snapshot together with any suffix/activity accepted
-      // while this renderer yields; Python retains its existing render path.
+      // while this renderer yields; the existing render path is retained.
       const options = SessionDockCapabilities.config.backend === 'rust'
         ? {historyPageEntry: cache.get(key)} : {};
       await renderSession(data.meta, data.messages, data.activity, options);
@@ -2277,7 +2277,7 @@ function syncSidebarUpdates(sessions) {
     if (!base) { S.cursors.set(key, latest); continue; }
     // Rust 列表行的 cursor 只带物理部分 {end, head}；语义 anchor 只在该会话已被
     // 打开（服务端缓存有视图）时出现。两边都有 anchor 才比较它，缺失时以
-    // 已有的 anchor 为准（docs/history-pages.md "列表 cursor"）。Python 总是给出 anchor。
+    // 已有的 anchor 为准（docs/history-pages.md "列表 cursor"）。
     const anchorSame = !base.anchor || !latest.anchor || base.anchor === latest.anchor;
     if (base.end === latest.end && base.head === latest.head && anchorSame) {
       S.cursors.set(key, latest.anchor ? latest : {...latest, anchor: base.anchor});
@@ -2928,7 +2928,7 @@ async function toggleSessionStar(uid) {
 
 /* ---------- Claude 时间线固定显示（Rust 只读迁移能力） ----------
  * 只改 SessionDock的显示时间线；不写原生记录，也不给 CLI 发任何回滚信号。
- * Python 页面没有这个能力声明，保持原有双 Esc 原生回滚流程。 */
+ * 没有这个能力声明的页面，保持原有双 Esc 原生回滚流程。 */
 function timelinePinEnabled() {
   return SessionDockCapabilities.config.backend === 'rust'
     && SessionDockCapabilities.config.timeline_pin === true;
@@ -3863,8 +3863,8 @@ function historyPagesEnabled() {
 }
 
 const historyPageRequests = new Map();
-// 点一次“加载中间 N 条”后自动连续翻页直到缺口填满（Python 是一次全部加载；
-// 这里分页取但不停）。按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
+// 点一次“加载中间 N 条”后自动连续翻页直到缺口填满（分页取但不停）。
+// 按钮显示进度，再点一次中止。用 let 是为了浏览器 E2E
 // 能关掉连续翻页，逐页检验竞争。
 let HISTORY_PAGE_CHAIN = true;
 
@@ -4780,7 +4780,7 @@ async function stopSession(m, button = null) {
   }
 }
 
-// Rust 回收站能力：文件进服务端显式配置的回收站目录，而不是 Python 的固定路径。
+// Rust 回收站能力：文件进服务端显式配置的回收站目录。
 const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
   && SessionDockCapabilities.config.trash === true;
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
@@ -6081,7 +6081,7 @@ function imageHtml(m, inline = false) {
 }
 
 // Rust-only per-message continuation: a message carries at most 16 typed
-// images plus `media_more`. Python never emits it, so its markup is unchanged.
+// images plus `media_more`. When it is absent, markup is unchanged.
 function mediaMoreInfo(more) {
   if (!more || typeof more !== 'object' || Array.isArray(more)) return null;
   const {remaining, total, cursor} = more;
@@ -7887,7 +7887,7 @@ document.addEventListener('keydown', e => {
   $('#q').blur();
 });
 
-// SessionDock 是 Python 服务的替代品而非开发版：没有常驻横幅。只有能力声明
+// SessionDock 是前身服务的替代品而非开发版：没有常驻横幅。只有能力声明
 // 本身无法解析（capabilities.js 失效关闭）时才提示检查服务配置。
 const backendNotice = $('#backend-notice');
 if (backendNotice && SessionDockCapabilities.config.configuration_error) {

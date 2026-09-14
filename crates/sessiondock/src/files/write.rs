@@ -25,13 +25,13 @@ pub const DEFAULT_UPLOAD_CHUNK_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_NAME_BYTES: usize = 255;
 pub const UPLOAD_DIR: &str = ".sessiondock-upload";
 /// Deleted entries move into this private subdirectory of the state directory
-/// (`<SESSIONDOCK_STATE_DIR>/file-trash/<32 hex>/<name>` plus a manifest), like
-/// Python's `file-manager/trash`, never into the project tree.
+/// (`<SESSIONDOCK_STATE_DIR>/file-trash/<32 hex>/<name>` plus a manifest),
+/// never into the project tree.
 pub const FILE_TRASH_DIR: &str = "file-trash";
 const MAX_KEEP_ATTEMPTS: u32 = 100_000;
 const COPY_CHUNK: usize = 64 * 1024;
 
-/// Upload sizes shared with the Python file manager.
+/// Upload sizes.
 #[derive(Clone, Debug)]
 pub struct WriteLimits {
     pub max_job_bytes: u64,
@@ -209,8 +209,7 @@ impl WriteService {
         &self.limits
     }
 
-    /// Declared to the legacy frontend; absent on Python, so the page keeps
-    /// its original defaults there.
+    /// Declared to the legacy frontend.
     pub fn capabilities(&self) -> Value {
         let mut actions = vec!["upload", "cancel", "mkdir", "new-file", "rename", "move"];
         if self.trash.is_some() {
@@ -278,7 +277,7 @@ impl WriteService {
         boundary::volume_root(path)
     }
 
-    /// Python Manager.guard: protect the filesystem root, home itself and the
+    /// Protect the filesystem root, home itself and the
     /// private file-manager state, including its ancestors and descendants.
     fn guard(&self, path: &Path) -> Result<(), FileError> {
         let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -619,7 +618,7 @@ impl WriteService {
                             conflict,
                         )?;
                         if copied.is_some() {
-                            // Python keeps the original recoverable after publishing a
+                            // The original is kept recoverable after publishing a
                             // cross-device copy. Trash also supports different devices.
                             source.dir.target.verify_identity()?;
                             destination.target.verify_identity()?;
@@ -1187,7 +1186,7 @@ fn create_empty_file(
                 Conflict::Keep => continue,
             },
             // Windows reports AccessDenied when O_EXCL targets an existing
-            // directory. Python treats every existing named entry alike.
+            // directory. Every existing named entry is treated alike.
             Err(_) if dir.symlink_metadata(&candidate).is_ok() => match conflict {
                 Conflict::Error | Conflict::Replace => return Err(exists_error()),
                 Conflict::Skip => return Ok(None),
@@ -1459,7 +1458,7 @@ fn copy_entry(
             .map_err(FileError::io)?;
         #[cfg(windows)]
         {
-            // Python copies the link contents even when the target is absolute.
+            // The link contents are copied even when the target is absolute.
             // cap-fs-ext's symlink methods reject such targets as an escape.
             let destination = directory_handle_path(dst)?.join(destination);
             if remove_as_directory {
@@ -1786,7 +1785,7 @@ fn relocate_entry(
 
 // ---- Bug-report attachments ----------------------------------------
 
-/// Python `ATTACHMENT_MAX_BYTES`; the API derives its body cap from this value.
+/// The API derives its body cap from this value.
 const BUG_REPORT_ATTACHMENT_MAX_BYTES: usize = 512 * 1024 * 1024;
 
 /// Keep a readable file name that can neither
@@ -1898,17 +1897,17 @@ impl WriteService {
         self.bug_report_upload(&cwd, requested_id, name, mime, bytes)
     }
 
-    /// Python `_attachment_name`, exposed for the transport's tests.
+    /// Exposed for the transport's tests.
     pub fn attachment_name(raw: &str) -> String {
         attachment_name(raw)
     }
 
-    /// Python `_upload_attachment` for the `bug-report` scope: one raw body
+    /// For the `bug-report` scope: one raw body
     /// into `<repository>/sessiondock_attachments/<id>/<name>` where the
     /// repository lies inside a write root. The batch directory is the
     /// requested id or the next free number; the file keeps its name, reuses
     /// an identical existing file, or takes `stem__N.suffix`; nothing is ever
-    /// overwritten. Returns Python's upload document.
+    /// overwritten. Returns the upload document.
     pub fn bug_report_upload(
         &self,
         repository: &Path,

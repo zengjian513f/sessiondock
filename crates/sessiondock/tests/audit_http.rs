@@ -1,4 +1,4 @@
-//! `POST /api/audit/browser` over the real router: unconfigured 501, Python's
+//! `POST /api/audit/browser` over the real router: unconfigured 501,
 //! protocol limits, JSONL intake, queue saturation and graceful shutdown.
 //! Only a temporary directory is ever written.
 
@@ -328,7 +328,7 @@ async fn queue_saturation_drops_with_counters_while_requests_stay_fast() {
         assert_eq!(body["ok"], true);
         if body["dropped"] == true {
             dropped += 1;
-            // Python drops only after parsing and therefore knows the event count.
+            // Drops only after parsing and therefore knows the event count.
             dropped_events += body["accepted"].as_u64().unwrap();
         } else {
             assert_eq!(body["accepted"], 1);

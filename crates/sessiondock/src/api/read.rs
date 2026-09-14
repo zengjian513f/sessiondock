@@ -1,9 +1,9 @@
 //! Read-only session list, messages, grant pages, input history, and SSE watch.
 //! Page queries use opaque cursors. The publisher owns file checks and each
 //! subscriber renders its own checkpoint. `debug_run`
-//! selects the list view (`SessionStore::list_view`, Python `filter_rows`).
+//! selects the list view (`SessionStore::list_view`).
 //! Main-session packets carry the live `prompt` (`bridge::live`: Claude
-//! question-card file, Codex approval screen) like Python's `_session_prompt`,
+//! question-card file, Codex approval screen),
 //! and the watch loop emits `prompt_only` packets when only that changes.
 //! This layer does not interpret native history or move live cursors.
 use std::{convert::Infallible, sync::Arc, time::Duration};
@@ -90,7 +90,7 @@ pub async fn messages(
             Ok((value, scope))
         })
         .await?;
-    // Python `result["prompt"] = _session_prompt(...)` for every main view:
+    // `result["prompt"]` is set for every main view:
     // null unless a Claude card or a Codex approval is live.
     if let Some(scope) = scope {
         codex_prompt_field(
@@ -319,12 +319,12 @@ fn packet(value: Value, requested: MessageQuery) -> Packet {
     Packet { value, query }
 }
 
-/// Python `emit({"prompt_only": True, "prompt": ...}, "prompt")`.
+/// Emit `{"prompt_only": true, "prompt": ...}` as a `prompt` packet.
 fn prompt_only(prompt: Value) -> String {
     json!({"prompt_only": true, "prompt": prompt}).to_string()
 }
 
-/// Python's poll spacing for the Claude file stamp / Codex screen (0.4 s).
+/// Poll spacing for the Claude file stamp / Codex screen (0.4 s).
 const PROMPT_POLL: Duration = Duration::from_millis(500);
 
 pub async fn watch(
@@ -335,7 +335,7 @@ pub async fn watch(
     let cursor = query.cursor();
     let mut subscription = state.observations.subscribe(query.uid, query.agent).await?;
     let snapshot = subscription.current()?;
-    // Python: `claude_sid` / `codex_session` only for a main session; the
+    // `claude_sid` / `codex_session` only for a main session; the
     // scope comes from this view's validated records.
     let scope = cursor
         .agent
@@ -362,7 +362,7 @@ pub async fn watch(
     codex_prompt_field(&state, scope.as_ref(), &mut first.value, &mut probe).await;
     let stream = async_stream::stream! {
         let mut cursor = first.query;
-        // Python `prompt_revision` / `codex_prompt`: what the last packet carried.
+        // `prompt_revision` / `codex_prompt`: what the last packet carried.
         let mut claude_revision = match &scope {
             Some(PromptScope::Claude { sid }) => state.prompts.claude_revision(sid),
             _ => None,
@@ -379,7 +379,7 @@ pub async fn watch(
                 _ = state.shutdown.cancelled() => break,
                 changed = subscription.changed() => changed,
                 _ = poll.tick(), if scope.is_some() => {
-                    // Python: a changed card file stamp or approval screen
+                    // A changed card file stamp or approval screen
                     // without new records is a `prompt_only` packet.
                     match &scope {
                         Some(PromptScope::Claude { sid }) => {

@@ -109,8 +109,8 @@ pub struct Limits {
     pub max_line_bytes: usize,
     pub max_frame_bytes: usize,
     pub operation_timeout: Duration,
-    /// Optional deadline for partial reads and writes after attach. Python
-    /// waits indefinitely after attach, so production uses `None`.
+    /// Optional deadline for partial reads and writes after attach. An
+    /// attached console waits indefinitely, so production uses `None`.
     pub partial_frame_timeout: Option<Duration>,
 }
 

@@ -2,18 +2,18 @@
 //! sessions registered under a run id stay out of the ordinary views, and
 //! `?debug_run=<id>` shows exactly that run.
 //!
-//! The registry is `<SESSIONDOCK_STATE_DIR>/debug-runs.json` in Python's
+//! The registry is `<SESSIONDOCK_STATE_DIR>/debug-runs.json` in the fixed
 //! format — `{"version":1,"runs":{<run_id>:{"root":…,"created":…,
 //! "sessions":[{source,cwd,sid,uid,name}]}}}` — written by the test tooling
-//! (never by this service) and reloaded whenever its `stat` changes, like
-//! Python's mtime reload. A missing, unreadable or malformed file is an
+//! (never by this service) and reloaded whenever its `stat` changes.
+//! A missing, unreadable or malformed file is an
 //! empty registry: nothing is hidden and every `debug_run` view is empty.
 //!
-//! Matching is Python's `_match`: a row's `uid`, `sid` or `name` found in a
+//! Matching: a row's `uid`, `sid` or `name` found in a
 //! run's session list, or its `cwd` equal to / under a run's root; the run
 //! registered first (registry order) wins. `filter_rows` keeps the rows that
 //! match no run for the default view, and only the rows of `run_id` for a
-//! debug view (an unknown or malformed id yields nothing, as in Python).
+//! debug view (an unknown or malformed id yields nothing).
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 
 pub const DEBUG_RUNS_FILENAME: &str = "debug-runs.json";
-/// `?debug_run=<id>` of a raw query string (Python `_debug_run`: the first
+/// `?debug_run=<id>` of a raw query string (the first
 /// 64 characters). Valid ids are `[A-Za-z0-9_-]`, so no percent-decoding
 /// is needed: an encoded or otherwise malformed id names no run.
 pub fn debug_run_of(query: Option<&str>) -> String {
@@ -111,7 +111,7 @@ impl RunIndex {
             index.ids.insert(run_id.clone());
             let root = text(&run["root"]);
             // A root that is relative or unnormalized could never equal a
-            // normalized absolute cwd, so it is dropped (Python drops it too).
+            // normalized absolute cwd, so it is dropped.
             if !root.is_empty() && root == normpath(root) && root.starts_with('/') {
                 let prefix = if root.ends_with('/') {
                     root.to_owned()
@@ -195,7 +195,6 @@ impl RunIndex {
         }
     }
 
-    /// Python `filter_rows`.
     pub fn filter_rows(&self, rows: Vec<Value>, run_id: &str) -> Vec<Value> {
         if run_id.is_empty() && self.is_empty() {
             return rows;
@@ -387,7 +386,7 @@ mod tests {
             Some("run-a")
         );
         assert_eq!(index.run_for(&json!({"cwd": "relative/root/x"})), None);
-        // Python drops a root that is not already normalized (`_build_index`).
+        // A root that is not already normalized is dropped.
         assert_eq!(index.run_for(&json!({"cwd": "/tmp/trail/x"})), None);
     }
 

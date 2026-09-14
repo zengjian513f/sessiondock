@@ -2,7 +2,7 @@
 """Referenced hardlinked media can be read and renamed without changing its aliases.
 
 GET /api/media returns the original PNG bytes; a file-manager rename preserves
-the inode and the other alias, matching Python.
+the inode and the other alias.
 Synthetic temp fixtures and an isolated loopback Rust server only.
 """
 from __future__ import annotations

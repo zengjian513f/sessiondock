@@ -72,8 +72,8 @@ const AUDIT_TIMEOUT: Duration = Duration::from_secs(2);
 const NOT_REGISTERED: &str = "机器未注册或已移除";
 
 /// What the hub page declares. Per-machine features (terminal, outbox, files,
-/// trash, live, audit) stay undeclared so the page degrades per request like
-/// Python's hub page, which declares nothing; the read-model pages every Rust
+/// trash, live, audit) stay undeclared so the page degrades per request.
+/// The hub page declares nothing; the read-model pages every Rust
 /// node serves are declared. `media_lazy` is left out: the page blanks a
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
@@ -84,8 +84,8 @@ pub fn hub_capabilities() -> Value {
     })
 }
 
-/// Server-side records of settings-page changes (`server.audit.record` in
-/// Python): one JSONL line per event under the hub's audit directory.
+/// Server-side records of settings-page changes:
+/// one JSONL line per event under the hub's audit directory.
 pub struct HubAudit {
     directory: PathBuf,
 }
@@ -165,7 +165,7 @@ pub struct HubApp {
 }
 
 /// Build the hub from its configuration inside a Tokio runtime: the registry
-/// with the wire namespace installed, its monitor, the client with Python's
+/// with the wire namespace installed, its monitor, the client with the
 /// timeouts and the page snapshot in hub mode.
 pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Result<HubApp> {
     let registry = Arc::new(open_registry(config)?);
@@ -222,7 +222,7 @@ fn authority(request: &Request) -> Option<&str> {
 }
 
 /// Same trust boundary as the node's loopback listener (`security::local_only`)
-/// plus Python's cross-origin write rejection, without the blanket body
+/// plus the cross-origin write rejection, without the blanket body
 /// limit: uploads are bounded per path by the dispatcher.
 async fn hub_gate(State(state): State<HubState>, request: Request, next: Next) -> Response {
     let allowed = authority(&request)
@@ -290,7 +290,7 @@ async fn hub_gate(State(state): State<HubState>, request: Request, next: Next) -
     response
 }
 
-/// How `handle` ends early: a finished answer, Python's `ValueError` 400 or
+/// How `handle` ends early: a finished answer, a 400 or
 /// the 502 of a lost upstream connection. The response is boxed so the error
 /// path stays small (most of these functions return `Result<Response, Reply>`).
 enum Reply {
@@ -372,7 +372,7 @@ async fn read_body(request: Request) -> Result<Map<String, Value>, Reply> {
     }
 }
 
-/// Python truthiness of a JSON value.
+/// Truthiness of a JSON value.
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,

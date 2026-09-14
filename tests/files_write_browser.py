@@ -64,7 +64,7 @@ def main():
         (write / "existing.txt").write_text("already here")
         local = Path(temporary) / "local"
         local.mkdir()
-        payload = os.urandom(10 * 1024 * 1024 + 123)  # crosses the Python 8 MiB chunk boundary
+        payload = os.urandom(10 * 1024 * 1024 + 123)  # crosses the 8 MiB chunk boundary
         (local / "synthetic-upload.bin").write_bytes(payload)
         (local / "existing.txt").write_text("would overwrite")
         state = corpus.root / "state"

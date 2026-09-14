@@ -394,7 +394,7 @@ async fn outbox_query_matches_python_first_uid_and_ignores_other_fields() {
         assert!(snapshot["outbox"].is_array());
         f.sanitized(&snapshot);
     }
-    // Python keys outbox rows by the supplied UID. An unrepresented child UID
+    // Outbox rows are keyed by the supplied UID. An unrepresented child UID
     // therefore has the same empty unsupported-source snapshot as any miss.
     let response = get(
         &prepared.router,

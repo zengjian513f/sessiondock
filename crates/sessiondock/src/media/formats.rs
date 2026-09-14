@@ -1,6 +1,6 @@
 //! Image decoding belongs to the client. SessionDock does not add container,
 //! dimension, pixel, frame-count or codec-profile admission rules beyond
-//! Python's decoded 32 MiB item limit.
+//! the decoded 32 MiB item limit.
 
 use super::MediaError;
 

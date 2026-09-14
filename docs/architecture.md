@@ -39,7 +39,7 @@ worker；请求排队直到取得许可或自身取消。探测、
 历史页/媒体/文件写/生命周期响应池按比例派生（表见
 [performance.md](performance.md#并发预算)）；搜索不占读池。
 同一文件版本复用解析结果。`/api/meta` 声明 `stage:"replacement"`、
-`read_only:false`——这是 Python 服务的替代品，前端没有常驻横幅。
+`read_only:false`——这是替代服务，前端没有常驻横幅。
 `observe::WatchHub` 为每个 `(uid,agent)` 共享一次500ms版本读取，最多2个后台
 工作准入；Tokio watch只保留最新不可变快照，每个浏览器按自己的checkpoint
 生成增量，慢读者不堆积旧版本。首次并发订阅合并、最后订阅回收、错误重试
@@ -53,7 +53,7 @@ checkpoint仍核对投影。
 设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图）：
 
 - `sessions/index`：列表只做目录遍历、`stat` 与每文件有界头/尾摘要（头 96 KiB
-  ≤ 40 条、尾 512 KiB，与 Python `list_sessions` 同一推导），按 stamp 缓存，
+  ≤ 40 条、尾 512 KiB，与 `list_sessions` 同一推导），按 stamp 缓存，
   并行读取；没有启动解析，没有会话数/总字节上限，单个文件的变化只影响它自己。
 - `sessions/views`：只在打开会话时经 `records`/`native_input`/`providers` 流式
   解析这一个文件，增量续读，进有界 LRU；游标、锚点、pin、原生输入证据等每视图
@@ -101,7 +101,7 @@ legacy增量补接元数据变化，只更新缓存/标题栏，不重绘已有�
 5. xterm 和 WebSocket 的生命周期由终端管理模块负责。终端字节不经过
    全局深层响应式状态；切换视图不等于销毁连接。
 6. ptyhost 继续每会话一个独立进程。Web 服务重启不得终止 CLI 会话。
-7. Rust 浏览器接口可与新前端一起演化；旧 Python Hub 兼容性需要单独的
+7. Rust 浏览器接口可与新前端一起演化；旧 Hub 兼容性需要单独的
    适配层和契约测试，当前健康检查的版本字段不代表旧节点协议兼容。
 
 当前实现合同以本文件及相应模块文档为准；未完成工作只记录在根目录

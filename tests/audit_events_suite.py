@@ -3,7 +3,7 @@
 
 A JSON batch {page_id, uid, _build, events:[{event, ts, uid, data, content}]} is
 admitted when SESSIONDOCK_AUDIT_DIR is configured; the directory is created
-and chmodded like Python's audit store. Unknown event
+and chmodded. Unknown event
 names matching the intake alphabet are accepted. Each event is written as
 structured metadata only (no free-form content) to browser-YYYY-MM-DD.jsonl,
 with the top-level page_id copied onto every row. Named events

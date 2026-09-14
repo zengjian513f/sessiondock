@@ -293,7 +293,7 @@ fn the_machine_accepts_a_possible_text_match_like_python() {
         )
         .is_empty()
     );
-    // Python retires the first causal matching native user record.
+    // The first causal matching native user record is retired.
     persist(
         &mut machine,
         Command::NativeAck {
@@ -379,7 +379,7 @@ fn first_causal_identical_input_matches_python_row_order() {
     };
     assert_eq!(found.record.turn_id.as_deref(), Some("t2"));
     assert!(observation.watch.is_some());
-    // Like Python, two later identical inputs select the first causal record.
+    // Two later identical inputs select the first causal record.
     let fixture = Fixture::new(&[meta("sid-two")]);
     let boundary = fixture.boundary();
     append(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Header and title-bar folding order over N widths (Python fold_sweep_e2e port, local mode).
+"""Header and title-bar folding order over N widths (local mode).
 
 Isolated Rust server, synthetic Claude session with a branch (an API field only), no CLI. Widths go from 1698 down to
 320 (608 and both sides of every breakpoint included); each width checks two invariants and the

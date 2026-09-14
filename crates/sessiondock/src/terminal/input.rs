@@ -76,7 +76,7 @@ const CONTROL: [&str; 26] = [
 /// Resolve one request key name. Accepts the host's own tmux-style names
 /// exactly (`Enter`, `PPage`, `C-c`) and lower-case aliases (`enter`,
 /// `pageup`, `ctrl-c`, `^c`). Every other nonempty host-valid key is forwarded
-/// literally, matching Python and ptyhost's `key_bytes` fallback.
+/// literally, matching ptyhost's `key_bytes` fallback.
 pub fn map_key(raw: &str) -> Option<MappedKey> {
     if raw.is_empty() || raw.len() > 256 {
         return None;

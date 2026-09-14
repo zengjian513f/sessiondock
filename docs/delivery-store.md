@@ -11,8 +11,8 @@ CLI accepted a prompt.
 `open(directory)` reads an existing ledger. Directories are created as needed;
 ordinary filesystem paths, aliases, permissions and unrelated neighboring files
 are accepted. Valid existing ledger data is preserved. A missing ledger is
-initialized; malformed or unsupported ledger JSON is reset to empty queues,
-matching Python's reader. Operations use the store mutex and atomic file replacement.
+initialized; malformed or unsupported ledger JSON is reset to empty queues.
+Operations use the store mutex and atomic file replacement.
 
 `snapshots()` reloads the committed provider snapshots from disk. External
 provider-state changes restore both machines with fresh epochs; formatting-only
@@ -40,8 +40,8 @@ terminal effects are reconciled with native state; opening the ledger does not
 repeat an old paste or Enter operation.
 
 Writes serialize to a same-directory temporary file, flush its contents and
-atomically replace the ledger. Unix directory synchronization is best effort,
-matching Python. Failure before replacement leaves the previous file intact.
+atomically replace the ledger. Unix directory synchronization is best effort.
+Failure before replacement leaves the previous file intact.
 If the caller loses a persistence acknowledgment, it can read the installed file
 and retry the identical Persist proposal. Storage acknowledgment is separate
 from CLI acceptance.

@@ -296,7 +296,7 @@ pub struct CreateRequest {
 
 /// Exactly one interactive entry must match the source; a resume additionally
 /// requires resume support. Legacy `adapter_id` input is ignored because the
-/// Python endpoint selects commands solely from its fixed source table.
+/// endpoint selects commands solely from its fixed source table.
 fn select_entry(
     service: &LifecycleService,
     source: Source,
@@ -510,7 +510,7 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
         .unwrap_or_default();
     let scan = match scanner.snapshot(true).await {
         Ok(scan) => Some(scan),
-        // Off `/proc`, Python uses psutil and treats an unavailable provider as
+        // Off `/proc`, an unavailable provider is treated as
         // an empty observation. With no exact PID evidence this path can still
         // reuse or start a managed host, but can never signal a process.
         Err(crate::runtime::procscan::ScanError::UnsupportedPlatform) => None,
@@ -664,7 +664,7 @@ pub struct TakeoverRequest {
     #[serde(default)]
     _page_id: String,
 }
-/// Python takeover: reuse a managed console, ask before replacing an external
+/// Takeover: reuse a managed console, ask before replacing an external
 /// CLI, then resume the exact catalog identity in its recorded cwd.
 pub async fn takeover(
     State(state): State<AppState>,
@@ -897,7 +897,7 @@ pub async fn cancel(
     response(project(&record), permit).await
 }
 
-/// Python `pending_store.discard` for the Rust receipt ledger: a finished
+/// Discard for the Rust receipt ledger: a finished
 /// (Exited/Failed) or durably cancelled receipt leaves the sidebar's pending
 /// list. The receipt itself stays queryable through `term/new-status`; a
 /// receipt whose instance may still run is 409 and must be stopped first.
@@ -969,7 +969,7 @@ pub async fn stop(
     })?;
     diagnostics([&body._build, &body._trace_id, &body._page_id]).map_err(|_| invalid_stop())?;
     let uid = body.uid;
-    // Index catalog: an unknown UID is 404 like Python's "会话不存在".
+    // Index catalog: an unknown UID is 404 ("会话不存在").
     // Subagent/unsupported/ambiguous rows proceed to the runtime lookup, which
     // can only ever match a verified main-session scope.
     let known = {

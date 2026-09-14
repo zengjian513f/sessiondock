@@ -1,36 +1,35 @@
 # External CLI liveness: the `/proc` scan and `spawned_by`
 
-The Python `live.py` process scan sits next to the managed
+The process scan sits next to the managed
 host observations ([processes.md](processes.md)). On platforms with
-native process discovery, `/api/live` exposes the complete set Python's
+native process discovery, `/api/live` exposes the complete set the
 frontend expects (`capabilities.live: true`).
 
 ## Scope
 
 - `SESSIONDOCK_PROC_ROOT=<dir>` (default `/proc`) is the process table to read;
   tests point it at a synthetic tree.
-- Grok's active-sessions file defaults to Python's
+- Grok's active-sessions file defaults to
   `~/.grok/active_sessions.json`; `SESSIONDOCK_GROK_ACTIVE=<file>` provides a
   test override. Entries name sessions live without a pid, stale ones included.
 - On a target without native process discovery, `/api/live` reports
   `scan: {status: "unsupported_platform"}`, `capabilities.live` stays false and
   managed observations remain available. External checks return no PID evidence
-  and therefore never signal a process. Python uses psutil on Windows; Rust may
-  add the equivalent provider independently of the HTTP and lifecycle contract.
+  and therefore never signal a process. A Windows provider may
+  be added independently of the HTTP and lifecycle contract.
 
 The scan is read-only: it lists the table, reads `cmdline` of every process,
 and `environ`, `cwd` and `fd/*` links of the processes whose command line
 mentions `claude`, `codex` or `grok`; `stat` lines are read lazily for ancestry
 walks. It never signals, writes, follows a link outside the tree, or elevates
 privileges (another user's `environ`/`fd` are unreadable and simply skipped;
-`cmdline` is world-readable and Python reads it too).
+`cmdline` is world-readable).
 
 Results are cached for 3 s counted from the moment a scan completes (a slow
 scan must not expire its own result), refreshes are single-flight (waiters
 reuse the one in progress) and `?force=1` bypasses the TTL while still
-serializing — Python `snapshot`. On this machine (256 cores, ~3000 processes,
-~180 keyword matches) one debug-build scan takes 60–70 ms; Python's takes
-~125 ms.
+serializing. On this machine (256 cores, ~3000 processes,
+~180 keyword matches) one debug-build scan takes 60–70 ms.
 
 ## Rules kept from `live.py` (commit 16cc89c)
 
@@ -48,7 +47,7 @@ Per matching process:
    helper is attributed to its nearest CLI ancestor by `comm` (12 levels), and
    an orphan without one (a `setsid`/`nohup` script left after the CLI exited)
    counts for nothing; a Grok owner accepts only `GROK_SESSION_ID`; a main
-   process never takes another family's id (Python applies the family check to
+   process never takes another family's id (the family check applies to
    main processes only, so a helper's inherited cross-family id still reaches a
    non-Grok owner).
 4. Open `*.jsonl` files under `/.codex/sessions/`, `/.claude/projects/` or
@@ -62,11 +61,11 @@ Per matching process:
    are exactly those homes, so this only widens synthetic trees.
 
 "CLI main process" means argv0 (`claude`/`codex`/`grok`, `.exe` stripped,
-`codex-*`/`claude-*` prefixes), exactly Python's `_is_cli`/`_cli_family`; a
+`codex-*`/`claude-*` prefixes); a
 runtime such as `node …/claude/cli.js --resume <id>` is not one (its `--resume`
 id still counts, its inherited env id resolves to the nearest CLI ancestor by
-`comm`, and it contributes no `started_at`). Python's `_WINDOWS_RUNTIMES` list
-is only the psutil candidate pre-filter on Windows and does not change this.
+`comm`, and it contributes no `started_at`). A Windows runtimes list
+is only the candidate pre-filter on Windows and does not change this.
 
 Per session list (`active_processes`): a process held by a Codex fork and its
 ancestors belongs to the deepest fork in the list only; unrelated sessions
@@ -74,10 +73,10 @@ sharing a helper keep it; a session named by the Grok active file is live
 without pids. `started_at[uid]` is the earliest start among the owned pids
 that are CLI main processes (`btime + starttime / CLK_TCK`, unrounded).
 
-## `tmux_uids`: whose console a pane is (Python 16cc89c)
+## `tmux_uids`: whose console a pane is
 
 `tmux_uids` are the live sessions that own a console: a `tmux*` ancestor
-(12 levels, Python `term_tmux.hosts`) or a managed host's session root among
+(12 levels) or a managed host's session root among
 the ancestors (16 levels, `term_host.hosts` / `term.process_belongs_to`), a
 managed instance that is `running` (always included), or a Claude session
 that inherited a pane through `continued_in` (below).
@@ -98,14 +97,14 @@ that inherited a pane through `continued_in` (below).
   continued JSONL's process runs under the origin TUI's daemon child, so the
   origin's Claude is a barrier between it and the pane root; the list shows
   only the continued session, so the console follows it. The origin owns a
-  pane when a verified host record declares its uid (Python's pane named
+  pane when a verified host record declares its uid (a pane named
   `sessiondock-claude-<sid[:8]>`; Rust never matches names, the launcher's
   metadata is the declaration) or one of its own CLI processes descends from
   a host's session root. Only Claude sessions look for an origin; a spawned
   grandchild is not a continuation and never inherits. Without a configured
   host directory there are no panes to inherit.
 
-Rust has no tmux backend, so a pane the Python service created in its own
+Rust has no tmux backend, so a pane the predecessor created in its own
 tmux server is only recognised through the process-tree walk, never
 inherited; that is the expected `tmux_uids` difference between the two
 services on one machine.
@@ -139,7 +138,7 @@ managed answer, `partial: true` and `scan.status: "failed"`.
 
 Legacy reads only `uids`/`tmux_uids`/`started_at`; with `live: true` it polls
 `/api/live` on its own and treats an unlisted session as stopped — which is now
-correct, as with Python.
+correct.
 
 ## Pending launches bound by process evidence
 
@@ -171,14 +170,13 @@ immediately: every `/api/live` records it, and a background task ticks every
 no page is open. Both run only when the scan and `SESSIONDOCK_STATE_DIR` are
 configured. The metadata row key is `spawned_by: {source, sid}`, written once
 and never rewritten ([metadata.md](metadata.md#spawned_by)); rows of
-`/api/sessions` carry it verbatim. `tests/meta_import.py` converts Python's
+`/api/sessions` carry it verbatim. `tests/meta_import.py` converts the
 key as-is (the spawner may no longer exist).
 
 The launcher refuses `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and `CLAUDE_PID`
 in profile environments in addition to the session ids, so a web-created
 session is never recorded as the child of whatever session started the
-service (Python strips `SPAWN_ENV_KEYS` from its own environment at startup;
-the Rust launcher `env_clear`s).
+service (the launcher `env_clear`s).
 
 ## Validation
 
@@ -208,6 +206,6 @@ the Rust launcher `env_clear`s).
   headless Grok — `tmux_uids` names the claude only; expectations verified
   against `live.py`).
 - Real roots, read-only: the debug binary with the real roots on a loopback
-  port versus the deployed Python
+  port versus the deployed
   service's `/api/live`; the uid sets and the reasons for every difference are
   recorded in the batch ledger.
