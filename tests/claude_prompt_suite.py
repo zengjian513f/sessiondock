@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract of the live `prompt` field (WP-G): `sessiondock claude-hook`,
+"""HTTP contract of the live `prompt` field: `sessiondock claude-hook`,
 `--write-bridge-settings`, `/api/messages` and `/api/watch` `prompt` /
 `prompt_only` packets, and the "cleared once the native answer is recorded"
 rule. Synthetic Claude/Codex fixtures, loopback only, no CLI, no Chromium.

@@ -45,13 +45,13 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
 | GET `/api/term/new-status` | `record_id`, `instance_id` | Refresh status of that exact recorded instance |
 | POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, guarded stop, verify exit |
-| POST `/api/term/discard` | `record_id`, `instance_id` | WP-E: drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` (Python `pending_store.discard`); 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
+| POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` (Python `pending_store.discard`); 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
 | POST `/api/session/stop` | `uid` | Stop a managed instance through guarded host control or terminate process IDs attributed to this exact external native session; an already-stopped session succeeds with `stopped:false` |
 | POST `/api/term/bind` | `record_id`, `instance_id`, `uid`, `operator_confirmed: true` | Validate a real main-session scope, persist one immutable intent, bind and observe |
-| GET `/api/term/list` | None | Native-bound sessions plus separate launch-only pending receipts; batch 24 adds `resume_sources{claude,codex,grok}` and `backends` |
+| GET `/api/term/list` | None | Native-bound sessions plus separate launch-only pending receipts, `resume_sources{claude,codex,grok}` and `backends` |
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
 | GET `/api/term/complete-dir` | `path`, optional `limit` | Python-compatible absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
-| POST `/api/term/backend` | `backend` | Batch 24: `{ok, backend:"ptyhost", backends}` for `ptyhost`/`host`, not persisted; `tmux` is 400 `backend_unsupported`, unknown 400 `backend_unknown` |
+| POST `/api/term/backend` | `backend` | `{ok, backend:"ptyhost", backends}` for `ptyhost`/`host`, not persisted; `tmux` is 400 `backend_unsupported`, unknown 400 `backend_unknown` |
 
 The limited legacy diagnostics `_build`, `_trace_id`, `_page_id` are accepted but
 confer no authority and are not forwarded. `cols`/`rows` are validated display
@@ -71,7 +71,7 @@ means a receipt result exists; only `running: true` is a freshly verified ready
 instance. Failed/uncertain/cancelled receipts remain queryable, not silently
 deleted or reported as running. A name-only kill is rejected.
 
-WP-E adds `started` (Unix seconds the intent was persisted), `finished_at`
+Receipts carry `started` (Unix seconds the intent was persisted), `finished_at`
 (Unix seconds the receipt became Exited/Failed), `discarded`, `discardable`
 and, on `binding`, `method` (`operator` | `process`), `evidence` and
 `bound_at`. `GET /api/term/list` lists a receipt under `pending` only while
@@ -80,7 +80,7 @@ it is not discarded and — once Exited/Failed — for at most 600 s after
 a finished receipt migrated from an older ledger has no time and is archived
 at once). Archived receipts still answer `term/new-status`.
 
-## Automatic binding by process evidence (WP-E)
+## Automatic binding by process evidence
 
 Python associates a new Codex/Grok pane with its native record once the
 first prompt is on disk (`_new_session_status`: same cwd, not in the
@@ -120,7 +120,7 @@ retaining their permits.
 The service has independent bounded work admission. Oversized/busy responses
 fail explicitly; no unbounded background request queue is created.
 
-## Launch identity kinds (batch 24)
+## Launch identity kinds
 
 `POST /api/term/create` accepts `resume_uid` and the receipt reports
 `launch_kind` (`fixed`, `new_pending`, `new_assigned`, `resume`) with
@@ -138,7 +138,7 @@ substitutes `{sid}` as one argument and adds `sid`+`uid` to `--meta`; the
 instance appears as that UID's session row and the legacy console uses the
 `guarded_v1` native claim. One managed instance per native identity: a running
 one is reused (`action:"reused"`), an uncertain and not cancelled one is 409
-`launch_conflict`. Since WP-E the index also verifies a Grok main session's
+`launch_conflict`. The index also verifies a Grok main session's
 scope (`summary.json` `info.id`), so Grok resume, stop, binding and the
 recycle bin's run state work like Codex. Additional codes: 400
 `invalid_launch_request` / `launch_adapter` (no unique entry for the source, or
@@ -245,7 +245,7 @@ rejects browser SID/source overrides, missing confirmation, conflicts and
 subagents. Old immutable-metadata Grok consoles remain separate.
 
 Receipts add nullable `binding` with source, actual SID/UID, state and method
-`operator` or `process` (WP-E, see above); `native_binding` is unbound, intent,
+`operator` or `process` (see above); `native_binding` is unbound, intent,
 confirmed or uncertain. Neither association is a native CLI receipt. Existing
 pending sockets stay attached without auto-upgrade. The explicit release action
 closes only this page's socket; then a native console can request a new lease

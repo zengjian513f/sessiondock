@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP-only contract of POST /api/bug-report and the bug-report attachment upload against the fake Claude and Codex CLIs (batch 41). No Chromium, no model binary."""
+"""HTTP-only contract of POST /api/bug-report and the bug-report attachment upload against the fake Claude and Codex CLIs. No Chromium, no model binary."""
 from __future__ import annotations
 import argparse, json, os, shutil, socket, subprocess, tempfile, time
 from contextlib import contextmanager

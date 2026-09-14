@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove /api/meta.hostname, served page titles, and list-payload warning trim (WP-C 6/7)."""
+"""Prove /api/meta.hostname, served page titles, and list-payload warning trim."""
 from __future__ import annotations
 
 import argparse

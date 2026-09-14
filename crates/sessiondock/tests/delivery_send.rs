@@ -1,4 +1,4 @@
-//! Claude reliable send end to end (batch 31): the HTTP router, an isolated
+//! Claude reliable send end to end: the HTTP router, an isolated
 //! ptyhost, the lifecycle launcher and the delivery ledger, with the fake
 //! Claude CLI from `tests/fake_claude_cli.py` as the only "CLI". It renders a
 //! Claude-like composer and appends synthetic native `user` records for every

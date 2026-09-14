@@ -128,7 +128,7 @@ def run(host, port):
     for header in ("x-sessiondock-protocol", "x-sessiondock-node-token"):
         assert_err(host, port, "hub headers", "GET", "/api/health", 403, "hub_unsupported",
                    {header: "1"})
-    # Batch 38 H1: hub traffic has its own listener; on loopback a well-formed
+    # Hub traffic has its own listener; on loopback a well-formed
     # credential pair is still refused before any handler, on every route.
     pair = {"x-sessiondock-protocol": "1", "x-sessiondock-node-token": "a" * 48}
     for path in ("/api/meta", "/api/sessions", "/api/nodes", "/"):

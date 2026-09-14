@@ -199,7 +199,7 @@ def builders():
         return (base(SESSIONDOCK_GROK_ROOT=grok, SESSIONDOCK_GROK_ACTIVE=active),
                 0, None, [f"grok_active={active}"])
 
-    # Node listener (batch 38 H1): four settings together or nothing.
+    # Node listener: four settings together or nothing.
     NODE_TOKEN = "check-t0ken.check-t0ken.check-t0ken.check-t0ken~"
 
     def node_files(tmp):
@@ -450,7 +450,7 @@ def builders():
         return base(SESSIONDOCK_PUBLIC_HOSTS="example.com,http://bad/path"), 1, "invalid authority", []
 
     def hostname_default(_tmp):
-        # Batch 44 WP-C: the system host name (Python `socket.gethostname()`),
+        # The system host name (Python `socket.gethostname()`),
         # never the product name while the kernel reports one.
         system = ""
         try:

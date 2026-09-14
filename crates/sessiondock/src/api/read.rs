@@ -79,7 +79,7 @@ pub async fn messages(
             // Opening a large view (window or full) projects and clones every
             // message once — hundreds of MB of temporaries for the largest
             // sessions; give that heap back instead of leaving it mapped
-            // until a later allocation happens to fit (batch 44 WP-A). Small
+            // until a later allocation happens to fit. Small
             // views and the frequent `append=1` polls skip the ~10 ms trim.
             let large = value["message_total"]
                 .as_u64()

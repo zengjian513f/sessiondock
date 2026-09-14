@@ -39,7 +39,7 @@ append, and rewrite; idle-delta p50 is recorded but is not the headline.
 
 Always report first-read (first-window) cost **alongside** append
 improvements. Establishing reuse has a cold-read cost; [append
-cache](append-cache.md) batch 13 and native-input batch 16 both show append
+cache](append-cache.md) and [native input](native-input.md) both show append
 and first-read moving in opposite directions.
 
 ## Linux RSS and HWM
@@ -56,7 +56,7 @@ whole-workload bound. `tests/rss_watch.py --pid PID` is the manual companion
 | RSS | Current resident set at that phase. |
 | HWM | Cumulative process high-water mark since start. It is not a per-phase allocation count or peak delta, and it does not fall when later RSS falls. |
 
-Reporting only RSS after a later phase can hide a temporary copy: the batch 18
+Reporting only RSS after a later phase can hide a temporary copy: an
 intermediate 32 MiB run was 48.297 MiB RSS vs 74.168 MiB HWM after cold GET.
 Logical AST-cache weights, scanner resident statistics, and fixed buffer sizes
 are not allocator/RSS measurements.
@@ -64,7 +64,7 @@ are not allocator/RSS measurements.
 ## Saved binaries
 
 Compare the **same** script against saved pre-change and post-change release
-new binaries under `target/sessiondock-beforeNN` (the historical batch-13 artifact was named `target/agenthub-before13`)
+new binaries under `target/sessiondock-beforeNN`
 and `target/release/sessiondock`. Keep them local/ignored; do not publish
 them or point a benchmark at production directories. Record both SHA-256
 values (`kind=benchmark` JSONL rows). Run old then new sequentially, never in
@@ -104,7 +104,7 @@ native/envelope tables. These benchmarks are opt-in and skipped by
 Five (or three) sequential observations are smoke measurements. They do not
 establish statistical significance, a confidence interval, or an overall
 speedup. Adjacent runs of the same binary already move by several percent
-(see batch 18 ordinary-history notes). Do not relabel an intermediate
+(see the ordinary-history notes). Do not relabel an intermediate
 binary’s numbers as the final release.
 
 ## Anti-patterns

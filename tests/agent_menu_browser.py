@@ -2,7 +2,7 @@
 """Subagent menu (Python agent_menu_e2e port): start/end times, end-time ordering, running dots.
 
 Isolated Rust server, synthetic Claude session with three subagents, desktop and 390 px.
-``agent_items[].active`` is what the backend reads off the sidecar transcripts (batch 36: an open last
+``agent_items[].active`` is what the backend reads off the sidecar transcripts (an open last
 turn with no stop notice in the owner's file): the worker's turn is open, the others ended. Only the
 owner's liveness is page state (``S.live``; a synthetic corpus has no CLI process). The worker
 finishing and resuming are edits to its transcript that reach the menu through a list refresh.

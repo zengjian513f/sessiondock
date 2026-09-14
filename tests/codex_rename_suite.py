@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""WP-C: synthesized Codex /rename command event on isolated HTTP."""
+"""Synthesized Codex /rename command event on isolated HTTP."""
 from __future__ import annotations
 
 import argparse

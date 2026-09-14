@@ -5,7 +5,7 @@ Walks both trees with no skips and classifies every file as identical,
 modified, only-in-legacy or only-in-reference via SHA-256. Modified text
 files (.js .css .html .json .webmanifest .md .txt .svg) get added/removed
 line counts from a unified diff; binary files report byte sizes.
-Intentional baseline changes belong in docs/migration.md. This is a report,
+Intentional baseline changes belong in reference/README.md. This is a report,
 not a validation gate: it always exits 0.
 """
 # run_validation: skip

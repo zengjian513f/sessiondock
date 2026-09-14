@@ -1,4 +1,4 @@
-//! Batch 41 (bug-report): server-side structured events into the same JSONL
+//! Bug-report audit: server-side structured events into the same JSONL
 //! segments the browser intake writes, and the time-window query a diagnostic
 //! bundle needs (Python `EventStore.record` / `EventStore.query`).
 //!

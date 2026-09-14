@@ -1,4 +1,4 @@
-//! Node listener gate (batch 38 H1) against the in-process routers: peer,
+//! Node listener gate against the in-process routers: peer,
 //! protocol and token are each required; the loopback router keeps refusing
 //! hub headers; `/api/meta` and `/api/nodes` report the configured identity.
 //! The `Config` fields are the ones `SESSIONDOCK_NODE_BIND`,
@@ -49,7 +49,7 @@ fn corpus(temp: &Path) -> Config {
             claude: Some(root),
             ..Default::default()
         },
-        // The default is the system host name (batch 44 WP-C); pin the
+        // The default is the system host name; pin the
         // Python-shaped node name this test asserts.
         hostname: "SessionDock".into(),
         ..Config::default()

@@ -1,4 +1,4 @@
-//! Lazy session index (batch 34, WP-A): directory walk + `stat` + bounded
+//! Lazy session index: directory walk + `stat` + bounded
 //! per-file head/tail summaries, cached by file stamp, read in parallel.
 //! Design: docs/read-model.md. No startup parse, no session or byte caps,
 //! one file's change never fails the list. Summaries are the only source for
@@ -40,7 +40,7 @@
 //! Persisted metadata enrichment (stars, fork visibility, pins) is applied by
 //! the facade on top of `sessions()`; it uses [`signed_document`] to re-sign.
 //!
-//! One more bounded read serves `agent_items[].active` (batch 36): for each
+//! One more bounded read serves `agent_items[].active`: for each
 //! Claude main transcript that owns a sidecar whose last turn is open, the
 //! stop notices are scanned from the owner file incrementally by committed
 //! offset ([`agent_stops`]), cached by the owner's stamp, in the same
@@ -433,7 +433,7 @@ impl Index {
     }
 
     /// `refresh` with a caller-chosen reuse window: the previous snapshot is
-    /// returned while it is younger than `ttl` (batch 44 WP-A: opening a
+    /// returned while it is younger than `ttl` (opening a
     /// view tolerates a few seconds of list staleness — the view `stat`s its
     /// own files — so the SSE publisher's 500 ms probes stop walking the
     /// roots every time).
@@ -457,7 +457,7 @@ impl Index {
             return Ok(snapshot.clone());
         }
         let discovered = self.discover()?;
-        // Unchanged walk (batch 44 WP-A): the same files with the same stamps
+        // Unchanged walk: the same files with the same stamps
         // and the same names file describe the snapshot already published —
         // every row, cut and stop scan is a function of those stamps. Skip the
         // rebuild (graph, rows, serialization, signature) and only refresh

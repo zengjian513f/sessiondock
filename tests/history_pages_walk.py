@@ -136,7 +136,7 @@ def build(root):
 def run(binary):
     with tempfile.TemporaryDirectory(prefix="sessiondock-history-pages-walk-") as tmp:
         corpus = build(Path(tmp))
-        # Batch 44 WP-A: the default page is 2000 events; keep the 200-event walk exact.
+        # The default page is 2000 events; keep the 200-event walk exact.
         with isolated_server(corpus, binary, extra_env={"SESSIONDOCK_HISTORY_PAGE_EVENTS": "200"}) as (base, opener):
             caps = get(opener, base, "/api/meta")["capabilities"]
             assert caps.get("history_pages") is True, caps

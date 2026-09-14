@@ -26,7 +26,7 @@ and HTTP authorization. The service never guesses native scope.
   target still requires guarded revalidation when terminal ownership is claimed.
 - `cancel(record_id, expected_instance_id)` durably records cancellation before
   local lease retirement or one guarded kill attempt. Wrong instances fail.
-- `discard(record_id, expected_instance_id)` (WP-E) refreshes the receipt and,
+- `discard(record_id, expected_instance_id)` refreshes the receipt and,
   only when it is Exited/Failed or durably cancelled, persists the display
   tombstone that hides it from `term/list.pending`. It never kills, deletes
   or re-authorizes anything; a live receipt is `NotReady`.
@@ -34,7 +34,7 @@ and HTTP authorization. The service never guesses native scope.
   already-started blocking work finish, and waits for the store lock to release.
 
 `bind(VerifiedNativeBinding)` and `authorize_native(&BoundTarget)` add explicit
-operator-confirmed (or, since WP-E, process-evidence) association and fresh
+operator-confirmed (or process-evidence) association and fresh
 authorization for native targets derived from a launch; the
 `lifecycle::autobind` task builds the process-evidence authority from the
 managed runtime observation and the `/proc` scan and calls the same `bind`. See [the binding contract](lifecycle-binding.md) for strict scope,

@@ -16,8 +16,8 @@ use sessiondock::config::Config;
 
 const USAGE: &str = "usage: sessiondock [--check-config | --initialize-delivery DIRECTORY | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]";
 
-/// The reactor's thread count comes from `SESSIONDOCK_ASYNC_WORKERS` (batch
-/// 44 WP-A), so the runtime is built after the environment is read.
+/// The reactor's thread count comes from `SESSIONDOCK_ASYNC_WORKERS`,
+/// so the runtime is built after the environment is read.
 fn main() -> Result<(), Box<dyn Error>> {
     let workers = match std::env::var_os("SESSIONDOCK_ASYNC_WORKERS") {
         // Validated again by Config::from_env; an invalid value fails there

@@ -4,7 +4,7 @@
 Differing .js/.html/.css via legacy_asset_diff.classify. JS/CSS: quotes/templates
 (comments skipped; ' and " cannot span lines); HTML: text nodes plus title,
 placeholder, aria-label. Added/removed/changed (ratio ≥ 0.6); documented if a
-12-char substring appears in docs/migration.md. Always exits 0.
+12-char substring appears in reference/README.md. Always exits 0.
 """
 # run_validation: skip
 import argparse, json, re, signal, sys
@@ -17,7 +17,7 @@ SUFFIX = {".js", ".html", ".css"}
 ATTRS = {"title", "placeholder", "aria-label"}
 SKIP = {"script", "style"}
 USER_RE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef\u2026]")
-MIG = ROOT / "docs" / "migration.md"
+MIG = ROOT / "reference" / "README.md"
 
 def interesting(text):
     return bool(text) and USER_RE.search(text) is not None

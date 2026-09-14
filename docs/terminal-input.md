@@ -1,4 +1,4 @@
-# Raw terminal input over HTTP (batch 25)
+# Raw terminal input over HTTP
 
 `POST /api/term/send` and `POST /api/term/scroll` give the legacy console the
 two HTTP input paths it used against the Python backend, under exactly the
@@ -50,7 +50,7 @@ Named keys map to the host's key names and byte sequences: `enter`→`\r`,
 translates under DECCKM), `f1`–`f12`, and `ctrl-<a-z>` / `C-x` / `^x`
 (letter & 0x1f), plus one single ASCII letter or digit (`1`–`9`, `y`, `p`)
 typed literally — the Codex question menu and command approval answers the
-live question cards send ([delivery.md](delivery.md), WP-G). Exact host names,
+live question cards send ([delivery.md](delivery.md)). Exact host names,
 lower-case aliases are normalized. Every other nonempty key name up to the
 host's 256-byte per-key ceiling is typed literally, matching Python ptyhost.
 

@@ -1,4 +1,4 @@
-//! Reliable-send executor (batch 31 Claude, batch 32 Codex).
+//! Reliable-send executor.
 //!
 //! Drives `DeliveryEngine` dispatch batches for Claude and Codex main sessions
 //! on managed instances: every terminal mutation follows a durable commit

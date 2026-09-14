@@ -63,7 +63,7 @@ fn catalog_uses_actual_native_ids_without_changing_display_aliases() {
 }
 
 /// A Codex file without `payload.id` stays unsupported; a Grok directory's
-/// `summary.json` `info.id` is its verified identity since WP-E.
+/// `summary.json` `info.id` is its verified identity.
 #[test]
 fn missing_identity_is_rejected_and_grok_summary_id_is_the_scope() {
     let temp = TempDir::new().unwrap();
@@ -109,7 +109,7 @@ fn duplicate_and_conflicting_files_cannot_be_filtered_into_a_unique_native_ident
     let good = root.join("good.jsonl");
     let conflict = root.join("conflict.jsonl");
     write(&good, &[codex("shared-real-id", "good-display")]);
-    // A Codex file's identity is its FIRST session_meta only (batch 35, Python
+    // A Codex file's identity is its FIRST session_meta only (Python
     // `and not meta`); the copied second meta is not a declaration, so the
     // two files collide on `shared-real-id` and neither is unique.
     write(

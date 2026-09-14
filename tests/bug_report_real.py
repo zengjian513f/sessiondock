@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # run_validation: real-cli
-"""Real Claude CLI bug-report worker acceptance (batch 41), cheapest configuration.
+"""Real Claude CLI bug-report worker acceptance, cheapest configuration.
 
 Runs in the normal validation sweep per AGENTS.md with the cheapest Claude
 configuration only (`--model claude-haiku-4-5-20251001 --effort low`, the full

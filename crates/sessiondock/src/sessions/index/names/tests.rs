@@ -226,7 +226,7 @@ fn own_nearest_ancestor_and_agent_titles() {
     );
 }
 
-/// Batch 35: the inherited title follows `forked_from_id` (Python
+/// The inherited title follows `forked_from_id` (Python
 /// `finalize_sessions`), not `history_base.thread_id` — a rewind past the
 /// parent's fork point reads R's bytes but is Q's child.
 #[test]

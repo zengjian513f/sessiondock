@@ -78,7 +78,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sessiondock-history-pages-") as temporary:
         corpus=build(Path(temporary))
         expected_native=native_bytes(corpus.root)
-        # Batch 44 WP-A: pages default to 2000 events and the gap button chains pages;
+        # Pages default to 2000 events and the gap button chains pages;
         # this choreography checks one 200-event page per click.
         with isolated_server(corpus,args.binary,extra_env={"SESSIONDOCK_HISTORY_PAGE_EVENTS":"200"}) as (base,opener),sync_playwright() as playwright:
             assert get_json(opener,base,"/api/meta")["capabilities"]["history_pages"] is True

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude reliable send through the real legacy composer (batch 31).
+"""Claude reliable send through the real legacy composer.
 
 A Claude-profile session is created through the real dialog against the fake
 Claude CLI (`tests/fake_claude_cli.py`, never a model binary). The first line

@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ROUTER = ROOT / "crates/sessiondock/src/api/mod.rs"
-# The hub is a separate binary (batch 40 H4) with its own dispatcher; its
+# The hub is a separate binary with its own dispatcher; its
 # self-answered routes are declared in `HUB_ROUTES` there. Everything else the
 # hub serves is proxied to one node, so only these need cross-checking.
 HUB_ROUTER = ROOT / "crates/sessiondock/src/api/hub.rs"

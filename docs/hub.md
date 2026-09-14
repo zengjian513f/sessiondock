@@ -1,11 +1,11 @@
-# Hub：注册表、健康监控、节点客户端、命名空间、聚合、代理与 `sessiondock-hub`（第三十八批 H2、第三十九批 H3、第四十批 H4）
+# Hub：注册表、健康监控、节点客户端、命名空间、聚合、代理与 `sessiondock-hub`
 
 `crates/sessiondock/src/hub/` 是多机 Hub 的数据层：注册表（`registry.rs`）、
 监控任务（`Monitor`）、Hub→节点 HTTP 客户端（`client.rs`）、节点身份/凭据文件
 （`identity.rs`）、线上命名空间（`namespace.rs`）、五条读路由的聚合与三条分拆写
-（`aggregate.rs`）以及对单台机器的代理（`proxy.rs`）。对照 Python `agenthub/hub.py` 的
+（`aggregate.rs`）以及对单台机器的代理（`proxy.rs`）。对照 Python `hub.py` 的
 `Registry`（73–492 行）与 `HubHandler.dispatch/selected/aggregate/search_aggregate/
-bulk_*/purge_all/resolve/proxy`（518–1076 行），以及 `agenthub/federation.py`。数据层不绑定
+bulk_*/purge_all/resolve/proxy`（518–1076 行），以及 `federation.py`。数据层不绑定
 监听、不读会话根；H4 的 `api/hub.rs` + `bin/sessiondock-hub.rs`（见「Hub 二进制」一节）把这些拼起来，
 Hub 侧的两个数据构造函数是：
 
@@ -198,7 +198,7 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   `try_public_payload`（返回 `Result`）。非字符串的终端名 Python 会 `str()` 后拼接，
   Rust 不动；真实节点只发字符串。
 - 奇偶校验：`tests/hub_namespace_parity.py --python-source <pyhead>` 在进程内
-  `importlib` 加载 `agenthub/federation.py`，把固定语料（51 例：每个改写键、嵌套但
+  `importlib` 加载 `federation.py`，把固定语料（51 例：每个改写键、嵌套但
   不透明的子树、媒体 src、epoch、终端名、回收站 id、每条装饰路径、顶层标量/数组、
   非 ASCII，含 5 例 Python 抛错）跑过 oracle 写成
   `tests/fixtures/hub_namespace_cases.json`（`--write`），默认模式重新生成并比对已提交

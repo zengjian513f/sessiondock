@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP-only contract of POST /api/session/stop for managed instances (batch 29). No Chromium."""
+"""HTTP-only contract of POST /api/session/stop for managed instances. No Chromium."""
 from __future__ import annotations
 import argparse, json, os, subprocess, tempfile, time
 from pathlib import Path

@@ -1162,7 +1162,7 @@ impl Core {
         // `exited`, or the owned Child reaped). Persist that observation
         // directly: re-probing here can race the host's own cleanup (record
         // and socket gone before the reaper tick) and would downgrade the
-        // receipt to Uncertain right after a confirmed stop (WP-E).
+        // receipt to Uncertain right after a confirmed stop.
         let evidence = ObservationEvidence::new(record, Observation::Exited);
         let persisted = self
             .work(move |store| store.observe(evidence).map_err(Error::Store))

@@ -1,5 +1,5 @@
-//! Ownership and fork graph over row summaries (batch 34, WP-A; batch 35
-//! lineage like Python `finalize_sessions`).
+//! Ownership and fork graph over row summaries
+//! (lineage like Python `finalize_sessions`).
 //!
 //! Summaries are the only input: Claude sidecars belong to the main
 //! transcript named by their path, Codex subagent rollouts to the thread
@@ -16,7 +16,7 @@
 //! ambiguous ids, ownership cycles and depth overflow stay visible
 //! `supported:false` rows with the same warning text as today. Healthy
 //! agents are reachable only as `agent_items` of their owner, each with
-//! `active` (batch 36: Codex from its own turn state, Claude from the turn
+//! `active` (Codex from its own turn state, Claude from the turn
 //! state and the owner's stop notices in `agent_stops`).
 //!
 //! A Claude main row whose tail names a `continued-in` session carries

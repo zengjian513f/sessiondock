@@ -338,7 +338,7 @@ async fn sse_publishes_changed_agent_menu_even_when_leaf_cursor_is_unchanged() {
         ),
     )
     .unwrap();
-    // Batch 44 WP-A: the publisher reuses a list up to 3 s old (`OPEN_TTL`)
+    // The publisher reuses a list up to 3 s old (`OPEN_TTL`)
     // instead of walking the roots every 500 ms, so a new agent file shows
     // up within ~3.5 s rather than ~1 s.
     let packet = tokio::time::timeout(Duration::from_secs(8), body.frame())

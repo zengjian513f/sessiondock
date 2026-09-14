@@ -155,7 +155,7 @@ def run(binary, use_browser, smoke):
 
     value = envelope(payload)
 
-    # Batch 34: a giant string that is not a reviewed tool envelope is ordinary
+    # A giant string that is not a reviewed tool envelope is ordinary
     # text, read back verbatim from its stamped source regardless of size;
     # it never becomes an image, a marker or an empty string.
     residual = stringify({'wall_time_seconds':0,'exit_code':0,
@@ -200,7 +200,7 @@ def run(binary, use_browser, smoke):
                 assert images(history) == []
         print(f'PASS giant ordinary event window wrapped={wrapped}',flush=True)
 
-    # Batch 36 (WP-G): a multi-part `exec` result (`[header, chunk, chunk, …]`,
+    # A multi-part `exec` result (`[header, chunk, chunk, …]`,
     # one stringified envelope per streamed chunk) shows every chunk's output
     # in part order; exit_code is the last chunk's, duration_s the sum. A giant
     # chunk is decoded in place as a source-verified span candidate

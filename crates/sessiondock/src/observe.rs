@@ -329,7 +329,7 @@ mod tests {
         let mut old = hub.subscribe(uid.clone(), String::new()).await.unwrap();
         old.current().unwrap();
         // A shape the reference adapter cannot read either (scalar `content`);
-        // a non-JSON line would only be a note since batch 35.
+        // a non-JSON line would only be a note.
         writeln!(
             fs::OpenOptions::new().append(true).open(&path).unwrap(),
             "{}",

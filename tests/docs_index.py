@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Index docs/*.md as Markdown tables (title, summary, batches, lines).
+"""Index docs/*.md as Markdown tables (title, summary, lines).
 
 Prints the index to stdout. With --write, also writes docs/README.md as
 the last step. The generated README is excluded from the index.
@@ -19,17 +19,13 @@ CLIP = 240
 FENCE_RE = re.compile(r"^(\s{0,3})(`{3,}|~{3,})")
 H1_RE = re.compile(r"^#\s+(.+?)\s*$")
 HEADING_RE = re.compile(r"^#{1,6}\s+")
-BATCH_RE = re.compile(r"batch\s+(\d+)|第[一二三四五六七八九十]+批", re.I)
 LINK_RE = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
-MIGRATION = {
-    "migration.md", "native-input.md", "media-parity.md",
-    "performance.md", "append-cache.md",
-}
+MEASUREMENTS = {"native-input.md", "performance.md", "append-cache.md"}
 PROCESS = {"delegation.md", "validation.md"}
-ORDER = ("合同与设计", "迁移记录", "流程")
+ORDER = ("合同与设计", "性能记录", "流程")
 INTRO = """# 文档索引
 
-本文件由 `tests/docs_index.py` 生成，列出 `docs/*.md` 的标题、首段摘要、批次与行数（不含本文件）。重新生成：
+本文件由 `tests/docs_index.py` 生成，列出 `docs/*.md` 的标题、首段摘要与行数（不含本文件）。重新生成：
 
 ```sh
 python3 tests/docs_index.py --write
@@ -58,8 +54,8 @@ def plain(text: str) -> str:
 
 
 def classify(name: str) -> str:
-    if name in MIGRATION:
-        return "迁移记录"
+    if name in MEASUREMENTS:
+        return "性能记录"
     return "流程" if name in PROCESS else "合同与设计"
 
 
@@ -86,13 +82,6 @@ def first_paragraph(lines: list[str]) -> str:
     return text if len(text) <= CLIP else text[:CLIP]
 
 
-def batches_of(text: str) -> str:
-    found = []
-    for match in BATCH_RE.finditer(text):
-        found.append(match.group(1) or match.group(0))
-    return ", ".join(dict.fromkeys(found))
-
-
 def cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
@@ -108,7 +97,6 @@ def collect() -> list[dict]:
             "name": path.name,
             "title": title_of(vis, path.stem),
             "summary": first_paragraph(vis),
-            "batches": batches_of(text),
             "lines": len(text.splitlines()),
             "section": classify(path.name),
         })
@@ -123,12 +111,12 @@ def render(rows: list[dict]) -> str:
             continue
         parts.append(f"## {section}")
         parts.append("")
-        parts.append("| Doc | Title | Summary | Batches | Lines |")
-        parts.append("| --- | --- | --- | --- | --- |")
+        parts.append("| Doc | Title | Summary | Lines |")
+        parts.append("| --- | --- | --- | --- |")
         for row in items:
             doc = f"[{row['name']}]({row['name']})"
             parts.append("| " + " | ".join(cell(value) for value in (
-                doc, row["title"], row["summary"], row["batches"], str(row["lines"]),
+                doc, row["title"], row["summary"], str(row["lines"]),
             )) + " |")
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"

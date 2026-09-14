@@ -5,7 +5,7 @@ edition.workspace = true
 publish.workspace = true
 description = "SessionDock HTTP service"
 
-# The multi-machine hub (batch 40): same crate, own binary, own configuration.
+# The multi-machine hub: same crate, own binary, own configuration.
 [[bin]]
 name = "sessiondock-hub"
 path = "src/bin/sessiondock-hub.rs"
@@ -26,7 +26,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 ptyhost-client = { path = "../ptyhost-client" }
 cap-std = "4"
 cap-fs-ext = "4"
-# Batch 44 WP-A: glibc arena cap and trim so evicted views really leave RSS.
+# Glibc arena cap and trim so evicted views really leave RSS.
 libc = "0.2"
 # Atomic no-clobber file/directory/symlink rename through checked parent handles.
 rustix = { version = "1", features = ["fs"] }
@@ -44,7 +44,7 @@ tokio-util.workspace = true
 native-tls = "0.2"
 tokio-native-tls = "0.3"
 
-# WP-W: process identity on Windows (OpenProcess + GetProcessTimes,
+# Process identity on Windows (OpenProcess + GetProcessTimes,
 # token user SID for the owner check), plus retained-handle file renames.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

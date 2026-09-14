@@ -184,7 +184,7 @@ test('operator binding explanation separates native association from delivery an
   assert.match(message({binding:{state:'confirmed',uid:'codex:full'}}),/不是可靠发送确认/);
   assert.match(message({binding:{state:'uncertain',uid:'codex:full'}}),/尚未确认/);
   assert.equal(message({unavailable_reason:'取消仍未确认退出',binding:{state:'confirmed',uid:'codex:full'}}),'取消仍未确认退出');
-  // WP-E: a process-evidence binding is named as such, still not delivery.
+  // A process-evidence binding is named as such, still not delivery.
   const process = message({binding:{state:'confirmed',method:'process',uid:'codex:full'}});
   assert.match(process, /进程证据.*codex:full/);
   assert.match(process, /不是可靠发送确认/);
@@ -612,7 +612,7 @@ test('file resolution is gated and Python console availability remains unchanged
   const start = 'function consoleUnavailableReason';
   const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (SessionDockCapabilities.config.backend === 'rust' && !linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
-  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // WP-E: like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // Like Python, an exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
   assert.ok(read('nodes.js').includes(exitGuard));
   const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));

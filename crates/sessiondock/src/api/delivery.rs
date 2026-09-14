@@ -1,6 +1,6 @@
 //! Read-only projection of an explicitly opened SessionDock-owned ledger, plus
-//! (batch 31) the four Python send routes driven by the reliable-send executor
-//! (Claude main sessions; Codex main sessions since batch 32).
+//! the four Python send routes driven by the reliable-send executor
+//! (Claude and Codex main sessions).
 //! Native scope is resolved before querying; acknowledgment input never comes
 //! from HTTP.
 use std::convert::Infallible;
@@ -148,7 +148,7 @@ fn body(encoded: service::EncodedJson) -> Response {
     response
 }
 
-// ---- batch 31: Python send routes ------------------------------------------
+// ---- Python send routes ------------------------------------------
 
 fn executor(state: &AppState) -> Result<&std::sync::Arc<DeliveryExecutor>, ApiError> {
     state.executor.as_ref().ok_or_else(|| {

@@ -524,7 +524,7 @@ impl TerminalService {
         result.map_err(input_error).map(|_| InputReceipt { bytes })
     }
 
-    /// Batch 31 delivery driver: the host's screen model plus cursor and
+    /// Delivery driver: the host's screen model plus cursor and
     /// health counters, read under the exact lease and per-name gate like an
     /// input. The host first lets the model
     /// catch up with pending output; a nonzero `lag` means it did not.

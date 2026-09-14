@@ -1,4 +1,4 @@
-//! `POST /api/bug-report` (Python `_bug_report`, batch 41) and the
+//! `POST /api/bug-report` (Python `_bug_report`) and the
 //! `uid=bug-report` branch of `POST /api/session/attachment` (Python's raw
 //! upload special case). Validation, status codes and the 202/500 shapes
 //! follow Python; the bundle and the worker live in `bug_report`.

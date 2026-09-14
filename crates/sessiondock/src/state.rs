@@ -57,7 +57,7 @@ pub struct AppState {
     pub watchers: Arc<Semaphore>,
     pub observations: Arc<crate::observe::WatchHub>,
     pub searches: Arc<Semaphore>,
-    /// Search-text cache, parse budget and warm-up (WP-B); search never
+    /// Search-text cache, parse budget and warm-up; search never
     /// takes a read-pool permit.
     pub search: Arc<crate::search::service::SearchService>,
     pub hostname: Arc<str>,
@@ -67,13 +67,13 @@ pub struct AppState {
     pub audit: Option<Arc<crate::audit::AuditService>>,
     /// Session recycle bin; `None` keeps delete/trash routes `501`.
     pub trash: Option<Arc<crate::trash::TrashService>>,
-    /// Node identity behind the second listener (batch 38 H1); `None` keeps
+    /// Node identity behind the second listener; `None` keeps
     /// `/api/meta` at `protocol: 0, node_id: null` and no hub can register us.
     pub node: Option<Arc<crate::api::node_auth::NodeIdentity>>,
-    /// Bug-report bundles and workers (batch 41); `None` keeps
+    /// Bug-report bundles and workers; `None` keeps
     /// `POST /api/bug-report` 501 and `capabilities.bug_report` false.
     pub bug_report: Option<Arc<crate::bug_report::worker::WorkerContext>>,
-    /// Live `prompt` sources for `/api/messages` and `/api/watch` (WP-G):
+    /// Live `prompt` sources for `/api/messages` and `/api/watch`:
     /// Claude question-card files under the state dir, Codex approvals off
     /// the managed instance screen; JSON `null` when neither applies.
     pub prompts: Arc<crate::bridge::LivePrompts>,

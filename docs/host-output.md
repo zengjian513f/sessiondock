@@ -65,7 +65,7 @@ and its end is the regular exit (`output_complete: true`, no `reason`):
 ConPTY keeps the output pipe open as long as the host owns the pseudo console,
 so EOF never arrives, conhost has rendered the child's final writes within a
 few frames of its exit, and a 3 s wait made every stop report `uncertain`
-although the host was about to finish (WP-W). Completeness on Windows
+although the host was about to finish. Completeness on Windows
 therefore means "the drain window elapsed after the child's exit", not EOF.
 
 Exit payloads add `output_complete: true` on EOF. PTY drain timeout or a read

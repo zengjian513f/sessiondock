@@ -1,7 +1,7 @@
 # External CLI liveness: the `/proc` scan and `spawned_by`
 
-Batch 36 (WP-AB) adds the Python `live.py` process scan next to the managed
-host observations of batch 22 ([processes.md](processes.md)). On platforms with
+The Python `live.py` process scan sits next to the managed
+host observations ([processes.md](processes.md)). On platforms with
 native process discovery, `/api/live` exposes the complete set Python's
 frontend expects (`capabilities.live: true`).
 
@@ -142,14 +142,14 @@ Legacy reads only `uids`/`tmux_uids`/`started_at`; with `live: true` it polls
 `/api/live` on its own and treats an unlisted session as stopped — which is now
 correct, as with Python.
 
-## Pending launches bound by process evidence (WP-E)
+## Pending launches bound by process evidence
 
 The same scan pairs a `Running` receipt of launch kind `new_pending` with its
 native record: the host's child process is the root, and an indexed session
 of the receipt's source whose owned CLI main process is or descends from it
 (`ProcTree::hosted`, the CLI barrier included) is the candidate; exactly one
 candidate is bound through the durable lifecycle bind with method
-`process` ([lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence-wp-e)).
+`process` ([lifecycle-http.md](lifecycle-http.md#automatic-binding-by-process-evidence)).
 The scan stays read-only and cached exactly as above; the task only runs
 while such receipts exist.
 
@@ -171,7 +171,7 @@ immediately: every `/api/live` records it, and a background task ticks every
 10 s (Python `_spawn_watch_loop`) because headless fan-outs live and die while
 no page is open. Both run only when the scan and `SESSIONDOCK_STATE_DIR` are
 configured. The metadata row key is `spawned_by: {source, sid}`, written once
-and never rewritten ([metadata.md](metadata.md#spawned_by-batch-36)); rows of
+and never rewritten ([metadata.md](metadata.md#spawned_by)); rows of
 `/api/sessions` carry it verbatim. `tests/meta_import.py` converts Python's
 key as-is (the spawner may no longer exist).
 

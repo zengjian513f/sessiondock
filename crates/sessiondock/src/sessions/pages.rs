@@ -12,7 +12,7 @@ use std::{
 const MAX_GRANTS: usize = 1024;
 const GRANT_TTL: Duration = Duration::from_secs(10 * 60);
 /// Events per page unless `PageStore::with_page_events` says otherwise
-/// (batch 44 WP-A: `SESSIONDOCK_HISTORY_PAGE_EVENTS`, default 2000). The
+/// (`SESSIONDOCK_HISTORY_PAGE_EVENTS`, default 2000). The
 /// 8 MiB JSON / 128-image / 24 MiB image targets below group a page. A
 /// larger individual event gets its own page so history always advances.
 pub const DEFAULT_PAGE_EVENTS: usize = 2000;

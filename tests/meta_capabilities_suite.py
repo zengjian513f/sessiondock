@@ -63,7 +63,7 @@ def check(area, opener, base, *, protocol=0, node_id=None, **flags):
     caps = body.get("capabilities")
     if not isinstance(caps, dict):
         fail(area, "missing capabilities", body)
-    # Batch 38 H1: identity only with the node listener configured; `hub` never.
+    # Identity only with the node listener configured; `hub` never.
     if body.get("mode") != "local" or body.get("protocol") != protocol or body.get("node_id") != node_id:
         fail(area, f"mode/protocol/node_id (want local/{protocol}/{node_id})", body)
     want = dict(BASE)
@@ -213,7 +213,7 @@ def main():
         with running_env("operator-file-root", binary, corpus, {
                 "SESSIONDOCK_AUDIT_DIR": str(both), "SESSIONDOCK_FILE_ROOTS": str(both)}) as (base, opener):
             check("operator-file-root", opener, base, audit=True, files=True)
-        # Node identity (batch 38 H1): protocol 1 and the minted id, `hub` still false.
+        # Node identity: protocol 1 and the minted id, `hub` still false.
         token = root / "node-token"
         token.touch(mode=0o600)
         token.chmod(0o600)

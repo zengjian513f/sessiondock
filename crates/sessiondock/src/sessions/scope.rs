@@ -15,7 +15,7 @@ pub(crate) struct CatalogEntry {
     pub subagent: bool,
 }
 
-/// WP-E: a Grok main session's identity is the validated `summary.json`
+/// A Grok main session's identity is the validated `summary.json`
 /// `info.id` (the value `grok --session-id`/`--resume` name); the chat file
 /// declares nothing. The index summary derives the same value.
 pub(super) fn grok_native_identity(

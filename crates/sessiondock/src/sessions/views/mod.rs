@@ -1,4 +1,4 @@
-//! Per-session views on demand (batch 34, WP-B): one opened session is
+//! Per-session views on demand: one opened session is
 //! streamed through the existing checked, incremental record path and kept in
 //! a bounded LRU; the session list never builds views. Design: docs/read-model.md.
 //!
@@ -28,7 +28,7 @@ use super::{
 use crate::metadata::TimelinePin;
 
 /// LRU bounds of the view cache (docs/read-model.md: 视图缓存 64 项 / 2 GiB).
-/// Runtime view budgets (batch 44 WP-A): `SESSIONDOCK_CACHE_ENTRIES` /
+/// Runtime view budgets: `SESSIONDOCK_CACHE_ENTRIES` /
 /// `SESSIONDOCK_VIEW_CACHE_MB`.
 fn view_limit() -> usize {
     budgets::caches().view_entries
@@ -349,7 +349,7 @@ impl ViewSnapshot {
         })
     }
 
-    /// Delivery executor read (batch 31): the current fence of a Claude main
+    /// Delivery executor read: the current fence of a Claude main
     /// session plus the projected human `user` inputs committed after `from`,
     /// taken from this checked, restamped immutable view (no ad-hoc file
     /// access). The fence is validated exactly like a message checkpoint; an
@@ -616,7 +616,7 @@ pub(crate) fn parse_candidate(
             abandoned_after: outcome
                 .as_ref()
                 .map_or(0, |outcome| outcome.abandoned_after),
-            // Lines the scanner skipped (batch 35) are a whole-file note the
+            // Lines the scanner skipped are a whole-file note the
             // projection cannot see in `records`.
             invalid_lines: record_batch.invalid,
         },
@@ -1359,7 +1359,7 @@ fn leaf_pin(request: &ViewRequest, leaf: &Candidate) -> Option<TimelinePin> {
 /// View metadata from the published owner row: Python's `session_view`
 /// (`index.py`) for an agent, the row itself for the main transcript. The
 /// row's `migration_warnings` come from the head/tail summary; the detail
-/// merges the projection's whole-file notes into them (batch 35).
+/// merges the projection's whole-file notes into them.
 fn view_meta(request: &ViewRequest, parsed: &Parsed) -> Result<Value, SessionError> {
     let mut meta = request.row.clone();
     if !meta.is_object() {

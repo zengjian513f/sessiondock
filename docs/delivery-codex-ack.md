@@ -4,7 +4,7 @@
 records the checked reader committed **after a fixed submission boundary** into
 the Codex domain's evidence types. It is a pure library: no HTTP route, no
 scheduler, no PTY access, no screen parsing, no CLI launch, and no file access
-of its own. Nothing here makes a receipt `acknowledged`. Batch 32 wires it
+of its own. Nothing here makes a receipt `acknowledged`. It is wired
 into the shared executor ([delivery-codex-executor.md](delivery-codex-executor.md)),
 which submits the adapter's causal `PossibleTextMatch` evidence directly.
 
@@ -137,4 +137,4 @@ and share `RawIndex::record_start`. Unifying them is a later cleanup.
 
 No real CLI, model, native home, PTY or browser is involved. Passing these
 tests alone does not complete M5; the executor wiring and its acceptance are
-batch 32 ([delivery-codex-executor.md](delivery-codex-executor.md)).
+in [delivery-codex-executor.md](delivery-codex-executor.md).

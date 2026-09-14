@@ -1,8 +1,7 @@
 # SessionDock TODO
 
-这里只记录当前独立项目尚未完成或尚未决定的工作。已完成的 Python → Rust
-迁移过程不在这里复述；历史记录见 `MIGRATION_HISTORY.md`，当前行为以代码、测试和
-`docs/` 下的合同为准。
+这里只记录当前尚未完成或尚未决定的工作。当前行为以代码、测试和 `docs/` 下的
+合同为准。
 
 ## Runtime and platform coverage
 

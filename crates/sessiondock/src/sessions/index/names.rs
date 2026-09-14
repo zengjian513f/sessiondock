@@ -1,4 +1,4 @@
-//! Codex `session_index.jsonl` names applied to summary rows (batch 34).
+//! Codex `session_index.jsonl` names applied to summary rows.
 //!
 //! Same contract as Python's `_thread_names`: a missing index is an empty
 //! index, malformed lines are skipped, `id` + `thread_name` must be truthy,

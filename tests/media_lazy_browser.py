@@ -96,7 +96,7 @@ def main():
                         route.continue_()
                 page.route("**/api/media/*",media_route)
                 page.goto(base,wait_until="networkidle")
-                page.evaluate("HISTORY_PAGE_CHAIN=false")   # batch 44: one page per click here
+                page.evaluate("HISTORY_PAGE_CHAIN=false")   # one page per click here
                 page.locator(f'#side .item[data-uid="{uid(corpus,"codex-lazy")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("LAZY ROW 1399")
                 page.wait_for_function("[...document.querySelectorAll('#msgs img')].some(i=>i.complete&&!i.naturalWidth)")

@@ -160,7 +160,7 @@ pub(in crate::sessions) fn scan_native_records(
             match decoded {
                 Ok((row, sidecars)) if row.is_object() => {
                     // Saturating accounting; the cache applies its budget at
-                    // `retain` (batch 44 WP-A: budgets are per cache, not global).
+                    // `retain` (budgets are per cache, not global).
                     decoder.weight = decoder
                         .weight
                         .saturating_add(value_weight(&row))

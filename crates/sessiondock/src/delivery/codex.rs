@@ -116,7 +116,7 @@ pub struct Receipt {
     pub association: Option<Correlation>,
     pub completion: Option<Completion>,
     pub completion_record_end: Option<u64>,
-    /// UI dismissal of an already attempted receipt (batch 32, Python
+    /// UI dismissal of an already attempted receipt (Python
     /// `9b1c2fd`): the row is hidden and leaves automatic tracking, but its
     /// delivery state stays uncertain and its deduplication identity remains.
     /// Removing it never resends and never cancels input the TUI owns.

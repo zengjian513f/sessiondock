@@ -380,7 +380,7 @@ fn image_span_and_large_ordinary_body_are_both_preserved() {
     }
 }
 
-/// Batch 35: on the pull path too, a complete line that is not a JSON object
+/// On the pull path too, a complete line that is not a JSON object
 /// is skipped and counted whatever its length (small-record and streaming
 /// scanner alike), the following records keep their physical offsets, and a
 /// an unsupported media spelling does not turn valid JSON into a hard failure.
@@ -428,7 +428,7 @@ fn invalid_lines_are_skipped_and_unsupported_media_does_not_fail_the_pull_path()
     );
 }
 
-/// Batch 36 (WP-G): a multi-part Codex output (`[header, chunk, chunk, …]`)
+/// A multi-part Codex output (`[header, chunk, chunk, …]`)
 /// is not one envelope candidate. Every giant chunk part is decoded in place
 /// through streaming replay (a span candidate, never read back as text and
 /// parsed a second time), a giant ordinary part is still read back

@@ -38,7 +38,7 @@ def append(path: Path, rows):
 
 def open_session(page, base, uid):
     page.goto(base, wait_until="networkidle")
-    expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+    expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
     page.locator(f'#side .item[data-uid="{uid}"]').click()
     expect(page.locator("#msgs")).to_contain_text("Pin answer one")
     page.wait_for_function("_es && _es.readyState === EventSource.OPEN")

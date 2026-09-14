@@ -70,7 +70,7 @@ survives restart without changing the confirmed display leaf; confirming it
 requires a pending operation and must happen only after external native
 confirmation. These methods themselves do not establish that confirmation.
 
-## Timeline pins (batch 27)
+## Timeline pins
 
 `POST /api/session/rewind {uid, target, request_id?}` persists a display pin
 for a Claude main session (`target` is the record node whose *preceding*
@@ -108,7 +108,7 @@ unchanged. Validation: metadata/provider/session unit tests,
 SSE retirement `native_advanced`, reload keeps state, 390 px pin/unpin, Web
 restart persists, native file only appended).
 
-## `spawned_by` (batch 36)
+## `spawned_by`
 
 `spawned_by: {source, sid}` records which session started this one; the
 server writes it itself from the process tree while both CLIs are alive

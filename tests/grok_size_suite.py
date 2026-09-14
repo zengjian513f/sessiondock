@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Grok list-row size is the whole session directory; "exit: 1" is not an error.
 
-Synthetic temp fixtures and an isolated loopback Rust server only. WP-C items 3
-and 4: Python `_dir_size` (every regular file under the session dir) and a
+Synthetic temp fixtures and an isolated loopback Rust server only.
+Python `_dir_size` (every regular file under the session dir) and a
 tool-result whose text starts with "exit: 1" must not be flagged as an error.
 """
 from __future__ import annotations

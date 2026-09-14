@@ -54,7 +54,7 @@
 - `web/src/components`: UI components. Do not put session synchronization,
   delivery confirmation, or terminal byte buffering in view callbacks.
 - `reference/legacy-web`: frozen migration reference, not served or bundled.
-  Record intentional baseline changes in `docs/migration.md`.
+  Record intentional baseline changes in `reference/README.md`.
 
 ## Delegation
 

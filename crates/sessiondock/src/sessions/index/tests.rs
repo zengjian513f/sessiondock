@@ -642,7 +642,7 @@ fn facade_rows_are_the_index_rows_and_the_documented_topology_holds() {
         assert_eq!(row["supported"], false, "{sid}");
         assert_eq!(row["migration_warnings"], json!([message]), "{sid}");
     }
-    // Batch 35: agents whose owner is not indexed are no rows (Python drops
+    // Agents whose owner is not indexed are no rows (Python drops
     // them); their uid still answers a typed 501 and they stay catalogued.
     for (sid, message) in [
         (
@@ -768,7 +768,7 @@ fn catalog_matches_the_opened_views_native_scopes() {
     assert!(actual.verified_scope(&corpus.uid("claude-branch")).is_ok());
     assert!(actual.verified_scope(&corpus.uid("codex-fork")).is_ok());
     assert!(actual.verified_scope(&corpus.uid("codex-agent")).is_err());
-    // WP-E: Grok main sessions verify through summary.json `info.id`.
+    // Grok main sessions verify through summary.json `info.id`.
     assert!(actual.verified_scope(&corpus.uid("grok-chat")).is_ok());
 }
 
@@ -857,7 +857,7 @@ fn warm_refresh_is_stat_only_and_only_changed_files_are_reread() {
     let second = index.refresh(true).unwrap();
     assert_eq!(index.reads(), files, "warm: no summary read at all");
     assert_eq!(second.sig(), first.sig());
-    // Batch 44 WP-A: a forced walk that finds every stamp unchanged reuses
+    // A forced walk that finds every stamp unchanged reuses
     // the snapshot instead of rebuilding rows, graph and signature.
     assert!(
         Arc::ptr_eq(&first, &second),
@@ -917,7 +917,7 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
     write(&claude.join("proj/origin/subagents/agent-a1.jsonl"), &agent);
     write(
         &claude.join("proj/origin/subagents/agent-a1.meta.json"),
-        br#"{"agentType":"worker","description":"WP-C worker"}"#,
+        br#"{"agentType":"worker","description":"fixture worker"}"#,
     );
     write(
         &claude.join("proj/continued.jsonl"),
@@ -938,7 +938,7 @@ fn a_subagent_symlink_inside_a_root_is_followed_and_owned_by_the_linking_session
     .unwrap();
     write(
         &linked.join("agent-a1.meta.json"),
-        br#"{"agentType":"worker","description":"WP-C worker"}"#,
+        br#"{"agentType":"worker","description":"fixture worker"}"#,
     );
     // External regular files and main-file aliases are followed; dangling
     // aliases and directory targets are skipped.
@@ -1610,7 +1610,7 @@ fn graph_fork_validation_messages_and_cut_outcomes() {
             "分叉历史依赖存在循环",
         ),
     ];
-    // Batch 35: legal shapes Python reads — `forked_from_id` naming another
+    // Legal shapes Python reads — `forked_from_id` naming another
     // thread than `history_base.thread_id`, and no `history_base` at all.
     let legal = vec![
         (
@@ -1688,7 +1688,7 @@ fn graph_fork_validation_messages_and_cut_outcomes() {
     assert_eq!(row["size"], all[&zero_uid].summary.size);
 }
 
-/// Batch 35 R3: the row lineage is Python `finalize_sessions`' walk over
+/// The row lineage is Python `finalize_sessions`' walk over
 /// `forked_from_id`, independent of `history_base`.
 #[test]
 fn graph_legacy_fork_chain_decorates_rows_along_forked_from_id() {
@@ -1764,7 +1764,7 @@ fn graph_legacy_fork_chain_decorates_rows_along_forked_from_id() {
     assert_eq!(row["forked_from_id"], "B");
 }
 
-/// Batch 35 R2/R3: a rewind past the parent's own fork point —
+/// A rewind past the parent's own fork point —
 /// `history_base` names the physical file (R) while `forked_from_id` names
 /// the logical parent (Q). Open reads R at `c`; the row follows Q → R.
 #[test]
@@ -1870,7 +1870,7 @@ fn graph_claude_sidecars_attach_by_exact_path_and_summary_failures_keep_their_re
         None,
     );
     // A shape the reference adapter cannot read either (scalar `content`);
-    // a corrupt line is only a note since batch 35.
+    // a corrupt line is only a note.
     let mut scalar = claude_row("broken-sess", "user", "u0", Value::Null, "Broken");
     scalar["message"]["content"] = json!(42);
     let broken = entry(
@@ -2121,7 +2121,7 @@ fn documented_row_fields_are_exactly_todays_set() {
 // ---------------------------------------------------------------------------
 // Python oracle: the exact corpus and comparison rules of
 // tests/list_rows_parity.py, applied to the index rows directly (the script
-// itself needs the HTTP server wired by WP-C). Run with
+// itself needs the HTTP server). Run with
 // `SESSIONDOCK_PYTHON_SOURCE=../sessiondock cargo test -p sessiondock --lib
 // sessions::index::tests::python -- --ignored --nocapture`.
 // ---------------------------------------------------------------------------
@@ -2271,7 +2271,7 @@ print(json.dumps(rows, ensure_ascii=False, default=str))
 }
 
 // ---------------------------------------------------------------------------
-// Batch 36 (WP-C): `agent_items[].active` and `continued_in` — the Python
+// `agent_items[].active` and `continued_in` — the Python
 // `ClaudeAgentItemTests` / Codex subagent / `continued_in` cases end to end
 // through `Index::refresh`.
 // ---------------------------------------------------------------------------

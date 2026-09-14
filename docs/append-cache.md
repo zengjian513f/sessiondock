@@ -10,7 +10,7 @@ Every changed candidate still goes through the existing full bounded file read,
 trusted-path/open-handle checks and before/after restamping. A cache entry can be
 reused only when it corresponds to the exact previous published Parsed candidate,
 has no incomplete/error checkpoint, and the entire previously committed byte
-prefix is verified against the freshly read prefix. Batch 17 uses SHA-256 over
+prefix is verified against the freshly read prefix. Verification uses SHA-256 over
 every byte through that complete-line boundary, replacing retained raw-byte
 comparison; it never substitutes a sampled header hash. Source/root/data/summary paths and stable
 file identity must also agree. The 4 KiB public head, file size and mtime alone are
@@ -61,7 +61,7 @@ to that weight; a tiny-encoded array of many scalars is not free. This is an
 additional disposable cache, not part of the existing 64 MiB raw-input, 16 MiB
 view or 32 MiB media budgets. It is not an allocator/RSS upper bound. Oversized
 multi-record batches simply are not cached; eviction must not change history
-output or become an HTTP error. Since batch 16, an individual record must also
+output or become an HTTP error. An individual record must also
 pass the scanner's separate structural/resident limits; physically small but
 enormous node trees are explicitly rejected before cache admission.
 
@@ -74,16 +74,16 @@ thresholds. A fresh process does not imply a cold operating-system file cache.
 Optional `--rss` reads Linux VmRSS/VmHWM for the exact spawned server PID outside
 the HTTP timing windows. These process figures include all server allocations,
 not only the record cache; they cannot prove a cross-platform or whole-workload
-memory bound. Batch 17 timing and memory observations are in [native input](native-input.md).
+memory bound. Further timing and memory observations are in [native input](native-input.md).
 
 Run the same script against saved pre-change and post-change release binaries:
 
 ```sh
-python3 tests/append_benchmark.py --binary target/agenthub-before13 --samples 3
+python3 tests/append_benchmark.py --binary target/sessiondock-before13 --samples 3
 python3 tests/append_benchmark.py --binary target/release/sessiondock --samples 3
 ```
 
-### Batch 13 release comparison
+### Release comparison
 
 Adjacent serial runs, three samples per provider/size, passed all 27 cursor cases
 for both binaries. The 10k-record p50 observations in milliseconds were:

@@ -58,8 +58,8 @@ def build(root):
     data.put(sid, "claude", rows, [])
     data.put("claude-broken", "claude", [
         claude_row("claude-broken", "user", "u0", None, "Unsupported synthetic history"),
-        # Scalar content is unreadable for Python too (unknown kinds are skipped
-        # since batch 33; duplicate session_meta / missing parents since batch 35).
+        # Scalar content is unreadable for Python too (unknown kinds, duplicate
+        # session_meta and missing parents are skipped).
         unreadable_claude_row("claude-broken", "u1", "u0")], [])
 
     def cx(sid, extra):

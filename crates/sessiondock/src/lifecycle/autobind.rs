@@ -1,4 +1,4 @@
-//! Process-evidence binding of pending Codex/Grok launches (WP-E).
+//! Process-evidence binding of pending Codex/Grok launches.
 //!
 //! Python's `new-status` resolution associates a fresh `codex`/`grok` pane
 //! with the native record that appeared after the first prompt: same cwd,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract of the `sessiondock-hub` binary (batch 40 H4) over the wire.
+"""HTTP contract of the `sessiondock-hub` binary over the wire.
 
 Two `tests/hub_fake_node.py` nodes are registered with the `register`
 subcommand (a server-side operation, never an HTTP route); the hub serves

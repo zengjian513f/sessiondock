@@ -54,7 +54,7 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
     if (!cap) return `${node.name} 的控制台状态尚未返回，请稍后重试。`;
   }
   if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {
-    // WP-E: like Python, an exited instance leaves the button as "接管会话"
+    // Like Python, an exited instance leaves the button as "接管会话"
     // whenever the source has a resume-capable CLI profile (the click starts
     // a fresh `--resume`); only an unresumable source keeps the gray
     // explanation. The exited xterm is never reclaimed automatically.

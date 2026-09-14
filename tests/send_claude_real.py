@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Claude CLI reliable-send acceptance (batch 31), cheapest configuration.
+"""Real Claude CLI reliable-send acceptance, cheapest configuration.
 
 Part of normal validation per AGENTS.md: it always uses the cheapest Claude
 configuration (`--model claude-haiku-4-5-20251001 --effort low`, the full dated ID,
@@ -17,7 +17,7 @@ the instance. Proxy variables (HTTP(S)_PROXY, ALL_PROXY, NO_PROXY) are passed
 through to the CLI because this network needs them; nothing else is inherited.
 
 It SKIPS with a printed reason when `claude` is not on PATH or not logged in.
-Since batch 33 the read model skips the record/attachment kinds current Claude
+The read model skips the record/attachment kinds current Claude
 Code versions write (reported as non-fatal `migration_warnings`, printed here);
 a session the read model still refuses is an assertion failure, not a skip.
 Bounded to a couple of turns and 90 s; never writes outside the temp dirs.
@@ -222,7 +222,7 @@ def main():
             row = next((r for r in listed.get("sessions", [])
                         if r.get("source") == "claude" and r.get("sid") == sid), None)
             assert row is not None, f"session {sid} not listed"
-            # Batch 33: the read model skips unknown record/attachment kinds
+            # The read model skips unknown record/attachment kinds
             # like Python and reports them as non-fatal warnings; a real session
             # that is still unsupported is a read-model regression, never a skip.
             assert row.get("supported") is True, (

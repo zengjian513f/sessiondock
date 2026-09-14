@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # run_validation: skip
-"""Fake Claude CLI for reliable-send tests (batch 31). Never a model binary.
+"""Fake Claude CLI for reliable-send tests. Never a model binary.
 
 Launched by the lifecycle launcher exactly like a real profile
 (`--session-id <uuid>` for new sessions, `--resume <sid>` for resumes). It

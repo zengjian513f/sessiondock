@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Python-oracle parity of GET /api/messages for Claude torn lines and broken lineage (R5).
 
-Batch 35: an invalid JSONL line is skipped (`跳过无效的JSONL 记录 ×N`); a parentUuid
+An invalid JSONL line is skipped (`跳过无效的JSONL 记录 ×N`); a parentUuid
 chain that reaches a missing uuid keeps the reachable timeline (`Claude 祖先链在
 <uuid> 处中断，之前的记录不在当前时间线`); a cycle truncates (`Claude 祖先链存在
 循环，已在 <uuid> 处截断`); a last-prompt leafUuid with no record warns (`Claude
@@ -106,7 +106,7 @@ def run(opener, base, corpus, adapter):
             fail("supported", f"{sid} supported={row.get('supported')} warnings={row.get('migration_warnings')}",
                  json.dumps(row, ensure_ascii=False).encode())
     passed("supported")
-    # Batch 44 WP-C: a supported list row carries no migration_warnings; the
+    # A supported list row carries no migration_warnings; the
     # skipped-line note is on the detail meta.
     if "migration_warnings" in rows["TORN"]:
         fail("TORN-warning", "supported list row must not carry migration_warnings",

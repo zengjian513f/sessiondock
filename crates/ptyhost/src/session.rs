@@ -33,7 +33,7 @@ const PTY_DRAIN_TIMEOUT: Duration = Duration::from_secs(3);
 /// drain always runs to its deadline and *is* the normal end of output there:
 /// conhost has rendered the child's last writes well within this window, and
 /// 3 s would turn every stop into "uncertain" for the service waiting on the
-/// exit (WP-W).
+/// exit.
 #[cfg(windows)]
 const PTY_DRAIN_TIMEOUT: Duration = Duration::from_millis(600);
 /// What an elapsed drain means: incomplete output on a real PTY, the regular

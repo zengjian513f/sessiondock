@@ -718,7 +718,7 @@ fn unsupported_files_and_oversized_files_fail_only_their_own_session() {
     let root = temp.path().canonicalize().unwrap().join("codex");
     let bad = root.join("2026/09/11/rollout-bad.jsonl");
     // A shape the reference adapter cannot read either (scalar `content`);
-    // a corrupt line is only a note since batch 35.
+    // a corrupt line is only a note.
     let mut scalar = codex_message("user", "fine");
     scalar["payload"]["content"] = json!(42);
     write(&bad, &[codex_header("b"), scalar]);

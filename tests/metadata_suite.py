@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """HTTP contract of persisted preferences (star, fork-visibility) vs /api/sessions,
-plus the server-recorded `spawned_by` row key (batch 36): seeded on disk, carried
+plus the server-recorded `spawned_by` row key: seeded on disk, carried
 by the row, untouched by star/unstar, durable across restart.
 
 Loopback synthetic fixtures, no Chromium. Codes from api/metadata.rs; disk keys

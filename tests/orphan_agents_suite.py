@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HTTP contract for orphan sub-agents (batch 35 R4).
+"""HTTP contract for orphan sub-agents.
 
 Claude sidecars without an owner file and Codex subagents whose
 parent_thread_id is not indexed are absent from GET /api/sessions.

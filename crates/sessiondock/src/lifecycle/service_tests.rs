@@ -906,7 +906,7 @@ async fn binding_confirmation_rejects_unsupported_scope_capability_and_stale_ins
         VerifiedNativeBinding::from_scope(&child, &record, true),
         Err(Error::BindingUnsupported)
     ));
-    // WP-E: a Grok scope is bindable, but only for a Grok receipt (this one
+    // A Grok scope is bindable, but only for a Grok receipt (this one
     // is Codex) — source disagreement stays an invalid binding.
     let mut grok = native_scope();
     grok.source = "grok".into();

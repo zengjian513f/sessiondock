@@ -91,7 +91,7 @@ pub fn map_key(raw: &str) -> Option<MappedKey> {
     }
     // One ASCII letter or digit is typed literally, which is also what the
     // host does with it: the Codex question menu answers with `1`–`9` and a
-    // command approval with its `y` / `p` mnemonic (WP-G question cards).
+    // command approval with its `y` / `p` mnemonic (question cards).
     if let [byte] = raw.as_bytes()
         && byte.is_ascii_alphanumeric()
         && let Some(index) = LITERAL.find(*byte as char)

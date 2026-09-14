@@ -65,7 +65,7 @@ def main():
                 page.on("request", lambda request: requests.append(request.url))
                 response = page.goto(base, wait_until="networkidle")
                 assert response.status == 200
-                expect(page.locator("#backend-notice")).to_be_hidden()  # batch 44: no standing banner
+                expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
                 expect(page.locator("#session-active")).to_have_text("0" if sys.platform.startswith("linux") else "?")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
                 assert page.evaluate("SessionDockCapabilities.namespace") == "sessiondock."
@@ -110,7 +110,7 @@ def main():
                 assert page.locator("#msgs").inner_text().count("SSE 半行中文追加只出现一次") == 1
 
                 # Unreadable native grammar must not leave a silently stale 'live'
-                # transcript. Since batch 33 unknown record kinds are skipped like
+                # transcript. Unknown record kinds are skipped like
                 # Python, so the trigger is a scalar `content` (unreadable for both).
                 unsupported = json.dumps({"type": "user", "sessionId": "legacy",
                     "message": {"role": "user", "content": 42}}) + "\n"

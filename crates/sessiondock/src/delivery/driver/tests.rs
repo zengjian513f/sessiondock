@@ -206,7 +206,7 @@ fn ansi_stripping_handles_osc_and_csi() {
     assert_eq!(strip_ansi("\x1b]0;title\x07a\x1b[31mb\x1b[0m"), "ab");
 }
 
-// ---- Codex composer (batch 32, port of codex_bridge.composer_state) --------
+// ---- Codex composer (port of codex_bridge.composer_state) --------
 
 const CODEX_FOOTER: &str = "gpt-5.6-luna low · /synthetic/codex-area";
 const PARTICLES: &str = "\x1b[38;2;90;90;90m⠁⠂⠄ ⠈⠐⠠\x1b[0m";

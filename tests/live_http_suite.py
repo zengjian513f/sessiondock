@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP-only contract of GET /api/live: empty inventory,
 cache hit/force miss, bound free-shell running then exited; then the explicit
-`/proc` scan (batch 36, Python live.py) over a synthetic process tree: uids,
+`/proc` scan (Python live.py) over a synthetic process tree: uids,
 tmux_uids (with the Python 16cc89c CLI barrier: a `grok -p` under a pane's
 claude is live but not managed), started_at, the scan cache and `spawned_by`
 recording; finally continued-in pane inheritance against a real ptyhost pane
@@ -153,7 +153,7 @@ def run(opener, base, uid, other, work):
 
 
 # ---------------------------------------------------------------- proc scan
-# Batch 36: the `/proc` scan (Python live.py) over a synthetic tree
+# The `/proc` scan (Python live.py) over a synthetic tree
 # (SESSIONDOCK_PROC_ROOT), Python tests/test_live.py FakeProc shape.
 BTIME = 1_700_000_000
 SID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"   # claude, resumed by pid 100

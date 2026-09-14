@@ -3,7 +3,7 @@
 """Operator tool: summarize supported:false list rows of a running server.
 
 GET /api/sessions JSON only (never session files). Groups unsupported rows by
-(source, last migration_warnings line — the fatal reason). Batch 35 (R1–R5)
+(source, last migration_warnings line — the fatal reason). The read model
 keeps these as supported:true skip notes, so they belong in the non-fatal
 table, not as last-line reasons: Codex later session_meta counted as
 `跳过重复的Codex session_meta ×N`; history_base null + forked_from_id is

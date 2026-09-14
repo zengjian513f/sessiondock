@@ -726,7 +726,7 @@ fn schema_two_migration_preserves_cancellation_and_rejects_injected_binding() {
 #[test]
 fn binding_spec_keeps_source_identity_and_accepts_extra_persisted_fields() {
     let (f, mut store, running, spec) = binding_fixture();
-    // WP-E: Grok binds like the others (summary.json `info.id` is its
+    // Grok binds like the others (summary.json `info.id` is its
     // native scope); a Grok uid still needs the `grok:` prefix.
     assert!(
         BindingSpec::new(

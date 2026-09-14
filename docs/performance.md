@@ -1,6 +1,6 @@
 # 读模型性能：真实读根与合成规模
 
-读模型设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图，第三十四批）。
+读模型设计以 [read-model.md](read-model.md) 为准（惰性索引 + 按需视图）。
 本文记录 2026-09-12 在开发机（Linux、Rust 1.98.1、release 构建、页缓存热）上的
 实测：真实读根的操作者基准、合成规模套件、以及最大真实文件的拷贝验收。这不是
 生产压测，也没有与 Python 做相同条件的对比；没有 Windows/macOS 或跨机器结果。
@@ -32,7 +32,7 @@ Claude 508 文件 / 795 MB，Codex 470 文件 / 2.5 GB，Grok 187 MB。
 /`permission-mode`/`mode`（Claude，各 ≈186 行）、attachment `plan_mode`（149 行）。
 63 个不支持的行是头/尾摘要能看见的硬错误（坏行、缺失父线程等），打开时给出同一原因。
 
-## 全文搜索：搜索文本缓存（WP-B，2026-09-13）
+## 全文搜索：搜索文本缓存（2026-09-13）
 
 设计见 [read-model.md](read-model.md#搜索)。独立实例（只配三个真实读根 + scratch
 下的 `SESSIONDOCK_SEARCH_CACHE_DIR`，816 行、3.6 GB），对照 Python 8710（只 GET），机器
@@ -49,7 +49,7 @@ Claude 508 文件 / 795 MB，Codex 470 文件 / 2.5 GB，Grok 187 MB。
 | `agenthub\s+rust`（可跨行正则，整体读入） | — | — | 0.10 s | 0.63 s |
 
 结果集合、顺序、命中数与 Python 逐条一致（Rust 多出的 debug-run 行按 Python 的
-uid 集合过滤，WP-C 负责该筛选）；唯一差异是 `claude:017851b4c1a4b53c` 的片段
+uid 集合过滤）；唯一差异是 `claude:017851b4c1a4b53c` 的片段
 上下文——Rust 投影把 114 条 `interrupted` 用户消息当正文（Python 15 条），改前
 的二进制片段与改后逐字相同，属读模型投影差异，不是搜索的。
 
@@ -110,11 +110,11 @@ fixture_gen 语料 1500 会话 / 1 GiB（三家来源，最后一对 user/assist
 128 个文件（每个约 7 MB），使“打开 20 个”对应真实分布（真实根最新 20 个共约
 45 MB），巨文件单独打开并报告常驻。
 
-WP-A 的索引单元基准（`cargo test -p sessiondock --lib sessions::index::tests::benchmark -- --ignored --nocapture`，
-2000 会话 / 1.05 GB，16 路）：冷 327 ms，热（stat-only）33 ms。WP-B 的视图基准：
+索引单元基准（`cargo test -p sessiondock --lib sessions::index::tests::benchmark -- --ignored --nocapture`，
+2000 会话 / 1.05 GB，16 路）：冷 327 ms，热（stat-only）33 ms。视图基准：
 258 MB / 40k 行 Codex 文件全量解析 1.98 s，热打开 0.06 s。
 
-## 并发预算（第四十四批 WP-A）
+## 并发预算
 
 所有池使用 tokio `Semaphore` 排队。等待中的请求取消后离开队列且不持有许可；
 已开始的阻塞工作持有许可到结束，不因 HTTP 取消而提前释放。池关闭会唤醒等待者。
@@ -136,7 +136,7 @@ WP-A 的索引单元基准（`cargo test -p sessiondock --lib sessions::index::t
 观察 180 s 0 个非 2xx；断网 6 s 恢复后 SSE 在 ≤ 2 s 内重连，无横幅、不暂停
 （`scratchpad/monkey/wpa/accept_concurrency.py`）。
 
-## 常驻内存（第四十四批 WP-A）
+## 常驻内存
 
 同一台机器、同一批真实根（只读），`scratchpad/monkey/wpa/mem_bench.py` 按主会话
 给出的顺序：列表 → p90（7.9 MB）→ 最大 Claude（49 MB）→ 最大 Codex（385 MB）→
@@ -170,14 +170,14 @@ VmRSS，MB：
   改为 64 MiB（`SESSIONDOCK_AST_CACHE_MB`），只有小于预算的活跃文件才为追加保留 AST。
 - **视图 LRU**：原 64 项 / 2 GiB（按序列化字节记账）；默认 16 项 / 128 MiB
   （`SESSIONDOCK_CACHE_ENTRIES` / `SESSIONDOCK_VIEW_CACHE_MB`）。截图密集的 304 MB Codex
-  会话一个视图 ≈ 230 MB 常驻（≤ 2 MiB 的内嵌图片 base64 驻留在视图里，媒体口径属
-  WP-D；解析临时对象归还之前曾把它显示成 +486 MB）。"最大 5 个"依次打开时 LRU
+  会话一个视图 ≈ 230 MB 常驻（≤ 2 MiB 的内嵌图片 base64 驻留在视图里，媒体口径另计；
+  解析临时对象归还之前曾把它显示成 +486 MB）。"最大 5 个"依次打开时 LRU
   按记账字节淘汰，终值 464 MB、空闲后 497 MB。
 
 `tikv-jemallocator` 未试：需要新增外部依赖（联网取包）；`malloc_trim` 已让释放
 真正回落，且只新增已在 lock 里的 `libc` 直接依赖。
 
-## 空闲页面 CPU（第四十四批 WP-A）
+## 空闲页面 CPU
 
 一个无头页面停在活动会话 `claude:179009468904dece`（22 个子代理，文件持续追加）
 40 s，独立实例（`scratchpad/monkey/wpa/idle_cpu_iso.py`）：
@@ -207,10 +207,10 @@ VmRSS，MB：
 索引新的字节时仍立即重扫一次——把它节流到每秒一次试过，但读模型的测试与文档承诺
 `meta` 与字节一致，故撤回；其余打开按 `OPEN_TTL` 3 s 复用列表）。计入进程扫描再加 ~3.5 %
 （每 3 s 一次冷扫描，与 Python 同频）。要到 ≤ 5 % 一核，剩下两件都在本包范围外：
-`sessions/views` 的追加改成增量投影（WP-C 文件），`graph::build` 改增量
-（`sessions/index/graph.rs`，WP-C 文件）。
+`sessions/views` 的追加改成增量投影，`graph::build` 改增量
+（`sessions/index/graph.rs`）。
 
-## 旧的合成读取基准（第二批，供对照）
+## 旧的合成读取基准（供对照）
 
 `python3 tests/read_benchmark.py --binary target/release/sessiondock --samples 10`
 创建临时合成记录（每份 2000 条正文）与 loopback 服务；2026-09-12 一次采样（ms）：
