@@ -15,22 +15,30 @@ creates a 15-second reservation. `bind` consumes it once and returns a
 and `owner` exposes only display IP/time. Restarting the Web service drops browser
 leases without stopping the independent ptyhost process.
 
-## Display address
+## Who holds the terminal (display only)
 
-The claimant's `ip` is a label, never identity (Python `_display_ip`). On the
-browser listener it is the TCP peer. On the authenticated node listener it is
-the hub's forwarded `X-Real-IP` (else the first `X-Forwarded-For` hop, else the
-peer), because the peer there is always the hub's own tunnel address, which
-tells the user nothing; a browser cannot pick its own label because the browser
-listener ignores those headers.
+A browser exposes neither host name nor login, so a takeover prompt can only
+describe the holder by two labels, neither of which is identity:
+
+- `ip` (Python `_display_ip`): on the browser listener the TCP peer; on the
+  authenticated node listener the hub's forwarded `X-Real-IP` (else the first
+  `X-Forwarded-For` hop, else the peer), because the peer there is always the
+  hub's own tunnel address, which tells the user nothing. A browser cannot pick
+  its own address because the browser listener ignores those headers.
+- `label` (`terminal::device::device_label`): a coarse device label from the
+  claim's `User-Agent` — `"iPhone · Safari"`, `"Windows · Chrome"`,
+  `"Android · 微信"` — empty for a non-browser client. The hub forwards
+  `User-Agent` for exactly this.
 
 Through the hub, every page of one user usually shares one address, so the
-label is only surfaced when it differs from the reader's own. A 409 conflict
-carries `same_address: true|false` beside `owner`; a force replacement signals
-the old page with the new claimant's address only when it differs, so the
-`{"t":"revoked","ip":...}` notice and the `revoked:<ip>` close reason carry an
-empty label for a same-address takeover. The page then says "在别处被抢占"
-without an address rather than echoing the reader's own.
+address is only surfaced when it differs from the reader's own. `owner` carries
+`{ip, label, since}`; a 409 conflict adds `same_address: true|false`; a force
+replacement signals the old page with the new claimant's label always and its
+address only when it differs, so the `{"t":"revoked","ip","by"}` notice and the
+`revoked:<ip>` close reason carry an empty `ip` for a same-address takeover.
+The page then says "已被 iPhone · Safari 抢占" or, with no label, "已被另一页面
+抢占", appending the address only when the server marked it as elsewhere.
+Server-side messages name the holder as `"<label>，<ip>"` (`PublicOwner::describe`).
 
 ## Identity, secrecy, and validation
 

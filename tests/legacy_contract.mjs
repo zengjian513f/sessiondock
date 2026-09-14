@@ -85,8 +85,11 @@ test('Rust terminal lookup requires a unique full UID and instance, never a name
 
 test('terminal ownership force retry retains the exact captured binding', async () => {
   const calls = [];
+  const prompts = [];
   const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page',
-    confirm: () => true, post: async (_path, body) => {calls.push(body); return calls.length === 1 ? {conflict: true} : {token: 'lease'};}});
+    confirm: message => { prompts.push(message); return true; },
+    post: async (_path, body) => {calls.push(body); return calls.length === 1 ? {conflict: true, owner: {ip: '10.66.66.1', label: ''}} : {token: 'lease'};}});
+  loadFunction(context, 'describeTermTaker', read('term.js'));
   const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
   assert.equal(await claim('name', 'codex:uid', {uid: 'codex:uid', instance_id: 'captured-instance'}), 'lease');
   for (const body of calls) {
@@ -94,6 +97,18 @@ test('terminal ownership force retry retains the exact captured binding', async 
     assert.equal(body.instance_id, 'captured-instance');
   }
   assert.equal(calls[1].force, true);
+  // Without a label, and without the server marking the holder elsewhere, the
+  // prompt names no address (an older node's hub tunnel address says nothing).
+  assert.equal(prompts[0], '该终端正由另一页面控制。\n\n是否抢占终端？');
+});
+
+test('terminal takeover prompts describe the taker only by what is meaningful', () => {
+  const context = contextWithCapabilities(disabled, {});
+  const describe = loadFunction(context, 'describeTermTaker', read('term.js'));
+  assert.equal(describe('', ''), '另一页面');
+  assert.equal(describe('', '203.0.113.7'), '另一页面（203.0.113.7）');
+  assert.equal(describe('iPhone · Safari', ''), ' iPhone · Safari ');
+  assert.equal(describe('iPhone · Safari', '203.0.113.7'), ' iPhone · Safari（203.0.113.7） ');
 });
 
 test('selecting an existing pending terminal does not rebuild the full sidebar', () => {

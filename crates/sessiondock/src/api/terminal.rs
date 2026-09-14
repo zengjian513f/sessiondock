@@ -20,7 +20,8 @@ use crate::{
     hub::proxy::display_ip,
     state::AppState,
     terminal::{
-        ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget, input,
+        Claimant, ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
+        device::device_label, input,
     },
 };
 
@@ -124,15 +125,24 @@ pub async fn claim(
         &headers,
         peer.map(|Extension(ConnectInfo(address))| address.ip()),
     );
+    let claimant = Claimant {
+        ip,
+        label: device_label(
+            headers
+                .get(header::USER_AGENT)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default(),
+        ),
+    };
     let result = tokio::select! {
         biased;
         _ = state.shutdown.cancelled() => return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
         result = async {
             match (&body.uid,&body.instance_id,&body.record_id,&body.launch_id) {
-                (None,None,None,None) => service.claim(&body.name,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from),
+                (None,None,None,None) => service.claim(&body.name,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from),
                 (None,Some(instance),Some(record),Some(launch)) => {
                     let target=launch_target(&state,&body.name,record,launch,instance).await?;
-                    service.claim_launch(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
+                    service.claim_launch(target,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 (Some(uid),Some(instance),None,None) => {
                     let observed=super::runtime::observe(&state).await?.ok_or_else(binding_unavailable)?;
@@ -140,7 +150,7 @@ pub async fn claim(
                         target.name()==body.name && target.uid()==uid && target.instance_id()==instance
                     ).ok_or_else(binding_unavailable)?;
                     authorize_native(&state,target).await?;
-                    service.claim_bound(target,&body.page,ip,python_truthy(&body.force)).await.map_err(ApiError::from)
+                    service.claim_bound(target,&body.page,claimant,python_truthy(&body.force)).await.map_err(ApiError::from)
                 }
                 _ => Err(binding_unavailable()),
             }

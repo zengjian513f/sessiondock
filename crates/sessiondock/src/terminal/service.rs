@@ -2,7 +2,6 @@
 //! no process creation, kill, send ledger, native inventory reads, or defaults.
 
 use std::collections::BTreeMap;
-use std::net::IpAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -24,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::input;
 use super::ownership::{
-    self, BoundLease, ClaimResponse, ExpectedTarget, LeaseTarget, Registry, Revocation,
+    self, BoundLease, ClaimResponse, Claimant, ExpectedTarget, LeaseTarget, Registry, Revocation,
 };
 
 const OUTPUT_CHUNK: usize = 32 * 1024;
@@ -332,7 +331,7 @@ impl TerminalService {
         &self,
         name: &str,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(name)?;
@@ -350,7 +349,7 @@ impl TerminalService {
         }
         let gate = self.gate(name)?;
         let _gate = gate.lock().await;
-        Ok(self.registry.claim(name, page, ip, force)?)
+        Ok(self.registry.claim(name, page, claimant, force)?)
     }
 
     pub fn cancel_reservation(&self, name: &str, page: &str, token: &str) {
@@ -364,7 +363,7 @@ impl TerminalService {
         &self,
         target: &BoundTarget,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(target.name())?;
@@ -387,7 +386,7 @@ impl TerminalService {
         }
         Ok(self
             .registry
-            .claim_bound(Arc::new(fresh), page, ip, force)?)
+            .claim_bound(Arc::new(fresh), page, claimant, force)?)
     }
 
     /// Only a trusted lifecycle receipt supplies this target. A launch lease
@@ -396,7 +395,7 @@ impl TerminalService {
         &self,
         target: Arc<LaunchTarget>,
         page: &str,
-        ip: IpAddr,
+        claimant: impl Into<Claimant>,
         force: bool,
     ) -> Result<ClaimResponse, TerminalError> {
         ownership::validate_name(target.name())?;
@@ -414,7 +413,7 @@ impl TerminalService {
         .map_err(host_error)?;
         Ok(self
             .registry
-            .claim_launch(Arc::new(fresh), page, ip, force)?)
+            .claim_launch(Arc::new(fresh), page, claimant, force)?)
     }
 
     /// Permanently block this exact tuple for this service lifetime and revoke
@@ -488,7 +487,7 @@ impl TerminalService {
                 "terminal_ownership",
                 format!(
                     "终端控制权正由其他页面持有（{}）；请从持有控制台的页面发送，或先释放/接管该控制台",
-                    owner.ip
+                    owner.describe()
                 ),
             ));
         }
@@ -779,9 +778,14 @@ pub fn terminal_size(cols: u16, rows: u16) -> Result<TerminalSize, TerminalError
 struct Close {
     code: u16,
     reason: String,
-    /// The `revoked` notice label for the replaced page: the new claimant's
-    /// display address, or empty when it would only repeat the page's own.
-    notice: Option<String>,
+    notice: Option<RevokedNotice>,
+}
+
+/// The `revoked` notice for the replaced page: the new claimant's display
+/// address (empty when it would only repeat the page's own) and device label.
+struct RevokedNotice {
+    ip: String,
+    by: String,
 }
 
 impl Close {
@@ -805,11 +809,14 @@ impl Close {
         let Some(signal) = signal.filter(|signal| signal.notify) else {
             return Self::new(4001, "replaced");
         };
-        let label = signal.new_ip.map(|ip| ip.to_string()).unwrap_or_default();
+        let ip = signal.new_ip.map(|ip| ip.to_string()).unwrap_or_default();
         Self {
             code: 4001,
-            reason: format!("revoked:{label}"),
-            notice: Some(label),
+            reason: format!("revoked:{ip}"),
+            notice: Some(RevokedNotice {
+                ip,
+                by: signal.new_label,
+            }),
         }
     }
 }
@@ -998,8 +1005,8 @@ async fn browser_output(
 
 async fn close_browser(sink: &mut SplitSink<WebSocket, Message>, close: Close) {
     let _ = timeout(CLOSE_TIMEOUT, async {
-        if let Some(label) = close.notice {
-            let notice = serde_json::json!({"t":"revoked","ip":label}).to_string();
+        if let Some(RevokedNotice { ip, by }) = close.notice {
+            let notice = serde_json::json!({"t":"revoked","ip":ip,"by":by}).to_string();
             let _ = sink.send(Message::Text(notice.into())).await;
         }
         let _ = sink
@@ -1031,7 +1038,12 @@ mod tests {
 
     fn token(registry: &Registry, name: &str, page: &str) -> String {
         registry
-            .claim(name, page, "127.0.0.1".parse().unwrap(), false)
+            .claim(
+                name,
+                page,
+                "127.0.0.1".parse::<std::net::IpAddr>().unwrap(),
+                false,
+            )
             .unwrap()
             .into_api_json()["token"]
             .as_str()
@@ -1108,7 +1120,12 @@ mod tests {
             let service = service.clone();
             tokio::spawn(async move {
                 service
-                    .claim("terminal", "new-page", "192.0.2.2".parse().unwrap(), true)
+                    .claim(
+                        "terminal",
+                        "new-page",
+                        "192.0.2.2".parse::<std::net::IpAddr>().unwrap(),
+                        true,
+                    )
                     .await
             })
         };
