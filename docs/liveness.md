@@ -8,11 +8,10 @@ frontend expects (`capabilities.live: true`).
 ## Scope
 
 - `SESSIONDOCK_PROC_ROOT=<dir>` (default `/proc`) is the process table to read;
-  tests point it at a synthetic tree (Python `PROC_FS`).
+  tests point it at a synthetic tree.
 - Grok's active-sessions file defaults to Python's
   `~/.grok/active_sessions.json`; `SESSIONDOCK_GROK_ACTIVE=<file>` provides a
-  test override. Entries name sessions live without a pid, stale ones included,
-  exactly like Python.
+  test override. Entries name sessions live without a pid, stale ones included.
 - On a target without native process discovery, `/api/live` reports
   `scan: {status: "unsupported_platform"}`, `capabilities.live` stays false and
   managed observations remain available. External checks return no PID evidence
@@ -104,7 +103,7 @@ that inherited a pane through `continued_in` (below).
   metadata is the declaration) or one of its own CLI processes descends from
   a host's session root. Only Claude sessions look for an origin; a spawned
   grandchild is not a continuation and never inherits. Without a configured
-  host directory there are no panes to inherit (Python `panes and …`).
+  host directory there are no panes to inherit.
 
 Rust has no tmux backend, so a pane the Python service created in its own
 tmux server is only recognised through the process-tree walk, never
@@ -168,7 +167,7 @@ are memoised per scan snapshot.
 
 The relation is visible only while both processes exist, so it is persisted
 immediately: every `/api/live` records it, and a background task ticks every
-10 s (Python `_spawn_watch_loop`) because headless fan-outs live and die while
+10 s because headless fan-outs live and die while
 no page is open. Both run only when the scan and `SESSIONDOCK_STATE_DIR` are
 configured. The metadata row key is `spawned_by: {source, sid}`, written once
 and never rewritten ([metadata.md](metadata.md#spawned_by)); rows of

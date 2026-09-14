@@ -111,7 +111,7 @@ def main():
                 expect(page.locator("#msgs")).to_contain_text("Needle Cat cat")
                 expect(page.locator("#msgs")).not_to_contain_text("DISCARDED_SEARCH_ONLY")
 
-                # Python-compatible lookahead is accepted by the server.
+                # Lookahead is accepted by the server.
                 search("(?=cat)")
                 expect(page.locator("#stat")).to_contain_text("全文命中")
                 expect(page.locator("#stat")).not_to_have_class("err")

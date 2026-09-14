@@ -1,4 +1,4 @@
-//! Session recycle-bin HTTP routes, using Python-compatible delete protection.
+//! Session recycle-bin HTTP routes, using delete protection.
 
 use std::sync::Arc;
 

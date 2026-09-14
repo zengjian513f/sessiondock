@@ -484,7 +484,7 @@ fn relation_sid<'a>(source: &str, meta: &'a Value) -> Option<&'a str> {
 }
 
 /// The fixed-prefix parent a Codex transcript declares: `(thread_id, cut)`.
-/// Python `_history_segments`: the physical parent is `history_base.thread_id`
+/// The physical parent is `history_base.thread_id`
 /// (falling back to `forked_from_id`), the cut is `end_byte_offset`. A null
 /// `history_base` inherits nothing — old-style forks and subagent rollouts
 /// are self-contained files whose `forked_from_id` is only the logical
@@ -1132,7 +1132,7 @@ mod tests {
     #[test]
     fn unreadable_record_inside_parent_prefix_fails_closed_but_a_skipped_line_does_not() {
         // A line that is not a JSON object inside the fixed prefix
-        // is skipped like Python; a record the reference adapter cannot read
+        // is skipped; a record the reference adapter cannot read
         // either still refuses the inherited prefix.
         for (line, expected) in [(b"not-json\n".as_slice(), None), (UNREADABLE, Some(501))] {
             let mut parent = codex("parent", &[header("parent-sid"), message("valid")]);
@@ -1205,7 +1205,7 @@ mod tests {
         assert!(rows(&cycle).iter().all(|row| row["supported"] == false));
     }
 
-    /// Python `_history_segments`: `history_base` null means nothing is
+    /// `history_base` null means nothing is
     /// inherited. Old-style forks copy the ancestors' metas and history into
     /// their own file and are read alone; the copied metas are skipped.
     #[test]

@@ -48,7 +48,7 @@ to have a Rust-only mode.
 
 Metadata is reloaded for each operation. Missing, damaged or unsupported metadata
 is treated as empty, and external edits may be observed and overwritten by a
-later Python-compatible update. The metadata store has no exclusive lifetime
+later update. The metadata store has no exclusive lifetime
 lock or permanent uncertain/frozen state. See [metadata.md](metadata.md).
 
 ## File access
@@ -101,7 +101,7 @@ of unrelated APIs.
 `?debug_run=<id>` selects the same test-session view as Python. Missing or damaged
 registry data behaves as an empty registry. An unknown run produces an empty view
 rather than an authorization error. See
-[read-model.md](read-model.md#debug_run-视图python-debug_runspy).
+[read-model.md](read-model.md#debug_run-视图).
 
 ## 501 ledger (unimplemented writes)
 

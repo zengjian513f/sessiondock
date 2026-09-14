@@ -4,7 +4,7 @@
 R2: history_base.thread_id supplies the inherited prefix [0, end_byte_offset) even
 when forked_from_id names a different thread; a null history_base with
 forked_from_id is self-contained. R3: list root_sid / fork_depth / created /
-title / size follow the forked_from_id chain like Python
+title / size follow the forked_from_id chain
 CodexAdapter.finalize_sessions (size = own + Σ min(cur.history_base.end_byte_offset
 or 0, parent file size)). A mid-line history_base cut is supported:false with a
 行边界 warning and GET /api/messages is HTTP 501 JSON. Synthetic Codex rollouts

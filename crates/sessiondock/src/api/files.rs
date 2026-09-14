@@ -30,7 +30,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::OwnedSemaphorePermit;
 
-/// Route body cap for one upload chunk: the Python-compatible 8 MiB chunk limit plus
+/// Route body cap for one upload chunk: the 8 MiB chunk limit plus
 /// one byte so an oversized chunk reaches the handler's explicit 413.
 pub const UPLOAD_BODY_LIMIT: usize = crate::files::DEFAULT_UPLOAD_CHUNK_BYTES + 1;
 
@@ -166,7 +166,7 @@ pub struct FileQuery {
     order: String,
     hidden: String,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[allow(dead_code)]
     debug_run: String,
 }
@@ -566,7 +566,7 @@ pub struct UploadQuery {
     job: String,
     offset: String,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[allow(dead_code)]
     debug_run: String,
 }

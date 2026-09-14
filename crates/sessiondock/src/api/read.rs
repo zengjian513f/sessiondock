@@ -46,7 +46,7 @@ pub async fn list(
     query: Result<Query<ListQuery>, QueryRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let Query(query) = query.map_err(query_error)?;
-    // Python `_debug_run`: the first 64 characters; an id the registry does
+    // The first 64 characters; an id the registry does
     // not know (or a malformed one) is an empty view, never an error.
     let debug_run: String = query.debug_run.chars().take(64).collect();
     state
@@ -134,14 +134,14 @@ async fn codex_prompt_field(
 }
 
 /// Opaque grant lookups for history pages and per-message media pages. Both
-/// ignore unrelated query parameters as Python does.
+/// ignore unrelated query parameters.
 #[derive(Deserialize)]
 pub struct PageQuery {
     cursor: String,
     #[serde(default)]
     agent: String,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[serde(default)]
     #[allow(dead_code)]
     debug_run: String,

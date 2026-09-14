@@ -105,7 +105,7 @@ pub struct SearchQuery {
     pub case: String,
     pub regex: String,
     pub progress: String,
-    /// Python `_debug_run`: the debug-run view the candidates come from.
+    /// The debug-run view the candidates come from.
     pub debug_run: String,
 }
 

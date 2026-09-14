@@ -14,7 +14,7 @@ use super::claude::{
 };
 use crate::sessions::{NativeFence, NativeInputRead};
 
-/// Python `_prompt_key`: Claude records the prompt without the editor's outer
+/// Claude records the prompt without the editor's outer
 /// whitespace; internal spaces and newlines stay significant.
 pub fn prompt_key(text: &str) -> &str {
     text.trim()

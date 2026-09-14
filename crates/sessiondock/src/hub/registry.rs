@@ -168,9 +168,9 @@ pub fn parse_networks(value: &str) -> Result<Vec<Network>, String> {
 
 #[derive(Debug)]
 pub enum RegistryError {
-    /// Rejected input (Python `ValueError`); the text is user-facing.
+    /// Rejected input; the text is user-facing.
     Invalid(String),
-    /// No node with this id (Python `KeyError`).
+    /// No node with this id.
     NotFound(String),
     /// The node did not answer `/api/meta` (registration only).
     Node(ClientError),
@@ -263,7 +263,7 @@ impl Health {
 /// Query string pairs as sent upstream (`urlencode(query, doseq=True)`).
 pub type Query = [(String, String)];
 
-/// Python `urllib.parse.urlencode`: `quote_plus` on keys and values.
+/// `quote_plus` on keys and values.
 pub fn encode_query(query: &Query) -> String {
     let mut out = String::new();
     for (key, value) in query {
@@ -454,7 +454,7 @@ impl Registry {
         let nid = nid.to_string();
         let data = data.clone();
         let _ = tokio::task::spawn_blocking(move || {
-            // Best effort like Python: a full disk must not fail the probe.
+            // Best effort: a full disk must not fail the probe.
             let _ = write_snapshot_file(&dir, &nid, stamp, &data);
         })
         .await;

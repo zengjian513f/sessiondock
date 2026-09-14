@@ -81,13 +81,13 @@ only the session cwd. `~/` references use the process's configured home.
 | `GET /api/session/files` | Directory browser grant plus optional absolute navigation; sorted pages of 1–500 entries. |
 | `mode=info` | 1 MiB text preview, replacement characters for invalid UTF-8, explicit truncation; NUL-containing text is unsupported. |
 | Raw file open | Python's 32 MiB limit; HTML/SVG/scripts are served as text rather than executable origin content. |
-| Download/media preview | Streamed from checked handles. PDF preview verifies the PDF marker as Python does. |
+| Download/media preview | Streamed from checked handles. PDF preview verifies the PDF marker. |
 | HEAD/Range | Representation headers without HEAD body; one byte range, explicit 416 for invalid/unsatisfiable ranges. |
 
 Directory enumeration is paginated. Reference scanning traverses the complete
 selected history, using an explicit stack for nested JSON. Basename and directory
 indexes are built once per batch. Media references instead resolve directly
-against the session cwd, with Python-compatible percent decoding and home
+against the session cwd, with percent decoding and home
 expansion. Name/type sorting currently uses Unicode lowercase, where Python uses
 Unicode casefold.
 

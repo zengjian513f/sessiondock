@@ -700,7 +700,7 @@ async fn busy_tui_confirms_late_and_swallowed_line_stays_uncertain_across_restar
     let raw = fs::read_to_string(fixture.jsonl(&sid)).unwrap();
     assert_eq!(raw.lines().count(), 1);
 
-    // Discard retires the receipt; a second discard is 404 like Python.
+    // Discard retires the receipt; a second discard is 404.
     let (status, discard) = post(
         &router,
         "/api/session/outbox/discard",

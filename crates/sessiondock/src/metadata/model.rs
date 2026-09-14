@@ -46,7 +46,7 @@ pub(super) struct Row {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
     /// The session that started this one, written once from the process tree
-    /// while both were alive (Python `spawned_by`); never rewritten.
+    /// while both were alive; never rewritten.
     #[serde(skip_serializing_if = "Option::is_none")]
     spawned_by: Option<SpawnedBy>,
 }
@@ -264,7 +264,7 @@ impl MetadataSnapshot {
         self.document.sessions.get(uid)?.spawned_by.as_ref()
     }
 
-    /// Python `spawned_uids`: sessions whose spawner is already recorded.
+    /// Sessions whose spawner is already recorded.
     pub fn spawned_uids(&self) -> BTreeSet<String> {
         self.document
             .sessions
@@ -274,7 +274,7 @@ impl MetadataSnapshot {
             .collect()
     }
 
-    /// Python `record_spawn_parents`: a session is spawned once; the first
+    /// A session is spawned once; the first
     /// observed relation is kept for good and a later, different clue is
     /// ignored. Entries with an empty uid, source or sid are skipped like
     /// Python. Existing parent relationships remain unchanged.

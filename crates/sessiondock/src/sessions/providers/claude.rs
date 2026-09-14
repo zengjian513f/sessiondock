@@ -10,12 +10,12 @@ use super::{
 
 pub(super) struct Lineage {
     pub active: Option<HashSet<String>>,
-    /// Python `abandoned`: user inputs off the active lineage that stay
+    /// User inputs off the active lineage that stay
     /// visible as interrupted — unanswered siblings of the current input, the
     /// input whose turn an Esc cut short (even with tools/thinking under it)
     /// and unanswered inputs below those.
     pub abandoned: HashSet<String>,
-    /// Python `offshoot`: every descendant of an abandoned input that is
+    /// Every descendant of an abandoned input that is
     /// neither active nor abandoned (the tool calls the interrupted assistant
     /// wrote, the native interrupt record). Visible, never a turn start.
     pub offshoot: HashSet<String>,
@@ -279,10 +279,10 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             warnings: Vec::new(),
         };
     };
-    // Python `_active_lineage`: the walk stops at a uuid without a record or
+    // The walk stops at a uuid without a record or
     // one already visited; the reachable part is the timeline. The missing
     // uuid itself is in `active` (it never matches a record), so a declared
-    // leaf with no record leaves every graph node out, exactly like Python.
+    // leaf with no record leaves every graph node out.
     let mut active = HashSet::<String>::new();
     let mut warnings = Vec::new();
     let mut node = Some(tip_id.as_str());
@@ -406,7 +406,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
     }
 }
 
-/// Python `_is_claude_interrupt_record`: the native mark of an Esc, not a
+/// The native mark of an Esc, not a
 /// new input. Texts are the string content or the string / `text` blocks.
 fn interrupt_record(record: &Value) -> bool {
     if record["type"] != "user" {
@@ -426,7 +426,7 @@ fn interrupt_record(record: &Value) -> bool {
     }
 }
 
-/// Python `_is_claude_interrupt`: whole-text, case-insensitive.
+/// Whole-text, case-insensitive.
 fn interrupt_text(text: &str) -> bool {
     matches!(
         text.trim().to_ascii_lowercase().as_str(),
@@ -437,10 +437,10 @@ fn interrupt_text(text: &str) -> bool {
 /// What the lineage decided about one visible record off the active chain.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Branch {
-    /// Python `interrupted_branch`: an abandoned input — no `working`
+    /// An abandoned input — no `working`
     /// status, `interrupted:true` on its bubbles.
     pub abandoned: bool,
-    /// Python `deferred_abort`: the `aborted` status is emitted by the
+    /// The `aborted` status is emitted by the
     /// native interrupt record (or ends with the response) below it.
     pub deferred_abort: bool,
 }

@@ -91,7 +91,7 @@ pub(crate) struct Batch {
     pub records: Vec<(Value, u64)>,
     pub sidecars: BTreeMap<u64, Vec<native_images::Sidecar>>,
     pub error: Option<String>,
-    /// Complete lines that are not JSON objects, skipped like the Python
+    /// Complete lines that are not JSON objects, skipped
     /// adapters' `_iter_records` (bytes stay in the physical index).
     pub invalid: usize,
     committed: usize,

@@ -62,7 +62,7 @@
   （`history_base`/`forked_from`）。规则与 [history-pages.md](history-pages.md)
   中记录的一致，输入改为摘要。
 - **子代理运行态与续写**（`index/agent_stops`）：`agent_items[].active`
-  与 Python 一致——Codex 看子代理 rollout 尾部最后一条回合边界 `event_msg`
+  ——Codex 看子代理 rollout 尾部最后一条回合边界 `event_msg`
   （`task_started`/`turn_started` 开、`task_complete`/`turn_complete`/`turn_aborted` 关）；
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
   （只有它算收尾），未收尾时再对照主会话里该子代理最近一次停止通知
@@ -126,7 +126,7 @@
   每个文件的 stamp 都与上次相同（且名称索引未变），直接复用上一份快照，不重建
   行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
 
-## debug_run 视图（Python `debug_runs.py`）
+## debug_run 视图
 
 - 注册表 `<SESSIONDOCK_STATE_DIR>/debug-runs.json`，与 Python 同格式
   （`{"version":1,"runs":{<run_id>:{"root":…,"created":…,"sessions":[{source,cwd,sid,uid,name}]}}}`），

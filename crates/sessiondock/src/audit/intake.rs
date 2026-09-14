@@ -204,7 +204,7 @@ fn record(item: &Value, batch: &Envelope<'_>) -> Option<Value> {
     }))
 }
 
-/// Python `audit.sanitize`: redact secret keys and stop recursion after depth 12.
+/// Redact secret keys and stop recursion after depth 12.
 pub fn sanitize(value: &Value, depth: usize) -> Value {
     if depth > DATA_DEPTH_MAX {
         return Value::String("<depth-limit>".into());

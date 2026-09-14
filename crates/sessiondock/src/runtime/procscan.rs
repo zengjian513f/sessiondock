@@ -1,11 +1,11 @@
-//! Read-only `/proc` scan for external CLI processes (Python `live.py`).
+//! Read-only `/proc` scan for external CLI processes.
 //!
 //! Linux uses `/proc` by default; `SESSIONDOCK_PROC_ROOT` points tests at a
-//! synthetic tree (Python `PROC_FS`).
+//! synthetic tree.
 //! The scan reads `cmdline`, `stat`, `environ`, the `cwd` link and the `fd`
 //! links of processes in the table, never signals, writes or follows a link
 //! outside the tree. The three families leave different traces, so three
-//! signals are collected exactly like Python:
+//! signals are collected:
 //!
 //! - Codex keeps the rollout open → `fd` links name the session file;
 //! - Claude carries `--session-id`/`--resume`, tool children inherit
@@ -34,23 +34,23 @@ use serde_json::Value;
 
 use super::process::ProcClock;
 
-/// Cache seconds after a scan completes (Python `TTL`); the TTL starts when the
+/// Cache seconds after a scan completes; the TTL starts when the
 /// scan finishes so a slow scan does not immediately expire its own result.
 pub const TTL: Duration = Duration::from_secs(3);
-/// Python `_ANCESTRY_DEPTH`: spawn-parent walks.
+/// Spawn-parent walks.
 pub const ANCESTRY_DEPTH: usize = 16;
 /// Python `_cli_ancestor` / `term_tmux.hosts` walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
 const KEYWORDS: [&str; 3] = ["claude", "codex", "grok"];
 const CLI_NAMES: [&str; 3] = ["claude", "codex", "grok"];
-/// Environment identity a CLI sets for its tool children (Python `_ENV_FAMILY`).
+/// Environment identity a CLI sets for its tool children.
 const ENV_FAMILY: [(&str, &str); 3] = [
     ("CLAUDE_CODE_SESSION_ID=", "claude"),
     ("CODEX_COMPANION_SESSION_ID=", "codex"),
     ("GROK_SESSION_ID=", "grok"),
 ];
-/// Spawner identity left in a child session's environment (Python `SPAWN_ENV`).
+/// Spawner identity left in a child session's environment.
 /// `CODEX_THREAD_ID` is a subagent thread's own id, `CODEX_SESSION_ID` the root
 /// thread; both are collected so a subagent's children land under the root.
 pub const SPAWN_ENV: [(&str, &str); 4] = [
@@ -59,7 +59,7 @@ pub const SPAWN_ENV: [(&str, &str); 4] = [
     ("CODEX_SESSION_ID", "codex"),
     ("GROK_SESSION_ID", "grok"),
 ];
-/// `SPAWN_ENV` plus `CLAUDE_PID` (Python `SPAWN_ENV_KEYS`).
+/// `SPAWN_ENV` plus `CLAUDE_PID`.
 pub const SPAWN_ENV_KEYS: [&str; 5] = [
     "CLAUDE_CODE_SESSION_ID",
     "CODEX_THREAD_ID",
@@ -103,7 +103,7 @@ impl SessionRoots {
     }
 }
 
-/// Python `_cli_name`: basename without directories or `.exe`, lowercase.
+/// Basename without directories or `.exe`, lowercase.
 pub fn cli_name(argv0: &str) -> String {
     let trimmed = argv0.trim();
     let head = trimmed.rsplit('/').next().unwrap_or(trimmed);
@@ -116,7 +116,7 @@ pub fn cli_name(argv0: &str) -> String {
         .map_or(head.clone(), str::to_owned)
 }
 
-/// Python `_cli_family`: which CLI family a command belongs to.
+/// Which CLI family a command belongs to.
 pub fn cli_family(argv0: &str) -> Option<&'static str> {
     let head = cli_name(argv0);
     if head == "grok" || head.starts_with("grok-") {
@@ -130,7 +130,7 @@ pub fn cli_family(argv0: &str) -> Option<&'static str> {
     }
 }
 
-/// Python `_is_cli`: the CLI main process itself, not a shell it started.
+/// The CLI main process itself, not a shell it started.
 pub fn is_cli(cmd: &str) -> bool {
     let head = cli_name(argv0_of(cmd));
     CLI_NAMES.contains(&head.as_str()) || head.starts_with("codex-") || head.starts_with("claude-")
@@ -153,7 +153,7 @@ fn session_regex() -> &'static Regex {
     })
 }
 
-/// Python `_CMD_SID`: `--session-id`/`--resume` UUIDs, lowercased.
+/// `--session-id`/`--resume` UUIDs, lowercased.
 pub fn command_sids(cmd: &str) -> BTreeSet<String> {
     session_regex()
         .captures_iter(cmd)
@@ -170,7 +170,7 @@ fn resolve_path(path: &str) -> String {
         .unwrap_or_else(|_| path.to_owned())
 }
 
-/// `(comm, ppid)` from `/proc/<pid>/stat` (Python `_process_parent`).
+/// `(comm, ppid)` from `/proc/<pid>/stat`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Parent {
     pub name: String,
@@ -236,7 +236,7 @@ impl ProcTree {
         self.root.join(pid.to_string())
     }
 
-    /// Full command line with NULs as spaces (Python `_process_cmdline`).
+    /// Full command line with NULs as spaces.
     pub fn cmdline(&self, pid: u32) -> Option<Arc<str>> {
         if let Some(known) = lock(&self.memo).cmdlines.get(&pid) {
             return known.clone();
@@ -260,7 +260,7 @@ impl ProcTree {
         value
     }
 
-    /// Unix seconds the process started (Python `_process_started_at`), the
+    /// Unix seconds the process started, the
     /// raw `btime + ticks / CLK_TCK` value without rounding.
     pub fn started_at(&self, pid: u32) -> Option<f64> {
         if let Some(known) = lock(&self.memo).starts.get(&pid) {
@@ -276,7 +276,7 @@ impl ProcTree {
     }
 
     /// The `SPAWN_ENV_KEYS` present in the process environment with non-empty
-    /// values (Python `_process_spawn_env`).
+    /// values.
     pub fn spawn_env(&self, pid: u32) -> Arc<BTreeMap<String, String>> {
         if let Some(known) = lock(&self.memo).spawn_env.get(&pid) {
             return known.clone();
@@ -297,7 +297,7 @@ impl ProcTree {
         value
     }
 
-    /// Python `_cli_ancestor`: the CLI main process a helper belongs to, by
+    /// The CLI main process a helper belongs to, by
     /// `comm` up the tree; `None` when the chain ends without one.
     pub fn cli_ancestor(&self, pid: u32) -> Option<u32> {
         let mut current = pid;
@@ -314,7 +314,7 @@ impl ProcTree {
         None
     }
 
-    /// Python `live.is_cli_process`: this pid is a session's CLI main process
+    /// This pid is a session's CLI main process
     /// (`claude`/`codex`/`grok` itself). The pane-ownership walks stop at one
     /// that is neither their start nor their target: a `grok -p` or `codex
     /// exec` a pane's Claude spawned sits in that pane's process tree, but
@@ -323,7 +323,7 @@ impl ProcTree {
         self.cmdline(pid).is_some_and(|cmd| is_cli(&cmd))
     }
 
-    /// Python `term_tmux.hosts`: some process runs under a tmux server with no
+    /// Some process runs under a tmux server with no
     /// other CLI main process between them.
     pub fn in_tmux(&self, pids: &[i64]) -> bool {
         pids.iter().any(|pid| {
@@ -420,7 +420,7 @@ pub struct ScanStats {
     pub elapsed_ms: u64,
 }
 
-/// One completed scan (Python `_cache`). Positive pids are CLI main processes,
+/// One completed scan. Positive pids are CLI main processes,
 /// negative ones related helpers.
 pub struct Scan {
     /// Lowercase session id → owning pids.
@@ -582,7 +582,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     }
 }
 
-/// Python `_env_owner`: whether an environment session id is this CLI's own.
+/// Whether an environment session id is this CLI's own.
 fn env_owner(
     tree: &ProcTree,
     pid: u32,
@@ -611,7 +611,7 @@ fn env_owner(
     Some(owner)
 }
 
-/// Python `_note_grok_sessions`: Grok's own active list names sessions without
+/// Grok's own active list names sessions without
 /// exposing a pid; a stale entry stays exactly as Python would show it.
 fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
     let Some(data) = std::fs::read(file)
@@ -650,7 +650,7 @@ pub struct ActiveProcesses {
 }
 
 impl Scan {
-    /// Python `_session_path_pids`: holders of the session file and of any
+    /// Holders of the session file and of any
     /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
     fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
@@ -669,7 +669,7 @@ impl Scan {
         found
     }
 
-    /// Python `_bare_claude_pids`: a bare `claude` in the session's cwd that
+    /// A bare `claude` in the session's cwd that
     /// started within 5 s before to 30 s after the session was created.
     fn bare_claude_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
@@ -692,7 +692,7 @@ impl Scan {
         found
     }
 
-    /// Python `pids_of`: positive pids are CLI main processes, negative related helpers.
+    /// Positive pids are CLI main processes, negative related helpers.
     pub fn pids_of(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
         let sid = session.sid.to_ascii_lowercase();
@@ -706,7 +706,7 @@ impl Scan {
         found
     }
 
-    /// Python `is_live`: a listed Grok session id counts even without a pid.
+    /// A listed Grok session id counts even without a pid.
     pub fn is_live(&self, session: &SessionRow) -> bool {
         let sid = session.sid.to_ascii_lowercase();
         (!sid.is_empty() && self.sids.contains_key(&sid))
@@ -714,7 +714,7 @@ impl Scan {
             || !self.bare_claude_pids(session).is_empty()
     }
 
-    /// Python `started_at`: the earliest CLI main process start among `pids`.
+    /// The earliest CLI main process start among `pids`.
     pub fn started_at(&self, pids: &[i64]) -> Option<f64> {
         pids.iter()
             .filter(|pid| **pid > 0)
@@ -724,7 +724,7 @@ impl Scan {
             .reduce(f64::min)
     }
 
-    /// Python `active_processes`: a process held by a Codex fork and its
+    /// A process held by a Codex fork and its
     /// ancestors belongs to the deepest fork only; unrelated sessions sharing
     /// a helper signal keep it.
     pub fn active_processes(&self, sessions: &[SessionRow]) -> ActiveProcesses {
@@ -785,7 +785,7 @@ impl Scan {
     }
 }
 
-/// Python `_codex_ancestor_sids`: the fork chain a Codex rollback branch can
+/// The fork chain a Codex rollback branch can
 /// confirm within the current list.
 pub(crate) fn codex_ancestor_sids(
     session: &SessionRow,
@@ -897,7 +897,7 @@ pub struct ScanSnapshot {
     pub age: Duration,
 }
 
-/// TTL-cached, single-flight scanner (Python `snapshot`): concurrent callers
+/// TTL-cached, single-flight scanner: concurrent callers
 /// wait for one scan and reuse it; `force` bypasses the TTL but still serializes.
 pub struct ProcScanner {
     root: PathBuf,
@@ -992,7 +992,7 @@ impl ProcScanner {
         })
     }
 
-    /// Python `term.kill_pids`: TERM the positively owned CLI main processes,
+    /// TERM the positively owned CLI main processes,
     /// wait up to six seconds, then KILL survivors. This is available only for
     /// the real Linux `/proc`; synthetic proc trees remain read-only fixtures.
     pub async fn kill_pids(&self, pids: &[i64]) -> Result<KillOutcome, KillError> {

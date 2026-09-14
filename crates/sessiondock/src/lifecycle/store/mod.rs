@@ -737,7 +737,7 @@ fn random() -> Result<String, Error> {
     getrandom::fill(&mut bytes).map_err(|_| Error::RandomUnavailable)?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
-/// Mint a private request key when a Python-compatible caller omits one.
+/// Mint a private request key when a caller omits one.
 /// Explicit request IDs still retain the durable replay behavior.
 pub fn fresh_request_id() -> Result<String, Error> {
     random()

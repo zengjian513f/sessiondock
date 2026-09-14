@@ -129,7 +129,7 @@ def main():
                                "options": [{"label": "红", "description": "暖色"}, {"label": "蓝", "description": ""}]}]}
         if {k: v for k, v in card.items() if k != "created"} != want or not isinstance(card.get("created"), int):
             fail("card shape differs from claude_bridge.py", card)
-        hook(state, question_payload())  # a repeated PreToolUse rewrites (new `created`), like Python
+        hook(state, question_payload())  # a repeated PreToolUse rewrites (new `created`)
         if json.loads(prompt_file.read_text())["state"] != "waiting":
             fail("repeated PreToolUse keeps the card waiting")
         hook(state, settle_payload("PostToolUse", tool="another-tool"))

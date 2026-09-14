@@ -567,7 +567,7 @@ pub(super) fn sanitize_output_with_media(
 pub(super) fn output(value: &Value) -> Result<(String, Value), String> {
     if let Some(chunks) = chunk_envelopes(value)? {
         // Validate that every other part can be rendered using the same
-        // Python-compatible fallback; text blocks need no copy here.
+        // Fallback; text blocks need no copy here.
         for part in value.as_array().into_iter().flatten() {
             if !is_output_envelope(part)
                 && !matches!(

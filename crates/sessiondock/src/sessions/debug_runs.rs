@@ -1,4 +1,4 @@
-//! Debug-run registry (Python `sessiondock/debug_runs.py`): paid monkey/test
+//! Debug-run registry: paid monkey/test
 //! sessions registered under a run id stay out of the ordinary views, and
 //! `?debug_run=<id>` shows exactly that run.
 //!
@@ -71,7 +71,7 @@ pub(crate) fn normpath(path: &str) -> String {
     }
 }
 
-/// Python `_abspath`: normalize an absolute path lexically; a relative one
+/// Normalize an absolute path lexically; a relative one
 /// is resolved against the process working directory.
 fn abspath(path: &str) -> String {
     if path.starts_with('/') {
@@ -90,7 +90,7 @@ struct Root {
     run_id: String,
 }
 
-/// The registry pre-resolved into lookup tables (Python `_build_index`).
+/// The registry pre-resolved into lookup tables.
 #[derive(Default)]
 pub struct RunIndex {
     roots: Vec<Root>,
@@ -151,12 +151,12 @@ impl RunIndex {
         self.roots.is_empty() && self.tables.values().all(HashMap::is_empty)
     }
 
-    /// Python `get(run_id) is not None`: a well-formed, registered id.
+    /// A well-formed, registered id.
     pub fn known(&self, run_id: &str) -> bool {
         valid_id(run_id) && self.ids.contains(run_id)
     }
 
-    /// Python `_match`: the run this row belongs to, if any.
+    /// The run this row belongs to, if any.
     pub fn run_for<'a>(&'a self, row: &Value) -> Option<&'a str> {
         let mut best: Option<&(usize, String)> = None;
         for key in ["uid", "sid", "name"] {
@@ -230,7 +230,7 @@ fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("")
 }
 
-/// Parse a registry document (Python `_read`): anything but a well-formed
+/// Parse a registry document: anything but a well-formed
 /// `{"runs": {…}}` is the empty registry.
 pub(crate) fn parse(bytes: &[u8]) -> RunIndex {
     let Ok(raw) = serde_json::from_slice::<Value>(bytes) else {
@@ -359,7 +359,7 @@ mod tests {
         let index = registry();
         assert!(!index.is_empty());
         assert!(index.known("run-a") && index.known("run-b"));
-        // Python `get`: a run that is not an object is `None`, so unknown.
+        // A run that is not an object is `None`, so unknown.
         assert!(!index.known("bad") && !index.known("missing") && !index.known("bad id!"));
         assert_eq!(index.run_for(&json!({"uid": "claude:a1"})), Some("run-a"));
         assert_eq!(index.run_for(&json!({"sid": "sid-b1"})), Some("run-b"));

@@ -93,7 +93,7 @@ def check_browser(browser, root, config):
         node_build = context.request.get(local + "/api/meta").json()["build"]
         page.evaluate("backgroundTerm()")
         page.close()
-        # Closing the setup console releases its Python-compatible ownership
+        # Closing the setup console releases its ownership
         # lease asynchronously; a claim that never finished binding also has
         # Python's 15-second reservation lifetime. Wait on the actual draft
         # probe before opening a different hub page.

@@ -121,7 +121,7 @@ pub(crate) struct View {
     pub sources: Vec<Candidate>,
     /// Owner UIDs whose entries this view depends on (leaf, owner, parents).
     pub dependencies: Vec<String>,
-    /// Python `CodexAdapter.read`: a Codex main session renamed through the
+    /// A Codex main session renamed through the
     /// name index shows the local `/rename <name>` as an inferred, uncounted
     /// `command` event at `renamed_at` (before the first later message).
     /// Derived from `meta` alone, so a rename recomposes without a reparse;
@@ -153,7 +153,7 @@ pub(crate) fn rename_event(meta: &Value) -> Option<Event> {
 }
 
 /// The view's events with the rename event (if any) spliced in before the
-/// first event whose `ts` is later than the rename (Python's `msgs.insert`).
+/// first event whose `ts` is later than the rename.
 struct WithRename<'a, I: Iterator<Item = &'a Event>> {
     base: std::iter::Peekable<I>,
     rename: Option<&'a Event>,
@@ -338,7 +338,7 @@ impl ViewSnapshot {
 
     /// Searchable semantic body: `(role, text)` of every non-status event
     /// in timeline order, without media, cursors or private payloads. The
-    /// inferred rename event is not searchable (Python `search_only`).
+    /// inferred rename event is not searchable.
     pub fn texts(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
         self.view.events().filter_map(|event| {
             let role = event.message["role"].as_str()?;
@@ -642,7 +642,7 @@ pub(crate) fn parse_candidate(
     meta["path"] = json!(super::path_text(&candidate.path));
     meta["size"] = json!(raw_index.length());
     if candidate.source == "grok" {
-        // Python `_dir_size`: the whole session directory, like the row.
+        // The whole session directory, like the row.
         meta["size"] = json!(
             super::index::directory_size(&candidate.root, &candidate.path)
                 .unwrap_or_else(|| candidate.stamps.iter().map(|stamp| stamp.size).sum::<u64>())
@@ -651,7 +651,7 @@ pub(crate) fn parse_candidate(
     }
     meta["supported"] = json!(unsupported.is_none());
     // A hard failure is the only warning of an unsupported row; a supported row
-    // keeps the provider's non-fatal notes (unknown kinds skipped like Python).
+    // keeps the provider's non-fatal notes (unknown kinds skipped).
     meta["migration_warnings"] = match &unsupported {
         Some(reason) => json!([reason]),
         None => meta["migration_warnings"]

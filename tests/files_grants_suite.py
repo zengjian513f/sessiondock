@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Directory browser grants survive rename/delete and restart, like Python.
+"""Directory browser grants survive rename/delete and restart.
 Only temporary native histories and files are used; no real CLI is started.
 """
 import argparse

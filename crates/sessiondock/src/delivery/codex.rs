@@ -185,7 +185,7 @@ pub enum Correlation {
         enter_operation: Operation,
         turn_id: String,
     },
-    /// Python-compatible causal text match after the fixed native boundary.
+    /// Causal text match after the fixed native boundary.
     PossibleTextMatch,
 }
 

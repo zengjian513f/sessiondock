@@ -154,7 +154,7 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_fork_visibility(uids, visible))
     }
 
-    /// Python `record_spawn_parents`: persist newly observed spawners, first
+    /// Persist newly observed spawners, first
     /// relation wins; returns how many sessions were recorded this time.
     pub fn record_spawn_parents(
         &self,

@@ -20,7 +20,7 @@ leases without stopping the independent ptyhost process.
 A browser exposes neither host name nor login, so a takeover prompt can only
 describe the holder by two labels, neither of which is identity:
 
-- `ip` (Python `_display_ip`): on the browser listener the TCP peer; on the
+- `ip`: on the browser listener the TCP peer; on the
   authenticated node listener the hub's forwarded `X-Real-IP` (else the first
   `X-Forwarded-For` hop, else the peer), because the peer there is always the
   hub's own tunnel address, which tells the user nothing. A browser cannot pick
@@ -91,7 +91,7 @@ The browser abandons an attach that remains in WebSocket `CONNECTING` for 15
 seconds, refreshes host liveness and enters the normal reconnect path. This
 transport timeout does not imply that the independent ptyhost process exited.
 
-`/api/term/list` publishes fresh observed sessions plus Python-compatible pending
+`/api/term/list` publishes fresh observed sessions plus pending
 and source information. Explicit stop and force takeover cover managed and
 external sessions through lifecycle discovery; resume creates a newly observed
 instance rather than reclaiming an exited one.

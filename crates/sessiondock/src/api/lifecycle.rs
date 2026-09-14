@@ -767,12 +767,12 @@ pub struct CompleteDirQuery {
     #[serde(default)]
     limit: Option<usize>,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[serde(default)]
     #[allow(dead_code)]
     debug_run: String,
 }
-/// Python-compatible absolute-directory completion, with the typed spelling
+/// Absolute-directory completion, with the typed spelling
 /// preserved.
 pub async fn complete_dir(
     State(state): State<AppState>,
@@ -848,7 +848,7 @@ pub struct StatusQuery {
     record_id: String,
     instance_id: String,
     /// `debug_run`: the page's view selector, appended to every `/api/`
-    /// URL by the frontend; accepted and ignored here like Python.
+    /// URL by the frontend; accepted and ignored here.
     #[serde(default)]
     #[allow(dead_code)]
     debug_run: String,
@@ -945,7 +945,7 @@ fn invalid_stop() -> ApiError {
         "停止请求格式或会话 UID 无效",
     )
 }
-/// Python `_stop_session`: use guarded host control for a managed instance and
+/// Use guarded host control for a managed instance and
 /// the same native SID/file/process-tree evidence for an external CLI.
 pub async fn stop(
     State(state): State<AppState>,

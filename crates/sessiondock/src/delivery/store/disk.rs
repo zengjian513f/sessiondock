@@ -1,4 +1,4 @@
-//! Python-compatible atomic file persistence for the delivery ledger.
+//! Atomic file persistence for the delivery ledger.
 
 use std::{
     fs::{self, OpenOptions},

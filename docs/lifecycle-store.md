@@ -13,7 +13,7 @@ the directory, chooses a home/default path, or resets missing data.
 
 The only specification is `LaunchSpec::new(Source, adapter_id, absolute_cwd)`,
 where Source is Claude, Codex or Grok. It expands and resolves the requested
-working directory like Python. New create and begin-start calls revalidate the directory; serde
+working directory. New create and begin-start calls revalidate the directory; serde
 decoding cannot bypass those checks. Reading/replaying an existing receipt does
 not require its historical cwd to still exist.
 

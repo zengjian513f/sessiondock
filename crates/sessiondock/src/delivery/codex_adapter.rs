@@ -5,7 +5,7 @@
 //! native turn association. The correlation it can
 //! establish from a raw TUI rollout is `Correlation::PossibleTextMatch`, which
 //! `Machine::acknowledge` accepts after validating the fixed cursor, real-user
-//! record, causal position and trimmed prompt as Python does. The output is
+//! record, causal position and trimmed prompt. The output is
 //! can acknowledge the causal matching receipt or advance its watch cursor.
 //!
 //! Records come from `ViewSnapshot::native_tail`: the opened view that
@@ -18,12 +18,12 @@ use super::codex::{
 };
 use crate::sessions::{NativeCheckpoint, TailError, TailRecord, ViewSnapshot};
 
-/// Python `send_queue.CONFIRM_TIMEOUT`: a terminal write older than this is
+/// A terminal write older than this is
 /// overdue and may be re-checked from the fixed boundary. Not a failure timeout.
 pub const CONFIRM_TIMEOUT_MS: u64 = 8_000;
 /// Python `_poll_outbox` spaces fixed-boundary replays by `CONFIRM_TIMEOUT`.
 pub const REPLAY_INTERVAL_MS: u64 = 8_000;
-/// Python `send_queue.TRACK_WINDOW`: automatic tracking stops one hour after
+/// Automatic tracking stops one hour after
 /// delivery. The receipt keeps its state; it does not become retryable.
 pub const TRACK_WINDOW_MS: u64 = 3_600_000;
 /// Python `_outbox_loop` wakes every 500 ms; the Rust inventory refresh shares
@@ -369,7 +369,7 @@ impl ReplayClock {
     }
 }
 
-/// Python `send_queue.tracked`: only the earliest still-tracked receipt per
+/// Only the earliest still-tracked receipt per
 /// UID is polled, and a receipt outside the window drops out of polling
 /// without changing state. `receipts` are `(request_id, delivered_ms)` pairs
 /// of one UID in creation order; the result is the one to observe this tick.

@@ -1489,7 +1489,7 @@ function migrationReadPaused(uid, agent = null) {
 }
 
 /** 瞬时失败只影响这一次请求：网络层错误、中止、408/429、5xx（501 除外）。
- *  它们走 Python 同款的退避重试，不暂停视图、不弹横幅、不关 SSE。 */
+ *  它们走退避重试，不暂停视图、不弹横幅、不关 SSE。 */
 function transientReadFailure(error) {
   if (!error) return false;
   if (error.name === 'AbortError' || error.name === 'TypeError') return true;
@@ -1600,7 +1600,7 @@ async function retryMigrationRead(uid, agent = null) {
 
 /** 服务端明确的 migration-error 事件：不可恢复时暂停并保留快照。
  *  原生文件并发增长等情况也会以 migration-error 携带 503；它仍是瞬时失败，
- *  留给随后到来的 es.onerror 按 Python 同款的退避策略重开。 */
+ *  留给随后到来的 es.onerror 按退避策略重开。 */
 function pauseMigrationWatch(es, uid, agent, error = null) {
   if (SessionDockCapabilities.config.backend !== 'rust' || _es !== es
       || _esUid !== uid || S.sel !== uid || S.agent !== agent) return false;

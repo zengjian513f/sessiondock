@@ -2,7 +2,7 @@
 //!
 //! `launch` creates an ordinary managed instance through the lifecycle service
 //! with the source's one configured CLI (what `term/create` would start, on
-//! the CLI's default model like Python), records the pending decoration and
+//! the CLI's default model), records the pending decoration and
 //! starts one injection task. The task waits for the CLI's composer to be empty and
 //! settled (`delivery::driver` composer models for Claude/Codex, screen
 //! stability for Grok), then under its own launch lease persists a step,
@@ -100,7 +100,7 @@ impl WorkerContext {
     }
 }
 
-/// Python `launch`: the pending instance is running and the injection task
+/// The pending instance is running and the injection task
 /// is started; the returned object is the route's `worker`.
 pub async fn launch(
     ctx: &WorkerContext,
@@ -473,7 +473,7 @@ impl Injection {
         .await
     }
 
-    /// Python `_confirm_submission`: the composer must be empty again; while
+    /// The composer must be empty again; while
     /// the pasted draft visibly stays after a second, Enter is resent a
     /// bounded number of times. Any other frame is watched, never typed into.
     async fn confirm_cleared(
@@ -791,7 +791,7 @@ pub fn screen_shows(screen: &str, prompt: &str, report_id: &str) -> bool {
     !tail.is_empty() && plain.contains(&tail)
 }
 
-/// Python `_ScreenProbe`: a non-blank frame that stopped changing is
+/// A non-blank frame that stopped changing is
 /// "empty"; after the paste the frame equal to the pasted one is "editing"
 /// and any other non-blank frame counts as moved on.
 #[derive(Default)]
