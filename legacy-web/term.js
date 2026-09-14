@@ -1890,6 +1890,7 @@ function ensureTerm(name) {
     renderer: 'dom', webgl: null, unicode11: null,
     syncHold: null, syncHoldTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
+    codexSideThread: false, sideThreadScanQueued: false,
   };
   T.views.set(name, view);
   term.loadAddon(fit);
@@ -2033,7 +2034,7 @@ function writeTermOutput(view, chunk) {
     view.syncHold = chunk;
     view.syncHoldTimer = setTimeout(() => flushTermSyncHold(view), TERM_SYNC_HOLD_MS);
   } else {
-    view.term.write(chunk);
+    writeParsedTermOutput(view, chunk);
     return;
   }
   if (termSyncFrameOpen(view.syncHold) && view.syncHold.length < TERM_SYNC_HOLD_MAX) return;
@@ -2050,7 +2051,52 @@ function flushTermSyncHold(view) {
   view.syncHoldTimer = null;
   const held = view.syncHold;
   view.syncHold = null;
-  if (held) view.term.write(held);
+  if (held) writeParsedTermOutput(view, held);
+}
+
+/** Codex 的 side thread 目前可能只存在于正在运行的 TUI，绑定 main thread 的
+ * 原生记录不会随它增长。只检查 xterm 已解析的实时屏幕底部，不能从原始包或
+ * scrollback 搜索：重绘包会带旧内容，用户向上滚动也不代表 CLI 已切线程。 */
+function terminalViewportHasCodexSideThread(term) {
+  const buffer = term?.buffer?.active;
+  const rows = Math.max(0, Number(term?.rows) || 0);
+  if (!buffer || !rows) return false;
+  const end = Math.min(Number(buffer.length) || 0, (Number(buffer.baseY) || 0) + rows);
+  const start = Math.max(0, end - Math.min(rows, 12));
+  let text = '';
+  for (let row = start; row < end; row++) {
+    text += `${buffer.getLine(row)?.translateToString(true) || ''}\n`;
+  }
+  return text.includes('Side from main thread');
+}
+
+function codexSideThreadVisible(uid = S.sel) {
+  return [...T.views.values()].some(view => view.bindingUid === uid
+    && view.codexSideThread && !view.ended && !view.retired);
+}
+
+function setCodexSideThreadState(view, active) {
+  active = !!active;
+  if (view.codexSideThread === active) return;
+  view.codexSideThread = active;
+  const uid = view.bindingUid || '';
+  if (uid && uid === S.sel && !S.agent && typeof renderConversationTail === 'function') {
+    renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
+  }
+}
+
+function scheduleCodexSideThreadScan(view) {
+  if (view.sideThreadScanQueued) return;
+  view.sideThreadScanQueued = true;
+  queueMicrotask(() => {
+    view.sideThreadScanQueued = false;
+    if (!T.views.has(view.name)) return;
+    setCodexSideThreadState(view, terminalViewportHasCodexSideThread(view.term));
+  });
+}
+
+function writeParsedTermOutput(view, chunk) {
+  view.term.write(chunk, () => scheduleCodexSideThreadScan(view));
 }
 
 function dropTermSyncHold(view) {
@@ -2461,6 +2507,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   // server still decides, so a revoked/expired token simply gets refused.
   view.inputLease = bound ? { token, ...binding } : null;
   dropTermSyncHold(view);
+  setCodexSideThreadState(view, false);
   view.ansiTail = '';
   view.selectionLocked = false;
   view.selectionSnapshot = null;
@@ -2727,6 +2774,7 @@ function disposeTermView(name) {
   const view = T.views.get(name);
   if (!view) return;
   const active = T.name === name;
+  setCodexSideThreadState(view, false);
   cancelTermReconnect(view);
   dropTermSocket(view);
   try { view.term.dispose(); } catch { /* 已被浏览器清理 */ }

@@ -1253,6 +1253,22 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .activity.waiting i { background: #d4a72c; }
 .activity.aborted i, .activity.failed i { background: #e5484d; }
 
+.terminal-thread-notice {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  margin: 3px 0 10px; padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, #d4a72c 58%, var(--border));
+  border-radius: 8px; background: color-mix(in srgb, #d4a72c 9%, var(--panel));
+  color: var(--text); font-size: 12px; line-height: 1.45;
+}
+.terminal-thread-copy { display: grid; gap: 2px; min-width: 0; }
+.terminal-thread-copy span { color: var(--muted); }
+.terminal-thread-notice button {
+  flex: none; min-height: 28px; padding: 4px 9px;
+  border: 1px solid var(--border); border-radius: 7px;
+  background: var(--panel); color: var(--fg); font: inherit; cursor: pointer;
+}
+.terminal-thread-notice button:hover { border-color: var(--accent); background: var(--hover); }
+
 .timeline-event {
   display: flex; align-items: baseline; gap: 7px; width: min(100%, max-content);
   min-width: 0; margin: 1px 0 7px; padding: 3px 8px;

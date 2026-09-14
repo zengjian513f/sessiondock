@@ -390,7 +390,8 @@ test('console output: plain chunks go straight to xterm, a DEC 2026 frame is wri
     clearTimeout: id => { if (timers[id - 1]) timers[id - 1].cleared = true; },
   });
   for (const name of ['TERM_SYNC_HOLD_MAX', 'TERM_SYNC_HOLD_MS', 'stripOscColorSets', 'terminalColorChunk',
-    'termSyncFrameOpen', 'flushTermSyncHold', 'dropTermSyncHold', 'writeTermOutput']) {
+    'termSyncFrameOpen', 'writeParsedTermOutput', 'flushTermSyncHold', 'dropTermSyncHold',
+    'writeTermOutput']) {
     load(context, name, term);
   }
   const {writeTermOutput, flushTermSyncHold, dropTermSyncHold, TERM_SYNC_HOLD_MAX} = context;

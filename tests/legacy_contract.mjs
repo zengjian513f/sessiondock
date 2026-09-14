@@ -154,6 +154,27 @@ test('pending terminals attach before any synchronous WebGL initialization', () 
   assert.equal(shouldUse('codex:native'), true);
 });
 
+test('Codex side-thread detection reads only the live screen footer', () => {
+  const context = contextWithCapabilities(disabled);
+  const detect = loadFunction(context, 'terminalViewportHasCodexSideThread', read('term.js'));
+  const lines = [
+    'old Side from main thread', 'old output', 'scrollback', 'main response',
+    '› Ask a follow-up question', 'gpt-5.6-sol · Ready · main thread',
+  ];
+  const term = {
+    rows: 3,
+    buffer: {active: {
+      baseY: 3, length: lines.length,
+      getLine: row => ({translateToString: () => lines[row]}),
+    }},
+  };
+  assert.equal(detect(term), false, 'a stale marker in scrollback is ignored');
+  lines[5] = 'gpt-5.6-sol · Side from main thread · main finished';
+  assert.equal(detect(term), true);
+  lines[5] = 'gpt-5.6-sol · Ready · main thread';
+  assert.equal(detect(term), false, 'switching back to main clears the state');
+});
+
 test('Rust remembered terminal layouts pin the full UID and instance', () => {
   const T = {name: 'pane', mode: 'normal', height: 200,
     list: [{name: 'pane', uid: 'codex:uid', instance_id: 'instance'}]};
