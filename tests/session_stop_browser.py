@@ -146,7 +146,7 @@ def main():
                     live = json.loads(opener.open(base + "/api/live?force=1", timeout=10).read())
                     assert live["managed"]["sessions"][codex_uid]["state"] == "exited", live["managed"]["sessions"]
 
-                    # ---- A session without any running instance follows Python:
+                    # ---- A session without any running instance:
                     # stopping succeeds as a no-op and the stale live marker clears.
                     # `S.live` can hold stale entries in Rust mode (no live poll), so the
                     # stop control can still be reached for such a session.

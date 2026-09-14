@@ -318,7 +318,7 @@ async fn source_without_a_cli_is_503_before_any_bundle() {
     let (status, meta) = get(&app.prepared.router, "/api/meta").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(meta["capabilities"]["bug_report"], true, "{meta}");
-    // Codex has no configured CLI here: Python's 503 "本机找不到 codex 命令",
+    // Codex has no configured CLI here: a 503 "本机找不到 codex 命令",
     // and no bundle is written for it.
     let (status, body) = post(
         &app.prepared.router,
@@ -592,7 +592,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
         users[0]["message"]["content"].as_str().unwrap().trim(),
         prompt.trim()
     );
-    // The worker's pending row carries Python's record fields; an ordinary
+    // The worker's pending row carries the record fields; an ordinary
     // launch keeps the plain projection. The report's own event trail is in
     // the audit log (worker_started/submitted).
     let (status, listing) = get(&router, "/api/term/list").await;

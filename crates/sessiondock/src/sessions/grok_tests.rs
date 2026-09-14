@@ -209,7 +209,7 @@ fn size_is_the_whole_session_directory_and_attachment_subtrees_are_never_parsed(
         .unwrap();
     assert_eq!(view["meta"]["size"], expected);
     // A file appended elsewhere in the directory is picked up with the next
-    // summary/chat change, exactly like Python's per-stamp refresh.
+    // summary/chat change, as a per-stamp refresh.
     fs::write(directory.join("updates.jsonl"), b"01234567890123456789").unwrap();
     fs::write(
         directory.join("summary.json"),

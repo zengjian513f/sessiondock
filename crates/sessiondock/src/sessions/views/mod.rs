@@ -129,7 +129,7 @@ pub(crate) struct View {
     pub rename: Option<Event>,
 }
 
-/// Python `_name_event` + the `read` insertion: the `/rename` command event
+/// The `/rename` command event
 /// of a renamed Codex main view (`event_id` `rename:<sid>:<renamed_at>`, the
 /// id the frontend also uses to merge its own copy).
 pub(crate) fn rename_event(meta: &Value) -> Option<Event> {
@@ -585,7 +585,7 @@ pub(crate) fn parse_candidate(
     let records = &record_batch.records;
     let mut unsupported = record_batch.error.clone();
     let uid = uid_for(candidate.source, &candidate.path);
-    // Python Grok falls back to chat mtime, or summary mtime if chat is absent;
+    // Grok falls back to chat mtime, or summary mtime if chat is absent;
     // this is metadata fallback only, never a fictional chat file version.
     let fallback = timestamp(
         candidate
@@ -881,7 +881,7 @@ pub(crate) struct ViewRequest {
     /// Persisted Claude display pin of the owner (main sessions only).
     pub pin: Option<TimelinePin>,
     /// The owner's published list row (topology, names and metadata already
-    /// applied by the index); Python's `messages.meta` is this row, so the
+    /// applied by the index); `messages.meta` is this row, so the
     /// view's metadata comes from here, never from a second derivation.
     pub row: Value,
 }
@@ -1356,8 +1356,8 @@ fn leaf_pin(request: &ViewRequest, leaf: &Candidate) -> Option<TimelinePin> {
     }
 }
 
-/// View metadata from the published owner row: Python's `session_view`
-/// (`index.py`) for an agent, the row itself for the main transcript. The
+/// View metadata from the published owner row: `session_view`
+/// for an agent, the row itself for the main transcript. The
 /// row's `migration_warnings` come from the head/tail summary; the detail
 /// merges the projection's whole-file notes into them.
 fn view_meta(request: &ViewRequest, parsed: &Parsed) -> Result<Value, SessionError> {
@@ -1537,8 +1537,8 @@ fn build(
     })
 }
 
-/// Identity of the selected view: Python compares Claude sidecar
-/// `sessionId` with the owner's, Codex agents carry their own thread id.
+/// Identity of the selected view: Claude sidecar `sessionId`
+/// is compared with the owner's, Codex agents carry their own thread id.
 fn native_scope(
     request: &ViewRequest,
     owner: &Parsed,

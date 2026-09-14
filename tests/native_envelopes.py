@@ -257,7 +257,7 @@ def run(binary, use_browser, smoke):
         print(f'PASS nested image boundary {size} bytes',flush=True)
 
     # Re-reading valid nested sources remains successful. Image decoding retains
-    # Python's actual 32 MiB single-item limit.
+    # the actual 32 MiB single-item limit.
     with tempfile.TemporaryDirectory(prefix='sessiondock-nested-work-') as temporary:
         payload = padded_png(32*MIB)
         corpus = corpus_for(Path(temporary),envelope(payload,2))

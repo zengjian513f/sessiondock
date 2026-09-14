@@ -116,8 +116,8 @@ pub struct Receipt {
     pub association: Option<Correlation>,
     pub completion: Option<Completion>,
     pub completion_record_end: Option<u64>,
-    /// UI dismissal of an already attempted receipt (Python
-    /// `9b1c2fd`): the row is hidden and leaves automatic tracking, but its
+    /// UI dismissal of an already attempted receipt:
+    /// the row is hidden and leaves automatic tracking, but its
     /// delivery state stays uncertain and its deduplication identity remains.
     /// Removing it never resends and never cancels input the TUI owns.
     #[serde(default)]
@@ -270,7 +270,7 @@ pub enum Command {
         request_id: String,
         uid: String,
     },
-    /// Python `_discard_message` for Codex after `9b1c2fd`: a pre-write row is
+    /// A pre-write row is
     /// discarded like `Discard`; an already attempted `uncertain` row is only
     /// hidden (`dismissed`), keeping its state and tombstone. Never a cancel.
     Dismiss {
@@ -703,7 +703,7 @@ impl Machine {
                     row.issue = None;
                     return self.change(row, After::None);
                 }
-                // Python permits retiring an injecting/confirming row. Hiding
+                // Retiring an injecting/confirming row is permitted. Hiding
                 // it leaves the authorized operation and callback intact.
                 // Display-only: keep the row's revision so an authorized
                 // one-shot callback is not invalidated, and keep its state.
@@ -817,7 +817,7 @@ impl Machine {
                 row.enter_operation.as_ref() == Some(enter_operation)
                     && turn_id == &evidence.record.turn_id
             }
-            // Python retires the first causal native user record whose prompt
+            // Retires the first causal native user record whose prompt
             // matches after trimming both ends. The fixed confirmation cursor
             // above supplies the same boundary here.
             Correlation::PossibleTextMatch => true,

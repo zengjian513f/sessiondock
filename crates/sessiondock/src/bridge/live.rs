@@ -3,9 +3,9 @@
 //! `LivePrompts` answers `/api/messages` and `/api/watch` for one main
 //! session: a Claude session reads its question-card file
 //! (`bridge::claude`, cleared once the matching native answer/tool_result is
-//! in the records — Python `_claude_prompt`); a Codex session reads the
-//! approval dialog off its managed instance's screen (`bridge::codex`,
-//! Python `_codex_prompt`); a subagent view or any other source has no
+//! in the records); a Codex session reads the
+//! approval dialog off its managed instance's screen (`bridge::codex`);
+//! a subagent view or any other source has no
 //! prompt. Nothing here sends keys: answering goes through `/api/term/send`
 //! under the page's own lease exactly like the native console.
 
@@ -20,7 +20,7 @@ use serde_json::Value;
 use super::{claude::PromptStore, claude::Revision, codex};
 use crate::{sessions::ViewSnapshot, state::AppState};
 
-/// Python `_codex_prompt` re-looks the pane up once per second while missing.
+/// Re-looks the pane up once per second while missing.
 const CODEX_LOOKUP_INTERVAL: Duration = Duration::from_secs(1);
 /// The last 80 joined scrollback rows.
 const CODEX_CAPTURE_LINES: usize = 80;
@@ -184,7 +184,7 @@ impl LivePrompts {
         }
     }
 
-    /// Python `_session_prompt` for one packet: the value the `prompt` field
+    /// The value the `prompt` field
     /// carries (JSON null when there is none).
     pub async fn current(
         &self,

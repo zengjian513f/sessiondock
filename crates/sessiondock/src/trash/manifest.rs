@@ -121,7 +121,7 @@ pub enum FileRole {
     Agent,
     /// A Claude subagent `.meta.json` sidecar.
     AgentMeta,
-    /// A whole Grok session directory (Python moves the directory).
+    /// A whole Grok session directory (the directory is moved).
     Directory,
 }
 

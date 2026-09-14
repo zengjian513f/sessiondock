@@ -302,7 +302,7 @@ pub async fn attach(
             return Err(error.into());
         }
     };
-    // Python accepts WebSocket frames up to 8 MiB. HTTP send/paste keeps the
+    // WebSocket frames up to 8 MiB are accepted. HTTP send/paste keeps the
     // ptyhost guarded-operation 1 MiB ceiling.
     let max_input = service.limits().max_host_frame_bytes;
     Ok(ws
@@ -507,8 +507,8 @@ pub async fn send(
 }
 
 /// Legacy scroll protocol. The ptyhost backend has no copy-mode or server-side
-/// scroll position: the original Python `term_host.scroll` returns 0 and lets
-/// the browser xterm scroll its own buffer, and `leave_copy_mode` is a no-op.
+/// scroll position: `scroll` returns 0 and lets the browser xterm scroll its
+/// own buffer, and `leave_copy_mode` is a no-op.
 /// The host's `capture` operation is a text snapshot, not a view state, so no
 /// PTY write, key translation, or host I/O happens here at all.
 #[derive(Deserialize)]
@@ -592,7 +592,7 @@ async fn launch_target(
     }
     Ok(target)
 }
-/// Python `pending_store.active` keeps a resolved row for 600 s; a finished
+/// A resolved row is kept for 600 s; a finished
 /// Rust receipt (Exited/Failed) leaves `term/list.pending` this long after
 /// its terminal state was recorded. It stays queryable by record id.
 pub const PENDING_ARCHIVE_AFTER: u64 = 600;
@@ -600,7 +600,7 @@ pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 /// Whether a receipt still belongs in the sidebar's pending list: not
 /// discarded by the operator and not finished for longer than
 /// [`PENDING_ARCHIVE_AFTER`]. A finished receipt with no recorded time (an
-/// older ledger) is archived at once, like Python's vanished pane.
+/// older ledger) is archived at once.
 fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     use crate::lifecycle::model::State;
     if record.discarded() {
@@ -656,7 +656,7 @@ pub async fn list(
             .list(0, 128)
             .await
             .map_err(super::lifecycle::failure)?;
-        // A bug-report worker's row carries Python's pending record
+        // A bug-report worker's row carries the pending record
         // fields (`kind`, `title` "处理 <id>", `report_id`) so the sidebar
         // names the report instead of "新建 … 会话".
         let now = std::time::SystemTime::now()
@@ -727,7 +727,7 @@ pub async fn list(
         sessions.retain(|row| row["origin_launch_id"].is_null());
         response["enabled"] = json!(!sessions.is_empty());
     }
-    // Python filters the pane list and the pending receipts through the
+    // The pane list and the pending receipts are filtered through the
     // debug-run registry exactly like the session list (`filter_rows`).
     let debug_run = crate::sessions::debug_run_of(query.as_deref());
     let runs = state.reader.store.debug_runs();

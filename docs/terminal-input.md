@@ -1,7 +1,7 @@
 # Raw terminal input over HTTP
 
 `POST /api/term/send` and `POST /api/term/scroll` give the legacy console the
-two HTTP input paths it used against the Python backend, under exactly the
+two HTTP input paths it used, under exactly the
 same authority as the WebSocket input path. This is raw keystroke delivery:
 success means the host acknowledged the write, never that the CLI processed
 it. The reliable-send composer, outbox and native confirmation stay
@@ -20,8 +20,8 @@ while a lease is held → 410 `terminal_exited`. Raw (unbound) targets are
 re-probed like raw attach: a launch identity → 409, exited → 410.
 
 A page that holds no lease for the terminal — the conversation view with the
-console closed or open on another device, where Python simply ran `tmux
-send-keys` — sends an **empty `token`** with the pinned identity. The route
+console closed or open on another device — sends an **empty `token`**
+with the pinned identity. The route
 then resolves the instance exactly as a claim would (runtime catalog and
 lifecycle authorization for native targets, the lifecycle receipt for launch
 targets) and `TerminalService::send_input_unleased` applies the delivery
@@ -40,7 +40,7 @@ above, optional `agent` (accepted, ignored, ≤ 256), and exactly one of
 `paste` (the host's bracketed-paste path, no implicit Enter) or `keys` (array
 of named keys). `data` and `paste` reproduce the legacy stale-build gate
 (`_build` ≠ served build → 409 `{code:"stale_build", reload:true, build}`);
-keys are not gated, as in Python. Success:
+keys are not gated. Success:
 `200 {ok:true, bytes, acknowledged:true, processed:"unknown"}` with
 `Cache-Control: no-store`.
 
@@ -52,12 +52,12 @@ translates under DECCKM), `f1`–`f12`, and `ctrl-<a-z>` / `C-x` / `^x`
 typed literally — the Codex question menu and command approval answers the
 live question cards send ([delivery.md](delivery.md)). Exact host names,
 lower-case aliases are normalized. Every other nonempty key name up to the
-host's 256-byte per-key ceiling is typed literally, matching Python ptyhost.
+host's 256-byte per-key ceiling is typed literally.
 
 Limits: 1 MiB decoded bytes per request (ptyhost's own send/paste ceiling),
 ≤ 256 keys (the host's guarded-operation ceiling), 4 MiB host
 control line including JSON escaping. There is no per-second input count limit.
-Requests serialize on the per-name gate and use Python's 10 s host-operation
+Requests serialize on the per-name gate and use the 10 s host-operation
 timeout. Codes: 501
 `terminal_disabled`, 400, 413 `terminal_input_too_large`, 403/409/410 as
 above, 504 `terminal_input_ambiguous` when the host did
@@ -68,8 +68,8 @@ retried automatically.
 
 `{name, up?, lines? (default 3), cancel?}` → `200 {pos:0,
 scrollback:"browser"}`; 404 `terminal_missing` without a record, 400 on bad
-shape, 501 when the transport is off. The Python ptyhost backend's `scroll()`
-already returned 0 and `leave_copy_mode()` was a no-op because the browser's
+shape, 501 when the transport is off. `scroll()` returns 0 and
+`leave_copy_mode()` is a no-op because the browser's
 xterm scrolls itself; the host protocol has no view/scroll state (only
 `capture` snapshots), so the route performs no host I/O and never writes to
 the PTY. The legacy wheel handler keeps its existing behaviour for `ptyhost`
@@ -85,12 +85,12 @@ composer's Esc, the question cards — sends `{keys}`. When this page holds no
 lease (`termInputBody` finds no `inputLease`), the body carries an empty token
 and the pane row's identity (`termRowBinding`), and the server decides as
 above. Text on the raw path — a pending console before its first native
-record, or a source without reliable send such as Grok — is Python's
-`submit_text`: a bracketed `{paste}`, then `{keys:["Enter"]}` 600 ms later so
+record, or a source without reliable send such as Grok — is
+a bracketed `{paste}`, then `{keys:["Enter"]}` 600 ms later so
 a paste-burst marker cannot swallow it. A Claude/Codex text submit is the
-reliable-send composer instead. Python-served pages keep the original bodies.
+reliable-send composer instead. Pages without the capability keep the original bodies.
 After a host exit the key bar silently does nothing once the instance leaves
-the list, matching Python.
+the list.
 
 ## Validation
 

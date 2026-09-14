@@ -301,7 +301,7 @@ impl DeliveryEngine {
         Ok(())
     }
     /// `agent_id` is already resolved by the caller's inventory. The Codex
-    /// ledger remains keyed by its native UID, as Python's queue is.
+    /// ledger remains keyed by its native UID.
     pub fn apply_codex(
         &mut self,
         command: codex::Command,

@@ -410,8 +410,8 @@ fn missing_ambiguous_cyclic_and_out_of_range_parents_fail_closed() {
 
 /// Old-style fork (2026-07/08): own meta (`history_base` null,
 /// `forked_from_id` = parent), the ancestors' metas copied after it, then the
-/// copied history and the own records. Python reads the file alone
-/// (`_history_segments` → `[]`) and ignores every meta after the first.
+/// copied history and the own records. The file is read alone
+/// (`_history_segments` → `[]`) and every meta after the first is ignored.
 #[test]
 fn legacy_fork_with_copied_metas_opens_alone_without_a_parent() {
     let temp = TempDir::new().unwrap();
@@ -491,7 +491,7 @@ fn legacy_fork_with_copied_metas_opens_alone_without_a_parent() {
 
 /// A rewind past the parent's own fork point: `history_base.thread_id` names
 /// the physical file holding the cut, `forked_from_id` the logical parent.
-/// Python reads the prefix from `history_base.thread_id`; the logical parent
+/// The prefix is read from `history_base.thread_id`; the logical parent
 /// is never opened. Cut validation is unchanged.
 #[test]
 fn history_base_thread_id_wins_over_forked_from_id_for_the_prefix() {

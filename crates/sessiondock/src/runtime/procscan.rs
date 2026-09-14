@@ -13,7 +13,7 @@
 //! - Grok TUI sessions are listed in an explicit active-sessions file;
 //!   headless `grok -p` keeps the session directory's `events.jsonl` open.
 //!
-//! Rules kept verbatim from Python: a session id on the command line beats an
+//! Rules: a session id on the command line beats an
 //! inherited one in the environment, an inherited id never crosses families
 //! (Grok only answers to `GROK_SESSION_ID`), an orphan helper without a live
 //! CLI ancestor counts for nothing, a bare `claude` is paired with a session
@@ -39,7 +39,7 @@ use super::process::ProcClock;
 pub const TTL: Duration = Duration::from_secs(3);
 /// Spawn-parent walks.
 pub const ANCESTRY_DEPTH: usize = 16;
-/// Python `_cli_ancestor` / `term_tmux.hosts` walk depth.
+/// CLI-ancestor and tmux-host walk depth.
 const CLI_ANCESTOR_DEPTH: usize = 12;
 
 const KEYWORDS: [&str; 3] = ["claude", "codex", "grok"];
@@ -69,7 +69,7 @@ pub const SPAWN_ENV_KEYS: [&str; 5] = [
 ];
 const SESSION_FILE_MARKERS: [&str; 3] = ["/.codex/sessions/", "/.claude/projects/", "/.grok/"];
 
-/// Where session files may live: Python's literal home markers plus the
+/// Where session files may live: the literal home markers plus the
 /// configured read roots. On the real machine the roots are exactly those
 /// homes, so the root rule only widens synthetic trees (the one deliberate
 /// difference from `live.py`, see docs/liveness.md).
@@ -162,7 +162,7 @@ pub fn command_sids(cmd: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// Python `Path(...).resolve()` without the strict requirement: an existing
+/// An existing
 /// path is canonicalized, a missing one is kept as spelled.
 fn resolve_path(path: &str) -> String {
     std::fs::canonicalize(path)
@@ -190,7 +190,7 @@ struct Memo {
 pub struct ProcTree {
     root: PathBuf,
     /// Boot clock of this tree (`<root>/stat btime`, ticks from this process's
-    /// own auxv like Python's `sysconf`); absent when the tree has no `stat`.
+    /// own auxv); absent when the tree has no `stat`.
     clock: Option<ProcClock>,
     memo: Mutex<Memo>,
 }
@@ -347,7 +347,7 @@ impl ProcTree {
         })
     }
 
-    /// Python `term_host.hosts` / `term.process_belongs_to`: some CLI main
+    /// Some CLI main
     /// process is, or descends from, a managed host's session root with no
     /// other CLI main process between them (`procs.ancestor_matches` /
     /// `descendant_of` with the `is_cli_process` barrier).
@@ -433,7 +433,7 @@ pub struct Scan {
     pub tree: Arc<ProcTree>,
 }
 
-/// The list-row fields the scan pairs processes with (Python `session` dict).
+/// The list-row fields the scan pairs processes with.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionRow {
     pub uid: String,
@@ -483,7 +483,7 @@ impl SessionRow {
     }
 }
 
-/// Python `_scan` over one process tree.
+/// Scan over one process tree.
 pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoots) -> Scan {
     let started = Instant::now();
     let mut sids: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
@@ -612,7 +612,7 @@ fn env_owner(
 }
 
 /// Grok's own active list names sessions without
-/// exposing a pid; a stale entry stays exactly as Python would show it.
+/// exposing a pid; a stale entry stays.
 fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
     let Some(data) = std::fs::read(file)
         .ok()
@@ -642,7 +642,7 @@ fn note_grok_sessions(sids: &mut BTreeMap<String, BTreeSet<i64>>, file: &Path) {
     }
 }
 
-/// Python `active_processes` output: live uids in list order and the pids each
+/// Live uids in list order and the pids each
 /// one owns after Codex fork-chain folding.
 pub struct ActiveProcesses {
     pub uids: Vec<String>,
@@ -806,7 +806,7 @@ pub(crate) fn codex_ancestor_sids(
     ancestors
 }
 
-/// Python `Path.expanduser()` for the `~`/`~/` forms rows can carry.
+/// Expand the `~`/`~/` forms rows can carry.
 fn expand_user(path: &str) -> String {
     if (path == "~" || path.starts_with("~/"))
         && let Some(home) = std::env::var_os("HOME")
@@ -816,9 +816,9 @@ fn expand_user(path: &str) -> String {
     path.to_owned()
 }
 
-/// Python `datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()`.
-/// Index rows always carry a zone (`…Z`, like Python `list_sessions`); a naive
-/// stamp, which Python would read as local time, is read as UTC here.
+/// Parse `created` (replace `Z` with `+00:00`) as a Unix timestamp.
+/// Index rows always carry a zone (`…Z`); a naive
+/// stamp is read as UTC here.
 fn parse_created(created: &str) -> Option<f64> {
     let text = created.replace('Z', "+00:00");
     if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&text) {

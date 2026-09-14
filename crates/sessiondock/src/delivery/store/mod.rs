@@ -131,7 +131,7 @@ impl DeliveryStore {
     }
 
     /// Replace malformed or unsupported persisted data with the same empty
-    /// queues Python exposes when its queue file cannot be decoded.
+    /// queues when the queue file cannot be decoded.
     pub(crate) fn reset(
         directory: &Path,
         codex_epoch: String,
@@ -166,7 +166,7 @@ impl DeliveryStore {
         })
     }
 
-    /// Decode an existing ledger. The engine handles Python-style empty/reset
+    /// Decode an existing ledger. The engine handles empty/reset
     /// fallback for missing, malformed or unsupported files.
     pub fn open(directory: &Path) -> Result<Self, Error> {
         let disk = disk::Disk::open(directory, false)?;

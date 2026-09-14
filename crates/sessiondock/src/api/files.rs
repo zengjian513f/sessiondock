@@ -175,7 +175,7 @@ impl FileQuery {
         validate_scope(&self.uid, &self.agent)?;
         crate::files::clean_ref(&self.r#ref)?;
         if directory && self.mode == "jobs" {
-            // Python returns jobs before reading navigation or pagination.
+            // Jobs are returned before reading navigation or pagination.
             self.path = None;
             return Ok(());
         }
@@ -187,7 +187,7 @@ impl FileQuery {
         } else if directory && self.mode == "thumbnail" {
             return Err(FileError::unsupported(&self.mode).into());
         } else if !matches!(self.mode.as_str(), "" | "info" | "preview") {
-            // Unknown modes are ordinary file reads/listings in Python.
+            // Unknown modes are ordinary file reads/listings.
             self.mode.clear();
         }
         if !directory {
@@ -223,7 +223,7 @@ impl FileQuery {
                 continue;
             }
             let digit = decimal_digit(character).ok_or_else(invalid)?;
-            // Python integers are unbounded. Any offset past usize is already
+            // Integer offsets are unbounded. Any offset past usize is already
             // past every possible listing, so admit it as an empty page.
             value = value.saturating_mul(10).saturating_add(digit);
             digit_before = true;
@@ -234,7 +234,7 @@ impl FileQuery {
         Ok(value)
     }
     fn listing_limit(&self) -> usize {
-        // Python's HTTP route ignores limit. Preserve our existing valid small
+        // The HTTP route ignores limit. Preserve our existing valid small
         // pages, but ignore other values instead of adding an input rejection.
         self.limit
             .as_deref()
@@ -678,7 +678,7 @@ fn pending_attachment_cwd(
             "创建回执与附件目标实例不匹配",
         ));
     }
-    // Python's pending store remains usable while its receipt exists, including
+    // The pending store remains usable while its receipt exists, including
     // the short resolved/exited retention window. Rust keeps historical ledger
     // rows indefinitely, so only the explicit discard tombstone ends this grant.
     if record.discarded() {
@@ -703,7 +703,7 @@ async fn pending_attachment_scope(
     }
     let lifecycle = super::lifecycle::enabled(state)?;
     let record = if query.record_id.is_empty() {
-        // Python pages (and an older Hub shell cached in a browser) send only
+        // Pages (and an older Hub shell cached in a browser) send only
         // the server-generated pending host UID. Host names are unique ledger
         // identities; resolve them on the server instead of treating the raw
         // UID as a client-supplied cwd grant.

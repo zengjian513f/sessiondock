@@ -51,7 +51,7 @@ pub(super) struct Row {
     spawned_by: Option<SpawnedBy>,
 }
 
-/// Python `session_meta.record_spawn_parents` payload: the spawner's source and
+/// The spawner's source and
 /// native session id. The spawner row may be gone; this is not a UID.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnedBy {
@@ -192,7 +192,7 @@ impl MetadataSnapshot {
         self.document.sessions.is_empty()
     }
 
-    /// Missing/cleared fields are absent, as with Python session_meta.snapshot.
+    /// Missing/cleared fields are absent.
     pub fn row(&self, uid: &str) -> Value {
         self.document.sessions.get(uid).map_or_else(
             || json!({}),
@@ -276,8 +276,8 @@ impl MetadataSnapshot {
 
     /// A session is spawned once; the first
     /// observed relation is kept for good and a later, different clue is
-    /// ignored. Entries with an empty uid, source or sid are skipped like
-    /// Python. Existing parent relationships remain unchanged.
+    /// ignored. Entries with an empty uid, source or sid are skipped.
+    /// Existing parent relationships remain unchanged.
     pub fn with_spawn_parents(&self, found: &[(String, SpawnedBy)]) -> Result<Self, MetadataError> {
         self.change(|rows| {
             for (uid, parent) in found {

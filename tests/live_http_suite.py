@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """HTTP-only contract of GET /api/live: empty inventory,
 cache hit/force miss, bound free-shell running then exited; then the explicit
-`/proc` scan (Python live.py) over a synthetic process tree: uids,
-tmux_uids (with the Python 16cc89c CLI barrier: a `grok -p` under a pane's
+`/proc` scan over a synthetic process tree: uids,
+tmux_uids (with the CLI barrier: a `grok -p` under a pane's
 claude is live but not managed), started_at, the scan cache and `spawned_by`
 recording; finally continued-in pane inheritance against a real ptyhost pane
 whose synthetic subtree runs the continued session. No Chromium."""
@@ -153,8 +153,8 @@ def run(opener, base, uid, other, work):
 
 
 # ---------------------------------------------------------------- proc scan
-# The `/proc` scan (Python live.py) over a synthetic tree
-# (SESSIONDOCK_PROC_ROOT), Python tests/test_live.py FakeProc shape.
+# The `/proc` scan over a synthetic tree
+# (SESSIONDOCK_PROC_ROOT), FakeProc shape.
 BTIME = 1_700_000_000
 SID_A = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"   # claude, resumed by pid 100
 SID_B = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"   # claude, stopped; orphan helper keeps its id
@@ -297,8 +297,8 @@ def write_tree(proc_root: Path, paths):
     proc.add(601, "bash", 600, "bash")
     proc.add(602, "claude", 601, f"claude --session-id {SID_F}", start_ticks=5_000)
     # H: headless grok -p spawned by F's tool shell inside F's pane. It is live and
-    # spawned_by F, but F's claude between it and the tmux server is a barrier
-    # (Python 16cc89c `is_cli_process`): the console is F's, H is not in tmux_uids.
+    # spawned_by F, but F's claude between it and the tmux server is a barrier:
+    # the console is F's, H is not in tmux_uids.
     proc.add(603, "bash", 602, "bash /tmp/claude-1000/f/tool.sh",
              {"CLAUDE_CODE_SESSION_ID": SID_F, "CLAUDE_PID": "602"}, start_ticks=5_100)
     proc.add(604, "grok", 603, "/home/x/.grok/bin/grok -p summarize --cwd /tmp/project",
@@ -410,7 +410,7 @@ FAKE_CLAUDE = (
 
 
 def continued_case(binary: Path, root: Path, ptyhost: Path):
-    """Python 16cc89c `_pane_for_session`: a managed pane resumes ORIGIN; the synthetic tree hangs
+    """A managed pane resumes ORIGIN; the synthetic tree hangs
     ORIGIN's claude, the daemon child running NEXT's claude (ORIGIN's row says continued_in → NEXT)
     and a `grok -p` (CHILD) under that real pane root. NEXT inherits the pane, CHILD never does."""
     home = root / "continued-home"

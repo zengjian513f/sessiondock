@@ -350,8 +350,8 @@ async fn selected_local_images_and_remote_urls_are_projected_with_or_without_roo
         #[cfg(unix)]
         ("symlink", PNG),
     ];
-    // Python media.register_path resolves a selected image reference through
-    // symlinks and checks the actual file; configured roots do not narrow it.
+    // A selected image reference is resolved through symlinks
+    // and the actual file is checked; configured roots do not narrow it.
     for (sid, expected) in readable {
         let projected = messages(&app, sid, "").await;
         let images = media(&projected);
@@ -440,7 +440,7 @@ async fn a_missing_cwd_basename_stays_text_even_when_other_directories_share_the
     fixture.unchanged();
 }
 
-/// Python's `media.register_path` registers nothing for a text reference that
+/// Nothing is registered for a text reference that
 /// is not an image file: the text stays, no placeholder. Typed native references
 /// keep their slot, and selected images outside configured roots or reached by
 /// a hard link are ordinary images.

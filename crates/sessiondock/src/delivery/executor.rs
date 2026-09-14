@@ -240,7 +240,7 @@ impl From<engine::Error> for Failure {
     }
 }
 
-/// Reader failures keep their code; an unknown session is the Python 400.
+/// Reader failures keep their code; an unknown session is a 400.
 fn api_failure(error: crate::error::ApiError) -> Failure {
     if error.code == "session_error" && error.status.as_u16() == 404 {
         return Failure::new(
@@ -328,8 +328,8 @@ struct Applied {
 struct Tracking {
     submitted: HashMap<String, TrackEntry>,
     redispatch: HashMap<String, Instant>,
-    /// Codex receipts follow the adapter's `ReplayClock` (Python
-    /// `_poll_outbox`): one clock per tracked receipt, dropped on retirement.
+    /// Codex receipts follow the adapter's `ReplayClock`:
+    /// one clock per tracked receipt, dropped on retirement.
     codex: HashMap<String, CodexTrack>,
 }
 
@@ -1104,7 +1104,7 @@ impl DeliveryExecutor {
 
     // ---- Codex ---------------------------------------------------------------
 
-    /// Python `_queue_message` for Codex: replay lookup, draft consent, then
+    /// Replay lookup, draft consent, then
     /// `Submit` (persisted before any terminal access) followed by the
     /// inspect → prepare → Enter chain under the lease. Codex owns follow-up
     /// queueing while working, so nothing here waits for an idle TUI.
@@ -1534,10 +1534,10 @@ impl DeliveryExecutor {
         }
     }
 
-    /// Python `_retry_message` for Codex: only a `failed` row with
+    /// Only a `failed` row with
     /// `attempts == 0` (the domain's `retryable()`, plus an unresolved draft
     /// conflict carrying its consent token) may be re-inspected; anything that
-    /// reached the terminal is refused with Python's message.
+    /// reached the terminal is refused with the fixed message.
     async fn retry_codex(
         &self,
         session: Session,
@@ -1588,7 +1588,7 @@ impl DeliveryExecutor {
                     .await;
             }
             _ => {
-                // Python checks the console draft before `send_queue.retry`.
+                // The console draft is checked before retry.
                 match self
                     .overwrite_draft(ComposerKind::Codex, &lease, overwrite_draft)
                     .await
@@ -1671,12 +1671,12 @@ impl DeliveryExecutor {
                     let id = id.to_owned();
                     self.engine(move |engine| engine.codex_receipt(&id)).await?
                 };
-                // Python `_discard_message` for Codex is idempotent: a row
+                // Discard for Codex is idempotent: a row
                 // another tab already removed answers `ok` with the snapshot.
                 if receipt
                     .is_some_and(|r| r.request.payload.uid == session.uid && r.visible_in_outbox())
                 {
-                    // Python permits dismissing a row while paste/Enter is in
+                    // Dismissing a row is permitted while paste/Enter is in
                     // flight. Dismissal only hides it; the durable operation and
                     // deduplication identity survive until its callback settles.
                     self.apply_codex(codex::Command::Dismiss {
@@ -1732,8 +1732,8 @@ impl DeliveryExecutor {
         let now = Instant::now();
         let mut redispatch = Vec::new();
         for row in rows {
-            // A dismissed row is retired from automatic tracking (Python
-            // tombstones it on discard): a later identical record then
+            // A dismissed row is retired from automatic tracking (tombstoned
+            // on discard): a later identical record then
             // acknowledges the next receipt with that text, not the hidden one.
             if row.attempted && tracked_state(row.state) && !row.dismissed {
                 self.observe_row(&row, now).await;
@@ -1832,7 +1832,7 @@ impl DeliveryExecutor {
         };
         match adapter::observe(row, &scope, &from, &read) {
             adapter::Observation::Accepted(mut evidence) => {
-                // Python confirms by the native text record. Media is outbox
+                // Confirmation is by the native text record. Media is outbox
                 // preview metadata; it has no separate native representation.
                 evidence.attachments = row.request.payload.attachments.clone();
                 if matches!(
@@ -1870,12 +1870,12 @@ impl DeliveryExecutor {
             .map_err(|error| Failure::new(error.status.as_u16(), error.code, error.message))
     }
 
-    /// Python `_poll_outbox` for one Codex receipt: the adapter's replay clock
+    /// For one Codex receipt: the adapter's replay clock
     /// decides a cheap watch tick, a rate-limited replay from the fixed
     /// boundary, or expiry after the tracking window (the row keeps its state
     /// and is not retryable). Outcomes map to the domain as documented in
     /// `docs/delivery-codex-executor.md`; a causal matching native user record
-    /// after the boundary retires the receipt as in Python `send_queue.observe`.
+    /// after the boundary retires the receipt.
     async fn observe_codex_row(&self, row: &codex::Receipt) {
         let id = row.request.request_id.clone();
         let uid = row.request.payload.uid.clone();
@@ -1884,8 +1884,8 @@ impl DeliveryExecutor {
             return;
         };
         let policy = self.limits.replay_policy();
-        // The durable Submit clock bounds the window and the timestamp check
-        // (Python `_tracked_since`); the physical fence is the real boundary.
+        // The durable Submit clock bounds the window and the timestamp check;
+        // the physical fence is the real boundary.
         let delivered_ms = row.created_ms;
         let plan = {
             let mut tracking = self.tracking.lock().unwrap_or_else(|p| p.into_inner());
@@ -2095,7 +2095,7 @@ fn unknown_view() -> ComposerView {
     }
 }
 
-/// Python `composer_probe` body: `draft_state`, plus `draft_conflict` and the
+/// Body: `draft_state`, plus `draft_conflict` and the
 /// consent token while editing.
 fn draft_conflict(view: &ComposerView) -> Value {
     match view.state {
@@ -2107,7 +2107,7 @@ fn draft_conflict(view: &ComposerView) -> Value {
     }
 }
 
-/// Python `_public` for a confirmed/retired row: no text or media.
+/// A confirmed/retired row: no text or media.
 fn hidden_item(receipt: &Receipt) -> Value {
     json!({
         "id": receipt.request.id,
@@ -2141,7 +2141,7 @@ fn age_since(created_ms: u64) -> Duration {
     Duration::from_millis(now_ms().saturating_sub(created_ms))
 }
 
-/// Match Python enqueue: mint a UUID for an empty ID, otherwise keep the
+/// Mint a UUID for an empty ID, otherwise keep the
 /// first 128 Unicode characters, including whitespace and punctuation.
 /// Retry and discard use the returned ID exactly, without normalization.
 pub fn normalize_request_id(raw: &str) -> Result<String, Failure> {

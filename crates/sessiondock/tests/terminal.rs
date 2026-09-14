@@ -788,7 +788,7 @@ async fn stalled_browser_waits_until_takeover_and_does_not_block_recovery() {
     let token = server.claim("slow-page", false).await;
     let mut ws = server.connect("slow-page", &token).await;
     assert_eq!(next(&mut ws).await, Message::Binary(READY.to_vec().into()));
-    // Stop consuming WS output. Python has no fixed downstream backpressure
+    // Stop consuming WS output. There is no fixed downstream backpressure
     // deadline, so an otherwise healthy attachment remains active.
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(host.active.load(Ordering::SeqCst), 1);

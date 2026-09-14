@@ -2,7 +2,7 @@
 //!
 //! The pool is the frozen candidate list (published rows in `updated`
 //! order). The searchable body of a candidate (`body`: the texts of the roles
-//! Python searches, joined by newlines) comes from the persistent search-text
+//! searched, joined by newlines) comes from the persistent search-text
 //! cache (`search::cache`, one private file per session and file version);
 //! only a session whose file version is not cached is projected — a
 //! still-current cached view is borrowed, anything else is streamed into a
@@ -20,11 +20,11 @@
 //!
 //! Wire compatibility: `q`, comma-separated `source`, `limit` (default 60,
 //! optional), and `word/case/regex/progress` enabled by the value 1. Public session views
-//! are the search pool, matching Python's default; attached agent transcripts
+//! are the search pool; attached agent transcripts
 //! are not silently merged into their owner's text. Unsupported views produce
 //! `errors`, `partial` and `incomplete`, while readable results are retained.
 //!
-//! Search accepts lookaround and backreferences and follows Python's whole-word
+//! Search accepts lookaround and backreferences and follows the whole-word
 //! boundary construction. The native session text is unchanged by matching.
 
 pub mod cache;
@@ -46,8 +46,8 @@ use crate::sessions::{SessionError, ViewSnapshot};
 pub use cache::Cached;
 
 const HIT_CAP: usize = 200;
-/// Characters of context around the first hit (Python `m.start() - 40`,
-/// `m.end() + 150`).
+/// Characters of context around the first hit (40 before,
+/// 150 after).
 const SNIPPET_BEFORE: usize = 40;
 const SNIPPET_AFTER: usize = 150;
 const SEARCH_ROLES: &[&str] = &[
@@ -226,7 +226,7 @@ fn collapse(raw: &str) -> String {
         .join(" ")
 }
 
-/// Python's snippet: 40 characters before the first hit, 150 after, terminal
+/// The snippet: 40 characters before the first hit, 150 after, terminal
 /// colours removed and whitespace collapsed.
 fn snippet(haystack: &str, start: usize, end: usize) -> String {
     let lo = haystack[..start]
@@ -439,8 +439,8 @@ pub fn matches(
     Ok(scanner.finish())
 }
 
-/// The searchable body of one view: the semantic texts of the roles Python
-/// searches, joined by newlines. Media, cursors and private payloads never
+/// The searchable body of one view: the semantic texts of the roles
+/// searched, joined by newlines. Media, cursors and private payloads never
 /// enter it.
 pub fn body(view: &ViewSnapshot) -> String {
     view.texts()

@@ -12,7 +12,7 @@
 //! persistence; the outcome lands in the manifest as
 //! `submitted` / `submitted_unconfirmed` / `failed`.
 //!
-//! Differences from Python, all documented in `docs/bug-report.md`: audit rows
+//! Documented in `docs/bug-report.md`: audit rows
 //! carry structured metadata only (no `content` blob); the report id stamp is
 //! UTC; `terminal.txt` is captured from the ptyhost screen model of a managed
 //! instance (8000 scrollback rows) and never from an external CLI; a worker
@@ -42,11 +42,11 @@ use crate::{
     lifecycle::model::Source,
 };
 
-/// Python `EVENT_WINDOW_SECONDS`.
+/// Audit-event window included in a bundle (900 s).
 pub const EVENT_WINDOW_SECONDS: u64 = 15 * 60;
 /// Composer uploads under the worker cwd.
 pub const ATTACHMENT_DIR: &str = "sessiondock_attachments";
-/// Python `BUG_REPORT_UPLOAD_UID`.
+/// Composer-upload uid when there is no session yet.
 pub const UPLOAD_UID: &str = "bug-report";
 pub const ATTACHMENT_MAX_COUNT: usize = 12;
 pub const MAX_DESCRIPTION_CHARS: usize = 50_000;
@@ -54,7 +54,7 @@ pub const DEFAULT_SOURCE: Source = Source::Codex;
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const STDOUT_TAIL: usize = 200_000;
 const STDERR_TAIL: usize = 40_000;
-/// Python `audit._SECRET_KEYS` (underscores folded to dashes), the bundle
+/// Secret keys (underscores folded to dashes), the bundle
 /// documents' redaction list; the audit intake's wider list is not used
 /// here because a manifest legitimately names the worker `token`.
 const SECRET_KEYS: [&str; 11] = [
@@ -96,7 +96,7 @@ pub fn parse_source(text: &str) -> Option<Source> {
     }
 }
 
-/// One validated composer upload (Python `resolve_attachments` row).
+/// One validated composer upload.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attachment {
     pub number: u64,
@@ -134,7 +134,7 @@ pub struct CreateInput {
     pub attachments: Vec<Attachment>,
 }
 
-/// Python `bug_report.create` result.
+/// Result of a successful `create`.
 #[derive(Clone, Debug)]
 pub struct Report {
     pub report_id: String,
@@ -143,8 +143,8 @@ pub struct Report {
     pub manifest: Value,
 }
 
-/// A `create` failure: before the directory exists it is a `400` (Python
-/// `ValueError`/`OSError`); afterwards the caller answers `500` with the
+/// A `create` failure: before the directory exists it is a `400`;
+/// afterwards the caller answers `500` with the
 /// report id and path so the partial bundle can be inspected.
 #[derive(Clone, Debug)]
 pub struct CreateError {
@@ -177,7 +177,7 @@ pub struct BugReportService {
     audit_dir: PathBuf,
     build: String,
     /// Lifecycle record id → report, for the sidebar's pending row
-    /// decoration (Python's pending record `kind`/`title`/`report_id`).
+    /// decoration (the pending record `kind`/`title`/`report_id`).
     workers: Mutex<BTreeMap<String, WorkerNote>>,
 }
 
@@ -259,7 +259,7 @@ impl BugReportService {
         }
     }
 
-    /// Python pending record fields for a worker's lifecycle record:
+    /// Pending record fields for a worker's lifecycle record:
     /// `{kind:"bug-report", report_id, title}` plus the manifest's
     /// `worker_status` / `worker_error`; `None` for ordinary launches.
     pub fn pending_decoration(&self, record_id: &str) -> Option<Value> {
@@ -301,7 +301,7 @@ impl BugReportService {
             }
             let outside = || format!("第 {position} 个附件不在附件目录中或已不存在");
             let requested = Path::new(&raw);
-            // Python resolves links and requires the resulting file to remain
+            // Links are resolved and the resulting file must remain
             // inside the resolved attachment root.
             let path = requested.canonicalize().map_err(|_| outside())?;
             if !path.starts_with(&root) {
@@ -416,7 +416,7 @@ impl BugReportService {
             crate::audit::query::MAX_QUERY_ROWS,
         );
         // The writer thread may not have reached our own row yet; the bundle
-        // always carries it exactly once, like Python's flushed store.
+        // always carries it exactly once.
         if !events.iter().any(|row| {
             row["event"] == "bug_report.created" && row["data"]["report_id"] == report_id
         }) {
@@ -517,7 +517,7 @@ fn string_of(value: Option<&Value>) -> String {
     }
 }
 
-/// `BUG-YYYYMMDD-HHMMSS-hex6` (UTC stamp; Python uses local time).
+/// `BUG-YYYYMMDD-HHMMSS-hex6` (UTC stamp).
 pub fn report_id(now: SystemTime) -> String {
     let seconds = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let stamp = chrono::DateTime::from_timestamp(seconds as i64, 0)
@@ -706,7 +706,7 @@ fn tail(text: &str, chars: usize) -> String {
     text.chars().skip(total - chars).collect()
 }
 
-/// Python `audit.sanitize` for bundle documents: secret-looking keys become
+/// For bundle documents: secret-looking keys become
 /// `<redacted>`; nesting beyond 12 levels is cut. Paths are kept.
 pub fn redact(value: &Value) -> Value {
     fn walk(value: &Value, depth: usize) -> Value {
@@ -846,7 +846,7 @@ fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
     }
 }
 
-/// Prepare the bundle root as Python's `create` does.
+/// Prepare the bundle root.
 pub fn validate_directory(path: &Path) -> io::Result<PathBuf> {
     fs::create_dir_all(path)?;
     let _ = set_mode(path, 0o700);

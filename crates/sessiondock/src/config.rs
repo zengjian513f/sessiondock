@@ -38,10 +38,9 @@ pub struct Config {
     /// Directory for the session recycle bin. Unset keeps the
     /// `trash` capability disabled and the delete/trash routes `501`.
     pub trash_dir: Option<PathBuf>,
-    /// Process table to scan; `/proc` by default and a synthetic tree in tests
-    /// (Python `PROC_FS`).
+    /// Process table to scan; `/proc` by default and a synthetic tree in tests.
     pub proc_root: PathBuf,
-    /// Optional override for Python's `~/.grok/active_sessions.json`.
+    /// Optional override for `~/.grok/active_sessions.json`.
     pub grok_active: Option<PathBuf>,
     /// Second listener for Hub traffic. Honoured only together
     /// with the token file, the id file and the peer networks; any subset of
@@ -61,8 +60,8 @@ pub struct Config {
     /// at all; unset keeps
     /// `capabilities.bug_report` false and `POST /api/bug-report` 501.
     pub bug_report_dir: Option<PathBuf>,
-    /// The repository a bug-report worker investigates (Python
-    /// `PROJECT_ROOT`): the worker's cwd and the parent of
+    /// The repository a bug-report worker investigates:
+    /// the worker's cwd and the parent of
     /// `sessiondock_attachments/`.
     pub bug_report_repo: Option<PathBuf>,
     /// Exact public authorities an authenticating reverse proxy forwards
@@ -71,7 +70,7 @@ pub struct Config {
     /// the gate loopback-only.
     pub public_hosts: Vec<String>,
     /// The name the page, `<title>`, `/api/meta` and `/api/nodes` show for
-    /// this machine (Python `socket.gethostname()`): `SESSIONDOCK_HOSTNAME`
+    /// this machine: `SESSIONDOCK_HOSTNAME`
     /// when set, else the system host name, else `SessionDock`.
     pub hostname: String,
     /// Persistent search-text cache (`docs/read-model.md` "搜索"). Unset keeps

@@ -130,8 +130,8 @@ async fn pending_codex_launch_binds_by_process_evidence_and_finished_receipts_ar
     );
     file(&bin.join("fake-codex"), FAKE_CODEX.as_bytes(), 0o700);
     // Two rollouts in the launch cwd: the held one is the CLI's, the decoy is
-    // an unrelated session in the same directory (Python would have had to
-    // disambiguate it by process too; Rust never uses cwd at all).
+    // an unrelated session in the same directory. The service never uses
+    // cwd at all.
     let held = codex_root.join(format!("rollout-{HELD_SID}.jsonl"));
     let decoy = codex_root.join(format!("rollout-{DECOY_SID}.jsonl"));
     rollout(&held, HELD_SID, &codex_area);

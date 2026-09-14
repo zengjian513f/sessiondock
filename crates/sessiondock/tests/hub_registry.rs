@@ -1,5 +1,5 @@
-//! Hub registry against `tests/hub_fake_node.py` (the port of the Python
-//! project's `hub_fixture.NodeHandler`): the `test_hub.py` registry cases —
+//! Hub registry against `tests/hub_fake_node.py`: the
+//! `test_hub.py` registry cases —
 //! conditional `sig` probes, snapshot across a restart, strikes → offline,
 //! recheck, streaming search, JSON cap — with the fake node driven through
 //! its `/__control` endpoint. Nothing here touches a session root.

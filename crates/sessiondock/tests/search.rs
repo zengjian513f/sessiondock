@@ -175,7 +175,7 @@ async fn source_filter_limit_and_explicit_partial_errors_are_not_fake_complete()
         &temp.path().join("claude/project/unsupported.jsonl"),
         &[
             user("unsupported", "u0", Value::Null, "Needle unsupported"),
-            // Scalar content is unreadable for Python too (unknown record
+            // Scalar content is unreadable (unknown record
             // kinds are merely skipped).
             json!({"type":"user","sessionId":"unsupported","message":{"content":42}}),
         ],

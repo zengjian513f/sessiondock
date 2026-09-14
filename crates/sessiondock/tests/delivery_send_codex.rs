@@ -448,7 +448,7 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     assert_eq!(reply["item"]["uid"], uid);
     assert_eq!(reply["item"]["text"], "hello from the web composer");
     assert_eq!(reply["item"]["server"], true);
-    // Python's Codex projection: an attempted, unconfirmed row is
+    // The Codex projection: an attempted, unconfirmed row is
     // `failed` with `attempts: 1` (legacy "终端写入待核对", 检查终端/移除).
     assert_eq!(reply["item"]["state"], "failed");
     assert_eq!(reply["item"]["attempts"], 1);
@@ -598,7 +598,7 @@ async fn codex_send_confirms_with_operation_turn_replays_and_needs_draft_consent
     kill(&app, &instances).await;
     close(app).await;
 
-    // The persisted association follows Python's causal text match.
+    // The persisted association follows the causal text match.
     let row = receipt(&fixture, &request_id);
     assert!(
         matches!(
@@ -686,7 +686,7 @@ async fn codex_swallowed_line_stays_uncertain_and_causal_text_records_confirm() 
 
     close(app).await;
 
-    // Python accepts the first causal matching record without a turn ID.
+    // The first causal matching record without a turn ID is accepted.
     fixture.select_profile("codex-noturn-v1");
     let app = open(&fixture).await;
     let router = app.prepared.router.clone();
@@ -772,9 +772,9 @@ async fn codex_swallowed_line_stays_uncertain_and_causal_text_records_confirm() 
     assert_eq!(replay["item"]["state"], "failed");
     assert_eq!(fixture.user_records(sid).len(), 1);
 
-    // Discard hides the receipt (Python `9b1c2fd`: a confirming receipt may
-    // be removed, it never resends); a second discard is idempotent `ok`
-    // like Python's Codex handler.
+    // Discard hides the receipt (a confirming receipt may
+    // be removed, it never resends); a second discard is idempotent
+    // `ok`.
     let (status, discard) = post(
         &router,
         "/api/session/outbox/discard",

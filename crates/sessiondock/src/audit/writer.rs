@@ -193,7 +193,7 @@ impl Writer {
     }
 
     /// Closes the current daily segment, opens today's file and applies
-    /// Python's fourteen-day retention window.
+    /// the fourteen-day retention window.
     fn rotate(&mut self, date: &str) -> io::Result<()> {
         self.sync();
         self.segment.take();
@@ -224,7 +224,7 @@ impl Writer {
         Ok(())
     }
 
-    /// Delete matching segments older than Python's retention window.
+    /// Delete matching segments older than the retention window.
     fn enforce_retention(&mut self) {
         let mut segments = list_segments(&self.directory);
         segments.sort();

@@ -481,7 +481,7 @@ async fn send_confirms_from_native_record_and_replays_by_request_id() {
     assert_eq!(media["item"]["media"][0]["token"], "abc");
     wait_confirmed(&app, &uid, "send-request-0002", Duration::from_secs(10)).await;
 
-    // Wrong terminal name and unknown session follow the Python codes.
+    // Wrong terminal name and unknown session follow the codes.
     let (status, unlinked) = post(&router, "/api/session/send",
         json!({"uid":uid,"name":"sessiondock-claude-other","text":"x","request_id":"send-request-0003","_build":app.build})).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -780,7 +780,7 @@ async fn send_routes_are_501_without_the_ledger_or_transport() {
     shutdown.cancel();
 }
 
-/// Frozen Python server uses str(value or "") before enqueue's character slice.
+/// The server uses str(value or "") before enqueue's character slice.
 /// Raw request bodies preserve large integer spelling and duplicate map keys.
 #[tokio::test]
 async fn python_json_request_ids_and_ignored_outbox_query_fields() {
@@ -883,7 +883,7 @@ async fn python_json_request_ids_and_ignored_outbox_query_fields() {
     .await;
     assert_eq!(status, StatusCode::OK, "{queried}");
     assert_eq!(queried, baseline);
-    // Unknown UIDs use Python's unsupported-source empty snapshot.
+    // Unknown UIDs use the unsupported-source empty snapshot.
     let (status, unknown) = get(
         &router,
         "/api/session/outbox?uid=claude:does-not-exist&future=1",

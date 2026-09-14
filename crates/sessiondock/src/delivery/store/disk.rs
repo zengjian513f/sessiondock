@@ -125,7 +125,7 @@ impl Disk {
         fs::rename(&temporary.path, self.directory.join(LEDGER_FILENAME))
             .map_err(|error| io_error("replace delivery ledger", error))?;
 
-        // Python treats directory fsync as best effort after the atomic replace.
+        // Directory fsync is treated as best effort after the atomic replace.
         #[cfg(unix)]
         if let Ok(directory) = fs::File::open(&self.directory) {
             let _ = directory.sync_all();

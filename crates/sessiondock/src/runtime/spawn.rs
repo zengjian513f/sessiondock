@@ -1,5 +1,4 @@
-//! Which session started a running session (Python `live.spawn_parents` and
-//! `server._spawn_watch_loop`).
+//! Which session started a running session.
 //!
 //! A CLI main process's ancestor chain carries the clues: an ancestor is itself
 //! another session's CLI main process, or some level's environment names another
@@ -23,7 +22,7 @@ use indexmap::IndexMap;
 use super::procscan::{ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow};
 use crate::metadata::{MetadataError, MetadataStore, SpawnedBy};
 
-/// Python `SPAWN_WATCH_INTERVAL`.
+/// Ten-second background tick.
 pub const WATCH_INTERVAL: Duration = Duration::from_secs(10);
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -82,7 +81,7 @@ fn spawn_candidates(
     found
 }
 
-/// Python `spawn_parents` without the per-scan memo: `{uid: {source, sid}}`
+/// `{uid: {source, sid}}` without a per-scan memo
 /// for every owned session whose chain names another listed session.
 pub fn spawn_parents(
     scan: &Scan,

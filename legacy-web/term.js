@@ -501,7 +501,7 @@ function takenOver(uid) {
  *  own instance lease when the console is open here, so sending from the
  *  composer never conflicts with our own console. Without a lease the server
  *  claims for itself and reports any other page's lease as an ownership
- *  error. Python-served pages and undeclared capabilities send nothing extra. */
+ *  error. Undeclared capabilities send nothing extra. */
 function termSendLease(name) {
   if (SessionDockCapabilities.config.backend !== 'rust'
       || !SessionDockCapabilities.allows('outbox')) return {};
@@ -516,7 +516,7 @@ function termSendLease(name) {
  *  the native `uid`+`instance_id` or the launch triple, exactly what attach
  *  would claim. The server then writes under its ordinary-claimant rule
  *  (refused while any page or server send holds the lease) instead of the
- *  Python backend's unauthenticated `send-keys`. */
+ *  unauthenticated `send-keys`. */
 function termRowBinding(name, uid) {
   const pending = String(uid || '').startsWith('tmux:');
   const row = (pending ? (T.pending || []) : (T.list || [])).find(row => row.name === name);
@@ -533,7 +533,7 @@ function termRowBinding(name, uid) {
  *  Grok text). Only the legacy HTTP shapes change (named keys, a bracketed
  *  `paste`, and raw text with `enter:false`); a Claude/Codex text submit is
  *  the reliable-send composer (see `termSendLease`), so a bare `text` returns
- *  null. Python-served pages and undeclared capabilities keep the body. */
+ *  null. Undeclared capabilities keep the body. */
 function termInputBody(name, body) {
   if (SessionDockCapabilities.config.backend !== 'rust'
       || !SessionDockCapabilities.allows('terminal_input')) return body;
@@ -1300,7 +1300,7 @@ function workerStatusMessage(info) {
   return info.worker_error ? `${text}：${info.worker_error}` : text;
 }
 
-/** Sidebar meta text of a Rust pending row (Python rows keep "等待首条消息"). */
+/** Sidebar meta text of a Rust pending row (other rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
   if (SessionDockCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
   if (s.state === 'exited') return '实例已退出';
@@ -1467,7 +1467,7 @@ function discardAbandonedNewSession(info) {
 async function resolveNewSession(info) {
   if (SessionDockCapabilities.config.backend === 'rust') {
     // Periodic term/list is authoritative for this launch-only view. Never run
-    // Python's filename-based resolution or automatic draft/receipt cleanup.
+    // filename-based resolution or automatic draft/receipt cleanup.
     const current = T.pending.find(row => row.record_id === info.record_id);
     const pendingId = pendingUid(info.name);
     // A launch that declared its full SID on the command line is associated
@@ -2364,7 +2364,7 @@ function recordHostExit(view, uid, event) {
     // say inside the xterm why it is incomplete.
     try { view.term.write(`\r\n${reason}\r\n`); } catch { /* disposed view */ }
   } else {
-    // Python closes the pane when the CLI exits and the page returns to the
+    // The pane closes when the CLI exits and the page returns to the
     // conversation. The final output stays in the retained xterm; nothing is
     // painted over the CLI's own farewell text, the explanation goes to the
     // header notice (unless the stop action already announced its stage).
@@ -3072,8 +3072,8 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
       }
     } else {
       // Text on the raw path — a pending console before its first native
-      // record, or a source without reliable send such as Grok — is Python's
-      // `submit_text`: a bracketed paste, then Enter once the CLI took it.
+      // record, or a source without reliable send such as Grok — is
+      // a bracketed paste, then Enter once the CLI took it.
       const rawText = !!text;
       const body = termInputBody(name, keys ? { name, keys, uid }
         : rawText ? { name, paste: text, uid } : { name, text });
@@ -3860,7 +3860,7 @@ addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));
 
 // Native/global process discovery and managed terminal transport are independent
-// Rust capabilities. The Python live poll normally refreshes this list; do not
+// Rust capabilities. The live poll normally refreshes this list; do not
 // lose discovery of new/replacement hosts just because Rust keeps live:false.
 async function pollRustTermList() {
   if (SessionDockCapabilities.config.backend !== 'rust'

@@ -1,4 +1,4 @@
-//! Python `tests/test_bug_report.py` semantics for the bundle, the
+//! Semantics for the bundle, the
 //! attachments and the composer probes. The worker's
 //! HTTP flow against a fake CLI is `tests/bug_report_http.rs`.
 
@@ -465,10 +465,10 @@ fn manifest_updates_merge_and_redact() {
     assert_eq!(manifest["status"], "submitted");
     assert_eq!(manifest["keep"], 1);
     assert_eq!(manifest["cookie"], "<redacted>");
-    // Python's list: `token` (the worker's launch identity) is kept, keys are not.
+    // The list: `token` (the worker's launch identity) is kept, keys are not.
     assert_eq!(manifest["worker"]["token"], "sid-1");
     assert_eq!(manifest["worker"]["api_key"], "<redacted>");
-    // Corrupt manifest: rewritten from the changes alone (Python behaviour).
+    // Corrupt manifest: rewritten from the changes alone.
     fs::write(dir.join("manifest.json"), "not json").unwrap();
     update_manifest(dir, json!({"status": "failed"})).unwrap();
     assert_eq!(read_json(&dir.join("manifest.json"))["status"], "failed");

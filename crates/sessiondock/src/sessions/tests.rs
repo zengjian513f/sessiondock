@@ -549,8 +549,8 @@ fn codex_inheritance_keeps_leaf_offsets_and_ignores_parent_tail_appends() {
         parent_row["migration_warnings"],
         json!(["跳过未知的Codex 记录类型：future-unsupported ×1"])
     );
-    // A later session_meta in the parent tail is skipped and counted like
-    // Python's `and not meta`; it is confined to the parent view and row.
+    // A later session_meta in the parent tail is skipped and counted;
+    // it is confined to the parent view and row.
     append(
         &parent,
         b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"parent\"}}\n",
@@ -1405,7 +1405,7 @@ fn persisted_timeline_pin_equals_pure_options_resets_cursors_and_retires_explici
     assert_eq!(fs::read(&file).unwrap(), expected);
 }
 
-/// Python `debug_runs.filter_rows` over the published list: the registry
+/// Over the published list: the registry
 /// beside the metadata hides registered runs from the ordinary view, a
 /// `debug_run` view shows exactly that run, the view is re-signed and fork
 /// parents are re-derived among the visible rows. Rows carry
@@ -1499,7 +1499,7 @@ fn list_view_applies_the_debug_run_registry_beside_the_metadata() {
     assert_ne!(run_1["sig"], run_2["sig"]);
     assert!(uids(&store.list_view(false, "unknown").unwrap()).is_empty());
     assert!(uids(&store.list_view(false, "bad id!").unwrap()).is_empty());
-    // Supported rows carry no `migration_warnings` (Python has none); the
+    // Supported rows carry no `migration_warnings`; the
     // detail `meta` keeps the non-fatal notes.
     assert!(default["sessions"][0].get("migration_warnings").is_none());
     assert_eq!(default["sessions"][0]["supported"], true);

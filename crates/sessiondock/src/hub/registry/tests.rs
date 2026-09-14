@@ -188,7 +188,7 @@ fn public_row<'a>(rows: &'a [Value], nid: &str) -> &'a Value {
 
 #[test]
 fn networks_parse_strictly_and_match_by_address_family() {
-    // Python defaults to loopback plus its deployment WireGuard range.
+    // Defaults to loopback plus the deployment WireGuard range.
     let nets = parse_networks(&format!("{DEFAULT_NETWORKS},192.0.2.0/24")).unwrap();
     assert_eq!(nets.len(), 4);
     assert!(nets[0].contains("127.0.0.1".parse().unwrap()));
@@ -1113,7 +1113,7 @@ async fn session_polls_are_conditional_and_served_from_cache_when_unchanged() {
         "节点服务暂不可用（HTTP 503）"
     );
 
-    // Variant caches are bounded to 128 entries, oldest first (Python keeps the same bound).
+    // Variant caches are bounded to 128 entries, oldest first.
     fake.set(Mode::Online);
     for index in 0..140 {
         registry

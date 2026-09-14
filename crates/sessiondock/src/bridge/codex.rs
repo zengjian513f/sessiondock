@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(options[1]["label"], "始终允许");
         assert_eq!(options[2]["label"], "拒绝");
         assert_eq!(options[2]["description"], "取消命令，并告诉 Codex 调整方案");
-        // Python: sha256 of "heading\nenvironment\ncommand\nkey:label…"[:16].
+        // sha256 of "heading\nenvironment\ncommand\nkey:label…"[:16].
         assert_eq!(prompt["id"], "codex-approval:8d35d794399d229d");
     }
 

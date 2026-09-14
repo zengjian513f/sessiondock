@@ -116,7 +116,7 @@ def run(opener, base, corpus: Corpus):
         if row.get("supported") is not True:
             fail("supported", f"{sid} supported is not true", excerpt)
         # A supported list row carries no migration_warnings
-        # (Python rows have none); every note lives in the detail meta.
+        # and every note lives in the detail meta.
         if "migration_warnings" in row:
             fail("warnings", f"{sid} supported row carries migration_warnings", excerpt)
         detail, draw = fetch(opener, base, "/api/messages/" + quote(corpus.uid(sid), safe=":"))

@@ -1,5 +1,5 @@
 //! Read-only projection of an explicitly opened SessionDock-owned ledger, plus
-//! the four Python send routes driven by the reliable-send executor
+//! the four send routes driven by the reliable-send executor
 //! (Claude and Codex main sessions).
 //! Native scope is resolved before querying; acknowledgment input never comes
 //! from HTTP.
@@ -70,7 +70,7 @@ pub async fn outbox(
     if state.shutdown.is_cancelled() {
         return Err(service::Error::Closed.into());
     }
-    // Python uses parse_qs(...).get("uid", [""])[0] and ignores every other
+    // First `uid` query value (`""` if absent); ignores every other
     // query field, including the legacy agent/debug selectors.
     let uid = query
         .into_iter()
@@ -148,7 +148,7 @@ fn body(encoded: service::EncodedJson) -> Response {
     response
 }
 
-// ---- Python send routes ------------------------------------------
+// ---- send routes ------------------------------------------
 
 fn executor(state: &AppState) -> Result<&std::sync::Arc<DeliveryExecutor>, ApiError> {
     state.executor.as_ref().ok_or_else(|| {
@@ -189,10 +189,10 @@ impl LeaseBody {
     }
 }
 
-/// Python `_queue_message` body. Unknown fields (`activity`, `cursor`,
-/// `page_id`, diagnostics) are accepted and ignored as in Python; `media` is
+/// Queue-message body. Unknown fields (`activity`, `cursor`,
+/// `page_id`, diagnostics) are accepted and ignored; `media` is
 /// accepted and retained as opaque outbox preview metadata. Uploaded paths are
-/// already embedded in `text` by the composer, exactly as in Python.
+/// already embedded in `text` by the composer.
 #[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct SendBody {
@@ -214,7 +214,7 @@ pub struct SendBody {
     _build: String,
 }
 
-/// Python send/retry/discard use `str(value or "")`. Keep JSON raw here so
+/// Send/retry/discard use `str(value or "")`. Keep JSON raw here so
 /// integer precision and object insertion order survive only this conversion;
 /// other native JSON parsers keep their existing number/ordering behavior.
 fn python_request_id<'de, D: serde::Deserializer<'de>>(
@@ -296,8 +296,8 @@ pub(crate) fn python_id_value(raw: &str, nested: bool) -> serde_json::Result<Str
             }
         }
         _ => {
-            // JSON's integer spelling is already Python's decimal representation,
-            // except -0. Floating point uses Python's fixed/scientific threshold.
+            // JSON's integer spelling is already the decimal representation,
+            // except -0. Floating point uses the fixed/scientific threshold.
             if !raw.contains(['.', 'e', 'E']) {
                 if raw == "0" || raw == "-0" {
                     if nested { "0" } else { "" }.into()
@@ -391,7 +391,7 @@ fn reply(reply: Reply) -> Response {
 }
 
 fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
-    // Python rejects text writes from a tab that outlived a deployment before
+    // Text writes from a tab that outlived a deployment are rejected before
     // touching the terminal; old clients surface the error and keep their text.
     (!hub && build != state.assets.build).then(|| {
         (

@@ -2,7 +2,7 @@
 """HTTP contract for process scan + spawned_by over a synthetic /proc tree.
 
 SESSIONDOCK_PROC_ROOT points at a Linux-shaped tree
-(Python live.py e5b023a rules, verified against `live._scan`/`spawn_parents`
+(verified against `live._scan`/`spawn_parents`
 over this very fixture): a CLI main process is argv0 claude/codex/grok only —
 `node …/cli.js --resume K` is not one, its --resume id still counts, and its
 CLAUDE_CODE_SESSION_ID is attributed to the nearest CLI ancestor (here P's
@@ -10,8 +10,8 @@ CLAUDE_CODE_SESSION_ID is attributed to the nearest CLI ancestor (here P's
 --session-id/--resume, else family env CLAUDE_CODE_SESSION_ID /
 CODEX_COMPANION_SESSION_ID / GROK_SESSION_ID (a main process never takes a
 cross-family inherited id); an fd on a *.jsonl under a configured read root
-marks it live (Rust's one widening of Python's literal home markers); an
-orphan helper (no CLI ancestor) does not. GET /api/live is the Python shape
+marks it live (the one widening of the literal home markers); an
+orphan helper (no CLI ancestor) does not. GET /api/live is the shape
 {uids, tmux_uids, started_at} plus enabled:true; started_at is
 btime+starttime/100. spawned_by is written once into session-metadata.json
 (and GET /api/sessions) from the CLI process or an ancestor within 16 levels
@@ -19,7 +19,7 @@ via another listed session's main process or CLAUDE_CODE_SESSION_ID /
 CODEX_THREAD_ID / CODEX_SESSION_ID / GROK_SESSION_ID / CLAUDE_PID. Unset
 The default process scan is enabled on Linux.
 
-CLI barrier (Python 16cc89c `live.is_cli_process`): Q is a claude inside a
+CLI barrier (`live.is_cli_process`): Q is a claude inside a
 tmux pane whose tool shell spawned `grok -p` (G2, events.jsonl open). G2 is
 live and spawned_by Q, but Q's claude between G2 and the tmux server means the
 console is Q's: tmux_uids lists Q only, never G2.
@@ -233,7 +233,7 @@ def run_scan(opener, base, uids, proc, state):
              json.dumps(live).encode())
     passed("GET /api/live tmux_uids={Q}: the grok -p under Q's claude is live but not that pane's session")
     started = live.get("started_at") if isinstance(live.get("started_at"), dict) else {}
-    # K: pid 200 is `node …` (not a CLI main), so Python's started_at comes from
+    # K: pid 200 is `node …` (not a CLI main), so started_at comes from
     # pid 100, the CLI ancestor its inherited CLAUDE_CODE_SESSION_ID resolves to.
     expect = {uids[P_SID]: epoch(100), uids[K_SID]: epoch(100),
               uids[T_SID]: epoch(300), uids[G_SID]: epoch(400),

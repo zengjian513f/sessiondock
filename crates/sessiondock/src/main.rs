@@ -204,7 +204,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
 /// AskUserQuestion / SessionStart / SessionEnd hook with the cleared launcher
 /// environment, so the state directory travels as an argument (the settings
 /// file `--write-bridge-settings` writes carries it); `SESSIONDOCK_STATE_DIR`
-/// is the fallback. Like Python's `claude_bridge.main`, every failure is
+/// is the fallback. Every failure is
 /// silent and the exit status is 0: a bridge problem must never block the
 /// CLI's tool call.
 fn claude_hook(arguments: &[std::ffi::OsString]) -> Result<(), Box<dyn Error>> {

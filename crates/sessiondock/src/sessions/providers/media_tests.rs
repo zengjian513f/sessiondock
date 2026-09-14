@@ -323,7 +323,7 @@ fn external_and_malformed_images_do_not_fail_history_projection() {
 
 /// A non-image block of an unknown kind is skipped like the
 /// reference `_flatten_content` — its payload never becomes text or media —
-/// and the session row reports the skip. Codex tool output follows Python's
+/// and the session row reports the skip. Codex tool output follows the
 /// `_stringify` fallback for serializable unknown blocks.
 #[test]
 fn unknown_message_blocks_are_skipped_and_codex_tool_blocks_use_python_stringify() {

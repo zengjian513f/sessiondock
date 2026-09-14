@@ -44,7 +44,7 @@ Server-side messages name the holder as `"<label>，<ip>"` (`PublicOwner::descri
 
 Ownership combines page ID, a random server token and a server connection ID.
 The browser token is distinct from the ptyhost credential, is compared in
-constant time, and is never logged. Pages accept Python's nonempty Unicode value
+constant time, and is never logged. Pages accept the nonempty Unicode value
 up to 128 characters. Host names retain the real ptyhost filename/protocol rules.
 
 The HTTP layer verifies that a requested native UID and instance exactly match a
@@ -74,8 +74,8 @@ the exact host; attach upgrades to WebSocket and releases the exact lease on all
 exit paths.
 
 Browser binary messages are raw PTY input. A resize JSON message is interpreted
-when it has valid Python dimensions (each 1–1000 and product at most 250,000);
-other text is forwarded literally as terminal input, matching Python. Unknown key
+when it has valid dimensions (each 1–1000 and product at most 250,000);
+other text is forwarded literally as terminal input. Unknown key
 names are forwarded literally within the ptyhost wire bounds of at most 256 keys
 and 256 bytes per key. Send/paste remains bounded by the host's 1 MiB protocol
 frame. Browser WebSocket frames retain the 8 MiB per-frame protocol boundary;
@@ -84,7 +84,7 @@ fragmented messages have no separate aggregate application cap.
 PTY output is forwarded in order and backpressure waits for the browser. There is
 no fixed queued-output count and no two-second backpressure disconnect policy.
 Partial ptyhost frame reads have no deadline; ordinary control operations use the
-same 10-second timeout as Python. Normal EOF preserves final output, while
+same 10-second timeout. Normal EOF preserves final output, while
 revocation and shutdown cancel the bridge promptly.
 
 The browser abandons an attach that remains in WebSocket `CONNECTING` for 15

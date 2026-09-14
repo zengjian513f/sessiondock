@@ -80,7 +80,7 @@ fn claude_path() -> &'static Path {
 }
 
 // ---------------------------------------------------------------------------
-// Python primitives
+// Primitives
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -447,7 +447,7 @@ fn claude_tail_custom_title_and_cwd_majority_beyond_the_head() {
     assert!(summary.supported(), "{:?}", summary.unsupported);
     assert_eq!(summary.warnings, Vec::<String>::new());
     assert_eq!(summary.committed, Some(bytes.len() as u64));
-    // Ties keep the first cwd seen in the tail, like Python's dict order.
+    // Ties keep the first cwd seen in the tail.
     let mut tie = Vec::new();
     for i in 0..40 {
         let mut row = claude_row(sid, "user", &format!("h{i}"), Value::Null, "head");
@@ -536,7 +536,7 @@ fn claude_corrupt_lines_are_notes_but_shape_errors_are_hard_failures_with_no_not
     bytes.extend(b"{not json}\n");
     bytes.extend(b"[1, 2]\n");
     let summary = summarize_bytes("claude", claude_path(), &bytes, None);
-    // Skipped like Python `_head_lines`; counted after the kinds.
+    // Skipped; counted after the kinds.
     assert!(summary.supported(), "{:?}", summary.unsupported);
     assert_eq!(
         summary.warnings,
@@ -769,7 +769,7 @@ fn codex_head_reads_120_pieces_and_subagents_take_the_tail_timestamp() {
 
 #[test]
 fn codex_duplicate_meta_bad_history_base_and_internal_context_rules() {
-    // Python `_raw_meta` (`and not meta`): a later session_meta is ignored;
+    // A later session_meta is ignored;
     // the row counts it and stays supported.
     let duplicate = encoded(&[
         codex_row(
@@ -848,8 +848,8 @@ fn codex_duplicate_meta_bad_history_base_and_internal_context_rules() {
 
 /// Old-style fork (2026-07/08): line 0 is the own meta (`forked_from_id`
 /// = parent, `history_base` null), then one copied `session_meta` per
-/// ancestor, then the copied history. Python takes the first meta everywhere
-/// and reads the file alone; the copied ids are not this file's identity.
+/// ancestor, then the copied history. The first meta is taken everywhere
+/// and the file is read alone; the copied ids are not this file's identity.
 #[test]
 fn codex_legacy_fork_identity_is_the_first_meta_and_copied_metas_are_counted() {
     let rows = encoded(&[
@@ -1120,7 +1120,6 @@ fn open_turn(rows: &[Value]) -> bool {
 
 #[test]
 fn claude_sidecar_turn_is_closed_only_by_an_assistant_end_turn() {
-    // Python `_claude_agent_tail` / `_CLAUDE_TURN_CLOSED`.
     let user = sidecar_user("2026-09-12T00:10:00Z");
     assert!(!open_turn(&[
         user.clone(),
@@ -1175,7 +1174,6 @@ fn claude_sidecar_turn_is_closed_only_by_an_assistant_end_turn() {
 
 #[test]
 fn codex_subagent_turn_follows_the_latest_turn_boundary_event() {
-    // Python `_codex_agent_tail` / `_CODEX_TURN_OPEN`.
     let meta = codex_row(
         "session_meta",
         json!({"id": "agent-one", "session_id": "codex-parent",
@@ -1243,7 +1241,7 @@ fn claude_continued_in_sid_is_the_last_tail_record_with_a_truthy_id() {
     let summary = summarize_bytes("claude", claude_path(), &encoded(&rows), None);
     assert_eq!(summary.continued_in_sid.as_deref(), Some("sid-last"));
     // The projection (`providers/claude.rs`) passes `continued-in` over as
-    // an unknown kind, like Python `read`; the row counts it the same way
+    // an unknown kind; the row counts it the same way
     // so list and detail agree.
     assert_eq!(
         summary.warnings,

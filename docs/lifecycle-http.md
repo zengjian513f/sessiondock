@@ -37,7 +37,7 @@ cgroup policies or Windows/macOS process independence.
 ## HTTP contract
 
 All methods require the configured lifecycle service. Without it, they return
-an explicit 501. Mutations are JSON-only; Python-style create/takeover/stop
+an explicit 501. Mutations are JSON-only; create/takeover/stop
 bodies ignore unrelated dictionary members. The local-only middleware applies.
 
 | Route | Input | Meaning |
@@ -76,13 +76,13 @@ Receipts carry `started` (Unix seconds the intent was persisted), `finished_at`
 and, on `binding`, `method` (`operator` | `process`), `evidence` and
 `bound_at`. `GET /api/term/list` lists a receipt under `pending` only while
 it is not discarded and — once Exited/Failed — for at most 600 s after
-`finished_at` (Python `pending_store.active` keeps a resolved row for 600 s;
+`finished_at` (a resolved row is kept for 600 s;
 a finished receipt migrated from an older ledger has no time and is archived
 at once). Archived receipts still answer `term/new-status`.
 
 ## Automatic binding by process evidence
 
-Python associates a new Codex/Grok pane with its native record once the
+A new Codex/Grok pane is associated with its native record once the
 first prompt is on disk (`_new_session_status`: same cwd, not in the
 `before` set, and for Codex the rollout held by a process of the pane). The
 Rust service keeps only the process evidence — never cwd, time or file
@@ -94,8 +94,8 @@ name — in `lifecycle::autobind`, a background task that runs while a
 2. the native process scan of [liveness.md](liveness.md)
    pairs every indexed session of the receipt's source with its owned CLI
    main processes; a session counts when one of them is, or descends from,
-   that child with no other CLI main process in between (Python
-   `term.process_belongs_to`); Codex keeps its rollout open, a Grok TUI
+   that child with no other CLI main process in between;
+   Codex keeps its rollout open, a Grok TUI
    keeps `events.jsonl` of its session directory open;
 3. exactly one such session, whose native scope the index verifies
    (Claude `sessionId`, Codex `session_meta.payload.id`, Grok
@@ -148,7 +148,7 @@ no unique resume-capable profile) / `invalid_launch` (invalid cwd) /
 `spec.launch={"kind":"fixed"}` and `session_id:null`; old files that already
 carry the new fields fail closed).
 
-Takeover and stop use the same native process discovery model as Python. They
+Takeover and stop use the same native process discovery model. They
 match SID/file identity and ancestry, never ports or fuzzy command-line text.
 
 ## Stopping a session
@@ -167,8 +167,8 @@ Managed instances use guarded host escalation:
 1. Fresh exact status; an instance that already exited answers
    `stage:"already_exited"` without sending anything.
 2. `C-d` through the guarded input path (`guarded_v1` keys), then up to 1.2 s
-   polling the exact instance for exit; repeated once — Python's
-   `graceful_stop(timeout=2.4)` sends exactly two EOFs, no Ctrl-C.
+   polling the exact instance for exit; repeated once (timeout=2.4) —
+   sends exactly two EOFs, no Ctrl-C.
    Exit here is `stage:"graceful"`.
 3. Otherwise the existing guarded stop: for a launch receipt this is the
    durable `term/kill` path (persist cancel → retire the launch-derived
@@ -177,19 +177,19 @@ Managed instances use guarded host escalation:
    without a receipt (a host started elsewhere with `--meta`) receives the
    same host `kill` through its bound guard. Exit is `stage:"stopped"`.
 4. No exit within those bounds is `stage:"uncertain"` (`stopped:false`): the
-   cancel flag stays on the receipt, nothing is retried and Python's
-   External sessions instead use Python's TERM/KILL sequence on exactly
+   cancel flag stays on the receipt, nothing is retried.
+   External sessions instead use the TERM/KILL sequence on exactly
    attributed native process IDs.
 
 Reply: `200 {ok:true, stopped, tmux, external_detection:"proc_scan", ...}`.
-Python's `{ok, stopped, tmux}` keys keep their meaning. Managed responses add
+The `{ok, stopped, tmux}` keys keep their meaning. Managed responses add
 the guarded-stop stage and receipt identity. Refusals include 409
 `run_state_unknown` when a
 managed record names the session but its host is unreachable, duplicated or
 its identity unverifiable (nothing is sent), and 400 `invalid_stop_request`.
-As in Python, stop ignores unrelated request fields and observes current state
+Stop ignores unrelated request fields and observes current state
 again on every call.
-No operator flag is required — Python's confirmation is the browser dialog.
+No operator flag is required — confirmation is the browser dialog.
 
 Browser leases: stop neither needs nor fails on a browser
 terminal lease. The EOF keys are server-originated host input; the WebSocket
@@ -204,8 +204,7 @@ managed instance with this UID is listed (`S.live` is not polled under
 `live:false`); the request carries a `request_id`; the outcome or the
 server's refusal (unmanaged/external explanation, unknown host state) is
 shown inline in `#session-stop-notice` instead of a bare alert, and a
-confirmed stop drops the UID from `S.live`. Python-served pages are
-unchanged.
+confirmed stop drops the UID from `S.live`.
 
 Validation: `cargo test -p sessiondock --test session_stop --locked`
 (temporary ptyhost + fake CLIs: graceful stop with `/api/live` exited,
@@ -236,7 +235,7 @@ as exit; uncertainty survives restart.
 
 The legacy `tmux:<name>` value is only its existing pending-view key, never a
 native UID sent to Rust's native APIs. Pending identity comes from the full
-receipt/launch/instance tuple. Rust mode does not run Python's pending-to-native
+receipt/launch/instance tuple. Rust mode does not run the pending-to-native
 resolution/automatic discard loop, and directory completion does not scan the
 filesystem. Native binding uses the separate [one-time host protocol](host-native-binding.md)
 and [durable service](lifecycle-binding.md). The confirmation dialog selects a

@@ -642,8 +642,8 @@ fn facade_rows_are_the_index_rows_and_the_documented_topology_holds() {
         assert_eq!(row["supported"], false, "{sid}");
         assert_eq!(row["migration_warnings"], json!([message]), "{sid}");
     }
-    // Agents whose owner is not indexed are no rows (Python drops
-    // them); their uid still answers a typed 501 and they stay catalogued.
+    // Agents whose owner is not indexed are no rows;
+    // their uid still answers a typed 501 and they stay catalogued.
     for (sid, message) in [
         (
             "codex-orphan-agent",
@@ -895,10 +895,10 @@ fn warm_refresh_is_stat_only_and_only_changed_files_are_reread() {
 }
 
 /// Claude Code continues a session into a new transcript and links the
-/// origin's sidecars into the continuation's `subagents/`; Python's `glob`
+/// origin's sidecars into the continuation's `subagents/`; the `glob`
 /// lists the link, so the agent belongs to both sessions. The link is the
 /// identity (uid, owner by directory), the canonical in-root target is the
-/// data. Regular-file aliases use ordinary Python path handling; dangling
+/// data. Regular-file aliases use ordinary path handling; dangling
 /// aliases and directory targets stay skipped.
 #[cfg(unix)]
 #[test]
@@ -1515,8 +1515,8 @@ fn graph_flattens_nested_codex_agents_to_their_root_and_keeps_broken_ones_visibl
         assert_eq!(row["migration_warnings"], json!([message]), "{name}");
         assert_eq!(built.agent_errors[&uids[name]].message, message);
     }
-    // An agent whose parent resolves to no indexed row is no row at all
-    // (Python `continue`), only the typed error its uid opens with.
+    // An agent whose parent resolves to no indexed row is no row at all,
+    // only the typed error its uid opens with.
     for (name, message) in [
         (
             "orphan",
@@ -1610,7 +1610,7 @@ fn graph_fork_validation_messages_and_cut_outcomes() {
             "分叉历史依赖存在循环",
         ),
     ];
-    // Legal shapes Python reads — `forked_from_id` naming another
+    // Legal shapes — `forked_from_id` naming another
     // thread than `history_base.thread_id`, and no `history_base` at all.
     let legal = vec![
         (
@@ -1647,7 +1647,7 @@ fn graph_fork_validation_messages_and_cut_outcomes() {
         assert_eq!(row["supported"], false, "{sid}");
         assert_eq!(row["migration_warnings"], json!([message]), "{sid}");
         // The physical outcome never touches the logical lineage: a bad cut
-        // still names its `forked_from_id` root (Python has no cut check),
+        // still names its `forked_from_id` root (no cut check),
         // while no or an unindexed parent leaves the row undecorated.
         if row["forked_from_id"] == "root" {
             assert_eq!(row["root_sid"], "root", "{sid}");
@@ -1688,7 +1688,7 @@ fn graph_fork_validation_messages_and_cut_outcomes() {
     assert_eq!(row["size"], all[&zero_uid].summary.size);
 }
 
-/// The row lineage is Python `finalize_sessions`' walk over
+/// The row lineage is the walk over
 /// `forked_from_id`, independent of `history_base`.
 #[test]
 fn graph_legacy_fork_chain_decorates_rows_along_forked_from_id() {
@@ -1748,7 +1748,7 @@ fn graph_legacy_fork_chain_decorates_rows_along_forked_from_id() {
                 .any(|seed| seed.uid == *uid && seed.scope.is_ok())
         );
     }
-    // B missing from the index: Python stops at the missing parent, so A's
+    // B missing from the index: the walk stops at the missing parent, so A's
     // chain is empty — own created/title/size, and never an error.
     let all = entries(vec![a.clone(), c.clone()]);
     let built = graph::build(&all, &mut |_, _| CutCheck::Boundary, &BTreeMap::new());
@@ -1790,7 +1790,7 @@ fn graph_rewind_past_fork_reads_history_base_and_decorates_along_forked_from_id(
         "Q base title",
     );
     let q_size = q.summary.size;
-    // `c` exceeds Q's own size: Python still clips it against Q (`min`).
+    // `c` exceeds Q's own size: it is still clipped against Q (`min`).
     let c = q_size + 17;
     let a = make(
         "A",
@@ -1901,7 +1901,7 @@ fn graph_claude_sidecars_attach_by_exact_path_and_summary_failures_keep_their_re
     assert!(item["path"].as_str().unwrap().ends_with("agent-one.jsonl"));
     assert_eq!(built.owners[&uids[1]], uids[0]);
     // `proj/other/subagents/agent-two.jsonl` without `proj/other.jsonl`:
-    // Python never lists it; the uid keeps its typed 501.
+    // it is never listed; the uid keeps its typed 501.
     assert!(!rows.contains_key(&uids[2]), "orphan sidecar is no row");
     assert_eq!(
         (
@@ -2271,7 +2271,7 @@ print(json.dumps(rows, ensure_ascii=False, default=str))
 }
 
 // ---------------------------------------------------------------------------
-// `agent_items[].active` and `continued_in` — the Python
+// `agent_items[].active` and `continued_in` — the
 // `ClaudeAgentItemTests` / Codex subagent / `continued_in` cases end to end
 // through `Index::refresh`.
 // ---------------------------------------------------------------------------
@@ -2422,7 +2422,6 @@ fn actives(items: &BTreeMap<String, Value>) -> BTreeMap<&str, bool> {
 
 #[test]
 fn claude_agent_items_carry_start_end_and_running_state() {
-    // Python `test_agent_items_carry_start_end_and_running_state`.
     let temp = TempDir::new().unwrap();
     let corpus = AgentCorpus::new(temp.path());
     let (user, assistant, tool_result) = (
@@ -2552,7 +2551,6 @@ fn claude_agent_items_carry_start_end_and_running_state() {
 
 #[test]
 fn claude_late_notice_copies_and_refusal_do_not_flip_a_running_agent() {
-    // Python `test_late_copies_of_a_notice_and_refusal_do_not_flip_a_running_agent`.
     let temp = TempDir::new().unwrap();
     let corpus = AgentCorpus::new(temp.path());
     corpus.agent(
@@ -2601,7 +2599,6 @@ fn claude_late_notice_copies_and_refusal_do_not_flip_a_running_agent() {
 
 #[test]
 fn claude_stop_notices_are_read_incrementally_and_only_from_complete_lines() {
-    // Python `test_stop_notices_are_read_incrementally_and_only_from_complete_lines`.
     let temp = TempDir::new().unwrap();
     let corpus = AgentCorpus::new(temp.path());
     let agent = corpus.agent(
@@ -2697,7 +2694,7 @@ fn claude_owners_without_an_open_sidecar_are_never_scanned_for_stops() {
         ],
         "toolu_xxxxxxxxxxxxxxxxxxxx",
     );
-    // No user/assistant record at all: closed as well (Python `closed is
+    // No user/assistant record at all: closed as well (`closed is
     // False` never holds).
     corpus.agent(
         "empty",
@@ -2726,7 +2723,6 @@ fn claude_owners_without_an_open_sidecar_are_never_scanned_for_stops() {
 
 #[test]
 fn codex_subagent_items_carry_turn_state_and_last_record_time() {
-    // Python `test_codex_subagent_items_carry_turn_state_and_last_record_time`.
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     let day = root.join("codex/2026/09/12");
@@ -2867,8 +2863,7 @@ fn codex_subagent_items_carry_turn_state_and_last_record_time() {
 
 #[test]
 fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
-    // Python `test_continued_in_session_is_resolved_to_uid`, plus the
-    // unresolved, self-referencing and last-record-wins shapes.
+    // Unresolved, self-referencing and last-record-wins shapes.
     let temp = TempDir::new().unwrap();
     let root = temp.path();
     let project = root.join("claude").join("proj");

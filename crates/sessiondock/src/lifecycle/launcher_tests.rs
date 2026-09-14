@@ -797,7 +797,7 @@ fn argv_metadata_and_kind_rules_follow_the_fixed_per_source_contract() {
             .err(),
         Some(Error::InvalidSpec)
     );
-    // Grok receives a new SID and supports the same `--resume` form as Python.
+    // Grok receives a new SID and supports the `--resume` form.
     let grok_new = LaunchSpec::profile_new(Source::Grok, "grok-cli-v1".into(), &work).unwrap();
     launcher.validate_spec(&grok_new).unwrap();
     fs::remove_dir_all(root.join("ledger")).unwrap();

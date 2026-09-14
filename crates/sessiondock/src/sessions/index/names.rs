@@ -1,6 +1,6 @@
 //! Codex `session_index.jsonl` names applied to summary rows.
 //!
-//! Same contract as Python's `_thread_names`: a missing index is an empty
+//! A missing index is an empty
 //! index, malformed lines are skipped, `id` + `thread_name` must be truthy,
 //! titles are clipped to 110 characters, and `renamed_at`/`renamed_to` only
 //! appear when the entry carries an `updated_at`. The snapshot is reused while
@@ -140,7 +140,7 @@ fn parse(bytes: &[u8]) -> Result<BTreeMap<String, Name>, SessionError> {
             continue;
         };
         let Some(sid) = id.as_str() else {
-            // Non-string Python dictionary keys cannot match a session SID.
+            // Non-string dictionary keys cannot match a session SID.
             continue;
         };
         let title = match thread_name {
@@ -164,7 +164,7 @@ fn parse(bytes: &[u8]) -> Result<BTreeMap<String, Name>, SessionError> {
 }
 
 impl NameIndex {
-    /// Python `finalize_sessions` titles over summary rows: own name first,
+    /// Titles over summary rows: own name first,
     /// otherwise the first named ancestor along the `forked_from_id`
     /// lineage (`graph::lineage`), otherwise the root's base title the
     /// graph already set.

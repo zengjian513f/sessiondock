@@ -1,7 +1,7 @@
 //! Read-only controlled-host observations against a frozen native inventory.
 //! No native file reads, launch, cleanup, or control authority. External CLI
-//! discovery lives next to it in `procscan` (explicit `/proc` scan, Python
-//! `live.py`) and `spawn` (spawner recording); this module never reads it.
+//! discovery lives next to it in `procscan` (explicit `/proc` scan)
+//! and `spawn` (spawner recording); this module never reads it.
 //!
 //! Run state is evidence-based and instance-scoped: `running` needs a reachable
 //! host reporting its child alive plus a verified process identity; `exited`

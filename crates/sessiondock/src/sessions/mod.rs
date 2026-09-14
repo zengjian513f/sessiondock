@@ -364,8 +364,8 @@ impl SessionSnapshot {
     }
 }
 
-/// One debug-run view of a published list (Python `filter_rows` +
-/// `_view_signature`), kept while the list, the registry and the run id are
+/// One debug-run view of a published list,
+/// kept while the list, the registry and the run id are
 /// the same so the polling default view costs no re-filtering.
 struct Filtered {
     published: Arc<Published>,
@@ -594,11 +594,11 @@ impl SessionStore {
     }
 
     /// `/api/sessions` for one view: the published list with the debug-run
-    /// registry applied (Python `debug_runs.filter_rows` — the ordinary view
+    /// registry applied (the ordinary view
     /// hides every registered run, `debug_run` shows only that run), fork
     /// parents re-derived among the visible rows and the document re-signed
     /// over the visible rows plus the run id (`_view_signature`). Rows carry
-    /// no `migration_warnings` unless unsupported (Python has none); the
+    /// no `migration_warnings` unless unsupported; the
     /// detail `meta` keeps them all.
     pub fn list_view(&self, force: bool, debug_run: &str) -> Result<Value, SessionError> {
         self.list_view_unless(force, debug_run, "")
@@ -631,7 +631,7 @@ impl SessionStore {
                 None => {
                     let mut rows = runs.filter_rows(published.rows().to_vec(), debug_run);
                     if let Some(metadata) = &published.metadata {
-                        // Python computes fork parents over the filtered
+                        // Fork parents are computed over the filtered
                         // topology: a parent whose only fork is hidden is
                         // an ordinary row in this view.
                         metadata.enrich(&mut rows);
@@ -688,7 +688,7 @@ impl SessionStore {
     }
 
     /// `search_pool` for one debug-run view: only the rows that view lists
-    /// are candidates (Python filters the results and `total_pool` alike).
+    /// are candidates (the results and `total_pool` alike).
     pub fn search_pool_view(&self, debug_run: &str) -> Result<SearchPool, SessionError> {
         let published = self.publish(false)?;
         let rows = self
@@ -1054,7 +1054,7 @@ fn timeline_pin_row(row: &mut Value, index: &IndexSnapshot, metadata: &MetadataS
 /// Public list rows carry `migration_warnings` only when unsupported (the
 /// fatal reason, like the batch-35 contract); the non-fatal notes of a
 /// supported row (and of its `agent_items`) stay in the detail `meta` only.
-/// Python rows have no such field, and nothing in the frontend reads it.
+/// Nothing in the frontend reads it.
 pub(crate) fn strip_row_warnings(document: &mut Value) {
     fn strip(row: &mut Value) {
         if row["supported"] != false
@@ -1143,9 +1143,9 @@ pub(crate) fn path_text(path: &Path) -> std::borrow::Cow<'_, str> {
     let text = path.to_string_lossy();
     #[cfg(windows)]
     {
-        // Python's `str(Path.resolve())` uses an ordinary drive/UNC spelling,
+        // `str(Path.resolve())` uses an ordinary drive/UNC spelling,
         // while Rust canonicalize returns the Win32 verbatim `\\?\` form.
-        // UIDs are a hash of Python's spelling and must stay identical whether
+        // UIDs are a hash of that spelling and must stay identical whether
         // the caller passes a configured path or its canonicalized equivalent.
         if let Some(rest) = text.strip_prefix("\\\\?\\UNC\\") {
             return format!("\\\\{rest}").replace('/', "\\").into();

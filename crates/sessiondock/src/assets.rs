@@ -28,10 +28,10 @@ pub enum Mode {
     Hub,
 }
 
-/// The hub page brand (Python used `HOSTNAME = "SessionDock"`; the SessionDock hub carries its own name).
+/// The hub page brand (the SessionDock hub carries its own name).
 pub const HUB_HOSTNAME: &str = "SessionDock";
 /// The page's localStorage prefix in hub mode; the served path is appended
-/// in the browser (`sessiondock.hub.<location.pathname>.`), as Python's
+/// in the browser (`sessiondock.hub.<location.pathname>.`);
 /// `sessiondock.hub.<path>.` distinguishes hubs mounted at different paths.
 pub const HUB_STORAGE_NAMESPACE: &str = "sessiondock.hub.";
 
@@ -129,7 +129,7 @@ impl Assets {
             escape_html(&capabilities.to_string())
         );
         if mode == Mode::Hub {
-            // Python keys hub storage on `location.pathname`; the snapshot
+            // Hub storage is keyed on `location.pathname`; the snapshot
             // cannot know the mount path, so the page completes the prefix
             // before the theme script and capabilities.js read it.
             injection.push_str(&format!(

@@ -3,7 +3,7 @@
 
 Like `send_codex_real.py` (isolated `CODEX_HOME` reusing `auth.json`
 read-only, throwaway cwd, `gpt-5.6-luna` with `model_reasoning_effort="low"`,
-everything deleted afterwards) but the launch profile carries Python's TUI
+everything deleted afterwards) but the launch profile carries the TUI
 arguments (`--enable default_mode_request_user_input -c
 suppress_unstable_features_warning=true`), a read-only sandbox and
 `-a on-request` (Codex 0.154 accepts only `on-request` / `never`). One prompt
@@ -13,7 +13,7 @@ read-only sandbox refuses, so the model requests approval and the TUI shows
 screen. The suite asserts:
 
 1. `/api/messages` carries the approval as `prompt` (`kind: "approval"`,
-   Python `codex_bridge.approval_prompt` shape: `id codex-approval:<16 hex>`,
+   shape: `id codex-approval:<16 hex>`,
    `y` / `p` / `Escape` options) and `/api/watch` pushed it as `prompt_only`;
 2. the answer goes through `/api/term/send` under a page lease with the
    option's own key (the page sends `['Escape']` for 拒绝 — nothing is run);
@@ -103,7 +103,7 @@ def main():
             "adapters": [],
             "profiles": [{
                 "id": "codex-real-v1", "source": "codex", "executable": codex,
-                # Python's TUI arguments plus the cheapest model and an approval
+                # The TUI arguments plus the cheapest model and an approval
                 # policy under which the model asks before escalating out of the sandbox.
                 "args": ["--model", MODEL, "-c", f'model_reasoning_effort="{EFFORT}"',
                          "--enable", "default_mode_request_user_input",

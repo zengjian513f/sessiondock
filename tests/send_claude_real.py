@@ -84,7 +84,7 @@ def isolated_config(tmp):
 
 def trust_project(config, area):
     """Pre-accept the folder trust dialog for the throwaway cwd in the isolated
-    config copy (the TUI would otherwise block on it), like the Python monkey
+    config copy (the TUI would otherwise block on it), like the monkey
     that answers the prompt with Enter. Never touches the real ~/.claude.json."""
     top = config / ".claude.json"
     try:
@@ -223,7 +223,7 @@ def main():
                         if r.get("source") == "claude" and r.get("sid") == sid), None)
             assert row is not None, f"session {sid} not listed"
             # The read model skips unknown record/attachment kinds
-            # like Python and reports them as non-fatal warnings; a real session
+            # and reports them as non-fatal warnings; a real session
             # that is still unsupported is a read-model regression, never a skip.
             assert row.get("supported") is True, (
                 "the real CLI session is unsupported by the read model: "

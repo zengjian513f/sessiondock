@@ -200,8 +200,8 @@ fn missing_previous_mismatched_cached_generation_and_raw_error_force_cold_decode
     }
 }
 
-/// A complete line that is not a JSON object is skipped and counted
-/// like Python `_iter_records`; the count survives cache reuse and the bytes
+/// A complete line that is not a JSON object is skipped and counted;
+/// the count survives cache reuse and the bytes
 /// stay in the physical index.
 #[test]
 fn invalid_and_nonobject_rows_are_skipped_counted_and_retained() {

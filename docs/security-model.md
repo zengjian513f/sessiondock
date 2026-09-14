@@ -1,6 +1,6 @@
 # SessionDock trust boundaries
 
-SessionDock serves the existing browser application and follows the Python
+SessionDock serves the existing browser application and follows the
 backend's accepted inputs. Native histories remain read-only. Optional services
 are enabled by their concrete runtime configuration; configuration is not used
 to invent narrower product inputs.
@@ -11,7 +11,7 @@ The ordinary server listens on loopback and has no user authentication or TLS
 listener. Public deployments authenticate and terminate TLS at the reverse
 proxy. `Host`, `Origin` and Fetch Metadata checks protect the browser boundary;
 they do not create a user identity. Request parsing retains the HTTP protocol
-boundaries used by Python, including its per-line request/header handling.
+boundaries, including per-line request/header handling.
 
 ## Loopback listener and Host / Origin
 
@@ -40,7 +40,7 @@ there is no CLI-home discovery. State, delivery, lifecycle, launcher, audit,
 trash, node and Hub variables select their corresponding stores or services.
 Use `sessiondock --check-config` to inspect the effective configuration.
 
-The file read API follows Python's operator file-manager behavior and is always
+The file read API follows the operator file-manager behavior and is always
 available. File writes are available when terminal operation is enabled. A
 launcher cwd is an execution choice, not file authorization. Configuration does
 not require unrelated paths to be disjoint or require state/metadata directories
@@ -54,7 +54,7 @@ lock or permanent uncertain/frozen state. See [metadata.md](metadata.md).
 ## File access
 
 File reads, navigation, attachments, uploads and enabled mutations follow the
-Python file-manager routes. Paths are resolved with normal OS permissions and
+file-manager routes. Paths are resolved with normal OS permissions and
 the existing selected-session context used for presentation; cwd itself grants
 no special authority. Uploads are streamed rather than encoded into JSON.
 Symlink, rename, delete, trash and replacement behavior is documented in
@@ -86,7 +86,7 @@ Launcher profiles choose executable, fixed arguments and environment. HTTP
 chooses the profile/source and supplies the cwd or native session identity; it
 does not supply an executable or arbitrary argv. New, resume, external-session
 takeover and stop paths use the same observed instance identity and confirmation
-semantics as Python. See [lifecycle-launcher.md](lifecycle-launcher.md) and
+semantics. See [lifecycle-launcher.md](lifecycle-launcher.md) and
 [lifecycle-http.md](lifecycle-http.md).
 
 ## Diagnostics redaction
@@ -98,14 +98,14 @@ of unrelated APIs.
 
 ## debug_run views
 
-`?debug_run=<id>` selects the same test-session view as Python. Missing or damaged
+`?debug_run=<id>` selects the test-session view. Missing or damaged
 registry data behaves as an empty registry. An unknown run produces an empty view
 rather than an authorization error. See
 [read-model.md](read-model.md#debug_run-视图).
 
 ## 501 ledger (unimplemented writes)
 
-Routes implemented by Python are not kept as migration stubs. Reliable send,
+Predecessor-only routes are not kept as migration stubs. Reliable send,
 retry/discard, terminal input, attachments and file upload, trash operations,
 external and managed stop, and forced takeover have concrete handlers. A 501 is
 reserved for a capability that truly needs an unconfigured service, such as an

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # run_validation: skip
 """Operator tool: compare GET /api/search latency and result uids of two
-running services (SessionDock vs Python sessiondock). Read-only GET only
+running services. Read-only GET only
 (urllib ProxyHandler({}), no proxy). Not part of the validation sweep.
 Never writes files.
 """

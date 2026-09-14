@@ -130,7 +130,7 @@ fn claude_unanswered_sibling_survives_as_interrupted_but_completed_sibling_does_
         .find(|message| message["text"] == "快速 Esc 输入")
         .unwrap();
     assert_eq!(interrupted["interrupted"], true);
-    // Python d16c5e1: an abandoned input is still the structural start of
+    // An abandoned input is still the structural start of
     // its own turn (`starts_turn = not is_interrupt`).
     assert_eq!(interrupted["turn_id"], "cancelled");
     assert_eq!(
@@ -405,7 +405,7 @@ fn codex_metadata_disambiguates_subagent_id_and_carries_history_topology() {
     assert_eq!(meta["sid"], "authoritative");
 }
 
-/// Python `_read_file` (`and not session_meta`): every session_meta after
+/// Every session_meta after
 /// the first is ignored. Old-style forks and subagent rollouts copy their
 /// ancestors' metas into the child file, so the copies are counted, not fatal,
 /// and the KEEP `history_base` check applies to the first meta only.
@@ -841,7 +841,7 @@ fn grok_unknown_record_kinds_are_skipped_with_warnings() {
 #[test]
 fn unknown_content_blocks_are_skipped_in_all_sources_but_invalid_media_still_fails() {
     // Message content: an unknown non-image block between two text blocks
-    // contributes no line (Python joins only the text parts).
+    // contributes no line (only the text parts are joined).
     let claude = rows(vec![
         json!({"type": "user", "uuid": "u0", "message": {"content": [
         {"type": "text", "text": "before"}, {"type": "audio", "data": "x"},
@@ -1061,7 +1061,7 @@ fn claude_pin_is_applied_or_retired_with_an_explicit_reason() {
 
 // ---------------------------------------------------------------------------
 // Broken Claude lineage renders the reachable part with a
-// warning, exactly like Python `_active_lineage` (verified against the
+// warning (verified against the
 // reference adapter on the same synthetic records).
 // ---------------------------------------------------------------------------
 
@@ -1082,8 +1082,8 @@ fn active(lineage: &super::claude::Lineage) -> Vec<String> {
     ids
 }
 
-/// u1 → a1 → [record x lost to a torn line] → u2 (parentUuid x) → a2: Python
-/// walks a2 → u2 → x, stops there, and renders u2/a2 only.
+/// u1 → a1 → [record x lost to a torn line] → u2 (parentUuid x) → a2:
+/// the walk goes a2 → u2 → x, stops there, and renders u2/a2 only.
 #[test]
 fn claude_missing_ancestor_truncates_the_timeline_with_a_warning() {
     let records = rows(vec![
@@ -1128,7 +1128,7 @@ fn claude_missing_ancestor_truncates_the_timeline_with_a_warning() {
     assert_eq!(visible(&messages), [("user", "incomplete")]);
 }
 
-/// a.parentUuid = b, b.parentUuid = a: Python's walk adds both and stops at
+/// a.parentUuid = b, b.parentUuid = a: the walk adds both and stops at
 /// the first repeat; every active record renders in file order.
 #[test]
 fn claude_lineage_cycle_is_truncated_at_the_revisited_node_with_a_warning() {
@@ -1163,7 +1163,7 @@ fn claude_lineage_cycle_is_truncated_at_the_revisited_node_with_a_warning() {
     );
 }
 
-/// `last-prompt` naming a leaf with no record: Python's active set is just
+/// `last-prompt` naming a leaf with no record: the active set is just
 /// that uuid, so every graph node is hidden and only non-graph records (the
 /// custom title's `/rename`) render. A later graph record moves the tip and
 /// clears the note.
@@ -1220,8 +1220,8 @@ fn claude_pin_target_on_a_truncated_lineage_uses_the_reachable_part() {
 }
 
 // ---------------------------------------------------------------------------
-// Claude interrupted turns stay visible — Python d16c5e1
-// `_active_lineage` (interrupt_nodes / abandoned via interrupt ancestry /
+// Claude interrupted turns stay visible —
+// lineage (interrupt_nodes / abandoned via interrupt ancestry /
 // offshoot / deferred_abort) and `_read_one` (filter, `starts_turn = not
 // is_interrupt`, `interrupted` texts, deferred `aborted`). Every expected
 // sequence below was produced by the reference adapter on the same rows.
@@ -1260,7 +1260,6 @@ fn message_at<'a>(messages: &'a [Value], text: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no message {text:?}"))
 }
 
-/// Python `test_fast_escape_keeps_unanswered_input_visible` verbatim.
 #[test]
 fn claude_fast_escape_keeps_unanswered_input_visible() {
     let records = rows(vec![
@@ -1302,8 +1301,8 @@ fn claude_fast_escape_keeps_unanswered_input_visible() {
     assert_eq!(messages[4]["turn_id"], "cancelled");
 }
 
-/// Python `test_interrupted_sibling_with_tools_stays_visible` verbatim: the
-/// assistant already replied, the user pressed Esc, the next input hangs off
+/// The assistant already replied, the user pressed Esc,
+/// the next input hangs off
 /// the previous turn_duration. Rules 1, 3, 4, 5 and 6 together.
 #[test]
 fn claude_interrupted_sibling_with_tools_stays_visible() {
@@ -1816,7 +1815,7 @@ fn codex_single_chunk_and_wrapped_outputs_are_unchanged() {
 }
 
 // ---------------------------------------------------------------- Grok
-// Python 16cc89c `tests/test_adapters.py` GrokAdapterTests: the in-flight
+// The GrokAdapterTests cases over the in-flight
 // `user_query` envelope and its neighbours.
 
 /// `test_in_flight_user_query_envelope_is_removed`: the protocol prefix a

@@ -450,7 +450,7 @@ def builders():
         return base(SESSIONDOCK_PUBLIC_HOSTS="example.com,http://bad/path"), 1, "invalid authority", []
 
     def hostname_default(_tmp):
-        # The system host name (Python `socket.gethostname()`),
+        # The system host name,
         # never the product name while the kernel reports one.
         system = ""
         try:

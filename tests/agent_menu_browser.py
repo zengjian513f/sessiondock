@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Subagent menu (Python agent_menu_e2e port): start/end times, end-time ordering, running dots.
+"""Subagent menu: start/end times, end-time ordering, running dots.
 
 Isolated Rust server, synthetic Claude session with three subagents, desktop and 390 px.
 ``agent_items[].active`` is what the backend reads off the sidecar transcripts (an open last

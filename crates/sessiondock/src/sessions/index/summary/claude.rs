@@ -32,7 +32,7 @@ pub(crate) fn owner_path(path: &Path) -> Option<std::path::PathBuf> {
     Some(session_directory.parent()?.join(format!("{stem}.jsonl")))
 }
 
-/// Python `_claude_agent_tail`'s turn state: the last user/assistant record
+/// Turn state: the last user/assistant record
 /// closes the turn only when it is an assistant `end_turn`
 /// (`_CLAUDE_TURN_CLOSED`; refusal/stop_sequence are followed by another
 /// assistant record without a stop notice, and a streamed text record may
@@ -89,7 +89,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let records = Records::parse(data, CLAUDE_HEAD_LINES);
     let mut hard_error: Option<String> = None;
 
-    // Head: first values in file order (Python `_meta` head loop).
+    // Head: first values in file order.
     let mut generated_title = None;
     let mut cwd = None;
     let mut branch = Value::Null;
@@ -133,8 +133,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         }
     }
 
-    // Tail: latest titles, the continuation sid and the cwd majority
-    // (Python `_meta` tail loop).
+    // Tail: latest titles, the continuation sid and the cwd majority.
     let mut custom_title = None;
     let mut latest_ai_title = None;
     let mut continued_in_sid = None;
@@ -175,7 +174,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         });
     let cwd = cwd
         .or_else(|| {
-            // Python's `max(dict, key=dict.get)` keeps the first of equal counts.
+            // The first of equal counts is kept.
             tail_cwds
                 .iter()
                 .rev()
@@ -267,7 +266,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         codex: None,
         agent: agent_meta,
         grok: None,
-        // Python keeps `continued_in_sid` on main rows only; a sidecar's
+        // `continued_in_sid` is kept on main rows only; a sidecar's
         // tail never carries one, and its row is folded away anyway.
         continued_in_sid: if agent.is_some() {
             None

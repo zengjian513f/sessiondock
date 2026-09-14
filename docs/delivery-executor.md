@@ -3,7 +3,7 @@
 This connects the [pure Claude domain](delivery.md), the
 [durable store](delivery-store.md), the [engine](delivery-engine.md) and the
 [async service](delivery-service.md) to a real terminal driver, a native
-acknowledgment adapter and the four Python send routes, for **Claude main
+acknowledgment adapter and the four send routes, for **Claude main
 sessions on managed instances**. Codex reuses the same executor, driver
 and routes for Codex main sessions — see
 [delivery-codex-executor.md](delivery-codex-executor.md); Grok reliable send
@@ -48,10 +48,10 @@ receipt. Duplicate, unmatched, exited or unauthorized instances are
 
 ## Composer inspection and draft consent
 
-The driver reproduces the Python bridge's composer model on the host **screen
+The driver reproduces the composer model on the host **screen
 capture**: two rule lines around a `❯` editor row, dim suggestion text vs a real
 draft, and cursor position deciding `empty` / `editing` / `unknown` when colour
-information is absent. The consent token is the Python fingerprint —
+information is absent. The consent token is the fingerprint —
 `sha256(cursor_x \0 cursor_y \0 screen)` — returned as `draft_token` and reused
 as the domain's frame token.
 
@@ -62,7 +62,7 @@ refuses to treat a lagging capture (`lag > 0`) as a known composer — it return
 `unknown`, so an unread editor is never mistaken for empty, and it aborts a
 prepare/Enter whose `dropped` counter moved between capture and write.
 
-Draft flow, matching Python `overwrite_draft`:
+Draft flow for `overwrite_draft`:
 
 1. `draft-status` returns `{draft_state}` plus `{draft_conflict:true, draft_token}`
    while editing.
@@ -123,26 +123,25 @@ checked readers (`claude_native_inputs`), never an ad-hoc read:
   Claude TUI supplies no request-ID echo.
 
 The tracker re-reads from the advancing watch cursor; when a receipt is overdue
-(Python `CONFIRM_TIMEOUT`, 8 s) it re-reads from the **fixed confirmation
+(8 s) it re-reads from the **fixed confirmation
 fence**, rate-limited to once per interval. Automatic tracking stops after a
 one-hour window (annotating the receipt once with the domain's timeout issue,
 without making it retryable). A dismissed (discarded) receipt is dropped from
 automatic tracking so a later identical human input acknowledges the next
 receipt, not the tombstone.
 
-## HTTP contract vs Python
+## HTTP contract
 
 All four routes are JSON, same-origin/loopback, `Cache-Control: no-store`, and
 return `501 delivery_send_disabled` unless **both** the delivery ledger and the
 terminal transport are configured (capability `outbox:true`). Bodies accept the
-Python fields; unknown fields (`activity`, `cursor`, `page_id`, diagnostics) are
+request fields; unknown fields (`activity`, `cursor`, `page_id`, diagnostics) are
 ignored; the page's own lease is an added optional `lease` object.
 
 ### `POST /api/session/send`
 
 Body: `uid`, `name`, `text`, `request_id`, `overwrite_draft`, `media`,
-optional `lease`, `_build`. Behaviour mirrors Python `_queue_message` +
-`_queue_claude_message`:
+optional `lease`, `_build`. Behaviour:
 
 - Text writes reproduce the stale-build gate before any terminal access:
   `_build` ≠ served build → `409 {code:"stale_build", reload:true, build}`.

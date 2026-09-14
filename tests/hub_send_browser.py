@@ -95,7 +95,7 @@ def check_browser(browser, root, config):
         page.close()
         # Closing the setup console releases its ownership
         # lease asynchronously; a claim that never finished binding also has
-        # Python's 15-second reservation lifetime. Wait on the actual draft
+        # the 15-second reservation lifetime. Wait on the actual draft
         # probe before opening a different hub page.
         deadline = time.monotonic() + 20
         while True:

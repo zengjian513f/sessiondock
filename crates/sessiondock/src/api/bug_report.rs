@@ -1,7 +1,7 @@
 //! `POST /api/bug-report` and the
-//! `uid=bug-report` branch of `POST /api/session/attachment` (Python's raw
+//! `uid=bug-report` branch of `POST /api/session/attachment` (the raw
 //! upload special case). Validation, status codes and the 202/500 shapes
-//! follow Python; the bundle and the worker live in `bug_report`.
+//! apply; the bundle and the worker live in `bug_report`.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -50,8 +50,8 @@ fn text(value: &Value, max: usize) -> String {
     }
 }
 
-/// Python `max(lo, min(int(value or default), hi))`; a non-numeric value is
-/// the Python `ValueError` (400 here, where Python answered 500 late).
+/// `max(lo, min(int(value or default), hi))`; a non-numeric value is
+/// a 400.
 fn dimension(value: &Value, default: u16, low: u16, high: u16) -> Result<u16, ApiError> {
     let number = match value {
         Value::Null => default,
@@ -126,7 +126,7 @@ pub async fn report(
             json!({"error": format!("不支持的处理会话类型: {source_text}"), "code": "bug_report_source"}),
         ));
     };
-    // Python `WORKER_SOURCES` / `shutil.which`: the source needs its one
+    // The source needs its one
     // configured CLI, the same the picker starts.
     if ctx.lifecycle.entry_for(source, false).is_none() {
         return Ok(json_body(
@@ -307,7 +307,7 @@ async fn outbox_snapshot(state: &AppState, uid: &str) -> Value {
     }
 }
 
-/// Python `term.capture_history(name, 8000)` with the screen as fallback:
+/// Capture history (`name`, 8000) with the screen as fallback:
 /// only a managed instance (native-associated or pending) is readable, through
 /// its guard envelope; anything else yields no capture.
 async fn terminal_capture(state: &AppState, ctx: &worker::WorkerContext, name: &str) -> String {
@@ -358,7 +358,7 @@ async fn terminal_capture(state: &AppState, ctx: &worker::WorkerContext, name: &
     extract(ctx.client.request_launch(&target, screen()).await).unwrap_or_default()
 }
 
-/// `POST /api/session/attachment`: Python's raw upload for `uid=bug-report`
+/// `POST /api/session/attachment`: the raw upload for `uid=bug-report`
 /// (query `name`, optional `id`, the file as the body) writes into the
 /// repository's attachment directory through the write service; every other
 /// native uid uses the conversation upload route of `api/files.rs`.

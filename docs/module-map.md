@@ -10,11 +10,11 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 188 files, 107034 lines, 959 tests, 45 undocumented.
+`crates/sessiondock/src`: 188 files, 107012 lines, 959 tests, 45 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines, 0 tests)
-  - `bug_report.rs` — `POST /api/bug-report` (Python `_bug_report`) and the (522 lines, 2 tests)
+  - `bug_report.rs` — `POST /api/bug-report` and the (522 lines, 2 tests)
   - `delivery.rs` — Read-only projection of an explicitly opened SessionDock-owned ledger, plus (555 lines, 0 tests)
   - `files.rs` — File transport. Every request resolves the selected session; opening a (977 lines, 1 tests)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines, 0 tests)
@@ -29,7 +29,7 @@ python3 tests/module_map.py --write
   - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (621 lines, 4 tests)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (222 lines, 1 tests)
   - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (749 lines, 0 tests)
-  - `trash.rs` — Session recycle-bin HTTP routes, using Python-compatible delete protection. (397 lines, 0 tests)
+  - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (397 lines, 0 tests)
 - `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (285 lines, 2 tests)
 - `audit.rs` — Best-effort browser diagnostics intake. (413 lines, 0 tests)
   - mods: `intake`, `query`, `writer`, `tests`
@@ -39,19 +39,19 @@ python3 tests/module_map.py --write
   - `tests.rs` — (no module doc) (65 lines, 3 tests)
   - `writer.rs` — Dedicated writer thread: daily JSONL files with fourteen-day retention. (328 lines, 0 tests)
 - `bin/`
-  - `sessiondock-hub.rs` — The multi-machine hub (Python `python3 -m sessiondock.hub`). (201 lines, 0 tests)
+  - `sessiondock-hub.rs` — The multi-machine hub. (201 lines, 0 tests)
 - `bridge/`
-  - `claude.rs` — Claude question cards (Python `sessiondock/claude_bridge.py`). (616 lines, 6 tests)
-  - `codex.rs` — Codex command approvals (Python `codex_bridge.approval_prompt`). (261 lines, 4 tests)
-  - `live.rs` — The live `prompt` of a session view (Python `server._session_prompt`). (286 lines, 2 tests)
-  - `mod.rs` — CLI question cards and approvals shown live on the conversation page (14 lines, 0 tests)
+  - `claude.rs` — Claude question cards. (616 lines, 6 tests)
+  - `codex.rs` — Codex command approvals. (261 lines, 4 tests)
+  - `live.rs` — The live `prompt` of a session view. (286 lines, 2 tests)
+  - `mod.rs` — CLI question cards and approvals shown live on the conversation page: (13 lines, 0 tests)
     - mods: `claude`, `codex`, `live`
 - `bug_report/`
-  - `mod.rs` — Bug-report bundles and their CLI workers (Python `bug_report.py`). (854 lines, 0 tests)
+  - `mod.rs` — Bug-report bundles and their CLI workers. (854 lines, 0 tests)
     - mods: `worker`, `tests`
-  - `tests.rs` — Python `tests/test_bug_report.py` semantics for the bundle, the (517 lines, 8 tests)
-  - `worker.rs` — The bug-report worker (Python `bug_report.launch` / `_inject_worker`). (862 lines, 0 tests)
-- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (1038 lines, 11 tests)
+  - `tests.rs` — Semantics for the bundle, the (517 lines, 8 tests)
+  - `worker.rs` — The bug-report worker. (862 lines, 0 tests)
+- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (1037 lines, 11 tests)
 - `delivery/`
   - `claude.rs` — Independent, pure Claude prompt/queue delivery domain. (1396 lines, 0 tests)
     - mods: `tests`
@@ -89,7 +89,7 @@ python3 tests/module_map.py --write
   - `service/`
     - `tests.rs` — (no module doc) (447 lines, 11 tests)
   - `store/`
-    - `disk.rs` — Python-compatible atomic file persistence for the delivery ledger. (183 lines, 0 tests)
+    - `disk.rs` — Atomic file persistence for the delivery ledger. (183 lines, 0 tests)
     - `json.rs` — Strict JSON grammar without duplicating either provider's persisted schema. (108 lines, 1 tests)
     - `mod.rs` — Explicit-directory persistence for the independent provider state machines. (328 lines, 0 tests)
       - mods: `disk`, `json`, `tests`
@@ -98,7 +98,7 @@ python3 tests/module_map.py --write
 - `files/`
   - `boundary.rs` — (no module doc) (627 lines, 0 tests)
   - `grants.rs` — An authenticated file browser keeps its directory grant after the original (355 lines, 2 tests)
-  - `info.rs` — Browser information describes the named leaf like Python's `path_for` / (56 lines, 0 tests)
+  - `info.rs` — Browser information describes the named leaf. (56 lines, 0 tests)
   - `jobs.rs` — In-memory file-operation jobs, bound to the session scope that created them. (224 lines, 0 tests)
   - `media.rs` — One trusted selected-view reference index shared by an entire media window. (132 lines, 0 tests)
     - mods: `tests`
@@ -109,10 +109,10 @@ python3 tests/module_map.py --write
   - `references.rs` — (no module doc) (281 lines, 0 tests)
   - `response.rs` — (no module doc) (519 lines, 0 tests)
   - `tests.rs` — (no module doc) (890 lines, 17 tests)
-  - `write.rs` — Authenticated operator file mutations through checked parent handles. (2204 lines, 1 tests)
+  - `write.rs` — Authenticated operator file mutations through checked parent handles. (2203 lines, 1 tests)
   - `write_tests.rs` — Synthetic-only write-side tests: authorization boundaries, TOCTOU, atomic (956 lines, 14 tests)
 - `hub/`
-  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (865 lines, 0 tests)
+  - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (864 lines, 0 tests)
     - mods: `tests`
   - `aggregate/`
     - `tests.rs` — (no module doc) (469 lines, 11 tests)
@@ -124,9 +124,9 @@ python3 tests/module_map.py --write
     - mods: `tests`
   - `identity/`
     - `tests.rs` — (no module doc) (72 lines, 4 tests)
-  - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (27 lines, 0 tests)
+  - `mod.rs` — Hub federation (batches 38–40): node identity, the hub's node registry (26 lines, 0 tests)
     - mods: `aggregate`, `client`, `identity`, `namespace`, `proxy`, `registry`
-  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (281 lines, 0 tests)
+  - `namespace.rs` — The hub's wire namespace (`federation.py` 31–113): every reference a node (280 lines, 0 tests)
     - mods: `tests`
   - `namespace/`
     - `tests.rs` — (no module doc) (236 lines, 10 tests)
@@ -178,8 +178,8 @@ python3 tests/module_map.py --write
     - `tests.rs` — (no module doc) (600 lines, 14 tests)
   - `tests.rs` — (no module doc) (368 lines, 13 tests)
 - `metadata/`
-  - `disk.rs` — Python-style metadata reads and atomic replacement in the configured directory. (112 lines, 0 tests)
-  - `mod.rs` — SessionDock preferences with Python-style reads and atomic publication. (227 lines, 0 tests)
+  - `disk.rs` — Metadata reads and atomic replacement in the configured directory. (112 lines, 0 tests)
+  - `mod.rs` — SessionDock preferences with reads and atomic publication. (227 lines, 0 tests)
     - mods: `disk`, `model`, `tests`
   - `model.rs` — Pure, versioned metadata transformations. No process or native-file access. (554 lines, 0 tests)
   - `tests.rs` — (no module doc) (667 lines, 15 tests)
@@ -193,31 +193,31 @@ python3 tests/module_map.py --write
     - mods: `process`, `procscan`, `spawn`, `tests`, `native_binding_tests`
   - `native_binding_tests.rs` — (no module doc) (353 lines, 7 tests)
   - `process.rs` — Process identity evidence for host-managed instances. (676 lines, 6 tests)
-  - `procscan.rs` — Read-only `/proc` scan for external CLI processes (Python `live.py`). (1048 lines, 0 tests)
+  - `procscan.rs` — Read-only `/proc` scan for external CLI processes. (1048 lines, 0 tests)
     - mods: `tests`
   - `procscan/`
-    - `tests.rs` — Python `tests/test_live.py` over a synthetic process tree (`FakeProc`): (779 lines, 13 tests)
-  - `spawn.rs` — Which session started a running session (Python `live.spawn_parents` and (267 lines, 0 tests)
+    - `tests.rs` — Tests over a synthetic process tree (`FakeProc`): (779 lines, 13 tests)
+  - `spawn.rs` — Which session started a running session. (266 lines, 0 tests)
     - mods: `tests`
   - `spawn/`
-    - `tests.rs` — Python `SpawnParentTests` over the synthetic tree, plus the write-once (313 lines, 3 tests)
+    - `tests.rs` — The SpawnParentTests cases over the synthetic tree, plus the write-once (313 lines, 3 tests)
   - `tests.rs` — (no module doc) (874 lines, 14 tests)
 - `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (879 lines, 8 tests)
   - mods: `cache`, `service`
 - `search/`
-  - `cache.rs` — Persistent search-text cache: one file per main session holding the exact (1041 lines, 7 tests)
+  - `cache.rs` — Persistent search-text cache: one file per main session holding the exact (1040 lines, 7 tests)
   - `service.rs` — Search-text production: where the body of one candidate comes from, in (350 lines, 0 tests)
 - `security.rs` — Loopback Host gate and same-origin API policy. Not authentication. (130 lines, 0 tests)
 - `sessions/`
-  - `debug_runs.rs` — Debug-run registry (Python `sessiondock/debug_runs.py`): paid monkey/test (452 lines, 6 tests)
+  - `debug_runs.rs` — Debug-run registry: paid monkey/test (451 lines, 6 tests)
   - `grok_tests.rs` — (no module doc) (303 lines, 7 tests)
   - `history.rs` — View identity helpers shared by `views` (`native_identity`, `history_link`, (1545 lines, 16 tests)
   - `index/`
-    - `agent_stops.rs` — Claude subagent stop points from the owner's main transcript (228 lines, 0 tests)
+    - `agent_stops.rs` — Claude subagent stop points from the owner's main transcript. (227 lines, 0 tests)
       - mods: `tests`
     - `agent_stops/`
-      - `tests.rs` — Python `ClaudeAgentItemTests` mechanics at the scan level: notice (427 lines, 8 tests)
-    - `graph.rs` — Ownership and fork graph over row summaries (644 lines, 0 tests)
+      - `tests.rs` — The ClaudeAgentItemTests mechanics at the scan level: notice (427 lines, 8 tests)
+    - `graph.rs` — Ownership and fork graph over row summaries. (643 lines, 0 tests)
     - `mod.rs` — Lazy session index: directory walk + `stat` + bounded (1311 lines, 0 tests)
       - mods: `agent_stops`, `graph`, `names`, `summary`, `tests`
     - `names.rs` — Codex `session_index.jsonl` names applied to summary rows. (199 lines, 0 tests)
@@ -225,13 +225,13 @@ python3 tests/module_map.py --write
     - `names/`
       - `tests.rs` — (no module doc) (494 lines, 9 tests)
     - `summary/`
-      - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (284 lines, 0 tests)
+      - `claude.rs` — Claude row summary: `ClaudeAdapter._meta` (main transcripts, including (283 lines, 0 tests)
       - `codex.rs` — Codex row summary: `CodexAdapter._raw_meta` (120 head pieces) plus the (238 lines, 0 tests)
       - `grok.rs` — Grok row summary: `GrokAdapter.session_meta` from `summary.json` plus the (135 lines, 0 tests)
-      - `mod.rs` — Bounded per-file row summaries. (850 lines, 0 tests)
+      - `mod.rs` — Bounded per-file row summaries. (848 lines, 0 tests)
         - mods: `claude`, `codex`, `grok`, `tests`
-      - `tests.rs` — (no module doc) (1278 lines, 25 tests)
-    - `tests.rs` — (no module doc) (2982 lines, 22 tests)
+      - `tests.rs` — (no module doc) (1276 lines, 25 tests)
+    - `tests.rs` — (no module doc) (2977 lines, 22 tests)
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines, 0 tests)
   - `media_tests.rs` — Synthetic native inputs only; projection and cursor boundaries for media. (257 lines, 6 tests)
   - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1315 lines, 0 tests)
@@ -255,7 +255,7 @@ python3 tests/module_map.py --write
     - `grok.rs` — Summary-derived Grok metadata. The transcript never overrides these fields, (220 lines, 3 tests)
     - `image_content.rs` — Typed image extraction before native content becomes public text or JSON. (164 lines, 0 tests)
     - `media_tests.rs` — Synthetic embedded image records only; no paths, network or CLI are opened. (591 lines, 16 tests)
-    - `tests.rs` — (no module doc) (1896 lines, 44 tests)
+    - `tests.rs` — (no module doc) (1895 lines, 44 tests)
     - `tools.rs` — Pure presentation of known tool arguments. A shell command is text here: (1056 lines, 0 tests)
       - mods: `tests`
     - `tools/`

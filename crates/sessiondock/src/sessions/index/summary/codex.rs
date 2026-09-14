@@ -17,7 +17,7 @@ fn first_truthy<'a>(values: impl IntoIterator<Item = &'a Value>) -> Option<Strin
     values.into_iter().find_map(text_if_truthy)
 }
 
-/// Python `_codex_agent_tail`'s turn state: the latest `event_msg` whose
+/// Turn state: the latest `event_msg` whose
 /// kind is a turn boundary (`_CODEX_TURN_OPEN`; other kinds such as
 /// `token_count` are passed over) says whether the turn is still open;
 /// no such record means closed. Subagents share the parent process, so
@@ -105,7 +105,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         }
     }
     // Hard failures today's projection raises on the records seen, in file order.
-    // Only the first session_meta is this file's identity (Python `and not
+    // Only the first session_meta is this file's identity (`and not
     // meta`); old-style forks and subagent rollouts copy their ancestors'
     // metas after it, which the projection skips and counts.
     let mut first_meta: Option<&Value> = None;

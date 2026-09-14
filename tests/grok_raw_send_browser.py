@@ -2,7 +2,7 @@
 """Grok composer text over raw terminal input from a page without a console.
 
 Grok has no reliable-send executor (`delivery_source_unsupported`), so the
-Python backend submitted its composer text with `tmux paste-buffer` + Enter.
+composer text is submitted as raw terminal input.
 Under the Rust `terminal_input` capability the same submit is a bracketed
 `paste` and a separate `Enter` on `/api/term/send`, with an empty token and
 the pane's pinned identity because the conversation view holds no lease

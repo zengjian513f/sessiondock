@@ -1092,8 +1092,8 @@ mod tests {
             resolve(&inventory, "child", "").unwrap().identity
         );
         assert!(resolve(&inventory, "parent", "").is_ok());
-        // A later session_meta is skipped and counted like Python's
-        // `and not meta`; the parent stays readable and the child's fixed
+        // A later session_meta is skipped and counted;
+        // the parent stays readable and the child's fixed
         // prefix is untouched.
         let duplicated = codex(
             "parent",
@@ -1263,7 +1263,7 @@ mod tests {
         );
     }
 
-    /// Python `_history_segments` table: `base.thread_id or forked_from_id`
+    /// `base.thread_id or forked_from_id`
     /// is the physical parent, `end_byte_offset` the cut, and only a
     /// non-null `history_base` inherits anything.
     #[test]

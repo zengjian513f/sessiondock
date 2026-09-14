@@ -34,7 +34,7 @@ SessionDock 节点通信只走 `10.66.66.0/24`。另一条中继路径上的 `19
 - Hub 访问各节点第二监听：TCP `8743`。形状见 [deploy-hub.md](deploy-hub.md) 与
   [security-model.md](security-model.md#node-listener-hub-traffic)。
 - Cetus 管理 SSH：`10.66.66.10` 端口 `22`。
-- Orion 仍是遗留 Python 节点，可能离线。
+- Orion 仍是遗留节点，可能离线。
 
 本机（Lyra）观察到的事实（运维明确要求记录的操作地址）：
 

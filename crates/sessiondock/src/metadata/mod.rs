@@ -1,4 +1,4 @@
-//! SessionDock preferences with Python-style reads and atomic publication.
+//! SessionDock preferences with reads and atomic publication.
 
 mod disk;
 mod model;

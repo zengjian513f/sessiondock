@@ -27,7 +27,7 @@
 | 组件 | 职责 | 输入 | 输出 |
 | --- | --- | --- | --- |
 | `sessions/index` | 目录遍历、`stat`、并行头/尾摘要、按 stamp 缓存、行推导、归属图、`sig`/`built_at` | 三个读根 | `/api/sessions` 行、候选文件表（uid → 路径/来源/stamp/原生 id/归属）、运行时原生目录 |
-| `sessions/index/summary` | 三家来源的有界摘要：头 96 KiB（≤ 40 条记录）+ 尾 512 KiB，推导与 Python `list_sessions` 逐字段一致 | 单个文件 | `RowSummary` |
+| `sessions/index/summary` | 三家来源的有界摘要：头 96 KiB（≤ 40 条记录）+ 尾 512 KiB | 单个文件 | `RowSummary` |
 | `sessions/views` | 单会话视图：经既有 `RecordCache`/`RawIndex`/provider 投影流式解析**这一个**文件，增量续读，重写重建；LRU（条数 + 字节） | 候选文件 + 可选时间线 pin | `ViewSnapshot`（消息、分页、媒体、检查点、原生输入证据） |
 | `search` + `search/cache` + `search/service` | 搜索文本缓存（按会话、按文件版本持久化的语义正文）、解析预算、后台预热；未缓存的会话借用已缓存视图或流式投影后丢弃；有界准入与 `partial` | 查询 + 候选表 + 缓存目录 | NDJSON 命中流 |
 | `observe`（SSE） | 每会话 `stat` 轮询 + 视图增量扩展；列表 SSE 用索引 `sig` | 索引 + 视图 | 事件流 |
@@ -37,23 +37,23 @@
 
 - **候选发现**：Claude `<root>/<project>/<sid>.jsonl` 主会话与 `agent-*.jsonl`
   sidecar；Codex 根下递归的 `rollout-*.jsonl`；Grok `<root>/<dir>/summary.json`
-  （+ `chat_history.jsonl`）。目录递归和普通文件链接跟随 Python 的 `glob`/`rglob`
+  （+ `chat_history.jsonl`）。目录递归和普通文件链接跟随 `glob`/`rglob`
   语义，不另设目录层数、路径组件、canonical root 或硬链接数量门槛。
 - **stamp** = `dev/ino/size/mtime_ns`。摘要缓存以 stamp 为键：stamp 未变则
   热刷新只有 `stat`；变了只重读这一个文件。
 - **摘要读取**：头 96 KiB 内最多 40 条完整记录 + 尾 512 KiB 内的完整记录
-  （残行丢弃），与 Python `_head_lines`/`_tail_lines` 相同；推导 `title`
+  （残行丢弃）；推导 `title`
   （custom-title > 最新 ai-title > 首条用户输入生成）、`cwd`（头部优先，尾部
   计数兜底）、`branch`、`created`、`updated`（`mtime`）、`size`、`model`、
   Codex `session_meta`/`history_base`、Claude `sessionId`/fork 来源、Grok
-  `summary.json` 字段。Grok 的 `size` 与 Python `_dir_size` 相同：会话目录内全部普通
+  `summary.json` 字段。Grok 的 `size`：会话目录内全部普通
   文件字节之和（递归、不进入链接目录、没有额外深度或条目数门槛），与
-  摘要一起按 summary/chat 的 stamp 缓存——Python 也只在这两个文件变化时重算。头/尾里
+  摘要一起按 summary/chat 的 stamp 缓存。头/尾里
   发现的硬错误（`content` 标量、缺 id 等）使该行 `supported:false` 并给出
   `migration_warnings == [原因]`；坏行、重复 `session_meta` 与未知记录类型只计入
   **详情 `meta.migration_warnings`** 的非致命备注（`跳过无效的JSONL 记录 ×N`、
   `跳过重复的Codex session_meta ×N`）：公开列表行（含 `agent_items`）只在
-  `supported:false` 时带 `migration_warnings`（Python 行没有这个字段，前端不消费，
+  `supported:false` 时带 `migration_warnings`（前端不消费，
   真实根上它占了列表载荷的一半以上）。
 - **并发变化**：读头/尾前后各 `stat` 一次；不一致则重读（最多 3 次），仍不一致
   就按已读字节发布并带上读取时的 stamp。删除的文件在下一次刷新消失。
@@ -74,7 +74,7 @@
   **只对存在未收尾 sidecar 的 owner 扫描**，与摘要同一线程池并行，冷列表仍
   ≤ 1 s、热列表仍只 `stat`；文件变短或 inode 变化则从头重扫。Claude 主会话尾部的
   `continued-in` 记录（`continuedInSessionId`）在同源主会话里按 sid 解析成
-  `continued_in` uid（Python `finalize_sessions`：按路径序最后一个同 sid 行胜出，
+  `continued_in` uid（按路径序最后一个同 sid 行胜出，
   指向自身丢弃），解析不到则不出字段。
 - **刷新节奏**：500 ms TTL 内复用上一份行；`force=1` 立即重扫；扫描在有界
   阻塞线程池并行（默认 16 路）。
@@ -103,8 +103,8 @@
   由索引填充——`uid`（主会话）、`agent`（`""` 或精确 agent id）、`owner`
   候选文件、`selected`（agent 自己的文件，主视图为 `None`）、`pin`（Claude
   主会话的时间线 pin）、`row`（已发布并经 names/metadata 装饰的主会话行；
-  视图 `meta` 就是这一行，agent 视图按 `row.agent_items` 派生，与 Python
-  `session_view` 一致）。候选只带索引发现的路径（来源/根/数据文件/sidecar），
+  视图 `meta` 就是这一行，agent 视图按 `row.agent_items` 派生）。
+  候选只带索引发现的路径（来源/根/数据文件/sidecar），
   视图自己 `stat` 并按与上次解析的差异续读/重建；行变化只重组 `meta`，不碰
   文件。视图读到的文件版本比索引发布的新时，门面强制重扫一次再复用视图，使
   `meta` 与视图描述同一份字节。
@@ -128,30 +128,29 @@
 
 ## debug_run 视图
 
-- 注册表 `<SESSIONDOCK_STATE_DIR>/debug-runs.json`，与 Python 同格式
+- 注册表 `<SESSIONDOCK_STATE_DIR>/debug-runs.json`
   （`{"version":1,"runs":{<run_id>:{"root":…,"created":…,"sessions":[{source,cwd,sid,uid,name}]}}}`），
   由测试工具（monkey）写入、本服务只读，`stat` 变化即重载；缺失/损坏 = 空注册表。
-  `tests/meta_import.py` 把 Python 的 `debug-runs.json` 注册表一并搬运。
-- 匹配（`sessions/debug_runs.rs`，Python `_match`）：行的 `uid`/`sid`/`name` 命中某 run
+  `tests/meta_import.py` 把 `debug-runs.json` 注册表一并搬运。
+- 匹配（`sessions/debug_runs.rs`）：行的 `uid`/`sid`/`name` 命中某 run
   的 sessions，或 `cwd`（`normpath`）等于/位于某 run 的 `root` 之下；多个 run 命中时取
   注册表顺序最靠前者。
-- 视图（`SessionStore::list_view`，Python `filter_rows`）：默认视图剔除全部登记会话；
+- 视图（`SessionStore::list_view`）：默认视图剔除全部登记会话；
   `?debug_run=<id>` 只显示该 run（未登记或不合法的 id → 空列表，不是错误）。视图对
   可见行重新推导 `fork_parent`，并以可见行 + run id 重签 `sig`（`_view_signature`），
   按（已发布列表、注册表、run id）缓存。`/api/live`、`/api/term/list`（sessions 与
   pending）、`/api/search`（候选与 `total_pool`）用同一注册表筛；`/api/messages` 等
-  详情路由忽略该参数（Python 同）。`security.rs` 不再对 `debug_run` 返回 501。
+  详情路由忽略该参数。`security.rs` 不再对 `debug_run` 返回 501。
 
 ## 搜索
 
-真实读根（803 会话、3.4 GB）上逐文件流式投影一次要 40 s 以上（Python 用
-`search-text` 的 gzip 缓存只要 1–4 s），所以搜索文本按会话
+真实读根（803 会话、3.4 GB）上逐文件流式投影一次要 40 s 以上，所以搜索文本按会话
 持久化（`search/cache.rs`、`search/service.rs`，2026-09-13）。命中语义、结果
 顺序、片段、`scanned`/`truncated` 与逐文件顺序扫描完全一致，只是正文的来源变了。
 
 - **可搜索正文** = `search::body`：主视图里 `user/assistant/user·subagent/
   assistant·subagent/thinking/question/answer` 角色的语义文本按 `\n` 拼接，
-  与 Python `_search_text` 相同；工具参数/输出、媒体、游标、私有片段不进正文。
+  工具参数/输出、媒体、游标、私有片段不进正文。
 - **缓存条目**：`<SESSIONDOCK_SEARCH_CACHE_DIR>/<source>-<hex>`——配置目录后以
   同目录临时文件 + rename 更新；首行 JSON 头（schema、构建指纹、uid、版本键、kind、
   字节数），其后是未压缩正文（真实根 816 会话共 18 MB，读页缓存比解压快，见
@@ -163,7 +162,7 @@
   Codex 声明的固定前缀链（每个父文件的路径、`cut` 与版本）或使链不可读的图错误；
   另加构建指纹（schema/crate 版本/二进制大小与 mtime），换二进制即整体重建，
   绝不信任旧投影。元数据 sidecar、名字索引、行装饰不影响正文，不进版本键。
-  解析前后各取一次版本，期间变化的结果只用不存（Python 同款）。
+  解析前后各取一次版本，期间变化的结果只用不存。
 - **正文来源顺序**（`SearchService::source`）：① 缓存命中（版本相等）→ 流式读；
   ② 视图 LRU 里仍是当前版本的视图（用户正打开着、SSE 增量续读的那些）→ 借用并
   写入缓存；③ 解析：同一 uid 只允许一个生产者（其余等待后重读缓存），先按数据
@@ -172,14 +171,14 @@
   完成时立即释放，并在每次大文件解析后 / 每 32 次解析后 `malloc_trim` 把 glibc
   各 arena 的空闲堆还给内核。**追加过的会话整体重解析**，不做"只解码新增字节"：
   增量解码要把该会话的解码记录常驻（约文件的数倍，每个活跃会话几十到几百 MB），
-  违反本文的常驻内存原则；Python 也是整体重读；实测活跃的 20 MB 会话重解析
+  违反本文的常驻内存原则；实测活跃的 20 MB 会话重解析
   ≈ 0.3 s，并行后热搜索仍 < 1 s。搜索不占普通读池的任何名额。
 - **匹配**：候选来自索引（按 `updated` 倒序，`?debug_run=` 视图筛过），`workers` 个线程并行取正文并匹配，但命中/进度
   严格按候选顺序发出，`limit` 停止点与顺序扫描相同。缓存正文按行对齐的 1 MiB
   块流式匹配（块只在 `\n` 处切，不含换行的模式命中不跨块，首个命中的上下文
   跨块拼接；非最后块末尾的空匹配留给下一块计数），整个正文不进内存；只有可能
   跨行匹配的正则整体读入；在途预算只调度内存使用，不拒绝有效查询。正则由
-  `fancy-regex` 提供 Python 所用的 lookaround 与 backreference。未知 `source` 是
+  `fancy-regex` 提供 lookaround 与 backreference。未知 `source` 是
   空筛选，`flags` 只有数值等于 `1` 时启用。
 - **预热**：有持久化目录时启动 2 s 后一趟后台预热（`workers/2` 个线程，
   解析槽按"前台无人等待才取"的低优先级），之后每 `SESSIONDOCK_SEARCH_WARMUP`
@@ -187,7 +186,7 @@
   不阻塞索引（与列表共用索引 TTL）。
 - **容量**：`SESSIONDOCK_SEARCH_CACHE_BYTES`（默认 1 GiB）按最近使用淘汰。
 - 搜索并发在服务内部排队；没有 10 秒 Busy、查询长度、编译大小或结果总字节数的
-  Rust 专属拒绝。`limit` 与 Python 一样控制命中条数。
+  Rust 专属拒绝。`limit` 控制命中条数。
 
 ## 目标与验收
 
@@ -211,7 +210,7 @@
 
 ## 历史容量与读取边界
 
-与 Python `_iter_records` / `json.loads` 的读取容量行为对齐，不再设置 64 MiB
+不再设置 64 MiB
 记录、4 GiB 文件、100 万记录、200 万事件/检查点、1 GiB 消息/索引以及摘要
 文件的固定拒读门槛。源文件的已验证长度限定实际读取范围；JSON 语法、完整行、
 源身份、跨度长度和 digest 校验仍生效。AST 节点/键/驻留记账上界从实际输入长度
@@ -220,9 +219,9 @@
 历史分页的 8 MiB JSON / 128 张图片 / 24 MiB 图片估算是分组目标。超过目标的
 单条消息独占一页，下一页仍能继续；每页事件数限制和游标一致性校验保留。
 
-结构扫描不另设重复键、嵌套深度、节点/键/数字长度门槛；重复键与 Python 一样
+结构扫描不另设重复键、嵌套深度、节点/键/数字长度门槛；重复键
 由最后一个值胜出。工具 envelope 不另设层数、候选数或累计 replay work 门槛，
-媒体也不增加 Python 没有的单图容量拒绝。
+媒体也不增加单图容量拒绝。
 
 ## 常驻内存预算
 
@@ -256,5 +255,5 @@
 - 不做落盘的**列表**索引缓存：没有启动解析，也就没有需要缓存的东西。搜索
   文本缓存是按会话、按文件版本的正文快照，不是列表状态，丢了只会多解析一次。
 - 不做跨文件的"一致性快照"：没有任何消费者需要它。
-- 不为搜索预建倒排/全文索引：正文缓存 + 正则流式匹配已经比 Python 快，
-  倒排索引才是"超出 Python"。
+- 不为搜索预建倒排/全文索引：正文缓存 + 正则流式匹配已经够快，
+  倒排索引才是超出范围。

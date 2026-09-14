@@ -20,7 +20,7 @@ display name) and shares everything that is not domain-specific:
 | admission (`workers`), per-UID `tokio::sync::Mutex` serialization, shutdown cancellation | the domain commands (`claude::Command` vs `codex::Command`) and receipts |
 | `ManagedResolver` (unique guard-capable managed host whose verified native association names the UID; launch origin authorized through the lifecycle binding) | the composer model: `driver::inspect_for(ComposerKind::Claude | Codex, capture)` |
 | lease borrow/claim (`sessiondock-delivery-executor` page or the request's own console lease) | the native adapter (`claude_adapter` JSONL inputs vs `codex_adapter::observe` over `ViewSnapshot::native_tail`) |
-| `overwrite_draft` (consent before any durable write), `prepare` (paste + independent full-text observation), `enter` (frame recheck, `Enter`) | the outbox projection (`claude_outbox` / `codex_outbox`) and the Python messages |
+| `overwrite_draft` (consent before any durable write), `prepare` (paste + independent full-text observation), `enter` (frame recheck, `Enter`) | the outbox projection (`claude_outbox` / `codex_outbox`) and the messages |
 | the tracker tick | the replay schedule: Claude's in-memory `confirm_timeout` clock vs Codex's `codex_adapter::ReplayClock` |
 
 The Claude path, its unit tests (`delivery::executor::tests`) and the
@@ -46,7 +46,7 @@ POST /api/session/send (Codex uid)
        → task_complete of that turn → Completed (hidden like Acknowledged)
 ```
 
-Python's Codex sender pastes and presses Enter blindly; the Rust executor
+The executor
 keeps the domain's two persisted steps and the independent paste observation,
 so a crash between paste and Enter restores as `Uncertain` and is never
 re-injected, and a paste the composer does not visibly hold (for example a
@@ -63,11 +63,11 @@ rows into `Uncertain` first.
 
 ## Composer inspection: `codex_bridge.composer_state`, ported
 
-`driver::inspect_codex` reproduces the Python rules on the host screen
+`driver::inspect_codex` reproduces the rules on the host screen
 capture (`capture_screen`, styled, with cursor):
 
 - ANSI is stripped and Codex 0.154's braille **particle glyphs**
-  (U+2800–U+28FF, painted in RGB colour, never dim — Python fix `9b1c2fd`) are
+  (U+2800–U+28FF, painted in RGB colour, never dim) are
   blanked before locating the block and ignored when deciding whether the
   composer holds text, so a particle padding row is never a draft block and an
   empty composer with particles in its blank cells is `empty`.
@@ -76,7 +76,7 @@ capture (`capture_screen`, styled, with cursor):
   wrapped bar excluded), the final `model · cwd` line, or the dim
   `esc again to edit previous message` rewind hint (dim styling required).
   Without a footer the host cursor must sit inside the block (or one/two blank
-  rows above a bottom-row composer at column marker+2), exactly as in Python.
+  rows above a bottom-row composer at column marker+2).
 - The block must start with `›` or `»`; content after the marker that is not
   whitespace, not a particle and **not dim** means `editing`, otherwise
   `empty` (the rotating placeholder is dim). Menus/approval prompts are
@@ -87,7 +87,7 @@ capture (`capture_screen`, styled, with cursor):
   between capture and write aborts the prepare/Enter, as for Claude.
 
 Draft consent is identical to Claude: `draft-status` → `{draft_state}` plus
-`{draft_conflict:true, draft_token}` while editing (token = Python fingerprint
+`{draft_conflict:true, draft_token}` while editing (token = the fingerprint
 `sha256(x\0y\0screen)`); `send`/`retry` without the exact token → `409`
 and no receipt; with it the approved draft is cleared (`C-u C-k`) and verified
 empty before the paste.
@@ -105,8 +105,8 @@ delivered_ms, now)` decides:
 | `Expired` (one hour) | polling stops; the row keeps its state and issue and is not retryable |
 
 `delivered_ms` is the receipt's durable `created_ms` (the Submit clock, never
-later than the Enter clock; Python `_tracked_since` also falls back to
-`created`). The physical fence is the real boundary; the timestamp check only
+later than the Enter clock). The physical fence is the real boundary; the
+timestamp check only
 skips records stamped before the request existed.
 
 The boundary is `Boundary { confirmation: receipt.confirmation, sequence:
@@ -126,8 +126,8 @@ Outcome mapping:
 
 The adapter produces `PossibleTextMatch`. The Machine accepts it only after it
 matches the receipt's fixed confirmation cursor, source identity, real-user
-record, exact media metadata and end-trimmed text, matching Python
-`send_queue.observe`. The executor held the write lease for the instance, verified
+record, exact media metadata and end-trimmed text.
+The executor held the write lease for the instance, verified
 the composer was empty (or cleared the one approved draft), captured the
 physical fence from the frozen view before the paste, independently observed
 the complete text in the composer, rechecked the frame, and pressed Enter
@@ -139,10 +139,10 @@ it is never derived from a neighbouring `task_started`.
 What stays uncertain: a swallowed line, an ambiguous transport result, a
 rewritten/truncated rollout, and anything past the one-hour window.
 
-## HTTP: the same four routes, Python's Codex bodies
+## HTTP: the same four routes, the Codex bodies
 
 Under `outbox:true` (ledger + terminal transport configured) the routes accept
-a Codex UID with the Claude bodies; codes follow Python's Codex handlers where
+a Codex UID with the Claude bodies; codes follow the Codex handlers where
 they differ from Claude's:
 
 | Route | Codex-specific behaviour |
@@ -150,12 +150,11 @@ they differ from Claude's:
 | `send` | `item.state` is the Codex projection: `queued`/`failed` with `attempts 0` before a write, `failed` with `attempts 1` and `error "发送结果待核对；禁止自动重试"` once pasted (legacy `codexNeedsInspection`: "终端写入待核对", 检查终端/移除). Replay of a confirmed/hidden ID → `state:"confirmed"`, no text. `name` mismatch → `409 terminal_unlinked "Codex 终端会话未连接…"`. |
 | `draft-status` | identical (`empty`/`editing`+token/`unknown`) |
 | `outbox/retry` | only a `failed` row with `attempts 0` (`FailedBeforeWrite`, or a `DraftConflict` with its token) re-inspects; anything attempted → `409 "消息已经写入终端或仍在确认，禁止重复发送"`; unknown → `404 "待发送消息不存在"`. The console draft is probed before the retry. |
-| `outbox/discard` | Python `_discard_message` for Codex: a pre-write row is discarded (tombstone kept); an attempted row, including an in-flight prepare/Enter, is **dismissed** (hidden, state, operation revision and dedup identity kept); authorized callbacks may settle once, and dismissal never resends; a missing/already removed ID → `200 {ok, uid, outbox…}` (idempotent, unlike Claude's 404). |
+| `outbox/discard` | A pre-write row is discarded (tombstone kept); an attempted row, including an in-flight prepare/Enter, is **dismissed** (hidden, state, operation revision and dedup identity kept); authorized callbacks may settle once, and dismissal never resends; a missing/already removed ID → `200 {ok, uid, outbox…}` (idempotent, unlike Claude's 404). |
 
 `GET /api/session/outbox` is unchanged. The legacy composer needs no change:
 `sendToSession` already treats Claude and Codex the same way and the Codex
-row labels/actions gate on the projected `failed`+`attempts` exactly as
-under Python.
+row labels/actions gate on the projected `failed`+`attempts`.
 
 ## Domain addition: `codex::Command::Dismiss`
 
@@ -177,7 +176,7 @@ its batch-6 semantics and tests.
   ownership/unlinked/unknown session; swallowed line uncertain + retry
   refused + restart without re-injection + dismiss hides + tombstone replay +
   a fresh identical request confirms on its own record; no-turn-ID and
-  duplicate native records confirm in Python row order; ambiguous Enter and unknown composer
+  duplicate native records confirm in row order; ambiguous Enter and unknown composer
   (pre-write failure, manual retry); lagging capture never idle; tracking
   window; immediate follow-up).
 - Integration (real router + temporary ptyhost + launcher + ledger, fake Codex
@@ -228,11 +227,10 @@ knobs `--delay`, `--swallow N`, `--no-turn-id`, `--duplicate`, `--reply`,
 - Long pastes that Codex collapses into a placeholder are never Entered by
   the executor (the domain requires the full text to be observed); the row
   stays `Uncertain` with the text left in the composer for the user.
-- Identical prompts follow Python row order: the first causal native record
+- Identical prompts follow row order: the first causal native record
   confirms the first matching receipt and cannot confirm another.
 - An unknown composer (approval prompt, menu, lagging capture) is a
-  pre-write failure with a manual 重试, not a background re-dispatch (Python
-  would paste blindly).
+  pre-write failure with a manual 重试, not a background re-dispatch.
 - Expired tracking is silent for Codex (the domain has no timeout command).
 - Attachment paths are submitted in the prompt and their preview metadata is
   retained in the outbox. Stop/interrupt, rename and compact acknowledgment

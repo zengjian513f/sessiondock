@@ -85,7 +85,7 @@ requests, identities and cancellation flags. Schema 1 also receives the previous
 defined `cancel_requested:false`. Schema 5 adds `method:"operator"`,
 `evidence:null` and `bound_at:null` to every migrated binding object. Old
 envelopes with missing required current fields or mixed schemas fail closed;
-ordinary extra fields follow Python's tolerant dictionary reads.
+ordinary extra fields follow tolerant dictionary reads.
 
 On open, historical Intent becomes Uncertain in the same durable recovery commit
 used for Starting/CancelRequested. A Confirmed binding survives restart because

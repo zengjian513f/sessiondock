@@ -31,8 +31,8 @@ pub const SID_PLACEHOLDER: &str = "{sid}";
 /// Session-identity variables a CLI must never inherit from the Web service.
 /// The launcher already clears its environment and the imported host strips
 /// these again; configuration cannot add them back. The spawner clues
-/// (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CLAUDE_PID`, Python
-/// `SPAWN_ENV_KEYS`) are refused too: a web-created session must not be
+/// (`CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CLAUDE_PID`)
+/// are refused too: a web-created session must not be
 /// recorded as the child of whatever session started this service.
 pub const DENIED_ENV: [&str; 6] = [
     "CLAUDE_CODE_SESSION_ID",
@@ -66,7 +66,7 @@ pub struct Config {
 
 /// One real CLI installation. `args` is the fixed prefix. Legacy `new_args`
 /// and `resume_args` may contain whole-argument `{session_id}` / `{sid}`
-/// substitutions; when absent, Python's source-specific identity arguments
+/// substitutions; when absent, source-specific identity arguments
 /// are appended automatically.
 #[derive(Clone, Deserialize)]
 pub struct CliProfile {
@@ -81,7 +81,7 @@ pub struct CliProfile {
     pub resume_args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
-    /// Names removed from the inherited environment, e.g. `TERM`. Python's
+    /// Names removed from the inherited environment, e.g. `TERM`. The
     /// lineage variables are removed separately for every CLI launch.
     #[serde(default)]
     pub env_remove: Vec<String>,
@@ -156,8 +156,8 @@ pub struct LaunchFailure {
     pub error: Error,
 }
 
-/// Read the configured launcher file with the same ordinary path semantics as
-/// Python's JSON configuration load. Parse errors are replaced by a static
+/// Read the configured launcher file with ordinary path semantics.
+/// Parse errors are replaced by a static
 /// error code so configuration contents never leak through the API.
 pub fn read_config(path: &Path) -> Result<Config, Error> {
     let bytes = std::fs::read(path).map_err(|_| Error::ConfigUnavailable)?;
@@ -191,7 +191,7 @@ impl Launcher {
         }
         let entries = entries(&config);
         // Executables may be symlinks (npm/volta shims, WinGet links, `which`
-        // results): resolve them like Python's `shutil.which`, then apply the
+        // results): resolve them, then apply the
         // no-follow identity checks to the real file.
         let host_binary = CheckedFile::open(&resolved_executable(&config.host_binary)?)?;
         let host_directory = CheckedDirectory::open(&config.host_dir)?;
@@ -482,7 +482,7 @@ fn spawn_detached(mut command: Command) -> std::io::Result<Child> {
 
 /// Windows: no console, own process group (console Ctrl events stay with the
 /// service) and out of the service's job object, so that a job-terminated
-/// service leaves the host alive — Python `term_host._spawn`. A job that
+/// service leaves the host alive. A job that
 /// forbids breakaway makes `CreateProcess` refuse with access denied; the host
 /// is then started inside the job rather than not at all.
 #[cfg(windows)]
@@ -513,7 +513,7 @@ fn spawn_detached(_command: Command) -> std::io::Result<Child> {
 
 fn env_name(key: &str) -> bool {
     // These are the constraints of a process environment, not shell variable
-    // syntax: Python also accepts names such as PSModulePath and ProgramFiles(x86).
+    // syntax: names such as PSModulePath and ProgramFiles(x86) are accepted.
     !key.is_empty() && !key.contains(['=', '\0'])
 }
 fn allowed_profile_env(key: &str) -> bool {

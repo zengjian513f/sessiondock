@@ -4,7 +4,7 @@
 //! transient projection under the shared parse-slot budget, matched and
 //! dropped (never retained: keeping decoded records resident to decode only
 //! appended bytes would cost several times the file per active session,
-//! against the read model's memory rule; Python re-reads too). One producer
+//! against the read model's memory rule). One producer
 //! per uid; a second search waits and re-reads the cache. The warm-up walks
 //! the same path at background priority (docs/read-model.md "搜索").
 

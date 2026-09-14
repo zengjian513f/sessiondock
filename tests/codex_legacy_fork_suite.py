@@ -5,7 +5,7 @@ R1: the first session_meta is the identity; later session_meta records are
 skipped as exactly `跳过重复的Codex session_meta ×N` and `supported` stays true.
 R2: history_base null + forked_from_id set → the file is self-contained (no
 inherited prefix, never an error).
-R3: list rows walk forked_from_id like Python CodexAdapter.finalize_sessions
+R3: list rows walk forked_from_id
 (a missing parent ends the chain; size = own + Σ min(end_byte_offset or 0,
 parent.size); history_base null therefore adds 0).
 """

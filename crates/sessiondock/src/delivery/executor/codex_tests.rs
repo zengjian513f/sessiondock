@@ -706,7 +706,7 @@ async fn codex_swallowed_enter_stays_uncertain_retry_refused_dismiss_hides() {
     }
 
     // Dismiss hides the row, keeps the tombstone; a second
-    // discard is idempotent `ok` like Python's Codex handler.
+    // discard is idempotent `ok`.
     let discard = harness.exec().discard(&harness.uid, "codex-req-0006").await;
     assert_eq!(discard.status, 200, "{}", discard.body);
     assert_eq!(discard.body["uid"], harness.uid);
@@ -809,7 +809,7 @@ async fn codex_ambiguous_enter_is_uncertain_and_unknown_composer_is_retryable() 
     harness.exec().discard(&harness.uid, "codex-req-0010").await;
 
     // An approval prompt instead of the composer: nothing is pasted, the row
-    // is a pre-write failure (Python "failed", attempts 0) and an explicit
+    // is a pre-write failure ("failed", attempts 0) and an explicit
     // retry re-inspects once the composer is back.
     harness.driver.state().enter_ambiguous = false;
     harness.driver.state().no_composer = true;

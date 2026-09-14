@@ -25,7 +25,7 @@ use crate::{
     state::AppState,
 };
 
-/// Python `_pane_for_session` recursion bound: continued-in hops examined.
+/// Recursion bound: continued-in hops examined.
 const CONTINUED_HOPS: usize = 8;
 
 const UNCONFIGURED: &str =
@@ -39,7 +39,7 @@ fn external_scan_result(
 ) -> Result<Option<Arc<Scan>>, ApiError> {
     match result {
         Ok(snapshot) => Ok(Some(snapshot.scan)),
-        // Python falls back to psutil off /proc and returns an empty observation
+        // Off `/proc`, an empty observation is returned
         // when that provider is unavailable. Absence of evidence never grants
         // PID control; managed host observation remains independently usable.
         Err(ScanError::UnsupportedPlatform) => Ok(None),
@@ -63,7 +63,7 @@ async fn external_scan(state: &AppState) -> Result<Option<Arc<Scan>>, ApiError> 
 }
 
 /// One process-table snapshot over a frozen session-list document. The map is
-/// Python `live.is_live(row, force=True)` for every row, including Grok's
+/// `is_live(row, force=True)` for every row, including Grok's
 /// active-session evidence when it exposes no PID. Callers can protect a whole
 /// trash batch without rescanning once per UID.
 pub(crate) async fn observe_external_all(
@@ -83,7 +83,7 @@ pub(crate) async fn observe_external_all(
         .collect())
 }
 
-/// The scan merged with the managed observations (Python `/api/live` body).
+/// The scan merged with the managed observations (`/api/live` body).
 #[derive(Default)]
 struct Merged {
     uids: Vec<String>,
@@ -104,11 +104,11 @@ fn seed_managed_status(response: &mut Value, running: &[String], started: &BTree
 
 /// Legacy envelope. Without the scan, `uids` lists only sessions whose managed
 /// instance is verified running and everything else is unknown, never
-/// stopped. With the scan (Linux, explicit switch) the answer is Python's:
+/// stopped. With the scan (Linux, explicit switch) the answer is:
 /// `uids` = sessions with a live CLI process (list order), `tmux_uids` those
 /// running under tmux or a managed host, `started_at[uid]` the earliest CLI
 /// main-process start; spawners are recorded on the way. `?force=1` bypasses
-/// both caches exactly like the Python endpoint.
+/// both caches.
 pub async fn live(
     State(state): State<AppState>,
     RawQuery(query): RawQuery,
@@ -116,7 +116,7 @@ pub async fn live(
     let force = query
         .as_deref()
         .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
-    // Python filters the session list through the debug-run registry before
+    // The session list is filtered through the debug-run registry before
     // pairing processes: a hidden session is never a live uid of this view.
     let debug_run = crate::sessions::debug_run_of(query.as_deref());
     let runs = state.reader.store.debug_runs();
@@ -125,7 +125,7 @@ pub async fn live(
         "uids":[],"tmux_uids":[],"started_at":{},"managed":null});
     // Managed running uids in list-independent order, their start times, the
     // host session roots and the uids the host
-    // records declare (Python's pane named for a session).
+    // records declare (the pane named for a session).
     let mut managed_running: Vec<String> = Vec::new();
     let mut managed_started: BTreeMap<String, f64> = BTreeMap::new();
     let mut host_roots: BTreeSet<u32> = BTreeSet::new();
@@ -234,7 +234,7 @@ pub async fn live(
                             merged.started.insert(uid.clone(), at);
                         }
                     }
-                    // Python records spawners on every `/api/live` (趁每次判活顺手记下).
+                    // Spawners are recorded on every `/api/live` (趁每次判活顺手记下).
                     merged.recorded = watcher
                         .as_ref()
                         .map(|watcher| watcher.record(&scan, &sessions, &active.owned));
@@ -286,12 +286,12 @@ pub async fn live(
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response())
 }
 
-/// Python `_pane_for_session`'s continued-in fallback: a Claude session no
+/// Continued-in fallback: a Claude session no
 /// pane owns inherits the pane of the listed row whose `continued_in` names
 /// it. The continued JSONL's process runs under the origin TUI's daemon child,
 /// so by process tree it is not the pane's CLI, but the list shows only the
 /// continued session and the console follows it (up to eight hops). The
-/// origin owns a pane when a host record declares its uid (Python's pane
+/// origin owns a pane when a host record declares its uid (the pane
 /// named for the session) or one of its CLI processes descends from a host's
 /// session root; a spawned grandchild is not a continuation and never inherits.
 fn inherits_pane(
@@ -442,7 +442,7 @@ mod external_scan_tests {
     }
 }
 
-/// Python 16cc89c `tests/test_server.py` PaneLinkingTests over a synthetic
+/// The PaneLinkingTests cases over a synthetic
 /// tree: pane root 10 → claude 11 (origin) → daemon 12 → claude 13 (the
 /// continued session's process); 11 also spawned grok 14. A CLI in between
 /// cuts pane ownership, so 13 and 14 do not belong to 10 directly.
@@ -595,7 +595,7 @@ mod tests {
             &declared,
             &BTreeSet::new()
         ));
-        // The first listed row naming the session wins, like Python's `next(...)`.
+        // The first listed row naming the session wins.
         let mut twice = chain.clone();
         let shadow = SessionRow {
             uid: "claude:shadow".into(),

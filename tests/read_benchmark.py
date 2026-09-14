@@ -2,7 +2,7 @@
 """Free synthetic read smoke benchmark; no original data or CLI is accessed.
 
 Times include loopback transport and Python JSON decoding. This is not a
-production or Python-vs-Rust benchmark, nor an RSS/CPU measurement. Run a release
+production benchmark, nor an RSS/CPU measurement. Run a release
 binary on an otherwise idle machine for comparable samples; no timing threshold
 is treated as a correctness assertion.
 """

@@ -1,5 +1,5 @@
-//! Browser information describes the named leaf like Python's `path_for` /
-//! `describe`. Direct references and byte reads retain their usual resolution.
+//! Browser information describes the named leaf.
+//! Direct references and byte reads retain their usual resolution.
 use super::{FileError, FileScope, FileService, boundary, response};
 use serde_json::{Value, json};
 use std::io::ErrorKind;

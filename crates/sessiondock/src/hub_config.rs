@@ -20,7 +20,7 @@ pub struct HubConfig {
     /// `SESSIONDOCK_HUB_NODES`: the registry file (`hub-nodes.json`).
     pub nodes_file: PathBuf,
     /// `SESSIONDOCK_HUB_CACHE_DIR`: offline session snapshots; default
-    /// `hub-cache` next to the registry file (Python's layout).
+    /// `hub-cache` next to the registry file.
     pub cache_dir: PathBuf,
     /// `SESSIONDOCK_HUB_NETWORKS`: CIDR list a node may be registered from.
     pub networks: Vec<Network>,

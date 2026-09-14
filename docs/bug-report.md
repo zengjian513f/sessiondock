@@ -1,7 +1,7 @@
 # Bug reports and their CLI workers (M7)
 
-`POST /api/bug-report` (Python `server._bug_report` / `bug_report.py` at
-`e5b023a`) captures a self-contained diagnostic bundle and starts a managed
+`POST /api/bug-report` captures a self-contained diagnostic bundle
+and starts a managed
 CLI instance that investigates it. The Rust implementation lives in
 `bug_report/mod.rs` (bundle), `bug_report/worker.rs` (launch + prompt
 injection), `audit/query.rs` (server-side audit events and the time-window
@@ -25,7 +25,7 @@ otherwise the capability stays `false` and the route `501`.
 
 ### Which CLI the worker runs
 
-Python `WORKER_SOURCES` / `shutil.which`: the worker is the source's one
+The worker is the source's one
 configured CLI, selected exactly as `POST /api/term/create` selects it
 (`LifecycleService::entry_for`), on the CLI's own default model and effort.
 There is no worker-specific profile and no model policy: the worker is the
@@ -38,7 +38,7 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 
 ## Route contract (`POST /api/bug-report`)
 
-Body as Python: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
+Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
 _trace_id, _build, source ∈ claude|codex|grok (default codex), terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120)}`; unknown fields are ignored,
@@ -46,7 +46,7 @@ non-numeric `cols`/`rows` are `400`.
 
 | Status | When |
 | --- | --- |
-| `403 terminal_disabled` | terminal transport off (Python `TERMINAL` false) |
+| `403 terminal_disabled` | terminal transport off |
 | `501 bug_report_disabled` | any dependency above missing |
 | `400` `不支持的处理会话类型: …` | unknown `source` |
 | `503` `本机找不到 <source> 命令` | the source has no unique configured CLI |
@@ -57,7 +57,7 @@ non-numeric `cols`/`rows` are `400`.
 
 `worker.sid` is the declared Claude session id (`null` for Codex/Grok, whose
 identity stays pending like any other launch); `token` is that sid or the
-launch id (Python's tmux token). The extra identity fields let the legacy page
+launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
 ## The bundle
@@ -76,27 +76,27 @@ private temp file renamed into place):
 | `worker-prompt.md` | the prompt (below) |
 | `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname, client_ip, session (list row of `uid`), outbox (delivery ledger snapshot), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
 
-Redaction follows Python `audit.sanitize`: keys in Python's `_SECRET_KEYS`
+Redaction follows `audit.sanitize`: keys
 (authorization, cookie, api-key, password, secret, access/refresh token …)
 become `<redacted>` at every level; paths are kept.
 
 ### Attachments
 
-`resolve_attachments` follows Python: at most 12 items, each `path` resolving
+`resolve_attachments` takes at most 12 items, each `path` resolving
 to an existing regular file below `<repo>/sessiondock_attachments/` (a symlink is
 accepted when its resolved target remains below that root), `number` from the
 item or the position, `mime` ≤ 100 chars,
 `kind` ∈ image/video/audio else `file`, `name` ≤ 200 chars, `relative_path`
 relative to the repository. The prompt lists them as `附件N: ./<relative_path>`.
 
-`POST /api/session/attachment?uid=bug-report&name=<file>[&id=N]` is Python's
+`POST /api/session/attachment?uid=bug-report&name=<file>[&id=N]` is the
 raw upload special case: the request body is the file, written through the
 file write service into `<repo>/sessiondock_attachments/<id>/<name>` (`id` is
-`[1-9]\d{0,8}` or the next free batch number; the name is sanitized like
-Python `_attachment_name`; identical content is reused, a clash becomes
-`stem__N.suffix`; nothing is ever overwritten). Response: Python's `{ok, name,
+`[1-9]\d{0,8}` or the next free batch number; the name is sanitized;
+identical content is reused, a clash becomes
+`stem__N.suffix`; nothing is ever overwritten). Response: `{ok, name,
 original_name, path, relative_path, attachment_id, mime, kind, size, reused,
-media: null}`. Bound: 512 MiB per file (`413`), matching Python. Every
+media: null}`. Bound: 512 MiB per file (`413`). Every
 other session `uid` uses the conversation attachment upload contract of
 [files.md](files.md).
 
@@ -112,16 +112,16 @@ other session `uid` uses the conversation attachment upload contract of
    `/api/term/list` pending row; the legacy pending page and sidebar row show
    it (`正在注入缺陷报告提示词`, `提示词已提交`, `提示词注入失败：…`).
    Manifest `status: starting`; audit `bug_report.worker_started`.
-2. Readiness (Python `_inject_worker`, 90 s): the screen is read through the
+2. Readiness (90 s): the screen is read through the
    launch guard without a lease so a page may open the console meanwhile.
    Claude/Codex use the delivery driver's composer models
-   (`driver::inspect_for`), Grok Python's `_ScreenProbe` (a non-blank frame
+   (`driver::inspect_for`), Grok `_ScreenProbe` (a non-blank frame
    that stopped changing). The composer must be `empty` for 600 ms; an
    `editing` frame on a fresh instance is a failure (`新建 … 会话出现了意外草稿`).
    State changes are audited as `bug_report.worker_probe`.
 3. Injection as server-originated host input through the launch guard
    (`request_launch` — the same path `session/stop` uses for its EOF
-   keys; Python's `tmux send-keys` needed no page console either). No browser
+   keys; no page console is needed either). No browser
    lease is claimed, so a page that opened the console from the toast keeps
    it and watches the prompt arrive; `manifest.injection.origin` records
    `sessiondock-bug-report`. The frame is rechecked, `paste_started_at` is
@@ -134,7 +134,7 @@ other session `uid` uses the conversation attachment upload contract of
    in turn. An unacknowledged (timed-out) Enter is recorded and never repeated
    blindly; a crash between the persisted steps leaves `status: injecting` and
    is never resumed.
-4. Python `_confirm_submission`: for at most 4 × 1 s the composer is watched;
+4. For at most 4 × 1 s the composer is watched;
    while it visibly still holds the pasted draft Enter is resent (audit
    `bug_report.worker_enter_retry`); any other frame is only watched. The
    result is the manifest's `composer_cleared`, diagnostic only.
@@ -145,11 +145,11 @@ other session `uid` uses the conversation attachment upload contract of
    the report id (or, for a declared session, a collapsed-paste placeholder as
    its first input) is `submitted` with `confirmed_from: {uid, method:
    "native_user_record", text_match}`; nothing within 20 s is
-   `submitted_unconfirmed` with Python's message `提示词已粘贴到 <CLI>，但未能确认已提交；请在终端里检查`;
+   `submitted_unconfirmed` with the message `提示词已粘贴到 <CLI>，但未能确认已提交；请在终端里检查`;
    any failed step is `failed` with `error`. Audit: `bug_report.worker_submitted`,
    `bug_report.worker_unconfirmed` (warning), `bug_report.worker_failed` (error).
 
-Each launched worker starts its own injection task, as in Python.
+Each launched worker starts its own injection task.
 
 ### Prompt
 
@@ -157,7 +157,7 @@ Each launched worker starts its own injection task, as in Python.
 first event that diverges across layers, keep the user's working-tree changes,
 make the minimal complete fix, run only the validation proportionate to the
 change, and **never push, deploy, restart a deployed service or touch
-production directories** — explain in the session instead. Python's push /
+production directories** — explain in the session instead. Push /
 Hub-sync steps are gone.
 
 ## Audit events (`audit/query.rs`)
@@ -170,14 +170,14 @@ report and `data.report_id`; the worker events carry `trace_id = report_id`.
 `query(directory, since, until, filter, limit)` reads the segments of the
 window's dates line by line (≤ 100 000 rows).
 
-## Differences from Python (DELTA)
+## Bundle details
 
 - Audit rows carry structured metadata only; there is no `content` blob, so
-  `events.jsonl` has no message text/composer content (Python's SQLite blobs).
-- The report id stamp is UTC (Python: local time).
-- `terminal.txt` exists only for a managed instance (Python: any tmux window).
-- `submitted` means a native `user` record carries the prompt (Python: the
-  composer cleared); a Codex/Grok worker whose rollout cannot be found is
+  `events.jsonl` has no message text/composer content.
+- The report id stamp is UTC.
+- `terminal.txt` exists only for a managed instance.
+- `submitted` means a native `user` record carries the prompt;
+  a Codex/Grok worker whose rollout cannot be found is
   `submitted_unconfirmed`.
 - Report attachments: ≤ 512 MiB per upload; no media preview token in the
   upload response (`media: null`).

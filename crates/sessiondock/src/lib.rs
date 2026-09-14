@@ -193,7 +193,7 @@ pub async fn prepare_app(
                 start.watcher.spawn_loop(start.reader, shutdown_for_watch);
             }
             // Process-evidence binding of pending Codex/Grok launches
-            // (Python's `new-status` resolution); no-op unless lifecycle,
+            // (`new-status` resolution); no-op unless lifecycle,
             // managed runtime and the process scan are all configured.
             lifecycle::autobind::spawn(built.state);
             Ok(PreparedApp {
@@ -333,8 +333,8 @@ fn build_app(
         .transpose()?
         .map(Arc::new);
     capabilities["trash"] = serde_json::json!(trash.is_some());
-    // Native CLI liveness is always discovered on supported platforms like
-    // Python. Explicit proc paths remain injectable for isolated tests.
+    // Native CLI liveness is always discovered on supported platforms.
+    // Explicit proc paths remain injectable for isolated tests.
     let proc_scan = runtime::procscan::ProcScanner::supported().then(|| {
         let grok_active = config.grok_active.clone().or_else(|| {
             lifecycle::model::expand_user(std::path::Path::new("~/.grok/active_sessions.json"))

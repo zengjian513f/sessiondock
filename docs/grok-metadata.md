@@ -2,7 +2,7 @@
 
 The read-only Grok source discovers exactly `root/*/*/summary.json`. Each session
 is identified by its directory: `grok:` plus the first 16 hexadecimal SHA-1
-characters of that absolute directory path, matching the Python adapter. A
+characters of that absolute directory path. A
 session with only a summary or an existing zero-byte `chat_history.jsonl` remains
 visible. No CLI is launched and no native files are created by the reader.
 
@@ -16,15 +16,15 @@ visible. No CLI is launched and no native files are created by the reader.
 | `model` / `branch` | `current_model_id` / `agent_name` |
 
 Fallback mtime comes from an existing chat file, including a zero-byte one, or
-from the summary when chat is absent. It is rounded down to seconds as in the
-Python metadata adapter. Response timestamps are UTC ISO timestamps with
-millisecond precision; parity comparisons normalize Python's local timezone.
+from the summary when chat is absent. It is rounded down to seconds.
+Response timestamps are UTC ISO timestamps with
+millisecond precision; parity comparisons normalize the local timezone.
 First and last transcript-message timestamps never replace summary metadata.
 A nonempty whitespace-only generated title is selected before whitespace
-collapse, matching Python's truthiness and yielding an empty displayed title.
+collapse, yielding an empty displayed title.
 The decoded cwd is display metadata; it grants no filesystem access.
 
-## The `user_query` envelope (Python 16cc89c)
+## The `user_query` envelope
 
 Grok writes a user turn as optional `<image_files>…</image_files>` blocks
 followed by `<user_query>…</user_query>`; the images arrive as structured
@@ -65,21 +65,21 @@ agent ownership semantics remain unchanged.
 
 ## Metadata sources and differences
 
-- `size` is Python's `_dir_size`: regular files under the session directory
+- `size`: regular files under the session directory
   are included recursively. The additive `chat_exists` stays; `size_scope` is
   gone.
 - Summary and chat inputs have no additional Rust-only size, depth or entry
   gates.
-- A malformed summary contributes no metadata, matching Python. Readable
+- A malformed summary contributes no metadata. Readable
   symlinked files are handled through their targets. A missing optional chat
   counts as absence.
-- The existing Grok message parser preserves a record's `timestamp` as `ts`,
-  whereas Python's Grok message reader omits that field. This metadata change
+- The existing Grok message parser preserves a record's `timestamp` as `ts`.
+  This metadata change
   does not change that behavior. The new parity test excludes message `ts`
   explicitly; it compares `created` and `updated` without that exclusion.
 - Timestamp normalization covers RFC3339, naive date/time, dates and numeric
   seconds/milliseconds. This is not a claim to support every alternative ISO
-  spelling accepted by Python's `datetime.fromisoformat`.
+  spelling.
 
 ## Validation
 
@@ -93,7 +93,7 @@ Rust tests cover optional chat stamps, stable directory UID, metadata/cursor
 separation, frozen search snapshots, independent mtime fallbacks, bounded
 discovery, the whole-directory size, malformed/oversized summaries,
 permissions and symlinks. Grok `run_terminal_command` results start with an
-`exit: N` header; like Python's `_EXIT_CODE` (one space before the number)
+`exit: N` header (one space before the number);
 it is not an exit code, so such results carry `exit_code: null` and
 `error: false`. The
 synthetic adapter comparison covers metadata precedence, timezone/numeric

@@ -248,7 +248,7 @@ async fn native_input_is_parsed_and_bad_queries_are_json_errors() {
     assert_eq!(batch["messages"].as_array().unwrap().len(), 2);
     assert_eq!(batch["messages"][0]["text"], "迁移测试问题");
     assert!(batch.get("outbox").is_none());
-    // Python sets `prompt` on every main view (null without a live card).
+    // `prompt` is set on every main view (null without a live card).
     assert!(batch["prompt"].is_null());
     let history =
         json_body(get(&app, &format!("/api/session/input-history?uid={uid}")).await).await;
