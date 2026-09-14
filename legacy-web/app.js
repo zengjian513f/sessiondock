@@ -3012,6 +3012,31 @@ function timelinePinAction(n, m) {
   n.appendChild(action);
 }
 
+function applySourceFilterChange() {
+  store.set('off', [...S.off]);
+  renderChips(); renderSide();
+  if (HUB_MODE && S.results !== null) void runSearch();
+}
+
+function selectOnlySource(source) {
+  if (!Object.hasOwn(SOURCES, source)) return false;
+  S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
+  applySourceFilterChange();
+  return true;
+}
+
+function selectOnlyNodeFilter(id) {
+  const node = Nodes.list.find(item => item.id === id);
+  if (!node) return false;
+  if (node.online === false) { alert(nodeOfflineReason(node)); return false; }
+  Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
+  store.set('nodesOff', [...Nodes.off]);
+  renderNodes(); renderChips(); renderSide();
+  showSessionCount(sidebarSessions().filter(nodeSelected).length);
+  if (S.results !== null) void runSearch();
+  return true;
+}
+
 function renderChips() {
   const box = $('#chips');
   const wanted = new Set(Object.keys(SOURCES));
@@ -3028,9 +3053,7 @@ function renderChips() {
       c.dataset.source = k;
       c.onclick = () => {
         S.off.has(k) ? S.off.delete(k) : S.off.add(k);
-        store.set('off', [...S.off]);
-        renderChips(); renderSide();
-        if (HUB_MODE && S.results !== null) void runSearch();
+        applySourceFilterChange();
       };
       box.appendChild(c);
     }
@@ -3039,9 +3062,89 @@ function renderChips() {
     c.setAttribute('aria-pressed', String(!S.off.has(k)));
     c.querySelector('.ico').style.color = v.color;
     c.querySelector(':scope > b').textContent = n;
-    c.title = v.name;
+    c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
     c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
   }
+}
+
+/* 机器与 Agent Type 默认是多选；右键（桌面）或长按（触屏）快速收窄到一项。 */
+let filterLongPress = null;
+let suppressFilterClick = null;
+
+function filterButton(target) {
+  return target.closest?.('#node-chips button[data-node], #chips button[data-source]') || null;
+}
+
+function selectOnlyFilter(button) {
+  if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
+  if (button.dataset.source) return selectOnlySource(button.dataset.source);
+  return false;
+}
+
+function cancelFilterLongPress() {
+  if (!filterLongPress) return;
+  clearTimeout(filterLongPress.timer);
+  filterLongPress = null;
+}
+
+for (const host of [$('#node-chips'), $('#chips')]) {
+  if (host.id === 'node-chips') {
+    // nodes.js 保持与冻结页面的字节兼容；在新交互层截住它的旧双击直选回调。
+    host.addEventListener('dblclick', event => {
+      const button = filterButton(event.target);
+      if (!button?.dataset.node || !host.contains(button)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    const paintHints = () => {
+      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline)')) {
+        const hint = '点击选择或取消；右键或长按只选这台机器';
+        if (button.title !== hint) button.title = hint;
+      }
+    };
+    new MutationObserver(paintHints).observe(host,
+      {childList: true, subtree: true, attributes: true, attributeFilter: ['title']});
+    paintHints();
+  }
+  host.addEventListener('contextmenu', event => {
+    const button = filterButton(event.target);
+    if (!button || !host.contains(button)) return;
+    event.preventDefault();
+    selectOnlyFilter(button);
+  });
+  host.addEventListener('pointerdown', event => {
+    if (event.pointerType === 'mouse' || event.button !== 0) return;
+    const button = filterButton(event.target);
+    if (!button || !host.contains(button)) return;
+    cancelFilterLongPress();
+    const press = {button, pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0};
+    press.timer = setTimeout(() => {
+      if (filterLongPress !== press) return;
+      filterLongPress = null;
+      if (!selectOnlyFilter(button)) return;
+      suppressFilterClick = button;
+      navigator.vibrate?.(12);
+      // 极少数容器长按后不派发 click，不能因此吞掉下一次真实点击。
+      setTimeout(() => { if (suppressFilterClick === button) suppressFilterClick = null; }, 800);
+    }, LONG_PRESS_MS);
+    filterLongPress = press;
+  });
+  host.addEventListener('pointermove', event => {
+    const press = filterLongPress;
+    if (!press || press.pointerId !== event.pointerId) return;
+    if (Math.abs(event.clientX - press.x) > LONG_PRESS_SLOP
+        || Math.abs(event.clientY - press.y) > LONG_PRESS_SLOP) cancelFilterLongPress();
+  });
+  for (const type of ['pointerup', 'pointercancel', 'pointerleave']) {
+    host.addEventListener(type, cancelFilterLongPress);
+  }
+  host.addEventListener('click', event => {
+    const button = filterButton(event.target);
+    if (!button || button !== suppressFilterClick) return;
+    suppressFilterClick = null;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
 }
 
 /* ---------- 分层：发起关系 ---------- */
