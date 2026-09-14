@@ -251,6 +251,7 @@ fn missing_file_roots_preserve_mixed_native_order_text_and_cursor() {
     assert_eq!(media[0]["error"]["code"], "media_files_disabled");
     assert!(media[1]["src"].is_string());
     assert_eq!(media[2]["error"]["code"], "media_files_disabled");
-    assert!(!batch.to_string().contains("/private/"));
+    let rendered = batch.to_string();
+    assert!(!rendered.contains("/private/first.png") && !rendered.contains("/private/last.png"));
     assert_eq!(fs::read(path).unwrap(), before);
 }

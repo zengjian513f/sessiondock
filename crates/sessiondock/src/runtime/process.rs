@@ -12,6 +12,11 @@
 //! whose PID is still reserved by an open handle (our own retained `Child`
 //! included) reads as `not_visible`, exactly like a vanished `/proc/<pid>`.
 //!
+//! macOS asks libproc for the named PID's `proc_bsdinfo` (the query behind
+//! `ps`) and takes its epoch-relative start stamp in microseconds; the owner
+//! check compares the effective uid with this service's own. A zombie reads as
+//! `not_visible` like a Linux `Z` state.
+//!
 //! Other platforms return a typed `unsupported_platform` reason: absence of a
 //! process table is never an exit.
 
@@ -108,6 +113,8 @@ impl ProcClock {
     pub const DEFAULT_TICKS: u64 = 100;
     /// 100 ns `FILETIME` units per second.
     pub const FILETIME_PER_SECOND: u64 = 10_000_000;
+    /// macOS `proc_bsdinfo` start stamps are microseconds since the epoch.
+    pub const MICROS_PER_SECOND: u64 = 1_000_000;
 
     pub fn unix_seconds(&self, start: StartTime) -> f64 {
         let seconds = self.boot_time as f64 + start.0 as f64 / self.ticks_per_second.max(1) as f64;
@@ -153,7 +160,9 @@ impl ProcClock {
 pub const PLATFORM: &str = "linux_proc";
 #[cfg(windows)]
 pub const PLATFORM: &str = "windows_process_times";
-#[cfg(not(any(target_os = "linux", windows)))]
+#[cfg(target_os = "macos")]
+pub const PLATFORM: &str = "macos_proc_pidinfo";
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub const PLATFORM: &str = "unsupported";
 
 #[cfg(target_os = "linux")]
@@ -179,7 +188,17 @@ pub async fn load_clock() -> Option<ProcClock> {
     })
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+/// macOS start times are epoch-relative microseconds (`pbi_start_tvsec` /
+/// `pbi_start_tvusec` of `PROC_PIDTBSDINFO`).
+#[cfg(target_os = "macos")]
+pub async fn load_clock() -> Option<ProcClock> {
+    Some(ProcClock {
+        boot_time: 0,
+        ticks_per_second: ProcClock::MICROS_PER_SECOND,
+    })
+}
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub async fn load_clock() -> Option<ProcClock> {
     None
 }
@@ -231,9 +250,77 @@ pub async fn observe(pid: u32, check_owner: bool) -> Result<ProcessIdentity, Ide
     windows::observe(pid, check_owner)
 }
 
-#[cfg(not(any(target_os = "linux", windows)))]
+/// Read one named process through `proc_pidinfo(PROC_PIDTBSDINFO)`, the
+/// libproc query behind `ps`. `check_owner` additionally refuses a process
+/// whose effective uid differs from ours.
+#[cfg(target_os = "macos")]
+pub async fn observe(pid: u32, check_owner: bool) -> Result<ProcessIdentity, IdentityFailure> {
+    // One kernel query, no handle, nothing blocks or waits.
+    macos::observe(pid, check_owner)
+}
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 pub async fn observe(_pid: u32, _check_owner: bool) -> Result<ProcessIdentity, IdentityFailure> {
     Err(IdentityFailure::UnsupportedPlatform)
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::{IdentityFailure, ProcessIdentity, StartTime};
+
+    pub(super) fn observe(pid: u32, check_owner: bool) -> Result<ProcessIdentity, IdentityFailure> {
+        if pid == 0 || pid > i32::MAX as u32 {
+            return Err(IdentityFailure::Malformed);
+        }
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: the buffer is exactly one proc_bsdinfo; libproc writes at
+        // most `size` bytes and reports how many it filled.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid as libc::c_int,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if written <= 0 {
+            return Err(match std::io::Error::last_os_error().raw_os_error() {
+                // The documented result for a PID that names no process.
+                Some(libc::ESRCH) => IdentityFailure::NotVisible,
+                // The kernel refuses another user's (or a protected) process
+                // outright; that is the owner check answered by the kernel.
+                Some(libc::EPERM) if check_owner => IdentityFailure::NotOwned,
+                _ => IdentityFailure::Unreadable,
+            });
+        }
+        if written != size {
+            return Err(IdentityFailure::Unreadable);
+        }
+        // SAFETY: the kernel filled the whole structure (`written == size`).
+        let info = unsafe { info.assume_init() };
+        if info.pbi_pid != pid {
+            return Err(IdentityFailure::Malformed);
+        }
+        if info.pbi_status == libc::SZOMB {
+            // Reaped-in-waiting: as gone as a vanished /proc entry.
+            return Err(IdentityFailure::NotVisible);
+        }
+        // SAFETY: plain libc query without side effects.
+        if check_owner && info.pbi_uid != unsafe { libc::geteuid() } {
+            return Err(IdentityFailure::NotOwned);
+        }
+        let start = info
+            .pbi_start_tvsec
+            .checked_mul(1_000_000)
+            .and_then(|micros| micros.checked_add(info.pbi_start_tvusec))
+            .ok_or(IdentityFailure::Malformed)?;
+        Ok(ProcessIdentity {
+            pid,
+            start_time: StartTime(start),
+        })
+    }
 }
 
 #[cfg(windows)]
@@ -487,6 +574,50 @@ mod tests {
             assert_eq!(observe(1, true).await, Err(IdentityFailure::NotOwned));
         }
         child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(observe(pid, false).await, Err(IdentityFailure::NotVisible));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn macos_reads_only_the_named_owned_child_and_notices_its_exit() {
+        use std::process::{Command, Stdio};
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let clock = load_clock().await.unwrap();
+        assert_eq!(clock.ticks_per_second, ProcClock::MICROS_PER_SECOND);
+        let captured = observe(pid, true).await.unwrap();
+        assert_eq!(captured.pid, pid);
+        let again = observe(pid, false).await.unwrap();
+        assert_eq!(captured.verify(&again), Ok(()));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let started = clock.unix_seconds(captured.start_time);
+        assert!(started <= now as f64 + 5.0 && started >= now as f64 - 120.0);
+        assert!(captured.start_time <= clock.latest_start_for(now, 5));
+        assert!(captured.start_time > clock.latest_start_for(now - 120, 0));
+        assert_eq!(
+            observe(std::process::id(), true).await.unwrap().pid,
+            std::process::id()
+        );
+        assert_eq!(observe(0, true).await, Err(IdentityFailure::Malformed));
+        // launchd (PID 1) belongs to root: an unprivileged service refuses it.
+        // SAFETY: plain libc query.
+        if unsafe { libc::geteuid() } != 0 {
+            assert_eq!(observe(1, true).await, Err(IdentityFailure::NotOwned));
+        }
+        child.kill().unwrap();
+        // Killed but not yet reaped: a zombie is as gone as an exited process.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(observe(pid, false).await, Err(IdentityFailure::NotVisible));
         child.wait().unwrap();
         assert_eq!(observe(pid, false).await, Err(IdentityFailure::NotVisible));
     }
