@@ -157,7 +157,7 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True):
     xterm_includes(page, "FAKE_CLAUDE_SID_ENV []")
     xterm_includes(page, "SERVICE_WRAPPER [loaded]")
     xterm_includes(page, "SERVICE_PATH [/usr/bin:/bin]")
-    expect(page.locator(".new-session-wait")).to_contain_text("已按服务端声明的完整会话 ID 启动")
+    expect(page.locator(".new-session-wait")).to_have_text("")
     return receipt
 
 

@@ -135,8 +135,8 @@ pub(super) fn project(record: &Record) -> Value {
             _ => "启动或取消结果尚不确定；不会自动重试或按名称操作其它进程",
         }
     };
-    // `method` is who asserted the association: the operator dialog, or the
-    // server's own process evidence; `evidence` / `bound_at` are the
+    // `method` is who asserted the association: an operator `POST /api/term/bind`,
+    // or the server's own process evidence; `evidence` / `bound_at` are the
     // persisted note and confirmation time of the latter.
     let binding = record.binding().map(|binding| {
         json!({"source":binding.spec().source(),

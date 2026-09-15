@@ -93,23 +93,15 @@ def main(bind_native=False, bare_shell=False):
                             if bare_shell:
                                 page.set_viewport_size({"width":1280,"height":900})
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
-                            # Pending-only actions may be promoted from the overflow
-                            # menu on a wide header. They must remain compact icons;
-                            # their full labels belong in title/aria and in the menu.
+                            # A healthy pending page explains nothing: the terminal
+                            # is simply usable, and the only actions are the ordinary
+                            # console toggle and stop.
+                            expect(page.locator(".new-session-wait")).to_have_text("")
+                            expect(page.locator(".new-session-wait")).to_be_hidden()
+                            assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
                             if bare_shell:
-                                expect(page.locator("#a-native-bind")).to_have_count(0)
-                                expect(page.locator(".new-session-wait")).to_have_text("SSH 终端已就绪，可直接输入命令。")
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
                                 assert not receipt.get("declared_sid"), receipt
-                            for selector,label in ([] if bare_shell else [("#a-native-bind","关联原生会话"),
-                                ("#a-pending-release","释放本页控制台")]):
-                                action=page.locator(selector)
-                                expect(action).to_be_visible()
-                                expect(action).to_have_attribute("title",label)
-                                expect(action.locator("svg.ui-icon")).to_have_count(1)
-                                assert action.inner_text()=="",(selector,action.inner_text())
-                                bounds=action.bounding_box()
-                                assert bounds and bounds["width"]<=32,bounds
                             original_request=response.request.post_data_json
                             repeated=context.request.post(base+"/api/term/create",data=original_request)
                             assert repeated.status==200 and repeated.json()["record_id"]==receipt["record_id"]
@@ -145,22 +137,11 @@ def main(bind_native=False, bare_shell=False):
                             ignored={**body,"instance_id":"0"*32,"sid":"forged-display-id"}
                             assert context.request.post(base+"/api/term/bind",data=ignored).status==409
                             page.evaluate("window.bindingSocket = T.ws")
-                            if not page.locator("#a-native-bind").is_visible(): page.locator("#a-more").click()
-                            page.locator("#a-native-bind").click()
-                            expect(page.locator("#native-bind-dialog")).to_be_visible()
-                            page.set_viewport_size({"width":390,"height":844})
-                            bounds=page.locator("#native-bind-dialog").bounding_box()
-                            assert bounds and bounds["x"]>=0 and bounds["x"]+bounds["width"]<=391,bounds
-                            if os.environ.get("SESSIONDOCK_TEST_BIND_SCREENSHOT"):
-                                page.screenshot(path=os.environ["SESSIONDOCK_TEST_BIND_SCREENSHOT"])
-                            page.locator("#native-bind-uid").select_option(native_uid)
-                            page.locator("#native-bind-confirm").check()
-                            with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/bind") as bound:
-                                page.locator("#native-bind-go").click()
-                            assert bound.value.status==200,bound.value.text()
-                            assert bound.value.json()["binding"]["state"]=="confirmed",bound.value.text()
-                            expect(page.locator("#native-bind-dialog")).not_to_be_visible()
-                            page.set_viewport_size({"width":1280,"height":900})
+                            # The operator path is the API alone; the page has no
+                            # binding UI and learns of the binding from its own polling.
+                            bound=context.request.post(base+"/api/term/bind",data=body)
+                            assert bound.status==200,bound.text()
+                            assert bound.json()["binding"]["state"]=="confirmed",bound.text()
                             # The page follows the confirmed binding by itself —
                             # the pending (launch-kind) socket is released, the native
                             # session opens and its console is claimed through the
@@ -285,7 +266,7 @@ def main(bind_native=False, bare_shell=False):
                 deadline=time.monotonic()+6
                 while list((root/"host").glob("*.sock")) and time.monotonic()<deadline:
                     time.sleep(.05)
-    print("PASS native binding browser: explicit operator confirmation, page follows the confirmed binding to the native console, pending row leaves the sidebar, stop of the bound session, durable cancel across Web restart" if bind_native else
+    print("PASS native binding browser: operator binding over the API only, page follows the confirmed binding to the native console, pending row leaves the sidebar, stop of the bound session, durable cancel across Web restart" if bind_native else
         "PASS lifecycle browser: explicit allowlist create, idempotency, pending xterm input, Web restart preserves one host, mobile cancellation retains receipt, native bytes unchanged")
 
 

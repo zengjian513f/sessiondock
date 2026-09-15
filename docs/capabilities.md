@@ -43,7 +43,7 @@ read helper for `store.get`, `nodesOff` and typography.
 | `terminal_backend` | same as `terminal` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_create` | true when lifecycle opens (`SESSIONDOCK_LIFECYCLE_DIR` + launcher) | unhides `#new-session`; notice “受控创建已配置” | [lifecycle-integration.md](lifecycle-integration.md) |
 | `terminal_pending` | same as `terminal_create` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |
-| `terminal_bind` | same as `terminal_create` | pending “关联原生会话” / “释放本页控制台” | [lifecycle-http.md](lifecycle-http.md) |
+| `terminal_bind` | same as `terminal_create` | none — `POST /api/term/bind` is API-only; the pending page follows a confirmed binding by itself | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_takeover` | same as `terminal_create` | resume via `resume_sources`, never name-guess | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
 | `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |

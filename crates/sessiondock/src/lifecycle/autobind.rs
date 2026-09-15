@@ -20,9 +20,9 @@
 //! Then the ordinary `bind` path runs with `BindingMethod::Process`: the
 //! durable intent carries the evidence note, the host publishes the
 //! one-time binding, and only a matching guarded Info confirms it. Zero or
-//! several candidates keep the receipt pending; the operator dialog remains
-//! available. The task only runs when the lifecycle service, the managed
-//! runtime and the process scan are all configured.
+//! several candidates keep the receipt pending; `POST /api/term/bind` remains
+//! the operator path. The task only runs when the lifecycle service, the
+//! managed runtime and the process scan are all configured.
 
 use std::time::Duration;
 
