@@ -156,12 +156,11 @@ test('the audit flush drains its response body', () => {
   assert.match(flush, /await response\.arrayBuffer\(\)\.catch\(\(\) => \{\}\);\n\s+if \(!response\.ok\)/);
 });
 
-test('terminals use the DOM renderer only', () => {
-  // A WebGL context made this the one tab whose renderer froze for good when
-  // Edge's GPU command buffer failed (NVIDIA + Wayland); synchronized frames
-  // are coalesced before the write now, so nothing needs it.
-  assert.doesNotMatch(read('term.js'), /WebglAddon/);
-  assert.doesNotMatch(read('index.html'), /addon-webgl/);
+test('pending terminals attach before any synchronous WebGL initialization', () => {
+  const context = contextWithCapabilities(disabled, {T: {uid: 'tmux:pane'}});
+  const shouldUse = loadFunction(context, 'shouldUseTermWebgl', read('term.js'));
+  assert.equal(shouldUse(), false);
+  assert.equal(shouldUse('codex:native'), true);
 });
 
 test('Codex side-thread detection reads only the live screen footer', () => {
