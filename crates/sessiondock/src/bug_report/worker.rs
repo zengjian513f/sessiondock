@@ -665,7 +665,7 @@ impl Probe {
                 kind: ComposerKind::Codex,
                 pre_paste: None,
             },
-            Source::Grok => Self::Screen(ScreenProbe::default()),
+            Source::Grok | Source::Shell => Self::Screen(ScreenProbe::default()),
         }
     }
 

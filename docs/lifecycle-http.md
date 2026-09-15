@@ -60,8 +60,16 @@ immutable launch specification. Missing working directories return
 `needs_create`; `create_cwd:true` creates the confirmed absolute path. Executable,
 argv, environment, SID, and legacy adapter fields cannot choose the command.
 
-Source selects exactly one interactive configured CLI. The legacy source picker
-advertises only this unambiguous subset.
+Source selects exactly one interactive configured CLI or the `shell` terminal.
+The legacy source picker advertises only this unambiguous subset and labels
+`shell` as SSH. `term/list.sources.shell` advertises shell creation; resume
+sources remain the three AI CLIs. Shell receipts use fixed argv, stay in the
+terminal list while running, and support the same guarded attach, reconnect,
+kill and discard as other launch receipts without native binding.
+Shell receipts leave the sidebar as soon as exit or launch failure is verified;
+the minimal lifecycle receipt stays queryable for idempotency. Terminal output
+is a bounded in-memory screen/scrollback, not a persisted conversation archive.
+An existing running shell can be reattached; an exited shell cannot be resumed.
 
 Receipt replies include record/request IDs, routing name, declared source/cwd,
 launch/instance IDs, state, running/stale flags, an explanation, and
@@ -76,7 +84,7 @@ Receipts carry `started` (Unix seconds the intent was persisted), `finished_at`
 and, on `binding`, `method` (`operator` | `process`), `evidence` and
 `bound_at`. `GET /api/term/list` lists a receipt under `pending` only while
 it is not discarded and — once Exited/Failed — for at most 600 s after
-`finished_at` (a resolved row is kept for 600 s;
+`finished_at` (a resolved AI row is kept for 600 s; finished `shell` rows leave immediately;
 a finished receipt migrated from an older ledger has no time and is archived
 at once). Archived receipts still answer `term/new-status`.
 

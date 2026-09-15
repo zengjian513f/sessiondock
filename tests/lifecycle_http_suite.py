@@ -107,7 +107,7 @@ def run(opener, base, root, work, claude_cwd):
         pending, backends = listed.get("pending") or [], listed.get("backends") or []
         if not any(row.get("record_id") == rec["record_id"] for row in pending):
             fail("list pending", pending, raw)
-        if listed.get("sources") != {"claude": True, "codex": True, "grok": False}:
+        if listed.get("sources") != {"claude": True, "codex": True, "grok": False, "shell": True}:
             fail("list sources", listed.get("sources"), raw)
         if listed.get("resume_sources") != {"claude": True, "codex": False, "grok": False}:
             fail("list resume_sources", listed.get("resume_sources"), raw)

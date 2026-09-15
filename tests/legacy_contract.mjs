@@ -1131,3 +1131,16 @@ test('timeline pins are capability gated and never claim a native rewind', () =>
   render({uid: 'claude:fixture'});
   assert.equal(inserted.length, 2);
 });
+
+
+test('SSH terminal receipts show terminal state without native binding messages', () => {
+  const context = contextWithCapabilities({...disabled, terminal: true});
+  const source = read('term.js');
+  const label = loadFunction(context, 'pendingStateLabel', source);
+  const message = loadFunction(context, 'pendingBindingMessage', source);
+  assert.equal(label({source: 'shell', record_id: 'r', state: 'running'}), '交互式终端');
+  assert.equal(label({source: 'shell', record_id: 'r', state: 'exited'}), '实例已退出');
+  assert.equal(message({source: 'shell', running: true}), 'SSH 终端已就绪，可直接输入命令。');
+  assert.equal(message({source: 'shell', running: false}), 'SSH 终端已退出。');
+  assert.equal(message({source: 'shell', unavailable_reason: '连接中断'}), '连接中断');
+});

@@ -110,7 +110,7 @@ pub fn entries(config: &Config) -> Vec<Entry> {
             id: profile.id.clone(),
             source: profile.source,
             profile: true,
-            resume: true,
+            resume: profile.source != Source::Shell,
         }))
         .collect()
 }
@@ -161,9 +161,56 @@ pub struct LaunchFailure {
 /// error code so configuration contents never leak through the API.
 pub fn read_config(path: &Path) -> Result<Config, Error> {
     let bytes = std::fs::read(path).map_err(|_| Error::ConfigUnavailable)?;
-    let config: Config = serde_json::from_slice(&bytes).map_err(|_| Error::InvalidConfig)?;
+    let mut config: Config = serde_json::from_slice(&bytes).map_err(|_| Error::InvalidConfig)?;
+    add_shell(&mut config);
     config_bounds(&config)?;
     Ok(config)
+}
+
+/// Existing node configurations gain a fixed interactive shell without edits.
+/// Explicit shell adapters/profiles take precedence over this default.
+fn add_shell(config: &mut Config) {
+    if entries(config)
+        .iter()
+        .any(|entry| entry.source == Source::Shell)
+    {
+        return;
+    }
+    #[cfg(unix)]
+    let executable = std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|path| {
+            resolved_executable(path)
+                .and_then(|path| CheckedFile::open(&path))
+                .is_ok()
+        })
+        .unwrap_or_else(|| PathBuf::from("/bin/sh"));
+    #[cfg(windows)]
+    let executable = std::env::var_os("COMSPEC")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(
+                std::env::var_os("SystemRoot").unwrap_or_else(|| OsString::from(r"C:\Windows")),
+            )
+            .join("System32/cmd.exe")
+        });
+    #[cfg(not(any(unix, windows)))]
+    let executable = PathBuf::from("/bin/sh");
+    let existing = entries(config);
+    let mut id = "shell".to_owned();
+    while existing.iter().any(|entry| entry.id == id) {
+        id.push('_');
+    }
+    config.adapters.push(Adapter {
+        id,
+        source: Source::Shell,
+        executable,
+        #[cfg(unix)]
+        args: vec!["-i".into()],
+        #[cfg(not(unix))]
+        args: vec![],
+        env: BTreeMap::new(),
+    });
 }
 
 struct CheckedAdapter {
@@ -237,7 +284,7 @@ impl Launcher {
                     profile.config.source,
                     &profile.executable,
                     match spec.launch() {
-                        Launch::Fixed => false,
+                        Launch::Fixed => profile.config.source == Source::Shell,
                         Launch::NewPending | Launch::NewAssigned => true,
                         Launch::Resume { .. } => true,
                     },
@@ -275,6 +322,11 @@ impl Launcher {
             .profiles
             .get(spec.adapter_id())
             .ok_or(Error::AdapterUnavailable)?;
+        if spec.source() == Source::Shell && *spec.launch() == Launch::Fixed {
+            let mut argv = vec![profile.executable.path.as_os_str().to_owned()];
+            argv.extend(profile.config.args.iter().map(OsString::from));
+            return Ok(argv);
+        }
         let (configured, defaults, placeholder, value): (&[String], &[&str], &str, Option<&str>) =
             match spec.launch() {
                 Launch::Fixed => return Err(Error::InvalidSpec),
@@ -289,6 +341,7 @@ impl Launcher {
                     let defaults: &[&str] = match spec.source() {
                         Source::Codex => &["resume", SID_PLACEHOLDER],
                         Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
+                        Source::Shell => return Err(Error::InvalidSpec),
                     };
                     (
                         &profile.config.resume_args,

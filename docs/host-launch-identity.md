@@ -47,7 +47,7 @@ expected fields before dispatching the inner request:
 | Expected field | Immutable metadata | Required value |
 | --- | --- | --- |
 | `expected_instance_id` | `instance_id` | 16–128 ASCII bytes from `A-Z a-z 0-9 _ . : -` |
-| `expected_source` | `source` | Exactly `claude`, `codex`, or `grok` |
+| `expected_source` | `source` | Exactly `claude`, `codex`, `grok`, or `shell` |
 | `expected_launch_id` | `launch_id` | 16–128 ASCII bytes from `A-Z a-z 0-9 _ . : -` |
 
 All fields must match exactly. SID and UID are neither required nor inferred.

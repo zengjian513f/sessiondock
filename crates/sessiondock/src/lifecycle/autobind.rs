@@ -146,6 +146,7 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                 super::model::Source::Claude => "claude",
                 super::model::Source::Codex => "codex",
                 super::model::Source::Grok => "grok",
+                super::model::Source::Shell => continue,
             };
             let mut found: Vec<(&SessionRow, Vec<i64>)> = Vec::new();
             for session in sessions.iter().filter(|session| session.source == source) {

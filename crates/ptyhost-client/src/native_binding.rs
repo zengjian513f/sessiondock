@@ -83,7 +83,8 @@ pub enum NativeBindingState {
     Bound(NativeBinding),
 }
 pub(crate) fn valid_native(source: Source, sid: &str, uid: &str) -> bool {
-    identifier(sid, 256)
+    source != Source::Shell
+        && identifier(sid, 256)
         && identifier(uid, 256)
         && uid.starts_with(&format!("{}:", source.as_str()))
         && uid.len() > source.as_str().len() + 1
