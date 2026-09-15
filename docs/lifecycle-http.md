@@ -115,10 +115,12 @@ name — in `lifecycle::autobind`, a background task that runs while a
 
 The task needs the lifecycle service, the managed runtime
 (`SESSIONDOCK_PTYHOST_DIR`) and native process evidence; on an unsupported
-platform the receipt stays pending until the operator dialog binds it. The legacy page
-follows a confirmed binding exactly like a declared Claude identity: it
-releases its launch-kind console, opens the native session and reclaims the
-console through the native lease. Legacy `tests/lifecycle_http_suite.py`
+platform the receipt stays pending, the terminal stays usable, and a minute
+after the page's first Enter it says only that the record has not been found.
+`POST /api/term/bind` is the sole operator path; the page offers no binding
+or release control. The legacy page follows a confirmed binding exactly like a
+declared Claude identity: it releases its launch-kind console, opens the native
+session and reclaims the console through the native lease. Legacy `tests/lifecycle_http_suite.py`
 keeps its fake-CLI expectations by injecting an empty synthetic process tree.
 
 Eight HTTP response permits cover queued work through serialization and retained
@@ -246,7 +248,7 @@ native UID sent to Rust's native APIs. Pending identity comes from the full
 receipt/launch/instance tuple. Rust mode does not run the pending-to-native
 resolution/automatic discard loop, and directory completion does not scan the
 filesystem. Native binding uses the separate [one-time host protocol](host-native-binding.md)
-and [durable service](lifecycle-binding.md). The confirmation dialog selects a
+and [durable service](lifecycle-binding.md). `POST /api/term/bind` names a
 native UID; the server resolves its actual SID from one verified snapshot. It
 rejects browser SID/source overrides, missing confirmation, conflicts and
 subagents. Old immutable-metadata Grok consoles remain separate.
@@ -254,9 +256,9 @@ subagents. Old immutable-metadata Grok consoles remain separate.
 Receipts add nullable `binding` with source, actual SID/UID, state and method
 `operator` or `process` (see above); `native_binding` is unbound, intent,
 confirmed or uncertain. Neither association is a native CLI receipt. Existing
-pending sockets stay attached without auto-upgrade. The explicit release action
-closes only this page's socket; then a native console can request a new lease
-(the page does this itself when it follows a confirmed binding). Cross-kind
+pending sockets stay attached without auto-upgrade. The page closes its own
+pending socket when it follows a confirmed binding or opens the native console
+of the same host; the native console then requests a new lease. Cross-kind
 force is rejected.
 Native claim and attach require fresh lifecycle authorization for launch-derived
 targets, even after Web restart with a new in-memory registry. Cancelled launches
@@ -273,8 +275,8 @@ cancellation does not reclaim ownership, and native fixture bytes are unchanged.
 Host/client, store and coordinator tests cover the deeper identity, persistence,
 lost response, shutdown, capacity and crash-recovery boundaries separately.
 
-The `--native-binding` browser variant additionally uses the real mobile-sized
-confirmation dialog, checks pending socket identity survives binding, explicitly
-releases then opens the native console, and cancels it from a temporary browser
-storage. Its free shell deliberately ignores HUP: a subsequent Web restart must
+The `--native-binding` browser variant additionally binds through
+`POST /api/term/bind`, checks that the page follows the binding by itself
+(pending socket released, native console claimed through the native lease),
+and cancels it from a temporary browser storage. Its free shell deliberately ignores HUP: a subsequent Web restart must
 still deny native claim while guarded host status proves the child is alive.

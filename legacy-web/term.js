@@ -1349,9 +1349,7 @@ function showNewSessionStage(info) {
   selectPendingSidebarRow(S.sel, added);
   showSessionCount(sidebarSessions().length);
   const src = SOURCES[info.source];
-  const pendingTitle = info.state === 'uncertain'
-    ? `状态不确定 · ${info.title || `新建 ${src.name} 会话`}`
-    : (info.title || `新建 ${src.name} 会话`);
+  const pendingTitle = info.title || `新建 ${src.name} 会话`;
   $('#detail').innerHTML = `<div class="dhead"><div class="dtitle">
     <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
     <h2>${sessionIconMarkup(info.source, true, true)}<span>${esc(pendingTitle)}</span></h2>
@@ -1361,11 +1359,6 @@ function showNewSessionStage(info) {
       <button class="session-menu-action" data-report-bug title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action" title="停止会话" aria-label="停止会话">${uiIcon('power')}</button>
-      ${SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.allows('terminal_bind')
-        ? `${info.source !== 'shell' ? `<button class="session-menu-action" id="a-native-bind" title="关联原生会话"
-            aria-label="关联原生会话">${uiIcon('link')}</button>` : ''}
-          <button class="session-menu-action" id="a-pending-release" title="释放本页控制台"
-            aria-label="释放本页控制台">${uiIcon('log-out')}</button>` : ''}
       `, `
     <div class="dmeta"><span id="mcount-total">0 条消息</span>
       ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
@@ -1373,19 +1366,10 @@ function showNewSessionStage(info) {
       <span class="meta-source">${esc(src.name)}</span></div>`)}
     </div></div>
   </div><div class="empty new-session-wait">${SessionDockCapabilities.config.backend === 'rust'
-    ? esc(pendingBindingMessage(info))
-    : '终端已启动，正在等待会话记录落盘…'}</div>`;
+    ? esc(pendingStageMessage(info)) : ''}</div>`;
   $('#detail .mobile-back').onclick = showMobileList;
   bindConsoleButton($('#a-term'), S.sel);
   $('#a-session-action').onclick = () => stopPendingSession(info, $('#a-session-action'));
-  if ($('#a-native-bind')) $('#a-native-bind').onclick = () => openNativeBindDialog(info);
-  if ($('#a-pending-release')) $('#a-pending-release').onclick = () => {
-    rememberTermOpen(info.name, false);
-    disposeTermView(info.name);
-    closeTermPane();
-    const wait = $('.new-session-wait');
-    if (wait) wait.textContent = '本页输入连接已释放；宿主仍运行。现在可打开已确认的原生会话控制台。';
-  };
   bindSessionActions($('#detail .dhead'));
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
   showMobileDetail();
@@ -1419,71 +1403,46 @@ function pendingStateLabel(s) {
   return s.source === 'shell' ? '交互式终端' : '等待首条消息';
 }
 
-function pendingBindingMessage(info) {
-  if (info.source === 'shell') return info.unavailable_reason || (info.running
-    ? 'SSH 终端已就绪，可直接输入命令。' : 'SSH 终端已退出。');
-  const worker = typeof workerStatusMessage === 'function' ? workerStatusMessage(info) : '';
-  if (info.unavailable_reason) return worker ? `${info.unavailable_reason}；${worker}` : info.unavailable_reason;
-  if (info.declared_sid)
-    return (worker ? `${worker}。` : '') + `已按服务端声明的完整会话 ID 启动（${info.launch_kind === 'resume' ? '续接' : '新建'} ${info.declared_sid}）；原生记录出现后由运行时目录关联，这不是 CLI 接受确认或可靠发送确认。`;
-  if (info.binding?.state === 'confirmed' && info.binding.method === 'process')
-    return (worker ? `${worker}。` : '') + `已按进程证据关联 ${info.binding.uid}（宿主子进程持有该原生记录）；正在切换到该会话。此关联不是可靠发送确认。`;
-  if (info.binding?.state === 'confirmed')
-    return (worker ? `${worker}。` : '') + `已由操作者确认关联 ${info.binding.uid}；正在切换到该会话的控制台。此关联不是可靠发送确认。`;
-  if (info.binding) return `关联结果尚未确认：${info.binding.uid}。保留原意图，只可核对或重试同一关联。`;
-  if (worker) return `${worker}。原生会话记录出现后会自动关联。`;
-  return '终端实例已就绪；首条消息落盘后由进程证据自动关联，不会按文件名或目录猜测。';
+// 等待页只说用户看得懂的事：启动、结束、停止、还没找到记录。关联方法、
+// 证据和 uid 不出现在这里；后台每 1.5 s 自动重试关联，页面无需重试按钮。
+const PENDING_RECORD_GRACE_MS = 60_000;
+const pendingFirstInput = new Map();
+
+function pendingStageMessage(info) {
+  const worker = workerStatusMessage(info);
+  if (worker) return worker;
+  if (info.state === 'prepared' || info.state === 'starting') return '正在启动…';
+  if (info.state === 'exited') return '会话已结束。';
+  if (info.state === 'failed') return '启动失败。';
+  if (info.state === 'cancel_requested' || (info.state === 'running' && !info.running)) return '正在停止…';
+  if (info.state === 'uncertain') return '暂时无法确认会话状态。';
+  if (info.binding?.state === 'confirmed') return '正在打开会话…';
+  if (info.source !== 'shell' && !info.declared_sid && pendingRecordMissing(info))
+    return '会话在运行，但还没找到它的记录，终端可以继续用。';
+  return '';
 }
 
-let nativeBindReceipt = null;
-function openNativeBindDialog(info) {
-  if (SessionDockCapabilities.config.backend !== 'rust' || !SessionDockCapabilities.allows('terminal_bind')) return;
-  const current = T.pending.find(row => row.record_id === info.record_id) || info;
-  if (!current.running || current.stale) { alert(current.unavailable_reason || '该实例不可关联。'); return; }
-  if (current.declared_sid) { alert(pendingBindingMessage(current)); return; }
-  nativeBindReceipt = {...current};
-  const picker = $('#native-bind-uid');
-  const candidates = S.sessions.filter(row => row.source === current.source && row.supported
-    && !row._is_subagent && !row.is_subagent);
-  picker.innerHTML = '<option value="">请选择已核对的原生会话</option>' + candidates.map(row =>
-    `<option value="${esc(row.uid)}">${esc(row.title || row.sid)} — ${esc(row.uid)}</option>`).join('');
-  if (current.binding && !candidates.some(row => row.uid === current.binding.uid))
-    picker.insertAdjacentHTML('beforeend', `<option value="${esc(current.binding.uid)}">${esc(current.binding.uid)}（已保存意图）</option>`);
-  picker.value = current.binding?.uid || '';
-  picker.disabled = !!current.binding;
-  $('#native-bind-confirm').checked = false;
-  $('#native-bind-error').textContent = '';
-  $('#native-bind-go').disabled = false;
-  $('#native-bind-dialog').showModal();
+// "还没找到记录"只在用户真的从本页发过消息一分钟后才说；首个回车是唯一依据。
+function pendingRecordMissing(info) {
+  const at = pendingFirstInput.get(info.name);
+  return at !== undefined && Date.now() - at >= PENDING_RECORD_GRACE_MS;
 }
-$('#native-bind-dialog .modal-close').onclick = () => $('#native-bind-dialog').close();
-$('#native-bind-dialog .modal-cancel').onclick = () => $('#native-bind-dialog').close();
-$('#native-bind-form').onsubmit = async event => {
-  event.preventDefault();
-  const receipt = nativeBindReceipt;
-  const uid = $('#native-bind-uid').value;
-  if (!receipt || !uid || !$('#native-bind-confirm').checked) return;
-  const button = $('#native-bind-go');
-  button.disabled = true;
-  try {
-    const result = await post('api/term/bind', {record_id:receipt.record_id,instance_id:receipt.instance_id,
-      uid,operator_confirmed:true});
-    if (result.error) throw new Error(result.error);
-    const current = T.pending.find(row => row.record_id === receipt.record_id);
-    if (current) Object.assign(current,result);
-    $('#native-bind-dialog').close();
-    await loadTermList();
-    if (S.sel === pendingUid(receipt.name)) {
-      const wait = $('.new-session-wait');
-      if (wait) wait.textContent = pendingBindingMessage(result);
-    }
-  } catch (error) { $('#native-bind-error').textContent = error.message || '关联结果未知，请保留同一意图核对。'; }
-  finally { button.disabled = false; }
-};
+
+function notePendingInput(name) {
+  if (pendingFirstInput.has(name) || !T.pending.some(row => row.name === name)) return;
+  pendingFirstInput.set(name, Date.now());
+  setTimeout(() => refreshPendingStage(name), PENDING_RECORD_GRACE_MS + 50);
+}
+
+function refreshPendingStage(name) {
+  const current = T.pending.find(row => row.name === name);
+  const wait = $('.new-session-wait');
+  if (current && wait && S.sel === pendingUid(name)) wait.textContent = pendingStageMessage(current);
+}
 
 async function stopPendingSession(info, button) {
   if (SessionDockCapabilities.config.backend === 'rust') {
-    if (!confirm('停止这个明确创建的终端实例？创建回执和草稿会保留。')) return;
+    if (!confirm('停止这个会话？')) return;
     if (button) button.disabled = true;
     try {
       const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
@@ -1493,10 +1452,10 @@ async function stopPendingSession(info, button) {
       if (current) Object.assign(current, result);
       if (S.sel === pendingUid(info.name)) {
         const wait = $('.new-session-wait');
-        if (wait) wait.textContent = result.unavailable_reason || '取消已请求，正在核对退出状态。';
+        if (wait) wait.textContent = '正在停止…';
       }
       await loadTermList();
-    } catch (error) { alert(error.message || '取消失败，请保留创建回执后查询。'); }
+    } catch (error) { alert(error.message || '停止失败，请重试。'); }
     finally { if (button) button.disabled = false; }
     return;
   }
@@ -1542,6 +1501,7 @@ async function openPendingSession(info) {
 function discardAbandonedNewSession(info) {
   const uid = pendingUid(info.name);
   T.resolveControllers.get(info.name)?.abort();
+  pendingFirstInput.delete(info.name);
   T.pending = (T.pending || []).filter(x => x.name !== info.name);
   T.list = (T.list || []).filter(x => x.name !== info.name);
   T.openViews.delete(info.name);
@@ -1584,7 +1544,7 @@ async function resolveNewSession(info) {
     // metadata), never by cwd/time/filename; follow it to the real session
     // while keeping this page's existing pending terminal view.
     // A pending Codex/Grok launch whose binding the server confirmed
-    // (process evidence, or the operator dialog) is followed the same way.
+    // (process evidence, or `POST /api/term/bind`) is followed the same way.
     const associated = current && (current.declared_sid || current.binding?.state === 'confirmed');
     const terminalLinked = associated && (T.list || []).find(row => row.name === current.name
       && row.instance_id === current.instance_id && row.uid);
@@ -1618,7 +1578,7 @@ async function resolveNewSession(info) {
     }
     const wait = $('.new-session-wait');
     if (current && wait && S.sel === pendingId)
-      wait.textContent = pendingBindingMessage(current);
+      wait.textContent = pendingStageMessage(current);
     return;
   }
   const pendingId = pendingUid(info.name);
@@ -2104,8 +2064,9 @@ function ensureTerm(name) {
       return;
     }
     view.ws.send(new TextEncoder().encode(d));
-    if (claudeRewinds.has(name) && /[\r\n]/.test(d)) {
-      scheduleClaudeRewindSync(name);
+    if (/[\r\n]/.test(d)) {
+      notePendingInput(name);
+      if (claudeRewinds.has(name)) scheduleClaudeRewindSync(name);
     }
   });
   // 专用 server 不让 tmux 接管滚动：外层不进 alternate screen，直接使用
@@ -2346,12 +2307,13 @@ function restoreTermPane(uid, agent = null) {
 }
 
 async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false) {
+  // 同一宿主上另一类控制台（如已关联前的等待页）还连着时，先放开它；
+  // 原生控制台随后按自己的租约重新连接，和跨页面抢占走同一条路。
   const existing = T.views.get(name);
   if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid
       && !termBindingServes(existing.bindingUid, T.uid)) {
-    ConsoleUI.errors.set(T.uid, '同一实例的另一类控制台仍保持连接；请先在原页面操作中释放本页控制台，再打开。');
-    renderTakeoverBtn();
-    return false;
+    rememberTermOpen(name, false);
+    disposeTermView(name);
   }
   const openEpoch = ++termOpenEpoch;
   auditTermPane('open', {target: name, requested_mode: requestedMode, auto_focus: autoFocus, auto});
