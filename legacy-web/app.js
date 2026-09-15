@@ -7501,8 +7501,6 @@ function renderOpts() {
   const mode = $('#search-mode-toggle'), any = S.opts.mode === 'any';
   mode.textContent = any ? 'OR' : 'AND';
   mode.disabled = !!S.opts.regex;
-  mode.classList.toggle('on', any && !S.opts.regex);
-  mode.setAttribute('aria-pressed', String(any));
   mode.title = S.opts.regex ? '正则模式使用整段表达式，不使用 AND / OR'
     : any ? '任一词（OR），点击切换为全部词（AND）'
           : '全部词（AND），点击切换为任一词（OR）；关键词可在不同消息中';

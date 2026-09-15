@@ -76,6 +76,8 @@ def main():
                                for control in layout["controls"]), layout
 
                 single_row()
+                expect(page.locator('#search-mode-toggle')).to_have_text("AND")
+                expect(page.locator('#search-mode-toggle')).to_have_class("on")
                 original_width = page.locator('#left').evaluate("el => el.style.width")
                 page.locator('#left').evaluate("el => el.style.width = '200px'")
                 single_row()
@@ -136,7 +138,7 @@ def main():
                 assert "mode=any" in searches[-1][0]
                 page.reload(wait_until="networkidle")
                 expect(page.locator('#search-mode-toggle')).to_have_text("OR")
-                expect(page.locator('#search-mode-toggle')).to_have_attribute("aria-pressed", "true")
+                expect(page.locator('#search-mode-toggle')).to_have_class("on")
                 search("Needle Synthetic")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 mode("all")
@@ -155,6 +157,7 @@ def main():
                 expect(page.locator("#side .item[data-uid]")).to_have_count(0)
                 flag("regex")
                 expect(page.locator("#search-mode-toggle")).to_be_disabled()
+                expect(page.locator("#search-mode-toggle")).to_have_class("on")
                 single_row()
                 hits(2)
                 assert any("word=1" in url and "case=1" in url and "regex=1" in url for url, _, _ in searches)

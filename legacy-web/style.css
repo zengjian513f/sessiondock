@@ -257,7 +257,10 @@ header {
 .opts button.on { background: var(--accent); color: #fff; }
 .opts button:disabled { opacity: .45; cursor: default; }
 .opts button:disabled:hover { background: transparent; color: var(--muted); }
-#search-mode-toggle { width: 36px; padding-inline: 4px; }
+#search-mode-toggle {
+  width: 36px; padding-inline: 4px; opacity: 1;
+  background: var(--accent); color: #fff;
+}
 #stat { margin-top: 6px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 #stat:empty { display: none; }
 #stat.err { color: #e5484d; }
