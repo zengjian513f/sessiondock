@@ -2112,10 +2112,13 @@ async function runLivePoll(force) {
     await refreshLive(force);
     if (typeof loadTermList === 'function') {   // tmux 会话可能在外部被结束
       // 首屏：term.js 自己已经发出了列表请求，复用它；列表从"未加载"变为有内容
-      // 不算变化，否则每次打开页面都会多一轮强制 live 刷新。
+      // 不算变化，否则每次打开页面都会多一轮强制 live 刷新。刚返回不到 1 秒的
+      // 列表也不重拉（首屏 live 与 term.js 的初始请求前后脚到达）；显式强刷除外。
       const first = !T.listLoaded;
       const before = (T.list || []).map(x => x.name).join();
-      await (first && T.listRequest ? T.listRequest : loadTermList());
+      const fresh = !force && T.listLoadedAt && performance.now() - T.listLoadedAt < 1000;
+      if (first && T.listRequest) await T.listRequest;
+      else if (!fresh) await loadTermList();
       if (!first && (T.list || []).map(x => x.name).join() !== before) {
         await refreshLive(true);                // 绕过 3 秒缓存，绿点立即跟着 tmux 消失
         renderTakeoverBtn();

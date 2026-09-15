@@ -25,6 +25,7 @@ const T = {
   enabled: false,
   listLoaded: false,
   listRequest: null,   // 进行中的 api/term/list 请求；首屏的 live 轮询复用它而不是再发一次
+  listLoadedAt: 0,     // 上次列表成功返回的时刻（performance.now）；live 轮询据此跳过刚拉过的重复请求
   listError: '',
   unavailable_reason: '',
   backend: '',     // 本机当前的终端后端；hub 模式下按机器看 Nodes.capabilities
@@ -356,6 +357,7 @@ async function fetchTermList() {
   T.listLoaded = true;
   T.listError = loaded ? '' : `无法读取控制台状态：${failure}`;
   if (loaded) {
+    T.listLoadedAt = performance.now();
     applyNodeState(data, 'term');
     T.enabled = !!data.enabled;
     T.unavailable_reason = data.unavailable_reason || '';
