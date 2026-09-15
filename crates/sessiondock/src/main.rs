@@ -353,6 +353,7 @@ fn print_effective_config(config: &Config) {
     println!("hostname={}", config.hostname);
     println!("search_cache_dir={}", path(&config.search_cache_dir));
     println!("search_cache_bytes={}", config.search_cache_bytes);
+    println!("search_fold_bytes={}", config.search_fold_bytes);
     println!("search_workers={}", config.search_workers);
     println!("search_warmup={}", config.search_warmup_secs);
 }

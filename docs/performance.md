@@ -72,6 +72,69 @@ LRU 视图），预热期间 RSS 峰 732 MB、结束后 98 MB；启动后 3 s �
 0.82 GB。默认取后者：冷搜索只在空缓存或换二进制后的头半分钟出现，由预热承担。
 真实读根 5597 个文件的 size/mtime 在全部验收前后逐一相同。
 
+## 全文搜索：折叠副本预筛与全词匹配（2026-09-15）
+
+设计见 [read-model.md](read-model.md#搜索)。热缓存下的搜索在生产实例上仍要
+80–500 ms（482 候选、18 MB），用临时计时器把一次无命中搜索（899 候选、19.3 MB，
+8 个 worker，独立实例）拆开：`execute` 内墙钟 13.5 ms，其 CPU 95 ms 里
+`search_version`（每候选 `stat`）17 ms、打开缓存文件 + 解析头 16 ms、读正文
+（含每个正文 1 MiB 的缓冲区清零与 UTF-8 校验）59 ms、正则本身 **2 ms**；`execute`
+之外候选行克隆 + `strip_row_warnings` 7 ms、`SearchPool` 析构时的 `malloc_trim`
+6 ms。全词查询是另一回事：`(?<![\p{L}\p{N}_])(?:guard)(?![\p{L}\p{N}_])` 的
+lookbehind 让 `fancy-regex` 失去字面量预扫，回溯 VM 逐字符扫 19 MB 花 2987 ms
+CPU（8 线程后 415 ms）。字面/正则查询的瓶颈是每候选的文件与 `stat` 开销，不是
+正则引擎。
+
+改法：缓存为每个正文常驻一份大小写折叠副本，查询先在副本上做"是否包含必需
+字面量"的预筛，不通过的候选不打开文件；字面查询直接用 `regex` crate，全词字面
+查询取字面量出现再查邻字符是否在 `[\p{L}\p{N}_]`；候选行按已发布列表复用；只在
+本次解析过正文时 `malloc_trim`。每候选一次的版本 `stat` 保留：改从索引快照取
+版本（≤ 500 ms 旧）能再省 2–3 ms 墙钟，但 `search_cache_suite` 的"追加后下一次
+搜索即可见"随即失败，退回。
+
+独立实例，同一组真实读根（三根、899–902 会话、19.3 MB 缓存），改前二进制为当天
+`main`（a2b805c）的 release 构建（与生产 `/srv/sessiondock/bin/sessiondock` 逐字节
+相同），改后为本分支；两实例并存、各自缓存目录、依次发同一查询五次取中位数；
+load average 13–15：
+
+| 查询 | 改前 | 改后 | 目标 |
+| --- | ---: | ---: | ---: |
+| `ddp_guard`（字面，不区分大小写） | 26.0 ms | 5.3 ms | ≤ 30 ms |
+| `guard`（全词） | 414.9 ms | 5.7 ms | ≤ 40 ms |
+| `agenthub.*rust`（正则） | 32.7 ms | 6.9 ms | ≤ 40 ms |
+| `zzzz_no_such_term_qq`（无命中） | 24.7 ms | 3.6 ms | ≤ 20 ms |
+| `k`（全词，890 个候选有命中） | 480.5 ms | 15.6 ms | — |
+| `会话列表` | 38.5 ms | 5.5 ms | — |
+| `(?<!\w)guard(?!\w)`（用户写的 lookaround 正则） | 464.9 ms | 144.4 ms | — |
+| `agenthub\s+rust`（可跨行，整体读入） | 28.9 ms | 6.7 ms | — |
+| `[a-z]+guard`（无字面前缀的正则） | 32.4 ms | 9.8 ms | — |
+| `ſession` | 18.8 ms | 4.8 ms | — |
+| `rust`（`source=codex`，427 候选） | 22.4 ms | 5.7 ms | — |
+
+生产实例（482 候选、有 SSE 客户端、其它验收并行）同一时段实测改前中位数
+`ddp_guard` 80 ms、全词 496 ms、正则 73 ms、无命中 53 ms。索引超过 500 ms 未刷新
+时（无标签页打开、搜索独自到来），`search_pool_view` 的 `publish(false)` 先走一遍
+根目录（本机负载下 85–200 ms），改前改后一样，属列表路径。
+
+结果逐字节相同：26 种查询形状（字面/全词/区分大小写/正则、`source` 筛选、`limit`、
+`(?<!\w)…(?!\w)`、`\s+` 跨行、`ſession`、`a#a`、`#` 全词、空查询、非法正则 400）的
+`/api/search` JSON 与 `progress=1` NDJSON 包序列在两个二进制之间完全一致
+（`scratchpad/equiv.py`，只 GET）。用户写的 lookaround 正则只受益于跳过不含
+`guard` 的正文；含它的正文仍由回溯 VM 整体扫描，是剩下的慢路径。
+
+冷启动（空缓存目录，启动后立即搜索，与预热并行）：改前 24.6 s，改后 24.8 s，
+都由 3.6 GB 的解析决定。RSS：预热后改前 97.5 MB、改后 112.1 MB（+14.6 MB）；
+两实例各跑完上表热查询后 87.1 MB 对 112.8 MB（+25.7 MB；改前每次搜索都
+`malloc_trim`，改后只在解析过时才 trim）。折叠副本记账 19.3 MB + 900 × 256 B，
+上限 `SESSIONDOCK_SEARCH_FOLD_BYTES`（默认 128 MiB）。
+
+折叠的正确性由 `search::fold::tests` 证明：枚举全部 0x110000 个码点，断言折叠值 =
+`regex-syntax` simple case folding 等价类的最小码点、类内成员折叠相同且类封闭、
+`regex`/`fancy-regex` 的 `(?i)c` 恰接受该类；`search::tests::matchers_equal_the_reference_pattern…`
+以改前的单一 `fancy-regex` 模式为参照，对 38 个查询 × 17 个正文（İ/ı/ſ/K/Σσς/ß、
+`a#a#a` 重叠、CJK、ANSI、跨块）逐一断言命中数、上限、片段相同，并断言预筛放行
+每个有命中的正文。
+
 ## 最大真实文件的拷贝验收（临时根，只读拷贝，用后删除）
 
 把最大的 Claude 文件（51.7 MB，23,763 行）和最大的 Codex rollout（228 MB）连同
