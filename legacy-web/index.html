@@ -456,10 +456,18 @@
 <script defer src="vendor/katex/katex.min.js"></script>
 <script defer src="vendor/katex/auto-render.min.js" onload="refreshFormulae()"></script>
 <script>
-  if ('serviceWorker' in navigator && window.isSecureContext) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('service-worker.js').catch(() => {});
-    });
+  // 不再注册 Service Worker：同源新标签页的导航要先经过它，而浏览器把它安排在已有的
+  // 同站点进程里启动——旧页面主线程卡死时，新标签页跟着挂到 60 s 启动超时。离线壳
+  // 缓存不值这个代价。这里把早先装上的注销掉，并清掉它的缓存。
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations()
+      .then(list => Promise.all(list.map(item => item.unregister())))
+      .catch(() => {});
+    if (window.caches) {
+      caches.keys().then(keys => Promise.all(keys
+        .filter(key => key.startsWith('sessiondock-shell-'))
+        .map(key => caches.delete(key)))).catch(() => {});
+    }
   }
 </script>
 </body>
