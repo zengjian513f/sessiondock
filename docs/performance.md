@@ -244,6 +244,73 @@ fixture_gen 语料 1500 会话 / 1 GiB（三家来源，最后一对 user/assist
 观察 180 s 0 个非 2xx；断网 6 s 恢复后 SSE 在 ≤ 2 s 内重连，无横幅、不暂停
 （`scratchpad/monkey/wpa/accept_concurrency.py`）。
 
+## 热读：视图字节缓存（2026-09-15）
+
+设计见 [read-model.md](read-model.md#视图字节缓存2026-09-15)：每个已解析文件的消息
+在投影后只序列化一次并留在视图里，`/api/messages`、`window=1`、增量、历史页和 SSE
+包按字节拼接，不再逐条克隆 `Value` 再序列化。起因是 Python 前身在热读上反超：它缓存
+解析结果 **和** 序列化后的 JSON 字节（外加 gzip 成员），重复全文读是一次 memcpy。
+
+独立实例（操作者脚本 `scratchpad/r2/bench_views.py`，不入库，沿用
+`tests/real_roots_bench.py` 的做法：只读三个真实读根 + 生产同款
+`SESSIONDOCK_FILE_ROOTS`，无 state/host/delivery/lifecycle 目录，loopback 184xx，
+`urllib` + `perf_counter`），改前 = 当天早上部署的 main 构建
+（`/srv/sessiondock/bin/sessiondock`）、改后 = 本分支 release，同一批 uid（与生产
+8741 上量的同一批：中位 2.3 MB Grok、p90 15.5 MB Codex、最大 Claude 52 MB、最大
+Codex 404 MB），两个二进制交替各跑一遍，机器 load average 13–15（其它 agent 在并行
+构建，所以冷读比 read-model 的目标表慢）。冷 = 进程启动后的第一次读，热 = 5 次中位数：
+
+单位 ms（RSS 为 MB，VmRSS）；两轮各跑一遍，取第二轮，第一轮相差 > 20% 时括注：
+
+| 指标 | 改前（main 早上构建） | 改后（本分支） |
+| --- | ---: | ---: |
+| 中位 2.3 MB Grok 全文 冷 | 27.8 | 27.2 |
+| 中位 2.3 MB Grok 全文 热 | 3.5 | 0.7（r1 1.3） |
+| p90 15.5 MB Codex（8.0 MiB 响应） 全文 冷 | 390.6 | 275.0 |
+| p90 15.5 MB Codex（8.0 MiB 响应） 全文 热 | 71.2 | 5.8 |
+| 最大 Claude 52 MB（8.3 MiB 响应） 全文 冷 | 1495.8 | 1387.6 |
+| 最大 Claude 52 MB（8.3 MiB 响应） 全文 热 | 119.3 | 8.1 |
+| 最大 Codex 404 MB（52.9 MiB 响应） 全文 冷 | 4968.5 | 4676.1 |
+| 最大 Codex 404 MB（52.9 MiB 响应） 全文 热 | 444.0 | 99.4 |
+| p90 15.5 MB Codex（8.0 MiB 响应） `window=1` 冷 | 284.7 | 258.2 |
+| p90 15.5 MB Codex（8.0 MiB 响应） `window=1` 热 | 23.9 | 2.5（r1 1.9） |
+| 最大 Claude 52 MB（8.3 MiB 响应） `window=1` 冷 | 1295.0 | 1271.8 |
+| 最大 Claude 52 MB（8.3 MiB 响应） `window=1` 热 | 18.3 | 3.2 |
+| 最大 Codex 404 MB（52.9 MiB 响应） `window=1` 冷 | 4206.6 | 4107.1 |
+| 最大 Codex 404 MB（52.9 MiB 响应） `window=1` 热 | 30.5 | 6.1（r1 7.4） |
+| p90 `append=1` 无新内容 热 | 1.1 | 1.2（r1 0.8） |
+| 404 MB `append=1` 无新内容 热 | 2.5 | 2.3（r1 3.2） |
+| p90 8 并发全文 热（3 轮 wall，取中位） | 156.1 | 65.5 |
+| p90 8 并发全文 冷（wall） | 515.9 | 300.7 |
+| 404 MB 8 并发 `window=1` 热（wall） | 117.8 | 128.3 |
+| RSS 列表后 | 112.2 | 111.7 |
+| RSS 打开 404 MB 全文之后（+1.5 s） | 471.8 | 414.9 |
+| RSS 8 并发之后（+1.5 s） | 516.8（r1 623.0） | 469.7 |
+| RSS 再空闲 2 s | 500.9 | 488.8 |
+
+- 热全文变成"小字段序列化 + 一次 memcpy + 传输"：p90 71 → 6 ms，52 MB Claude
+  119 → 8 ms，404 MB Codex（53 MB 响应）444 → 99 ms（其中大半是 53 MB 在 loopback 上
+  的传输与 `urllib` 接收；Python 同一会话 90 ms）；`window=1` 首屏 18–31 ms →
+  3–6 ms，因为头 100 + 尾 500 是两段拷贝，分页预算用缓存里记下的长度，不再为
+  称重再序列化 600 条。
+- 冷读不变或略快（解析占绝对大头；编码这一遍代替了原来解析时"序列化一遍只为
+  记账 + 再序列化一遍算语义 digest"的两遍；差异在本机负载噪声内）。
+- 8 个并发热读不再各自序列化：p90 8 个并发全文 wall 148–174 ms → 43–66 ms（每轮的
+  第一次 122 ms 含 8 个 8 MB 响应缓冲的首次缺页）。8 个并发**冷**读只解析、只编码
+  一次（`views::body_tests::eight_concurrent_readers_fill_the_bytes_once`），
+  wall 516 → 301 ms。
+- `append=1` 无新内容与增量续读 1–3 ms 不变。404 MB 会话 8 个并发 `window=1`
+  118 → 128 ms 也没变：尾窗里的截图每次都要重新投影/注册描述符，这是媒体口径。
+- 常驻：字节与 `Value` 树记同一笔账（预算不变，倍率按 1.2–1.6× + 1× 估为 ≈ 2.2–2.6×）；打开 404 MB
+  之后 RSS 472 → 415 MB、8 并发之后 517–623 → 470 MB、空闲 501 → 489 MB——反而
+  更低，因为热读不再产生"全部消息克隆"的临时对象。响应缓冲（> 4 MiB）在发送
+  完毕后由一个合并的后台 trim（`memory::release_soon`，一阵大响应停下 500 ms 后）
+  归还；去掉这一步的中间版本实测 after404 777 / afterConc 832 MB，每个 hyper 线程
+  的 arena 各留着一份 53 MB 空闲块。请求路径上不再 `malloc_trim`（原来每个
+  `message_total > 2000` 的响应各付 ~10 ms）。
+- 没做：gzip 成员缓存——Rust 服务本身不压缩（代理层压缩），无处可省；
+  按字节的历史页缓存（页本身已是缓存字节的切片）。
+
 ## 常驻内存
 
 同一台机器、同一批真实根（只读），`scratchpad/monkey/wpa/mem_bench.py` 按主会话
@@ -269,8 +336,9 @@ VmRSS，MB：
 
 - **线程数 / trim**：tokio 默认按核数开 256 个 worker，每个线程一个 glibc arena，
   释放的内存留在各自 arena 里；`SESSIONDOCK_ASYNC_WORKERS` 默认 `clamp(核数/8, 4, 16)`，
-  并在新解析、淘汰、打开视图的响应（非 `append=1` 或 > 4 MiB）与每次搜索结束后
-  `malloc_trim(0)`。仅这一项就让"385 MB 全文之后"从 1146 回到 ~300（解析临时对象和
+  并在新解析、淘汰与每次搜索结束后 `malloc_trim(0)`，> 4 MiB 的历史响应发出后由
+  后台线程合并 trim 一次（2026-09-15 之前是每个大响应在请求路径上各 trim 一次，
+  见上文"热读"）。仅这一项就让"385 MB 全文之后"从 1146 回到 ~300（解析临时对象和
   54 MB 响应副本真正归还），搜索后不再净增。`mallopt(M_ARENA_MAX, 2)` 试过并否决：
   十次 `/proc` 扫描的 futex 调用 2.6k → 564k（两个 arena 被并行索引读取和读 worker
   争抢），空闲 CPU 反而上升。

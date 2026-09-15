@@ -765,17 +765,20 @@ pub(super) fn resolve(inventory: &Inventory, uid: &str, agent: &str) -> Result<V
         .collect();
     let mut sources = vec![parsed.candidate.clone()];
     sources.extend(builder.sources);
-    let rename = super::views::rename_event(&meta);
-    Ok(View {
+    let inherited_encoded = Arc::new(
+        super::views::EncodedEvents::build(&builder.events, true, None)
+            .map_err(|_| SessionError::new(500, "消息序列化失败"))?,
+    );
+    Ok(View::new(super::views::ViewParts {
         parsed,
         meta,
         inherited: Arc::new(builder.events),
+        inherited_encoded,
         dependencies: dependencies.into_iter().collect(),
         identity,
         native_scope,
         sources,
-        rename,
-    })
+    }))
 }
 
 pub(super) fn inherited_identity(native: String, digests: Vec<Value>) -> String {
@@ -874,7 +877,7 @@ mod tests {
         Arc::new(Parsed {
             _fixture: Some(fixture),
             native_id,
-            semantic_digest: super::super::projection_digest(&events, bytes.len()),
+            encoded: super::super::views::EncodedEvents::build(&events, true, None).unwrap(),
             raw_index: super::super::native_input::RawIndex::scan(bytes.as_slice()).unwrap(),
             candidate: Candidate {
                 source,

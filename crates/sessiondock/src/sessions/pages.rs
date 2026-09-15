@@ -242,6 +242,22 @@ impl Default for Budget {
     }
 }
 impl Budget {
+    /// Admit `event` (at non-status `position` of `snapshot`) into the page.
+    /// The serialized length and discovered references come from the view's
+    /// encoder when it has them; only the rename event is measured here.
+    fn take_at(
+        &mut self,
+        snapshot: &ViewSnapshot,
+        position: usize,
+        event: &Event,
+        limit: usize,
+    ) -> Result<bool, SessionError> {
+        match snapshot.view.entry(position, event) {
+            Some(entry) => self.admit(event, entry.message_len, entry.discovered, limit),
+            None => self.take(event, limit),
+        }
+    }
+    /// `take_at` measuring the event itself.
     fn take(&mut self, event: &Event, limit: usize) -> Result<bool, SessionError> {
         if self.events >= limit {
             return Ok(false);
@@ -249,6 +265,19 @@ impl Budget {
         let mut counter = Counter(0);
         serde_json::to_writer(&mut counter, &event.message)
             .map_err(|_| SessionError::new(500, "历史消息序列化失败"))?;
+        let discovered = crate::media::discover(&event.message).len();
+        self.admit(event, counter.0, discovered, limit)
+    }
+    fn admit(
+        &mut self,
+        event: &Event,
+        json_len: usize,
+        discovered: usize,
+        limit: usize,
+    ) -> Result<bool, SessionError> {
+        if self.events >= limit {
+            return Ok(false);
+        }
         // Only the inline-displayed prefix is charged; the remainder is paged
         // separately through media grants and never enters this response.
         let displayed = event.media.len().min(DISPLAY_LIMIT);
@@ -263,9 +292,8 @@ impl Budget {
                 }
             })
             .sum::<usize>();
-        let json_bytes = counter
-            .0
-            .saturating_add((displayed + crate::media::discover(&event.message).len()) * 8192)
+        let json_bytes = json_len
+            .saturating_add((displayed + discovered) * 8192)
             .saturating_add(32);
         if self.events > 0
             && (self.images.saturating_add(displayed) > MAX_IMAGES
@@ -306,11 +334,22 @@ pub(super) fn window(
     // Prioritize the latest tail. Heavy media may reduce either segment below
     // legacy's usual 100/500 events; all omitted events remain reachable.
     let mut stop = total;
-    while stop > 0 && total - stop < 500 && budget.take(selected[stop - 1].event, 600)? {
+    while stop > 0
+        && total - stop < 500
+        && budget.take_at(
+            snapshot,
+            selected[stop - 1].index,
+            selected[stop - 1].event,
+            600,
+        )?
+    {
         stop -= 1;
     }
     let mut start = 0;
-    while start < stop && start < 100 && budget.take(selected[start].event, 600)? {
+    while start < stop
+        && start < 100
+        && budget.take_at(snapshot, selected[start].index, selected[start].event, 600)?
+    {
         start += 1;
     }
     if start == stop {
@@ -401,6 +440,9 @@ impl ViewSnapshot {
             .filter(|event| event.message["role"] != "status" && event.end <= checkpoint.start)
             .collect()
     }
+    /// The `Value` renderer of one history page, the reference
+    /// `history_page_body` is tested against.
+    #[cfg(test)]
     pub(crate) fn history_page(
         &self,
         grant: PageGrant,
@@ -414,9 +456,51 @@ impl ViewSnapshot {
         if events.len() != grant.total || grant.next >= grant.stop || grant.stop > events.len() {
             return Err(SessionError::new(409, "历史页范围已变化，请重新载入会话"));
         }
+        let (selected, page) = self.page_selection(&grant, token, &events, pages)?;
+        let messages = super::project_selected(self, &selected, Some(media), files, Some(pages))?;
+        let response = json!({"messages":messages,"page":page});
+        validate_response(&response)?;
+        Ok(response)
+    }
+
+    /// `history_page` as bytes: the messages spliced from the view's
+    /// retained serialization (docs/read-model.md "视图字节缓存").
+    pub(crate) fn history_page_body(
+        &self,
+        grant: PageGrant,
+        token: &str,
+        media: &MediaStore,
+        files: Option<&FileService>,
+        pages: &PageStore,
+    ) -> Result<Vec<u8>, SessionError> {
+        self.validate_grant_scope(&grant.uid, &grant.agent, &grant.checkpoint)?;
+        let events = self.checkpoint_events(&grant.checkpoint);
+        if events.len() != grant.total || grant.next >= grant.stop || grant.stop > events.len() {
+            return Err(SessionError::new(409, "历史页范围已变化，请重新载入会话"));
+        }
+        let (selected, page) = self.page_selection(&grant, token, &events, pages)?;
+        let mut body = Vec::new();
+        body.extend_from_slice(b"{\"messages\":");
+        super::views::body::write_messages(self, &selected, media, files, pages, &mut body)?;
+        body.extend_from_slice(b",\"page\":");
+        serde_json::to_writer(&mut body, &page)
+            .map_err(|_| SessionError::new(500, "历史页响应序列化失败"))?;
+        body.push(b'}');
+        Ok(body)
+    }
+
+    /// The events of one page under the byte/image/event budget, plus its
+    /// `page` descriptor (a continuation grant is issued when the gap remains).
+    fn page_selection<'a>(
+        &'a self,
+        grant: &PageGrant,
+        token: &str,
+        events: &[&'a Event],
+        pages: &PageStore,
+    ) -> Result<(Vec<Selected<'a>>, Value), SessionError> {
         let mut budget = Budget::default();
         let mut end = grant.next;
-        while end < grant.stop && budget.take(events[end], pages.page_events())? {
+        while end < grant.stop && budget.take_at(self, end, events[end], pages.page_events())? {
             end += 1;
         }
         if end == grant.next {
@@ -430,7 +514,6 @@ impl ViewSnapshot {
                 event,
             })
             .collect::<Vec<_>>();
-        let messages = super::project_selected(self, &selected, Some(media), files, Some(pages))?;
         let next = if end < grant.stop {
             let mut next = grant.clone();
             next.next = end;
@@ -438,9 +521,8 @@ impl ViewSnapshot {
         } else {
             None
         };
-        let response = json!({"messages":messages,"page":{"cursor":token,"next":next,"start":grant.next,"end":end,"stop":grant.stop,"remaining":grant.stop-end}});
-        validate_response(&response)?;
-        Ok(response)
+        let page = json!({"cursor":token,"next":next,"start":grant.next,"end":end,"stop":grant.stop,"remaining":grant.stop-end});
+        Ok((selected, page))
     }
 
     /// One further batch of a single message's typed images. Descriptors are

@@ -36,9 +36,9 @@ fn parsed(candidate: Candidate, bytes: &[u8], raw_error: Option<String>) -> Pars
         meta: json!({}),
         native_id: Ok("synthetic-native-id".into()),
         events: Vec::new(),
+        encoded: super::super::views::EncodedEvents::default(),
         unsupported: raw_error.clone(),
         raw_error,
-        semantic_digest: "synthetic-projection".into(),
         pin: None,
     }
 }
