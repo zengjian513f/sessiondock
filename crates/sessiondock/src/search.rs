@@ -26,7 +26,12 @@
 //! `[\p{L}\p{N}_]` instead of driving the backtracking engine across the
 //! text; regex queries run `fancy-regex` as before.
 //!
-//! Wire compatibility: `q`, comma-separated `source`, `limit` (default 60,
+//! Literal queries split on whitespace with double-quoted phrases; `mode=any`
+//! selects OR, otherwise every term must occur somewhere in the session (AND).
+//! Each term uses the literal/whole-word matcher, retaining discovery across
+//! chunks, without a synthesized backtracking regex or a whole-body read.
+//!
+//! Wire compatibility: `q`, `mode`, comma-separated `source`, `limit` (default 60,
 //! optional), and `word/case/regex/progress` enabled by the value 1. Public session views
 //! are the search pool; attached agent transcripts
 //! are not silently merged into their owner's text. Unsupported views produce
@@ -110,6 +115,8 @@ impl From<SessionError> for SearchError {
 #[serde(default)]
 pub struct SearchQuery {
     pub q: String,
+    /// `any` means OR; omitted or any other value means AND.
+    pub mode: String,
     pub source: String,
     pub limit: String,
     pub word: String,
@@ -179,6 +186,8 @@ impl Matcher {
 
 pub struct PreparedSearch {
     matcher: Option<Matcher>,
+    terms: Vec<PreparedSearch>,
+    any: bool,
     /// Bodies whose folded copy fails this cannot match and are skipped.
     prefilter: Prefilter,
     /// The pattern cannot match across a newline, so a body can be matched
@@ -192,7 +201,7 @@ pub struct PreparedSearch {
 
 impl PreparedSearch {
     pub fn is_empty(&self) -> bool {
-        self.matcher.is_none()
+        self.matcher.is_none() && self.terms.is_empty()
     }
 
     pub fn chunkable(&self) -> bool {
@@ -261,6 +270,35 @@ fn chunkable(q: &str, regex: bool) -> bool {
     !q.contains(['\\', '[', '^', '$']) && !q.contains("(?")
 }
 
+/// Whitespace separates literal terms; double quotes preserve a phrase.
+/// An unfinished quote keeps the remainder as a phrase while typing.
+/// Within quotes, \" and \\ can be escaped. Empty and duplicate terms disappear.
+pub fn literal_terms(q: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut term = String::new();
+    let mut quoted = false;
+    let mut chars = q.chars().peekable();
+    while let Some(c) = chars.next() {
+        if quoted && c == '\\' && matches!(chars.peek(), Some('"' | '\\')) {
+            term.push(chars.next().unwrap());
+        } else if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && (c.is_whitespace() || c == '\u{feff}') {
+            if !term.is_empty() {
+                terms.push(std::mem::take(&mut term));
+            }
+        } else {
+            term.push(c);
+        }
+    }
+    if !term.is_empty() {
+        terms.push(term);
+    }
+    let mut seen = BTreeSet::new();
+    terms.retain(|term| seen.insert(term.clone()));
+    terms
+}
+
 impl SearchQuery {
     pub fn prepare(self) -> Result<PreparedSearch, SearchError> {
         let word = flag(&self.word);
@@ -274,16 +312,55 @@ impl SearchQuery {
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .collect();
-        let chunkable = chunkable(&self.q, regex);
-        let (matcher, prefilter) = if self.q.trim().is_empty() {
+        let mut terms = if regex {
+            Vec::new()
+        } else {
+            literal_terms(&self.q)
+        };
+        let any = self.mode == "any";
+        if terms.len() > 1 {
+            let prefilter = Prefilter::terms(&terms, any);
+            let terms = terms
+                .into_iter()
+                .map(|q| {
+                    // Quote the decoded term so spaces/newlines remain literal.
+                    let q = format!("\"{}\"", q.replace('\\', "\\\\").replace('"', "\\\""));
+                    SearchQuery {
+                        q,
+                        word: self.word.clone(),
+                        case: self.case.clone(),
+                        ..Default::default()
+                    }
+                    .prepare()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(PreparedSearch {
+                chunkable: terms.iter().all(PreparedSearch::chunkable),
+                matcher: None,
+                terms,
+                any,
+                prefilter,
+                sources,
+                limit,
+                progress,
+                debug_run: self.debug_run.chars().take(64).collect(),
+            });
+        }
+        let q = if regex {
+            self.q
+        } else {
+            terms.pop().unwrap_or_default()
+        };
+        let chunkable = chunkable(&q, regex);
+        let (matcher, prefilter) = if q.is_empty() || (regex && q.trim().is_empty()) {
             (None, Prefilter::none())
         } else if regex {
             (
-                Some(Matcher::Regex(fancy_pattern(&self.q, word, case, true)?)),
-                Prefilter::regex(&self.q, !case),
+                Some(Matcher::Regex(fancy_pattern(&q, word, case, true)?)),
+                Prefilter::regex(&q, !case),
             )
         } else {
-            let plain = regex::RegexBuilder::new(&regex::escape(&self.q))
+            let plain = regex::RegexBuilder::new(&regex::escape(&q))
                 .case_insensitive(!case)
                 .size_limit(usize::MAX)
                 .dfa_size_limit(usize::MAX)
@@ -295,12 +372,14 @@ impl SearchQuery {
                 } else {
                     Matcher::Literal(plain)
                 }),
-                Prefilter::literal(&self.q),
+                Prefilter::literal(&q),
             )
         };
         Ok(PreparedSearch {
             debug_run: self.debug_run.chars().take(64).collect(),
             matcher,
+            terms: Vec::new(),
+            any,
             prefilter,
             chunkable,
             sources,
@@ -362,6 +441,7 @@ pub type Outcome = Option<(usize, bool, String)>;
 /// non-chunkable query must be fed the body as a single final chunk.
 pub struct Scanner<'q> {
     query: &'q PreparedSearch,
+    terms: Vec<Scanner<'q>>,
     count: usize,
     capped: bool,
     /// Up to 40 characters ending the previous chunk, for the first hit's context.
@@ -374,6 +454,7 @@ impl<'q> Scanner<'q> {
     pub fn new(query: &'q PreparedSearch) -> Self {
         Self {
             query,
+            terms: query.terms.iter().map(Scanner::new).collect(),
             count: 0,
             capped: false,
             tail: String::new(),
@@ -384,6 +465,11 @@ impl<'q> Scanner<'q> {
 
     /// Whether more chunks can still change the outcome.
     pub fn wants_more(&self) -> bool {
+        if !self.terms.is_empty() {
+            return self.terms.iter().map(|term| term.count).sum::<usize>() < HIT_CAP
+                || (!self.query.any && self.terms.iter().any(|term| term.count == 0))
+                || self.terms.iter().any(|term| term.pending.is_some());
+        }
         !self.capped || self.pending.is_some()
     }
 
@@ -475,6 +561,14 @@ impl<'q> Scanner<'q> {
         final_chunk: bool,
         cancelled: &AtomicBool,
     ) -> Result<(), SearchError> {
+        if !self.terms.is_empty() {
+            for term in &mut self.terms {
+                if term.wants_more() {
+                    term.feed(chunk, final_chunk, cancelled)?;
+                }
+            }
+            return Ok(());
+        }
         if self.pending.is_some() {
             self.continue_snippet(chunk, final_chunk);
         }
@@ -521,6 +615,64 @@ impl<'q> Scanner<'q> {
     }
 
     pub fn finish(mut self) -> Outcome {
+        if !self.terms.is_empty() {
+            let outcomes: Vec<_> = self.terms.into_iter().map(Scanner::finish).collect();
+            if !self.query.any && outcomes.iter().any(Option::is_none) {
+                return None;
+            }
+            let outcomes: Vec<_> = outcomes
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, outcome)| outcome.map(|outcome| (index, outcome)))
+                .collect();
+            if outcomes.is_empty() {
+                return None;
+            }
+            let count: usize = outcomes.iter().map(|(_, outcome)| outcome.0).sum();
+            // Prefer the first-hit excerpt covering the most terms, then add
+            // excerpts for terms occurring in other messages. No body retained.
+            let never = AtomicBool::new(false);
+            let mut excerpts: Vec<_> = outcomes
+                .iter()
+                .map(|(own_index, outcome)| {
+                    let mut covered: BTreeSet<_> = self
+                        .query
+                        .terms
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, term)| {
+                            matches(term, &outcome.2, &never)
+                                .ok()
+                                .flatten()
+                                .map(|_| index)
+                        })
+                        .collect();
+                    covered.insert(*own_index);
+                    (outcome.2.clone(), covered)
+                })
+                .collect();
+            let mut covered = BTreeSet::new();
+            let mut snippets = Vec::new();
+            while !excerpts.is_empty() {
+                let index = excerpts
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(index, (_, terms))| {
+                        (
+                            terms.difference(&covered).count(),
+                            std::cmp::Reverse(*index),
+                        )
+                    })
+                    .map(|(index, _)| index)
+                    .unwrap();
+                let (text, terms) = excerpts.remove(index);
+                if snippets.is_empty() || terms.difference(&covered).next().is_some() {
+                    covered.extend(terms);
+                    snippets.push(text);
+                }
+            }
+            return Some((count.min(HIT_CAP), count >= HIT_CAP, snippets.join(" … ")));
+        }
         if let Some(pending) = self.pending.take() {
             self.snippet = Some(collapse(&pending.raw));
         }
@@ -596,7 +748,7 @@ pub fn execute(
     workers: usize,
 ) -> Result<Value, SearchError> {
     check_cancel(cancelled)?;
-    if query.matcher.is_none() {
+    if query.is_empty() {
         return Ok(empty_result());
     }
     let pool: Vec<_> = rows
@@ -715,9 +867,7 @@ mod tests {
         .unwrap()
     }
 
-    /// The query as it was matched before the literal and whole-word
-    /// matchers: every shape compiled to one `fancy-regex` pattern and
-    /// driven through the same scanner. The reference for equivalence.
+    /// Single decoded literals and regexes still equal the original engine.
     fn reference(q: &str, word: bool, case: bool, regex: bool) -> PreparedSearch {
         let mut query = SearchQuery {
             q: q.into(),
@@ -729,6 +879,8 @@ mod tests {
         .prepare()
         .unwrap();
         if query.matcher.is_some() {
+            let decoded = literal_terms(q);
+            let q = if regex { q } else { &decoded[0] };
             query.matcher = Some(Matcher::Regex(fancy_pattern(q, word, case, regex).unwrap()));
         }
         query.prefilter = Prefilter::none();
@@ -771,6 +923,124 @@ mod tests {
         assert_eq!(count("#|()", "##", true, true), 3);
         assert_eq!(count("cat", "Cat caterpillar CAT cat", true, false), 3);
         assert_eq!(count("cat", "cat\u{0301} \u{203f}cat _cat", true, false), 2);
+    }
+
+    #[test]
+    fn literal_term_syntax_preserves_phrases_and_regular_words() {
+        for (input, expected) in [
+            ("  部署\t失败 部署 ", vec!["部署", "失败"]),
+            ("\"部署 失败\" 重启", vec!["部署 失败", "重启"]),
+            ("\"部署 失败", vec!["部署 失败"]),
+            ("\"\"  \"\"", vec![]),
+            ("AND OR", vec!["AND", "OR"]),
+            ("a\u{85}b\u{feff}c", vec!["a", "b", "c"]),
+            (
+                r#""say \"hi\" at C:\\tmp" x"#,
+                vec![r#"say "hi" at C:\tmp"#, "x"],
+            ),
+        ] {
+            assert_eq!(literal_terms(input), expected, "{input:?}");
+        }
+        assert!(prepared("\"\"", false, false).is_empty());
+    }
+
+    #[test]
+    fn and_or_match_across_chunks_with_literal_flags_and_excerpts() {
+        let never = AtomicBool::new(false);
+        for mode in ["all", "any"] {
+            for word in ["0", "1"] {
+                for case in ["0", "1"] {
+                    let query = SearchQuery {
+                        q: "部署 失败".into(),
+                        mode: mode.into(),
+                        word: word.into(),
+                        case: case.into(),
+                        ..Default::default()
+                    }
+                    .prepare()
+                    .unwrap();
+                    assert!(query.chunkable());
+                    for (body, all, any) in [
+                        ("部署完成\n失败原因", word != "1", word != "1"),
+                        ("失败\n部署", true, true),
+                        ("只有部署", false, word != "1"),
+                        ("什么也没有", false, false),
+                    ] {
+                        let outcome = matches(&query, body, &never).unwrap();
+                        assert_eq!(
+                            outcome.is_some(),
+                            if mode == "any" { any } else { all },
+                            "mode={mode} word={word} body={body}"
+                        );
+                        assert_eq!(chunked(&query, body, 1), outcome);
+                        if outcome.is_some() {
+                            assert!(query.admits(&fold::fold(body)));
+                        }
+                    }
+                }
+            }
+        }
+        let body = format!("部署\n{}\n失败", "x".repeat(500));
+        let query = prepared("部署 失败", false, false);
+        let outcome = matches(&query, &body, &never).unwrap().unwrap();
+        assert_eq!(outcome.0, 2);
+        assert!(outcome.2.contains("部署") && outcome.2.contains("失败"));
+        assert!(outcome.2.contains(" … "));
+        assert_eq!(chunked(&query, &body, 1), Some(outcome));
+        // Finding 200 occurrences of one term must not hide a missing AND term.
+        let body = format!("{}\nlate", "early ".repeat(250));
+        let query = prepared("early late", false, false);
+        assert_eq!(chunked(&query, &body, 1).unwrap().0, HIT_CAP);
+        assert!(
+            matches(&query, &body.replace("late", "absent"), &never)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn phrases_case_and_regex_mode_are_independent_of_boolean_mode() {
+        let never = AtomicBool::new(false);
+        for (q, mode, case, regex, body, found) in [
+            (
+                "\"部署 失败\" 重启",
+                "all",
+                "0",
+                "0",
+                "重启\n部署 失败",
+                true,
+            ),
+            (
+                "\"部署 失败\" 重启",
+                "all",
+                "0",
+                "0",
+                "部署\n失败\n重启",
+                false,
+            ),
+            ("Kelvin session", "all", "0", "0", "KELVIN\nſession", true),
+            ("Kelvin session", "all", "1", "0", "KELVIN\nſession", false),
+            ("foo bar", "any", "0", "1", "foo\nbar", false),
+            ("foo|bar", "all", "0", "1", "bar", true),
+            ("AND OR", "all", "0", "0", "OR\nAND", true),
+            ("a.b x+y", "all", "0", "0", "a.b\nx+y", true),
+            ("a.b x+y", "all", "0", "0", "axb\nxy", false),
+        ] {
+            let query = SearchQuery {
+                q: q.into(),
+                mode: mode.into(),
+                case: case.into(),
+                regex: regex.into(),
+                ..Default::default()
+            }
+            .prepare()
+            .unwrap();
+            assert_eq!(
+                matches(&query, body, &never).unwrap().is_some(),
+                found,
+                "{q} {body}"
+            );
+        }
     }
 
     #[test]

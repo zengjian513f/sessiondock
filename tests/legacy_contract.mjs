@@ -9,6 +9,49 @@ const appSource = read('app.js');
 const disabled = {backend: 'rust', read_only: true, live: false,
   outbox: false, audit: false, search: false, files: false};
 
+test('literal search supports AND/OR, quoted phrases and safe per-term highlighting', () => {
+  const S = {term: '部署 失败', opts: {mode: 'all', case: false, word: false, regex: false}};
+  const context = vm.createContext({S, esc: value => String(value)
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')});
+  for (const name of ['searchTerms', 'literalSource', 'reTerm', 'hasTerm', 'matchesSearch', 'hl']) {
+    loadFunction(context, name);
+  }
+  assert.equal(context.matchesSearch('失败\n部署'), true);
+  assert.equal(context.matchesSearch('部署完成'), false);
+  assert.equal(context.hasTerm('部署完成'), true, 'message previews match one term of a session AND');
+  S.opts.mode = 'any';
+  assert.equal(context.matchesSearch('部署完成'), true);
+  S.opts.mode = 'all';
+  S.term = '"部署 失败" 重启';
+  assert.equal(context.matchesSearch('重启\n部署 失败'), true);
+  assert.equal(context.matchesSearch('重启\n部署\n失败'), false);
+  assert.deepEqual(Array.from(context.searchTerms('  "" 部署\t失败 部署')), ['部署', '失败']);
+  assert.deepEqual(Array.from(context.searchTerms('"部署 失败')), ['部署 失败']);
+  assert.deepEqual(Array.from(context.searchTerms('AND OR')), ['AND', 'OR']);
+  assert.deepEqual(Array.from(context.searchTerms('a\u0085b\ufeffc')), ['a', 'b', 'c']);
+  assert.deepEqual(Array.from(context.searchTerms(String.raw`"say \"hi\" at C:\\tmp" x`)), ['say "hi" at C:\\tmp', 'x']);
+  S.term = 'Kelvin session';
+  assert.equal(context.matchesSearch('KELVIN\nſession'), true);
+  S.opts.case = true;
+  assert.equal(context.matchesSearch('KELVIN\nſession'), false);
+  S.opts.case = false;
+  S.opts.word = true;
+  S.term = '猫 部署';
+  assert.equal(context.matchesSearch('猫猫 部署'), false);
+  assert.equal(context.matchesSearch('猫\n部署'), true);
+  S.opts.word = false;
+  S.term = '<img> x+y';
+  assert.equal(context.hl('<img> & x+y'), '<mark>&lt;img&gt;</mark> &amp; <mark>x+y</mark>');
+  S.opts.regex = true;
+  S.opts.mode = 'any';
+  S.term = 'foo bar';
+  assert.equal(context.matchesSearch('foo\nbar'), false, 'regex ignores boolean mode');
+  S.term = 'foo|bar';
+  assert.equal(context.matchesSearch('bar'), true);
+  S.term = '\\_';
+  assert.equal(context.matchesSearch('_'), true, 'advanced regex retains legacy JS syntax');
+});
+
 function contextWithCapabilities(value, globals = {}) {
   const meta = value === undefined ? null
     : {content: typeof value === 'string' ? value : JSON.stringify(value)};

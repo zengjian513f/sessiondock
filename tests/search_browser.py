@@ -76,7 +76,14 @@ def main():
 
                 def flag(name):
                     old = page.locator("#stat").get_attribute("data-seq") or ""
+                    if name == "regex" and page.locator("#search-advanced").get_attribute("open") is None:
+                        page.locator("#search-advanced summary").click()
                     page.locator(f'#opts button[data-o="{name}"]').click()
+                    wait_search(old)
+
+                def mode(name):
+                    old = page.locator("#stat").get_attribute("data-seq") or ""
+                    page.locator(f'#search-mode button[data-mode="{name}"]').click()
                     wait_search(old)
 
                 def hits(expected):
@@ -96,6 +103,28 @@ def main():
                 expect(page.locator("#a-term")).to_be_visible()
                 expect(page.locator("#a-term")).to_be_enabled()
 
+                # Session-level AND spans messages; both terms are highlighted.
+                search("Needle Synthetic")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(1)
+                main = page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]')
+                expect(main.locator(".snip")).to_contain_text("Needle")
+                expect(main.locator(".snip")).to_contain_text("Synthetic")
+                main.click()
+                expect(page.locator("#msgs mark").filter(has_text="Needle")).to_have_count(1)
+                expect(page.locator("#msgs mark").filter(has_text="Synthetic")).to_have_count(1)
+                mode("any")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(2)
+                assert "mode=any" in searches[-1][0]
+                page.reload(wait_until="networkidle")
+                expect(page.locator('#search-mode button[data-mode="any"]')).to_have_attribute("aria-pressed", "true")
+                search("Needle Synthetic")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(2)
+                mode("all")
+                search('"Needle Cat" Synthetic')
+                expect(page.locator("#side .item[data-uid]")).to_have_count(1)
+                search('"Needle Synthetic"')
+                expect(page.locator("#side .item[data-uid]")).to_have_count(0)
+
                 search("cat")
                 hits(4)
                 flag("word")
@@ -105,6 +134,7 @@ def main():
                 search("c.t")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(0)
                 flag("regex")
+                expect(page.locator("#search-mode")).to_be_hidden()
                 hits(2)
                 assert any("word=1" in url and "case=1" in url and "regex=1" in url for url, _, _ in searches)
                 page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]').click()
@@ -130,7 +160,7 @@ def main():
                 assert all(url.startswith(base + "/") for url in requests)
                 assert any(status == 200 and "application/x-ndjson" in mime for _, status, mime in searches)
                 assert all("progress=1" in url for url, _, _ in searches)
-                print("PASS legacy search browser: NDJSON results/progress, partial unsupported warning, case/word/regex flags, result navigation, unsupported regex error and recovery")
+                print("PASS legacy search browser: AND/OR across messages, phrases, per-term highlighting, stored mode, advanced regex, NDJSON results/progress and flags")
             finally:
                 browser.close()
 

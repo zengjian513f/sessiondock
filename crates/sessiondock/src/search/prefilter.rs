@@ -43,6 +43,15 @@ impl Prefilter {
         Self::from_clauses(vec![vec![fold::fold(needle)]])
     }
 
+    pub fn terms(terms: &[String], any: bool) -> Self {
+        let literals: Vec<_> = terms.iter().map(|term| fold::fold(term)).collect();
+        Self::from_clauses(if any {
+            vec![literals]
+        } else {
+            literals.into_iter().map(|literal| vec![literal]).collect()
+        })
+    }
+
     /// The required literals of a regex query, from its parse tree; the
     /// parse flags are the matcher's (`case_insensitive` only sets the
     /// literals' case flag, which folding makes irrelevant).

@@ -640,6 +640,12 @@ main { display: flex; flex: 1; min-height: 0; }
   background: var(--panel); border-bottom: 1px solid var(--border);
 }
 .side-search .qbox { width: 100%; max-width: none; flex: none; }
+.search-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px; margin-top: 5px; }
+.search-controls [hidden] { display: none; }
+#search-advanced { display: flex; font-size: 12px; color: var(--muted); }
+#search-advanced summary { display: inline-block; padding: 3px 6px; cursor: pointer; border-radius: 5px; }
+#search-advanced summary:hover { background: var(--hover); color: var(--text); }
+#search-advanced[open] > button { display: inline-block; }
 
 #search-progress {
   display: none; margin-top: 8px; padding: 4px 2px;
