@@ -243,10 +243,17 @@ VmRSS，MB：
   立即失效；服务背后的变化（别的后端起的 host、被追加的文件）随各来源自己的 TTL
   （扫描 3 s、观察 2 s、列表 3 s）在一个轮询周期内可见。`force=1` 全部绕过并回填。
 
-隔离实例基准（`scratchpad/bench_polls.py`，只读真实根 + 生产 `debug-runs.json`
+隔离实例基准（`tests/bench_polls_real.py`，只读真实根 + 部署的 `debug-runs.json`
 的只读拷贝 → 483 行 / 435 KB，临时 state/host/lifecycle 目录，26 个
 `/api/term/create` 起的 free-shell ptyhost 实例，loopback，urllib + `perf_counter`
 5 次取中位数；"修改前"是同一台机器上从 `main` 构建的二进制，同一配置先后运行）：
+
+```sh
+python3 tests/bench_polls_real.py --claude-root ~/.claude/projects --codex-root ~/.codex/sessions \
+  --grok-root ~/.grok/sessions --codex-index ~/.codex/session_index.jsonl --registry <debug-runs.json> \
+  --binary <二进制> --ptyhost target/release/ptyhost --hosts 26 --label after \
+  --i-understand-this-reads-real-histories
+```
 
 | op | 修改前 | 修改后 | 目标 |
 | --- | ---: | ---: | ---: |
