@@ -9,13 +9,16 @@ plan, table rows and report match.
 # run_validation: skip
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,7 +163,8 @@ class DeployDryRunTest(unittest.TestCase):
         self.assertEqual(tree_state(self.prefix), self.before)
 
     def test_a_build_web_only(self) -> None:
-        proc = self.cli(["build", "--web-only", "--targets-file", str(self.targets)])
+        proc = self.cli(["build", "--web-only", "--allow-dirty", "--web-from-head",
+                         "--targets-file", str(self.targets)])
         stage = self.remember_stage(proc.stdout)
         self.assertEqual(proc.returncode, 0, combined(proc))
         self.assertIsNotNone(stage, proc.stdout)
@@ -222,6 +226,46 @@ class DeployDryRunTest(unittest.TestCase):
         self.assertEqual(rows.get("local"), "FAILED", proc.stdout)
         self.assertIn("backup-deploy-", combined(proc))
         self.assert_prefix_unchanged()
+
+
+class SourceArchiveTests(unittest.TestCase):
+    def test_dirty_source_matches_tracked_files_and_preserves_index(self):
+        spec = importlib.util.spec_from_file_location("sessiondock_deploy_snapshot", DEPLOY)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory(prefix="sessiondock-source-fixture-") as temporary:
+            root = Path(temporary)
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=root, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+            git("init", "-q")
+            git("config", "user.name", "Synthetic Test")
+            git("config", "user.email", "test@example.invalid")
+            (root / "source.rs").write_text("baseline")
+            (root / "deleted.rs").write_text("deleted baseline")
+            git("add", ".")
+            git("commit", "-qm", "fixture")
+            head = git("rev-parse", "HEAD")
+            (root / "source.rs").write_text("staged version")
+            git("add", "source.rs")
+            index = (root / ".git/index").read_bytes()
+            (root / "source.rs").write_text("working version")
+            (root / "deleted.rs").unlink()
+            (root / "runtime.env").write_text("untracked fixture configuration")
+            with patch.object(module, "ROOT", root):
+                tree = module.archive_source(root / "dirty.tar", True)
+                self.assertEqual(module.source_tree(True), tree)
+                module.archive_source(root / "head.tar", False)
+            with tarfile.open(root / "dirty.tar") as archive:
+                self.assertEqual(archive.extractfile("source.rs").read(), b"working version")
+                self.assertNotIn("deleted.rs", archive.getnames())
+                self.assertNotIn("runtime.env", archive.getnames())
+            with tarfile.open(root / "head.tar") as archive:
+                self.assertEqual(archive.extractfile("source.rs").read(), b"baseline")
+                self.assertIn("deleted.rs", archive.getnames())
+            self.assertEqual((root / ".git/index").read_bytes(), index)
+            self.assertEqual(git("rev-parse", "HEAD"), head)
+            self.assertEqual(git("diff", "--cached", "--numstat"), "1\t1\tsource.rs")
 
 
 if __name__ == "__main__":
