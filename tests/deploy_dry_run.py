@@ -77,6 +77,20 @@ def combined(proc: subprocess.CompletedProcess) -> str:
 class DeployDryRunTest(unittest.TestCase):
     stage_dir: Path | None = None
 
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Nested deploy self-checks must never contend with the real fleet lock.
+        cls.checkout = tempfile.TemporaryDirectory(prefix="sessiondock-deploy-checkout-")
+        cls.source = Path(cls.checkout.name)
+        shutil.copytree(ROOT / "deploy", cls.source / "deploy",
+                        ignore=shutil.ignore_patterns("*.local.*", "__pycache__"))
+        shutil.copytree(ROOT / "legacy-web", cls.source / "legacy-web",
+                        ignore=shutil.ignore_patterns("node_modules"))
+        for args in (["init", "-q"], ["add", "deploy", "legacy-web"],
+                     ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
+                      "commit", "-qm", "Fixture"]):
+            subprocess.run(["git", *args], cwd=cls.source, check=True, capture_output=True)
+
     def setUp(self) -> None:
         self.root = tempfile.mkdtemp(prefix="sessiondock-deploy-dry-")
         self.prefix = Path(self.root) / "prefix"
@@ -120,6 +134,7 @@ class DeployDryRunTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._drop_stage()
+        cls.checkout.cleanup()
 
     @classmethod
     def _drop_stage(cls) -> None:
@@ -128,15 +143,15 @@ class DeployDryRunTest(unittest.TestCase):
         if stage is None:
             return
         try:
-            stage.resolve().relative_to(STAGE_ROOT.resolve())
+            stage.resolve().relative_to((cls.source / "target" / "deploy").resolve())
         except ValueError:
             return
         shutil.rmtree(stage, ignore_errors=True)
 
     def cli(self, argv: list[str]) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [sys.executable, str(DEPLOY), *argv],
-            cwd=ROOT, capture_output=True, text=True, timeout=CLI_TIMEOUT,
+            [sys.executable, str(self.source / "deploy" / "deploy.py"), *argv],
+            cwd=self.source, capture_output=True, text=True, timeout=CLI_TIMEOUT,
         )
 
     def remember_stage(self, stdout: str) -> Path | None:
@@ -171,7 +186,9 @@ class DeployDryRunTest(unittest.TestCase):
         assert stage is not None
         art = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
         self.assertTrue(art.get("web_only"))
-        self.assertEqual(art.get("commit"), git_head())
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.source,
+                              check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(art.get("commit"), head)
         self.assertTrue((stage / "web" / "index.html").is_file())
         self.assertEqual(art.get("binaries"), {})
         bin_files = [p for p in (stage / "bin").rglob("*") if p.is_file()] if (stage / "bin").is_dir() else []
