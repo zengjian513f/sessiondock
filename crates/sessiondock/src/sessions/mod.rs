@@ -323,22 +323,26 @@ impl Published {
 /// be built on demand. Views are not retained by the pool; a cached one is
 /// borrowed, a miss is streamed and dropped (docs/read-model.md "搜索").
 pub struct SearchPool {
-    pub rows: Vec<Value>,
+    /// Shared with the store's row cache: the same rows serve every search
+    /// over the same published list and registry.
+    pub rows: Arc<Vec<Value>>,
     published: Arc<Published>,
 }
 
-impl Drop for SearchPool {
-    /// A search streamed and dropped up to every session's projection; give
-    /// that heap back once, when the whole scan is over.
-    fn drop(&mut self) {
-        memory::release();
-    }
+/// The candidate rows of the last search pool, reused while the published
+/// list, the registry and the run id are the same (a search that parsed
+/// nothing then allocates no rows).
+struct SearchRows {
+    published: Arc<Published>,
+    runs: Arc<RunIndex>,
+    run_id: String,
+    rows: Arc<Vec<Value>>,
 }
 
 /// The version of one main view's searchable text (`SessionStore::search_version`):
 /// a canonical JSON key that changes exactly when a parse could yield a
 /// different body, plus the data file's `dev:ino` and size for the
-/// search-text cache's append heuristic.
+/// search-text cache's parse budget.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchVersion {
     pub key: Value,
@@ -380,6 +384,7 @@ struct ListState {
     /// Owner uids that vanished from the index since the views were last
     /// touched; applied before the next use of the view cache.
     evictions: Vec<String>,
+    search_rows: Option<SearchRows>,
 }
 
 /// Dependency resolution over one index snapshot: Codex `history_base`
@@ -440,6 +445,7 @@ impl SessionStore {
                 published: None,
                 filtered: None,
                 evictions: Vec::new(),
+                search_rows: None,
             }),
             views: Mutex::new(Views::new()),
         }
@@ -691,14 +697,30 @@ impl SessionStore {
     /// are candidates (the results and `total_pool` alike).
     pub fn search_pool_view(&self, debug_run: &str) -> Result<SearchPool, SessionError> {
         let published = self.publish(false)?;
-        let rows = self
-            .debug_runs()
-            .filter_rows(published.rows().to_vec(), debug_run);
+        let runs = self.debug_runs();
+        if let Some(cached) = &self.list_state()?.search_rows
+            && Arc::ptr_eq(&cached.published, &published)
+            && (Arc::ptr_eq(&cached.runs, &runs) || (cached.runs.is_empty() && runs.is_empty()))
+            && cached.run_id == debug_run
+        {
+            return Ok(SearchPool {
+                rows: cached.rows.clone(),
+                published,
+            });
+        }
+        let rows = runs.filter_rows(published.rows().to_vec(), debug_run);
         let mut document = json!({"sessions": rows});
         strip_row_warnings(&mut document);
         let Value::Array(rows) = document["sessions"].take() else {
             unreachable!("array above");
         };
+        let rows = Arc::new(rows);
+        self.list_state()?.search_rows = Some(SearchRows {
+            published: published.clone(),
+            runs,
+            run_id: debug_run.to_owned(),
+            rows: rows.clone(),
+        });
         Ok(SearchPool { rows, published })
     }
 

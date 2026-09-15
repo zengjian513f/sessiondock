@@ -18,6 +18,14 @@
 //! a regex using escapes, classes, inline flags or anchors can; those read the
 //! body whole.
 //!
+//! Before any body is opened, the query's prefilter (`prefilter`, over the
+//! case-folded copies the cache keeps resident, `fold`) rules out the bodies
+//! that cannot match. Literal and whole-word queries then run the regex
+//! crate's literal search on the original text (`Matcher`), the whole-word
+//! form checking each occurrence's neighbours against the boundary class
+//! `[\p{L}\p{N}_]` instead of driving the backtracking engine across the
+//! text; regex queries run `fancy-regex` as before.
+//!
 //! Wire compatibility: `q`, comma-separated `source`, `limit` (default 60,
 //! optional), and `word/case/regex/progress` enabled by the value 1. Public session views
 //! are the search pool; attached agent transcripts
@@ -28,6 +36,8 @@
 //! boundary construction. The native session text is unchanged by matching.
 
 pub mod cache;
+pub mod fold;
+pub mod prefilter;
 pub mod service;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,6 +54,7 @@ use serde_json::{Value, json};
 
 use crate::sessions::{SessionError, ViewSnapshot};
 pub use cache::Cached;
+pub use prefilter::Prefilter;
 
 const HIT_CAP: usize = 200;
 /// Characters of context around the first hit (40 before,
@@ -109,8 +120,67 @@ pub struct SearchQuery {
     pub debug_run: String,
 }
 
+/// How one body is matched. Every variant finds the same spans as the
+/// `fancy-regex` pattern the query used to compile to (`tests::reference`):
+/// a literal is delegated to the regex crate by `fancy-regex` anyway, and the
+/// whole-word form `(?<![\p{L}\p{N}_])(?:lit)(?![\p{L}\p{N}_])` matches
+/// at `s` exactly when the literal matches at `s` and neither neighbour is
+/// in the class — checked here per occurrence, so the engine never scans
+/// the text between occurrences (its look-behind defeats the literal
+/// prefilter, 3 s of CPU over 19 MB).
+enum Matcher {
+    Literal(PlainRegex),
+    Word(PlainRegex),
+    Regex(Regex),
+}
+
+impl Matcher {
+    /// The leftmost match starting at or after `pos`, as the pattern's
+    /// `find_from_pos` would report it.
+    fn find_at(&self, hay: &str, pos: usize) -> Result<Option<(usize, usize)>, SearchError> {
+        match self {
+            Matcher::Literal(plain) => Ok(plain
+                .find_at(hay, pos)
+                .map(|found| (found.start(), found.end()))),
+            Matcher::Word(plain) => {
+                let mut pos = pos;
+                while let Some(found) = plain.find_at(hay, pos) {
+                    let (start, end) = (found.start(), found.end());
+                    let before = hay[..start]
+                        .chars()
+                        .next_back()
+                        .is_some_and(fold::is_word_char);
+                    let after = hay[end..].chars().next().is_some_and(fold::is_word_char);
+                    if !before && !after {
+                        return Ok(Some((start, end)));
+                    }
+                    // Not a whole word here: the engine would try the next
+                    // character, where only another occurrence can match.
+                    pos = start + hay[start..].chars().next().map_or(1, char::len_utf8);
+                    if pos > hay.len() {
+                        break;
+                    }
+                }
+                Ok(None)
+            }
+            Matcher::Regex(pattern) => pattern
+                .find_from_pos(hay, pos)
+                .map(|found| found.map(|found| (found.start(), found.end())))
+                .map_err(|error| {
+                    SearchError::new(
+                        400,
+                        "invalid_search_regex",
+                        format!("正则匹配失败: {error}"),
+                    )
+                }),
+        }
+    }
+}
+
 pub struct PreparedSearch {
-    pattern: Option<Regex>,
+    matcher: Option<Matcher>,
+    /// Bodies whose folded copy fails this cannot match and are skipped.
+    prefilter: Prefilter,
     /// The pattern cannot match across a newline, so a body can be matched
     /// as line-aligned chunks with exactly the whole-body outcome.
     chunkable: bool,
@@ -122,12 +192,48 @@ pub struct PreparedSearch {
 
 impl PreparedSearch {
     pub fn is_empty(&self) -> bool {
-        self.pattern.is_none()
+        self.matcher.is_none()
     }
 
     pub fn chunkable(&self) -> bool {
         self.chunkable
     }
+
+    pub fn prefilter(&self) -> &Prefilter {
+        &self.prefilter
+    }
+
+    /// Whether a body with this folded copy can match.
+    pub fn admits(&self, folded: &[u8]) -> bool {
+        self.prefilter.admits(folded)
+    }
+}
+
+fn invalid_regex(error: impl std::fmt::Display) -> SearchError {
+    SearchError::new(400, "invalid_search_regex", format!("正则无效: {error}"))
+}
+
+/// The whole-word wrapper around a regex source.
+fn whole_word(source: &str) -> String {
+    format!(r"(?<![\p{{L}}\p{{N}}_])(?:{source})(?![\p{{L}}\p{{N}}_])")
+}
+
+/// The query's `fancy-regex` pattern: a regex query as written (with the
+/// whole-word wrapper), a literal query escaped.
+fn fancy_pattern(q: &str, word: bool, case: bool, regex: bool) -> Result<Regex, SearchError> {
+    let source = if regex {
+        q.to_owned()
+    } else {
+        regex::escape(q)
+    };
+    let source = if word { whole_word(&source) } else { source };
+    RegexBuilder::new(&source)
+        .case_insensitive(!case)
+        .backtrack_limit(usize::MAX)
+        .delegate_size_limit(usize::MAX)
+        .delegate_dfa_size_limit(usize::MAX)
+        .build()
+        .map_err(invalid_regex)
 }
 
 pub fn empty_result() -> Value {
@@ -169,34 +275,33 @@ impl SearchQuery {
             .map(str::to_owned)
             .collect();
         let chunkable = chunkable(&self.q, regex);
-        let pattern = if self.q.trim().is_empty() {
-            None
+        let (matcher, prefilter) = if self.q.trim().is_empty() {
+            (None, Prefilter::none())
+        } else if regex {
+            (
+                Some(Matcher::Regex(fancy_pattern(&self.q, word, case, true)?)),
+                Prefilter::regex(&self.q, !case),
+            )
         } else {
-            let source = if regex {
-                self.q
-            } else {
-                regex::escape(&self.q)
-            };
-            let source = if word {
-                format!(r"(?<![\p{{L}}\p{{N}}_])(?:{source})(?![\p{{L}}\p{{N}}_])")
-            } else {
-                source
-            };
-            Some(
-                RegexBuilder::new(&source)
-                    .case_insensitive(!case)
-                    .backtrack_limit(usize::MAX)
-                    .delegate_size_limit(usize::MAX)
-                    .delegate_dfa_size_limit(usize::MAX)
-                    .build()
-                    .map_err(|error| {
-                        SearchError::new(400, "invalid_search_regex", format!("正则无效: {error}"))
-                    })?,
+            let plain = regex::RegexBuilder::new(&regex::escape(&self.q))
+                .case_insensitive(!case)
+                .size_limit(usize::MAX)
+                .dfa_size_limit(usize::MAX)
+                .build()
+                .map_err(invalid_regex)?;
+            (
+                Some(if word {
+                    Matcher::Word(plain)
+                } else {
+                    Matcher::Literal(plain)
+                }),
+                Prefilter::literal(&self.q),
             )
         };
         Ok(PreparedSearch {
             debug_run: self.debug_run.chars().take(64).collect(),
-            pattern,
+            matcher,
+            prefilter,
             chunkable,
             sources,
             limit,
@@ -377,39 +482,34 @@ impl<'q> Scanner<'q> {
             return Ok(());
         }
         let query = self.query;
-        let Some(pattern) = &query.pattern else {
+        let Some(matcher) = &query.matcher else {
             return Ok(());
         };
         let mut position = 0;
         while position <= chunk.len() {
             check_cancel(cancelled)?;
-            let found = pattern.find_from_pos(chunk, position).map_err(|error| {
-                SearchError::new(
-                    400,
-                    "invalid_search_regex",
-                    format!("正则匹配失败: {error}"),
-                )
-            })?;
-            let Some(found) = found else { break };
-            if found.start() == found.end() && !final_chunk && found.start() == chunk.len() {
+            let Some((start, end)) = matcher.find_at(chunk, position)? else {
+                break;
+            };
+            if start == end && !final_chunk && start == chunk.len() {
                 break;
             }
             self.count += 1;
             if self.snippet.is_none() && self.pending.is_none() {
                 if final_chunk && self.tail.is_empty() {
-                    self.snippet = Some(snippet(chunk, found.start(), found.end()));
+                    self.snippet = Some(snippet(chunk, start, end));
                 } else {
-                    self.start_snippet(chunk, found.start(), found.end());
+                    self.start_snippet(chunk, start, end);
                 }
             }
             if self.count >= HIT_CAP {
                 self.capped = true;
                 break;
             }
-            position = if found.end() > found.start() {
-                found.end()
-            } else if let Some(next) = chunk[found.end()..].chars().next() {
-                found.end() + next.len_utf8()
+            position = if end > start {
+                end
+            } else if let Some(next) = chunk[end..].chars().next() {
+                end + next.len_utf8()
             } else {
                 break;
             };
@@ -496,7 +596,7 @@ pub fn execute(
     workers: usize,
 ) -> Result<Value, SearchError> {
     check_cancel(cancelled)?;
-    if query.pattern.is_none() {
+    if query.matcher.is_none() {
         return Ok(empty_result());
     }
     let pool: Vec<_> = rows
@@ -613,6 +713,26 @@ mod tests {
         }
         .prepare()
         .unwrap()
+    }
+
+    /// The query as it was matched before the literal and whole-word
+    /// matchers: every shape compiled to one `fancy-regex` pattern and
+    /// driven through the same scanner. The reference for equivalence.
+    fn reference(q: &str, word: bool, case: bool, regex: bool) -> PreparedSearch {
+        let mut query = SearchQuery {
+            q: q.into(),
+            word: if word { "1" } else { "0" }.into(),
+            case: if case { "1" } else { "0" }.into(),
+            regex: if regex { "1" } else { "0" }.into(),
+            ..Default::default()
+        }
+        .prepare()
+        .unwrap();
+        if query.matcher.is_some() {
+            query.matcher = Some(Matcher::Regex(fancy_pattern(q, word, case, regex).unwrap()));
+        }
+        query.prefilter = Prefilter::none();
+        query
     }
 
     fn count(q: &str, hay: &str, word: bool, regex: bool) -> usize {
@@ -780,6 +900,118 @@ mod tests {
         );
         assert_eq!(chunked(&query, &hay, 1).unwrap(), whole);
         assert_eq!(chunked(&query, &hay, 2).unwrap(), whole);
+    }
+
+    /// Every query shape over a fixture of case-folding edge cases,
+    /// overlapping occurrences, CJK, ANSI colours and chunk boundaries:
+    /// the new matchers report exactly the hits, cap and snippet of the
+    /// reference pattern, whole and chunked, and the prefilter admits every
+    /// body that has a hit.
+    #[test]
+    fn matchers_equal_the_reference_pattern_and_prefilter_admits_every_hit() {
+        let bodies = [
+            "The ddp_guard hook\nDDP_GUARD again ddp_guardian\n_ddp_guard ddp_guard_",
+            "a#a#a\naa#a\nxa#a#a\n#a#a#",
+            "\u{212A}elvin \u{17F}ession kelvin session KELVIN SESSION",
+            "İstanbul ıstanbul istanbul Istanbul İ ı i I",
+            "Σίσυφος ΣΊΣΥΦΟΣ σίσυφος ς σ Σ",
+            "straße STRASSE Straẞe ß ẞ",
+            "猫 猫猫 _猫 猫\n会话列表 会話列表",
+            "\x1b[31mguard\x1b[0m \x1b[1mGuard\x1b[0m Guard guard",
+            "cat\u{0301} \u{203f}cat _cat cat9 9cat cat catcat CatCAT",
+            "",
+            "\n",
+            "guard",
+            "guard\n",
+            "\nguard",
+            "AgentHub was ported to Rust\nno match here at all",
+        ];
+        let long = format!(
+            "{}\nguard {}\nGUARD{}\n{}",
+            "x".repeat(300),
+            "guard ".repeat(250),
+            "y".repeat(400),
+            "tail guard ddp_guard"
+        );
+        let queries: &[(&str, bool, bool, bool)] = &[
+            ("ddp_guard", false, false, false),
+            ("ddp_guard", false, true, false),
+            ("guard", true, false, false),
+            ("guard", true, true, false),
+            ("Guard", false, false, false),
+            ("Guard", true, true, false),
+            ("a#a", false, false, false),
+            ("a#a", true, false, false),
+            ("#a", true, false, false),
+            ("kelvin", false, false, false),
+            ("\u{212A}elvin", false, false, false),
+            ("session", true, false, false),
+            ("ſession", true, false, false),
+            ("i", false, false, false),
+            ("İ", false, false, false),
+            ("ı", true, false, false),
+            ("σ", false, false, false),
+            ("ς", true, false, false),
+            ("ΣΊΣΥΦΟΣ", true, false, false),
+            ("ß", false, false, false),
+            ("straße", true, false, false),
+            ("ẞ", false, true, false),
+            ("猫", true, false, false),
+            ("会话", false, false, false),
+            ("cat", true, false, false),
+            ("x", false, false, false),
+            ("guard ", false, false, false),
+            (" ", false, false, false),
+            ("agenthub.*rust", false, false, true),
+            ("guard|ddp_?guard", true, false, true),
+            ("a|ab", true, false, true),
+            ("()", true, false, true),
+            ("n.*e", false, false, true),
+            ("(?<!d)guard(?!i)", false, false, true),
+            ("(cat)\\1", false, false, true),
+            ("^guard$", false, false, true),
+            ("\\bguard\\b", false, true, true),
+            ("[σς]", true, false, true),
+        ];
+        let never = AtomicBool::new(false);
+        for (q, word, case, regex) in queries {
+            let new = SearchQuery {
+                q: (*q).into(),
+                word: if *word { "1" } else { "0" }.into(),
+                case: if *case { "1" } else { "0" }.into(),
+                regex: if *regex { "1" } else { "0" }.into(),
+                ..Default::default()
+            }
+            .prepare()
+            .unwrap();
+            let old = reference(q, *word, *case, *regex);
+            let mut hits = 0;
+            for hay in bodies.iter().copied().chain([long.as_str()]) {
+                let expected = matches(&old, hay, &never).unwrap();
+                let got = matches(&new, hay, &never).unwrap();
+                assert_eq!(
+                    got, expected,
+                    "{q:?} word={word} case={case} regex={regex} hay={hay:?}"
+                );
+                if expected.is_some() {
+                    hits += 1;
+                    assert!(
+                        new.admits(&fold::fold(hay)),
+                        "prefilter rejects a hit: {q:?} word={word} case={case} regex={regex} hay={hay:?}"
+                    );
+                }
+                if new.chunkable() {
+                    for lines in 1..=3 {
+                        assert_eq!(
+                            chunked(&new, hay, lines),
+                            chunked(&old, hay, lines),
+                            "{q:?} word={word} case={case} regex={regex} lines={lines} hay={hay:?}"
+                        );
+                    }
+                }
+            }
+            assert!(hits > 0 || *q == " ", "{q:?} never matched the fixture");
+        }
     }
 
     #[test]
