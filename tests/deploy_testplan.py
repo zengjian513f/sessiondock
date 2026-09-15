@@ -23,6 +23,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "deploy"))
@@ -252,6 +253,11 @@ class GateCliTest(unittest.TestCase):
         tp.stream = self.fake
         tp.changed_files = lambda base, dirty: ["legacy-web/app.js", "docs/deployment.md"]
         tp.list_suites = lambda binary: NAMES
+        # This fixture builds HEAD with a stubbed diff/runner. Real workspace
+        # edits must not turn its synthetic clean build into a refusal.
+        clean_build = patch.object(deploy, "dirty_files", return_value=[])
+        clean_build.start()
+        self.addCleanup(clean_build.stop)
         self.stages: list[Path] = []
 
     def tearDown(self) -> None:
