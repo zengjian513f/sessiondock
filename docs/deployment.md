@@ -10,10 +10,11 @@
 
 ```sh
 python3 deploy/deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
+                                  [--test none|affected|full] [--test-base REF] [--test-timeout S]
 python3 deploy/deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
                                   [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                                   [--health-timeout S] [--targets-file PATH] [-v]
-python3 deploy/deploy.py deploy   # build 之后紧接 push，标志相同
+python3 deploy/deploy.py deploy   # build → test → push，标志相同；--test 在这里默认 affected
 python3 deploy/deploy.py rollback --targets X [--backup DIR]
 ```
 
@@ -22,14 +23,18 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   checkout 里别人的未提交前端改动）。`--web-only` 完全不跑 cargo。默认 `--targets-file` 是
   `deploy/targets.local.json`（缺省时退回 `targets.example.json`），其中 `build` 段给出 cargo
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
+  `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
   超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。任一目标不是 OK 就退出 1。
+  `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
+  验证过的（`stage tests: mode=… result=… base=… suites=…`）。
+- `deploy`：build → test → push。`--test` 默认 `affected`；任一套件失败就退出 1，**什么都不上传**。
 - `rollback`：不给 `--backup` 时取目标机上**mtime 最新**的 `backup-deploy-*`（手工备份的时间戳是
   本地时间、本工具是 UTC，按名字排不可靠）。`--backup` 只接受匹配
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
-## 三种产物（`target/deploy/<UTC 时间戳>-<short>/`）
+## 三种产物（`target/deploy/<UTC 时间戳>-<short>/`，同一秒内再建则加 `-2`、`-3` 后缀）
 
 | 产物 | 内容 | 用途 |
 | --- | --- | --- |
@@ -37,8 +42,68 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`） | 所有 kind 的 `web/` |
 | `source.tar` | `git archive --format=tar HEAD` | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建 |
 
-`artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令；`logs/` 放 cargo 日志和
-每台目标的 `<name>.log`；每次 push/rollback 写一份 `report-<stamp>.json`。
+`artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
+（`test_mode`、`test_base`、`test_full`、`test_suites`、`test_result`、`test_log`）；`logs/` 放 cargo 日志、
+测试门的 `tests.log` / `tests.json` / `validation/<suite>.log` 和每台目标的 `<name>.log`；每次 push/rollback
+写一份 `report-<stamp>.json`。
+
+## 测试门（build → test → push）
+
+`deploy/testplan.py`（仅标准库）实现三种模式，`--test` 选择：
+
+| 模式 | 含义 | 跑什么 |
+| --- | --- | --- |
+| `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
+| `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（`*_real` 付费套件与 run_validation 一样默认排除） |
+
+顺序固定为 build → test → push：测试失败先于任何上传，退出 1，并在 stderr 列出失败套件名与各自的日志
+路径（`<stage>/logs/validation/<suite>.log`）。测试输出实时流到控制台（run_validation 自己的进度行）并
+落盘到 `<stage>/logs/tests.log`；整轮超时 `--test-timeout`（默认 2400 s）。跑之前一定先打印计划：
+base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则）、选中的套件（或 `full sweep` 与触发它的
+路径）、额外脚本。
+
+**测试按平台跑，一个平台一次，绝不按节点跑。** Linux：构建机上 push 之前跑一次，覆盖所有 `linux-node`
+和 Hub（它们拿的是同一个二进制）。macOS / Windows 在节点上原生构建，所以同一个模式（记录在 stage 的
+`test_mode` 里，随 `push` 传给处理器的 `DeployOptions.test_mode`）在它们的 `stage()` 里驱动一步原生测试：
+解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> test --workspace --locked`
+（[deploy-macos.md](deploy-macos.md) §2），Windows 在 `build.cmd` 里跑
+`<toolchain_bin>\cargo.exe test -p sessiondock --locked`（`RUSTC`/`RUSTDOC` 指向同一工具链，
+[deploy-windows.md](deploy-windows.md) §2）；失败即该目标 `FAILED`，在换入任何东西之前中止，错误信息带
+节点上的 `.deploy-test.log` 路径和本地的 `<stage>/logs/<name>.log`；`none` 则跳过。Python/浏览器套件只在
+Linux 构建机上跑。
+
+### base commit（`affected` 从哪里开始算"改动"）
+
+1. `--test-base REF` 显式指定；
+2. 否则取所选目标 `etc/deployed-commit` 标记里的 commit（`deploy` 在测试前对每台目标做一次只读 probe）。
+   多台不一致时取**最旧**的那个（`git rev-list --count <sha>..HEAD` 最大，即 diff 最大）；
+3. 没有任何目标给出标记（或 `build` 单独运行——它没有目标可 probe）时退回 `origin/main`，没有 `origin/main`
+   再退回 `HEAD~1`。
+
+### 映射表（`deploy/testplan.py` 的 `RULES` / `MODULE_SUITES`）
+
+规则只写"路径前缀 → 套件名模式"；套件名**从不硬编码**，每个模式在运行时对 `run_validation.py --list`
+的输出做 fnmatch，取所有改动文件结果的并集。带 `/` 的条目是不在扫描里的脚本，直接 `python3` 跑（若它的
+stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本仍照跑）。按顺序首个命中的规则生效；没有规则
+命中 → 全量。
+
+| 改动路径 | 选中 |
+| --- | --- |
+| `.gitignore`、`.gitattributes`、`.editorconfig` | 不测（不影响产物） |
+| `docs/**`、任何 `*.md` | 只跑文档检查：`tests/check_docs_links.py`、`tests/check_agents_md.py` |
+| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道，`cargo_test` 就是 workspace）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
+| `crates/sessiondock/src/<module>/**`、`src/<module>.rs` | `cargo_*` + 模块别名：`sessions` → `history_*`、`sessions_*`、`messages_*`、`native_*`、`*_parity`、`codex_*`、`claude_*`、`grok_*`、`agent_*`、`orphan_*`、`continued_*`、`fork_*`、`list_rows_*`、`input_history_*`、`inventory_*`、`debug_runs_*`、`symlink_*`、`unicode_*`、`names_*`、`budget_*`、`reader_pool_*`、`sse_*`、`rewind_*`；`terminal` → `terminal_*`、`term_*`、`managed_*`、`session_stop_*`、`grok_raw_send_*`；`lifecycle` → `lifecycle_*`、`send_*`、`outbox*`、`pending_*`、`restart_state_*`、`live_*`、`session_stop_*`；`hub`/`hub_config`/`bin` → `hub_*`（`hub` 另加 `node_auth_*`）；`search` → `search_*`；`media` → `media_*`、`native_*`；`files` → `file*`；`delivery` → `delivery_*`、`send_*`、`outbox*`；`bug_report` → `bug_report_*`；`audit` → `audit_*`；`metadata` → `metadata_*`、`prefs_*`；`trash` → `trash_*`；`runtime` → `live_*`、`spawned_by_*`、`managed_*`、`restart_state_*`、`lifecycle_*`；`bridge` → `claude_prompt_*`、`prompt_*`、`live_*`；`native_replay` → `native_*`；`assets` → `static_assets_*`、`meta_*`、`prefs_*`。表里没有的模块用 `<module>*`，一个都匹配不上就全量 |
+| `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
+| `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
+| `crates/sessiondock/tests/**`（其它） | `cargo_*` |
+| `legacy-web/**` | `node_contracts` + 所有 `*_browser*` + `brand_names_check` |
+| `deploy/**` | `deploy_*`（`deploy_native_handlers`、`deploy_testplan`）+ 脚本 `tests/deploy_dry_run.py` |
+| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → `node_contracts`；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py`、`deploy_dry_run.py` 改自己就跑自己 |
+| `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`web/**`、`reference/**` …） | 全量 |
+
+离线回归：`tests/deploy_testplan.py`（映射、base 规则、三种模式的 CLI 行为，runner 被替身替换）；
+`tests/deploy_native_handlers.py` 钉住 macOS / Windows 处理器里原生测试一步的命令序列。
 
 ## 每台目标的步骤与不变量
 
@@ -74,7 +139,8 @@ kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
 - probe：一次 ssh 往返跑一段 POSIX 脚本（远程统一用 `sh -c` 包住，登录 shell 是 zsh 也不会因为通配
   失配而中断），输出 `key=value`：`is-active`、`/api/meta`、每个二进制的 `sha256sum`、`pgrep -x ptyhost`、
   `ls host | wc -l`、`etc/deployed-commit`、web 内容摘要。
-- stage：二进制 → `bin/<name>.new`（上传后再校验哈希）；web → `<prefix>/web.staging/`。
+- stage：二进制 → `bin/<name>.new`（上传后再校验哈希）；web → `<prefix>/web.staging/`。Linux 节点与 Hub
+  不在节点上跑测试：它们拿到的二进制已经在构建机上按 stage 的 `test_mode` 验证过。
 - swap：`mv -f bin/<name>.new bin/<name>`；在目标机上 `rsync -a --delete web.staging/ web/` 后删掉 staging。
 - restart：`systemctl --user restart <unit>`；节点单元是 `KillMode=process`，分离的 ptyhost 不受影响。
 - 备份始终同时拷 `bin/` 里声明的二进制和整个 `web/`；rollback 用同一条 `.new` + `mv` 路径恢复二进制、

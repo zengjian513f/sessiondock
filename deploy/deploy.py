@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""SessionDock fleet deployment: build once on this machine, push to every target, roll back.
+"""SessionDock fleet deployment: build once on this machine, test, push to every target, roll back.
 
     deploy.py build    [--allow-dirty] [--web-from-head] [--with-ptyhost] [--web-only]
+                       [--test none|affected|full] [--test-base REF] [--test-timeout S]
     deploy.py push     [--targets a,b | --all] [--stage DIR] [--web-only | --bin-only]
                        [--with-ptyhost] [--dry-run] [--parallel N] [--keep-backups N]
                        [--health-timeout S] [--targets-file PATH] [-v]
-    deploy.py deploy   (build, then push, with the same flags)
+    deploy.py deploy   (build, then test, then push, with the same flags; --test defaults
+                        to `affected` here and to `none` for a bare build)
     deploy.py rollback --targets X [--backup DIR] [--targets-file PATH]
 
 Targets come from deploy/targets.local.json (gitignored, the real fleet);
@@ -13,6 +15,14 @@ deploy/targets.example.json shows the shape with placeholders. Per-kind steps li
 in deploy/sdtargets/<kind>.py; the shared contract and the invariants every handler
 keeps are documented in deploy/sdtargets/base.py. Fleet status is a separate
 read-only tool (deploy/fleet_status.py).
+
+Test gate (deploy/testplan.py): `--test none` ships untested, `affected` maps the files
+changed since the targets' oldest `etc/deployed-commit` (or --test-base) to validation
+suites, `full` runs the whole sweep. A failing suite stops before anything is uploaded
+(exit 1, failing suite names and log paths printed). The stage records the mode and
+result in artifacts.json; `push` prints them and never tests on this machine, while
+macOS/Windows nodes that build natively run the Rust tests in their own stage() when
+the recorded mode is not `none`. Tests are per platform, once each, never per node.
 
 Per target: probe -> plan -> stage -> backup -> swap -> restart -> verify ->
 write_marker -> prune_backups. Any failure after a successful backup rolls that
@@ -39,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sdtargets import Artifacts, DeployOptions, ProbeResult, Target, handler_for, load_targets  # noqa: E402
 from sdtargets.base import ShellError  # noqa: E402
+import testplan  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
@@ -172,6 +183,10 @@ def cmd_build(args) -> Path:
     commit, short = git("rev-parse", "HEAD"), git("rev-parse", "--short", "HEAD")
     started = utc_now()
     stage = STAGE_ROOT / f"{stamp_of(started)}-{short}"
+    for n in range(2, 100):   # never reuse a stage another build made in the same second
+        if not stage.exists():
+            break
+        stage = STAGE_ROOT / f"{stamp_of(started)}-{short}-{n}"
     for sub in ("bin", "web", "logs"):
         (stage / sub).mkdir(parents=True, exist_ok=True)
     print(f"stage {stage}")
@@ -261,6 +276,15 @@ def load_stage(path: Path) -> Artifacts:
                      sha256=dict(doc["sha256"]),
                      source_archive=path / doc["source_archive"] if doc.get("source_archive") else None,
                      web_only=bool(doc.get("web_only")))
+
+
+def stage_test_info(stage: Path) -> dict:
+    """test_* fields of artifacts.json ({} for a stage built before the test gate existed)."""
+    try:
+        doc = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in doc.items() if k.startswith("test_")}
 
 
 def placeholder_artifacts(stage: Path | None) -> Artifacts:
@@ -494,6 +518,57 @@ def run_all(rows_fn, targets: list[Target], parallel: int) -> list[dict]:
     return rows
 
 
+# -- test gate (build -> TEST -> push) -----------------------------------------------------
+def probe_markers(targets: list[Target], stage: Path, args) -> dict[str, str | None]:
+    """One read-only probe per enabled target: its etc/deployed-commit, for the test base."""
+    art, opts = load_stage(stage), DeployOptions(log_dir=stage / "logs")
+
+    def one(t: Target) -> tuple[str, str | None]:
+        log = Log(opts.log_dir / f"{t.name}.log", t.name, args.verbose)
+        try:
+            r = handler_for(t.kind)(t, art, opts, log).probe()
+            log(f"test-base probe: reachable={r.reachable} marker={r.deployed_commit!r}")
+            return t.name, r.deployed_commit if r.reachable else None
+        except Exception as e:  # unreachable / unsupported kinds simply contribute no marker
+            log(f"test-base probe failed: {type(e).__name__}: {e}")
+            return t.name, None
+        finally:
+            log.close()
+
+    with ThreadPoolExecutor(max_workers=max(1, getattr(args, "parallel", 4))) as pool:
+        return dict(pool.map(one, [t for t in targets if t.enabled]))
+
+
+def run_test_gate(args, stage: Path, targets: list[Target] | None) -> None:
+    """Run the suites the change needs against the stage; exit 1 before any upload on failure."""
+    binary = str(stage / "bin" / "sessiondock") if (stage / "bin" / "sessiondock").is_file() \
+        else "target/release/sessiondock"
+    base = how = None
+    changed: list[str] = []
+    names: list[str] = []
+    if args.test == "affected":
+        try:
+            base, how = testplan.resolve_base(args.test_base, probe_markers(targets, stage, args) if targets else {})
+        except ValueError as e:
+            die(str(e))
+        changed, names = testplan.changed_files(base, args.allow_dirty), testplan.list_suites(binary)
+    plan = testplan.plan_for(args.test, changed, names)
+    testplan.print_plan(plan, base, how or "")
+    res = testplan.run(plan, binary, stage, args.test_timeout)
+    doc = json.loads((stage / "artifacts.json").read_text(encoding="utf-8"))
+    doc.update({"test_mode": args.test, "test_base": base, "test_full": plan["full"],
+                "test_suites": plan["suites"] + plan["scripts"], "test_result": res["result"],
+                "test_log": res["log"] if res["result"] != "skipped" else None})
+    (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    print(f"tests: {res['result']} (mode {args.test}" + (f", log {res['log']})" if res["result"] != "skipped" else ")"),
+          flush=True)
+    if res["result"] not in ("passed", "skipped"):
+        print("failing suites (nothing was uploaded):", file=sys.stderr)
+        for name, log in res["failed"]:
+            print(f"  {name}  {log}", file=sys.stderr)
+        sys.exit(1)
+
+
 # -- commands --------------------------------------------------------------------------------
 def cmd_push(args, stage: Path | None = None) -> int:
     if args.web_only and args.bin_only:
@@ -511,9 +586,17 @@ def cmd_push(args, stage: Path | None = None) -> int:
     except (OSError, ValueError, TypeError, KeyError) as e:
         die(f"cannot load {targets_file(args)}: {e}")
     chosen = select_targets(args, targets)
+    info = stage_test_info(stage)
+    if info:
+        print(f"stage tests: mode={info.get('test_mode')} result={info.get('test_result')} "
+              f"base={(info.get('test_base') or '-')[:12]} "
+              f"suites={'full sweep' if info.get('test_full') else len(info.get('test_suites') or [])}")
+    else:
+        print("stage tests: unknown (stage predates the test gate)")
     opts = DeployOptions(dry_run=args.dry_run, web_only=args.web_only, bin_only=args.bin_only,
                          with_ptyhost=args.with_ptyhost, keep_backups=args.keep_backups,
-                         health_timeout=args.health_timeout, log_dir=stage / "logs")
+                         health_timeout=args.health_timeout, log_dir=stage / "logs",
+                         test_mode=info.get("test_mode") or "none")
     print(f"{'DRY RUN: ' if args.dry_run else ''}push {art.short} ({'web only' if args.web_only else 'bin only' if args.bin_only else 'bin+web'}"
           f"{', +ptyhost' if args.with_ptyhost else ''}) from {stage} to {[t.name for t in chosen]} "
           f"(targets {targets_file(args)}, parallel {args.parallel})")
@@ -531,7 +614,15 @@ def cmd_push(args, stage: Path | None = None) -> int:
 
 
 def cmd_deploy(args) -> int:
-    return cmd_push(args, cmd_build(args))
+    """build -> test -> push; the targets are loaded first so the test base can use their markers."""
+    try:
+        targets = load_targets(targets_file(args))
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        die(f"cannot load {targets_file(args)}: {e}")
+    chosen = select_targets(args, targets)
+    stage = cmd_build(args)
+    run_test_gate(args, stage, chosen)
+    return cmd_push(args, stage)
 
 
 def cmd_rollback(args) -> int:
@@ -566,6 +657,17 @@ def main(argv: list[str] | None = None) -> int:
     build_flags.add_argument("--web-from-head", action="store_true",
                              help="with --allow-dirty: still snapshot legacy-web/ from HEAD, not the working tree")
     build_flags.add_argument("--build-timeout", type=float, default=3600, help="seconds for cargo build")
+
+    def test_flags(default: str) -> argparse.ArgumentParser:   # a fresh parent per command: its own default
+        tf = argparse.ArgumentParser(add_help=False)
+        tf.add_argument("--test", choices=testplan.MODES, default=default,
+                        help="1 none: ship untested; 2 affected: suites mapped from the files changed since the "
+                             f"targets' deployed commit; 3 full: the whole sweep (default here: {default})")
+        tf.add_argument("--test-base", metavar="REF",
+                        help="diff base for --test affected (default: oldest etc/deployed-commit of the targets, "
+                             "else origin/main, else HEAD~1)")
+        tf.add_argument("--test-timeout", type=float, default=2400, help="seconds for the whole test run")
+        return tf
     ship_flags = argparse.ArgumentParser(add_help=False)
     ship_flags.add_argument("--with-ptyhost", action="store_true", help="also build/ship the ptyhost binary")
     ship_flags.add_argument("--web-only", action="store_true", help="no cargo build / no binary steps")
@@ -579,11 +681,13 @@ def main(argv: list[str] | None = None) -> int:
     push_flags.add_argument("--keep-backups", type=int, default=5, help="0 = never prune")
     push_flags.add_argument("--health-timeout", type=float, default=45.0)
 
-    p = sub.add_parser("build", parents=[common, build_flags, ship_flags], help="build binaries + web snapshot into target/deploy/<stamp>-<short>/")
-    p.set_defaults(func=lambda a: (cmd_build(a), 0)[1])
-    p = sub.add_parser("push", parents=[common, ship_flags, push_flags], help="deploy a stage to targets")
+    p = sub.add_parser("build", parents=[common, build_flags, test_flags("none"), ship_flags],
+                       help="build binaries + web snapshot into target/deploy/<stamp>-<short>/, then --test (default none)")
+    p.set_defaults(func=lambda a: (run_test_gate(a, cmd_build(a), None), 0)[1])
+    p = sub.add_parser("push", parents=[common, ship_flags, push_flags], help="deploy a stage to targets (never tests here)")
     p.set_defaults(func=cmd_push)
-    p = sub.add_parser("deploy", parents=[common, build_flags, ship_flags, push_flags], help="build, then push")
+    p = sub.add_parser("deploy", parents=[common, build_flags, test_flags("affected"), ship_flags, push_flags],
+                       help="build, then --test (default affected), then push")
     p.set_defaults(func=cmd_deploy)
     p = sub.add_parser("rollback", parents=[common], help="restore bin/ and web/ from a backup-deploy-* dir")
     p.add_argument("--targets", required=True, help="comma-separated target names")

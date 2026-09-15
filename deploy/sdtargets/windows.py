@@ -8,7 +8,9 @@ Multi-step work is uploaded as ASCII `.cmd` files rendered from `deploy/windows/
 only a script yields real exit codes); uploads use scp because rsync is unavailable.
 
 `stage()` uploads a zip of the commit, extracts it into `extra["source_dir"]` (keeping
-`target\`), builds with the toolchain's REAL `cargo.exe` (`extra["toolchain_bin"]`; the
+`target\`), runs `cargo.exe test -p sessiondock --locked` there when the stage's test
+mode is not `none` (section 2; `TEST_FAILED` stops the target before anything is staged),
+builds with the toolchain's REAL `cargo.exe` (`extra["toolchain_bin"]`; the
 rustup shims are reparse points an elevated SSH cannot run), stages `bin\<name>.new.exe`
 and `web.staging\`. `swap()` runs ONE script mirroring `restart-session1.cmd` with the
 swap inserted after the stop phase (the running exe is locked; ptyhost.exe hosts are never
@@ -38,6 +40,7 @@ from .base import (SSH_BASE_OPTS, ProbeResult, Shell, ShellError, TargetHandler,
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "windows"
 BUILD_TIMEOUT = 960.0
+TEST_TIMEOUT = 1800.0     # added to BUILD_TIMEOUT for build.cmd when the test phase is on
 SWAP_TIMEOUT = 240.0
 WEB_STAGING = "web.staging"
 
@@ -158,6 +161,14 @@ class WindowsNode(TargetHandler):
         if self.o.with_ptyhost and "ptyhost" not in names:
             names.append("ptyhost")
         return names
+
+    @property
+    def run_tests(self) -> bool:
+        return self.ship_bin and getattr(self.o, "test_mode", "none") != "none"
+
+    @property
+    def build_timeout(self) -> float:
+        return BUILD_TIMEOUT + (TEST_TIMEOUT if self.run_tests else 0.0)
 
     # -- remote helpers -----------------------------------------------------------
     def _tasklist(self, image: str) -> list[int]:
@@ -287,7 +298,7 @@ class WindowsNode(TargetHandler):
             out["build.cmd"] = render("build.cmd", {
                 "SD": p, "SRC": self.source_dir, "TC": self.toolchain_bin,
                 "ZIP": f"{self.deploy_dir}\\source-{self.a.short}.zip", "BINS": bins,
-                "PKGS": " ".join(f"-p {n}" for n in self.bins)})
+                "PKGS": " ".join(f"-p {n}" for n in self.bins), "TEST": "1" if self.run_tests else "0"})
         out["backup.cmd"] = render("backup.cmd", {"SD": p, "BACKUP": self.backup_dir or
                                                   f"{p}\\backup-deploy-{self.a.short}-<UTC stamp>", "BINS": bins})
         out["swap-restart.cmd"] = render("swap-restart.cmd", {
@@ -299,8 +310,10 @@ class WindowsNode(TargetHandler):
         p, d = self.prefix, self.deploy_dir
         steps: list[str] = []
         if self.ship_bin:
+            test = (f"cargo.exe test -p sessiondock --locked ({self.o.test_mode}; TEST_FAILED = FAILED before staging), "
+                    if self.run_tests else "tests skipped (mode none), ")
             steps += [f"scp <source zip of {self.a.short}> -> {d}\\source-{self.a.short}.zip",
-                      f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(BUILD_TIMEOUT)}s): extract, "
+                      f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(self.build_timeout)}s): extract, {test}"
                       f"real cargo.exe build --release --locked, MTIME check, copy -> bin\\<name>.new.exe, certutil"]
         if self.ship_web:
             steps.append(f"scp web.zip -> {d}\\web.zip ; Expand-Archive -> {p}\\{WEB_STAGING}\\ "
@@ -323,7 +336,9 @@ class WindowsNode(TargetHandler):
         if self.ship_bin:
             remote = self._upload_script("build.cmd", scripts["build.cmd"])   # also creates .deploy\
             self.sh.scp_upload(self._source_zip(), f"{self.deploy_dir}\\source-{self.a.short}.zip", timeout=600)
-            out = self._run_script(remote, "BUILD_OK", BUILD_TIMEOUT)
+            out = self._run_script(remote, "BUILD_OK", self.build_timeout)
+            if self.run_tests and "TEST_OK" not in out:
+                raise RuntimeError(f"build.cmd printed no TEST_OK although the test phase was on\n{out[-1500:]}")
             mt: dict[tuple[str, str], str] = {}
             for line in out.splitlines():
                 tok = line.split()

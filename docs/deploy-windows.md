@@ -93,7 +93,11 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   出现非 ASCII 字节会让 `cd /d` 失效）上传到 `<SD_SOURCE>\.deploy\` 后执行。没有 rsync，上传用 scp。
 - stage：提交的 zip（由 `source.tar` 在构建机上转换）上传后 `Expand-Archive -Force` 到 `<SD_SOURCE>`
   （保留 `target\`），`build.cmd` 用工具链目录里**真实的** `cargo.exe` 并把 `RUSTC`/`RUSTDOC` 指向同一
-  工具链（`.cargo\bin` 下的 rustup shim 是 reparse point，提权的 SSH 进程执行会报 448）；除退出码外
+  工具链（`.cargo\bin` 下的 rustup shim 是 reparse point，提权的 SSH 进程执行会报 448）；stage 的测试
+  模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）不是 `none` 时
+  `build.cmd` 渲染 `TEST=1`，在解压之后、构建之前按第 2 节跑 `cargo.exe test -p sessiondock --locked`
+  （`TEST_FAILED` → 退出码 18，该目标 `FAILED`，什么都没暂存；日志 `<SD_SOURCE>\.deploy-test.log`），
+  处理器还要求输出里有 `TEST_OK`；除退出码外
   还比较 `target\release\sessiondock.exe` 构建前后的 mtime，编译过但文件没更新即失败；产物
   `copy /y` 成 `bin\sessiondock.new.exe`，`certutil -hashfile … SHA256` 作为期望值；web 快照 zip
   解到 `web.staging\`。

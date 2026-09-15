@@ -1,8 +1,10 @@
 @echo off
 rem Template rendered by deploy/sdtargets/windows.py (ASCII only, CRLF on upload).
-rem Extract the source zip into the build directory keeping target, build with the
-rem toolchain's real cargo.exe (the rustup shims in .cargo\bin are reparse points that an
-rem elevated SSH session cannot execute) and stage the fresh binaries as NAME.new.exe.
+rem Extract the source zip into the build directory keeping target, run the Rust tests
+rem when TEST=1 (docs/deploy-windows.md section 2; a failure stops before anything is
+rem staged), build with the toolchain's real cargo.exe (the rustup shims in .cargo\bin are
+rem reparse points that an elevated SSH session cannot execute) and stage the fresh
+rem binaries as NAME.new.exe.
 rem Each line is parsed on its own, so ERRORLEVEL is the real exit code of the previous line.
 chcp 437 >nul 2>&1
 setlocal EnableExtensions
@@ -10,6 +12,7 @@ set "SD=@SD@"
 set "SRC=@SRC@"
 set "TC=@TC@"
 set "ZIP=@ZIP@"
+set "TEST=@TEST@"
 set "PATH=%TC%;%PATH%"
 set "RUSTC=%TC%\rustc.exe"
 set "RUSTDOC=%TC%\rustdoc.exe"
@@ -28,8 +31,17 @@ echo ===TOOLCHAIN===
 if errorlevel 1 ( echo CARGO_BROKEN & exit /b 14 )
 "%RUSTC%" --version
 if errorlevel 1 ( echo RUSTC_BROKEN & exit /b 15 )
-echo ===BUILD===
+echo ===TEST===
 cd /d "%SRC%"
+if not "%TEST%"=="1" ( echo TEST_SKIPPED & goto build )
+"%TC%\cargo.exe" test -p sessiondock --locked > "%SRC%\.deploy-test.log" 2>&1
+set "RC=%ERRORLEVEL%"
+powershell -NoProfile -Command "Get-Content -LiteralPath '%SRC%\.deploy-test.log' -Tail 40"
+if not "%RC%"=="0" ( echo TEST_FAILED rc=%RC% log=%SRC%\.deploy-test.log & exit /b 18 )
+del /q "%SRC%\.deploy-test.log" >nul 2>&1
+echo TEST_OK
+:build
+echo ===BUILD===
 for %%N in (@BINS@) do call :mtime %%N BEFORE
 "%TC%\cargo.exe" build --release --locked @PKGS@ > "%SRC%\.deploy-build.log" 2>&1
 set "RC=%ERRORLEVEL%"
