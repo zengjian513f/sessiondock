@@ -1616,6 +1616,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 
 .empty { color: var(--muted); padding: 60px 20px; text-align: center; }
+.new-session-wait:empty { display: none; }
 
 /* ---------- 终端 (嵌在会话详情底部) ---------- */
 .hidden { display: none !important; }

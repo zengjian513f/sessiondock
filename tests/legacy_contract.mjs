@@ -254,16 +254,16 @@ test('binding appearance does not upgrade the remembered pending target', () => 
   assert.equal(native.record_id,undefined);
 });
 
-test('cross-kind open is rejected before changing persisted layout or rendered pane', async () => {
-  const errors=new Map();
+test('opening the native console releases a pending console of the same host instead of refusing', async () => {
+  const calls=[];
   const T={uid:'codex:native',views:new Map([['pane',{bindingUid:'tmux:pane'}]])};
-  const context=contextWithCapabilities(disabled,{T,ConsoleUI:{errors},renderTakeoverBtn:()=>{},
-    $:()=>assert.fail('A rejected open must not mutate the pane'),
-    rememberTermOpen:()=>assert.fail('A rejected open must not change layout')});
+  const context=contextWithCapabilities(disabled,{T,
+    rememberTermOpen:(name,open)=>calls.push(['remember',name,open]),
+    disposeTermView:name=>{calls.push(['dispose',name]); throw new Error('stop after release');}});
   loadFunction(context,'termBindingServes',read('term.js'));
   const open=loadFunction(context,'openTermPane',read('term.js'));
-  assert.equal(await open('pane'),false);
-  assert.match(errors.get('codex:native'),/先.*释放/);
+  await assert.rejects(open('pane'),/stop after release/);
+  assert.deepEqual(calls,[['remember','pane',false],['dispose','pane']]);
 });
 
 test('Rust terminal lookup follows a Codex rollback branch to the pane bound to its ancestor', () => {
@@ -298,18 +298,30 @@ test('Rust terminal lookup follows a Codex rollback branch to the pane bound to 
   assert.equal(linked('codex:b'), null);
 });
 
-test('operator binding explanation separates native association from delivery and exit', () => {
-  const context=contextWithCapabilities(disabled);
-  const message=loadFunction(context,'pendingBindingMessage',read('term.js'));
-  assert.match(message({binding:{state:'confirmed',uid:'codex:full'}}),/操作者.*codex:full/);
-  assert.match(message({binding:{state:'confirmed',uid:'codex:full'}}),/不是可靠发送确认/);
-  assert.match(message({binding:{state:'uncertain',uid:'codex:full'}}),/尚未确认/);
-  assert.equal(message({unavailable_reason:'取消仍未确认退出',binding:{state:'confirmed',uid:'codex:full'}}),'取消仍未确认退出');
-  // A process-evidence binding is named as such, still not delivery.
-  const process = message({binding:{state:'confirmed',method:'process',uid:'codex:full'}});
-  assert.match(process, /进程证据.*codex:full/);
-  assert.match(process, /不是可靠发送确认/);
-  assert.match(message({}), /进程证据自动关联/);
+test('the pending stage speaks in user terms and stays silent while nothing is wrong', () => {
+  const context=contextWithCapabilities(disabled, {workerStatusMessage: () => '', pendingFirstInput: new Map(),
+    PENDING_RECORD_GRACE_MS: 60_000});
+  const source=read('term.js');
+  context.pendingRecordMissing=loadFunction(context,'pendingRecordMissing',source);
+  const message=loadFunction(context,'pendingStageMessage',source);
+  assert.equal(message({state:'running',running:true}), '');
+  assert.equal(message({state:'running',running:true,declared_sid:'abc'}), '');
+  assert.equal(message({state:'starting'}), '正在启动…');
+  assert.equal(message({state:'exited'}), '会话已结束。');
+  assert.equal(message({state:'failed'}), '启动失败。');
+  assert.equal(message({state:'running',running:false}), '正在停止…');
+  assert.equal(message({state:'uncertain'}), '暂时无法确认会话状态。');
+  assert.equal(message({state:'running',running:true,binding:{state:'confirmed',method:'process',uid:'codex:full'}}), '正在打开会话…');
+  // No uid, method or evidence ever reaches the page text.
+  for (const info of [{state:'running',running:true,binding:{state:'uncertain',uid:'codex:full'}}])
+    assert.doesNotMatch(message(info), /codex:full|证据|操作者/);
+  // The missing-record line needs a message sent from this page a minute ago.
+  context.pendingFirstInput.set('pane', Date.now() - 61_000);
+  assert.equal(message({name:'pane',source:'codex',state:'running',running:true}),
+    '会话在运行，但还没找到它的记录，终端可以继续用。');
+  assert.equal(message({name:'pane',source:'shell',state:'running',running:true}), '');
+  context.pendingFirstInput.set('pane', Date.now());
+  assert.equal(message({name:'pane',source:'codex',state:'running',running:true}), '');
 });
 
 test('bug-report worker rows surface the manifest status and pending rows name their state', () => {
@@ -323,13 +335,12 @@ test('bug-report worker rows surface the manifest status and pending rows name t
   assert.equal(worker({kind:'bug-report',worker_status:'submitted'}),'提示词已提交');
   assert.equal(worker({worker_status:'failed'}),'');
   context.workerStatusMessage=worker;
-  const message=loadFunction(context,'pendingBindingMessage',source);
-  assert.match(message({kind:'bug-report',worker_status:'failed',worker_error:'未注入',declared_sid:'abc'}),/提示词注入失败：未注入/);
+  const message=loadFunction(context,'pendingStageMessage',source);
+  assert.equal(message({kind:'bug-report',worker_status:'failed',worker_error:'未注入',declared_sid:'abc'}),'提示词注入失败：未注入');
   const label=loadFunction(context,'pendingStateLabel',source);
   assert.equal(label({record_id:'r',state:'exited'}),'实例已退出');
   assert.equal(label({record_id:'r',state:'running'}),'等待首条消息');
   assert.equal(label({record_id:'r',state:'running',kind:'bug-report',worker_status:'injecting'}),'正在注入缺陷报告提示词');
-  assert.match(source, /info\.state === 'uncertain'[\s\S]*?`状态不确定 · \$\{info\.title/);
 });
 
 test('a stale Rust terminal view cannot reconnect to a replacement instance', async () => {
@@ -748,15 +759,6 @@ test('file resolution is gated and Python console availability remains unchanged
   assert.equal(compatible.slice(compatible.indexOf(start)), baseline.slice(baseline.indexOf(start)));
 });
 
-test('pending session header actions use icons when promoted from the overflow menu', () => {
-  const term = read('term.js');
-  const index = read('index.html');
-  assert.match(term, /id="a-native-bind" title="关联原生会话"\s+aria-label="关联原生会话">\$\{uiIcon\('link'\)\}<\/button>/);
-  assert.match(term, /id="a-pending-release" title="释放本页控制台"\s+aria-label="释放本页控制台">\$\{uiIcon\('log-out'\)\}<\/button>/);
-  assert.match(index, /<symbol id="i-link"/);
-  assert.match(index, /<symbol id="i-log-out"/);
-});
-
 function migrationContext(extra = {}, capabilities = disabled) {
   const context = contextWithCapabilities(capabilities, {
     S: {sel: 'codex:fixture', agent: null, cursors: new Map()},
@@ -1135,13 +1137,13 @@ test('timeline pins are capability gated and never claim a native rewind', () =>
 
 
 test('SSH terminal receipts show terminal state without native binding messages', () => {
-  const context = contextWithCapabilities({...disabled, terminal: true});
+  const context = contextWithCapabilities({...disabled, terminal: true}, {workerStatusMessage: () => '',
+    pendingRecordMissing: () => false});
   const source = read('term.js');
   const label = loadFunction(context, 'pendingStateLabel', source);
-  const message = loadFunction(context, 'pendingBindingMessage', source);
+  const message = loadFunction(context, 'pendingStageMessage', source);
   assert.equal(label({source: 'shell', record_id: 'r', state: 'running'}), '交互式终端');
   assert.equal(label({source: 'shell', record_id: 'r', state: 'exited'}), '实例已退出');
-  assert.equal(message({source: 'shell', running: true}), 'SSH 终端已就绪，可直接输入命令。');
-  assert.equal(message({source: 'shell', running: false}), 'SSH 终端已退出。');
-  assert.equal(message({source: 'shell', unavailable_reason: '连接中断'}), '连接中断');
+  assert.equal(message({source: 'shell', state: 'running', running: true}), '');
+  assert.equal(message({source: 'shell', state: 'exited', running: false}), '会话已结束。');
 });
