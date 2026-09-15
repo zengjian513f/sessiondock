@@ -82,6 +82,9 @@ pub(super) struct Disk {
     directory_handle: File,
     #[cfg(test)]
     pub(super) failpoint: std::sync::atomic::AtomicU8,
+    /// Ledger reads so far; tests pin how many a batch operation needs.
+    #[cfg(test)]
+    pub(super) reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Disk {
@@ -113,11 +116,15 @@ impl Disk {
             directory_identity,
             #[cfg(test)]
             failpoint: std::sync::atomic::AtomicU8::new(0),
+            #[cfg(test)]
+            reads: std::sync::atomic::AtomicUsize::new(0),
         };
         Ok(disk)
     }
 
     pub(super) fn read(&self) -> Result<Option<Vec<u8>>, Error> {
+        #[cfg(test)]
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = self.directory.join(LEDGER_FILENAME);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),

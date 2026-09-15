@@ -483,7 +483,33 @@ impl LifecycleStore {
         self.observe(ObservationEvidence::new(&authority.record, observation))
     }
     pub fn observe(&mut self, evidence: ObservationEvidence) -> Result<Record, Error> {
-        let record = self.get(&evidence.record_id)?;
+        self.check()?;
+        self.observe_loaded(evidence)
+    }
+    /// `observe` then `observe_binding` for several receipts after ONE ledger
+    /// reload. The per-call reload exists so an external edit is seen by the
+    /// next request; a list refresh is one request, so reloading before every
+    /// receipt only multiplied disk reads by the ledger size (73 receipts made
+    /// `term/list` re-read and re-parse the file ~220 times).
+    pub fn refresh_many(
+        &mut self,
+        items: Vec<(usize, ObservationEvidence, BindingObservation)>,
+    ) -> Result<Vec<(usize, Record)>, Error> {
+        self.check()?;
+        let mut out = Vec::with_capacity(items.len());
+        for (slot, evidence, binding) in items {
+            let record = self.observe_loaded(evidence)?;
+            let record = self.observe_binding_loaded(BindingEvidence::new(&record, binding))?;
+            out.push((slot, record));
+        }
+        Ok(out)
+    }
+    #[cfg(test)]
+    pub(super) fn disk_reads(&self) -> usize {
+        self.disk.reads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn observe_loaded(&mut self, evidence: ObservationEvidence) -> Result<Record, Error> {
+        let record = self.get_loaded(&evidence.record_id)?;
         if record.launch_id() != evidence.launch_id
             || record.instance_id() != evidence.instance_id
             || record.revision() != evidence.revision
@@ -584,7 +610,11 @@ impl LifecycleStore {
         self.observe_binding(BindingEvidence::new(&authority.record, observation))
     }
     pub fn observe_binding(&mut self, evidence: BindingEvidence) -> Result<Record, Error> {
-        let current = self.get(evidence.record.record_id())?;
+        self.check()?;
+        self.observe_binding_loaded(evidence)
+    }
+    fn observe_binding_loaded(&mut self, evidence: BindingEvidence) -> Result<Record, Error> {
+        let current = self.get_loaded(evidence.record.record_id())?;
         if current != evidence.record {
             return Err(Error::StaleAuthority);
         }
@@ -636,6 +666,10 @@ impl LifecycleStore {
     }
     pub fn get(&mut self, record_id: &str) -> Result<Record, Error> {
         self.check()?;
+        self.get_loaded(record_id)
+    }
+    /// `get` against the document already loaded by the caller's `check()`.
+    fn get_loaded(&self, record_id: &str) -> Result<Record, Error> {
         if !model::nonce(record_id) {
             return Err(Error::InvalidRequest);
         }

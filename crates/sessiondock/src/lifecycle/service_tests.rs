@@ -149,6 +149,9 @@ struct Peer {
     bind_pause: Arc<AtomicBool>,
     binding_capable: Arc<AtomicBool>,
     info_fail: Arc<AtomicBool>,
+    /// `info` requests answered so far and the delay before each answer.
+    infos: Arc<AtomicUsize>,
+    info_delay_ms: Arc<AtomicUsize>,
     pause: Arc<AtomicBool>,
     entered: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
@@ -178,6 +181,8 @@ impl Peer {
             bind_pause: Arc::new(AtomicBool::new(false)),
             binding_capable: Arc::new(AtomicBool::new(true)),
             info_fail: Arc::new(AtomicBool::new(false)),
+            infos: Arc::new(AtomicUsize::new(0)),
+            info_delay_ms: Arc::new(AtomicUsize::new(0)),
             pause: Arc::new(AtomicBool::new(false)),
             entered: Arc::new(tokio::sync::Notify::new()),
             release: Arc::new(tokio::sync::Notify::new()),
@@ -204,6 +209,7 @@ impl Peer {
             peer.binding_capable.clone(),
             peer.info_fail.clone(),
         );
+        let (infos, info_delay_ms) = (peer.infos.clone(), peer.info_delay_ms.clone());
         tokio::spawn(async move {
             loop {
                 let mut stream = tokio::select! { _=stop.cancelled()=>break, accepted=listener.accept()=>match accepted {Ok((stream,_))=>stream,Err(_)=>break} };
@@ -237,6 +243,13 @@ impl Peer {
                     kills.fetch_add(1, Ordering::SeqCst);
                     if kill_exits.load(Ordering::SeqCst) {
                         exited.store(true, Ordering::SeqCst);
+                    }
+                }
+                if operation == "info" {
+                    infos.fetch_add(1, Ordering::SeqCst);
+                    let delay = info_delay_ms.load(Ordering::SeqCst);
+                    if delay > 0 {
+                        tokio::time::sleep(Duration::from_millis(delay as u64)).await;
                     }
                 }
                 let mut response = if operation == "info" {
@@ -1146,4 +1159,66 @@ async fn explicit_free_shell_creation_survives_response_drop_and_shutdown_then_c
         .unwrap();
     assert_eq!(cancelled.state(), State::Exited);
     reopened.shutdown().await.unwrap();
+}
+
+/// `term/list` refreshes every receipt on every poll. Exited receipts are
+/// final and pile up, so probing them again made the list grow with ledger
+/// history; live receipts probed one after another ran into the readiness
+/// deadline once there were enough of them. Hosts answer slowly here on
+/// purpose: six live receipts at 30 ms per `info` take ≈ 360 ms in series
+/// (two `info`s per status, each status under the 100 ms host timeout)
+/// against a 250 ms deadline, and ≈ 60 ms in parallel, so the shape of the
+/// refresh decides whether they stay Running.
+#[tokio::test]
+async fn list_leaves_exited_receipts_alone_and_probes_live_ones_in_parallel() {
+    let (_gate, f) = fixture().await;
+    let exited = f.seed("request-list-exited", State::Running);
+    let exited_peer = Peer::new(&f, &exited).await;
+    exited_peer.exited.store(true, Ordering::SeqCst);
+    let mut live = Vec::new();
+    for index in 0..6 {
+        let record = f.seed(&format!("request-list-live-{index}"), State::Running);
+        let peer = Peer::new(&f, &record).await;
+        peer.info_delay_ms.store(30, Ordering::SeqCst);
+        live.push((record, peer));
+    }
+    let service = f.open(limits()).await;
+
+    let first = service.list(0, 128).await.unwrap();
+    assert_eq!(first.len(), 7);
+    let by_id = |records: &[Record], id: &str| {
+        records
+            .iter()
+            .find(|r| r.record_id() == id)
+            .unwrap()
+            .state()
+    };
+    assert_eq!(by_id(&first, exited.record_id()), State::Exited);
+    for (record, _) in &live {
+        assert_eq!(by_id(&first, record.record_id()), State::Running);
+    }
+    let exited_infos = exited_peer.infos.load(Ordering::SeqCst);
+    assert!(exited_infos > 0, "the exit itself was observed through the host");
+    let live_infos: Vec<usize> = live
+        .iter()
+        .map(|(_, peer)| peer.infos.load(Ordering::SeqCst))
+        .collect();
+
+    let second = service.list(0, 128).await.unwrap();
+    assert_eq!(
+        second.iter().map(Record::record_id).collect::<Vec<_>>(),
+        first.iter().map(Record::record_id).collect::<Vec<_>>(),
+        "ledger order is preserved"
+    );
+    assert_eq!(by_id(&second, exited.record_id()), State::Exited);
+    assert_eq!(
+        exited_peer.infos.load(Ordering::SeqCst),
+        exited_infos,
+        "an exited receipt is not probed again"
+    );
+    for ((record, peer), before) in live.iter().zip(live_infos) {
+        assert_eq!(by_id(&second, record.record_id()), State::Running);
+        assert!(peer.infos.load(Ordering::SeqCst) > before, "live receipts are probed");
+    }
+    service.shutdown().await.unwrap();
 }
