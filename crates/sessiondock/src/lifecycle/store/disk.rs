@@ -124,7 +124,8 @@ impl Disk {
 
     pub(super) fn read(&self) -> Result<Option<Vec<u8>>, Error> {
         #[cfg(test)]
-        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = self.directory.join(LEDGER_FILENAME);
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(bytes)),
