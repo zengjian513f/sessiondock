@@ -478,19 +478,30 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   background: transparent; color: var(--muted); font: 21px/1 sans-serif; cursor: pointer;
 }
 .modal-close:hover { background: var(--hover); color: var(--text); }
-.new-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 2px; }
+/* 机器下拉和来源按钮永远同一行；行宽不够时来源只留图标，和顶栏一样。 */
+.new-row { display: flex; align-items: flex-start; gap: 7px; margin-top: 2px; container-type: inline-size; }
 .new-source {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
-  margin: 0; padding: 0; border: 0;
+  flex: none; margin: 0; padding: 0; border: 0;
 }
-.new-row .new-source { flex: 1 1 264px; min-width: 0; }
-#new-session-form .new-source { grid-template-columns: repeat(4, minmax(0, 1fr)); flex-basis: 340px; }
-@media (max-width: 720px) {
-  #new-session-form .new-source { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#new-session-form .new-source { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.new-source .src-label { font-style: normal; }
+@container (max-width: 470px) {
+  #new-session-form .src-label { display: none; }
+  #new-session-form .new-source span { min-width: 44px; padding: 6px 8px; }
+}
+@container (max-width: 380px) {
+  .report-form .src-label { display: none; }
+  .report-form .new-source span { min-width: 44px; padding: 6px 8px; }
+}
+@container (max-width: 300px) {
+  #new-session-form .new-source { gap: 5px; }
+  #new-session-form .new-source span { min-width: 34px; padding: 6px 4px; }
+  #new-session-form .node-select:not([hidden]) { min-width: 88px; padding-left: 8px; }
 }
 /* 新建会话与报告问题共用的机器下拉。 */
 .node-select:not([hidden]) {
-  display: flex; align-items: center; gap: 7px; flex: 1 1 172px; min-width: 108px;
+  display: flex; align-items: center; gap: 7px; flex: 1 1 120px; min-width: 96px;
   padding: 0 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
 }
 .node-select > span { flex: none; color: var(--muted); font-size: 12px; font-weight: 600; }
