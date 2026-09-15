@@ -6,9 +6,9 @@
 //! are relative to that input, not a native file. The fixed 8 KiB input/hash
 //! buffers never grow with a large string. Resident statistics are a conservative
 //! logical AST weight, including string capacities.
+use crate::fingerprint::{Digest, Fingerprint};
 use indexmap::IndexMap;
 use serde_json::{Number, Value};
-use sha1::{Digest, Sha1};
 use std::io::Read;
 
 const BUFFER: usize = 8192;
@@ -71,10 +71,10 @@ pub(crate) struct TextSpan {
     start: u64,
     end: u64,
     decoded_len: u64,
-    digest: [u8; 20],
+    digest: Digest,
     escaped: bool,
     prefix: Vec<u8>,
-    data_suffix: Option<(u64, [u8; 20])>,
+    data_suffix: Option<(u64, Digest)>,
 }
 #[cfg_attr(not(test), allow(dead_code))]
 impl TextSpan {
@@ -89,9 +89,9 @@ impl TextSpan {
     pub(crate) fn decoded_len(&self) -> u64 {
         self.decoded_len
     }
-    /// SHA-1 over ALL decoded UTF-8 bytes, including the discarded inline prefix.
-    /// This content fingerprint is not by itself an authorization or MAC.
-    pub(crate) fn digest(&self) -> &[u8; 20] {
+    /// Fingerprint over ALL decoded UTF-8 bytes, including the discarded inline
+    /// prefix. This content fingerprint is not by itself an authorization or MAC.
+    pub(crate) fn digest(&self) -> &Digest {
         &self.digest
     }
     pub(crate) fn escaped(&self) -> bool {
@@ -103,7 +103,7 @@ impl TextSpan {
     }
     /// Pure lexical evidence after the first comma of a `data:` candidate.
     /// Neither a MIME check nor media authorization.
-    pub(crate) fn data_suffix(&self) -> Option<(u64, [u8; 20])> {
+    pub(crate) fn data_suffix(&self) -> Option<(u64, Digest)> {
         self.data_suffix
     }
 }
@@ -515,40 +515,19 @@ impl SpanHash {
     }
 }
 struct TextHash {
-    hash: Sha1,
-    pending: [u8; BUFFER],
-    pending_len: usize,
+    hash: Fingerprint,
 }
 impl TextHash {
     fn new() -> Self {
         Self {
-            hash: Sha1::new(),
-            pending: [0; BUFFER],
-            pending_len: 0,
+            hash: Fingerprint::new(),
         }
     }
-    fn feed(&mut self, mut bytes: &[u8]) {
-        while !bytes.is_empty() {
-            if self.pending_len == 0 && bytes.len() >= BUFFER {
-                let count = bytes.len() / BUFFER * BUFFER;
-                self.hash.update(&bytes[..count]);
-                bytes = &bytes[count..];
-            } else {
-                let count = bytes.len().min(BUFFER - self.pending_len);
-                self.pending[self.pending_len..self.pending_len + count]
-                    .copy_from_slice(&bytes[..count]);
-                self.pending_len += count;
-                bytes = &bytes[count..];
-                if self.pending_len == BUFFER {
-                    self.hash.update(self.pending);
-                    self.pending_len = 0;
-                }
-            }
-        }
+    fn feed(&mut self, bytes: &[u8]) {
+        self.hash.update(bytes);
     }
-    fn finish(mut self) -> [u8; 20] {
-        self.hash.update(&self.pending[..self.pending_len]);
-        self.hash.finalize().into()
+    fn finish(self) -> Digest {
+        self.hash.finalize()
     }
 }
 
@@ -697,10 +676,14 @@ impl<R: Read> Parser<R> {
                 Some(0..=0x1f) | None => return Err(self.error(ErrorKind::Syntax)),
                 Some(_) => {
                     let chunk = self.input.chunk();
-                    let end = chunk
+                    // The bulk of a string (base64, tool text) is a run with
+                    // no quote or backslash: find its end with a SIMD search,
+                    // then the first control byte inside the run, if any.
+                    let end = memchr::memchr2(b'"', b'\\', chunk).unwrap_or(chunk.len());
+                    let end = chunk[..end]
                         .iter()
-                        .position(|&byte| byte == b'"' || byte == b'\\' || byte < 0x20)
-                        .unwrap_or(chunk.len());
+                        .position(|&byte| byte < 0x20)
+                        .unwrap_or(end);
                     let count = match std::str::from_utf8(&chunk[..end]) {
                         Ok(_) => end,
                         Err(error) if error.valid_up_to() != 0 => error.valid_up_to(),

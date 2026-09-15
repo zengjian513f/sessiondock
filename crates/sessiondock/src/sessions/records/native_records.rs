@@ -4,7 +4,10 @@ use super::*;
 use crate::media::{NativeImage, NativeSpan};
 use std::io::{self, BufRead, BufReader, Cursor, Read};
 
-const SMALL: usize = 64 * 1024;
+/// Complete lines up to this size are decoded from their resident bytes; it
+/// must not exceed the inline string threshold, or such a line could hold a
+/// string the resident decoder would inline where the pull decoder would span.
+const SMALL: usize = budgets::INLINE_STRING_BYTES;
 mod replay_source;
 
 /// Why a complete line produced no row: not a JSON object (skipped and
@@ -54,11 +57,10 @@ impl<R: BufRead> Read for Line<'_, R> {
             return Ok(0);
         }
         let available = self.reader.fill_buf()?;
-        let count = available
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .map_or(available.len(), |at| at + 1)
-            .min(buffer.len());
+        // Only the bytes this call can copy are searched for the LF; scanning
+        // the whole buffered window per call made long lines quadratic.
+        let window = &available[..available.len().min(buffer.len())];
+        let count = memchr::memchr(b'\n', window).map_or(window.len(), |at| at + 1);
         buffer[..count].copy_from_slice(&available[..count]);
         self.complete = count > 0 && buffer[count - 1] == b'\n';
         self.reader.consume(count);

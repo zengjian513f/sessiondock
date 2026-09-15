@@ -1116,6 +1116,7 @@ dependencies = [
  "hyper-util",
  "indexmap",
  "libc",
+ "memchr",
  "mime_guess",
  "native-tls",
  "ptyhost-client",

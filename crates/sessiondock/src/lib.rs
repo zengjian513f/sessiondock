@@ -16,6 +16,7 @@ pub mod config;
 pub mod delivery;
 mod error;
 pub mod files;
+pub mod fingerprint;
 pub mod hub;
 pub mod hub_config;
 pub mod lifecycle;

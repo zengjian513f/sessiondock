@@ -1,16 +1,16 @@
 use super::*;
-use sha1::{Digest, Sha1};
+use crate::fingerprint::Fingerprint;
 use std::io::Cursor;
 
-fn hash(bytes: &[u8]) -> [u8; 20] {
-    Sha1::digest(bytes).into()
+fn hash(bytes: &[u8]) -> crate::fingerprint::Digest {
+    Fingerprint::digest(bytes)
 }
 fn range(start: u64, physical: &[u8], decoded: &[u8]) -> StringRange {
     StringRange {
         start,
         end: start + physical.len() as u64,
         decoded_len: decoded.len() as u64,
-        decoded_sha1: hash(decoded),
+        decoded_digest: hash(decoded),
     }
 }
 fn escaped(bytes: &[u8]) -> Vec<u8> {
@@ -95,13 +95,13 @@ fn plans_accept_large_ranges_and_layers_but_reject_invalid_bounds() {
             start: 2,
             end: 1,
             decoded_len: 0,
-            decoded_sha1: hash(b""),
+            decoded_digest: hash(b""),
         },
         StringRange {
             start: 0,
             end: 1,
             decoded_len: 2,
-            decoded_sha1: hash(b"ab"),
+            decoded_digest: hash(b"ab"),
         },
     ] {
         assert!(DecodePlan::new(vec![invalid_range]).is_err());
@@ -113,7 +113,7 @@ fn plans_accept_large_ranges_and_layers_but_reject_invalid_bounds() {
         start: u64::MAX - 1,
         end: u64::MAX,
         decoded_len: 0,
-        decoded_sha1: hash(b""),
+        decoded_digest: hash(b""),
     };
     assert!(DecodePlan::new(vec![edge]).is_ok());
 }
@@ -159,7 +159,7 @@ fn every_layer_digest_is_checked_even_when_outer_and_leaf_digests_match() {
     let (raw, plan, expected) = nested(4, CHUNK * 2);
     for target in 0..4 {
         let mut ranges = plan.ranges().to_vec();
-        ranges[target].decoded_sha1[0] ^= 1;
+        ranges[target].decoded_digest[0] ^= 1;
         let changed = DecodePlan::new(ranges).unwrap();
         let mut reader = ReplayReader::new(raw.as_slice(), &changed).unwrap();
         let mut output = Vec::new();
@@ -249,15 +249,15 @@ fn generated_multimegabyte_source_has_fixed_read_requests_and_no_body_buffer() {
         }
     }
     let len = 4 * 1024 * 1024;
-    let mut hash = Sha1::new();
+    let mut hash = Fingerprint::new();
     for _ in 0..len / CHUNK {
-        hash.update([b'A'; CHUNK]);
+        hash.update(&[b'A'; CHUNK]);
     }
     let plan = DecodePlan::new(vec![StringRange {
         start: 800,
         end: 800 + len as u64,
         decoded_len: len as u64,
-        decoded_sha1: hash.finalize().into(),
+        decoded_digest: hash.finalize(),
     }])
     .unwrap();
     let mut reader = ReplayReader::new(
@@ -290,16 +290,16 @@ fn multimegabyte_parent_skip_and_tail_are_streamed() {
         }
     }
     let length = 4 * 1024 * 1024;
-    let mut parent_hash = Sha1::new();
+    let mut parent_hash = Fingerprint::new();
     for _ in 0..length / CHUNK {
-        parent_hash.update([b'A'; CHUNK]);
+        parent_hash.update(&[b'A'; CHUNK]);
     }
     let plan = DecodePlan::new(vec![
         StringRange {
             start: 0,
             end: length as u64,
             decoded_len: length as u64,
-            decoded_sha1: parent_hash.finalize().into(),
+            decoded_digest: parent_hash.finalize(),
         },
         range((length / 2) as u64, b"AAAA", b"AAAA"),
     ])
@@ -317,7 +317,7 @@ fn large_range_validation_does_not_preallocate_its_bytes() {
         start: 0,
         end: u64::MAX / 2,
         decoded_len: u64::MAX / 2,
-        decoded_sha1: hash(b"synthetic"),
+        decoded_digest: hash(b"synthetic"),
     }])
     .unwrap();
     assert_eq!(plan.ranges().len(), 1);

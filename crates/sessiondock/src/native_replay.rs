@@ -1,6 +1,7 @@
 //! Checked-source-independent replay of nested JSON string interiors.
 //! Plans describe ranges, never file authority. Each parent is completed and
 //! verified even when the requested child ended much earlier in that parent.
+use crate::fingerprint::Digest;
 use crate::sessions::JsonStringReader;
 use std::io::{self, Read};
 
@@ -20,7 +21,7 @@ pub(crate) struct StringRange {
     pub(crate) start: u64,
     pub(crate) end: u64,
     pub(crate) decoded_len: u64,
-    pub(crate) decoded_sha1: [u8; 20],
+    pub(crate) decoded_digest: Digest,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,7 +172,7 @@ impl<R: Read> ReplayReader<R> {
             let reader = JsonStringReader::new(
                 window,
                 range.decoded_len,
-                range.decoded_sha1,
+                range.decoded_digest,
                 range.end - range.start,
             )?;
             stage = Stage::String {

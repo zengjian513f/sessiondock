@@ -1,10 +1,10 @@
 //! Private structural image authority. JSON paths only locate already-reviewed
 //! native content blocks; a JSON value cannot manufacture a sidecar.
 use super::scanner::{Node, Text, TextSpan};
+use crate::fingerprint::{Digest, Fingerprint};
 use crate::media::NativeImage;
 use crate::native_replay::{CheckedReplay, DecodePlan};
 use serde_json::Value;
-use sha1::{Digest, Sha1};
 use std::{
     collections::{BTreeMap, HashMap},
     marker::PhantomData,
@@ -45,7 +45,7 @@ pub(crate) struct SpanImage {
     pub mime: String,
     pub span: TextSpan,
     pub encoded_offset: u64,
-    pub payload_sha1: [u8; 20],
+    pub payload_digest: Digest,
     pub plan: Option<DecodePlan>,
 }
 
@@ -348,7 +348,7 @@ where
 struct Payload {
     path: Vec<String>,
     mime: String,
-    hash: [u8; 20],
+    hash: Digest,
     offset: u64,
     span: bool,
 }
@@ -362,7 +362,7 @@ fn payload(
         Node::String(Text::Inline(value)) => (
             value.as_bytes(),
             value.len() as u64,
-            Sha1::digest(value.as_bytes()).into(),
+            Fingerprint::digest(value.as_bytes()),
             false,
         ),
         Node::String(Text::Span(span)) => (span.prefix(), span.decoded_len(), *span.digest(), true),
@@ -385,7 +385,7 @@ fn payload(
                 }
                 hash
             }
-            _ => Sha1::digest(&prefix[comma + 1..]).into(),
+            _ => Fingerprint::digest(&prefix[comma + 1..]),
         };
         (mime, offset, hash)
     } else {
@@ -539,7 +539,7 @@ fn extract(
         mime: payload.mime,
         span,
         encoded_offset: payload.offset,
-        payload_sha1: payload.hash,
+        payload_digest: payload.hash,
         plan: None,
     })
     .map(Some)

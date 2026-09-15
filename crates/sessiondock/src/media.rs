@@ -192,7 +192,10 @@ impl NativeImage {
         Ok(Self {
             source: Arc::new(ImageSource {
                 token: random_token()?,
-                semantic: native_media::semantic(mime, &Sha1::digest(encoded).into()),
+                semantic: native_media::semantic(
+                    mime,
+                    &crate::fingerprint::Fingerprint::digest(encoded.as_bytes()),
+                ),
                 data: ImageData::Embedded {
                     mime,
                     encoded: encoded.into(),

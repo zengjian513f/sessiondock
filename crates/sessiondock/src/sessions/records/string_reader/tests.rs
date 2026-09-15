@@ -18,8 +18,8 @@ impl Read for Chunked<'_> {
         Ok(count)
     }
 }
-fn hash(bytes: &[u8]) -> [u8; 20] {
-    Sha1::digest(bytes).into()
+fn hash(bytes: &[u8]) -> crate::fingerprint::Digest {
+    crate::fingerprint::Fingerprint::digest(bytes)
 }
 fn decode(raw: &[u8], expected: &[u8], input_chunk: usize, output_chunk: usize) {
     let source = Chunked {
@@ -132,7 +132,7 @@ fn every_proper_truncation_of_an_escape_or_multibyte_scalar_is_invalid() {
     for raw in [b"\\uD83D\\uDE00".as_slice(), "😀".as_bytes(), b"\\u0041"] {
         for length in 1..raw.len() {
             let mut reader =
-                JsonStringReader::new(&raw[..length], length as u64, [0; 20], length as u64)
+                JsonStringReader::new(&raw[..length], length as u64, [0; 16], length as u64)
                     .unwrap();
             assert!(reader.read_to_end(&mut Vec::new()).is_err());
             assert!(reader.finish().is_err());
@@ -273,21 +273,16 @@ fn generated_large_base64_like_input_uses_only_fixed_reader_buffers() {
         }
     }
     let length = 4 * 1024 * 1024;
-    let mut expected = Sha1::new();
+    let mut expected = Fingerprint::new();
     for _ in 0..length / BUFFER {
-        expected.update([b'A'; BUFFER]);
+        expected.update(&[b'A'; BUFFER]);
     }
     let source = Generated {
         remaining: length as u64,
         maximum_request: 0,
     };
-    let mut reader = JsonStringReader::new(
-        source,
-        length as u64,
-        expected.finalize().into(),
-        length as u64,
-    )
-    .unwrap();
+    let mut reader =
+        JsonStringReader::new(source, length as u64, expected.finalize(), length as u64).unwrap();
     assert!(std::mem::size_of_val(&reader) < BUFFER + 1024);
     assert_eq!(
         io::copy(&mut reader, &mut io::sink()).unwrap(),

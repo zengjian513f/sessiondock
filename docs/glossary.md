@@ -64,7 +64,7 @@ aliases. Historical names belong only in migration records.
 
 ## Media
 
-**Native span.** Private `TextSpan`/`NativeSpan`: physical quote range, decoded length/SHA-1 and optional `DecodePlan`. GET re-checks full current-branch membership; a private text span is not filesystem or image authority. See [spans](native-input.md#tool-envelopes-and-native-images).
+**Native span.** Private `TextSpan`/`NativeSpan`: physical quote range, decoded length/fingerprint (`crate::fingerprint`) and optional `DecodePlan`. Every string above 64 KiB (`budgets::INLINE_STRING_BYTES`) is a span: an image span stays out of the decoded record and the view (served on GET), ordinary giant text is read back into the record from the stamped source. GET re-checks full current-branch membership; a private text span is not filesystem or image authority. See [spans](native-input.md#tool-envelopes-and-native-images).
 
 **Inline image.** Image data embedded in native history. The 32 MiB decoded-image limit applies equally to inline data and retained native spans. See [media limits](media.md#size-and-cache-behavior).
 
@@ -79,7 +79,7 @@ aliases. Historical names belong only in migration records.
 **DecodePlan.** One outer physical range and inner `StringRange`s whose offsets address the preceding **decoded** stream, never file bytes. See [envelopes](native-input.md#tool-envelopes-and-native-images).
 
 
-**Replay.** GET rebuilds the layered reader from the immutable plan, verifies each layer's length/SHA-1 and outer EOF, then publishes. Identical image bytes are not enough if a parent digest changed. See [envelopes](native-input.md#tool-envelopes-and-native-images).
+**Replay.** GET rebuilds the layered reader from the immutable plan, verifies each layer's length/fingerprint and outer EOF, then publishes. Identical image bytes are not enough if a parent digest changed. See [envelopes](native-input.md#tool-envelopes-and-native-images).
 
 ## Topology
 

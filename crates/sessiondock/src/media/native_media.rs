@@ -4,6 +4,7 @@
 //! verification before publishing the returned blob over HTTP.
 use super::*;
 use crate::files::FileError;
+use crate::fingerprint::{Digest as ContentDigest, Fingerprint};
 use crate::native_replay::DecodePlan;
 use std::{
     io::{self, Read},
@@ -24,9 +25,9 @@ pub(crate) struct NativeSpan {
     pub plan: Option<DecodePlan>,
     /// Entire final JSON-unescaped string, including a data-URL header if present.
     pub decoded_len: u64,
-    pub decoded_sha1: [u8; 20],
+    pub decoded_digest: ContentDigest,
     pub encoded_offset: u64,
-    pub payload_sha1: [u8; 20],
+    pub payload_digest: ContentDigest,
     pub mime: String,
 }
 impl NativeSpan {
@@ -49,7 +50,7 @@ pub(super) struct NativeScope {
     pub agent: String,
 }
 
-pub(super) fn semantic(mime: Mime, payload: &[u8; 20]) -> String {
+pub(super) fn semantic(mime: Mime, payload: &ContentDigest) -> String {
     let mut hash = Sha1::new();
     hash.update(b"image-semantic-v2\0");
     hash.update(mime.text());
@@ -75,10 +76,10 @@ impl NativeImage {
                 plan.first().start != span.start
                     || plan.first().end != span.end
                     || plan.last().decoded_len != span.decoded_len
-                    || plan.last().decoded_sha1 != span.decoded_sha1
+                    || plan.last().decoded_digest != span.decoded_digest
             })
             || span.decoded_len <= span.encoded_offset
-            || (span.encoded_offset == 0 && span.payload_sha1 != span.decoded_sha1)
+            || (span.encoded_offset == 0 && span.payload_digest != span.decoded_digest)
         {
             return Err(MediaError::Invalid);
         }
@@ -90,7 +91,7 @@ impl NativeImage {
         Ok(Self {
             source: Arc::new(ImageSource {
                 token: random_token()?,
-                semantic: semantic(mime, &span.payload_sha1),
+                semantic: semantic(mime, &span.payload_digest),
                 data: ImageData::NativeSpan(span),
             }),
         })
@@ -170,8 +171,8 @@ struct Verified<'a, R> {
     reader: R,
     span: &'a NativeSpan,
     count: u64,
-    whole: Sha1,
-    payload: Sha1,
+    whole: Fingerprint,
+    payload: Fingerprint,
     failed: bool,
 }
 impl<'a, R: Read> Verified<'a, R> {
@@ -180,8 +181,8 @@ impl<'a, R: Read> Verified<'a, R> {
             reader,
             span,
             count: 0,
-            whole: Sha1::new(),
-            payload: Sha1::new(),
+            whole: Fingerprint::new(),
+            payload: Fingerprint::new(),
             failed: false,
         }
     }
@@ -196,8 +197,8 @@ impl<'a, R: Read> Verified<'a, R> {
             }
         }
         if self.count != self.span.decoded_len
-            || <[u8; 20]>::from(self.whole.finalize()) != self.span.decoded_sha1
-            || <[u8; 20]>::from(self.payload.finalize()) != self.span.payload_sha1
+            || self.whole.finalize() != self.span.decoded_digest
+            || self.payload.finalize() != self.span.payload_digest
         {
             return Err(changed());
         }

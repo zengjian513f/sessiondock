@@ -1,8 +1,7 @@
 //! Checked, chunked native input and a disposable raw-prefix index.
 //! This does not parse JSON or authorize media.
 use super::{FileStamp, SessionError, file_stamp, stamp, trusted_path};
-use sha1::{Digest, Sha1};
-use sha2::Sha256;
+use crate::fingerprint::{self, Digest, Fingerprint};
 use std::{
     fs::File,
     io::{self, Read, Seek, SeekFrom},
@@ -172,17 +171,19 @@ impl Read for CheckedNative {
 
 struct Checkpoint {
     end: u64,
-    digest: [u8; 20],
+    digest: Digest,
 }
 /// No raw body is retained: <=4096 head bytes plus one logical entry per LF.
+/// Digests are content fingerprints (`crate::fingerprint`) of every byte up
+/// to a complete-line boundary; the index never trusts size/mtime alone.
 pub(crate) struct RawIndex {
     length: u64,
     committed: u64,
     head: Vec<u8>,
     digest: String,
     checkpoints: Vec<Checkpoint>,
-    committed_digest: [u8; 32],
-    probe_digest: Option<[u8; 32]>,
+    committed_digest: Digest,
+    probe_digest: Option<Digest>,
 }
 impl RawIndex {
     pub(super) fn scan(reader: impl Read) -> Result<Self, SessionError> {
@@ -214,13 +215,15 @@ impl RawIndex {
     pub(super) fn head_bytes(&self) -> &[u8] {
         &self.head
     }
+    /// Fingerprint of every physical byte (hex).
     pub(super) fn digest(&self) -> &str {
         &self.digest
     }
-    pub(super) fn committed_digest(&self) -> [u8; 32] {
+    /// Fingerprint of the bytes through the last complete line.
+    pub(super) fn committed_digest(&self) -> Digest {
         self.committed_digest
     }
-    pub(super) fn probe_digest(&self) -> Option<[u8; 32]> {
+    pub(super) fn probe_digest(&self) -> Option<Digest> {
         self.probe_digest
     }
     /// Physical start of the record that ends at `end`: the previous LF
@@ -243,7 +246,7 @@ impl RawIndex {
     }
     pub(super) fn prefix_hash(&self, end: u64) -> Option<String> {
         if end == 0 {
-            return Some(format!("{:x}", Sha1::digest([])));
+            return Some(fingerprint::hex(&Fingerprint::digest(&[])));
         }
         let index = self
             .checkpoints
@@ -252,13 +255,7 @@ impl RawIndex {
         if end == self.length {
             return Some(self.digest().to_owned());
         }
-        Some(
-            self.checkpoints[index]
-                .digest
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect(),
-        )
+        Some(fingerprint::hex(&self.checkpoints[index].digest))
     }
 }
 
@@ -269,13 +266,12 @@ impl RawIndex {
 pub(super) struct RawIndexBuilder {
     index: RawIndex,
     probe: Option<u64>,
-    hash: Sha1,
-    strong: Sha256,
-    committed_strong: Sha256,
+    hash: Fingerprint,
     failed: bool,
 }
 impl RawIndexBuilder {
     pub(super) fn new(probe: Option<u64>) -> Result<Self, SessionError> {
+        let empty = Fingerprint::digest(&[]);
         Ok(Self {
             index: RawIndex {
                 length: 0,
@@ -283,13 +279,11 @@ impl RawIndexBuilder {
                 head: Vec::new(),
                 digest: String::new(),
                 checkpoints: Vec::new(),
-                committed_digest: Sha256::digest([]).into(),
-                probe_digest: (probe == Some(0)).then(|| Sha256::digest([]).into()),
+                committed_digest: empty,
+                probe_digest: (probe == Some(0)).then_some(empty),
             },
             probe,
-            hash: Sha1::new(),
-            strong: Sha256::new(),
-            committed_strong: Sha256::new(),
+            hash: Fingerprint::new(),
             failed: false,
         })
     }
@@ -316,11 +310,11 @@ impl RawIndexBuilder {
             ensure_capacity(&mut index.head, capacity)?;
             index.head.extend_from_slice(&bytes[..head_count]);
         }
+        // JSONL never carries a raw LF inside a record, so line boundaries
+        // are a plain byte search; the running fingerprint is snapshotted at
+        // each of them (a checkpoint, the committed digest, the probe).
         let mut start = 0;
-        for (offset, byte) in bytes.iter().enumerate() {
-            if *byte != b'\n' {
-                continue;
-            }
+        for offset in memchr::memchr_iter(b'\n', bytes) {
             self.hash.update(&bytes[start..=offset]);
             index.committed = index.length + offset as u64 + 1;
             if index.checkpoints.len() == index.checkpoints.capacity() {
@@ -328,31 +322,18 @@ impl RawIndexBuilder {
                 let capacity = index.checkpoints.len() + grow;
                 ensure_capacity(&mut index.checkpoints, capacity)?;
             }
+            let digest = self.hash.finalize();
             index.checkpoints.push(Checkpoint {
                 end: index.committed,
-                digest: self.hash.clone().finalize().into(),
+                digest,
             });
+            index.committed_digest = digest;
+            if self.probe == Some(index.committed) {
+                index.probe_digest = Some(digest);
+            }
             start = offset + 1;
         }
         self.hash.update(&bytes[start..]);
-        // SHA256 visits each byte once; only the requested probe is finalized
-        // midstream, and only the last LF state in each push is retained.
-        let probe_at = self
-            .probe
-            .filter(|end| *end > index.length && *end <= index.length + bytes.len() as u64)
-            .map(|end| (end - index.length) as usize)
-            .filter(|at| bytes[*at - 1] == b'\n');
-        if let Some(at) = probe_at {
-            self.strong.update(&bytes[..at]);
-            index.probe_digest = Some(self.strong.clone().finalize().into());
-            self.strong.update(&bytes[at..start]);
-        } else {
-            self.strong.update(&bytes[..start]);
-        }
-        if start > 0 {
-            self.committed_strong = self.strong.clone();
-        }
-        self.strong.update(&bytes[start..]);
         index.length += bytes.len() as u64;
         Ok(())
     }
@@ -360,15 +341,7 @@ impl RawIndexBuilder {
         if self.failed {
             return Err(read_error());
         }
-        let mut encoded = Vec::new();
-        ensure_capacity(&mut encoded, 40)?;
-        for byte in self.hash.finalize() {
-            const HEX: &[u8; 16] = b"0123456789abcdef";
-            encoded.push(HEX[(byte >> 4) as usize]);
-            encoded.push(HEX[(byte & 15) as usize]);
-        }
-        self.index.digest = String::from_utf8(encoded).expect("ASCII digest");
-        self.index.committed_digest = self.committed_strong.finalize().into();
+        self.index.digest = fingerprint::hex(&self.hash.finalize());
         Ok(self.index)
     }
 }

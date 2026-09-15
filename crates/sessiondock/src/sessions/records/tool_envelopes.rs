@@ -25,7 +25,7 @@ pub(super) fn extend(
         start: base.checked_add(span.start()).ok_or("原生工具区段溢出")?,
         end: base.checked_add(span.end()).ok_or("原生工具区段溢出")?,
         decoded_len: span.decoded_len(),
-        decoded_sha1: *span.digest(),
+        decoded_digest: *span.digest(),
     });
     DecodePlan::new(ranges).map_err(|_| "原生工具解码区段无效".into())
 }

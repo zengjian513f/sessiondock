@@ -15,9 +15,9 @@ fn span(data: &[u8], offset: usize, mime: &str) -> NativeSpan {
         end: data.len() as u64 + 20,
         plan: None,
         decoded_len: data.len() as u64,
-        decoded_sha1: Sha1::digest(data).into(),
+        decoded_digest: crate::fingerprint::Fingerprint::digest(data),
         encoded_offset: offset as u64,
-        payload_sha1: Sha1::digest(&data[offset..]).into(),
+        payload_digest: crate::fingerprint::Fingerprint::digest(&data[offset..]),
         mime: mime.into(),
     }
 }
@@ -77,13 +77,13 @@ fn nested_span(data: &str, encoded_offset: usize) -> (NativeSpan, String) {
                 start: meta.start,
                 end: meta.end,
                 decoded_len: outer.len() as u64,
-                decoded_sha1: Sha1::digest(outer.as_bytes()).into(),
+                decoded_digest: crate::fingerprint::Fingerprint::digest(outer.as_bytes()),
             },
             StringRange {
                 start: inner_start,
                 end: inner_start + data.len() as u64,
                 decoded_len: data.len() as u64,
-                decoded_sha1: Sha1::digest(data.as_bytes()).into(),
+                decoded_digest: crate::fingerprint::Fingerprint::digest(data.as_bytes()),
             },
         ])
         .unwrap(),
@@ -110,15 +110,15 @@ fn nested_plan_binds_outer_coordinates_and_final_image_hash_not_outer_length() {
     bad.decoded_len -= 1;
     cases.push(bad);
     let mut bad = meta.clone();
-    bad.decoded_sha1[0] ^= 1;
-    bad.payload_sha1 = bad.decoded_sha1;
+    bad.decoded_digest[0] ^= 1;
+    bad.payload_digest = bad.decoded_digest;
     cases.push(bad);
     let mut bad = meta.clone();
     bad.plan = Some(plan.with_outer_offset(1).unwrap());
     cases.push(bad);
     let mut bad = meta.clone();
     let mut ranges = plan.ranges().to_vec();
-    ranges.last_mut().unwrap().decoded_sha1[0] ^= 1;
+    ranges.last_mut().unwrap().decoded_digest[0] ^= 1;
     bad.plan = Some(DecodePlan::new(ranges).unwrap());
     cases.push(bad);
     for bad in cases {
@@ -147,7 +147,7 @@ fn nested_plan_preserves_image_semantics_but_is_part_of_the_exact_private_grant(
     }
     let mut altered = meta.clone();
     let mut ranges = altered.plan.as_ref().unwrap().ranges().to_vec();
-    ranges[0].decoded_sha1[0] ^= 1;
+    ranges[0].decoded_digest[0] ^= 1;
     altered.plan = Some(DecodePlan::new(ranges).unwrap());
     let different_origin = NativeImage::from_native_span(altered).unwrap();
     assert_eq!(image.semantic_key(), different_origin.semantic_key());
@@ -275,7 +275,7 @@ fn invalid_metadata_and_scope_are_rejected_without_opening_paths() {
     bad.decoded_len += 1;
     cases.push(bad);
     let mut bad = base.clone();
-    bad.payload_sha1[0] ^= 1;
+    bad.payload_digest[0] ^= 1;
     cases.push(bad);
     let mut bad = base.clone();
     bad.encoded_offset = bad.decoded_len + 1;
@@ -521,7 +521,7 @@ impl BmpBase64 {
     }
     fn image(raw_len: usize) -> NativeImage {
         let mut input = Self::new(raw_len);
-        let mut hash = Sha1::new();
+        let mut hash = Fingerprint::new();
         let mut bytes = [0; 8192];
         loop {
             let count = input.read(&mut bytes).unwrap();
@@ -530,13 +530,13 @@ impl BmpBase64 {
             }
             hash.update(&bytes[..count]);
         }
-        let digest = hash.finalize().into();
+        let digest = hash.finalize();
         let mut meta = span(b"AAAA", 0, "image/bmp");
         meta.decoded_len = input.length as u64;
         meta.end = meta.start + meta.decoded_len;
         meta.record_end = meta.end + 1;
-        meta.decoded_sha1 = digest;
-        meta.payload_sha1 = digest;
+        meta.decoded_digest = digest;
+        meta.payload_digest = digest;
         NativeImage::from_native_span(meta).unwrap()
     }
 }
