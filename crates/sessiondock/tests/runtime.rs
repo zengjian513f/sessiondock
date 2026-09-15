@@ -153,6 +153,24 @@ async fn get(app: &Router, path: &str) -> (StatusCode, Value, bool) {
     (status, serde_json::from_slice(&body).unwrap(), no_store)
 }
 
+async fn post(app: &Router, path: &str, body: Value) -> (StatusCode, Value, bool) {
+    let request = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("host", "127.0.0.1")
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let no_store = response
+        .headers()
+        .get("cache-control")
+        .is_some_and(|value| value == "no-store");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap(), no_store)
+}
+
 fn native_fixture() -> TempDir {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -281,7 +299,8 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     )
     .unwrap();
     // Display polls share one in-flight probe; only one Info request reaches
-    // the host however many pages poll.
+    // the host however many pages poll `/api/live` or `/api/term/list`
+    // (the list authorizes nothing and reads the same shared observation).
     let first = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, "/api/live").await })
@@ -289,6 +308,10 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     let second = {
         let app = app.clone();
         tokio::spawn(async move { get(&app, "/api/live").await })
+    };
+    let third = {
+        let app = app.clone();
+        tokio::spawn(async move { get(&app, "/api/term/list").await })
     };
     timeout(Duration::from_secs(1), async {
         while host.accepted.load(Ordering::SeqCst) < 1 {
@@ -299,12 +322,16 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(host.accepted.load(Ordering::SeqCst), 1);
-    // A fresh (claim-grade) observation takes the second admission permit;
-    // another observer waits for capacity instead of becoming a request-level
-    // refusal.
-    let third = {
+    // A fresh (claim-grade) observation — a bound claim — takes the second
+    // admission permit; another fresh observer waits for capacity instead of
+    // becoming a request-level refusal.
+    let claim = || {
+        json!({"name": "synthetic", "page": "page-1",
+               "uid": "codex:synthetic", "instance_id": "synthetic-instance-0001"})
+    };
+    let fourth = {
         let app = app.clone();
-        tokio::spawn(async move { get(&app, "/api/term/list").await })
+        tokio::spawn(async move { post(&app, "/api/term/claim", claim()).await })
     };
     timeout(Duration::from_secs(1), async {
         while host.accepted.load(Ordering::SeqCst) < 2 {
@@ -313,17 +340,19 @@ async fn observation_admission_waits_and_shutdown_cancels_active_probes() {
     })
     .await
     .unwrap();
-    let mut fourth = {
+    let mut fifth = {
         let app = app.clone();
-        tokio::spawn(async move { get(&app, "/api/term/list").await })
+        tokio::spawn(async move { post(&app, "/api/term/claim", claim()).await })
     };
     assert!(
-        timeout(Duration::from_millis(100), &mut fourth)
+        timeout(Duration::from_millis(100), &mut fifth)
             .await
             .is_err()
     );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(host.accepted.load(Ordering::SeqCst), 2);
     cancel.cancel();
-    for request in [first, second, third, fourth] {
+    for request in [first, second, third, fourth, fifth] {
         let (status, body, _) = timeout(Duration::from_secs(1), request)
             .await
             .unwrap()
