@@ -34,6 +34,20 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   `backup-deploy-<hex>-<YYYYmmdd>-<HHMMSS>` 的目录。
 - `status` 不在本工具里：只读的舰队状态见 `deploy/fleet_status.py`。
 
+## 并发部署锁
+
+`build`、`deploy`、`push`、`rollback` 启动后先获取 Git common directory 下的
+`sessiondock-deploy.lock`，整个命令结束才释放；`deploy` 的 build → test → push 共用一次
+持锁。同一仓库的多个会话及所有 worktree 互斥，不同目标也排队。默认持续等待，
+每 30 秒显示持锁 PID、命令和开始时间；`--lock-timeout SECONDS` 限制等待，`0` 立即失败。
+等待者拿锁后才读取工作区、目标清单和默认 stage，避免使用等待前的旧状态。
+
+锁由操作系统管理，正常退出、异常和进程终止都会释放；文件保留，里面的旧 PID 只供
+诊断。**不要删除锁文件来解锁**，删除会让不同进程锁住不同 inode，破坏互斥。
+锁覆盖同一 Git 仓库及 worktree；独立 clone 或不同构建机之间仍须协调部署。
+只读的 `fleet_status.py` 不持锁。离线回归见 `tests/deploy_lock.py`；部署自检使用临时
+仓库或临时锁，避免与运行自检的外层部署互锁。
+
 ## 三种产物（`target/deploy/<UTC 时间戳>-<short>/`，同一秒内再建则加 `-2`、`-3` 后缀）
 
 | 产物 | 内容 | 用途 |
@@ -103,7 +117,7 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
 | `crates/sessiondock/tests/**`（其它） | `cargo_*` |
 | `legacy-web/**` | `node_contracts` + 所有 `*_browser*` + `brand_names_check` |
-| `deploy/**` | `deploy_*`（`deploy_native_handlers`、`deploy_testplan`）+ 脚本 `tests/deploy_dry_run.py` |
+| `deploy/**` | `deploy_*`（`deploy_lock`、`deploy_native_handlers`、`deploy_testplan`）+ 脚本 `tests/deploy_dry_run.py` |
 | `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → `node_contracts`；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py`、`deploy_dry_run.py` 改自己就跑自己 |
 | `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`web/**`、`reference/**` …） | 全量 |
 
