@@ -72,10 +72,20 @@ WantedBy=default.target
 
 ```nginx
 # 在已登录鉴权的 server 块里加一个位置；<HUB_PATH> 是挂载前缀（页面 storage 命名空间按它区分）。
+# 鉴权子请求不携带上传正文，避免继承默认 1 MiB 限制。
+location = <HUB_AUTH_PATH> {
+    internal;
+    client_max_body_size 0;
+    proxy_pass http://127.0.0.1:<AUTH_PORT>/__auth/check;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length '';
+    proxy_set_header Cookie $http_cookie;
+}
+
 location = <HUB_PATH> { return 301 <HUB_PATH>/; }
 
 location <HUB_PATH>/ {
-    include snippets/auth.conf;              # 登录鉴权（Hub 自身无鉴权）
+    auth_request <HUB_AUTH_PATH>;            # 登录鉴权（Hub 自身无鉴权）
     proxy_pass http://127.0.0.1:<HUB_PORT>/;
     proxy_http_version 1.1;
     proxy_set_header Host $http_host;
@@ -106,7 +116,12 @@ location <HUB_PATH>/ {
   ETag 降为弱标记 `W/"…"`，Hub 的 `If-None-Match` 接受弱匹配。`gzip_types`
   不列 `text/event-stream`，SSE 不受影响。首屏未压缩约 3 MB，压缩后约 1 MB，
   再次访问只剩页面与 API。
-- `client_max_body_size` 覆盖附件上限；读写超时给长连接（终端、SSE）留足。
+- 上传位置的 `client_max_body_size` 覆盖附件上限；鉴权子请求的位置必须单独设为 `0`，
+  并关闭正文及 Content-Length 透传。否则上传正文虽不交给鉴权服务，子请求仍会先按默认
+  1 MiB 限制返回 413，`auth_request` 再将异常状态转换为页面的 HTTP 500。
+  共享代理可为 SessionDock 使用专用鉴权位置；保留同一个鉴权服务、Cookie 和登录处理。
+  回归：`python3 tests/nginx_upload_auth.py`，使用私有 Nginx 与假鉴权/上传服务。
+- 读写超时给长连接（终端、SSE）留足。
 - 反代把 Host 原样传给 Hub（Hub 的同源检查按 Host 核对 Origin）；Hub 只 loopback，不直接对外。
 
 回退与切流步骤见 [replacement-checklist.md](replacement-checklist.md)。

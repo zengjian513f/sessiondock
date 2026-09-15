@@ -172,9 +172,46 @@ def fold_events(rows, priority_of):
     return events
 
 
+def check_status_badge(page, uid):
+    # BUG-20260915-115855-eef60c: the mobile h2 clipped the top 4px
+    # of the live badge. Use real title markup and the usual live painter.
+    for width in (320, 390, 424, 608, 720, 721, 1200):
+        page.set_viewport_size({"width": width, "height": 900})
+        if width <= 720:
+            page.evaluate("showMobileDetail()")
+        settle(page)
+        for tmux in (False, True):
+            page.evaluate("""({uid, tmux}) => {
+                S.live.add(uid);
+                if (tmux) S.liveTmux.add(uid); else S.liveTmux.delete(uid);
+                paintLive();
+            }""", {"uid": uid, "tmux": tmux})
+            badge = page.evaluate("""() => {
+                const dot = document.querySelector('#dlive');
+                const r = dot.getBoundingClientRect();
+                let top = r.top, right = r.right, bottom = r.bottom, left = r.left;
+                for (let e = dot.parentElement; e; e = e.parentElement) {
+                    const s = getComputedStyle(e), b = e.getBoundingClientRect();
+                    if (s.overflowX !== 'visible') {
+                        left = Math.max(left, b.left); right = Math.min(right, b.right);
+                    }
+                    if (s.overflowY !== 'visible') {
+                        top = Math.max(top, b.top); bottom = Math.min(bottom, b.bottom);
+                    }
+                }
+                return {visible: dot.offsetWidth > 0, tmux: dot.classList.contains('tmux'),
+                    clipped: [top - r.top, r.right - right, r.bottom - bottom, left - r.left]};
+            }""")
+            assert badge["visible"] and badge["tmux"] == tmux, (width, badge)
+            assert all(abs(n) < 0.1 for n in badge["clipped"]), (width, badge)
+    page.evaluate("uid => { S.live.delete(uid); S.liveTmux.delete(uid); paintLive(); }", uid)
+
+
 def run(page, uid):
     page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
+    check_status_badge(page, uid)
+    page.set_viewport_size({"width": 1698, "height": 900})
     page.evaluate("setSideWidth(340, true)")
     settle(page)
     first = page.evaluate(HEADER_FOLD_JS)

@@ -209,6 +209,19 @@ class BaseCommitTest(unittest.TestCase):
         self.assertEqual(tp.changed_files(h1, False), want)
         self.assertTrue(set(want) <= set(tp.changed_files(h1, True)))
 
+    def test_first_dirty_path_keeps_its_first_character(self) -> None:
+        # Porcelain's first two columns include a leading space for unstaged
+        # changes. Stripping stdout turned "crates/..." into "rates/..." and
+        # caused the affected test gate to select an unrelated full sweep.
+        def result(argv, **kwargs):
+            output = (' M crates/sessiondock/src/delivery/claude.rs\n'
+                      ' M legacy-web/style.css\n') if 'status' in argv else ''
+            return subprocess.CompletedProcess(argv, 0, stdout=output, stderr='')
+        with patch.object(tp.subprocess, 'run', side_effect=result):
+            changed = tp.changed_files('HEAD', True)
+        self.assertEqual(changed, ['crates/sessiondock/src/delivery/claude.rs', 'legacy-web/style.css'])
+        self.assertFalse(tp.plan_for('affected', changed, NAMES)['full'])
+
 
 class FakeRun:
     """Replaces testplan.stream: records argv, prints progress, writes tests.json, returns rc."""
@@ -299,6 +312,17 @@ class GateCliTest(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("stage tests: mode=none result=skipped base=- suites=0", out)
         self.assertEqual(self.fake.calls, [], "push never runs tests")
+
+    def test_web_only_does_not_validate_unshipped_backend_edits(self) -> None:
+        tp.changed_files = lambda base, dirty: ["crates/sessiondock/src/delivery/executor.rs",
+                                               "Cargo.lock", "legacy-web/term.js"]
+        rc, out, err = self.cli("build", "--web-only", "--test", "affected", "--test-base", "HEAD~1")
+        self.assertEqual(rc, 0, out + err)
+        art = self.artifacts()
+        self.assertFalse(art["test_full"])
+        self.assertTrue(set(art["test_suites"]) >= BROWSERS | {"node_contracts"})
+        self.assertFalse(set(art["test_suites"]) & CARGO)
+        self.assertNotIn("Cargo.lock", out)
 
     def test_affected_plan_runner_and_record(self) -> None:
         rc, out, err = self.cli("build", "--web-only", "--test", "affected", "--test-base", "HEAD~1")

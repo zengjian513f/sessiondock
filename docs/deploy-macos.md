@@ -28,11 +28,14 @@ cd <SD_SOURCE>
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
 
+macOS 部署验证串行执行 Rust 测试，避免多个独立 fixture 同时持有大量目录和
+文件句柄而耗尽进程的句柄预算；所有用例和断言保持不变。
+
 M4 上全量 release 约 40 s。跑测试时 **必须** 把 `TMPDIR` 指到一个真实、短的目录，否则
 `/var/folders/...` 的符号链接会触发 launcher 的 `UnsafePath`，长路径会撞 socket 上限：
 
 ```sh
-mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest ~/.cargo/bin/cargo test --workspace --no-fail-fast
+mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest ~/.cargo/bin/cargo test --workspace --no-fail-fast -- --test-threads=1
 ```
 
 ## 3. 运行目录与 launchd
@@ -110,7 +113,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-depl
 - stage：`source.tar` 上传到 `<SD_SOURCE>/.deploy/`，清空 `<SD_SOURCE>` 里 `target/` 以外的一切再
   `tar -x`；stage 的测试模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）
   不是 `none` 时先按第 2 节跑 `mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest <cargo> test
-  --workspace --locked`（超时 1800 s；失败即该目标 `FAILED`，在构建和换入之前中止，`.deploy-test.log`
+  --workspace --locked -- --test-threads=1`（超时 1800 s；失败即该目标 `FAILED`，在构建和换入之前中止，`.deploy-test.log`
   留在 `<SD_SOURCE>` 供查看）；`cargo build --release --locked -p sessiondock`（超时 900 s，M4 上热构建约 30–40 s）；
   产物拷成 `<PREFIX>/bin/<name>.new` 并在节点上算 SHA-256 作为期望值（构建机的 Linux 哈希与此无关）；
   web 快照 rsync 到 `<PREFIX>/web.staging/`，与线上 `web/` 比内容摘要决定"web 是否变化"。

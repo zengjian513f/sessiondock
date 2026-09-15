@@ -332,7 +332,7 @@ test('Codex rollback: the deepest branch is the leaf, live siblings first, and o
     migrateComposerDraft: (from, to) => migrated.push([from, to]),
     browserAuditEvent: (event, data, _content, fields) => audited.push([event, data, fields]),
     openSession: async (uid, agent, options) => opened.push([uid, agent, options])});
-  for (const name of ['hiddenForkParent', 'forkAncestors', 'forkLeaf', 'forkLeafUid', 'followSelectedFork']) load(context, name);
+  for (const name of ['hiddenForkParent', 'forkAncestors', 'forkChildren', 'forkLeaf', 'forkLeafUid', 'followSelectedFork']) load(context, name);
   const a = {uid: 'codex:a', source: 'codex', sid: 'sid-a', fork_parent: true, created: '2026-09-14T00:00:00Z'};
   const b = {uid: 'codex:b', source: 'codex', sid: 'sid-b', forked_from_id: 'sid-a', fork_parent: true, created: '2026-09-14T06:00:00Z'};
   const c = {uid: 'codex:c', source: 'codex', sid: 'sid-c', forked_from_id: 'sid-b', created: '2026-09-15T00:00:00Z'};
@@ -505,4 +505,49 @@ test('console output: plain chunks go straight to xterm, a DEC 2026 frame is wri
   writeTermOutput(v, H + 'closing');
   flushTermSyncHold(v);
   same(v.writes, [H + 'closing']);
+});
+
+test('OSC 10/11/12/4 reports to the PTY always use the dark terminal palette', () => {
+  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../legacy-web/style.css', import.meta.url), 'utf8');
+  const context = ctx();
+  for (const name of ['DARK_TERM_REPORT', 'oscRgbString', 'oscColorReport', 'rewriteOscColorReports']) {
+    load(context, name, term);
+  }
+  const {DARK_TERM_REPORT, oscRgbString, oscColorReport, rewriteOscColorReports} = context;
+  const darkBlock = css.match(/:root\[data-theme="dark"\] #xterm \{([^}]+)\}/)?.[1];
+  assert.ok(darkBlock, 'dark #xterm palette');
+  const cssRgb = name => {
+    const match = darkBlock.match(new RegExp(`--terminal-${name}:\\s*#([0-9a-fA-F]{6})`));
+    assert.ok(match, name);
+    return [0, 2, 4].map(i => parseInt(match[1].slice(i, i + 2), 16));
+  };
+  same(DARK_TERM_REPORT[10], cssRgb('fg'));
+  same(DARK_TERM_REPORT[11], cssRgb('bg'));
+  same(DARK_TERM_REPORT[12], cssRgb('cursor'));
+  const ansi = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white',
+    'bright-black', 'bright-red', 'bright-green', 'bright-yellow',
+    'bright-blue', 'bright-magenta', 'bright-cyan', 'bright-white'];
+  same(DARK_TERM_REPORT.ansi, ansi.map(cssRgb));
+
+  const st = s => s + '\x1b\\';
+  const bel = s => s + '\x07';
+  assert.equal(rewriteOscColorReports('\x1b]11;rgb:f4f4/f6f6/f8f8\x1b\\'),
+    oscColorReport('11', DARK_TERM_REPORT[11]));
+  assert.equal(rewriteOscColorReports('\x1b]10;rgb:2525/2a2a/3232\x07'),
+    oscColorReport('10', DARK_TERM_REPORT[10], true));
+  assert.equal(rewriteOscColorReports('\x1b]12;#315f9f\x1b\\'),
+    oscColorReport('12', DARK_TERM_REPORT[12]));
+  assert.equal(rewriteOscColorReports('\x1b]4;1;rgb:a8a8/3232/3b3b\x1b\\'),
+    oscColorReport('4;1', DARK_TERM_REPORT.ansi[1]));
+  assert.equal(rewriteOscColorReports('\x1b]4;232;rgb:0808/0808/0808\x1b\\'),
+    '\x1b]4;232;rgb:0808/0808/0808\x1b\\', '256-color cube is not a theme leak');
+  assert.equal(rewriteOscColorReports('a\x1b]11;rgb:ffff/ffff/ffff\x1b\\b'),
+    `a${oscColorReport('11', DARK_TERM_REPORT[11])}b`);
+  assert.equal(rewriteOscColorReports('\x1b]52;c;abcd\x1b\\'), '\x1b]52;c;abcd\x1b\\');
+  assert.equal(rewriteOscColorReports('hi'), 'hi');
+  assert.equal(oscRgbString(0, 0, 0), 'rgb:0000/0000/0000');
+  assert.equal(st('\x1b]11;rgb:0000/0000/0000'), oscColorReport('11', [0, 0, 0]));
+  assert.equal(bel('\x1b]10;rgb:9d9d/a5a5/b0b0'), oscColorReport('10', DARK_TERM_REPORT[10], true));
+  assert.match(term, /d = rewriteOscColorReports\(d\);/);
 });

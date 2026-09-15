@@ -145,6 +145,8 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True):
     repeated = context.request.post(base + "/api/term/create", data=response.request.post_data_json)
     assert repeated.status == 200 and repeated.json()["record_id"] == receipt["record_id"]
     assert repeated.json()["declared_sid"] == receipt["declared_sid"]
+    expect(page.locator("#termpane")).to_be_hidden()
+    page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
     expect(page.locator("#composer")).to_be_hidden()
     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")

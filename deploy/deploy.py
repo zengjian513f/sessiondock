@@ -96,8 +96,16 @@ def source_tree(worktree: bool) -> str:
         return git("rev-parse", "HEAD^{tree}")
     with tempfile.TemporaryDirectory(prefix="sessiondock-source-index-") as temporary:
         env = dict(os.environ, GIT_INDEX_FILE=str(Path(temporary) / "index"))
-        for argv in (["git", "read-tree", "HEAD"], ["git", "add", "--update", "--", "."]):
-            subprocess.run(argv, cwd=ROOT, env=env, check=True, timeout=300)
+        # Copy the index so staged new source files are included. Even
+        # write-tree may refresh its cache, so never run it on the shared index.
+        index = Path(git("rev-parse", "--git-path", "index"))
+        if not index.is_absolute():
+            index = ROOT / index
+        if index.is_file():
+            shutil.copyfile(index, env["GIT_INDEX_FILE"])
+        else:
+            subprocess.run(["git", "read-tree", "HEAD"], cwd=ROOT, env=env, check=True, timeout=300)
+        subprocess.run(["git", "add", "--update", "--", "."], cwd=ROOT, env=env, check=True, timeout=300)
         return subprocess.run(["git", "write-tree"], cwd=ROOT, env=env,
                               capture_output=True, text=True, check=True, timeout=300).stdout.strip()
 
@@ -578,6 +586,11 @@ def run_test_gate(args, stage: Path, targets: list[Target] | None) -> None:
         except ValueError as e:
             die(str(e))
         changed, names = testplan.changed_files(base, args.allow_dirty), testplan.list_suites(binary)
+        if args.web_only:
+            # This stage ships no Rust sources or binaries. Concurrent backend
+            # edits must not force their Cargo validation into a page update.
+            changed = [path for path in changed if not path.startswith("crates/")
+                       and path not in {"Cargo.toml", "Cargo.lock"}]
     plan = testplan.plan_for(args.test, changed, names)
     testplan.print_plan(plan, base, how or "")
     res = testplan.run(plan, binary, stage, args.test_timeout)

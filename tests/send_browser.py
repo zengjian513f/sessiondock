@@ -1,19 +1,8 @@
 #!/usr/bin/env python3
-"""Claude reliable send through the real legacy composer.
-
-A Claude-profile session is created through the real dialog against the fake
-Claude CLI (`tests/fake_claude_cli.py`, never a model binary). The first line
-is typed in the console so the native file exists; every later prompt goes
-through the composer at the bottom of the page: POST /api/session/send under
-this page's own console lease, the outbox row shows "状态待核对" until the
-fake CLI's native `user` record arrives over SSE, then the row is replaced by
-the real message. A console draft asks for consent (the real confirm dialog)
-and is cleared before the prompt is pasted. A second page without a lease
-sees the documented ownership error while the first page holds the console —
-for the composer's send and for its Esc, which is raw input with an empty
-token and the pane's identity. Finally a 390 px page with no console open
-anywhere sends Esc through the pinned instance and a prompt through the
-server-held lease.
+"""Server drafts and one-shot conversation SEND against an isolated fake CLI.
+Covers busy sends, lost responses, session isolation, uploads, cancellation,
+and startup choice refusal/recovery without browser message persistence.
+Older helper functions remain available to the terminal ownership suites.
 """
 import base64
 import hashlib
@@ -63,7 +52,7 @@ def initialize(flag, directory):
     assert done.returncode == 0, done.stderr.decode()
 
 
-def create_claude(page, base, work):
+def create_claude(page, base, work, *, open_terminal=True):
     if not page.locator("#new-session").is_visible():
         page.locator("#header-more-btn").click()
     page.locator("#new-session").click()
@@ -74,6 +63,12 @@ def create_claude(page, base, work):
     assert created.value.status == 200, created.value.text()
     receipt = created.value.json()
     assert receipt["running"] and receipt["launch_kind"] == "new_assigned", receipt
+    expect(page.locator("#termpane")).to_be_hidden()
+    expect(page.locator("#composer")).to_be_visible()
+    assert page.evaluate("T.views.size === 0 && T.openViews.size === 0")
+    if not open_terminal:
+        return receipt
+    page.locator("#a-term").click()
     expect(page.locator("#termpane")).to_be_visible()
     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
     xterm_includes(page, "FAKE_CLAUDE_READY sid=[%s]" % receipt["declared_sid"])
@@ -175,17 +170,18 @@ def main():
         corpus = Corpus(root)
         python = Path(subprocess.check_output(["/bin/sh", "-c", "command -v python3"]).decode().strip()).resolve()
         wrapper = root / "bin/fake-claude"
-        wrapper.write_text("#!/bin/sh\nexec %s %s \"$@\"\n" % (python, FAKE_CLI))
+        wrapper.write_text("#!/bin/sh\nexec %s %s \"$@\"\n" % (python, REPO / "tests/fake_conversation_cli.py"))
         wrapper.chmod(0o700)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
             "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "claude-cli-v1", "source": "claude", "executable": str(wrapper),
-                 "args": ["--settings", SETTINGS, "--reply"], "new_args": ["--session-id", "{session_id}"],
+                 "args": ["--settings", SETTINGS, "--reply", "--delay", "2500", "--busy-footer"], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
-                         "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
+                         "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
+                         "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:
@@ -202,7 +198,7 @@ def main():
                     def watch(context):
                         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                         context.on("request", lambda request: sends.append(request.post_data_json)
-                            if urlsplit(request.url).path == "/api/session/send" else None)
+                            if urlsplit(request.url).path == "/api/session/conversation/send" else None)
                         page = context.new_page()
                         page.on("pageerror", lambda error: errors.append(str(error)))
 
@@ -216,177 +212,147 @@ def main():
                         page.goto(base, wait_until="networkidle")
                         return page
 
-                    # ---- Desktop: create, type the first line at the console, then compose.
-                    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-                    meta = context.request.get(base + "/api/meta").json()
-                    assert meta["capabilities"]["outbox"] is True and meta["capabilities"]["outbox_read"] is True, meta
-                    page = watch(context)
-                    receipt = create_claude(page, base, root / "work")
-                    sid = receipt["declared_sid"]
-                    uid = claude_uid(root, sid)
-                    expect(page.locator("#composer")).to_be_hidden()
-                    page.locator("#termpane .xterm-helper-textarea").press_sequentially("first line at the console")
-                    page.locator("#termpane .xterm-helper-textarea").press("Enter")
-                    xterm_includes(page, "> first line at the console")
-                    page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
-                    # The desktop console opens full-height over the chat; switch back
-                    # to the conversation (the console stays attached, its lease held).
-                    page.wait_for_function("uid => takenOver(uid) !== null", arg=uid, timeout=15000)
-                    if page.evaluate("T.mode") == "full":
-                        page.locator("#a-term").click()
-                    expect(page.locator("#composer")).to_be_visible(timeout=15000)
-                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
-                    wait_history(page, "first line at the console")
-
-                    # Composer send under this page's own console lease.
-                    response = send_from_composer(page, "hello from the composer")
-                    assert response.status == 200, response.text()
-                    body = response.json()
-                    assert body["ok"] is True and body["item"]["state"] == "ambiguous" and body["item"]["attempts"] == 1, body
-                    assert sends[-1]["lease"]["instance_id"] == receipt["instance_id"] and len(sends[-1]["lease"]["token"]) == 64, sends[-1]
-                    assert sends[-1]["request_id"] and sends[-1]["_build"] == meta["build"], sends[-1]
-                    version = page.evaluate("uid => S.outboxVersions.get(uid)", uid)
-                    assert version and isinstance(version["epoch"], str) and isinstance(version["revision"], int), version
-                    # The outbox row is visible until the native record replaces it via SSE.
-                    page.wait_for_function("() => document.querySelector('#msgs .client-outbox') !== null"
-                                           " || [...document.querySelectorAll('#msgs .msg')].some(n => n.textContent.includes('hello from the composer'))")
-                    xterm_includes(page, "> hello from the composer")
-                    wait_history(page, "hello from the composer")
-                    wait_history(page, "OK: hello from the composer")
-                    expect(page.locator("#cinput")).to_have_value("")
-                    # The front-end retires its optimistic row from the native SSE
-                    # record; the server ledger is confirmed independently by the
-                    # executor's tracker, so poll until it empties.
-                    listed = wait_server_outbox_empty(context, base, uid)
-                    assert listed["outbox_version"]["epoch"] == version["epoch"], (listed, version)
-                    raw = (root / "claude/project-history" / f"{sid}.jsonl").read_text().splitlines()
-                    assert [json.loads(row)["message"]["content"] for row in raw if json.loads(row)["type"] == "user"] == \
-                        ["first line at the console", "hello from the composer"], raw
-
-                    send_attachments(page, root, "desktop attachments", sends, fail_first=True)
-                    wait_server_outbox_empty(context, base, uid)
-
-                    # ---- A second page without the console lease is refused while
-                    # this page holds it; nothing is persisted or pasted.
-                    other = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
-                    page_two = watch(other)
-                    page_two.locator(f'#side .item[data-uid="{uid}"]').click()
-                    page_two.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
-                    expect(page_two.locator("#composer")).to_be_visible()
-                    # Second page holds no console lease. A send from its own
-                    # browser origin (same body the composer posts, no lease) is
-                    # refused with the documented ownership error, and nothing is
-                    # persisted or pasted.
-                    refused = other.request.post(base + "/api/session/send", data={
-                        "uid": uid, "name": receipt["name"], "text": "blocked by the other console",
-                        "media": [], "request_id": "browser-blocked-request", "_build": meta["build"]})
-                    assert refused.status == 409, refused.text()
-                    body = refused.json()
-                    # A launch-console lease held by another page conflicts as a
-                    # binding mismatch; a native/server lease as a conflict with
-                    # the owner IP. Both are the documented ownership refusal.
-                    assert body["code"] == "terminal_ownership", body
-                    # The composer's draft probe (the first call it makes) is
-                    # refused the same way, so the page shows the error instead of
-                    # sending. Assert the refusal the page hits, then drive the
-                    # real composer and confirm it surfaces a visible alert and
-                    # posts no send.
-                    probe = other.request.post(base + "/api/session/draft-status", data={
-                        "uid": uid, "name": receipt["name"],
-                        "page": "page-two", "token": "0" * 64, "instance_id": receipt["instance_id"]})
-                    assert probe.status == 409 and probe.json()["code"] == "terminal_ownership", probe.text()
-                    # Driving the real composer, the refusal reaches the user as
-                    # a visible alert and the page posts no send and shows no
-                    # optimistic row.
-                    before = len(dialogs)
-                    page_two.locator("#cinput").fill("blocked by the other console")
-                    page_two.locator("#csend").click()
-                    deadline = time.monotonic() + 10
-                    while len(dialogs) <= before and time.monotonic() < deadline:
-                        time.sleep(0.1)
-                    if dialogs[before:]:
-                        assert dialogs[before][0] == "alert", dialogs[before:]
-                    assert not any(x.get("text") == "blocked by the other console" for x in sends), sends
-                    assert page_two.locator("#msgs .client-outbox").count() == 0
-                    # The composer's Esc is raw input from a page without a lease:
-                    # an empty token plus the pane's pinned identity. While this
-                    # page's console holds the lease it is the same ownership
-                    # refusal naming the owner, never the "credential format"
-                    # error a blank token used to hit, and it reaches the user.
-                    raw = []
-                    other.on("request", lambda request: raw.append(request.post_data_json)
-                             if urlsplit(request.url).path == "/api/term/send" else None)
-                    before = len(dialogs)
-                    with page_two.expect_response(lambda response: urlsplit(response.url).path == "/api/term/send", timeout=20000) as escaped:
-                        page_two.locator("#cesc").click()
-                    assert escaped.value.status == 409 and escaped.value.json()["code"] == "terminal_ownership", escaped.value.text()
-                    assert raw[-1]["token"] == "" and raw[-1]["keys"] == ["Escape"], raw[-1]
-                    assert raw[-1]["uid"] == uid and raw[-1]["instance_id"] == receipt["instance_id"], raw[-1]
-                    assert "record_id" not in raw[-1] and "launch_id" not in raw[-1], raw[-1]
-                    deadline = time.monotonic() + 10
-                    while len(dialogs) <= before and time.monotonic() < deadline:
-                        time.sleep(0.1)
-                    assert dialogs[before:] and dialogs[before][0] == "alert" and "其他页面持有" in dialogs[before][1], dialogs[before:]
-                    assert "凭证格式" not in dialogs[before][1], dialogs[before:]
-                    listed = wait_server_outbox_empty(other, base, uid)
-                    other.close()
-                    assert not errors, errors
+                    context = browser.new_context(viewport={"width":1280,"height":900},service_workers="block")
+                    page=watch(context)
+                    receipt=create_claude(page,base,root / 'work',open_terminal=False)
+                    page.wait_for_function("composerUid && !composerDraft().loading && takenOver(composerUid)")
+                    assert page.evaluate('T.views.size')==0
+                    uid='tmux:'+receipt['name']
+                    build=context.request.get(base+'/api/meta').json()['build']
+                    def send(text):
+                        page.fill('#cinput',text)
+                        with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as response:
+                            page.locator('#csend').click()
+                        assert response.value.status==200,response.value.text()
+                        assert response.value.json()['state']=='sent'
+                        expect(page.locator('#cinput')).to_have_value('')
+                        assert not page.locator('.client-outbox,.draft-saved').count()
+                        return sends[-1]
+                    # Empty legacy evidence must leave a fresh server draft untouched.
+                    response=context.request.post(base+'/api/session/conversation/import',data={'uid':uid,'value':{'text':'','attachments':[],'quotes':[]}})
+                    assert response.status==200,response.text()
+                    row=context.request.get(base+'/api/session/conversation?uid='+uid).json()['draft']
+                    assert row['revision']==0 and row['value'] is None,row
+                    # Repair the already-produced nullable shape without consuming any input.
+                    response=context.request.post(base+'/api/session/conversation',data={'uid':uid,'revision':0,'value':{'text':None,'attachments':None,'quotes':None}})
+                    assert response.status==200,response.text()
+                    repaired=response.json()['draft']['value']
+                    assert repaired['text']=='' and repaired['attachments']==[] and repaired['quotes']==[]
+                    page.reload(wait_until='networkidle')
+                    # With no native user turn yet, reopen the pending instance explicitly.
+                    page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',receipt)
+                    page.wait_for_function('composerUid && !composerDraft().loading')
+                    assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
+                    first=send('first busy input')
+                    started=time.monotonic();second=send('second busy input')
+                    assert time.monotonic()-started<2.5 # No JSONL confirmation wait.
+                    assert first['request_id']!=second['request_id']
+                    replay=context.request.post(base+'/api/session/conversation/send',data=first)
+                    assert replay.status==200,replay.text()
+                    jsonl=root/'claude/project-history'/f"{receipt['declared_sid']}.jsonl"
+                    deadline=time.monotonic()+15
+                    while not jsonl.exists() or jsonl.read_text().count('second busy input')<2:
+                        assert time.monotonic()<deadline
+                        time.sleep(.1)
+                    users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
+                    assert users==['first busy input','second busy input'],users
+                    page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
+                    native=page.evaluate('S.sel')
+                    page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
+                    server=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
+                    assert server['value']['text']=='draft survives refresh'
+                    assert not page.evaluate("Object.keys(localStorage).some(k=>k.includes('composerDraft'))")
+                    page.reload(wait_until='networkidle')
+                    page.wait_for_function("composerUid && !composerDraft().loading")
+                    expect(page.locator('#cinput')).to_have_value('draft survives refresh')
+                    # CAS refuses another page's stale write without changing either input.
+                    stale=context.request.post(base+'/api/session/conversation',data={'uid':native,'revision':server['revision']-1,'value':{'text':'stale other page'}})
+                    assert stale.status==409,stale.text()
+                    assert context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']['value']['text']=='draft survives refresh'
+                    other_reply=context.request.post(base+'/api/term/create',data={'source':'claude','cwd':str(root/'work/claude-area'),'request_id':'other-session','_build':build})
+                    assert other_reply.status==200,other_reply.text()
+                    other_receipt=other_reply.json();other='tmux:'+other_receipt['name']
+                    context.request.post(base+'/api/session/conversation',data={'uid':other,'revision':0,'value':{'text':'separate session'}})
+                    assert context.request.get(base+'/api/session/conversation?uid='+other).json()['draft']['value']['text']=='separate session'
+                    assert context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']['value']['text']=='draft survives refresh'
+                    # A lost HTTP reply is resolved by GET before any stale save or second SEND.
+                    def lose_reply(route):
+                        response=route.fetch()
+                        assert response.status==200,response.text()
+                        route.abort('failed')
+                    page.route('**/api/session/conversation/send',lose_reply)
+                    page.fill('#cinput','lost HTTP reply');page.locator('#csend').click()
+                    page.wait_for_function('!composerSending')
+                    expect(page.locator('#cinput')).to_have_value('lost HTTP reply')
+                    count=len(sends)
+                    page.unroute('**/api/session/conversation/send',lose_reply)
+                    page.locator('#csend').click();page.wait_for_function('!composerSending')
+                    expect(page.locator('#cinput')).to_have_value('')
+                    assert len(sends)==count # Lookup only: no duplicate SEND.
+                    page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
+                    # Selection saves metadata, with no upload or published agent file.
+                    uploads=[]
+                    context.on('request',lambda request:uploads.append(request.url) if '/conversation/attachment?' in request.url else None)
+                    page.locator('#cadd').click()
+                    with page.expect_file_chooser() as chooser:page.locator('#attach-menu [data-attach=file]').click()
+                    chooser.value.set_files([{'name':'payload.txt','mimeType':'text/plain','buffer':b'private bytes'}])
+                    page.evaluate('async () => await composerDraftWrites')
+                    assert not uploads and not (root/'work/claude-area/sessiondock_attachments').exists()
+                    # A failed upload keeps the original File and text; no SEND.
+                    def unavailable(route):route.fulfill(status=503,content_type='application/json',body='{"error":"upload unavailable"}')
+                    page.route('**/api/session/conversation/attachment?*',unavailable)
+                    count=len(sends);page.locator('#csend').click()
+                    page.wait_for_function('!composerSending')
+                    assert len(sends)==count and page.evaluate('composerDraft().attachments[0].file instanceof File')
+                    expect(page.locator('#cinput')).to_have_value('draft survives refresh')
+                    page.unroute('**/api/session/conversation/attachment?*',unavailable)
+                    body=send('attachment send')
+                    assert body['text']=='attachment send' and body['attachments'][0]['upload_id']
+                    published=list((root/'work/claude-area/sessiondock_attachments').glob('*/payload.txt'))
+                    assert len(published)==1 and published[0].read_bytes()==b'private bytes'
+                    # The same upload ID cannot overwrite another session's staging bytes.
+                    for owner,content in [('report:a',b'a'),('report:b',b'b')]:
+                        response=context.request.post(base+'/api/session/conversation/attachment?uid='+owner+'&id=same&name=x',data=content,headers={'Content-Type':'text/plain'})
+                        assert response.status==200,response.text()
+                    conflict=context.request.post(base+'/api/session/conversation/attachment?uid=report:a&id=same&name=x',data=b'changed',headers={'Content-Type':'text/plain'})
+                    assert conflict.status==409,conflict.text()
+                    # Disconnect an incomplete streaming upload; no partial staging files survive.
+                    address=urlsplit(base)
+                    with socket.create_connection((address.hostname,address.port)) as connection:
+                        connection.sendall(b'POST /api/session/conversation/attachment?uid=report:a&id=partial&name=partial HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1000000\r\nContent-Type: text/plain\r\n\r\nabc')
+                    time.sleep(.3)
+                    assert not list((root/'state/conversations/conversation-uploads').glob('*.upload'))
+                    # A startup choice disables the chat sender, and backend rejects bypasses.
+                    (root/'gate').write_text('Do you trust this directory?\n❯ 1. Yes\n  2. No\nPress Enter to confirm')
+                    gated=create_claude(page,base,root/'work',open_terminal=False)
+                    gated_uid='tmux:'+gated['name']
+                    page.wait_for_function('composerDraft()?.cliQuestion === true',timeout=15000)
+                    expect(page.locator('#csend')).to_be_disabled()
+                    page.fill('#cinput','must not answer trust')
+                    page.evaluate('async () => await composerDraftWrites')
+                    refused=context.request.post(base+'/api/session/conversation/send',data={'uid':gated_uid,'text':'must not answer trust','request_id':'choice-refusal','_build':build})
+                    assert refused.status==409 and refused.json()['code']=='cli_question',refused.text()
+                    assert not (root/'gate.trace').exists() # No terminal bytes.
+                    assert context.request.get(base+'/api/session/conversation?uid='+gated_uid).json()['draft']['value']['text']=='must not answer trust'
+                    expect(page.locator('#cinput')).to_have_value('must not answer trust')
+                    stopped=context.request.post(base+'/api/term/kill',data={'record_id':gated['record_id'],'instance_id':gated['instance_id']})
+                    assert stopped.status==200,stopped.text()
+                    # CLI exit/restart keeps the same draft and stable restart request.
+                    restarted=context.request.post(base+'/api/session/conversation/restart',data={'uid':gated_uid,'request_id':'restart-same','_build':build})
+                    assert restarted.status==200,restarted.text()
+                    new_receipt=restarted.json();next_uid='tmux:'+new_receipt['name']
+                    assert context.request.get(base+'/api/session/conversation?uid='+next_uid).json()['draft']['value']['text']=='must not answer trust'
+                    again=context.request.post(base+'/api/session/conversation/restart',data={'uid':gated_uid,'request_id':'restart-same','_build':build})
+                    assert again.status==200 and again.json()['name']==new_receipt['name'],again.text()
+                    context.request.post(base+'/api/term/kill',data={'record_id':new_receipt['record_id'],'instance_id':new_receipt['instance_id']})
+                    assert not errors,errors
+                    # Clean up private test hosts only.
+                    for item in [receipt,other_receipt,gated]:
+                        context.request.post(base+'/api/term/kill',data={'record_id':item['record_id'],'instance_id':item['instance_id']})
                     context.close()
-
-                    # ---- Mobile: no console open anywhere; the server claims its own lease.
-                    mobile = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
-                    page = watch(mobile)
-                    page.locator(f'#side .item[data-uid="{uid}"]').click()
-                    page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
-                    expect(page.locator("#composer")).to_be_visible()
-                    bounds = page.locator("#composer").bounding_box()
-                    assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
-                    # Esc from the phone with no console open anywhere: written
-                    # through the pinned instance under the ordinary-claimant
-                    # rule, and nothing lingers to conflict with the send below.
-                    raw = []
-                    mobile.on("request", lambda request: raw.append(request.post_data_json)
-                              if urlsplit(request.url).path == "/api/term/send" else None)
-                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/send", timeout=20000) as escaped:
-                        page.locator("#cesc").click()
-                    assert escaped.value.status == 200 and escaped.value.json()["ok"] is True, escaped.value.text()
-                    assert raw[-1]["token"] == "" and raw[-1]["keys"] == ["Escape"] and raw[-1]["uid"] == uid, raw[-1]
-                    page.locator("#cinput").fill("from the phone")
-                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/send", timeout=20000) as sent:
-                        page.locator("#csend").click()
-                    assert sent.value.status == 200, sent.value.text()
-                    assert "lease" not in sends[-1], sends[-1]
-                    wait_history(page, "from the phone")
-                    wait_history(page, "OK: from the phone")
-                    send_attachments(page, root, "mobile attachments", sends)
-                    wait_server_outbox_empty(mobile, base, uid)
-                    assert not errors, errors
-                    mobile.close()
             finally:
                 browser.close()
-                for path in (root / "host").glob("*.json"):
-                    record = json.loads(path.read_text())
-                    meta = record["meta"]
-                    try:
-                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
-                            stream.settimeout(2)
-                            stream.connect(str(root / "host" / (record["name"] + ".sock")))
-                            stream.sendall(json.dumps({"op": "launch_guard_v1", "expected_source": meta["source"],
-                                "expected_launch_id": meta["launch_id"], "expected_instance_id": meta["instance_id"],
-                                "request": {"op": "kill", "force": True}}).encode() + b"\n")
-                    except OSError:
-                        pass
-                deadline = time.monotonic() + 6
-                while list((root / "host").glob("*.sock")) and time.monotonic() < deadline:
-                    time.sleep(.05)
-    print("PASS send browser: composer send under the page's console lease confirmed by the fake CLI's "
-          "native record over SSE (optimistic outbox row replaced by the history message, server ledger "
-          "emptied by the tracker), a second page refused with the terminal_ownership error on both composer "
-          "calls and its Esc refused with the owner while the console is held, a 390 px Esc and composer "
-          "send with no console open anywhere (raw input and the server-claimed lease), "
-          "and desktop/mobile JSON+image attachments with upload-error draft retention and retry")
+    print('PASS send_browser: server drafts/CAS/isolation, busy SEND, deduplication, metadata-only selection, private uploads/publication, interrupted stream, startup choice refusal, no browser outbox')
 
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

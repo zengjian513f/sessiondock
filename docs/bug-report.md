@@ -99,6 +99,27 @@ identity stays pending like any other launch); `token` is that sid or the
 launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
+## Server input preservation
+
+Reports and ordinary messages use the same [conversation service](conversation.md).
+There is one revisioned editing draft per logical session in the private state
+directory. Browser storage holds preferences and draft identifiers only. A report
+uses a provisional `report:<id>` identity until its processing launch is bound to
+that same draft; the server owns the first SEND. No browser submission archive or
+native-confirmation outbox is created.
+
+Selecting/pasting a file saves metadata only. File bytes remain in browser RAM
+until explicit Send, then stream into private server staging. An unuploaded file
+needs reselection after refresh; leaving with unuploaded bytes or an unfinished
+save warns. Upload/SEND errors retain the current draft. Concurrent edits use CAS;
+a successful SEND clears only the submitted revision.
+
+The report body adds `{draft_uid, draft_revision, request_id}` and attachment
+`{upload_id, number}` references. A stable report request ID freezes diagnostics
+once; a lost response returns the stored result, without another bundle or launch.
+A crash with an incomplete capture returns `report_result_unknown` and retains
+input for inspection.
+
 ## The bundle
 
 `<dir>/BUG-YYYYMMDD-HHMMSS-hex6/` (`0700`, files `0600`, every write is a
@@ -128,67 +149,30 @@ item or the position, `mime` ≤ 100 chars,
 `kind` ∈ image/video/audio else `file`, `name` ≤ 200 chars, `relative_path`
 relative to the repository. The prompt lists them as `附件N: ./<relative_path>`.
 
-`POST /api/session/attachment?uid=bug-report&name=<file>[&id=N]` is the
-raw upload special case: the request body is the file, written through the
-file write service into `<repo>/sessiondock_attachments/<id>/<name>` (`id` is
-`[1-9]\d{0,8}` or the next free batch number; the name is sanitized;
-identical content is reused, a clash becomes
-`stem__N.suffix`; nothing is ever overwritten). Response: `{ok, name,
-original_name, path, relative_path, attachment_id, mime, kind, size, reused,
-media: null}`. Bound: 512 MiB per file (`413`). Every
-other session `uid` uses the conversation attachment upload contract of
-[files.md](files.md).
+The browser uses `POST /api/session/conversation/attachment` to stream private
+uploads scoped by draft/session identity and upload ID. Identical retries reuse
+metadata; different bytes under that ID return conflict and never overwrite.
+Explicit report submission publishes the files to
+`<repo>/sessiondock_attachments/<batch>/<name>` through the existing checked file
+writer, then freezes diagnostic attachment copies. Ordinary conversation sends
+publish to their own verified cwd. The old direct attachment endpoint remains
+available to legacy callers; it is not the new browser upload path.
 
 ## The worker (`bug_report/worker.rs`)
 
-1. `lifecycle::Service::create` with the source's configured CLI and cwd =
-   repository (`request_id` `bug-report-<report_id>`, idempotent). The record
-   must reach `Running`; the sidebar decoration `{kind: "bug-report",
-   report_id, title: "处理 <id>", worker_status, worker_error}` is remembered
-   per lifecycle record (`BugReportService::pending_decoration`, rebuilt from
-   manifests at start, `worker_status`/`worker_error` mirroring every
-   manifest `status`/`error` update) and merged into the worker's
-   `/api/term/list` pending row; the legacy pending page and sidebar row show
-   it (`正在注入缺陷报告提示词`, `提示词已提交`, `提示词注入失败：…`).
-   Manifest `status: starting`; audit `bug_report.worker_started`.
-2. Readiness (90 s): the screen is read through the
-   launch guard without a lease so a page may open the console meanwhile.
-   Claude/Codex use the delivery driver's composer models
-   (`driver::inspect_for`), Grok `_ScreenProbe` (a non-blank frame
-   that stopped changing). The composer must be `empty` for 600 ms; an
-   `editing` frame on a fresh instance is a failure (`新建 … 会话出现了意外草稿`).
-   State changes are audited as `bug_report.worker_probe`.
-3. Injection as server-originated host input through the launch guard
-   (`request_launch` — the same path `session/stop` uses for its EOF
-   keys; no page console is needed either). No browser
-   lease is claimed, so a page that opened the console from the toast keeps
-   it and watches the prompt arrive; `manifest.injection.origin` records
-   `sessiondock-bug-report`. The frame is rechecked, `paste_started_at` is
-   persisted, the prompt is pasted (bracketed), the paste is verified on
-   screen — the composer shows the exact text, the TUI's collapsed-paste
-   placeholder (`[Pasted text #1 +N lines]`, `[Pasted Content …]`), or, when
-   the block cannot be read whole, a changed frame carrying the report id or
-   the prompt's last line — then `pasted_at`/`paste_verified`,
-   `enter_started_at`, Enter, `entered_at`, `enter_acknowledged` are persisted
-   in turn. An unacknowledged (timed-out) Enter is recorded and never repeated
-   blindly; a crash between the persisted steps leaves `status: injecting` and
-   is never resumed.
-4. For at most 4 × 1 s the composer is watched;
-   while it visibly still holds the pasted draft Enter is resent (audit
-   `bug_report.worker_enter_retry`); any other frame is only watched. The
-   result is the manifest's `composer_cleared`, diagnostic only.
-5. Confirmation comes from a native `user` record, never from the screen:
-   Claude — the declared session id resolved through the published list rows;
-   Codex/Grok — sessions of that source whose cwd is the
-   repository and that were created since the launch. A `user` text containing
-   the report id (or, for a declared session, a collapsed-paste placeholder as
-   its first input) is `submitted` with `confirmed_from: {uid, method:
-   "native_user_record", text_match}`; nothing within 20 s is
-   `submitted_unconfirmed` with the message `提示词已粘贴到 <CLI>，但未能确认已提交；请在终端里检查`;
-   any failed step is `failed` with `error`. Audit: `bug_report.worker_submitted`,
-   `bug_report.worker_unconfirmed` (warning), `bug_report.worker_failed` (error).
-
-Each launched worker starts its own injection task.
+1. Create the source's ordinary configured CLI with repository cwd. Keep its
+   model/effort defaults. The new frontend view is conversation mode; the PTY
+   starts in the backend and can be opened manually.
+2. Bind the processing launch to the report's server draft, retaining original
+   text, uploaded references and the diagnostic task prompt.
+3. Call the common conversation sender. A blank startup screen may be retried
+   before any write. A choice menu/approval refuses SEND and retains the draft;
+   the user answers in the terminal. No Enter resend or native-confirmation
+   polling takes place.
+4. Successful guarded paste + Enter is `submitted`, with `injection.basis: SEND`.
+   Failure records `failed` and `draft_retained`. Native JSONL is read later for
+   history rendering independently. An exited unbound CLI can be restarted from
+   the retained conversation draft; both launches share that draft identity.
 
 ### Prompt
 
@@ -219,9 +203,8 @@ window's dates line by line (≤ 100 000 rows).
   `events.jsonl` has no message text/composer content.
 - The report id stamp is UTC.
 - `terminal.txt` exists only for a managed instance.
-- `submitted` means a native `user` record carries the prompt;
-  a Codex/Grok worker whose rollout cannot be found is
-  `submitted_unconfirmed`.
+- `submitted` means the common guarded SEND completed; missing native history
+  does not introduce an unconfirmed state. Old manifests remain readable.
 - Report attachments: ≤ 512 MiB per upload; no media preview token in the
   upload response (`media: null`).
 - `cols`/`rows` are recorded in the manifest only; the PTY size follows the
@@ -236,7 +219,7 @@ window's dates line by line (≤ 100 000 rows).
   files, `submitted` from the synthetic native record, second report sees the
   first in its window, the capture route's answer and the `captured` validation).
 - `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
-  9 scenarios including Codex `submitted_unconfirmed` and the audit trail).
+  9 scenarios including Codex SEND without a native rollout and the audit trail).
 - `python3 tests/bug_report_node_browser.py` (hub page over three fake nodes:
   the dialog's machine picker defaults to the problem's machine, a worker on
   another machine goes through `/api/bug-report/capture` and hands `captured`

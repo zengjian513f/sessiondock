@@ -113,6 +113,20 @@ pub async fn outbox(
             return Ok(empty_outbox());
         }
     };
+    if state.conversations.is_some() {
+        let legacy: Value = serde_json::from_slice(&encoded.into_bytes()).map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "delivery_read_failed",
+                "旧发送账本读取失败，保留原记录",
+            )
+        })?;
+        return Ok(Json(
+            json!({"outbox":[],"outbox_version":{"epoch":"conversation","revision":0},
+            "legacy_delivery":legacy}),
+        )
+        .into_response());
+    }
     Ok(body(encoded))
 }
 
@@ -390,7 +404,7 @@ fn reply(reply: Reply) -> Response {
         .into_response()
 }
 
-fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
+pub(super) fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
     // Text writes from a tab that outlived a deployment are rejected before
     // touching the terminal; old clients surface the error and keep their text.
     (!hub && build != state.assets.build).then(|| {

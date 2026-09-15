@@ -168,7 +168,7 @@ fn invalid_fence_or_changed_identity_is_reported_not_guessed() {
 }
 
 #[test]
-fn nothing_new_keeps_the_watch_and_missing_enter_never_matches() {
+fn nothing_new_keeps_the_watch_and_unattempted_input_never_matches() {
     let row = receipt("hello", 100);
     assert_eq!(
         observe(&row, &scope(), &cursor(100), &read(true, 100, Vec::new())),
@@ -176,11 +176,34 @@ fn nothing_new_keeps_the_watch_and_missing_enter_never_matches() {
     );
     let mut unwritten = receipt("hello", 100);
     unwritten.enter = None;
+    unwritten.attempted = false;
     let observed = read(true, 300, vec![input("uuid-a", 100, 300, "hello")]);
     assert_eq!(
         observe(&unwritten, &scope(), &cursor(100), &observed),
         Observation::Nothing { next: None }
     );
+}
+
+#[test]
+fn manually_submitted_paste_matches_without_a_managed_enter() {
+    let mut row = receipt("hello", 100);
+    row.enter = None;
+    let observed = read(true, 300, vec![input("uuid-a", 100, 300, "hello")]);
+    let Observation::Accepted(evidence) = observe(&row, &scope(), &cursor(100), &observed) else {
+        panic!("expected native acceptance of manually submitted paste");
+    };
+    assert_eq!(evidence.association, Association::PossibleTextMatch);
+    assert_eq!(evidence.context.record.id, "uuid-a");
+    let invalid = read(false, 300, observed.inputs.clone());
+    assert_eq!(
+        observe(&row, &scope(), &cursor(100), &invalid),
+        Observation::FenceInvalid
+    );
+    let different = read(true, 300, vec![input("uuid-a", 100, 300, "other")]);
+    assert!(matches!(
+        observe(&row, &scope(), &cursor(100), &different),
+        Observation::Nothing { .. }
+    ));
 }
 
 #[test]

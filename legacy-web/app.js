@@ -5,7 +5,7 @@ const SOURCES = Object.freeze(Object.fromEntries(
     name: cli.name, icon: cli.icon, color: cli.color,
   }])));
 
-// 所有界面状态都落 localStorage, 刷新后原样恢复
+// 页面偏好落 localStorage；输入内容由服务端会话草稿保存。
 // 读取缺失时回退到旧前缀下的同名键并一次性搬到新键；写只写新键。
 const store = {
   get(k, d) {
@@ -20,6 +20,7 @@ const store = {
 // 存储结构的版本只由公共层调度；每种 CLI 自己决定怎样迁移旧队列。
 const QUEUED_MESSAGES_VERSION = 5;
 function loadQueuedMessages() {
+  if (SessionDockCapabilities.config.conversation_send === true) return [];
   const saved = store.get('queuedMessages', []);
   const valid = Array.isArray(saved) ? saved : [];
   if (!SessionDockCapabilities.allows('outbox')) return valid;
@@ -93,6 +94,7 @@ const S = {
   cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
   queued: new Map(loadQueuedMessages()),       // uid → 尚未写入原生会话记录的已发送消息
   outboxVersions: new Map(), // uid → 最近接受的服务端发送账本快照版本
+  dismissedOutboxIds: new Map(), // uid → 本页已明确移除的回执，拒收滞留快照
   retiredOutboxEpochs: new Set(), // 服务重启后拒收仍在网络中滞留的旧进程快照
   starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
   picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
@@ -854,6 +856,7 @@ const entryTotal = entry => Number.isFinite(+entry?.total)
   ? +entry.total : messageCount(entry?.msgs || []);
 
 function saveQueuedMessages() {
+  if (SessionDockCapabilities.config.conversation_send === true) return;
   for (const [uid, items] of S.queued) {
     if (!Array.isArray(items) || !items.length) S.queued.delete(uid);
   }
@@ -944,6 +947,9 @@ function acceptServerOutboxVersion(uid, version) {
 }
 
 function syncServerOutbox(uid, items, version = null, { retireMissing = false } = {}) {
+  if (SessionDockCapabilities.config.conversation_send === true) {
+    const changed=S.queued.delete(uid);return changed;
+  }
   if (!SessionDockCapabilities.allows('outbox')) return false;
   if (!['claude', 'codex'].includes(sessiondockCli(uid)?.source)
       || !Array.isArray(items)) return false;
@@ -952,7 +958,9 @@ function syncServerOutbox(uid, items, version = null, { retireMissing = false } 
     return false;
   }
   acceptServerOutboxVersion(uid, version);
-  const next = items.map(item => ({ ...item, server: true }));
+  const dismissed = S.dismissedOutboxIds.get(uid);
+  const next = items.filter(item => !dismissed?.has(item?.id))
+    .map(item => ({ ...item, server: true }));
   const current = queuedMessages(uid);
   if (!retireMissing) {
     const ids = new Set(next.map(item => item?.id).filter(Boolean));
@@ -960,7 +968,8 @@ function syncServerOutbox(uid, items, version = null, { retireMissing = false } 
     // 收到了正文 diff。占位必须等匹配的 user/command 被本页接受后，再由
     // reconcileQueuedMessages 原子替换；否则空账本包先到就会让消息消失。
     for (const item of current) {
-      if (item?.server && item.id && !ids.has(item.id)) next.push(item);
+      if (item?.server && item.id && !ids.has(item.id)
+          && !dismissed?.has(item.id)) next.push(item);
     }
   }
   next.sort((a, b) => (+a?.created || 0) - (+b?.created || 0)
@@ -1003,10 +1012,20 @@ async function retryServerQueuedMessage(uid, id) {
 }
 
 async function discardServerQueuedMessage(uid, id) {
-  const d = await post('api/session/outbox/discard', { uid, id });
-  if (d.error) return alert('移除失败: ' + d.error);
-  // 用户明确点了撤销/移除，不需要等待一条永远不会出现的原生正文。
-  syncServerOutbox(uid, d.outbox || [], d.outbox_version, {retireMissing: true});
+  let d;
+  try {
+    d = await post('api/session/outbox/discard', { uid, id });
+  } catch (error) {
+    return alert('移除失败: ' + (error.message || String(error)));
+  }
+  // 另一个页面或后台已收掉此项时，也允许清理本页残留回执。
+  if (d.error && d.code !== 'delivery_missing') return alert('移除失败: ' + d.error);
+  const dismissed = S.dismissedOutboxIds.get(uid) || new Set();
+  dismissed.add(id);
+  S.dismissedOutboxIds.set(uid, dismissed);
+  // 只收掉用户点选的回执；其他项仍须等待各自的原生正文，不能随快照清空。
+  discardQueuedUserMessage(uid, id);
+  if (Array.isArray(d.outbox)) syncServerOutbox(uid, d.outbox, d.outbox_version);
 }
 
 function updateClientQueuedMessage(uid, id, update) {
@@ -2230,7 +2249,19 @@ const pendingUid = name => `tmux:${name}`;
 /** SessionDock启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
 function pendingTmuxSessions() {
   if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
-  return T.pending.flatMap(t => {
+  const pending = [...T.pending];
+  // A CLI may exit before creating native history (for example after updating).
+  // Keep its saved input reachable instead of removing the only recovery entry.
+  if (typeof composerDrafts !== 'undefined') {
+    const names = new Set(pending.map(row => row.name));
+    for (const [uid, draft] of composerDrafts) {
+      if (!uid.startsWith('tmux:') || !draft.session || names.has(draft.session.name)
+          || (!draft.text && !draft.attachments.length && !draft.quotes.length)) continue;
+      pending.push({ ...draft.session, stale: true, running: false, state: 'exited',
+        unavailable_reason: '会话草稿已保留' });
+    }
+  }
+  return pending.flatMap(t => {
     // A receipt whose binding the server confirmed is represented by
     // the native row it binds, exactly like a declared Claude identity.
     const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
@@ -2273,17 +2304,24 @@ function forkAncestors(session) {
 }
 // 沿 forked_from_id 往下追到最深的回退分支：Codex 双 Esc 后进程不变，新消息只写
 // 进新分支的文件。同一级有多条分支时先取仍在运行的，再取最新创建的。
+// 一条会话的直接子分支（同来源、同机器，forked_from_id 指向它）：仍在运行的
+// 在前，其余按创建时间新的在前。
+function forkChildren(session) {
+  if (!session?.sid) return [];
+  return S.sessions.filter(s => s.source === session.source
+    && (s.node_id || '') === (session.node_id || '') && s.sid
+    && String(s.forked_from_id || '') === String(session.sid))
+    .sort((a, b) => (S.live.has(b.uid) - S.live.has(a.uid))
+      || String(b.created || '').localeCompare(String(a.created || '')));
+}
 function forkLeaf(session) {
   const seen = new Set();
   let cur = session;
   while (cur && !seen.has(cur.uid)) {
     seen.add(cur.uid);
-    const children = S.sessions.filter(s => s.source === cur.source
-      && (s.node_id || '') === (cur.node_id || '') && s.sid
-      && String(s.forked_from_id || '') === String(cur.sid));
+    const children = forkChildren(cur);
     if (!children.length) break;
-    cur = children.sort((a, b) => (S.live.has(b.uid) - S.live.has(a.uid))
-      || String(b.created || '').localeCompare(String(a.created || '')))[0];
+    cur = children[0];
   }
   return cur;
 }
@@ -4763,14 +4801,16 @@ function head(m, total) {
 
 /* ---------- 回退父会话链 ---------- */
 // Codex 回退会生成子会话，原会话默认从左栏隐藏。子会话标题栏给一个图标，
-// 下拉列出整条父会话链，每一级可单独显示到左栏或再次隐藏。
+// 下拉列出整条父会话链，每一级可单独显示到左栏或再次隐藏。父会话本身
+// 也给同一个图标，列出它的子分支：从链上进入隐藏的父会话后能原路回去。
 function forkChainButtonMarkup(m) {
-  if (m.agent_id || !m.forked_from_id) return '';
-  return `<button class="iconbtn" id="a-fork-chain" type="button" title="父会话链"
-      aria-label="父会话链" aria-haspopup="menu" aria-expanded="false"
+  if (m.agent_id || !(m.forked_from_id || m.fork_parent || forkChildren(m).length)) return '';
+  const label = m.forked_from_id ? '父会话链' : '子会话';
+  return `<button class="iconbtn" id="a-fork-chain" type="button" title="${label}"
+      aria-label="${label}" aria-haspopup="menu" aria-expanded="false"
       aria-controls="fork-chain-menu">${uiIcon('fork')}</button>
     <div class="session-view-menu fork-chain-menu" id="fork-chain-menu" hidden role="menu"
-      aria-label="父会话链"></div>`;
+      aria-label="${label}"></div>`;
 }
 
 function closeForkChainMenu() {
@@ -4786,11 +4826,8 @@ function renderForkChainMenu() {
   const current = S.sessions.find(session => session.uid === S.sel)
     || (S.results || []).find(session => session.uid === S.sel) || menu._meta;
   const chain = current ? forkAncestors(current) : [];
-  menu.innerHTML = chain.map(({ sid, row }, i) => {
-    const level = i === 0 ? '父会话' : `上 ${i + 1} 级父会话`;
-    if (!row) return `<div class="chain-row gone" role="none">
-        <span><small>${level} · 记录已不存在</small><b><code>${esc(sid)}</code></b></span>
-      </div>`;
+  const children = current ? forkChildren(current) : [];
+  const chainRow = (level, row) => {
     const shown = !row.fork_parent || !!row.fork_parent_visible;
     const when = `${esc(fmtTime(row.created))} → ${esc(fmtTime(row.updated))}`;
     return `<div class="chain-row${shown ? ' shown' : ''}" role="none" data-uid="${esc(row.uid)}">
@@ -4800,7 +4837,16 @@ function renderForkChainMenu() {
         ${row.fork_parent ? `<button type="button" class="btn chain-toggle" role="menuitem"
           data-visible="${shown ? 0 : 1}">${shown ? '隐藏' : '显示'}</button>` : ''}
       </div>`;
-  }).join('') || '<div class="chain-row gone" role="none"><span><small>没有父会话</small></span></div>';
+  };
+  const rows = chain.map(({ sid, row }, i) => {
+    const level = i === 0 ? '父会话' : `上 ${i + 1} 级父会话`;
+    if (!row) return `<div class="chain-row gone" role="none">
+        <span><small>${level} · 记录已不存在</small><b><code>${esc(sid)}</code></b></span>
+      </div>`;
+    return chainRow(level, row);
+  }).concat(children.map((row, i) => chainRow(children.length > 1 ? `子会话 ${i + 1}` : '子会话', row)));
+  menu.innerHTML = rows.join('')
+    || '<div class="chain-row gone" role="none"><span><small>没有父会话或子会话</small></span></div>';
 }
 
 function bindForkChainMenu(heading, m) {
@@ -6664,12 +6710,12 @@ function renderQueuedMessages(uid = S.sel) {
       inspect.title = `消息可能已经被 ${cli.name} 接收；打开终端核对，不会重复发送`;
       inspect.onclick = () => globalThis.revealNativeTerminal?.(uid);
       actions.append(inspect);
-      if (item.state === 'failed' || item.state === 'confirming') {
+      if (['ambiguous', 'failed', 'confirming'].includes(item.state)) {
         // 回执只说明粘贴和回车已到达终端；移除它不会重发。终端把它并进
         // 草稿后原生记录永远不会出现，用户必须能自己收掉这条回执。
         const discard = el('button', '', '移除');
         discard.type = 'button';
-        discard.title = '只移除这条回执，不会重新发送';
+        discard.title = '只移除待确认提示，不会重发或中断会话';
         discard.onclick = () => discardServerQueuedMessage(uid, item.id);
         actions.append(discard);
       }
@@ -6784,6 +6830,7 @@ function renderConversationTail(activity, uid = S.sel) {
     renderActivity(activity);
   }
   renderTerminalThreadNotice(uid);
+  if (typeof syncComposerSendState==='function') syncComposerSendState();
   renderQueuedMessages(uid);
   refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');

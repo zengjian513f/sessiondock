@@ -62,7 +62,7 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 写一份 `report-<stamp>.json`。
 
 `--allow-dirty` 的源码快照通过临时 Git index 生成，不改变共享工作区的暂存区，
-也不包含未跟踪的本地配置、凭据或运行数据。新增源码应先提交，使其成为已跟踪文件。
+也不包含未跟踪的本地配置、凭据或运行数据。新增源码应先用 `git add` 纳入暂存区，使快照包含新增文件；无需为了部署提交。
 `source_tree` 与 `source_source` 记录源码树及来源；构建期间已跟踪文件变化会中止本次
 stage，须重新构建，避免不同平台部署不同版本。
 
@@ -76,6 +76,9 @@ stage，须重新构建，避免不同平台部署不同版本。
 | `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
 | `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（`*_real` 付费套件与 run_validation 一样默认排除） |
 
+`--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
+`Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
+
 顺序固定为 build → test → push：测试失败先于任何上传，退出 1，并在 stderr 列出失败套件名与各自的日志
 路径（`<stage>/logs/validation/<suite>.log`）。测试输出实时流到控制台（run_validation 自己的进度行）并
 落盘到 `<stage>/logs/tests.log`；整轮超时 `--test-timeout`（默认 2400 s）。跑之前一定先打印计划：
@@ -85,7 +88,7 @@ base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则�
 **测试按平台跑，一个平台一次，绝不按节点跑。** Linux：构建机上 push 之前跑一次，覆盖所有 `linux-node`
 和 Hub（它们拿的是同一个二进制）。macOS / Windows 在节点上原生构建，所以同一个模式（记录在 stage 的
 `test_mode` 里，随 `push` 传给处理器的 `DeployOptions.test_mode`）在它们的 `stage()` 里驱动一步原生测试：
-解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> test --workspace --locked`
+解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> test --workspace --locked -- --test-threads=1`
 （[deploy-macos.md](deploy-macos.md) §2），Windows 在 `build.cmd` 里跑
 `<toolchain_bin>\cargo.exe test -p sessiondock --locked`（`RUSTC`/`RUSTDOC` 指向同一工具链，
 [deploy-windows.md](deploy-windows.md) §2）；失败即该目标 `FAILED`，在换入任何东西之前中止，错误信息带
