@@ -24,6 +24,7 @@ const T = {
   ended: new Map(), // Rust only: explicit host exit, pinned to UID/instance.
   enabled: false,
   listLoaded: false,
+  listRequest: null,   // 进行中的 api/term/list 请求；首屏的 live 轮询复用它而不是再发一次
   listError: '',
   unavailable_reason: '',
   backend: '',     // 本机当前的终端后端；hub 模式下按机器看 Nodes.capabilities
@@ -315,7 +316,12 @@ let terminalFontReady = prepareTerminalFont();
 addEventListener('resize', () => { layoutTermPane(); fitTerm(); });
 
 let termListRequestSeq = 0;
-async function loadTermList() {
+function loadTermList() {
+  const request = fetchTermList().finally(() => { if (T.listRequest === request) T.listRequest = null; });
+  T.listRequest = request;
+  return request;
+}
+async function fetchTermList() {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
