@@ -93,6 +93,15 @@ pub const FOREIGN_ATTACHMENT: &str = "附件来自另一台机器";
 pub const UPSTREAM_FAILED: &str = "机器连接中断；写操作可能已执行，请核对目标机器状态";
 pub const NODE_RESPONSE_TOO_LARGE: &str = "节点响应过大";
 
+/// JSON APIs never return HTML; a node's reverse-proxy error page is 502.
+fn reject_html_upstream(content_type: &str) -> Result<(), ProxyError> {
+    if content_type.contains("text/html") {
+        Err(ProxyError::Upstream)
+    } else {
+        Ok(())
+    }
+}
+
 /// Query in `parse_qs` shape: values grouped per key in first-appearance
 /// order, blank values kept.
 pub type Query = IndexMap<String, Vec<String>>;
@@ -830,6 +839,9 @@ pub async fn proxy(
             &public_payload(value, node, forward.path),
         ));
     }
+    // A node bouncing behind nginx answers HTML 502. Streaming that to the
+    // browser made `response.json()` throw `Unexpected token '<'`.
+    reject_html_upstream(&content_type)?;
     let mut reply_headers = HeaderMap::new();
     if let Ok(value) = HeaderValue::from_str(&content_type) {
         reply_headers.insert(header::CONTENT_TYPE, value);

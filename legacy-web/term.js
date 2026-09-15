@@ -1,6 +1,7 @@
 'use strict';
 
 // 接管会话: 在服务端把它用 tmux resume 起来, 然后把终端嵌在会话详情底部。
+// SSH 例外：PTY 在输入框上方。
 // 会话跑在 tmux 里, 所以关掉页面/重启 sessiondock 都不会打断它。
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
@@ -32,7 +33,7 @@ const T = {
   backend: '',     // 本机当前的终端后端；hub 模式下按机器看 Nodes.capabilities
   backends: [],
   height: store.get('termh', 320),
-  mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话) | full(终端)
+  mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话：PTY+输入) | full(纯终端)
   ctrlArmed: false,                         // 手机 Ctrl / 桌面右 Ctrl：只修饰下一次输入
   sources: {},
   home: '',
@@ -739,7 +740,15 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       body: JSON.stringify(payload),
       ...(controller ? {signal: controller.signal} : {}),
     });
-    const data = await r.json();
+    const text = await r.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(r.status >= 500
+        ? '服务暂时不可用，请稍后重试'
+        : '服务返回了无法解析的响应，请重新加载');
+    }
     browserAuditEvent?.('http.response.received', {
       url, status: r.status, ok: r.ok,
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
@@ -950,6 +959,7 @@ function openBugReportDialog() {
   $('#bug-report-error').textContent = '';
   $('#bug-report-go').disabled = false;
   $('#bug-report-go').textContent = '发送';
+  setSendButtonBusy($('#bug-report-go'), '');
   prepareBugReportNode();
   bindBugReportDraft();
   renderBugReportItems();
@@ -1034,6 +1044,13 @@ $('#bug-report-dialog').addEventListener('click', event => {
 $('#bug-report-form').addEventListener('paste', event => pasteAttachmentFiles(event, addBugReportFiles));
 bindFileDrop($('#bug-report-form'), addBugReportFiles);
 
+function setSendButtonBusy(button, label) {
+  if (!button) return;
+  button.setAttribute('aria-busy', label ? 'true' : 'false');
+  if (label) button.setAttribute('aria-label', label);
+  else button.removeAttribute('aria-label');
+}
+
 function completeBugReportSubmission(data,node) {
   const oldUid=BUG_REPORT_DRAFT_UID,draft=composerDrafts.get(oldUid);
   if (draft) {
@@ -1068,8 +1085,13 @@ $('#bug-report-form').onsubmit = async event => {
   }
   const origin = bugReportOrigin(node);
   const remote = HUB_MODE && !!origin.node_id && origin.node_id !== node;
+  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) {
+    error.textContent = '页面已更新，请重新加载后再提交';
+    return;
+  }
   bugReportSending = true;
   button.disabled = true;
+  setSendButtonBusy(button, '发送中');
   $('#bug-report-add').disabled = true;
   error.textContent = '';
   renderBugReportItems();
@@ -1093,7 +1115,7 @@ $('#bug-report-form').onsubmit = async event => {
     const uploaded = [];
     let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
-      button.textContent = `上传 ${i + 1}/${attachments.length}`;
+      setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
       const result = await uploadComposerAttachment(
         attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
@@ -1102,10 +1124,10 @@ $('#bug-report-form').onsubmit = async event => {
     const terminalName = takenOver(S.sel) || (T.uid === S.sel ? T.name : '') || '';
     let captured = null;
     if (remote) {
-      button.textContent = '抓取中…';
+      setSendButtonBusy(button, '抓取中');
       captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
     }
-    button.textContent = '提交中…';
+    setSendButtonBusy(button, '提交中');
     const source = bugReportSource();
     store.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
@@ -1134,8 +1156,8 @@ $('#bug-report-form').onsubmit = async event => {
   } finally {
     bugReportSending = false;
     button.disabled = false;
+    setSendButtonBusy(button, '');
     $('#bug-report-add').disabled = false;
-    button.textContent = '发送';
     renderBugReportItems();
   }
 };
@@ -1473,7 +1495,6 @@ function showNewSessionStage(info) {
   cancelSearch(true);
   S.sel = pendingUid(info.name);
   rememberComposerSession(composerDraft(S.sel), info);
-  persistComposerDraft(S.sel);
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
@@ -1622,13 +1643,27 @@ async function discardPendingSession(info) {
   }
 }
 
+/** SSH/shell receipts have no conversation archive; the PTY is the session. */
+function sessionIsPtyOnly(uid = S.sel) {
+  if (!uid) return false;
+  const row = [...(T.pending || []), ...(T.list || [])]
+    .find(item => item.uid === uid || pendingUid(item.name) === uid);
+  if (row) return row.source === 'shell';
+  return typeof sessionTermMeta === 'function' && sessionTermMeta(uid)?.source === 'shell';
+}
+
 async function openPendingSession(info) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending);
-  // Creating a backend instance does not opt the user into the terminal UI.
-  // Restore a pane only when the user previously opened this same session.
-  if (T.openViews.has(pending.name)
-      && (SessionDockCapabilities.config.backend !== 'rust' || (pending.running && !pending.stale)))
+  // Agent 会话留在对话页，直到用户打开控制台。SSH 没有归档，默认 PTY 在
+  // 输入框上方；点控制台再进纯终端。记住的布局优先。
+  const running = SessionDockCapabilities.config.backend !== 'rust'
+    || (pending.running && !pending.stale);
+  const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
+  const remembered = T.openViews.has(pending.name) && running;
+  if (pending.source === 'shell' && (running || retained))
+    await openTermPane(pending.name, true, remembered ? null : 'collapsed');
+  else if (remembered)
     await openTermPane(pending.name);
   resolveNewSession(pending);
 }
@@ -1745,7 +1780,6 @@ async function resolveNewSession(info) {
         if (draft && (draft.text || draft.attachments.length || draft.quotes.length)) {
           const wait = $('.new-session-wait');
           if (wait && S.sel === pendingId) wait.textContent = 'CLI 已退出，输入已保留';
-          persistComposerDraft(pendingId);
         } else discardAbandonedNewSession(info);
         return;
       }
@@ -1885,10 +1919,12 @@ function renderTakeoverBtn() {
   const replacement = name ? null
     : linkedTermSession(S.sel, { followReplacement: true });
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
-  const switchToChat = paneOpen && (MOBILE.matches || T.mode === 'full');
-  const terminalVisible = paneOpen && (MOBILE.matches || T.mode !== 'collapsed');
+  const ptyOnly = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
+  const switchToChat = paneOpen && (ptyOnly ? T.mode === 'full' : (MOBILE.matches || T.mode === 'full'));
+  const terminalVisible = paneOpen && (ptyOnly || MOBILE.matches || T.mode !== 'collapsed');
   const label = replacement ? '切换到当前会话终端'
     : !name ? '接管会话'
+    : ptyOnly ? (switchToChat ? '切换到对话' : '切换到终端')
     : MOBILE.matches ? (paneOpen ? '切换到对话' : '切换到终端')
     : switchToChat ? '切换到对话' : '切换到终端';
   b.innerHTML = uiIcon(switchToChat ? 'chat' : 'terminal');
@@ -2322,7 +2358,8 @@ function termPaneRenderable(view = currentTermViewObject()) {
   if (!view || view !== currentTermViewObject()) return false;
   const pane = $('#termpane');
   if (pane.classList.contains('hidden')) return false;
-  if (!MOBILE.matches && T.mode === 'collapsed') return false;
+  if (!MOBILE.matches && T.mode === 'collapsed' && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly()))
+    return false;
   if (pane.classList.contains('term-collapsed')) return false;
   // 手机从桌面布局切回会话列表时，#right 会由祖先的 display:none 隐藏，
   // 但 #termpane 本身没有 hidden 类。FitAddon 在这种容器上会返回内部最小值
@@ -2463,7 +2500,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   auditTermPane('open', {target: name, requested_mode: requestedMode, auto_focus: autoFocus, auto});
   const focusSource = autoFocus ? document.activeElement : null;
   const saved = T.openViews.get(name);
-  if (!MOBILE.matches && ['normal', 'collapsed', 'full'].includes(requestedMode)) {
+  if (['normal', 'collapsed', 'full'].includes(requestedMode)) {
     T.mode = requestedMode;
   } else if (saved) {
     if (['normal', 'collapsed', 'full'].includes(saved.mode)) T.mode = saved.mode;
@@ -2483,7 +2520,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   const view = ensureTerm(name);
   if (autoFocus) requestTermFocus(view, focusSource);
   activateTermView(view);
-  // 桌面“纯对话”吸附态高度为 0。此时保留 xterm 对象和已有连接，但不要
+  // 桌面 Agent「纯对话」吸附态高度为 0。此时保留 xterm 对象和已有连接，但不要
   // 新连或 fit；否则内部最小尺寸会把真实 tmux pane 压成 10×6。
   if (termPaneRenderable(view)) {
     // 缓存 view 即使行列数相同也可能丢了 renderer surface；强制同步并重绘。
@@ -2501,6 +2538,16 @@ function toggleTermPane(name) {
   auditTermPane('toggle', {target: name});
   if (pane.classList.contains('hidden')) {
     return openTermPane(name, true, MOBILE.matches ? null : 'full');
+  }
+  if (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly()) {
+    T.mode = T.mode === 'full' ? 'collapsed' : 'full';
+    store.set('termmode', T.mode);
+    rememberTermLayout(name);
+    layoutTermPane();
+    renderTakeoverBtn();
+    if (T.mode === 'full') return openTermPane(name);
+    fitTerm(true, true);
+    return;
   }
   if (!MOBILE.matches) {
     // 分屏状态点按钮也进入纯终端；下一次再切到纯对话。
@@ -2530,6 +2577,7 @@ function revealConversationForPrompt(uid, prompt) {
     return false;
   }
   if (S.sel !== uid || S.agent) return false;
+  if (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)) return false;
   const pane = $('#termpane');
   if (!pane || pane.classList.contains('hidden')) return false;
   if (revealedTermPrompts.get(uid) === id) return false;
@@ -2566,7 +2614,17 @@ function layoutTermPane() {
   const right = $('#right');
   const desktop = !MOBILE.matches;
   const paneOpen = !pane.classList.contains('hidden');
-  right.classList.toggle('term-full', desktop && paneOpen && T.mode === 'full');
+  const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly();
+  right.classList.toggle('shell-session', shell);
+  right.classList.toggle('term-full', paneOpen && T.mode === 'full' && (desktop || shell));
+  if (shell && paneOpen && T.mode !== 'full') {
+    pane.classList.remove('term-collapsed');
+    pane.style.removeProperty('--mobile-terminal-top');
+    const detailHeight = $('#detail')?.offsetHeight || 0;
+    const composerHeight = $('#composer')?.offsetHeight || 0;
+    pane.style.height = Math.max(0, right.clientHeight - detailHeight - composerHeight) + 'px';
+    return;
+  }
   pane.classList.toggle('term-collapsed', desktop && paneOpen && T.mode === 'collapsed');
   if (MOBILE.matches) {
     pane.style.removeProperty('height');
@@ -2580,10 +2638,6 @@ function layoutTermPane() {
       pane.style.height = Math.max(0, right.clientHeight - $('#detail').offsetHeight) + 'px';
     }
     else {
-      // T.height 是跨窗口尺寸保存的用户偏好。在较高窗口拖大的终端切到较矮
-      // 窗口后，不能让旧高度占满整个 #right；否则 detail 会被压成 0，标题
-      // 与 composer 重叠，termpane 还会被推出视口（再 resize 才看似恢复）。
-      // 普通模式始终给详情头和 composer 留出它们当前实际需要的空间。
       const detailHeadHeight = $('#detail > .dhead')?.offsetHeight || 0;
       const composerHeight = $('#composer')?.offsetHeight || 0;
       const maxHeight = Math.max(0, right.clientHeight - detailHeadHeight - composerHeight);
@@ -2661,12 +2715,11 @@ function recordHostExit(view, uid, event) {
     // say inside the xterm why it is incomplete.
     try { view.term.write(`\r\n${reason}\r\n`); } catch { /* disposed view */ }
   } else {
-    // The pane closes when the CLI exits and the page returns to the
-    // conversation. The final output stays in the retained xterm; nothing is
-    // painted over the CLI's own farewell text, the explanation goes to the
-    // header notice (unless the stop action already announced its stage).
+    // AI sessions close the pane and return to the conversation. SSH/shell
+    // has no archive, so the retained PTY stays the only surface.
     view.keepOutput = true;
-    if (T.name === view.name) closeTermPane(true);
+    if (T.name === view.name && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)))
+      closeTermPane(true);
     const stopNotice = document.querySelector('#session-stop-notice');
     if (uid === S.sel && typeof showSessionStopNotice === 'function'
         && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
@@ -2834,11 +2887,11 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
       if (pending) { pending.stale = true; pending.unavailable_reason = reason; }
       ConsoleUI.errors.set(uid, reason);
       // The host-performed stop (`session/stop` escalation, `term/kill`)
-      // retires the lease before the exit is observed: close the pane like a
-      // host exit and keep the final output in the retained
-      // view; the explanation goes to the notice, not over the CLI's screen.
+      // retires the lease before the exit is observed: AI sessions close the
+      // pane like a host exit; SSH/shell keeps the retained PTY.
       view.keepOutput = true;
-      if (T.name === name) closeTermPane(true);
+      if (T.name === name && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)))
+        closeTermPane(true);
       const stopNotice = document.querySelector('#session-stop-notice');
       if (uid === S.sel && typeof showSessionStopNotice === 'function'
           && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
@@ -3196,12 +3249,14 @@ function hydrateComposerDraft(uid) {
     try {
       const legacy = await importLegacyComposer(uid);
       const row = await readServerComposerDraft(uid);
-      draft.revision = row.revision;
+      // An edit based on an older snapshot must keep its CAS revision.
+      if (!draft.editVersion) draft.revision = row.revision;
       if (uid.startsWith('report:') && row.value?.session?.kind==='bug-report'
           && row.value.session.uid && !row.value.session.uid.startsWith('report:')) {
         draft.handedOffSession=row.value.session;return;
       }
       if (!draft.editVersion && row.value && !row.value.removed) {
+        for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
         Object.assign(draft, restoreComposerDraftRecord(row.value), {revision:row.revision});
         if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
           if (item.uploaded?.upload_id) return;
@@ -3245,6 +3300,7 @@ function persistComposerDraft(uid = composerUid) {
   uid = composerDraftOwner(uid);
   const draft = composerDrafts.get(uid);
   if (!draft) return Promise.resolve(false);
+  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return Promise.resolve(false);
   composerPendingSaves.set(draft,{uid,version:++draft.editVersion,value:composerDraftRecord(draft,uid)});
   syncComposerUnloadProtection();
   if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
@@ -3257,6 +3313,7 @@ function persistComposerDraft(uid = composerUid) {
       while (composerPendingSaves.has(draft)) {
         const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
         const data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
         if (data.error) throw new Error(data.error);
         draft.revision=data.draft.revision;draft.savedVersion=pending.version;draft.storageError='';
       }
@@ -3559,11 +3616,13 @@ function switchComposerDraft(uid) {
 }
 
 function renderComposer() {
-  const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox');
+  const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
+  const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox') || shell;
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');
   const box = $('#composer');
   box.classList.toggle('hidden', !name && !pending);
+  $('#right')?.classList.toggle('shell-session', !!shell);
   switchComposerDraft(name || pending ? S.sel : null);
   if (name || pending) syncComposerMode();
 }
@@ -3776,6 +3835,26 @@ function syncComposerSendState() {
   $('#csend').disabled=composerSending || !!draft?.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
 }
 
+async function reconcileComposerSubmission(uid) {
+  const draft=composerDrafts.get(composerDraftOwner(uid));
+  if (!draft?.requestId || draft.loading || draft.loadFailed || composerSending
+      || composerSaving.has(draft) || draft.editVersion!==draft.savedVersion) return;
+  const version=draft.editVersion,id=draft.requestId;
+  const result=await priorComposerSubmission(uid,id);
+  if (result?.state!=='sent' || !result.draft || result.draft.revision<draft.revision
+      || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
+  const next=restoreComposerDraftRecord(result.draft.value);
+  // A later attachment may be saved as metadata while its bytes still live in
+  // this page. A receipt refresh must preserve that File and its preview.
+  for (const a of next.attachments) {
+    const local=draft.attachments.find(b=>a.id===b.id);
+    if (local) {a.file=local.file;a.preview=local.preview;a.status=local.status;}
+  }
+  for (const a of draft.attachments) if (a.preview && !next.attachments.some(b=>a.id===b.id)) URL.revokeObjectURL(a.preview);
+  for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
+  Object.assign(draft,next,{revision:result.draft.revision,editVersion:version,savedVersion:version,storageError:''});
+  refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
+}
 let composerQuestionProbeBusy=false;
 setInterval(async () => {
   const uid=composerUid;
@@ -3791,7 +3870,10 @@ setInterval(async () => {
       if (draft.cliQuestion!==question) {draft.cliQuestion=question;if (composerUid===uid) renderComposerItems();}
     }
   } catch { /* The SEND endpoint independently checks the current question. */ }
-  finally {composerQuestionProbeBusy=false;}
+  finally {
+    try {await reconcileComposerSubmission(uid);} catch { /* A missing/in-progress receipt keeps the editor intact. */ }
+    composerQuestionProbeBusy=false;
+  }
 },1500);
 
 function renderComposerItems() {
@@ -4075,7 +4157,8 @@ function composerAttachmentIdentity(uid) {
 
 let composerSending = false;
 async function submitComposer() {
-  if (!conversationSendEnabled()) {
+  if (!conversationSendEnabled() && !SessionDockCapabilities.allows('outbox')
+      && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
     alert('此服务尚未启用会话发送，请更新服务后重试'); return;
   }
   const ta = $('#cinput'), button = $('#csend'), add = $('#cadd');
@@ -4087,11 +4170,29 @@ async function submitComposer() {
   const text = ta.value, attachments = [...draft.attachments];
   const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
   if (composerSending || (!text.trim() && !attachments.length && !quotes.length)) return;
+  if (!conversationSendEnabled() || (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid))) {
+    closeComposerHistory(); composerSending = true;
+    button.disabled = true;
+    try {
+      const sent = await sendToSession(text, null, uid);
+      if (sent) {
+        ta.value = '';
+        draft.text = '';
+      }
+    } catch (error) {
+      alert('发送失败，输入保留：' + (error.message || error));
+    } finally {
+      composerSending = false; button.disabled = false; autoGrow(ta);
+    }
+    return;
+  }
   if (activeCliQuestion(uid)) {
     alert('CLI 正在等待选择题回答，请先回答；输入已保留'); return;
   }
   closeComposerHistory(); composerSending = true;
-  button.disabled = true; add.disabled = true; renderComposerItems();
+  button.disabled = true; add.disabled = true;
+  setSendButtonBusy(button, '发送中');
+  renderComposerItems();
   try {
     draft.text = text;
     const priorPayload=JSON.stringify({text,attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),quotes});
@@ -4109,7 +4210,7 @@ async function submitComposer() {
     if (check.error) throw new Error(check.error);
     const uploaded = [];
     for (let i = 0; i < attachments.length; i++) {
-      button.textContent = `上传 ${i + 1}/${attachments.length}`;
+      setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
       uploaded.push({...await uploadComposerAttachment(attachments[i], uid), number:attachments[i].number});
     }
     const requestText = JSON.stringify({text, attachments:uploaded.map(a => ({upload_id:a.upload_id,number:a.number})), quotes});
@@ -4119,14 +4220,14 @@ async function submitComposer() {
     }
     if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
     const submittedRevision = draft.revision;
-    button.textContent = '发送中…';
+    setSendButtonBusy(button, '发送中');
     const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
       draftRevision:submittedRevision, attachments:uploaded, quotes});
     if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);
   } catch (error) {
     alert('发送失败，输入保留：' + (error.message || error));
   } finally {
-    composerSending = false; button.textContent = '发送'; add.disabled = false;
+    composerSending = false; setSendButtonBusy(button, ''); add.disabled = false;
     renderComposerItems(); autoGrow(ta);
   }
 }

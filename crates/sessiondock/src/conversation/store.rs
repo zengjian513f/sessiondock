@@ -60,6 +60,81 @@ pub fn fingerprint(value: &Value) -> Value {
         Sha256::digest(serde_json::to_vec(value).expect("JSON value serialization"))
     ))
 }
+// Pending editor markers identify the original submission; the persisted
+// receipt hash must verify them before removing any content, including at boot.
+fn completed_editor_value(
+    requests: &BTreeMap<String, Submission>,
+    key: &str,
+    value: &Value,
+) -> Option<Value> {
+    let id = value["requestId"].as_str()?;
+    let row = requests.get(&format!("{key}\0{id}"))?;
+    if row.phase != "sent" {
+        return None;
+    }
+    let normalize = |body: &Value| {
+        json!({"text":body["text"],
+        "attachments":body["attachments"].as_array().into_iter().flatten().map(|a|json!({"upload_id":a["upload_id"],"number":a["number"]})).collect::<Vec<_>>(),
+        "quotes":body["quotes"].as_array().cloned().unwrap_or_default()})
+    };
+    let mut candidates = Vec::new();
+    if let Some(body) = value["requestText"]
+        .as_str()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+    {
+        candidates.push(normalize(&body));
+    }
+    let attachments = row
+        .attachments
+        .iter()
+        .map(|id| {
+            let a = value["attachments"]
+                .as_array()?
+                .iter()
+                .find(|a| a["uploaded"]["upload_id"] == id.as_str())?;
+            Some(json!({"upload_id":id,"number":a["number"]}))
+        })
+        .collect::<Option<Vec<_>>>();
+    if let Some(attachments) = attachments {
+        candidates.push(json!({"text":value["text"],"attachments":attachments,"quotes":value["quotes"].as_array().cloned().unwrap_or_default()}));
+        if id.starts_with("report-send:") && value["report_text"].is_string() {
+            candidates.push(json!({"text":value["report_text"],"attachments":attachments,"quotes":value["quotes"].as_array().cloned().unwrap_or_default()}));
+            candidates
+                .push(json!({"text":value["report_text"],"attachments":attachments,"quotes":[]}));
+        }
+    }
+    let submitted = candidates
+        .into_iter()
+        .find(|body| fingerprint(body) == row.payload)?;
+    let mut next = value.clone();
+    if next["text"] == submitted["text"] {
+        next["text"] = json!("");
+    }
+    if let Some(items) = next.get_mut("attachments").and_then(Value::as_array_mut) {
+        items.retain(|a| {
+            !submitted["attachments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|sent| {
+                    a["uploaded"]["upload_id"] == sent["upload_id"] && a["number"] == sent["number"]
+                })
+        });
+    }
+    if let Some(items) = next.get_mut("quotes").and_then(Value::as_array_mut) {
+        items.retain(|q| !submitted["quotes"].as_array().unwrap().contains(q));
+    }
+    for field in ["requestId", "requestText", "report_prompt", "report_text"] {
+        next.as_object_mut()?.remove(field);
+    }
+    if next["text"].as_str().unwrap_or("").is_empty()
+        && next["attachments"].as_array().is_none_or(Vec::is_empty)
+        && next["quotes"].as_array().is_none_or(Vec::is_empty)
+    {
+        next["nextAttachmentNumber"] = json!(1);
+    }
+    Some(next)
+}
 fn io(error: std::io::Error) -> Failure {
     Failure::new(
         503,
@@ -98,10 +173,26 @@ impl Store {
                 request.payload = fingerprint(&request.payload);
             }
         }
-        Ok(Self {
+        let repair = state
+            .drafts
+            .iter()
+            .any(|(key, d)| completed_editor_value(&state.requests, key, &d.value).is_some());
+        let store = Self {
             directory,
             state: Mutex::new(state),
-        })
+        };
+        if repair {
+            store.update(|doc| {
+                for (key, draft) in &mut doc.drafts {
+                    if let Some(value) = completed_editor_value(&doc.requests, key, &draft.value) {
+                        draft.value = value;
+                        draft.revision += 1;
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        Ok(store)
     }
     pub fn directory(&self) -> &Path {
         &self.directory
@@ -177,7 +268,18 @@ impl Store {
     }
     pub fn save(&self, key: &str, expected: u64, value: Value) -> Result<Draft> {
         self.update(|doc| {
+            let completed = completed_editor_value(&doc.requests, key, &value);
             let old = doc.drafts.entry(key.into()).or_default();
+            if completed.as_ref().is_some_and(|v| {
+                v["text"].as_str().unwrap_or("").is_empty()
+                    && v["attachments"].as_array().is_none_or(Vec::is_empty)
+                    && v["quotes"].as_array().is_none_or(Vec::is_empty)
+            }) {
+                // A complete sent replica is no edit. It must not replace a
+                // later draft even if a stale page adopted the latest revision.
+                return Ok(old.clone());
+            }
+            let value = completed.unwrap_or(value);
             if old.value == value {
                 return Ok(old.clone());
             }
@@ -258,7 +360,10 @@ impl Store {
             row.result = result;
             if phase == "sent" {
                 if let Some(draft) = doc.drafts.get_mut(key) {
-                    if revision == Some(draft.revision) {
+                    if let Some(value) = completed_editor_value(&doc.requests, key, &draft.value) {
+                        draft.value = value;
+                        draft.revision += 1;
+                    } else if revision == Some(draft.revision) {
                         draft.revision += 1;
                         let session = draft.value["session"].clone();
                         draft.value =
@@ -512,6 +617,80 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
+    }
+    #[test]
+    fn sent_report_cannot_be_restored_and_late_edits_survive_repair() {
+        let temp = tempfile::tempdir().unwrap();
+        let s = Store::open(temp.path()).unwrap();
+        let id = "report-send:known";
+        let original = json!({"text":"report","report_text":"report","report_prompt":"diagnostics","requestId":id,
+            "attachments":[{"id":"a","number":1,"uploaded":{"upload_id":"a"}}],"quotes":[],"session":{"uid":"tmux:owned"}});
+        let draft = s.save("a", 0, original.clone()).unwrap();
+        s.begin(
+            "a",
+            id,
+            json!({"text":"report","attachments":[{"upload_id":"a","number":1}],"quotes":[]}),
+        )
+        .unwrap();
+        let mut edited = original.clone();
+        edited["text"] = json!("later edit");
+        edited["attachments"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"b","number":2,"uploaded":{"upload_id":"b"}}));
+        edited["quotes"] = json!([{"id":"q","text":"later quote"}]);
+        s.save("a", draft.revision, edited.clone()).unwrap();
+        s.finish("a", id, "sent", json!({"ok":true}), Some(draft.revision))
+            .unwrap();
+        let current = s.draft("a");
+        assert_eq!(current.value["text"], "later edit");
+        assert_eq!(current.value["attachments"].as_array().unwrap().len(), 1);
+        assert_eq!(current.value["attachments"][0]["id"], "b");
+        assert_eq!(current.value["quotes"][0]["text"], "later quote");
+        assert!(current.value.get("requestId").is_none());
+        let restored = s.save("a", current.revision, original.clone()).unwrap();
+        assert_eq!(restored.value["text"], "later edit");
+        assert_eq!(restored.value["attachments"][0]["id"], "b");
+        // Simulate the old deployed code writing its pre-SEND snapshot back.
+        s.update(|doc| {
+            doc.drafts.get_mut("a").unwrap().value = edited;
+            Ok(())
+        })
+        .unwrap();
+        let reopened = Store::open(temp.path()).unwrap().draft("a");
+        assert_eq!(reopened.value["text"], "later edit");
+        assert_eq!(reopened.value["attachments"][0]["id"], "b");
+        assert_eq!(reopened.value["quotes"][0]["text"], "later quote");
+    }
+    #[test]
+    fn sent_snapshot_preserves_changed_quotes_and_removed_attachment() {
+        let temp = tempfile::tempdir().unwrap();
+        let s = Store::open(temp.path()).unwrap();
+        let body = json!({"text":"send","attachments":[{"upload_id":"a","number":1}],"quotes":[{"id":"q","text":"original"}]});
+        let original = json!({"text":"send","attachments":[{"id":"a","number":1,"uploaded":{"upload_id":"a"}}],
+            "quotes":body["quotes"],"requestId":"send-id","requestText":serde_json::to_string(&body).unwrap()});
+        let draft = s.save("a", 0, original.clone()).unwrap();
+        s.begin("a", "send-id", body).unwrap();
+        let mut edited = original.clone();
+        edited["attachments"] = json!([]);
+        edited["quotes"] = json!([{"id":"q","text":"changed"}]);
+        s.save("a", draft.revision, edited).unwrap();
+        s.finish(
+            "a",
+            "send-id",
+            "sent",
+            json!({"ok":true}),
+            Some(draft.revision),
+        )
+        .unwrap();
+        let current = s.draft("a");
+        assert_eq!(current.value["text"], "");
+        assert_eq!(current.value["quotes"][0]["text"], "changed");
+        let mut unverified = original;
+        unverified["text"] = json!("unverified input");
+        unverified["requestText"] = json!("{}");
+        let saved = s.save("a", current.revision, unverified).unwrap();
+        assert_eq!(saved.value["text"], "unverified input");
     }
     #[test]
     fn clear_only_the_submitted_draft_and_keep_deduplication() {

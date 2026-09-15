@@ -305,8 +305,13 @@ def run(opener, base, root, repo):
     retained,_=call(opener,base,'GET','/api/session/conversation?uid=tmux:'+answer['worker']['name'])
     assert not retained['draft']['value']['text']
     assert retained['draft']['value']['session']['kind']=='bug-report'
+    old=draft['draft']['value']
+    old.update(requestId='report-send:'+answer['report_id'],report_text='private report',report_prompt='diagnostics')
+    replayed,_=call(opener,base,'POST','/api/session/conversation',{'uid':owner,'revision':retained['draft']['revision'],'value':old})
+    assert replayed['draft']['revision']==retained['draft']['revision']
+    assert not replayed['draft']['value']['text'] and not replayed['draft']['value']['attachments']
     assert not list((root/'state/conversations/conversation-uploads').glob('*'))
-    passed('private report, stable response lookup, no duplicate bundle/launch, clear and retain session identity')
+    passed('private report, stable response lookup, no duplicate bundle/launch, no sent-draft resurrection, retain session identity')
 
     # A blocked first task is the ordinary draft; restart updates every report reference.
     (root/'gate').write_text('Update available\n❯ 1. Update and exit\n  2. Skip\nPress Enter to continue')

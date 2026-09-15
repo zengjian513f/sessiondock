@@ -469,3 +469,18 @@ fn client_errors_map_like_python() {
     let response = json_response(StatusCode::OK, &json!({"ok": true}));
     assert_eq!(response.headers()["x-sessiondock-decoded-length"], "11");
 }
+
+#[test]
+fn html_upstream_is_a_json_502_not_a_page_body() {
+    assert_eq!(
+        reject_html_upstream("text/html; charset=utf-8"),
+        Err(ProxyError::Upstream)
+    );
+    assert_eq!(
+        reject_html_upstream("text/html"),
+        Err(ProxyError::Upstream)
+    );
+    assert_eq!(reject_html_upstream("application/json"), Ok(()));
+    assert_eq!(reject_html_upstream("text/event-stream"), Ok(()));
+    assert_eq!(reject_html_upstream("application/octet-stream"), Ok(()));
+}

@@ -177,7 +177,8 @@ test('terminal claim POST deadline covers headers and body without retrying inpu
           signal.addEventListener('abort', () => reject(new Error('aborted')), {once: true});
         });
         if (phase === 'headers') return stalled();
-        return {status: 200, ok: true, json: phase === 'body' ? stalled : async () => ({token: 'lease'})};
+        if (phase === 'body') return {status: 200, ok: true, text: stalled};
+        return {status: 200, ok: true, text: async () => JSON.stringify({token: 'lease'})};
       },
     });
     const post = loadFunction(context, 'post', read('term.js'));
@@ -1233,7 +1234,7 @@ test('SSH terminal receipts show terminal state without native binding messages'
 test('new pending sessions enter conversation mode, remembered terminal choices are restored', async () => {
   const calls = [];
   const context = contextWithCapabilities(disabled, {
-    T: {openViews:new Map()}, showNewSessionStage:row=>calls.push(['conversation',row.name]),
+    T: {openViews:new Map(), views:new Map()}, showNewSessionStage:row=>calls.push(['conversation',row.name]),
     openTermPane:async name=>calls.push(['terminal',name]), resolveNewSession:row=>calls.push(['resolve',row.name]),
   });
   const open = loadFunction(context, 'openPendingSession', read('term.js'));
@@ -1243,6 +1244,66 @@ test('new pending sessions enter conversation mode, remembered terminal choices 
   context.T.openViews.set('remembered', {});
   await open({name:'remembered',running:true,stale:false});
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['conversation','remembered'],['terminal','remembered'],['resolve','remembered']]);
+});
+
+
+test('SSH pending sessions open the PTY instead of staying on the conversation surface', async () => {
+  const calls = [];
+  const context = contextWithCapabilities(disabled, {
+    T: {openViews:new Map(), views:new Map()}, showNewSessionStage:row=>calls.push(['conversation',row.name]),
+    openTermPane:async (name, _focus, mode)=>calls.push(['terminal',name,mode ?? null]),
+    resolveNewSession:row=>calls.push(['resolve',row.name]),
+  });
+  const open = loadFunction(context, 'openPendingSession', read('term.js'));
+  await open({name:'ssh',source:'shell',running:true,stale:false});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),
+    [['conversation','ssh'],['terminal','ssh','collapsed'],['resolve','ssh']]);
+  calls.length = 0;
+  await open({name:'ssh-stale',source:'shell',running:false,stale:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),
+    [['conversation','ssh-stale'],['resolve','ssh-stale']]);
+  calls.length = 0;
+  context.T.views.set('ssh-kept', {keepOutput:true});
+  await open({name:'ssh-kept',source:'shell',running:false,stale:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),
+    [['conversation','ssh-kept'],['terminal','ssh-kept','collapsed'],['resolve','ssh-kept']]);
+});
+
+
+test('SSH host exit keeps the PTY instead of returning to conversation', () => {
+  const closed = [];
+  const context = contextWithCapabilities(disabled, {
+    T: {ended: new Map(), name: 'pane', pending: [{name: 'pane', source: 'shell'}], list: []},
+    ConsoleUI: {errors: new Map()}, S: {sel: 'tmux:pane'},
+    cancelTermReconnect: () => {}, renderTakeoverBtn: () => {}, rememberTermOpen: () => {},
+    closeTermPane: (...args) => closed.push(args), pendingUid: name => `tmux:${name}`,
+    showSessionStopNotice: () => {},
+  });
+  loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
+  const exit = loadFunction(context, 'recordHostExit', read('term.js'));
+  const view = {name: 'pane', instanceId: 'instance'};
+  assert.equal(exit(view, 'tmux:pane', {code: 1000, reason: 'host exited'}), true);
+  assert.equal(view.keepOutput, true);
+  assert.deepEqual(closed, []);
+});
+
+
+test('SSH conversation shows a simple composer without leaving the PTY', () => {
+  const box = {classList: {hidden: true, toggle(name, on) { if (name === 'hidden') this.hidden = on; }}};
+  const right = {classList: {toggle() {}}};
+  const drafts = [];
+  const context = contextWithCapabilities({...disabled, conversation_send: true}, {
+    S: {sel: 'tmux:ssh'}, T: {pending: [{name: 'ssh', source: 'shell'}], list: []},
+    conversationSendEnabled: () => true, sessionTerminalEnabled: () => true, takenOver: () => 'ssh',
+    pendingUid: name => `tmux:${name}`,
+    $: sel => sel === '#composer' ? box : sel === '#right' ? right : null,
+    switchComposerDraft: uid => drafts.push(uid), syncComposerMode: () => {},
+  });
+  loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
+  loadFunction(context, 'renderComposer', read('term.js'));
+  context.renderComposer();
+  assert.equal(box.classList.hidden, false);
+  assert.deepEqual(drafts, ['tmux:ssh']);
 });
 
 
@@ -1260,4 +1321,120 @@ test('restoring empty and legacy nullable drafts keeps defaults and valid input'
   assert.equal(draft.text,'keep me');
   assert.equal(draft.attachments[0].id,'image');
   assert.equal(draft.quotes[0].text,'keep quote');
+});
+
+
+test('reading a cleared draft removes old submission markers and keeps a concurrent edit CAS baseline', async () => {
+  const draft={text:'old report',attachments:[],quotes:[],requestId:'sent',report_prompt:'old task',revision:1,editVersion:0,savedVersion:0};
+  const context=vm.createContext({composerDraftOwner:uid=>uid,composerHydrations:new Map(),
+    composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,importLegacyComposer:async()=>null,
+    readServerComposerDraft:async()=>({revision:2,value:{text:'',attachments:[],quotes:[]}}),
+    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
+  for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord']) loadFunction(context,name,read('term.js'));
+  const hydrate=loadFunction(context,'hydrateComposerDraft',read('term.js'));
+  await hydrate('uid');assert.equal(draft.text,'');assert.equal(draft.requestId,undefined);assert.equal(draft.report_prompt,undefined);
+  Object.assign(draft,{revision:2,editVersion:0});context.composerHydrations.clear();
+  context.readServerComposerDraft=async()=>{draft.editVersion=1;draft.text='concurrent edit';return {revision:3,value:{text:'other page',attachments:[],quotes:[]}}};
+  await hydrate('uid');assert.equal(draft.text,'concurrent edit');assert.equal(draft.revision,2);
+});
+
+test('a server-owned report SEND clears a clean viewer without overwriting local edits', async () => {
+  const draft={text:'old report',attachments:[{id:'a',preview:'blob:old'}],quotes:[],requestId:'sent',revision:1,editVersion:0,savedVersion:0};
+  const revoked=[];
+  const context=vm.createContext({composerDrafts:new Map([['uid',draft]]),composerDraftOwner:uid=>uid,
+    composerSaving:new Set(),composerSending:false,
+    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    priorComposerSubmission:async ()=>({state:'sent',draft:{revision:2,value:{text:'',attachments:[],quotes:[]}}}),
+    URL:{revokeObjectURL:url=>revoked.push(url)},refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
+  for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord']) loadFunction(context,name,read('term.js'));
+  const reconcile=loadFunction(context,'reconcileComposerSubmission',read('term.js'));
+  await reconcile('uid');
+  assert.equal(draft.text,'');assert.equal(draft.attachments.length,0);assert.equal(draft.requestId,undefined);
+  assert.deepEqual(revoked,['blob:old']);
+  Object.assign(draft,{text:'new local edit',requestId:'sent',editVersion:1,savedVersion:0});
+  await reconcile('uid');assert.equal(draft.text,'new local edit');
+  draft.savedVersion=1;
+  context.priorComposerSubmission=async()=>{draft.editVersion++;draft.text='edited during lookup';return {state:'sent',draft:{revision:3,value:{text:'',attachments:[],quotes:[]}}}};
+  await reconcile('uid');assert.equal(draft.text,'edited during lookup');
+  const file={bytes:'still in RAM'};
+  Object.assign(draft,{text:'later saved input',attachments:[{id:'b',file,preview:'blob:new',status:''}],requestId:'sent',savedVersion:draft.editVersion});
+  context.priorComposerSubmission=async()=>({state:'sent',draft:{revision:4,value:{text:'later saved input',attachments:[{id:'b',number:2,file:{name:'new.png',size:2}}],quotes:[]}}});
+  await reconcile('uid');
+  assert.equal(draft.text,'later saved input');assert.equal(draft.attachments[0].file,file);
+  assert.equal(draft.attachments[0].preview,'blob:new');assert.deepEqual(revoked,['blob:old']);
+});
+
+
+test('send buttons keep the idle label and mark aria-busy instead of growing text', () => {
+  const term = read('term.js');
+  const css = read('style.css');
+  assert.match(term, /function setSendButtonBusy\(/);
+  assert.doesNotMatch(term, /button\.textContent = '发送中/);
+  assert.doesNotMatch(term, /button\.textContent = '提交中/);
+  assert.doesNotMatch(term, /button\.textContent = '抓取中/);
+  assert.doesNotMatch(term, /button\.textContent = `上传 /);
+  assert.match(term, /setSendButtonBusy\(button, '发送中'\)/);
+  assert.match(css, /@keyframes send-spin/);
+  assert.match(css, /\.cbtns \.btn\.go\[aria-busy="true"\]::after/);
+  const attrs = new Map();
+  const button = {
+    textContent: '发送',
+    setAttribute(name, value) { attrs.set(name, value); },
+    removeAttribute(name) { attrs.delete(name); },
+  };
+  const setBusy = loadFunction(vm.createContext({}), 'setSendButtonBusy', term);
+  setBusy(button, '发送中');
+  assert.equal(button.textContent, '发送');
+  assert.equal(attrs.get('aria-busy'), 'true');
+  assert.equal(attrs.get('aria-label'), '发送中');
+  setBusy(button, '');
+  assert.equal(button.textContent, '发送');
+  assert.equal(attrs.get('aria-busy'), 'false');
+  assert.equal(attrs.has('aria-label'), false);
+});
+
+
+test('stale build disables composer and report send', () => {
+  const buttons = {
+    '#csend': {disabled: false},
+    '#bug-report-go': {disabled: false},
+    '#cadd': {disabled: false},
+    '#bug-report-add': {disabled: false},
+  };
+  const context = vm.createContext({
+    staleBuildShown: false,
+    document: {body: {classList: {add() {}}, appendChild() {}}},
+    el: () => ({setAttribute() {}, innerHTML: '', appendChild() {}, type: '', title: '', onclick: null}),
+    $: sel => buttons[sel] || null,
+  });
+  loadFunction(context, 'markStaleBuild');
+  context.markStaleBuild('abc');
+  assert.equal(buttons['#csend'].disabled, true);
+  assert.equal(buttons['#bug-report-go'].disabled, true);
+  assert.equal(buttons['#cadd'].disabled, true);
+  assert.equal(buttons['#bug-report-add'].disabled, true);
+});
+
+
+test('post() does not surface HTML as a JSON parse error', async () => {
+  const stale = [];
+  const context = vm.createContext({
+    BUILD_ID: 'old', TERM_PAGE_ID: 'page', staleBuildShown: false,
+    appUrl: url => url, browserAuditEvent() {}, markStaleBuild: () => stale.push(1),
+    performance: {now: () => 0}, crypto: {randomUUID: () => 'id'},
+    fetch: async () => ({
+      status: 502, ok: false,
+      text: async () => '<html><head></head><h1>502 Bad Gateway</h1>',
+    }),
+  });
+  const post = loadFunction(context, 'post', read('term.js'));
+  await assert.rejects(() => post('api/session/conversation', {uid: 'x'}), /服务暂时不可用/);
+  context.fetch = async () => ({
+    status: 409, ok: false,
+    text: async () => JSON.stringify({error: '页面版本已过期，请重新加载', reload: true, build: 'new'}),
+  });
+  const data = await post('api/session/conversation', {uid: 'x'});
+  assert.equal(data.reload, true);
+  assert.equal(stale.length, 1);
 });
