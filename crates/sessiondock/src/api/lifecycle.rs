@@ -537,40 +537,20 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
     let pids = active.owned.get(uid).cloned().unwrap_or_default();
     let hosted = hosted_by_runtime || scan.scan.tree.hosted(&pids, &host_roots);
     let tmux = scan.scan.tree.in_tmux(&pids);
-    let by_sid = sessions
-        .iter()
-        .filter(|row| row.source == "codex" && !row.sid.is_empty())
-        .map(|row| (row.sid.as_str(), row))
-        .collect();
-    let ancestors = crate::runtime::procscan::codex_ancestor_sids(&target, &by_sid);
-    let managed_forks: Vec<(String, String)> = observed
+    let managed_fork = observed
         .as_ref()
-        .into_iter()
-        .flat_map(|snapshot| snapshot.hosts.iter())
-        .filter_map(|host| {
+        .and_then(|snapshot| snapshot.fork_host(&scan.scan, &sessions, uid))
+        .and_then(|host| {
             let bound = host.bound_target()?;
-            if bound.source().as_str() != target.source
-                || !ancestors.contains(bound.sid())
-                || !scan
-                    .scan
-                    .tree
-                    .hosted(&pids, &std::collections::BTreeSet::from([host.summary.pid]))
-            {
-                return None;
-            }
             Some((host.summary.name.clone(), bound.instance_id().to_owned()))
-        })
-        .collect();
+        });
     Ok(ExternalProcesses {
         scanner,
         pids,
         raw,
         hosted,
         tmux,
-        managed_fork: match managed_forks.as_slice() {
-            [only] => Some(only.clone()),
-            _ => None,
-        },
+        managed_fork,
     })
 }
 fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {

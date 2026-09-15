@@ -44,7 +44,12 @@ The target is resolved by `ManagedResolver`: the unique guard-capable managed
 host whose **verified native association** names the UID (runtime catalog),
 authorized through the lifecycle binding when it originates from a launch
 receipt. Duplicate, unmatched, exited or unauthorized instances are
-`terminal_unlinked` (409).
+`terminal_unlinked` (409). A Codex rollback branch (`Esc Esc`) has no binding
+of its own: when no host names its UID, the resolver takes the host bound to
+one of its `forked_from_id` ancestors whose pane runs the branch's process
+(`RuntimeSnapshot::fork_host`, the same rule as takeover's `followed_fork`;
+see [liveness](liveness.md)). Without a process scanner the branch stays
+`terminal_unlinked`; the fork graph alone never picks a host.
 
 ## Composer inspection and draft consent
 
