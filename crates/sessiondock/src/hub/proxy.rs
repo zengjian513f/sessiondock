@@ -325,7 +325,7 @@ pub fn resolve(
                     map.insert(key.to_string(), Value::String(local));
                 }
             }
-            if path == "/api/bug-report"
+            if matches!(path.as_str(), "/api/bug-report" | "/api/bug-report/capture")
                 && let Some(value) = map
                     .get("terminal_name")
                     .filter(|value| truthy(value))

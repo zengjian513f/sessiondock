@@ -109,6 +109,8 @@ async fn bundle_filters_related_events_and_captures_context() {
                 session: json!({"path": "/tmp/session.jsonl"}),
                 outbox: json!({"outbox": [{"state": "confirming", "secret": "s3cret"}]}),
                 attachments: Vec::new(),
+                origin: Origin::default(),
+                remote_events: Vec::new(),
             },
         )
         .unwrap();
@@ -160,8 +162,16 @@ async fn bundle_filters_related_events_and_captures_context() {
     let environment = read_json(&directory.join("environment.json"));
     assert_eq!(environment["build"], "rs-test-build");
     assert_eq!(environment["git_head"]["argv"][0], "git");
+    // Without an origin the bundle names this machine as the problem's.
+    assert_eq!(manifest["origin"]["hostname"], "host");
+    assert_eq!(manifest["origin"]["node_name"], "");
+    assert_eq!(manifest["origin"]["uid"], "codex:one");
+    assert_eq!(manifest["origin"]["remote"], false);
+    assert_eq!(manifest["origin"]["capture_error"], Value::Null);
     let prompt = fs::read_to_string(directory.join("worker-prompt.md")).unwrap();
     assert!(prompt.contains(&report.report_id));
+    assert!(prompt.contains("问题机器：host\n"));
+    assert!(!prompt.contains("另一台机器"));
     assert!(prompt.contains("相关会话：codex:one"));
     assert!(prompt.contains("不要 push、不要部署"));
     assert!(!prompt.contains("push 到 GitHub"));
@@ -179,6 +189,118 @@ async fn bundle_filters_related_events_and_captures_context() {
             "{name}"
         );
     }
+    shutdown.cancel();
+    audit.shutdown().await;
+}
+
+/// A worker started away from the problem's machine gets that machine's
+/// capture (rows first in `events.jsonl`), and the prompt and manifest name
+/// the machine the bundle describes.
+#[tokio::test]
+async fn bundle_from_a_remote_capture_names_the_origin_machine() {
+    let fixture = Fixture::new();
+    let service = fixture.service();
+    let (audit, shutdown) = fixture.audit();
+    let report = service
+        .create(
+            &audit,
+            CreateInput {
+                description: "Lyra 上的会话卡住".into(),
+                uid: String::new(),
+                page_id: "page-9".into(),
+                hostname: "cygnus".into(),
+                session: json!({"uid": "codex:n1~one", "cwd": "/srv/x"}),
+                terminal_capture: "frame from lyra".into(),
+                origin: Origin {
+                    node_id: "n1".into(),
+                    node_name: "Lyra".into(),
+                    hostname: "lyra".into(),
+                    uid: "codex:n1~one".into(),
+                    remote: true,
+                    capture_error: String::new(),
+                },
+                remote_events: vec![
+                    json!({"event": "browser.click", "uid": "codex:n1~one", "seq": 7}),
+                    json!({"event": "http.request.started", "uid": "codex:n1~one", "seq": 8}),
+                ],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let manifest = read_json(&report.path.join("manifest.json"));
+    assert_eq!(manifest["hostname"], "cygnus");
+    assert_eq!(
+        manifest["origin"],
+        json!({"node_id": "n1", "node_name": "Lyra", "hostname": "lyra",
+            "uid": "codex:n1~one", "remote": true, "capture_error": null})
+    );
+    assert_eq!(manifest["session"]["cwd"], "/srv/x");
+    assert_eq!(manifest["event_count"], 3, "{manifest}");
+    let rows: Vec<Value> = fs::read_to_string(report.path.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(rows[0]["event"], "browser.click");
+    assert_eq!(rows[1]["event"], "http.request.started");
+    assert_eq!(rows[2]["event"], "bug_report.created");
+    assert_eq!(
+        fs::read_to_string(report.path.join("terminal.txt")).unwrap(),
+        "frame from lyra"
+    );
+    let prompt = fs::read_to_string(report.path.join("worker-prompt.md")).unwrap();
+    assert!(prompt.contains("问题机器：Lyra（主机 lyra）\n"), "{prompt}");
+    assert!(prompt.contains("相关会话：codex:n1~one\n"), "{prompt}");
+    assert!(
+        prompt.contains(
+            "问题发生在 Lyra（主机 lyra），而这条处理会话运行在另一台机器（本机 cygnus）"
+        ),
+        "{prompt}"
+    );
+    assert!(!prompt.contains("抓取服务端上下文失败"));
+    shutdown.cancel();
+    audit.shutdown().await;
+}
+
+/// The problem machine being unreachable does not lose the report; the
+/// prompt says what is missing from the bundle.
+#[tokio::test]
+async fn bundle_records_a_failed_remote_capture() {
+    let fixture = Fixture::new();
+    let service = fixture.service();
+    let (audit, shutdown) = fixture.audit();
+    let report = service
+        .create(
+            &audit,
+            CreateInput {
+                description: "页面卡死".into(),
+                hostname: "cygnus".into(),
+                origin: Origin {
+                    node_id: "n1".into(),
+                    node_name: "Lyra".into(),
+                    hostname: String::new(),
+                    uid: "claude:n1~two".into(),
+                    remote: true,
+                    capture_error: "Lyra 离线：中央站未能连接该机器".into(),
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let manifest = read_json(&report.path.join("manifest.json"));
+    assert_eq!(manifest["origin"]["node_name"], "Lyra");
+    assert_eq!(
+        manifest["origin"]["capture_error"],
+        "Lyra 离线：中央站未能连接该机器"
+    );
+    assert_eq!(manifest["terminal_file"], "");
+    let prompt = fs::read_to_string(report.path.join("worker-prompt.md")).unwrap();
+    assert!(prompt.contains("问题机器：Lyra\n"), "{prompt}");
+    assert!(
+        prompt.contains("从 Lyra 抓取服务端上下文失败：Lyra 离线"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("相关会话：claude:n1~two\n"), "{prompt}");
     shutdown.cancel();
     audit.shutdown().await;
 }
