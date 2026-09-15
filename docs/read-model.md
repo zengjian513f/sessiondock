@@ -97,6 +97,52 @@
   [history-pages.md](history-pages.md)、[native-input.md](native-input.md)、
   [media.md](media.md)。
 
+### 视图字节缓存（2026-09-15）
+
+热读（同一文件版本的第二次 `/api/messages`）以前仍要把每条消息 `Value` 克隆一遍再
+序列化：隔离实例上 52 MB 的 Claude 会话每次全文 105–119 ms，404 MB 的 Codex 会话
+437–444 ms，`window=1` 首屏 18–33 ms（[performance.md](performance.md#热读视图字节缓存2026-09-15)）。
+现在每个已解析文件（`Parsed.encoded`，
+`views/encoded.rs`）在投影之后**只序列化一次**，把结果留在视图里，
+HTTP/SSE 的响应（`views/body.rs`）按字节拼接：
+
+- **单位是一个事件列表**：叶文件 `parsed.events` 一份，视图的继承前缀
+  `inherited` 一份（与链一起复用）。每条非 status 消息的 `serde_json::to_vec` 原样
+  输出首尾相接、逗号分隔，并记每条的起点，于是任意连续的一段消息位置就是一次
+  `memcpy`；status 事件另存（不进 `messages`，但进语义 digest）。
+- **同一次序列化还产出**语义 digest（`projection_digest(events, committed)`，
+  与旧算法逐字节相同的 SHA-1 输入）和 LRU 记账（Σ 消息字节），代替以前解析时的两遍
+  丢弃式序列化；过期检查点的锚点（`start < committed`）也从缓存字节算 digest，不再
+  为一次增量请求重新序列化整个前缀。
+- **响应 = 小字段 + 拼接**：`meta`/`version`/`reset`/`start`/`end`/`anchor` 由 serde_json
+  照旧生成、去掉收尾的 `}`，接 `"messages":[` + 缓存片段 + `]`，再接
+  `message_total`/`partial`/`activity_changed`/`activity`，最后由 handler 追加
+  `prompt`（主视图）并收尾。全文、`window=1`（头 100 + 尾 500 是两段
+  `memcpy`）、`start=/head=/anchor=` 增量（`end > start` 的后缀）、`append=1`、
+  历史页（`/page?cursor=`，按非 status 位置切片）都走这条路；分页预算
+  （`pages::Budget`）用缓存里记下的消息长度与文本引用数，不再为了称重再序列化 600 条。
+- **逐字节相同**：可缓存的消息就是它自己的 `to_vec` 输出，周围字段由同一个
+  `json!` 值序列化，`Value` 渲染器（`messages_with_pages`，只在测试里保留）与字节渲染器
+  的文档逐字节相等（`views/body_tests.rs` 三家来源冷/热、窗口、增量、追加、
+  重命名事件、媒体）。
+- **不是纯函数的消息每次照旧投影**：带类型化图片的事件（描述符注册是每次请求的
+  副作用，超过 16 张还要签发 `media_more` grant）和正文里发现了图片引用的事件
+  （文件 token 每次随机）在编码时标为 `special`，请求时克隆 + 投影 + 序列化，与
+  以前完全一样；其它消息直接拷贝。Codex 重命名事件（`rename_at`）按 `ts` 插在序列
+  里，只切断一次拷贝。
+- **追加只编码新尾巴**：追加后的重投影（仍是全量投影）对照上一次解析逐条比较
+  （`same_value`：键序敏感、`-0.0`/`0.0` 区分——`Value::eq` 都不区分，而字节要求
+  区分），`end` 与消息树都相同且无类型化媒体的消息直接拷贝旧字节，只有新尾巴和被
+  后续记录改写的旧消息（Codex `turn_aborted`、Claude 分支）重新序列化；重写/截断
+  让比较失败即全部重编码。测试证明扩展后的字节与从未见过旧文件的进程投影相同。
+- **单飞**：字节在 `Views::open` 持有视图锁时随解析建立，8 个并发冷读只编码一次，
+  其余等锁后拼接同一份；热读不建任何东西。
+- **瞬时投影不留字节**：搜索的 `open_transient` 以同一遍流式序列化算 digest 与记账，
+  `retain=false`，峰值内存不变。
+- **预算**：见下文"常驻内存预算"——字节与 `Value` 树记在同一笔账上（`SESSIONDOCK_VIEW_CACHE_MB`），
+  不另设旋钮；代价是常驻倍率从记账的 1.2–1.6× 估为约 2.2–2.6×（同一预算最坏多
+  128 MiB；实测见 performance.md，打开 404 MB 之后的 RSS 反而从 472 降到 415 MB）。
+
 ### 视图模块的接口（`sessions/views`）
 
 - `Views::open(&ViewRequest, &dyn Dependencies) -> Arc<ViewSnapshot>`：`ViewRequest`
@@ -231,17 +277,23 @@
 | 缓存 | 默认 | 环境变量 | 记账口径 |
 | --- | ---: | --- | --- |
 | 已解析文件 / 视图 LRU 条数 | 16 | `SESSIONDOCK_CACHE_ENTRIES`（0 = 不保留） | 条数；AST 缓存取其一半 |
-| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节 |
+| 视图 LRU 字节 | 128 MiB | `SESSIONDOCK_VIEW_CACHE_MB`（0 = 不保留） | 视图的序列化消息字节 + 内嵌图片的 base64 驻留字节；序列化字节本身自 2026-09-15 起真的驻留（视图字节缓存），同一笔账同时约束 `Value` 树和字节 |
 | 解码 AST 缓存 | 64 MiB | `SESSIONDOCK_AST_CACHE_MB`（0 = 不保留，追加全量重解码） | `serde_json::Value` 树的估重 |
 
 实测（真实根，2026-09-13，[performance.md](performance.md#常驻内存)）：
 一个视图的常驻 ≈ 记账字节的 1.2–1.6 倍（文本会话）到 ≈ 文件大小的 1.6 倍
 （截图密集的 Codex 会话：≤ 2 MiB 的内嵌图片以 base64 驻留在视图里，这是
-[media.md](media.md) 的媒体口径，不在本包范围）。AST 缓存只对小于其预算的文件
-生效：它让活跃会话的每次追加免于重解码整文件，对 385 MB 的文件本来也不会保留。
+[media.md](media.md) 的媒体口径，不在本包范围）。视图字节缓存（2026-09-15）之后
+序列化字节也驻留：同一个视图估为记账的 ≈ 2.2–2.6 倍，预算不变，所以同一预算下
+最坏多 128 MiB 常驻、保留的视图数不变；不为字节另设预算，是因为 Σ 字节 ≤ Σ 记账
+本来就被同一上限约束，而把字节按 2× 记账会让 404 MB + 52 MB + p90 三个会话
+无法同时留在 128 MiB 里，热切换时重新解析 5 s 远比多 100 MB 常驻贵。AST 缓存
+只对小于其预算的文件生效：它让活跃会话的每次追加免于重解码整文件，对 385 MB
+的文件本来也不会保留。
 
-除了缓存上限，进程在每次新解析、视图淘汰、打开视图的历史响应（非 `append=1`
-或 > 4 MiB）和每次搜索结束后调用 `malloc_trim(0)`（遍历全部 arena 归还空闲页）：
+除了缓存上限，进程在每次新解析、视图淘汰和每次搜索结束后调用 `malloc_trim(0)`
+（遍历全部 arena 归还空闲页；打开视图的历史响应曾经也 trim，因为它克隆了全部消息，
+字节缓存之后热读不再产生投影临时对象，这一处 trim 撤掉了）：
 在 256 核机器上 tokio 曾开 256 个 worker（`SESSIONDOCK_ASYNC_WORKERS` 现默认
 `clamp(核数/8, 4, 16)`），每个线程一个 glibc arena，释放的几百 MB 永远留在 RSS 里。
 `mallopt(M_ARENA_MAX, 2)` 实测被否决：并行索引读取和读 worker 争抢两个 arena，

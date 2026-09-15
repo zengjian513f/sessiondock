@@ -25,7 +25,7 @@ use crate::{
     error::ApiError,
     files::FileService,
     media::MediaStore,
-    sessions::{MessageQuery, PageStore, SessionError, SessionStore},
+    sessions::{MessageBody, MessageQuery, PageStore, SessionError, SessionStore},
     state::{AppState, JsonBytes},
 };
 
@@ -36,6 +36,10 @@ pub struct ListQuery {
     sig: String,
     debug_run: String,
 }
+
+/// Responses above this many bytes schedule a coalesced `malloc_trim` once
+/// they have left the process (docs/read-model.md "常驻内存预算").
+const LARGE_RESPONSE: usize = 4 * 1024 * 1024;
 
 fn query_error(error: QueryRejection) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_query", error.body_text())
@@ -68,26 +72,22 @@ pub async fn messages(
     let files = state.files.clone();
     let pages = state.history_pages.clone();
     let prompts = state.prompts.clone();
-    let (mut value, scope) = state
+    let (body, scope, mut prompt) = state
         .reader
         .run(move |store| {
             let snapshot = store.snapshot(&uid, &query.agent)?;
             let scope = query.agent.is_empty().then(|| PromptScope::of(&snapshot));
-            let mut value =
-                snapshot.messages_with_pages(&query, &media, files.as_deref(), &pages)?;
-            claude_prompt_field(&prompts, scope.as_ref(), &mut value);
-            // Opening a large view (window or full) projects and clones every
-            // message once — hundreds of MB of temporaries for the largest
-            // sessions; give that heap back instead of leaving it mapped
-            // until a later allocation happens to fit. Small
-            // views and the frequent `append=1` polls skip the ~10 ms trim.
-            let large = value["message_total"]
-                .as_u64()
-                .is_some_and(|total| total > 2000);
-            if large {
-                crate::sessions::memory::release();
+            // A hot read splices retained bytes and leaves no projection
+            // temporaries behind (a cold open's parse trims its own in
+            // `Views::file`); what a large response leaves is its own
+            // buffer, freed after the send, so the trim runs later and off
+            // this path instead of costing every big read ~10 ms.
+            let body = snapshot.messages_body(&query, &media, files.as_deref(), &pages)?;
+            let prompt = claude_prompt_field(&prompts, scope.as_ref(), &snapshot, &body);
+            if body.size() > LARGE_RESPONSE {
+                crate::sessions::memory::release_soon();
             }
-            Ok((value, scope))
+            Ok((body, scope, prompt))
         })
         .await?;
     // `result["prompt"]` is set for every main view:
@@ -96,27 +96,29 @@ pub async fn messages(
         codex_prompt_field(
             &state,
             scope.as_ref(),
-            &mut value,
+            &mut prompt,
             &mut CodexProbe::default(),
         )
         .await;
     }
-    Ok(JsonBytes::new(&value))
+    Ok(JsonBytes(body.finish(prompt.as_ref())))
 }
 
 /// The Claude half of the `prompt` field, on the blocking reader (it reads
-/// and may clear the card file). Runs only for a main view (`scope` given).
+/// and may clear the card file). Runs only for a main view (`scope` given):
+/// `Some(prompt)` is the field to append, `None` omits it (agent views).
 fn claude_prompt_field(
     prompts: &LivePrompts,
     scope: Option<&Option<PromptScope>>,
-    value: &mut Value,
-) {
+    snapshot: &Arc<crate::sessions::ViewSnapshot>,
+    body: &MessageBody,
+) -> Option<Value> {
     match scope {
         Some(Some(PromptScope::Claude { sid })) => {
-            value["prompt"] = prompts.claude_prompt(sid, &value["messages"]);
+            Some(prompts.claude_prompt_unless(sid, |tool_id| body.answers(snapshot, tool_id)))
         }
-        Some(_) => value["prompt"] = Value::Null,
-        None => {}
+        Some(_) => Some(Value::Null),
+        None => None,
     }
 }
 
@@ -125,11 +127,11 @@ fn claude_prompt_field(
 async fn codex_prompt_field(
     state: &AppState,
     scope: Option<&PromptScope>,
-    value: &mut Value,
+    prompt: &mut Option<Value>,
     probe: &mut CodexProbe,
 ) {
     if let Some(PromptScope::Codex { uid }) = scope {
-        value["prompt"] = state.prompts.codex_prompt(state, uid, probe).await;
+        *prompt = Some(state.prompts.codex_prompt(state, uid, probe).await);
     }
 }
 
@@ -170,7 +172,7 @@ async fn page_response<F>(
     work: F,
 ) -> Result<Response, ApiError>
 where
-    F: FnOnce(&SessionStore, &PageResources, &PageQuery) -> Result<Value, SessionError>
+    F: FnOnce(&SessionStore, &PageResources, &PageQuery) -> Result<Vec<u8>, SessionError>
         + Send
         + 'static,
 {
@@ -187,12 +189,13 @@ where
         .reader
         .run(move |store| {
             let _permit = worker_permit;
-            let value = work(store, &resources, &query)?;
-            let bytes = JsonBytes::new(&value);
-            Ok(bytes)
+            Ok(JsonBytes(work(store, &resources, &query)?))
         })
         .await?;
     let length = bytes.0.len();
+    if length > LARGE_RESPONSE {
+        crate::sessions::memory::release_soon();
+    }
     let mut response = Body::from(Bytes::from_owner(PageBody {
         bytes: bytes.0,
         _permit: permit,
@@ -216,7 +219,7 @@ pub async fn history_page(
 ) -> Result<Response, ApiError> {
     page_response(state, query, move |store, resources, query| {
         let grant = resources.pages.lookup(&query.cursor, &uid, &query.agent)?;
-        store.snapshot(&uid, &query.agent)?.history_page(
+        store.snapshot(&uid, &query.agent)?.history_page_body(
             grant,
             &query.cursor,
             &resources.media,
@@ -236,13 +239,14 @@ pub async fn media_page(
         let grant = resources
             .pages
             .lookup_media(&query.cursor, &uid, &query.agent)?;
-        store.snapshot(&uid, &query.agent)?.media_page(
+        let value = store.snapshot(&uid, &query.agent)?.media_page(
             grant,
             &query.cursor,
             &resources.media,
             resources.files.as_deref(),
             &resources.pages,
-        )
+        )?;
+        Ok(JsonBytes::new(&value).0)
     })
     .await
 }
@@ -303,20 +307,39 @@ pub async fn input_history(
 }
 
 struct Packet {
-    value: Value,
+    body: MessageBody,
+    /// The `prompt` field to append (`None` on agent views).
+    prompt: Option<Value>,
     query: MessageQuery,
 }
 
-fn packet(value: Value, requested: MessageQuery) -> Packet {
+impl Packet {
+    /// The SSE data (the document with its `prompt` appended) and the
+    /// cursor the next packet continues from.
+    fn data(self) -> (String, MessageQuery) {
+        let data = String::from_utf8(self.body.finish(self.prompt.as_ref()))
+            .expect("serde_json output and its spliced copies are UTF-8");
+        if data.len() > LARGE_RESPONSE {
+            crate::sessions::memory::release_soon();
+        }
+        (data, self.query)
+    }
+}
+
+fn packet(body: MessageBody, prompt: Option<Value>, requested: MessageQuery) -> Packet {
     let query = MessageQuery {
-        start: value["end"].as_u64().unwrap_or(0),
-        head: value["version"]["head"].as_str().unwrap_or("").into(),
-        anchor: value["anchor"].as_str().unwrap_or("").into(),
+        start: body.end(),
+        head: body.head().into(),
+        anchor: body.anchor().into(),
         agent: requested.agent,
         window: "1".into(),
         ..Default::default()
     };
-    Packet { value, query }
+    Packet {
+        body,
+        prompt,
+        query,
+    }
 }
 
 /// Emit `{"prompt_only": true, "prompt": ...}` as a `prompt` packet.
@@ -351,29 +374,30 @@ pub async fn watch(
     let mut first = state
         .reader
         .run(move |_| {
-            let mut value =
-                snapshot.messages_with_pages(&cursor, &media, files.as_deref(), &pages)?;
-            if first_scope.is_some() {
-                claude_prompt_field(&prompts, Some(&first_scope), &mut value);
-            }
-            Ok(packet(value, cursor))
+            let body = snapshot.messages_body(&cursor, &media, files.as_deref(), &pages)?;
+            let prompt = if first_scope.is_some() {
+                claude_prompt_field(&prompts, Some(&first_scope), &snapshot, &body)
+            } else {
+                None
+            };
+            Ok(packet(body, prompt, cursor))
         })
         .await?;
-    codex_prompt_field(&state, scope.as_ref(), &mut first.value, &mut probe).await;
+    codex_prompt_field(&state, scope.as_ref(), &mut first.prompt, &mut probe).await;
     let stream = async_stream::stream! {
-        let mut cursor = first.query;
         // `prompt_revision` / `codex_prompt`: what the last packet carried.
         let mut claude_revision = match &scope {
             Some(PromptScope::Claude { sid }) => state.prompts.claude_revision(sid),
             _ => None,
         };
-        let mut codex_prompt = first.value["prompt"].clone();
+        let mut codex_prompt = first.prompt.clone().unwrap_or(Value::Null);
         let mut poll = tokio::time::interval(PROMPT_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // A byte checkpoint does not encode the browser's metadata version.
         // Always send one aligned batch so a reconnect catches a preference or
         // menu change that occurred between its HTTP snapshot and subscribe.
-        yield Ok::<Event, Infallible>(Event::default().data(first.value.to_string()));
+        let (first_data, mut cursor) = first.data();
+        yield Ok::<Event, Infallible>(Event::default().data(first_data));
         loop {
             let changed = tokio::select! {
                 _ = state.shutdown.cancelled() => break,
@@ -414,28 +438,31 @@ pub async fn watch(
             let packet_scope = scope.clone();
             let result = match snapshot {
                 Ok(snapshot) => state.reader.run_wait(&state.shutdown, move |_| {
-                    let mut value = snapshot.messages_with_pages(&request_cursor, &media, files.as_deref(), &pages)?;
-                    if packet_scope.is_some() {
-                        claude_prompt_field(&prompts, Some(&packet_scope), &mut value);
-                    }
-                    Ok(packet(value, request_cursor))
+                    let body = snapshot.messages_body(&request_cursor, &media, files.as_deref(), &pages)?;
+                    let prompt = if packet_scope.is_some() {
+                        claude_prompt_field(&prompts, Some(&packet_scope), &snapshot, &body)
+                    } else {
+                        None
+                    };
+                    Ok(packet(body, prompt, request_cursor))
                 }).await,
                 Err(error) => Err(error),
             };
             match result {
                 Ok(mut next) => {
-                    codex_prompt_field(&state, scope.as_ref(), &mut next.value, &mut probe).await;
+                    codex_prompt_field(&state, scope.as_ref(), &mut next.prompt, &mut probe).await;
                     match &scope {
                         // `_claude_prompt` may have deleted the file: resync the stamp.
                         Some(PromptScope::Claude { sid }) => claude_revision = state.prompts.claude_revision(sid),
-                        Some(PromptScope::Codex { .. }) => codex_prompt = next.value["prompt"].clone(),
+                        Some(PromptScope::Codex { .. }) => codex_prompt = next.prompt.clone().unwrap_or(Value::Null),
                         None => {}
                     }
                     // The publisher already compares the complete revision,
                     // including view metadata. A changed agent menu/preference
                     // can have exactly the same byte checkpoint and no messages.
-                    yield Ok(Event::default().data(next.value.to_string()));
-                    cursor = next.query;
+                    let (data, query) = next.data();
+                    yield Ok(Event::default().data(data));
+                    cursor = query;
                 }
                 Err(error) => {
                     yield Ok(Event::default().event("migration-error")
