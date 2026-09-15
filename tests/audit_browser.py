@@ -114,6 +114,16 @@ def main():
                     seen = wait_for_events(page, audit, {"browser.page.loaded", "browser.session.opened",
                                                    "browser.http.response.parsed", "browser.dom.snapshot",
                                                    "browser.sse.opened"})
+                    # A ≥1 s main-thread frame is attributed by the browser and beaconed at once.
+                    assert page.evaluate("PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')")
+                    page.evaluate("setTimeout(() => { const t = performance.now(); while (performance.now() - t < 1300) {} }, 0)")
+                    deadline = time.monotonic() + 15
+                    while not any(row["event"] == "browser.main_thread.long_frame"
+                                  and any("setTimeout" in script["invoker"] for script in row["data"]["scripts"])
+                                  for row in audit_lines(audit)):
+                        assert time.monotonic() < deadline, "the synthetic long frame was never reported"
+                        page.wait_for_timeout(100)
+                    seen.add("browser.main_thread.long_frame")
                     # Navigating away fires pagehide: the page flushes through sendBeacon.
                     page.goto(base + "/?second=1", wait_until="networkidle")
                     seen |= wait_for_events(page, audit, {"browser.page.hidden"})
@@ -155,6 +165,14 @@ def main():
                     assert loaded["build"] and loaded["data"]["user_agent"], loaded
                     hidden = [row for row in by_page if row["event"] == "browser.page.hidden"]
                     assert hidden and hidden[-1]["data"]["reason"] == "pagehide", hidden
+                    frames = [row for row in by_page if row["event"] == "browser.main_thread.long_frame"
+                              and any("setTimeout" in script["invoker"] for script in row["data"]["scripts"])]
+                    assert frames and frames[-1]["severity"] == "warning" and frames[-1]["uid"] == uid, frames[:1]
+                    frame = frames[-1]["data"]
+                    assert frame["duration_ms"] >= 1000 and frame["dom_nodes"] > 0, frame
+                    assert frame["heap_mb"] is None or len(frame["heap_mb"]) == 3, frame
+                    script = next(script for script in frame["scripts"] if "setTimeout" in script["invoker"])
+                    assert script["duration_ms"] >= 1000 and script["invoker_type"], script
                     context.close()
                 # Graceful shutdown (SIGTERM above) must leave every segment parseable.
                 after_shutdown = audit_lines(audit)

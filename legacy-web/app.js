@@ -269,6 +269,66 @@ function flushBrowserAuditBeacon() {
   }
 }
 
+// ---- 主线程长帧归因 ----
+// 页面偶发整体卡死，事后只能从审计日志看到轮询停摆，看不到是谁在跑。卡死前
+// 通常先有几段逐步变长的长任务；long-animation-frame 由浏览器给出每段里跑了
+// 哪个函数、在哪个文件的哪个位置、由谁触发、耗时和强制布局占比。这里对 ≥1 s
+// 的帧各记一条 main_thread.long_frame，用 sendBeacon 直接交给浏览器进程发出，
+// 随后主线程再卡死也不会丢。每页最多记 60 条，免得一个坏循环刷爆日志。
+const LONG_FRAME_MIN_MS = 1000;
+const LONG_FRAME_MAX_EVENTS = 60;
+let longFrameCount = 0;
+function longFrameEvent(entry) {
+  const base = APP_BASE.href;
+  const scripts = [...(entry.scripts || [])].slice(0, 8).map(script => ({
+    invoker: String(script.invoker || '').slice(0, 200), invoker_type: script.invokerType || '',
+    function: String(script.sourceFunctionName || '').slice(0, 120),
+    url: String(script.sourceURL || '').replace(base, ''), char: script.sourceCharPosition ?? null,
+    duration_ms: Math.round(script.duration || 0),
+    forced_layout_ms: Math.round(script.forcedStyleAndLayoutDuration || 0),
+    pause_ms: Math.round(script.pauseDuration || 0),
+  }));
+  const end = entry.startTime + entry.duration;
+  const memory = performance.memory;
+  const term = typeof T === 'undefined' ? null
+    : {name: T.name, views: T.views?.size ?? 0, connected: T.ws?.readyState ?? null};
+  return {
+    event: 'main_thread.long_frame',
+    ts: new Date(performance.timeOrigin + entry.startTime).toISOString(),
+    uid: S.sel ?? '', trace_id: '', request_id: '', connection_id: '', severity: 'warning',
+    data: {
+      duration_ms: Math.round(entry.duration), blocking_ms: Math.round(entry.blockingDuration || 0),
+      render_ms: entry.renderStart ? Math.round(end - entry.renderStart) : 0,
+      style_layout_ms: entry.styleAndLayoutStart ? Math.round(end - entry.styleAndLayoutStart) : 0,
+      scripts,
+      heap_mb: memory ? [memory.usedJSHeapSize, memory.totalJSHeapSize, memory.jsHeapSizeLimit]
+        .map(bytes => Math.round(bytes / 1048576)) : null,
+      dom_nodes: document.getElementsByTagName('*').length,
+      selected: S.sel, agent: S.agent, visibility: document.visibilityState,
+      audit_queue: browserAuditQueue.length, terminal: term,
+    },
+    content: null,
+  };
+}
+function observeLongFrames() {
+  if (!SessionDockCapabilities.allows('audit')) return;
+  if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
+  const observer = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) {
+      if (entry.duration < LONG_FRAME_MIN_MS || longFrameCount >= LONG_FRAME_MAX_EVENTS) continue;
+      longFrameCount += 1;
+      try {
+        const event = longFrameEvent(entry);
+        const sent = navigator.sendBeacon?.(appUrl('api/audit/browser'),
+          new Blob([auditPayload([event])], {type: 'application/json'}));
+        if (!sent) browserAuditEvent(event.event, event.data, null, {severity: event.severity});
+      } catch { /* 诊断不影响页面 */ }
+    }
+  });
+  observer.observe({type: 'long-animation-frame', buffered: true});
+}
+observeLongFrames();
+
 const nativeAlert = window.alert.bind(window);
 const nativeConfirm = window.confirm.bind(window);
 window.alert = message => {

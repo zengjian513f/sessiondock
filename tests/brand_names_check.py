@@ -51,11 +51,10 @@ def main():
                    'data-app-name="SessionDock"', 'data-storage-key="sessiondock.pwa-install-dismissed"'):
         if needle not in index:
             failures.append(f"legacy-web/index.html: missing {needle}")
-    worker = (WEB / "service-worker.js").read_text(encoding="utf-8")
-    if "const CACHE_PREFIX = 'sessiondock-shell-';" not in worker:
-        failures.append("legacy-web/service-worker.js: CACHE_PREFIX is not 'sessiondock-shell-'")
-    if "SessionDock 当前离线" not in worker:
-        failures.append("legacy-web/service-worker.js: offline text does not name SessionDock")
+    if "serviceWorker.register(" in index:
+        failures.append("legacy-web/index.html: registers a service worker (it pins new tabs to a hung page process)")
+    if "key.startsWith('sessiondock-shell-')" not in index:
+        failures.append("legacy-web/index.html: does not clear the retired sessiondock-shell-* caches")
     for page, expected in (("files.html", "<title>文件管理 · SessionDock</title>"),
                            ("file.html", "<title>正在打开 · SessionDock</title>")):
         if expected not in (WEB / page).read_text(encoding="utf-8"):
@@ -79,7 +78,7 @@ def main():
             print("  " + line)
         sys.exit(1)
     print(f"PASS brand names check: {len(paths)} tracked non-Markdown text files contain no retired brand; "
-          "manifest/service worker/page titles and PWA identity say SessionDock")
+          "manifest/page titles and PWA identity say SessionDock, no service worker is registered")
 
 
 if __name__ == "__main__":

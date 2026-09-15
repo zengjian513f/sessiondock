@@ -155,8 +155,7 @@ def main():
                 assert page.evaluate("document.querySelector('meta[name=apple-mobile-web-app-title]').content") == "SessionDock"
                 manifest = page.evaluate("fetch('manifest.webmanifest').then(r => r.json())")
                 assert manifest["name"] == "SessionDock" and manifest["short_name"] == "SessionDock", manifest
-                worker = page.evaluate("fetch('service-worker.js').then(r => r.text())")
-                assert "const CACHE_PREFIX = 'sessiondock-shell-'" in worker
+                assert page.evaluate("navigator.serviceWorker.getRegistrations().then(list => list.length)") == 0
                 fresh.close()
                 assert not errors, errors
             finally:

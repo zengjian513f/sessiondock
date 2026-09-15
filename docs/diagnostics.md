@@ -27,3 +27,24 @@ the 14-day retention window are deleted.
 `GET /api/health` reports accepted, rejected, dropped, written and queued
 counters. Shutdown closes admission and drains queued records within the
 configured shutdown deadline.
+
+## Main-thread long frames
+
+The page reports every main-thread frame of 1 s or longer as
+`browser.main_thread.long_frame` (severity `warning`), at most 60 per page
+load. The browser's `long-animation-frame` entry supplies the attribution in
+`data.scripts[]`: `invoker` (for example `WebSocket.onmessage`,
+`TimerHandler:setInterval`, `EventSource.onmessage`), `invoker_type`,
+`function`, `url` (relative to the page) and `char` (source position), plus
+per-script `duration_ms`, `forced_layout_ms` and `pause_ms`. The frame itself
+carries `duration_ms`, `blocking_ms`, `render_ms`, `style_layout_ms`,
+`heap_mb` (`[used, total, limit]`, Chromium only), `dom_nodes`, the selected
+view, visibility, the audit queue length and the terminal state.
+
+The record is sent with `sendBeacon` the moment the observer fires, not
+through the batched queue: the browser process owns the request as soon as it
+is queued, so the record survives even when the next frame never ends. A page
+that freezes for good therefore leaves its last few, progressively longer
+frames in the log with the function that ran in each. The page registers no
+service worker for the same reason: a navigation to the same origin would wait
+for a worker started inside the existing, possibly frozen, page process.

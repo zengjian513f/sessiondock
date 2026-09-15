@@ -650,10 +650,13 @@ test('the installable shell is SessionDock', () => {
   const manifest = JSON.parse(read('manifest.webmanifest'));
   assert.equal(manifest.name, 'SessionDock');
   assert.equal(manifest.short_name, 'SessionDock');
-  const worker = read('service-worker.js');
-  assert.match(worker, /const CACHE_PREFIX = 'sessiondock-shell-';/);
-  assert.match(worker, /SessionDock 当前离线/);
   const index = read('index.html');
+  // 不注册 Service Worker：它会把同源新标签页的导航绑在已有的（可能已卡死的）
+  // 页面进程里。旧注册在页面加载时注销。
+  assert.doesNotMatch(index, /serviceWorker\.register\(/);
+  assert.match(index, /navigator\.serviceWorker\.getRegistrations\(\)/);
+  assert.match(index, /item\.unregister\(\)/);
+  assert.match(index, /key\.startsWith\('sessiondock-shell-'\)/);
   assert.match(index, /<meta name="apple-mobile-web-app-title" content="SessionDock">/);
   assert.match(index, /data-app-name="SessionDock" data-storage-key="sessiondock\.pwa-install-dismissed"/);
   assert.match(index, /localStorage\.getItem\(prefix \+ 'theme'\)/);
