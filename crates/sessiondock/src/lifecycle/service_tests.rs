@@ -1198,7 +1198,10 @@ async fn list_leaves_exited_receipts_alone_and_probes_live_ones_in_parallel() {
         assert_eq!(by_id(&first, record.record_id()), State::Running);
     }
     let exited_infos = exited_peer.infos.load(Ordering::SeqCst);
-    assert!(exited_infos > 0, "the exit itself was observed through the host");
+    assert!(
+        exited_infos > 0,
+        "the exit itself was observed through the host"
+    );
     let live_infos: Vec<usize> = live
         .iter()
         .map(|(_, peer)| peer.infos.load(Ordering::SeqCst))
@@ -1218,7 +1221,10 @@ async fn list_leaves_exited_receipts_alone_and_probes_live_ones_in_parallel() {
     );
     for ((record, peer), before) in live.iter().zip(live_infos) {
         assert_eq!(by_id(&second, record.record_id()), State::Running);
-        assert!(peer.infos.load(Ordering::SeqCst) > before, "live receipts are probed");
+        assert!(
+            peer.infos.load(Ordering::SeqCst) > before,
+            "live receipts are probed"
+        );
     }
     service.shutdown().await.unwrap();
 }

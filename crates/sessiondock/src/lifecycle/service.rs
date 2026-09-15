@@ -1,5 +1,6 @@
 //! Isolated lifecycle coordinator. HTTP cancellation never owns a spawn.
 
+use futures_util::{StreamExt, stream};
 use ptyhost_client::{BoundTarget, ControlOp, HostClient, LaunchTarget, NativeBindingState};
 use std::{
     collections::BTreeMap,
@@ -8,7 +9,6 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
-use futures_util::{StreamExt, stream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -571,7 +571,9 @@ impl Core {
                     .work(move |store| store.list(offset, limit).map_err(Error::Store))
                     .await?;
                 let deadline = Instant::now() + self.limits.readiness_timeout;
-                self.refresh_all(records, deadline).await.map(Answer::Records)
+                self.refresh_all(records, deadline)
+                    .await
+                    .map(Answer::Records)
             }
             Command::Target(id) => {
                 let record = self.get(id.clone()).await?;
@@ -814,7 +816,10 @@ impl Core {
         match observation {
             Ok(Ok(observation)) => RemoteProbe::Observed(Box::new(observation)),
             _ if record.state() != State::Starting => {
-                match client.retire_if_local_process_dead(record.host_name()).await {
+                match client
+                    .retire_if_local_process_dead(record.host_name())
+                    .await
+                {
                     Ok(true) => RemoteProbe::Retired,
                     _ => RemoteProbe::Unavailable,
                 }
@@ -876,7 +881,10 @@ impl Core {
         let mut remote: Vec<(usize, Record)> = Vec::new();
         for record in records {
             let slot = slots.len();
-            if matches!(record.state(), State::Prepared | State::Failed | State::Exited) {
+            if matches!(
+                record.state(),
+                State::Prepared | State::Failed | State::Exited
+            ) {
                 slots.push(Some(record));
                 continue;
             }
@@ -905,9 +913,12 @@ impl Core {
         let items: Vec<(usize, ObservationEvidence, BindingObservation)> = observed
             .into_iter()
             .map(|(slot, record, observation)| {
-                let binding =
-                    binding_observation(&record, self.bindings.get(record.record_id()));
-                (slot, ObservationEvidence::new(&record, observation), binding)
+                let binding = binding_observation(&record, self.bindings.get(record.record_id()));
+                (
+                    slot,
+                    ObservationEvidence::new(&record, observation),
+                    binding,
+                )
             })
             .collect();
         let refreshed = self
