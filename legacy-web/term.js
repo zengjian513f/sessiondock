@@ -1890,6 +1890,10 @@ function termSelectionMouseDown(event) {
   });
 }
 
+function shouldUseTermWebgl(uid = T.uid) {
+  return !String(uid || '').startsWith('tmux:');
+}
+
 function ensureTerm(name) {
   let view = T.views.get(name);
   if (view) return view;
@@ -1913,7 +1917,7 @@ function ensureTerm(name) {
     activationEpoch: 0,
     attachPromise: null, revoked: false,
     focusRequest: null, resumeFocus: false,
-    unicode11: null,
+    renderer: 'dom', webgl: null, unicode11: null,
     syncHold: null, syncHoldTimer: null,
     selectionLocked: false, selectionSnapshot: null, restoringSelection: false,
     codexSideThread: false, sideThreadScanQueued: false,
@@ -1936,11 +1940,24 @@ function ensureTerm(name) {
   // but has no browser clipboard policy of its own, so the embedding page must
   // opt in before Ctrl+V can paste the selected text back into the PTY.
   view.osc52 = term.parser.registerOscHandler(52, payload => handleOsc52Clipboard(view, payload));
-  // 只用 DOM 渲染器。WebGL 渲染器曾用来压 Codex DEC ?2026 重画在 Chromium/Wayland
-  // 下的中间帧，但同步帧现在整帧攒住再写（writeTermOutput），不再需要；而它让这
-  // 个页面成了浏览器里唯一持有 WebGL 上下文的标签页，NVIDIA + Wayland 下 Edge 的
-  // GPU 命令缓冲区一出错（AllocateRingBuffer 失败、未初始化的 SharedImage），
-  // 渲染进程就堵死在原生代码里，整页永久无响应，连调试器都插不进去。
+  // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
+  // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
+  // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
+  if (shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => {
+        if (view.webgl !== webgl) return;
+        view.webgl = null;
+        view.renderer = 'dom';
+        webgl.dispose();
+        requestAnimationFrame(() => term.refresh(0, term.rows - 1));
+      });
+      term.loadAddon(webgl);
+      view.webgl = webgl;
+      view.renderer = 'webgl';
+    } catch { /* WebGL2/硬件加速不可用时保留 DOM renderer */ }
+  }
   const forwardedSelectionStarts = new WeakSet();
   host.addEventListener('mousedown', e => {
     if (forwardedSelectionStarts.has(e) || e.button !== 0) return;
@@ -3933,6 +3950,9 @@ function foregroundTerm(force = false) {
   if (document.hidden || (!force && !termWasBackgrounded)) return;
   termWasBackgrounded = false;
   for (const view of T.views.values()) {
+    if (view.webgl) {
+      try { view.term.clearTextureAtlas(); } catch {}
+    }
     if (view.resumeFocus) requestTermFocus(view, document.body);
     view.resumeFocus = false;
     reconnectTerm(view);
