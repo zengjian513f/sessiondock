@@ -531,6 +531,46 @@ impl RuntimeSnapshot {
             .map(|(uid, _)| uid.as_str())
             .collect()
     }
+
+    /// The single host whose verified binding names a Codex ancestor of `uid`
+    /// while its pane runs this fork's own process. A rollback keeps the CLI
+    /// in the pane taken over for the parent and the durable host identity
+    /// with that parent; the fork owns the process after chain folding
+    /// (`Scan::active_processes`). Exact bindings, other sources, a fork whose
+    /// process moved on again and an ambiguous pair resolve to nothing.
+    pub fn fork_host(
+        &self,
+        scan: &procscan::Scan,
+        sessions: &[procscan::SessionRow],
+        uid: &str,
+    ) -> Option<&ManagedHost> {
+        let target = sessions.iter().find(|session| session.uid == uid)?;
+        if target.source != "codex" {
+            return None;
+        }
+        let by_sid = sessions
+            .iter()
+            .filter(|row| row.source == "codex" && !row.sid.is_empty())
+            .map(|row| (row.sid.as_str(), row))
+            .collect();
+        let ancestors = procscan::codex_ancestor_sids(target, &by_sid);
+        if ancestors.is_empty() {
+            return None;
+        }
+        let active = scan.active_processes(sessions);
+        let pids = active.owned.get(uid).filter(|pids| !pids.is_empty())?;
+        let mut matches = self.hosts.iter().filter(|host| {
+            host.bound_target().is_some_and(|bound| {
+                bound.source().as_str() == target.source
+                    && ancestors.contains(bound.sid())
+                    && scan
+                        .tree
+                        .hosted(pids, &std::collections::BTreeSet::from([host.summary.pid]))
+            })
+        });
+        let host = matches.next()?;
+        matches.next().is_none().then_some(host)
+    }
 }
 
 #[derive(Clone, Debug)]

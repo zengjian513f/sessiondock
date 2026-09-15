@@ -483,6 +483,7 @@ fn build_app(
                     reader: reader.clone(),
                     lifecycle: lifecycle.clone(),
                     probes: runtime_probes.clone(),
+                    proc_scan: proc_scan.clone(),
                 }),
                 reader.clone(),
                 Default::default(),

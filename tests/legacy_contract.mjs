@@ -207,9 +207,42 @@ test('cross-kind open is rejected before changing persisted layout or rendered p
   const context=contextWithCapabilities(disabled,{T,ConsoleUI:{errors},renderTakeoverBtn:()=>{},
     $:()=>assert.fail('A rejected open must not mutate the pane'),
     rememberTermOpen:()=>assert.fail('A rejected open must not change layout')});
+  loadFunction(context,'termBindingServes',read('term.js'));
   const open=loadFunction(context,'openTermPane',read('term.js'));
   assert.equal(await open('pane'),false);
   assert.match(errors.get('codex:native'),/先.*释放/);
+});
+
+test('Rust terminal lookup follows a Codex rollback branch to the pane bound to its ancestor', () => {
+  const node = 'n'.repeat(32);
+  const parent = {uid: 'codex:a', source: 'codex', sid: 'sid-a', fork_parent: true, created: '2026-09-14T00:00:00Z'};
+  const branch = {uid: 'codex:b', source: 'codex', sid: 'sid-b', forked_from_id: 'sid-a', created: '2026-09-15T00:00:00Z'};
+  const elsewhere = {uid: `codex:${node}~b`, node_id: node, source: 'codex', sid: 'sid-b', forked_from_id: 'sid-a'};
+  const S = {sessions: [parent, branch, elsewhere], live: new Set(['codex:b'])};
+  const T = {list: [{name: 'pane', uid: 'codex:a', instance_id: 'instance'}], pending: [], uid: null, name: null};
+  const context = contextWithCapabilities(disabled, {T, S});
+  for (const name of ['forkAncestors', 'forkLeaf', 'forkLeafUid']) loadFunction(context, name);
+  for (const name of ['sessionTermMeta', 'termBindingServes']) loadFunction(context, name, read('term.js'));
+  const linked = loadFunction(context, 'linkedTermSession', read('term.js'));
+  // The branch has no pane of its own; the parent's pane is its console.
+  const same = (actual, expected) => assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+  same(linked('codex:b'), {name: 'pane', uid: 'codex:b'});
+  // The parent's pane now writes the branch: only a follower may resolve it.
+  assert.equal(linked('codex:a'), null);
+  same(linked('codex:a', {followReplacement: true}), {name: 'pane', uid: 'codex:b'});
+  // Another machine's branch never inherits this machine's pane.
+  assert.equal(linked(`codex:${node}~b`), null);
+  // Rebinding a view bound to the parent serves the branch, not the reverse.
+  assert.equal(context.termBindingServes('codex:a', 'codex:b'), true);
+  assert.equal(context.termBindingServes('codex:b', 'codex:a'), false);
+  assert.equal(context.termBindingServes('codex:a', 'codex:a'), true);
+  // A second pane claiming the same ancestor is ambiguous.
+  T.list.push({name: 'twin', uid: 'codex:a', instance_id: 'other'});
+  assert.equal(linked('codex:b'), null);
+  T.list.pop();
+  // A missing ancestor record ends the walk.
+  branch.forked_from_id = 'sid-gone';
+  assert.equal(linked('codex:b'), null);
 });
 
 test('operator binding explanation separates native association from delivery and exit', () => {

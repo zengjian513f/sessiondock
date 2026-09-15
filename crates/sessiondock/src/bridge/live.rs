@@ -202,8 +202,10 @@ impl LivePrompts {
 
 /// The unique guard-capable managed host whose verified association names
 /// this UID (the same rule as the delivery executor's resolver), from the
-/// display-grade shared observation (2 s TTL, single flight). No lease is
-/// taken: a read-only capture is not terminal input.
+/// display-grade shared observation (2 s TTL, single flight). A Codex
+/// rollback branch without a binding of its own reads the pane bound to its
+/// ancestor (`RuntimeSnapshot::fork_host`). No lease is taken: a read-only
+/// capture is not terminal input.
 async fn codex_target(state: &AppState, uid: &str) -> Option<BoundTarget> {
     let runtime = state.runtime.as_ref()?;
     let shared = crate::api::runtime::shared(state, runtime, false)
@@ -215,11 +217,21 @@ async fn codex_target(state: &AppState, uid: &str) -> Option<BoundTarget> {
         .iter()
         .filter_map(|host| host.bound_target())
         .filter(|target| target.uid() == uid);
-    let target = matches.next()?.clone();
-    if matches.next().is_some() {
-        return None;
+    match matches.next() {
+        Some(_) if matches.next().is_some() => None,
+        Some(target) => Some(target.clone()),
+        None => {
+            let scanner = state.proc_scan.as_ref()?;
+            let document = state.reader.run(|store| store.list_recent()).await.ok()?;
+            let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
+            let scan = scanner.snapshot(false).await.ok()?;
+            shared
+                .snapshot
+                .fork_host(&scan.scan, &sessions, uid)?
+                .bound_target()
+                .cloned()
+        }
     }
-    Some(target)
 }
 
 /// Shared handle stored in `AppState`.

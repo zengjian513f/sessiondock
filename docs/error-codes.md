@@ -12,11 +12,11 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `backend_unknown`
 
-- 未知终端后端 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L838 → `POST /api/term/backend`
+- 未知终端后端 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L818 → `POST /api/term/backend`
 
 ### `backend_unsupported`
 
-- Rust 后端不支持 tmux；新建会话只能由 ptyhost 托管 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L833 → `POST /api/term/backend`
+- Rust 后端不支持 tmux；新建会话只能由 ptyhost 托管 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L813 → `POST /api/term/backend`
 
 ### `bad_body`
 
@@ -259,7 +259,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_path`
 
-- 启动目录路径无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `complete_dir` L789 → `GET /api/term/complete-dir`
+- 启动目录路径无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `complete_dir` L769 → `GET /api/term/complete-dir`
 
 ### `invalid_purge`
 
@@ -287,7 +287,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `invalid_stop_request`
 
-- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L942
+- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L922
 
 ### `invalid_terminal_input`
 
@@ -480,7 +480,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 - 会话不存在
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L488
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L988 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L968 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L263 → `POST /api/session/rewind`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L156 → `POST /api/session/star`
 
@@ -561,7 +561,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `launch_cwd_unknown`
 
-- 该会话没有记录可用的工作目录；请通过创建接口明确指定目录续接 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L741 → `POST /api/term/takeover`
+- 该会话没有记录可用的工作目录；请通过创建接口明确指定目录续接 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L721 → `POST /api/term/takeover`
 
 ### `launch_identity`
 
@@ -576,7 +576,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `launch_not_finished`
 
-- 该创建实例尚未退出或取消，不能丢弃；请先停止它 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `discard` L919 → `POST /api/term/discard`
+- 该创建实例尚未退出或取消，不能丢弃；请先停止它 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `discard` L899 → `POST /api/term/discard`
 
 ### `launch_not_ready`
 
@@ -584,7 +584,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `launch_source`
 
-- 续接会话的数据源与请求来源不一致 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L618 → `POST /api/term/create`
+- 续接会话的数据源与请求来源不一致 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L598 → `POST /api/term/create`
 
 ### `media_changed`
 
@@ -596,7 +596,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `run_state_unknown`
 
-- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1073 → `POST /api/session/stop`
+- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1053 → `POST /api/session/stop`
 
 ### `session_error`
 
@@ -657,11 +657,11 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 
 ### `stop_superseded`
 
-- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L996 → `POST /api/session/stop`
+- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L976 → `POST /api/session/stop`
 
 ### `takeover_superseded`
 
-- 该回滚分支的运行实例已转移到更新的子会话，请先处理当前子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L702 → `POST /api/term/takeover`
+- 该回滚分支的运行实例已转移到更新的子会话，请先处理当前子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L682 → `POST /api/term/takeover`
 
 ### `terminal_binding_unavailable`
 
@@ -695,7 +695,7 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `action` L526 → `POST /api/session/files/action`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `resolve` L125 → `POST /api/session/resolve-files`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L99
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L961 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L941 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L93
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L111 → `POST /api/term/claim`
 - [`security.rs`](../crates/sessiondock/src/security.rs) `api_policy` L107
@@ -891,9 +891,9 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 - Rust 后端尚未迁移此能力：终端后端选择。当前是只读开发阶段。
 - Rust 后端尚未迁移此能力：受管实例停止。当前是只读开发阶段。
 - [`api/audit.rs`](../crates/sessiondock/src/api/audit.rs) `browser` L32 → `POST /api/audit/browser`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L820 → `POST /api/term/backend`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L800 → `POST /api/term/backend`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `enabled` L29
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L956, L1004 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L936, L984 → `POST /api/session/stop`
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `configured` L36
 - [`error.rs`](../crates/sessiondock/src/error.rs) `unavailable` L31
 
@@ -1023,8 +1023,8 @@ Scanned `crates/sessiondock/src`: **175** (status, code) pairs.
 ### `process_control_unavailable`
 
 - 无法结束外部会话进程：{error:?}
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1027 → `POST /api/session/stop`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L729 → `POST /api/term/takeover`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1007 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L709 → `POST /api/term/takeover`
 
 ### `process_scan_unavailable`
 

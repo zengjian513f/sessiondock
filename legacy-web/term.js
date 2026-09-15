@@ -406,7 +406,7 @@ async function loadTermList() {
       const view = T.views.get(name);
       const keepFinalOutput = (view?.ended || view?.retired)
         && ((T.name === name && !$('#termpane').classList.contains('hidden'))
-          || (view?.keepOutput && view.bindingUid === S.sel));
+          || (view?.keepOutput && termBindingServes(view.bindingUid, S.sel)));
       if (replaced || (!valid.has(name) && !keepFinalOutput)) disposeTermView(name);
     }
     // tmux 结束后，对应的消息缓存才重新回到普通 LRU 容量池。
@@ -448,17 +448,47 @@ function sessionTermMeta(uid) {
     || null;
 }
 
+/** Rust 下 pane 与 view 绑定的是接管/启动时核验的 uid，Codex 回退后不变；
+ *  同一进程改写新分支后，分支叶子沿 forked_from_id 追溯到被绑定的祖先仍算同一
+ *  控制台。 */
+function termBindingServes(boundUid, uid) {
+  if (!boundUid || !uid) return false;
+  if (boundUid === uid) return true;
+  if (typeof forkAncestors !== 'function') return false;
+  const session = sessionTermMeta(uid);
+  return !!session && forkAncestors(session).some(({row}) => row?.uid === boundUid);
+}
+
 /** 返回会话所在的稳定 tmux pane 以及 pane 当前对应的 uid。
  *
  * 默认只接受 pane 的精确 uid 归属。Codex 回退后，同一个稳定 pane 会改绑到
  * 新叶子；只有负责跟进回退或用户明确切换终端的调用方才允许追随这个替代 uid。
+ * Rust 后端的 pane 行始终写接管时绑定的 uid，叶子由列表的 fork 图推出。
  */
 function linkedTermSession(uid, { followReplacement = false } = {}) {
   const panes = [...(T.list || []), ...(T.pending || [])];
   if (SessionDockCapabilities.config.backend === 'rust') {
-    const exact = panes.filter(pane => pane.instance_id && (pane.uid === uid
-      || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === uid)));
-    return exact.length === 1 ? {name: exact[0].name, uid} : null;
+    const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
+      || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
+    const leafOf = target => (typeof forkLeafUid === 'function' ? forkLeafUid(target) : target);
+    const exact = exactFor(uid);
+    if (exact.length === 1) {
+      const leaf = leafOf(uid);
+      return leaf === uid || followReplacement ? {name: exact[0].name, uid: leaf} : null;
+    }
+    if (exact.length || typeof forkAncestors !== 'function') return null;
+    // 回退分支没有自己的 pane：最近一个仍有 pane 的祖先就是它的控制台，前提是
+    // 这条分支正是那个 pane 当前写入的叶子。
+    const session = sessionTermMeta(uid);
+    for (const {row} of session ? forkAncestors(session) : []) {
+      if (!row) break;
+      const inherited = exactFor(row.uid);
+      if (!inherited.length) continue;
+      if (inherited.length !== 1) return null;
+      const leaf = leafOf(row.uid);
+      return leaf === uid || followReplacement ? {name: inherited[0].name, uid: leaf} : null;
+    }
+    return null;
   }
   const linked = (pane, name = pane?.name) => {
     if (!pane || (!followReplacement && pane.uid && pane.uid !== uid)) return null;
@@ -2071,7 +2101,7 @@ function terminalViewportHasCodexSideThread(term) {
 }
 
 function codexSideThreadVisible(uid = S.sel) {
-  return [...T.views.values()].some(view => view.bindingUid === uid
+  return [...T.views.values()].some(view => termBindingServes(view.bindingUid, uid)
     && view.codexSideThread && !view.ended && !view.retired);
 }
 
@@ -2079,8 +2109,9 @@ function setCodexSideThreadState(view, active) {
   active = !!active;
   if (view.codexSideThread === active) return;
   view.codexSideThread = active;
-  const uid = view.bindingUid || '';
-  if (uid && uid === S.sel && !S.agent && typeof renderConversationTail === 'function') {
+  const uid = S.sel || '';
+  if (uid && termBindingServes(view.bindingUid, uid) && !S.agent
+      && typeof renderConversationTail === 'function') {
     renderConversationTail(cache.get(viewKey(uid))?.activity || null, uid);
   }
 }
@@ -2239,7 +2270,8 @@ function restoreTermPane(uid, agent = null) {
 
 async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false) {
   const existing = T.views.get(name);
-  if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid && existing.bindingUid !== T.uid) {
+  if (SessionDockCapabilities.config.backend === 'rust' && existing?.bindingUid
+      && !termBindingServes(existing.bindingUid, T.uid)) {
     ConsoleUI.errors.set(T.uid, '同一实例的另一类控制台仍保持连接；请先在原页面操作中释放本页控制台，再打开。');
     renderTakeoverBtn();
     return false;

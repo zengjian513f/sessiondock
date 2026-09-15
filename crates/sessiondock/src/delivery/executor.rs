@@ -102,12 +102,18 @@ pub trait TargetResolver: Send + Sync {
 /// the lifecycle binding when the instance originates from a launch receipt.
 /// Duplicate, unmatched, exited or unauthorized instances are "not linked".
 /// It is provider-neutral: the bound target's own source decides nothing here
-/// beyond the identity the runtime already verified.
+/// beyond the identity the runtime already verified. A Codex rollback branch
+/// with no binding of its own resolves to the host bound to its ancestor when
+/// that host's pane runs the branch's process (`RuntimeSnapshot::fork_host`),
+/// so the console taken over for the parent keeps delivering after `Esc Esc`.
 pub struct ManagedResolver {
     pub runtime: Arc<crate::runtime::ManagedRuntime>,
     pub reader: Reader,
     pub lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
     pub probes: Arc<Semaphore>,
+    /// Process evidence for the fork rule; without a scanner a branch stays
+    /// unlinked rather than guessed from the fork graph alone.
+    pub proc_scan: Option<Arc<crate::runtime::procscan::ProcScanner>>,
 }
 
 fn unlinked() -> Failure {
@@ -144,12 +150,14 @@ impl TargetResolver for ManagedResolver {
                 .iter()
                 .filter_map(|host| host.bound_target())
                 .filter(|target| target.uid() == uid);
-            let Some(target) = matches.next() else {
-                return Err(unlinked());
+            let target = match matches.next() {
+                Some(_) if matches.next().is_some() => return Err(unlinked()),
+                Some(target) => target,
+                None => self
+                    .fork_target(&observed, uid)
+                    .await
+                    .ok_or_else(unlinked)?,
             };
-            if matches.next().is_some() {
-                return Err(unlinked());
-            }
             if target.origin_launch_id().is_some() {
                 let lifecycle = self.lifecycle.as_ref().ok_or_else(unlinked)?;
                 lifecycle
@@ -157,13 +165,33 @@ impl TargetResolver for ManagedResolver {
                     .await
                     .map_err(|_| unlinked())?;
             }
+            // The host verifies every capture and write against its own
+            // binding: for a rollback branch that is the ancestor's uid.
             Ok(DeliveryTarget {
                 name: target.name().to_owned(),
-                uid: uid.to_owned(),
+                uid: target.uid().to_owned(),
                 instance_id: target.instance_id().to_owned(),
                 bound: Arc::new(target.clone()),
             })
         })
+    }
+}
+
+impl ManagedResolver {
+    /// The ancestor-bound host of a Codex rollback branch, by the shared
+    /// `fork_host` rule over the current list and a TTL-shared process scan.
+    async fn fork_target<'a>(
+        &self,
+        observed: &'a crate::runtime::RuntimeSnapshot,
+        uid: &str,
+    ) -> Option<&'a ptyhost_client::BoundTarget> {
+        let scanner = self.proc_scan.as_ref()?;
+        let document = self.reader.run(|store| store.list_recent()).await.ok()?;
+        let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
+        let scan = scanner.snapshot(false).await.ok()?;
+        observed
+            .fork_host(&scan.scan, &sessions, uid)?
+            .bound_target()
     }
 }
 

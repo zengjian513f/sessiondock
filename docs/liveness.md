@@ -103,6 +103,26 @@ that inherited a pane through `continued_in` (below).
   a host's session root. Only Claude sessions look for an origin; a spawned
   grandchild is not a continuation and never inherits. Without a configured
   host directory there are no panes to inherit.
+- **Codex rollback branches** (`RuntimeSnapshot::fork_host`): `Esc Esc` in
+  the Codex TUI forks a new thread whose `forked_from_id` names the current
+  one, while the CLI process and the pane taken over for the parent stay
+  where they are; the new rollout file is what the process now holds open,
+  so `active_processes` folds the process onto the branch and the parent
+  owns nothing. The host's verified binding keeps the parent's uid (the
+  durable host identity never moves), so the branch has no binding of its
+  own. The single host bound to a `codex_ancestor_sids` ancestor of the
+  branch **and** whose session root hosts the branch's owned pids is the
+  branch's host: takeover reuses it (`followed_fork`), stop targets it,
+  `ManagedResolver` delivers through it and the Codex approval probe
+  captures it. A branch whose process moved on to a deeper branch, a root
+  without ancestors, and a pair of candidate hosts resolve to nothing; the
+  parent keeps resolving exactly and is `takeover_superseded` /
+  `stop_superseded` once its pids folded away. The page follows the same
+  graph from the list: a selected session that just became a hidden fork
+  parent moves to the deepest branch (live sibling first, else newest),
+  carrying the composer draft and the open console (`followSelectedFork`,
+  `linkedTermSession` walking `forkAncestors` under the Rust backend), while
+  a parent the user opened deliberately (fork chain, "显示父会话") stays put.
 
 Rust has no tmux backend, so a pane the predecessor created in its own
 tmux server is only recognised through the process-tree walk, never

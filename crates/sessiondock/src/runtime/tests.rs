@@ -171,6 +171,101 @@ async fn only_unique_running_guard_capable_instances_offer_a_nonserializable_con
     second.await.unwrap();
 }
 
+/// After a Codex rollback the pane taken over for the parent keeps running
+/// the CLI, which now writes the branch's file. The host stays bound to the
+/// parent; the branch resolves to it only with process evidence under that
+/// host, and never once the process moved on to a deeper branch.
+#[tokio::test]
+async fn codex_rollback_branch_resolves_to_its_ancestors_host_by_process_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let first=host_with_guard(&directory,"one",json!({"source":"codex","sid":"complete-native-session-one","instance_id":"synthetic-instance-0001"}),false,true).await;
+    let snapshot = runtime(&directory)
+        .observe(&NativeCatalog::from_rows(&rows()))
+        .await
+        .unwrap();
+    first.await.unwrap();
+    let host_pid = snapshot.hosts[0].summary.pid;
+    let codex = |uid: &str, sid: &str, parent: &str| procscan::SessionRow {
+        uid: format!("codex:{uid}"),
+        source: "codex".into(),
+        sid: sid.into(),
+        path: format!("/home/x/.codex/sessions/{uid}.jsonl"),
+        cwd: None,
+        created: String::new(),
+        forked_from_id: parent.into(),
+        continued_in: None,
+    };
+    let parent = codex("1111111111111111", "complete-native-session-one", "");
+    let branch = codex(
+        "bbbbbbbbbbbbbbbb",
+        "sid-branch",
+        "complete-native-session-one",
+    );
+    let leaf = codex("cccccccccccccccc", "sid-leaf", "sid-branch");
+    let stranger = codex("dddddddddddddddd", "sid-stranger", "");
+    let temp = tempfile::tempdir().unwrap();
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("proc"));
+    proc.add(host_pid, "ptyhost", 1, "ptyhost", &[], &[]);
+    // The CLI under the host holds the branch file; an outside CLI holds the stranger's.
+    proc.add(
+        500,
+        "codex",
+        host_pid,
+        "codex resume complete-native-session-one",
+        &[],
+        &[(3, &branch.path)],
+    );
+    proc.add(600, "codex", 1, "codex", &[], &[(3, &stranger.path)]);
+    let scan = proc.scan();
+    let sessions = [parent.clone(), branch.clone(), stranger.clone()];
+    let found = snapshot.fork_host(&scan, &sessions, &branch.uid).unwrap();
+    assert_eq!(found.summary.name, "one");
+    assert_eq!(found.bound_target().unwrap().uid(), parent.uid);
+    // The parent binds exactly; a root without ancestors and a foreign process are not forks.
+    assert!(snapshot.fork_host(&scan, &sessions, &parent.uid).is_none());
+    assert!(
+        snapshot
+            .fork_host(&scan, &sessions, &stranger.uid)
+            .is_none()
+    );
+    assert!(
+        snapshot
+            .fork_host(&scan, &sessions, "codex:missing")
+            .is_none()
+    );
+    // Once the process writes a deeper branch the middle branch owns nothing.
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("proc2"));
+    proc.add(host_pid, "ptyhost", 1, "ptyhost", &[], &[]);
+    proc.add(
+        500,
+        "codex",
+        host_pid,
+        "codex resume complete-native-session-one",
+        &[],
+        &[(3, &leaf.path)],
+    );
+    let scan = proc.scan();
+    let sessions = [parent.clone(), branch.clone(), leaf.clone()];
+    assert!(snapshot.fork_host(&scan, &sessions, &branch.uid).is_none());
+    assert_eq!(
+        snapshot
+            .fork_host(&scan, &sessions, &leaf.uid)
+            .unwrap()
+            .summary
+            .name,
+        "one"
+    );
+    // A branch whose process left the host is not served by it.
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("proc3"));
+    proc.add(host_pid, "ptyhost", 1, "ptyhost", &[], &[]);
+    proc.add(500, "codex", 1, "codex", &[], &[(3, &leaf.path)]);
+    assert!(
+        snapshot
+            .fork_host(&proc.scan(), &sessions, &leaf.uid)
+            .is_none()
+    );
+}
+
 fn runtime(directory: &TempDir) -> ManagedRuntime {
     ManagedRuntime::new(
         HostClient::new(directory.path(), Limits::default()).unwrap(),

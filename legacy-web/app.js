@@ -2184,8 +2184,8 @@ function pendingTmuxSessions() {
 
 const sessionContinued = session =>
   !!(session?.continued_in && S.sessions.some(s => s.uid === session.continued_in));
-const sessionHidden = session =>
-  (!!session?.fork_parent && !session.fork_parent_visible) || sessionContinued(session);
+const hiddenForkParent = session => !!session?.fork_parent && !session.fork_parent_visible;
+const sessionHidden = session => hiddenForkParent(session) || sessionContinued(session);
 // 沿 forked_from_id 往上追整条父会话链（近的在前）。只在同来源、同机器内按
 // 原生 sid 匹配；记录已不存在的一级保留占位并到此为止。
 function forkAncestors(session) {
@@ -2200,6 +2200,25 @@ function forkAncestors(session) {
     sid = String(row?.forked_from_id || '');
   }
   return chain;
+}
+// 沿 forked_from_id 往下追到最深的回退分支：Codex 双 Esc 后进程不变，新消息只写
+// 进新分支的文件。同一级有多条分支时先取仍在运行的，再取最新创建的。
+function forkLeaf(session) {
+  const seen = new Set();
+  let cur = session;
+  while (cur && !seen.has(cur.uid)) {
+    seen.add(cur.uid);
+    const children = S.sessions.filter(s => s.source === cur.source
+      && (s.node_id || '') === (cur.node_id || '') && s.sid
+      && String(s.forked_from_id || '') === String(cur.sid));
+    if (!children.length) break;
+    cur = children.sort((a, b) => (S.live.has(b.uid) - S.live.has(a.uid))
+      || String(b.created || '').localeCompare(String(a.created || '')))[0];
+  }
+  return cur;
+}
+function forkLeafUid(uid) {
+  return forkLeaf(S.sessions.find(s => s.uid === uid))?.uid || uid;
 }
 const sidebarSessions = () => [...pendingTmuxSessions(), ...S.sessions]
   .filter(s => !sessionHidden(s));
@@ -2382,6 +2401,7 @@ async function loadSessions(force) {
   if (run !== sessionLoadRun) return false;
   $('#stat').classList.remove('err');
   const seedCursors = S.cursors.size === 0;
+  const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
   S.sig = d.sig;
   S.sessions = d.sessions;
   applyNodeState(d, 'sessions');
@@ -2390,6 +2410,7 @@ async function loadSessions(force) {
   renderSide();
   showSessionCount(sidebarSessions().length);
   seedCursors ? seedSidebarCursors(d.sessions) : syncSidebarUpdates(d.sessions);
+  if (wasListed) void followSelectedFork();
   return true;
 }
 
@@ -2400,12 +2421,14 @@ async function pollSessions() {
     const d = await (await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(S.sig)))).json();
     applyNodeState(d, 'sessions');
     if (d.unchanged || !d.sessions) return;
+    const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
     S.sig = d.sig;
     S.sessions = d.sessions;
     renderNodes();
     refreshSessionMeta();
     renderChips();
     syncSidebarUpdates(d.sessions);
+    if (wasListed) await followSelectedFork();
     if (S.results) {
       // 搜索结果集合保持不变，只合入 rename 等最新元数据。
       const fresh = new Map(S.sessions.map(s => [s.uid, s]));
@@ -3633,9 +3656,29 @@ function scheduleOpenRetry(uid, agent, ac) {
   } else openRetries.delete(key);
 }
 
-async function openSession(uid, agent = null) {
+// 当前会话被 Codex 回退成隐藏的父会话后，对话页和控制台一起跟到最深的分支：
+// 同一个 pty 仍在写，只是原生叶子换了。用户主动打开的父会话（父会话链、
+// 显示父会话）不在此列。
+async function followSelectedFork() {
+  const current = S.sessions.find(s => s.uid === S.sel);
+  if (!current || S.agent || !hiddenForkParent(current)) return false;
+  // 手机停在列表页时不把人拽进详情；父会话已从列表消失，点开分支即可。
+  if (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail') return false;
+  const leaf = forkLeaf(current);
+  if (!leaf || leaf.uid === S.sel) return false;
+  browserAuditEvent('session.fork_followed', {from_uid: S.sel}, null, {uid: leaf.uid});
+  if (typeof migrateComposerDraft === 'function') migrateComposerDraft(S.sel, leaf.uid);
+  if (typeof T !== 'undefined' && T.uid === S.sel) T.uid = leaf.uid;
+  await openSession(leaf.uid, null, {exact: true});
+  return true;
+}
+
+async function openSession(uid, agent = null, {exact = false} = {}) {
   const selectedAgent = agent || null;
   if (!selectedAgent) uid = followContinuedSession(uid);
+  if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
+    uid = forkLeafUid(uid);
+  }
   browserAuditEvent('session.opened', {agent: selectedAgent || '', cached: cache.has(viewKey(uid, selectedAgent))},
     null, {uid});
   showMobileDetail();
@@ -4679,7 +4722,7 @@ function bindForkChainMenu(heading, m) {
     }
     if (e.target.closest('.chain-open')) {
       closeForkChainMenu();
-      openSession(row.dataset.uid);
+      openSession(row.dataset.uid, null, {exact: true});
     }
   };
 }
