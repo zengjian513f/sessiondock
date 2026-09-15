@@ -102,7 +102,14 @@ def load_python(source, root):
     # unnecessary. Use the standard-library builtin mappings without file reads.
     with patch.object(mimetypes, "knownfiles", []):
         mimetypes.init()
-    assert sorted(name for name in sys.modules if name.startswith(namespace + ".")) == [namespace + ".adapters", namespace + ".media"]
+    loaded = {name for name in sys.modules if name.startswith(namespace + ".")}
+    required = {namespace + ".adapters", namespace + ".media"}
+    # Newer comparison checkouts share a pure JSON decoder with the adapters.
+    # Keep the import boundary narrow and verify every helper's source.
+    assert required <= loaded <= required | {namespace + ".fastjson"}, sorted(loaded)
+    for name in loaded:
+        expected = package_dir / (name.rsplit(".", 1)[1] + ".py")
+        assert Path(sys.modules[name].__file__).resolve() == expected.resolve(), name
     return instances, media
 
 

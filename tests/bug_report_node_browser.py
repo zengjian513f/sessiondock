@@ -62,6 +62,13 @@ def options(page):
         .map(o => ({value: o.value, text: o.textContent, disabled: o.disabled}))""")
 
 
+def open_report(page):
+    button = page.locator("#report-bug")
+    if not button.is_visible():
+        page.locator("#header-more-btn").click()
+    button.click()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--binary", default=str(REPO / "target/release/sessiondock"))
@@ -92,7 +99,7 @@ def main():
 
                     # 1. No session selected, all machines ticked: picker lists all three,
                     #    defaults to the first usable machine.
-                    page.locator("#report-bug").click()
+                    open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     assert page.locator("#bug-report-node-label").is_visible()
                     opts = options(page)
@@ -124,7 +131,7 @@ def main():
                     row.click()
                     page.wait_for_function("S.sel && S.sel.includes('" + NID["a"] + "~')")
                     sel = page.evaluate("S.sel")
-                    page.locator("[data-report-bug]").first.click()
+                    open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     assert page.evaluate("bugReportNode()") == NID["a"]
                     page.select_option("#bug-report-node", NID["c"])
@@ -148,7 +155,7 @@ def main():
                     # 3. The problem's machine is unreachable: the report still goes out with
                     #    `captured: {error}`.
                     boundary.capture_status = 503
-                    page.locator("[data-report-bug]").first.click()
+                    open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     assert page.evaluate("bugReportNode()") == NID["a"]
                     page.select_option("#bug-report-node", NID["b"])
@@ -167,7 +174,7 @@ def main():
                     page.evaluate("loadTermList()")
                     page.wait_for_function(
                         'Nodes.capabilities["' + NID["b"] + '"].sources.codex === false')
-                    page.locator("[data-report-bug]").first.click()
+                    open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     page.select_option("#bug-report-node", NID["b"])
                     assert page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")
