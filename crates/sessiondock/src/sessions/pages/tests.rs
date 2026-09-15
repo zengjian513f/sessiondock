@@ -1,6 +1,6 @@
 //! Synthetic pagination grants and semantic checkpoints; no native I/O or CLI.
 use super::*;
-use crate::sessions::{Candidate, FileStamp, Parsed, View, projection_digest};
+use crate::sessions::{Candidate, FileStamp, Parsed, View};
 use std::{path::PathBuf, sync::Arc};
 
 const AGED: Duration = Duration::from_secs(1);
@@ -48,7 +48,7 @@ fn snapshot(events: Vec<Event>, bytes: &[u8], identity: &str, agent: &str) -> Vi
         committed: bytes.len(),
         meta: meta.clone(),
         native_id: Ok("synthetic-page".into()),
-        semantic_digest: projection_digest(&leaf, bytes.len()),
+        encoded: crate::sessions::EncodedEvents::build(&leaf, true, None).unwrap(),
         events: leaf,
         unsupported: None,
         raw_error: None,
@@ -60,16 +60,18 @@ fn snapshot(events: Vec<Event>, bytes: &[u8], identity: &str, agent: &str) -> Vi
         .cloned()
         .collect::<Vec<_>>();
     let sources = vec![parsed.candidate.clone()];
-    ViewSnapshot::new(Arc::new(View {
+    let inherited_encoded =
+        Arc::new(crate::sessions::EncodedEvents::build(&inherited, true, None).unwrap());
+    ViewSnapshot::new(Arc::new(View::new(crate::sessions::ViewParts {
         parsed,
         meta,
         inherited: Arc::new(inherited),
+        inherited_encoded,
         dependencies: vec![UID.into()],
         identity: identity.into(),
         native_scope: Err(SessionError::new(501, "synthetic scope unused")),
         sources,
-        rename: None,
-    }))
+    })))
 }
 fn plain(count: usize) -> ViewSnapshot {
     snapshot(

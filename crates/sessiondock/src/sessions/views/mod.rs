@@ -27,6 +27,11 @@ use super::{
 };
 use crate::metadata::TimelinePin;
 
+pub(crate) mod body;
+mod encoded;
+pub(crate) use body::MessageBody;
+pub(crate) use encoded::EncodedEvents;
+
 /// LRU bounds of the view cache (docs/read-model.md: 视图缓存 64 项 / 2 GiB).
 /// Runtime view budgets: `SESSIONDOCK_CACHE_ENTRIES` /
 /// `SESSIONDOCK_VIEW_CACHE_MB`.
@@ -65,9 +70,12 @@ pub(crate) struct Parsed {
     /// Errors apply only to native-scope consumers, not compatible history display.
     pub native_id: Result<String, SessionError>,
     pub events: Vec<Event>,
+    /// The serialized form of `events` (docs/read-model.md "视图字节缓存"):
+    /// exact message bytes for hot reads, the committed semantic digest and
+    /// the LRU accounting, all from one serialization pass at parse time.
+    pub encoded: EncodedEvents,
     pub unsupported: Option<String>,
     pub raw_error: Option<String>,
-    pub semantic_digest: String,
     /// The persisted Claude display pin these events were projected with
     /// (main sessions only). A different pin means a different logical view.
     pub pin: Option<TimelinePin>,
@@ -82,30 +90,34 @@ impl Parsed {
     pub fn head(&self, end: usize) -> String {
         head(self.raw_index.head_bytes(), end)
     }
+    /// `projection_digest(events, committed)`, computed while encoding.
+    pub fn semantic_digest(&self) -> &str {
+        self.encoded.digest()
+    }
     /// Serialized message bytes plus resident media, the unit of the view
-    /// budgets. Serialization stays on the bounded blocking worker.
-    fn encoded_bytes(&self) -> Result<usize, SessionError> {
-        encoded_bytes(self.events.iter())
+    /// budgets (the retained JSON bytes are the same figure, so a view is
+    /// charged once for both its tree and its bytes; see docs/read-model.md).
+    fn encoded_bytes(&self) -> usize {
+        accounted_bytes(&self.encoded, self.events.iter())
     }
 }
 
-fn encoded_bytes<'a>(events: impl Iterator<Item = &'a Event>) -> Result<usize, SessionError> {
-    let mut size = 0usize;
-    for event in events {
-        size = size.saturating_add(
-            serde_json::to_vec(&event.message)
-                .map_err(|_| SessionError::new(500, "消息序列化失败"))?
-                .len(),
-        );
-        size = size.saturating_add(
-            event
-                .media
-                .iter()
-                .map(crate::media::NativeImage::resident_len)
-                .fold(0usize, usize::saturating_add),
-        );
-    }
-    Ok(size)
+/// Serialized message bytes plus resident media of one encoded event list.
+fn accounted_bytes<'a>(encoded: &EncodedEvents, events: impl Iterator<Item = &'a Event>) -> usize {
+    events
+        .flat_map(|event| event.media.iter())
+        .map(crate::media::NativeImage::resident_len)
+        .fold(encoded.total_len(), usize::saturating_add)
+}
+
+/// Encode a projected event list, retaining its bytes for hot reads.
+fn encode_events(
+    events: &[Event],
+    retain: bool,
+    previous: Option<encoded::Previous<'_>>,
+) -> Result<EncodedEvents, SessionError> {
+    EncodedEvents::build(events, retain, previous)
+        .map_err(|_| SessionError::new(500, "消息序列化失败"))
 }
 
 /// The resolved logical view behind a [`ViewSnapshot`]: one parsed leaf plus
@@ -114,6 +126,9 @@ pub(crate) struct View {
     pub parsed: Arc<Parsed>,
     pub meta: Value,
     pub inherited: Arc<Vec<Event>>,
+    /// The serialized form of `inherited`, shared with the previous build
+    /// of this view when the chain was reused.
+    pub inherited_encoded: Arc<EncodedEvents>,
     pub identity: String,
     pub native_scope: Result<NativeScope, SessionError>,
     /// Every candidate file this view was projected from, leaf first, then
@@ -127,6 +142,91 @@ pub(crate) struct View {
     /// Derived from `meta` alone, so a rename recomposes without a reparse;
     /// its physical end is 0 — a full read carries it, an append never does.
     pub rename: Option<Event>,
+    /// The non-status position the rename event occupies in `events()`.
+    pub rename_at: Option<usize>,
+}
+
+/// Where a non-status position of a view's `events()` lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Slot {
+    Inherited(usize),
+    Leaf(usize),
+    Rename,
+}
+
+/// The `View` fields every constructor derives the same way.
+pub(crate) struct ViewParts {
+    pub parsed: Arc<Parsed>,
+    pub meta: Value,
+    pub inherited: Arc<Vec<Event>>,
+    pub inherited_encoded: Arc<EncodedEvents>,
+    pub identity: String,
+    pub native_scope: Result<NativeScope, SessionError>,
+    pub sources: Vec<Candidate>,
+    pub dependencies: Vec<String>,
+}
+
+impl View {
+    /// Compose a view; the rename event and its position follow from `meta`.
+    pub(crate) fn new(parts: ViewParts) -> Self {
+        let rename = rename_event(&parts.meta);
+        let rename_at = rename.as_ref().map(|rename| {
+            let at = rename.message["ts"].as_str().unwrap_or("");
+            let mut position = 0;
+            for event in parts.inherited.iter().chain(parts.parsed.events.iter()) {
+                if event.message["ts"].as_str().is_some_and(|ts| ts > at) {
+                    break;
+                }
+                if event.message["role"] != "status" {
+                    position += 1;
+                }
+            }
+            position
+        });
+        Self {
+            parsed: parts.parsed,
+            meta: parts.meta,
+            inherited: parts.inherited,
+            inherited_encoded: parts.inherited_encoded,
+            identity: parts.identity,
+            native_scope: parts.native_scope,
+            sources: parts.sources,
+            dependencies: parts.dependencies,
+            rename,
+            rename_at,
+        }
+    }
+
+    /// Non-status position → the event list it lives in and its index there.
+    pub(crate) fn slot(&self, position: usize) -> Slot {
+        let position = match self.rename_at {
+            Some(at) if position == at => return Slot::Rename,
+            Some(at) if position > at => position - 1,
+            _ => position,
+        };
+        let inherited = self.inherited_encoded.message_count();
+        if position < inherited {
+            Slot::Inherited(position)
+        } else {
+            Slot::Leaf(position - inherited)
+        }
+    }
+
+    /// The encoder's entry for `event` at non-status `position`, proven by
+    /// identity: the event list the position maps to must hold this very
+    /// event there (`None` for the rename event, or should a caller's
+    /// position ever disagree with the view's numbering — then the event is
+    /// measured and serialized from itself, never from another's bytes).
+    pub(crate) fn entry(&self, position: usize, event: &Event) -> Option<&encoded::Entry> {
+        let (encoded, events, local): (&EncodedEvents, &[Event], usize) = match self.slot(position)
+        {
+            Slot::Inherited(index) => (&self.inherited_encoded, &self.inherited, index),
+            Slot::Leaf(index) => (&self.parsed.encoded, &self.parsed.events, index),
+            Slot::Rename => return None,
+        };
+        let held = events.get(encoded.event_index(local)?)?;
+        std::ptr::eq(held, event).then(|| encoded.message_entry(local))?
+    }
 }
 
 /// The `/rename` command event
@@ -284,6 +384,9 @@ impl ViewSnapshot {
         message_batch(self, query, Some(media), files, None)
     }
 
+    /// The `Value` renderer of the HTTP batch, kept as the reference the
+    /// byte renderer (`messages_body`) is tested against.
+    #[cfg(test)]
     pub(crate) fn messages_with_pages(
         &self,
         query: &MessageQuery,
@@ -293,6 +396,22 @@ impl ViewSnapshot {
     ) -> Result<Value, SessionError> {
         validate_message_query(query)?;
         message_batch(self, query, Some(media), files, Some(pages))
+    }
+
+    /// The HTTP/SSE batch as bytes: the same document `messages_with_pages`
+    /// produces, with every cacheable message spliced from the view's
+    /// retained serialization instead of cloned and re-serialized
+    /// (docs/read-model.md "视图字节缓存"). Run on the bounded reader.
+    pub(crate) fn messages_body(
+        &self,
+        query: &MessageQuery,
+        media: &crate::media::MediaStore,
+        files: Option<&crate::files::FileService>,
+        pages: &PageStore,
+    ) -> Result<MessageBody, SessionError> {
+        validate_message_query(query)?;
+        let selection = select_batch(self, query, Some(pages))?;
+        body::message_body(self, selection, media, files, pages)
     }
 
     pub(crate) fn valid_checkpoint(&self, query: &MessageQuery) -> bool {
@@ -557,6 +676,19 @@ pub(crate) fn parse_candidate(
     cache: &mut records::RecordCache,
     pin: Option<TimelinePin>,
 ) -> Result<Parsed, SessionError> {
+    parse_candidate_retaining(candidate, previous, cache, pin, true)
+}
+
+/// `parse_candidate`, retaining the serialized message bytes only when
+/// `retain` (a transient projection computes the same digest and accounting
+/// in one pass and keeps nothing).
+pub(crate) fn parse_candidate_retaining(
+    candidate: Candidate,
+    previous: Option<&Parsed>,
+    cache: &mut records::RecordCache,
+    pin: Option<TimelinePin>,
+    retain: bool,
+) -> Result<Parsed, SessionError> {
     let (record_batch, raw_index) =
         cache.decode_input(&candidate, previous, |decoder, probe| {
             read_native_input(&candidate, decoder, probe)
@@ -660,7 +792,17 @@ pub(crate) fn parse_candidate(
             .map(Value::Array)
             .unwrap_or_else(|| json!([])),
     };
-    let semantic_digest = projection_digest(&events, committed);
+    // One serialization pass: the retained hot-read bytes, the committed
+    // semantic digest and the LRU accounting. A previous parse of the same
+    // file (an append) lends the bytes of every message it left unchanged.
+    let encoded = encode_events(
+        &events,
+        retain,
+        previous.map(|previous| encoded::Previous {
+            events: &previous.events,
+            encoded: &previous.encoded,
+        }),
+    )?;
     let (native_id, _declared) = if candidate.source == "grok" {
         scope::grok_native_identity(summary.as_ref())
     } else {
@@ -676,9 +818,9 @@ pub(crate) fn parse_candidate(
         committed,
         meta,
         events,
+        encoded,
         unsupported,
         raw_error,
-        semantic_digest,
         pin,
     };
     parsed.meta["cursor"] = json!({
@@ -704,9 +846,12 @@ pub(crate) fn semantic_anchor(identity: &str, parsed: &Parsed, end: usize) -> St
     // fixed inherited history and the selected view identity. Plain appends
     // leave this prefix unchanged; branch switches/rewrites force a reset.
     let projection = if end == parsed.committed {
-        parsed.semantic_digest.clone()
+        parsed.semantic_digest().to_owned()
     } else {
-        projection_digest(&parsed.events, end)
+        parsed
+            .encoded
+            .digest_upto(&parsed.events, end as u64)
+            .unwrap_or_else(|| projection_digest(&parsed.events, end))
     };
     let mut identity_parts = json!([
         CURSOR_SCHEMA,
@@ -753,13 +898,24 @@ pub(crate) fn projection_digest(events: &[Event], end: usize) -> String {
     format!("{:x}", digest.finalize())
 }
 
-fn message_batch(
-    snapshot: &ViewSnapshot,
+/// One batch's selection: which events go out and the small per-request
+/// fields around them. Shared by the `Value` and the byte renderers.
+pub(crate) struct Selection<'a> {
+    pub selected: Vec<Selected<'a>>,
+    pub reset: bool,
+    pub start: usize,
+    pub window: bool,
+    pub total: usize,
+    pub partial: Value,
+    pub activity: Value,
+    pub activity_changed: bool,
+}
+
+fn select_batch<'a>(
+    snapshot: &'a ViewSnapshot,
     query: &MessageQuery,
-    media: Option<&crate::media::MediaStore>,
-    files: Option<&crate::files::FileService>,
     pages: Option<&PageStore>,
-) -> Result<Value, SessionError> {
+) -> Result<Selection<'a>, SessionError> {
     let view = &snapshot.view;
     let parsed = &view.parsed;
     let start = usize::try_from(query.start).unwrap_or(usize::MAX);
@@ -790,35 +946,72 @@ fn message_batch(
         .iter()
         .filter(|selected| selected.event.message["counted"] != false)
         .count();
-    let partial = if reset
-        && query.window == "1"
-        && let Some(pages) = pages
-    {
+    let window = reset && query.window == "1";
+    let partial = if window && let Some(pages) = pages {
         pages::window(snapshot, &mut selected, pages)?
-    } else if reset && query.window == "1" && selected.len() > 600 {
+    } else if window && selected.len() > 600 {
         let omitted = selected.len() - 600;
         selected.drain(100..selected.len() - 500);
         json!({"head": 100, "tail": 500, "omitted": omitted})
     } else {
         Value::Null
     };
-    let messages = project_selected(snapshot, &selected, media, files, pages)?;
+    Ok(Selection {
+        selected,
+        reset,
+        start: if append_reset {
+            parsed.committed
+        } else {
+            begin
+        },
+        window,
+        total,
+        partial,
+        activity,
+        activity_changed,
+    })
+}
+
+/// The per-request fields before `messages` (`meta` … `anchor`) and after
+/// it (`message_total` … `activity`), exactly as `message_batch` orders them.
+pub(crate) fn batch_fields(snapshot: &ViewSnapshot, selection: &Selection<'_>) -> (Value, Value) {
+    let view = &snapshot.view;
+    let parsed = &view.parsed;
     let current_anchor = &snapshot.anchor;
     let mut meta = view.meta.clone();
     meta["cursor"] = json!({"end": parsed.committed,
         "head": parsed.head(parsed.committed), "anchor": current_anchor});
-    let response = json!({
+    let head = json!({
         "meta": meta,
         "version": {"size": parsed.raw_index.length(),
                     "exists": parsed.candidate.data_stamp().is_some(),
                     "mtime": parsed.candidate.data_stamp().map(|stamp| stamp.modified / 1_000_000),
                     "head": parsed.head(parsed.committed)},
-        "reset": reset, "start": if append_reset { parsed.committed } else { begin },
+        "reset": selection.reset, "start": selection.start,
         "end": parsed.committed, "anchor": current_anchor,
-        "messages": messages, "message_total": total, "partial": partial,
-        "activity_changed": activity_changed, "activity": activity,
     });
-    if pages.is_some() && reset && query.window == "1" {
+    let tail = json!({
+        "message_total": selection.total, "partial": selection.partial,
+        "activity_changed": selection.activity_changed, "activity": selection.activity,
+    });
+    (head, tail)
+}
+
+fn message_batch(
+    snapshot: &ViewSnapshot,
+    query: &MessageQuery,
+    media: Option<&crate::media::MediaStore>,
+    files: Option<&crate::files::FileService>,
+    pages: Option<&PageStore>,
+) -> Result<Value, SessionError> {
+    let selection = select_batch(snapshot, query, pages)?;
+    let messages = project_selected(snapshot, &selection.selected, media, files, pages)?;
+    let (mut response, tail) = batch_fields(snapshot, &selection);
+    response["messages"] = Value::Array(messages);
+    for (key, value) in tail.as_object().expect("object above") {
+        response[key] = value.clone();
+    }
+    if pages.is_some() && selection.window {
         pages::validate_response(&response)?;
     }
     Ok(response)
@@ -973,17 +1166,18 @@ fn recompose(
     if old.meta == meta {
         return Ok(snapshot.clone());
     }
-    let rename = rename_event(&meta);
-    Ok(Arc::new(ViewSnapshot::new(Arc::new(View {
-        parsed: old.parsed.clone(),
-        meta,
-        inherited: old.inherited.clone(),
-        identity: old.identity.clone(),
-        native_scope: old.native_scope.clone(),
-        sources: old.sources.clone(),
-        dependencies: old.dependencies.clone(),
-        rename,
-    }))))
+    Ok(Arc::new(ViewSnapshot::new(Arc::new(View::new(
+        ViewParts {
+            parsed: old.parsed.clone(),
+            meta,
+            inherited: old.inherited.clone(),
+            inherited_encoded: old.inherited_encoded.clone(),
+            identity: old.identity.clone(),
+            native_scope: old.native_scope.clone(),
+            sources: old.sources.clone(),
+            dependencies: old.dependencies.clone(),
+        },
+    )))))
 }
 
 #[cfg(test)]
@@ -1003,6 +1197,9 @@ pub(crate) struct Views {
     files: BTreeMap<String, FileEntry>,
     views: BTreeMap<(String, String), CachedView>,
     records: records::RecordCache,
+    /// Test override of the process-wide byte budget.
+    #[cfg(test)]
+    byte_limit: Option<usize>,
 }
 
 /// Which pin a parsed file must carry: the leaf's exact display pin, or any
@@ -1022,11 +1219,30 @@ trait FileSource {
         pin: Pin<'_>,
         deps: &dyn Dependencies,
     ) -> Result<(Arc<Parsed>, usize), SessionError>;
+    /// Whether this build keeps serialized message bytes for hot reads.
+    fn retains(&self) -> bool;
 }
 
 impl Views {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// A cache whose byte budget is `bytes` instead of the configured one.
+    #[cfg(test)]
+    pub(crate) fn with_byte_limit(bytes: usize) -> Self {
+        Self {
+            byte_limit: Some(bytes),
+            ..Self::default()
+        }
+    }
+
+    fn byte_limit(&self) -> usize {
+        #[cfg(test)]
+        if let Some(limit) = self.byte_limit {
+            return limit;
+        }
+        view_byte_limit()
     }
 
     /// Open (or refresh) the view for `request`. Cheap when nothing changed:
@@ -1066,9 +1282,12 @@ impl Views {
             selected,
             pin.clone(),
             previous.as_ref().map(|cached| cached.prefixes.as_slice()),
-            previous
-                .as_ref()
-                .map(|cached| cached.snapshot.view.inherited.clone()),
+            previous.as_ref().map(|cached| {
+                (
+                    cached.snapshot.view.inherited.clone(),
+                    cached.snapshot.view.inherited_encoded.clone(),
+                )
+            }),
         )?;
         let snapshot = Arc::new(ViewSnapshot::new(Arc::new(built.view)));
         self.views.insert(
@@ -1207,10 +1426,10 @@ impl Views {
                 )?)
             }
         };
-        let encoded = parsed.encoded_bytes()?;
+        let encoded = parsed.encoded_bytes();
         // The cap is serialized event bytes, not a promise about RSS.
         self.files.remove(&id);
-        let (view_limit, view_byte_limit) = (view_limit(), view_byte_limit());
+        let (view_limit, view_byte_limit) = (view_limit(), self.byte_limit());
         let mut evicted = fresh;
         while self.files.len() >= view_limit
             || self.bytes().saturating_add(encoded) > view_byte_limit
@@ -1279,6 +1498,9 @@ impl FileSource for CachedFiles<'_> {
     ) -> Result<(Arc<Parsed>, usize), SessionError> {
         self.views.file(candidate, pin, deps)
     }
+    fn retains(&self) -> bool {
+        true
+    }
 }
 
 /// Cold, unretained parses for one transient build (search misses).
@@ -1298,19 +1520,23 @@ impl FileSource for ColdFiles {
         };
         let parsed = match deps.parsed(&candidate, pin) {
             Some(parsed) => parsed,
-            None => Arc::new(parse_candidate(
+            None => Arc::new(parse_candidate_retaining(
                 candidate,
                 None,
                 &mut self.records,
                 pin.cloned(),
+                false,
             )?),
         };
         // Nothing will extend this parse: free the decoded records now, not
         // when the whole transient open ends (search cold paths run several
         // of these at once; the AST is the bulk of a projection's memory).
         self.records = records::RecordCache::default();
-        let encoded = parsed.encoded_bytes()?;
+        let encoded = parsed.encoded_bytes();
         Ok((parsed, encoded))
+    }
+    fn retains(&self) -> bool {
+        false
     }
 }
 
@@ -1456,7 +1682,7 @@ fn build(
     selected: Option<Candidate>,
     pin: Option<TimelinePin>,
     old_prefixes: Option<&[Prefix]>,
-    old_inherited: Option<Arc<Vec<Event>>>,
+    old_inherited: Option<(Arc<Vec<Event>>, Arc<EncodedEvents>)>,
 ) -> Result<Built, SessionError> {
     let leaf = selected.clone().unwrap_or_else(|| owner.clone());
     let (parsed, _) = files.file(leaf, Pin::Exact(pin.as_ref()), deps)?;
@@ -1479,8 +1705,8 @@ fn build(
                 .iter()
                 .all(|prefix| restamp(&prefix.candidate).is_ok_and(|now| now == prefix.candidate))
     });
-    let (prefixes, inherited) = match (reusable, old_inherited) {
-        (Some(prefixes), Some(inherited)) => (
+    let (prefixes, inherited, inherited_encoded) = match (reusable, old_inherited) {
+        (Some(prefixes), Some((inherited, encoded))) => (
             prefixes
                 .iter()
                 .map(|prefix| Prefix {
@@ -1491,6 +1717,7 @@ fn build(
                 })
                 .collect::<Vec<_>>(),
             inherited,
+            encoded,
         ),
         _ => {
             let mut chain = Chain {
@@ -1501,10 +1728,11 @@ fn build(
                 seen: BTreeSet::from([uid_for(parsed.candidate.source, &parsed.candidate.path)]),
             };
             chain.inherit(parsed.candidate.source, &parsed.meta)?;
-            (chain.prefixes, Arc::new(chain.events))
+            let encoded = Arc::new(encode_events(&chain.events, files.retains(), None)?);
+            (chain.prefixes, Arc::new(chain.events), encoded)
         }
     };
-    let inherited_encoded = encoded_bytes(inherited.iter())?;
+    let inherited_bytes = accounted_bytes(&inherited_encoded, inherited.iter());
     let digests = prefixes
         .iter()
         .map(|prefix| prefix.digest.clone())
@@ -1519,21 +1747,20 @@ fn build(
     for prefix in &prefixes {
         dependencies.insert(uid_for(prefix.candidate.source, &prefix.candidate.path));
     }
-    let rename = rename_event(&meta);
     Ok(Built {
-        view: View {
+        view: View::new(ViewParts {
             parsed,
             meta,
             inherited,
+            inherited_encoded,
             identity,
             native_scope,
             sources,
             dependencies: dependencies.into_iter().collect(),
-            rename,
-        },
+        }),
         owner: owner_parsed,
         prefixes,
-        inherited_encoded,
+        inherited_encoded: inherited_bytes,
     })
 }
 
@@ -1690,5 +1917,7 @@ fn parse_prefix(
     Ok((meta, events, digest))
 }
 
+#[cfg(test)]
+mod body_tests;
 #[cfg(test)]
 mod tests;
