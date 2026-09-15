@@ -2005,7 +2005,8 @@ impl Chain<'_> {
                 .collect::<Vec<_>>(),
         );
         if let Some(cache) = self.cache {
-            let encoded = encoded_bytes(events.iter())?;
+            // Byte accounting only: the prefix cache keeps events, not their bytes.
+            let encoded = accounted_bytes(&encode_events(&events, false, None)?, events.iter());
             if let Ok(mut cache) = cache.lock() {
                 cache.insert(
                     candidate.clone(),
