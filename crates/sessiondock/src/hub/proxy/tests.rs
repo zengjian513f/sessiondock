@@ -163,6 +163,35 @@ fn resolve_unscopes_path_query_and_body_for_one_machine() {
     )
     .unwrap();
     assert_eq!(report.body.unwrap()["terminal_name"], "t1");
+    // The problem machine's capture names its terminal the same way; the
+    // nested `origin`/`captured` of a cross-machine report stay untouched.
+    let capture = resolve(
+        None,
+        "POST",
+        "/api/bug-report/capture",
+        q(""),
+        body(json!({"terminal_name": format!("{B}~t1"), "uid": ""})),
+    )
+    .unwrap();
+    assert_eq!(capture.nid, B);
+    assert_eq!(capture.body.unwrap()["terminal_name"], "t1");
+    let remote = resolve(
+        None,
+        "POST",
+        "/api/bug-report",
+        q(""),
+        body(json!({"_node": A, "uid": "", "terminal_name": "",
+            "origin": {"node_id": B, "uid": format!("claude:{B}~x")},
+            "captured": {"session": {"uid": format!("claude:{B}~x")}}})),
+    )
+    .unwrap();
+    assert_eq!(remote.nid, A);
+    let remote = remote.body.unwrap();
+    assert_eq!(remote["origin"]["uid"], format!("claude:{B}~x"));
+    assert_eq!(
+        remote["captured"]["session"]["uid"],
+        format!("claude:{B}~x")
+    );
 }
 
 #[test]

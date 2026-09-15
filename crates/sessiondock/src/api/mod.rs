@@ -36,10 +36,11 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
         "/api/session/files/upload" => files::UPLOAD_BODY_LIMIT,
         "/api/session/files/action" => crate::files::DEFAULT_UPLOAD_CHUNK_BYTES,
         "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
+        "/api/bug-report" => bug_report::REPORT_BODY_LIMIT,
         "/api/session/star"
         | "/api/sessions/fork-visibility"
         | "/api/audit/browser"
-        | "/api/bug-report"
+        | "/api/bug-report/capture"
         | "/api/trash/restore"
         | "/api/trash/purge"
         | "/api/sessions/delete"
@@ -239,6 +240,13 @@ pub fn router() -> Router<AppState> {
             "/bug-report",
             post(bug_report::report).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/bug-report"),
+            )),
+        )
+        // The problem machine's side of a report whose worker starts elsewhere.
+        .route(
+            "/bug-report/capture",
+            post(bug_report::capture).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/bug-report/capture"),
             )),
         );
     router.fallback(not_found)

@@ -713,21 +713,48 @@ function bugReportSource() {
   return $('#bug-report-source input:checked')?.value || 'codex';
 }
 
-// 与新建会话一样，三种 CLI 都可以做处理会话；记住上次的选择，本机缺少的
-// 命令置灰（中央站下由目标机器校验）。
+// 与新建会话一样，三种 CLI 都可以做处理会话；记住上次的选择，处理机器上
+// 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
 function syncBugReportSources() {
   const remembered = store.get('bugReportSource', 'codex');
+  const sources = HUB_MODE ? Nodes.capabilities[bugReportNode()]?.sources : T.sources;
+  const known = sources && Object.keys(sources).length;
   let checked = null;
   for (const input of $('#bug-report-source').querySelectorAll('input')) {
-    const missing = !HUB_MODE && T.sources && Object.keys(T.sources).length
-      && T.sources[input.value] === false;
+    const missing = known && !sources[input.value];
     input.disabled = !!missing;
-    input.title = missing ? `本机找不到 ${input.value} 命令` : '';
+    input.title = missing ? `${bugReportNodeName() || '本机'}找不到 ${input.value} 命令` : '';
     if (input.value === remembered && !missing) checked = input;
   }
   const fallback = checked || [...$('#bug-report-source').querySelectorAll('input')]
     .find(input => !input.disabled);
   if (fallback) fallback.checked = true;
+}
+
+// 处理会话的机器下拉与新建会话一样列出全部机器；默认选问题所在的机器
+// （当前会话的机器），其次上次的选择，再次唯一筛选中的机器。
+function prepareBugReportNode() {
+  if (!HUB_MODE) return;
+  const select = $('#bug-report-node');
+  const origin = bugReportOriginNode();
+  const selected = selectedNodeIds();
+  const preferred = [origin, store.get('bugReportNode', ''),
+    selected.length === 1 ? selected[0] : ''].filter(Boolean);
+  select.replaceChildren();
+  for (const n of Nodes.list) {
+    const option = document.createElement('option');
+    option.value = n.id;
+    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线或未启用终端）');
+    option.disabled = !Nodes.capabilities[n.id]?.enabled;
+    select.appendChild(option);
+  }
+  const usable = id => [...select.options].some(o => o.value === id && !o.disabled);
+  select.value = preferred.find(usable) || [...select.options].find(o => !o.disabled)?.value || '';
+  $('#bug-report-node-label').hidden = false;
+}
+
+function bugReportNodeName(id = bugReportNode()) {
+  return HUB_MODE ? Nodes.list.find(n => n.id === id)?.name || '' : '';
 }
 
 function showBugReportToast(report, worker) {
@@ -736,7 +763,8 @@ function showBugReportToast(report, worker) {
   toast.replaceChildren();
   const text = document.createElement('span');
   const label = BUG_REPORT_SOURCES[worker?.source] || '处理';
-  text.textContent = `${report} 已保存，${label} 处理会话正在启动`;
+  const where = worker?.node_name ? `到 ${worker.node_name}` : '';
+  text.textContent = `${report} 已保存${where}，${label} 处理会话正在启动`;
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'btn';
@@ -786,25 +814,55 @@ function clearBugReportDraft() {
   renderBugReportItems();
 }
 
-// 中央站上未选中会话时，报告和附件必须落到同一台在线机器；机器列表的
-// 第一台可能正好离线，不能盲目取它。
+// 处理会话（以及报告、附件）落在下拉里选中的机器上。
 function bugReportNode() {
+  return HUB_MODE ? $('#bug-report-node').value || '' : '';
+}
+
+// 问题所在的机器：当前会话的机器；没有会话时取唯一筛选中的机器；筛选着
+// 多台机器又没选会话时说不清是哪台，按处理机器本身算。
+function bugReportOriginNode() {
   if (!HUB_MODE) return '';
   const fromSession = nodeOf(S.sel);
   if (fromSession) return fromSession;
   const candidates = selectedNodeIds();
-  const online = candidates.find(id => Nodes.list.find(n => n.id === id)?.online !== false);
-  return online || candidates[0] || '';
+  return candidates.length === 1 ? candidates[0] : '';
+}
+
+// 报告里注明的问题机器；单机模式由服务端填主机名。
+function bugReportOrigin(workerNode) {
+  const uid = S.sel || '';
+  if (!HUB_MODE) return {uid};
+  const nodeId = bugReportOriginNode() || workerNode;
+  return {node_id: nodeId, node_name: bugReportNodeName(nodeId), uid};
 }
 
 function bugReportNodeError(node) {
   if (!HUB_MODE) return '';
-  if (!node) return '没有可用的机器：请先在顶部选择一台机器或打开一个会话';
+  if (!node) return '没有可用的机器：请先在顶部选择一台在线机器或打开一个会话';
   const info = Nodes.list.find(n => n.id === node);
   if (info?.online === false) {
-    return `${info.name || '目标机器'} 离线，无法在该机器上保存报告；请先切换到在线机器的会话`;
+    return `${info.name || '所选机器'} 离线，无法在该机器上保存报告；请换一台在线机器`;
+  }
+  if (!Nodes.capabilities[node]?.enabled) {
+    return `${info?.name || '所选机器'} 未启用终端，无法启动处理会话；请换一台机器`;
   }
   return '';
+}
+
+// 处理机器不是问题机器时，先向问题机器要一份服务端上下文（会话行、发送账本、
+// 终端画面、审计窗口），随报告交给处理机器；问题机器离线或抓取失败时不阻断
+// 报告，只把原因写进诊断包。
+async function captureBugReportContext(originNode, uid, terminalName) {
+  try {
+    const d = await post('api/bug-report/capture', {
+      _node: originNode, uid, terminal_name: terminalName, page_id: TERM_PAGE_ID,
+    });
+    if (d.error) return {error: d.error};
+    return d;
+  } catch (failure) {
+    return {error: `抓取失败：${failure.message || failure}`};
+  }
 }
 
 function closeBugReportAttachMenu() {
@@ -819,6 +877,7 @@ function openBugReportDialog() {
   $('#bug-report-go').disabled = false;
   $('#bug-report-go').textContent = '保存并启动处理会话';
   renderBugReportItems();
+  prepareBugReportNode();
   syncBugReportSources();
   dialog.showModal();
   setTimeout(() => $('#bug-report-description').focus(), 0);
@@ -830,6 +889,11 @@ document.addEventListener('click', event => {
   if (!event.target.closest('[data-report-bug]')) return;
   openBugReportDialog();
 });
+$('#bug-report-node').onchange = () => {
+  store.set('bugReportNode', bugReportNode());
+  syncBugReportSources();
+  $('#bug-report-error').textContent = '';
+};
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
 $('#bug-report-dialog .modal-cancel').onclick = () => $('#bug-report-dialog').close();
 $('#bug-report-dialog').addEventListener('click', event => {
@@ -879,6 +943,8 @@ $('#bug-report-form').onsubmit = async event => {
     error.textContent = nodeError;
     return;
   }
+  const origin = bugReportOrigin(node);
+  const remote = HUB_MODE && !!origin.node_id && origin.node_id !== node;
   bugReportSending = true;
   button.disabled = true;
   $('#bug-report-add').disabled = true;
@@ -887,6 +953,7 @@ $('#bug-report-form').onsubmit = async event => {
   const snapshot = browserStateSnapshot('bug-report');
   browserAuditEvent('bug_report.requested', {
     ...snapshot.data, attachments: attachments.length,
+    worker_node: node, origin_node: origin.node_id || '', remote,
   }, snapshot.content);
   try {
     // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
@@ -904,14 +971,22 @@ $('#bug-report-form').onsubmit = async event => {
         attachment_id: result.attachment_id,
       });
     }
-    button.textContent = '正在提交…';
     const terminalName = takenOver(S.sel) || (T.uid === S.sel ? T.name : '') || '';
+    let captured = null;
+    if (remote) {
+      button.textContent = `正在从 ${origin.node_name || '问题机器'} 抓取上下文…`;
+      captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
+    }
+    button.textContent = '正在提交…';
     const source = bugReportSource();
     store.set('bugReportSource', source);
+    // 远端抓取时会话与终端引用不再随请求下发：中央站要求 uid 与 _node 指向
+    // 同一台机器，问题会话的引用改由 origin.uid 与 captured 携带。
     const d = await post('api/bug-report', {
       ...(HUB_MODE ? {_node: node} : {}),
-      description, uid: S.sel || '', page_id: TERM_PAGE_ID, source,
-      terminal_name: terminalName, snapshot, attachments: uploaded,
+      description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source,
+      terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
+      origin, ...(captured ? {captured} : {}),
       cols: Math.max(80, T.term?.cols || 120), rows: Math.max(24, T.term?.rows || 36),
     });
     if (d.error) {

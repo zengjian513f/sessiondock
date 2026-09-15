@@ -1,7 +1,14 @@
-//! `POST /api/bug-report` and the
+//! `POST /api/bug-report`, `POST /api/bug-report/capture` and the
 //! `uid=bug-report` branch of `POST /api/session/attachment` (the raw
 //! upload special case). Validation, status codes and the 202/500 shapes
 //! apply; the bundle and the worker live in `bug_report`.
+//!
+//! A report may run its worker on a machine other than the one the problem
+//! was seen on. The browser then asks the problem's machine for
+//! `/api/bug-report/capture` (its session row, delivery ledger, terminal
+//! frame and audit window) and hands the answer to the worker's machine as
+//! `captured`, together with `origin` naming the problem's machine; that
+//! machine writes the bundle without a local capture of its own.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -16,9 +23,10 @@ use ptyhost_client::{CaptureKind, ControlOp, ControlReply};
 use serde_json::{Value, json};
 
 use crate::{
+    audit::query::QueryFilter,
     bug_report::{
-        CreateInput, DEFAULT_SOURCE, MAX_DESCRIPTION_CHARS, UPLOAD_UID, parse_source, source_label,
-        source_name, update_manifest, worker,
+        CreateInput, DEFAULT_SOURCE, EVENT_WINDOW_SECONDS, MAX_DESCRIPTION_CHARS, Origin,
+        UPLOAD_UID, parse_source, source_label, source_name, update_manifest, worker,
     },
     error::ApiError,
     files::WriteService,
@@ -28,6 +36,13 @@ use crate::{
 
 /// Raw upload bodies on `/session/attachment?uid=...`.
 pub const ATTACHMENT_BODY_LIMIT: usize = WriteService::BUG_REPORT_ATTACHMENT_MAX_BYTES + 1;
+/// `POST /api/bug-report` may carry another machine's capture (audit window
+/// plus an 8000-row terminal frame), so it takes more than the 4 MiB of the
+/// other JSON routes.
+pub const REPORT_BODY_LIMIT: usize = 16 * 1024 * 1024;
+/// Newest audit rows a remote capture hands over; the local window keeps
+/// the `MAX_QUERY_ROWS` bound.
+pub const REMOTE_EVENT_ROWS: usize = 20_000;
 
 fn disabled() -> ApiError {
     ApiError::new(
@@ -147,27 +162,64 @@ pub async fn report(
         }
     };
     let uid = text(&body["uid"], 512);
-    let session = if !uid.is_empty() && !uid.starts_with("tmux:") {
-        session_row(&state, &uid).await
-    } else {
-        json!({})
-    };
     let snapshot = if body["snapshot"].is_object() {
         body["snapshot"].clone()
     } else {
         json!({})
     };
     let terminal_name = text(&body["terminal_name"], 256);
-    let terminal_capture = if terminal_name.is_empty() {
-        String::new()
-    } else {
-        terminal_capture(&state, &ctx, &terminal_name).await
+    // `origin` names the machine the problem was seen on; `captured` is that
+    // machine's `/api/bug-report/capture` answer when it is not this one.
+    let mut origin = Origin {
+        node_id: text(&body["origin"]["node_id"], 64),
+        node_name: text(&body["origin"]["node_name"], 128),
+        hostname: state.hostname.to_string(),
+        uid: text(&body["origin"]["uid"], 512),
+        remote: false,
+        capture_error: String::new(),
     };
-    let outbox = if uid.is_empty() {
-        json!({})
+    if origin.uid.is_empty() {
+        origin.uid = uid.clone();
+    }
+    let (context, remote_events) = if body["captured"].is_object() {
+        origin.remote = true;
+        let captured = &body["captured"];
+        origin.capture_error = text(&captured["error"], 2000);
+        let hostname = text(&captured["hostname"], 256);
+        if !hostname.is_empty() {
+            origin.hostname = hostname;
+        } else if origin.capture_error.is_empty() {
+            // A capture answer without a host is not one this route produced.
+            return Err(invalid("captured.hostname 缺失"));
+        } else {
+            origin.hostname = String::new();
+        }
+        let events = captured["events"]
+            .as_array()
+            .map(|rows| {
+                let skip = rows.len().saturating_sub(REMOTE_EVENT_ROWS);
+                rows.iter().skip(skip).cloned().collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        (
+            Context {
+                session: captured["session"].clone(),
+                outbox: captured["outbox"].clone(),
+                terminal_capture: text(&captured["terminal_capture"], usize::MAX),
+            },
+            events,
+        )
     } else {
-        outbox_snapshot(&state, &uid).await
+        (
+            local_context(&state, &ctx, &uid, &terminal_name).await,
+            Vec::new(),
+        )
     };
+    let Context {
+        session,
+        outbox,
+        terminal_capture,
+    } = context;
     let page_id = {
         let page = text(&body["page_id"], 128);
         if page.is_empty() {
@@ -192,6 +244,8 @@ pub async fn report(
         session,
         outbox,
         attachments,
+        origin,
+        remote_events,
     };
     let audit = ctx.audit.clone();
     let service = ctx.service.clone();
@@ -253,6 +307,121 @@ pub async fn report(
             ))
         }
     }
+}
+
+/// The server-side context of a report: the session's list row, its
+/// delivery ledger and the managed terminal's frame, all read on this
+/// machine.
+struct Context {
+    session: Value,
+    outbox: Value,
+    terminal_capture: String,
+}
+
+async fn local_context(
+    state: &AppState,
+    ctx: &worker::WorkerContext,
+    uid: &str,
+    terminal_name: &str,
+) -> Context {
+    let session = if !uid.is_empty() && !uid.starts_with("tmux:") {
+        session_row(state, uid).await
+    } else {
+        json!({})
+    };
+    let terminal_capture = if terminal_name.is_empty() {
+        String::new()
+    } else {
+        terminal_capture(state, ctx, terminal_name).await
+    };
+    let outbox = if uid.is_empty() {
+        json!({})
+    } else {
+        outbox_snapshot(state, uid).await
+    };
+    Context {
+        session,
+        outbox,
+        terminal_capture,
+    }
+}
+
+/// `POST /api/bug-report/capture`: the server-side context of a report on
+/// this machine, for a worker that starts elsewhere. Body `{uid,
+/// terminal_name, page_id|_page_id, _trace_id}`; answer `{ok, hostname,
+/// captured_at, session, outbox, terminal_capture, events}` where `events`
+/// is the same 900 s audit window `create` would have bundled here (newest
+/// `REMOTE_EVENT_ROWS` rows). Gated exactly like the report route.
+pub async fn capture(
+    State(state): State<AppState>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    if state.terminal.is_none() {
+        return Err(terminal_off("终端未启用，无法抓取会话上下文"));
+    }
+    let ctx = state.bug_report.clone().ok_or_else(disabled)?;
+    let Json(body) =
+        body.map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "bad_body", "bad body"))?;
+    if !body.is_object() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "bad_body",
+            "bad body",
+        ));
+    }
+    let uid = text(&body["uid"], 512);
+    let terminal_name = text(&body["terminal_name"], 256);
+    let page_id = {
+        let page = text(&body["page_id"], 128);
+        if page.is_empty() {
+            text(&body["_page_id"], 128)
+        } else {
+            page
+        }
+    };
+    let trace_id = text(&body["_trace_id"], 128);
+    let context = local_context(&state, &ctx, &uid, &terminal_name).await;
+    let now = std::time::SystemTime::now();
+    let audit_dir = ctx.service.audit_dir().to_path_buf();
+    let filter = QueryFilter {
+        uid: uid.clone(),
+        page_id,
+        trace_id,
+        report_id: String::new(),
+    };
+    let events = tokio::task::spawn_blocking(move || {
+        let since = now
+            .checked_sub(std::time::Duration::from_secs(EVENT_WINDOW_SECONDS))
+            .unwrap_or(std::time::UNIX_EPOCH);
+        let until = now + std::time::Duration::from_secs(5);
+        let rows = crate::audit::query::query(
+            &audit_dir,
+            since,
+            until,
+            &filter,
+            crate::audit::query::MAX_QUERY_ROWS,
+        );
+        let skip = rows.len().saturating_sub(REMOTE_EVENT_ROWS);
+        rows.into_iter().skip(skip).collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "bug_report_failed",
+            "审计查询任务异常退出",
+        )
+    })?;
+    Ok(json_body(
+        StatusCode::OK,
+        json!({
+            "ok": true, "hostname": state.hostname.to_string(),
+            "captured_at": crate::audit::query::rfc3339(now),
+            "uid": uid, "terminal_name": terminal_name,
+            "session": context.session, "outbox": context.outbox,
+            "terminal_capture": context.terminal_capture, "events": events,
+        }),
+    ))
 }
 
 /// The published list row, `{}` when absent.

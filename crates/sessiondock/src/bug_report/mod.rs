@@ -117,6 +117,42 @@ impl Attachment {
     }
 }
 
+/// The machine the problem was observed on, as the reporter names it: the
+/// registered Hub node (`node_id`/`node_name`), standalone the local host.
+/// A report may start its worker on another machine; the origin then says
+/// where the bundle's session row, ledger, terminal frame and audit rows
+/// came from (`remote`), or why they could not be fetched (`capture_error`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Origin {
+    pub node_id: String,
+    pub node_name: String,
+    pub hostname: String,
+    /// The session reference as the reporter saw it (Hub-scoped in Hub
+    /// mode); empty when no session was selected.
+    pub uid: String,
+    pub remote: bool,
+    pub capture_error: String,
+}
+
+impl Origin {
+    /// The name shown in the prompt and manifest: the node name, else the host.
+    pub fn label(&self) -> &str {
+        if self.node_name.is_empty() {
+            &self.hostname
+        } else {
+            &self.node_name
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "node_id": self.node_id, "node_name": self.node_name, "hostname": self.hostname,
+            "uid": self.uid, "remote": self.remote,
+            "capture_error": if self.capture_error.is_empty() { Value::Null } else { json!(self.capture_error) },
+        })
+    }
+}
+
 /// Everything `create` records besides the description.
 #[derive(Clone, Debug, Default)]
 pub struct CreateInput {
@@ -125,6 +161,7 @@ pub struct CreateInput {
     pub page_id: String,
     pub trace_id: String,
     pub build: String,
+    /// The machine writing the bundle and running the worker.
     pub hostname: String,
     pub client_ip: String,
     pub snapshot: Value,
@@ -132,6 +169,11 @@ pub struct CreateInput {
     pub session: Value,
     pub outbox: Value,
     pub attachments: Vec<Attachment>,
+    /// Where the problem happened; `Default` means this machine.
+    pub origin: Origin,
+    /// Audit rows captured on the origin machine when it is not this one;
+    /// they precede the local window in `events.jsonl`.
+    pub remote_events: Vec<Value>,
 }
 
 /// Result of a successful `create`.
@@ -230,6 +272,10 @@ impl BugReportService {
 
     pub fn repository(&self) -> &Path {
         &self.repository
+    }
+    /// The audit segments a bundle's `events.jsonl` is queried from.
+    pub fn audit_dir(&self) -> &Path {
+        &self.audit_dir
     }
     pub fn directory(&self) -> &Path {
         &self.directory
@@ -439,6 +485,9 @@ impl BugReportService {
             row["seq"] = Value::Null;
             events.push(row);
         }
+        let mut all_events = input.remote_events.clone();
+        all_events.extend(events);
+        let events = all_events;
         let mut jsonl = String::new();
         for row in &events {
             jsonl.push_str(&row.to_string());
@@ -474,7 +523,29 @@ impl BugReportService {
         });
         write_json(&report_dir.join("environment.json"), &environment)
             .map_err(|e| error("environment.json", e))?;
-        let prompt = worker_prompt(&report_id, &report_dir, &input.uid, description, &saved);
+        let origin = if input.origin.hostname.is_empty() && input.origin.node_name.is_empty() {
+            Origin {
+                hostname: input.hostname.clone(),
+                uid: input.uid.clone(),
+                ..input.origin.clone()
+            }
+        } else {
+            input.origin.clone()
+        };
+        let session_reference = if origin.uid.is_empty() {
+            input.uid.as_str()
+        } else {
+            origin.uid.as_str()
+        };
+        let prompt = worker_prompt(
+            &report_id,
+            &report_dir,
+            session_reference,
+            description,
+            &saved,
+            &origin,
+            &input.hostname,
+        );
         write_text(&report_dir.join("worker-prompt.md"), &prompt)
             .map_err(|e| error("worker-prompt.md", e))?;
         let manifest = json!({
@@ -485,6 +556,7 @@ impl BugReportService {
             "event_window_seconds": EVENT_WINDOW_SECONDS,
             "uid": input.uid, "page_id": input.page_id, "trace_id": input.trace_id,
             "build": input.build, "hostname": input.hostname, "client_ip": input.client_ip,
+            "origin": origin.json(),
             "session": if input.session.is_object() { input.session.clone() } else { json!({}) },
             "outbox": if input.outbox.is_object() { input.outbox.clone() } else { json!({}) },
             "terminal_file": if input.terminal_capture.is_empty() { "" } else { "terminal.txt" },
@@ -560,23 +632,26 @@ pub fn attachment_block(attachments: &[(Attachment, String)]) -> String {
 
 /// The worker's task, rewritten for this repository: read the bundle, find
 /// the first event that diverges, fix minimally, validate proportionately,
-/// and never push, deploy or restart anything.
+/// and never push, deploy or restart anything. `origin` names the machine
+/// the problem was seen on; `local_hostname` is the worker's machine.
 pub fn worker_prompt(
     report_id: &str,
     report_dir: &Path,
     uid: &str,
     description: &str,
     attachments: &[(Attachment, String)],
+    origin: &Origin,
+    local_hostname: &str,
 ) -> String {
     let mut body = description.trim().to_owned();
-    let mut notes = String::new();
+    let mut notes = origin_block(origin, local_hostname);
     if !attachments.is_empty() {
         body.push_str("\n\n");
         body.push_str(&attachment_block(attachments));
-        notes = format!(
+        notes.push_str(&format!(
             "\n用户随报告上传了 {} 个附件（路径相对仓库根目录，图片请用图片查看工具查看，\n它们展示了用户看到的实际现象）；描述中的 [附件N] 指向上面对应的路径。\n",
             attachments.len()
-        );
+        ));
     }
     let session = if uid.is_empty() {
         "用户未选中会话"
@@ -590,6 +665,7 @@ pub fn worker_prompt(
 {body}
 
 诊断包：{dir}
+问题机器：{machine}
 相关会话：{session}
 {notes}
 请先完整阅读 manifest.json、browser-state.json、environment.json、events.jsonl，
@@ -607,7 +683,46 @@ pub fn worker_prompt(
 5. 完成后在会话中说明根因、修改的文件、验证结果和仍存风险。
 ",
         dir = report_dir.display(),
+        machine = origin_label(origin),
     )
+}
+
+/// `问题机器` as the prompt and toast name it: `Lyra（主机 lyra）`, or just
+/// the host when the machine has no registered name.
+fn origin_label(origin: &Origin) -> String {
+    let label = origin.label();
+    if label.is_empty() {
+        return "未知".to_owned();
+    }
+    if origin.node_name.is_empty() || origin.hostname.is_empty() || origin.hostname == label {
+        return label.to_owned();
+    }
+    format!("{label}（主机 {}）", origin.hostname)
+}
+
+/// The prompt's note on a worker that runs away from the problem's machine,
+/// and on a server-side capture that failed.
+fn origin_block(origin: &Origin, local_hostname: &str) -> String {
+    let mut text = String::new();
+    if origin.remote {
+        let local = if local_hostname.is_empty() {
+            "本机".to_owned()
+        } else {
+            format!("本机 {local_hostname}")
+        };
+        text.push_str(&format!(
+            "\n问题发生在 {machine}，而这条处理会话运行在另一台机器（{local}）：诊断包里的会话行、\n发送账本、终端画面和审计事件都是从 {machine} 抓取的，本机的原生 JSONL 与 delivery/lifecycle\n账本里没有这条会话，不要在本机寻找它；修复仍在本机的这份仓库里完成。\n",
+            machine = origin_label(origin),
+        ));
+    }
+    if !origin.capture_error.is_empty() {
+        text.push_str(&format!(
+            "\n从 {} 抓取服务端上下文失败：{}；诊断包只包含浏览器侧快照和本机审计记录。\n",
+            origin_label(origin),
+            origin.capture_error
+        ));
+    }
+    text
 }
 
 /// Hard-link or copy each upload as

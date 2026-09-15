@@ -345,6 +345,96 @@ async fn source_without_a_cli_is_503_before_any_bundle() {
     close(app).await;
 }
 
+/// The problem machine's half of a cross-machine report: its context and
+/// audit window, gated like the report route; the worker machine's half
+/// refuses a capture that names no host.
+#[tokio::test]
+async fn capture_route_answers_the_local_context_and_is_gated_like_the_report() {
+    let Some(host_binary) = ptyhost_binary() else {
+        eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
+        return;
+    };
+    let fixture = Fixture::new(&host_binary);
+    let app = open(fixture.config(false, &fixture.launcher)).await;
+    let (status, body) = post(
+        &app.prepared.router,
+        "/api/bug-report/capture",
+        json!({"uid": "", "terminal_name": ""}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert_eq!(body["code"], "bug_report_disabled");
+    close(app).await;
+
+    let app = open(fixture.config(true, &fixture.launcher)).await;
+    // A browser row on this machine's audit lands in the capture's window.
+    let (status, _) = post(
+        &app.prepared.router,
+        "/api/audit/browser",
+        json!({"page_id": "page-c", "uid": "", "events": [{"event": "dom.snapshot", "ts": "t"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let rows = loop {
+        let (status, body) = post(
+            &app.prepared.router,
+            "/api/bug-report/capture",
+            json!({"uid": "claude:none", "terminal_name": "no-such-host", "page_id": "page-c"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["ok"], true);
+        assert!(!body["hostname"].as_str().unwrap().is_empty(), "{body}");
+        assert!(
+            body["captured_at"].as_str().unwrap().contains('T'),
+            "{body}"
+        );
+        assert_eq!(body["uid"], "claude:none");
+        assert_eq!(body["session"], json!({}));
+        assert_eq!(body["outbox"], json!({}));
+        assert_eq!(body["terminal_capture"], "");
+        let rows = body["events"].as_array().unwrap().clone();
+        if rows
+            .iter()
+            .any(|row| row["event"] == "browser.dom.snapshot")
+        {
+            break rows;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "audit row never reached the capture window: {body}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    assert!(
+        rows.iter().all(|row| row["page_id"] == "page-c"),
+        "{rows:?}"
+    );
+
+    // The worker machine's side: `captured` must carry the origin host
+    // unless it explains a failed capture; nothing is written either way
+    // before validation passes.
+    let (status, body) = post(
+        &app.prepared.router,
+        "/api/bug-report",
+        json!({"description": "x", "source": "claude",
+            "origin": {"node_id": "n1", "node_name": "Lyra", "uid": "claude:n1~x"},
+            "captured": {"session": {}}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("captured.hostname"),
+        "{body}"
+    );
+    assert_eq!(fs::read_dir(&fixture.reports).unwrap().count(), 0);
+    close(app).await;
+}
+
 #[tokio::test]
 async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
     let Some(host_binary) = ptyhost_binary() else {
