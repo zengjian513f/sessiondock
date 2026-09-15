@@ -841,7 +841,7 @@ fn benchmark_parse_phases() {
         parsed.unsupported
     );
     let t = Instant::now();
-    let encoded = parsed.encoded_bytes().unwrap();
+    let encoded = parsed.encoded_bytes();
     eprintln!("encoded_bytes {:?} {} MB", t.elapsed(), encoded >> 20);
     let t = Instant::now();
     let digest = projection_digest(&parsed.events, parsed.committed);
