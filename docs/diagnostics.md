@@ -48,3 +48,13 @@ that freezes for good therefore leaves its last few, progressively longer
 frames in the log with the function that ran in each. The page registers no
 service worker for the same reason: a navigation to the same origin would wait
 for a worker started inside the existing, possibly frozen, page process.
+
+## Response bodies
+
+Every audit post reads its response body to completion even though the page
+only needs the status. An unread fetch response keeps its 2 MiB shared-memory
+data pipe — one renderer file descriptor — until garbage collection; at one
+post per second the renderer's 1024-fd soft limit fills within minutes, after
+which the GPU command buffer cannot allocate shared memory and the tab freezes
+in native code with no JavaScript on the stack. `tests/renderer_fd_browser.py`
+guards it.
