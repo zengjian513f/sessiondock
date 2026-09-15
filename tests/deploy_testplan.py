@@ -190,7 +190,10 @@ class BaseCommitTest(unittest.TestCase):
                                           "b": f"{h2} {h2[:7]} 2026-09-14T00:00:00Z dirty=0",
                                           "c": None, "d": "not a sha at all"})
         self.assertEqual(sha, h2, "the OLDEST marker (largest diff) wins")
-        self.assertIn("oldest etc/deployed-commit marker (b, 2 commits behind HEAD)", how)
+        # `HEAD~2` follows first parents; the count is `git rev-list`'s, which also
+        # counts commits merged in between, so derive it instead of hard-coding 2.
+        behind = git("rev-list", "--count", f"{h2}..HEAD")
+        self.assertIn(f"oldest etc/deployed-commit marker (b, {behind} commits behind HEAD)", how)
         sha, how = tp.resolve_base(None, {"only": f"{h1[:10]} short"})
         self.assertEqual(sha, h1, "abbreviated markers resolve")
         sha, how = tp.resolve_base(None, {"x": None})
@@ -350,7 +353,8 @@ class GateCliTest(unittest.TestCase):
         rc, out, err = self.cli("deploy", "--dry-run", "--targets", "local", "--web-only")
         self.assertEqual(rc, 0, out + err)
         h2 = git("rev-parse", "HEAD~2")
-        self.assertIn(f"base {h2[:12]} (oldest etc/deployed-commit marker (local, 2 commits behind HEAD))", out)
+        behind = git("rev-list", "--count", f"{h2}..HEAD")
+        self.assertIn(f"base {h2[:12]} (oldest etc/deployed-commit marker (local, {behind} commits behind HEAD))", out)
         self.assertIn("DRY RUN: push", out)
         self.assertIn("stage tests: mode=affected result=passed", out)
         self.assertEqual(self.artifacts()["test_base"], h2)
