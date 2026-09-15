@@ -13,6 +13,7 @@ pub mod audit;
 pub mod bridge;
 pub mod bug_report;
 pub mod config;
+pub mod conversation;
 pub mod delivery;
 mod error;
 pub mod files;
@@ -366,6 +367,8 @@ fn build_app(
             && audit.is_some()
             && terminal.is_some()
             && lifecycle.is_some()
+            && metadata.is_some()
+            && files_write.is_some()
     );
     // Node identity: configuration proved the four settings come
     // together; the id is minted here (O_EXCL 0600) on first start. `hub`
@@ -378,6 +381,9 @@ fn build_app(
         })),
         _ => None,
     };
+    capabilities["conversation_send"] = serde_json::json!(
+        metadata.is_some() && terminal.is_some() && lifecycle.is_some() && files_write.is_some()
+    );
     let capabilities = Arc::new(capabilities);
     let assets = Arc::new(assets::Assets::load(
         &config.web_dir,
@@ -476,8 +482,37 @@ fn build_app(
         bridge::LivePrompts::new(config.state_dir.as_deref(), config.ptyhost_dir.as_deref())
             .map_err(io::Error::other)?,
     );
-    let executor = match (&delivery, &terminal, &runtime) {
-        (Some(delivery), Some(terminal), Some(runtime)) => {
+    let conversations = match (&metadata, &terminal, &runtime, &lifecycle, &files_write) {
+        (Some(metadata), Some(terminal), Some(runtime), Some(lifecycle), Some(writer)) => {
+            let directory = metadata.directory().join("conversations");
+            let store = Arc::new(
+                conversation::store::Store::open(&directory)
+                    .map_err(|e| io::Error::other(e.message))?,
+            );
+            Some(Arc::new(conversation::Conversations::new(
+                store,
+                reader.clone(),
+                lifecycle.clone(),
+                Arc::new(delivery::executor::ManagedResolver {
+                    runtime: runtime.clone(),
+                    reader: reader.clone(),
+                    lifecycle: Some(lifecycle.clone()),
+                    probes: runtime_probes.clone(),
+                    proc_scan: proc_scan.clone(),
+                }),
+                Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
+                writer.clone(),
+                prompts.clone(),
+                bug_report.as_ref().map(|ctx| ctx.service.clone()),
+            )))
+        }
+        _ => None,
+    };
+    if let Some(service) = &conversations {
+        service.housekeeping(shutdown.clone());
+    }
+    let executor = match (&delivery, &terminal, &runtime, conversations.is_none()) {
+        (Some(delivery), Some(terminal), Some(runtime), true) => {
             Some(delivery::executor::DeliveryExecutor::start(
                 delivery.clone(),
                 Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
@@ -496,6 +531,7 @@ fn build_app(
         _ => None,
     };
     let state = AppState {
+        conversations,
         assets,
         capabilities,
         terminal,

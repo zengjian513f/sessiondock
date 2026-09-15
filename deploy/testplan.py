@@ -132,7 +132,7 @@ def plan_for(mode: str, changed: list[str], names: list[str]) -> dict:
 # -- git ---------------------------------------------------------------------------------
 def git(*args: str, check: bool = True) -> str:
     p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, timeout=60, check=check)
-    return p.stdout.strip() if p.returncode == 0 else ""
+    return p.stdout.rstrip("\r\n") if p.returncode == 0 else ""
 
 
 def commit_of(ref: str) -> str | None:

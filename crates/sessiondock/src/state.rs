@@ -29,6 +29,7 @@ pub struct AppState {
     pub capabilities: Arc<Value>,
     pub terminal: Option<Arc<crate::terminal::TerminalService>>,
     pub metadata: Option<Arc<crate::metadata::MetadataStore>>,
+    pub conversations: Option<Arc<crate::conversation::Conversations>>,
     pub delivery: Option<Arc<crate::delivery::service::DeliveryService>>,
     /// Claude reliable send over managed instances; `None` keeps the four
     /// send routes `501` (needs both the ledger and the terminal transport).

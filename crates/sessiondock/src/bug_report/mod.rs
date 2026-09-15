@@ -307,6 +307,55 @@ impl BugReportService {
         }
     }
 
+    /// Only server-registered processing records may update a report bundle.
+    pub(crate) fn conversation_status(
+        &self,
+        record_id: &str,
+        result: &Result<Value, crate::delivery::executor::Failure>,
+    ) -> io::Result<()> {
+        let Some(decoration) = self.pending_decoration(record_id) else {
+            return Ok(());
+        };
+        let report_id = decoration["report_id"].as_str().expect("registered report");
+        let changes = match result {
+            Ok(value) => json!({"status":"submitted","error":null,"submission":value,
+                "injection":{"origin":worker::PAGE,"basis":"SEND","submitted_at":crate::audit::query::rfc3339(SystemTime::now())}}),
+            Err(error) => json!({"status":"failed","error":error.message,
+                "injection":{"origin":worker::PAGE,"basis":"SEND","draft_retained":true}}),
+        };
+        update_manifest(&self.directory.join(report_id), changes)?;
+        self.note_status(
+            record_id,
+            if result.is_ok() {
+                "submitted"
+            } else {
+                "failed"
+            },
+            result.as_ref().err().map(|e| e.message.as_str()),
+        );
+        Ok(())
+    }
+    pub(crate) fn conversation_restarted(
+        &self,
+        old_record: &str,
+        worker: &Value,
+    ) -> io::Result<Option<String>> {
+        let Some(decoration) = self.pending_decoration(old_record) else {
+            return Ok(None);
+        };
+        let report_id = decoration["report_id"].as_str().expect("registered report");
+        update_manifest(
+            &self.directory.join(report_id),
+            json!({"status":"starting","error":null,
+            "tmux":worker["name"],"worker":worker,"injection":{"basis":"SEND","draft_retained":true}}),
+        )?;
+        self.note_worker(
+            worker["record_id"].as_str().expect("lifecycle record"),
+            report_id,
+        );
+        Ok(Some(report_id.to_owned()))
+    }
+
     /// Pending record fields for a worker's lifecycle record:
     /// `{kind:"bug-report", report_id, title}` plus the manifest's
     /// `worker_status` / `worker_error`; `None` for ordinary launches.

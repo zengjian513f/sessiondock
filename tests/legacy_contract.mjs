@@ -130,7 +130,7 @@ test('Rust terminal lookup requires a unique full UID and instance, never a name
 test('terminal ownership force retry retains the exact captured binding', async () => {
   const calls = [];
   const prompts = [];
-  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page',
+  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
     confirm: message => { prompts.push(message); return true; },
     post: async (_path, body) => {calls.push(body); return calls.length === 1 ? {conflict: true, owner: {ip: '10.66.66.1', label: ''}} : {token: 'lease'};}});
   loadFunction(context, 'describeTermTaker', read('term.js'));
@@ -148,7 +148,7 @@ test('terminal ownership force retry retains the exact captured binding', async 
 
 test('an automatic pty restore never asks to take over a held terminal', async () => {
   const calls = [];
-  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page',
+  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
     auditTermPane: () => {},
     confirm: () => assert.fail('entering the conversation view must not prompt'),
     alert: () => assert.fail('entering the conversation view must not alert'),
@@ -158,6 +158,74 @@ test('an automatic pty restore never asks to take over a held terminal', async (
   assert.equal(await claim('name', 'codex:uid', {uid: 'codex:uid', instance_id: 'i'}, true), null);
   assert.equal(calls.length, 1, 'no force claim follows a silent decline');
   assert.equal(calls[0].force, undefined);
+});
+
+test('terminal claim POST deadline covers headers and body without retrying input', async () => {
+  for (const phase of ['headers', 'body', 'success', 'input']) {
+    const timers = new Map(), audits = [];
+    let requests = 0, signal;
+    const context = vm.createContext({BUILD_ID: 'fixture', TERM_PAGE_ID: 'fixture-page',
+      AbortController, performance, appUrl: path => path,
+      setTimeout: (fn, ms) => { timers.set(1, {fn, ms}); return 1; },
+      clearTimeout: id => timers.delete(id),
+      browserAuditEvent: (...args) => audits.push(args),
+      fetch: async (_url, options) => {
+        requests++;
+        signal = options.signal;
+        const stalled = () => new Promise((_resolve, reject) => {
+          if (signal.aborted) return reject(new Error('aborted'));
+          signal.addEventListener('abort', () => reject(new Error('aborted')), {once: true});
+        });
+        if (phase === 'headers') return stalled();
+        return {status: 200, ok: true, json: phase === 'body' ? stalled : async () => ({token: 'lease'})};
+      },
+    });
+    const post = loadFunction(context, 'post', read('term.js'));
+    const job = phase === 'input' ? post('api/term/send', {keys: ['Escape']})
+      : post('api/term/claim', {name: 'fixture'}, {timeoutMs: 5000});
+    if (phase === 'headers' || phase === 'body') {
+      await Promise.resolve();
+      assert.equal(timers.get(1).ms, 5000);
+      const rejected = assert.rejects(job, error => error.name === 'TimeoutError'
+        && error.message.includes('服务端可能已执行'));
+      timers.get(1).fn();
+      await rejected;
+      assert.equal(audits.at(-1)[0], 'http.request.failed');
+    } else {
+      assert.equal((await job).token, 'lease');
+      assert.equal(signal === undefined, phase === 'input');
+    }
+    assert.equal(requests, 1, 'no mutation is automatically repeated');
+    assert.equal(timers.size, 0, 'deadline is cleared on success and failure');
+  }
+});
+
+test('claim timeout never forces ownership or attaches using an uncertain lease', async () => {
+  for (const force of [false, true]) {
+    for (const auto of [false, true]) {
+      const calls = [], ConsoleUI = {errors: new Map()};
+      const context = vm.createContext({T: {}, ConsoleUI, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
+        renderTakeoverBtn: () => {},
+        alert: () => assert.fail('timeout must clear the attempt without a modal'),
+        confirm: () => { assert.equal(auto, false); return true; },
+        auditTermPane: () => {},
+        post: async (_url, body, options) => {
+          calls.push({body, options});
+          if (force && calls.length === 1) return {conflict: true};
+          const error = new Error('fixture deadline'); error.name = 'TimeoutError'; throw error;
+        },
+      });
+      loadFunction(context, 'describeTermTaker', read('term.js'));
+      const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
+      assert.equal(await claim('pane', 'claude:fixture', {uid: 'claude:fixture', instance_id: 'pinned'}, auto), null);
+      assert.equal(calls.length, force && !auto ? 2 : 1);
+      for (const {body, options} of calls) {
+        assert.equal(body.instance_id, 'pinned');
+        assert.equal(options.timeoutMs, 5000);
+      }
+      if (!(force && auto)) assert.match(ConsoleUI.errors.get('claude:fixture'), /服务端可能已取得控制权/);
+    }
+  }
 });
 
 test('terminal takeover prompts describe the taker only by what is meaningful', () => {
@@ -274,7 +342,7 @@ test('Rust terminal lookup follows a Codex rollback branch to the pane bound to 
   const S = {sessions: [parent, branch, elsewhere], live: new Set(['codex:b'])};
   const T = {list: [{name: 'pane', uid: 'codex:a', instance_id: 'instance'}], pending: [], uid: null, name: null};
   const context = contextWithCapabilities(disabled, {T, S});
-  for (const name of ['forkAncestors', 'forkLeaf', 'forkLeafUid']) loadFunction(context, name);
+  for (const name of ['forkAncestors', 'forkChildren', 'forkLeaf', 'forkLeafUid']) loadFunction(context, name);
   for (const name of ['sessionTermMeta', 'termBindingServes']) loadFunction(context, name, read('term.js'));
   const linked = loadFunction(context, 'linkedTermSession', read('term.js'));
   // The branch has no pane of its own; the parent's pane is its console.
@@ -296,6 +364,23 @@ test('Rust terminal lookup follows a Codex rollback branch to the pane bound to 
   // A missing ancestor record ends the walk.
   branch.forked_from_id = 'sid-gone';
   assert.equal(linked('codex:b'), null);
+});
+
+test('a fork parent lists its own branches, running first, then newest', () => {
+  const node = 'n'.repeat(32);
+  const parent = {uid: 'codex:a', source: 'codex', sid: 'sid-a', fork_parent: true};
+  const older = {uid: 'codex:b', source: 'codex', sid: 'sid-b', forked_from_id: 'sid-a', created: '2026-09-14T00:00:00Z'};
+  const newer = {uid: 'codex:c', source: 'codex', sid: 'sid-c', forked_from_id: 'sid-a', created: '2026-09-15T00:00:00Z'};
+  const elsewhere = {uid: `codex:${node}~d`, node_id: node, source: 'codex', sid: 'sid-d', forked_from_id: 'sid-a'};
+  const grandchild = {uid: 'codex:e', source: 'codex', sid: 'sid-e', forked_from_id: 'sid-b'};
+  const S = {sessions: [parent, older, newer, elsewhere, grandchild], live: new Set(['codex:b'])};
+  const context = contextWithCapabilities(disabled, {S});
+  const children = loadFunction(context, 'forkChildren');
+  assert.deepEqual(children(parent).map(s => s.uid), ['codex:b', 'codex:c'], 'direct branches on this machine only');
+  S.live.clear();
+  assert.deepEqual(children(parent).map(s => s.uid), ['codex:c', 'codex:b'], 'newest first once nothing runs');
+  assert.equal(children(grandchild).length, 0);
+  assert.equal(children({uid: 'tmux:x', source: 'codex'}).length, 0, 'a pending row without a sid has no branches');
 });
 
 test('the pending stage speaks in user terms and stays silent while nothing is wrong', () => {
@@ -331,12 +416,12 @@ test('bug-report worker rows surface the manifest status and pending rows name t
   assert.ok(table, 'WORKER_STATUS_TEXT table exists');
   vm.runInContext(table[0], context);
   const worker=loadFunction(context,'workerStatusMessage',source);
-  assert.equal(worker({kind:'bug-report',worker_status:'failed',worker_error:'未注入'}),'提示词注入失败：未注入');
-  assert.equal(worker({kind:'bug-report',worker_status:'submitted'}),'提示词已提交');
+  assert.equal(worker({kind:'bug-report',worker_status:'failed',worker_error:'未注入'}),'未发送，输入已保留：未注入');
+  assert.equal(worker({kind:'bug-report',worker_status:'submitted'}),'已发送');
   assert.equal(worker({worker_status:'failed'}),'');
   context.workerStatusMessage=worker;
   const message=loadFunction(context,'pendingStageMessage',source);
-  assert.equal(message({kind:'bug-report',worker_status:'failed',worker_error:'未注入',declared_sid:'abc'}),'提示词注入失败：未注入');
+  assert.equal(message({kind:'bug-report',worker_status:'failed',worker_error:'未注入',declared_sid:'abc'}),'未发送，输入已保留：未注入');
   const label=loadFunction(context,'pendingStateLabel',source);
   assert.equal(label({record_id:'r',state:'exited'}),'实例已退出');
   assert.equal(label({record_id:'r',state:'running'}),'等待首条消息');
@@ -402,8 +487,9 @@ test('manual terminal capability does not enable the reliable-send composer', as
     alert: text => messages.push(text),
     $: () => assert.fail('Disabled send must not read or consume a draft'),
   });
+  context.conversationSendEnabled=()=>false;
   await loadFunction(context, 'submitComposer', read('term.js'))();
-  assert.match(messages[0], /可靠发送尚未启用/);
+  assert.match(messages[0], /尚未启用会话发送/);
 });
 
 test('only an explicit Rust host exit retires reconnect without consuming a draft', () => {
@@ -514,37 +600,28 @@ test('confirmed pending binding follows native history after its host record exi
   ]);
 });
 
-test('pending composer attachments carry the exact Rust launch receipt identity', async () => {
-  const row={name:'node~pending-host',record_id:'receipt',instance_id:'instance'};
+test('private attachment uploads keep the exact session UID and stable upload ID', async () => {
   let request;
+  class Xhr {
+    upload={};status=200;responseText='{"ok":true,"upload_id":"file-id"}';
+    open(method,url){request={method,url:String(url)};}
+    setRequestHeader(){}
+    send(body){request.body=body;this.onload();}
+  }
   const context=contextWithCapabilities(disabled, {
-    T:{pending:[row]}, pendingUid:name=>`tmux:${name}`,
-    URL, appUrl:path=>`http://sessiondock.test/${path}`, renderComposerItems:()=>{},
-    fetch:async (url, options) => {
-      request={url:String(url),options};
-      return {ok:true,status:200,json:async()=>({ok:true,attachment_id:'1'})};
-    },
+    URL, Blob, XMLHttpRequest:Xhr,COMPOSER_MAX_FILE_BYTES:512*1024*1024,
+    appUrl:path=>`http://sessiondock.test/${path}`,renderComposerItems:()=>{},
+    persistComposerDraft:async()=>true,composerDraftOwner:uid=>uid,
   });
-  const identity=loadFunction(context,'composerAttachmentIdentity',read('term.js'));
-  context.composerAttachmentIdentity=identity;
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(identity('tmux:node~pending-host'))),
-    {uid:'tmux:node~pending-host',record_id:'receipt',instance_id:'instance'});
-  assert.deepEqual(JSON.parse(JSON.stringify(identity('codex:node~native'))),
-    {uid:'codex:node~native'});
-  const upload=loadFunction(context,'uploadComposerAttachment',read('term.js'));
-  await upload({file:{name:'新会话附件.txt',type:'text/plain'},status:'',error:'',uploaded:null},
-    'tmux:node~pending-host');
+  const file=Object.assign(new Blob(['attachment'],{type:'text/plain'}),{name:'新会话附件.txt'});
+  await loadFunction(context,'uploadComposerAttachment',read('term.js'))(
+    {id:'file-id',file,status:'',uploaded:null},'tmux:node~pending-host');
   const query=new URL(request.url).searchParams;
+  assert.equal(new URL(request.url).pathname,'/api/session/conversation/attachment');
   assert.equal(query.get('uid'),'tmux:node~pending-host');
-  assert.equal(query.get('record_id'),'receipt');
-  assert.equal(query.get('instance_id'),'instance');
+  assert.equal(query.get('id'),'file-id');
   assert.equal(query.get('name'),'新会话附件.txt');
-  assert.equal(request.options.method,'POST');
-  const python=contextWithCapabilities(undefined, {T:{pending:[row]},pendingUid:name=>`tmux:${name}`});
-  assert.deepEqual(JSON.parse(JSON.stringify(
-    loadFunction(python,'composerAttachmentIdentity',read('term.js'))('tmux:node~pending-host'))),
-    {uid:'tmux:node~pending-host'});
+  assert.equal(request.method,'POST');assert.equal(request.body,file);
 });
 
 test('explicit false gates only the declared capability and namespaces Rust storage', () => {
@@ -756,7 +833,11 @@ test('file resolution is gated and Python console availability remains unchanged
   const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
-  assert.equal(compatible.slice(compatible.indexOf(start)), baseline.slice(baseline.indexOf(start)));
+  // Availability stays compatible; the intentionally changed click handling is
+  // exercised by hub_console_availability_browser.py and recorded in reference/README.md.
+  const end = 'function bindConsoleButton';
+  assert.equal(compatible.slice(compatible.indexOf(start), compatible.indexOf(end)),
+    baseline.slice(baseline.indexOf(start), baseline.indexOf(end)));
 });
 
 function migrationContext(extra = {}, capabilities = disabled) {
@@ -1146,4 +1227,37 @@ test('SSH terminal receipts show terminal state without native binding messages'
   assert.equal(label({source: 'shell', record_id: 'r', state: 'exited'}), '实例已退出');
   assert.equal(message({source: 'shell', state: 'running', running: true}), '');
   assert.equal(message({source: 'shell', state: 'exited', running: false}), '会话已结束。');
+});
+
+
+test('new pending sessions enter conversation mode, remembered terminal choices are restored', async () => {
+  const calls = [];
+  const context = contextWithCapabilities(disabled, {
+    T: {openViews:new Map()}, showNewSessionStage:row=>calls.push(['conversation',row.name]),
+    openTermPane:async name=>calls.push(['terminal',name]), resolveNewSession:row=>calls.push(['resolve',row.name]),
+  });
+  const open = loadFunction(context, 'openPendingSession', read('term.js'));
+  await open({name:'new',running:true,stale:false});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['conversation','new'],['resolve','new']]);
+  calls.length = 0;
+  context.T.openViews.set('remembered', {});
+  await open({name:'remembered',running:true,stale:false});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['conversation','remembered'],['terminal','remembered'],['resolve','remembered']]);
+});
+
+
+test('restoring empty and legacy nullable drafts keeps defaults and valid input', () => {
+  const context = vm.createContext({newComposerDraft: () => ({text:'',attachments:[],quotes:[],nextAttachmentNumber:1})});
+  loadFunction(context, 'ensureComposerAttachmentNumbers', read('term.js'));
+  const restore=loadFunction(context, 'restoreComposerDraftRecord', read('term.js'));
+  for (const record of [null, {}, {attachments:null}, {text:null,attachments:null,quotes:null}]) {
+    const draft=restore(record);
+    assert.equal(draft.text,'');
+    assert.equal(draft.attachments.length,0);
+    assert.equal(draft.quotes.length,0);
+  }
+  const draft=restore({text:'keep me',attachments:[{id:'image',number:1,file:{name:'image.png',size:3}}],quotes:[{text:'keep quote'}]});
+  assert.equal(draft.text,'keep me');
+  assert.equal(draft.attachments[0].id,'image');
+  assert.equal(draft.quotes[0].text,'keep quote');
 });

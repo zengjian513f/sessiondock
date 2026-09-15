@@ -137,7 +137,9 @@ impl Fixture {
         }
     }
     fn config(&self, bug_report: bool, launcher: &Path) -> Config {
+        directory(&self.root.join("state"));
         Config {
+            state_dir: Some(self.root.join("state")),
             web_dir: self.web.clone(),
             ptyhost_dir: Some(self.host.clone()),
             lifecycle_dir: Some(self.lifecycle.clone()),
@@ -436,7 +438,7 @@ async fn capture_route_answers_the_local_context_and_is_gated_like_the_report() 
 }
 
 #[tokio::test]
-async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
+async fn report_uses_common_send_and_native_history_matches_independently() {
     let Some(host_binary) = ptyhost_binary() else {
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
@@ -652,23 +654,12 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
         .iter()
         .find(|row| row["sid"] == sid)
         .unwrap_or_else(|| panic!("session {sid} not listed: {listed}"));
-    assert_eq!(final_manifest["confirmed_from"]["uid"], row["uid"]);
-    assert_eq!(final_manifest["confirmed_from"]["text_match"], "report_id");
-    assert_eq!(
-        final_manifest["confirmed_from"]["method"],
-        "native_user_record"
-    );
+    assert!(row["uid"].is_string());
+    assert!(final_manifest.get("confirmed_from").is_none());
+    assert_eq!(final_manifest["injection"]["basis"], "SEND");
+    assert!(final_manifest["injection"]["submitted_at"].is_string());
     assert_eq!(final_manifest["worker_source"], "claude");
     assert_eq!(final_manifest["worker"]["record_id"], record_id);
-    assert!(
-        final_manifest["injection"]["pasted_at"].is_string(),
-        "{final_manifest}"
-    );
-    assert!(
-        final_manifest["injection"]["entered_at"].is_string(),
-        "{final_manifest}"
-    );
-    assert_eq!(final_manifest["injection"]["enter_acknowledged"], true);
     assert_eq!(final_manifest["session"], json!({}));
     // The native record carries the exact prompt.
     let jsonl = fs::read_to_string(fixture.jsonl(&sid)).unwrap();
@@ -729,7 +720,7 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
         .map(|entry| fs::read_to_string(entry.path()).unwrap())
         .collect();
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut seen = audit_text.contains("bug_report.worker_submitted");
+    let mut seen = audit_text.contains("bug_report.worker_submission");
     while !seen && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(200)).await;
         seen = fs::read_dir(&fixture.audit)
@@ -738,10 +729,10 @@ async fn report_is_captured_injected_and_confirmed_from_the_native_record() {
             .any(|entry| {
                 fs::read_to_string(entry.path())
                     .unwrap_or_default()
-                    .contains("bug_report.worker_submitted")
+                    .contains("bug_report.worker_submission")
             });
     }
-    assert!(seen, "worker_submitted never reached the audit log");
+    assert!(seen, "worker_submission never reached the audit log");
 
     // A second report for the same page sees the first in its window.
     let (status, reply2) = post(

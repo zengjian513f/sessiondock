@@ -5,6 +5,11 @@ guarded host status, browser leases and the legacy pending view. Default startup
 still launches nothing. Batch ten adds explicit operator native binding, not reliable delivery,
 external CLI takeover, rename, authentication, or production deployment.
 
+New sessions open the conversation page. The configured CLI and ptyhost still
+start on the backend; the browser does not claim or attach a console until the
+user switches to it. Reopening a session may restore the user’s saved terminal
+choice. Saved pending input remains editable even when its CLI has exited.
+
 ## Explicit configuration and startup
 
 Set `SESSIONDOCK_LIFECYCLE_DIR` to an existing private receipt directory and

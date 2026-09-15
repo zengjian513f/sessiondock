@@ -165,7 +165,7 @@ def test_macos_test_step(tmp: Path) -> None:
     """test_mode != none: workspace tests run on the node after tar -x and before cargo build."""
     src, p = "/Users/example/sessiondock-src", MAC_TARGET.prefix
     test_cmd = (f"cd {src} && mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest /Users/example/.cargo/bin/cargo "
-                "test --workspace --locked >.deploy-test.log 2>&1; rc=$?; tail -n 40 .deploy-test.log; "
+                "test --workspace --locked -- --test-threads=1 >.deploy-test.log 2>&1; rc=$?; tail -n 40 .deploy-test.log; "
                 "[ $rc -eq 0 ] && rm -f .deploy-test.log; exit $rc")
     h = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected", log_dir=tmp / "logs"))
     h.probe()

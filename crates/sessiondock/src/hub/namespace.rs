@@ -20,7 +20,16 @@ use super::registry::Node;
 const REFERENCE_KEYS: [&str; 4] = ["uid", "from_uid", "to_uid", "continued_in"];
 /// Subtrees copied verbatim: message payloads, tool input, file contents and
 /// resolved paths may legitimately contain a key called `uid` or `src`.
-const OPAQUE_KEYS: [&str; 6] = ["data", "content", "input", "arguments", "raw", "resolved"];
+const OPAQUE_KEYS: [&str; 8] = [
+    "data",
+    "content",
+    "input",
+    "arguments",
+    "raw",
+    "resolved",
+    "legacy",
+    "legacy_delivery",
+];
 const MEDIA_PREFIX: &str = "/api/media/";
 
 /// A reference that cannot be scoped or unscoped; the
@@ -153,6 +162,9 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             decorate_row(session, node, false, false)?;
         }
     }
+    if path == "/api/session/conversation/restart" {
+        decorate_row(&mut result, node, true, false)?;
+    }
     if path == "/api/bug-report"
         && let Some(worker) = result
             .get_mut("worker")
@@ -160,6 +172,28 @@ fn rewrite(data: Value, node: &Node, path: &str, strict: bool) -> Result<Value, 
             .and_then(Value::as_object_mut)
     {
         decorate_row(worker, node, true, false)?;
+    }
+    if path.starts_with("/api/session/conversation") {
+        if let Some(session) = result
+            .get_mut("draft")
+            .and_then(|d| d.get_mut("value"))
+            .and_then(|v| v.get_mut("session"))
+            .and_then(Value::as_object_mut)
+        {
+            decorate_row(session, node, true, false)?;
+        }
+        if let Some(drafts) = result.get_mut("drafts").and_then(Value::as_array_mut) {
+            for draft in drafts {
+                if let Some(session) = draft
+                    .get_mut("draft")
+                    .and_then(|d| d.get_mut("value"))
+                    .and_then(|v| v.get_mut("session"))
+                    .and_then(Value::as_object_mut)
+                {
+                    decorate_row(session, node, true, false)?;
+                }
+            }
+        }
     }
     if path == "/api/trash"
         && let Some(items) = result.get_mut("items").and_then(Value::as_array_mut)

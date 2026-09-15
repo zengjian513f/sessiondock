@@ -1878,6 +1878,62 @@ fn same_content(dir: &Dir, name: &str, bytes: &[u8]) -> bool {
     file.read_to_end(&mut existing).is_ok() && existing == bytes
 }
 
+enum AttachmentBody<'a> {
+    Bytes(&'a [u8]),
+    File(&'a Path),
+}
+impl AttachmentBody<'_> {
+    fn len(&self) -> Result<u64, FileError> {
+        match self {
+            Self::Bytes(bytes) => Ok(bytes.len() as u64),
+            Self::File(path) => Ok(std::fs::metadata(path).map_err(FileError::io)?.len()),
+        }
+    }
+    fn write_to(&self, writer: &mut impl Write) -> Result<(), FileError> {
+        match self {
+            Self::Bytes(bytes) => writer.write_all(bytes).map_err(FileError::io),
+            Self::File(path) => {
+                let mut file = std::fs::File::open(path).map_err(FileError::io)?;
+                std::io::copy(&mut file, writer).map_err(FileError::io)?;
+                Ok(())
+            }
+        }
+    }
+    fn same_content(&self, dir: &Dir, name: &str) -> bool {
+        match self {
+            Self::Bytes(bytes) => same_content(dir, name, bytes),
+            Self::File(path) => {
+                let mut options = OpenOptions::new();
+                options.read(true).follow(FollowSymlinks::No).nonblock(true);
+                let (Ok(mut a), Ok(mut b)) =
+                    (dir.open_with(name, &options), std::fs::File::open(path))
+                else {
+                    return false;
+                };
+                let (Ok(am), Ok(bm)) = (a.metadata(), b.metadata()) else {
+                    return false;
+                };
+                if !am.is_file() || am.len() != bm.len() {
+                    return false;
+                }
+                let mut left = [0u8; 65536];
+                let mut right = [0u8; 65536];
+                loop {
+                    let Ok(n) = a.read(&mut left) else {
+                        return false;
+                    };
+                    if b.read_exact(&mut right[..n]).is_err() || left[..n] != right[..n] {
+                        return false;
+                    }
+                    if n == 0 {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl WriteService {
     pub const BUG_REPORT_ATTACHMENT_MAX_BYTES: usize = BUG_REPORT_ATTACHMENT_MAX_BYTES;
 
@@ -1895,6 +1951,21 @@ impl WriteService {
         let cwd = boundary::absolute_navigation(scope.cwd)?;
         self.guard(&cwd.join(crate::bug_report::ATTACHMENT_DIR))?;
         self.bug_report_upload(&cwd, requested_id, name, mime, bytes)
+    }
+
+    /// Publish a private, completely uploaded file without buffering it in RAM.
+    pub fn session_attachment_publish(
+        &self,
+        scope: &FileScope<'_>,
+        requested_id: Option<&str>,
+        name: &str,
+        mime: &str,
+        path: &Path,
+    ) -> Result<Value, FileError> {
+        super::references::validate_scope(scope)?;
+        let cwd = boundary::absolute_navigation(scope.cwd)?;
+        self.guard(&cwd.join(crate::bug_report::ATTACHMENT_DIR))?;
+        self.attachment_upload(&cwd, requested_id, name, mime, AttachmentBody::File(path))
     }
 
     /// Exposed for the transport's tests.
@@ -1916,14 +1987,31 @@ impl WriteService {
         supplied_mime: &str,
         bytes: &[u8],
     ) -> Result<Value, FileError> {
-        if bytes.is_empty() {
+        self.attachment_upload(
+            repository,
+            requested_id,
+            raw_name,
+            supplied_mime,
+            AttachmentBody::Bytes(bytes),
+        )
+    }
+    fn attachment_upload(
+        &self,
+        repository: &Path,
+        requested_id: Option<&str>,
+        raw_name: &str,
+        supplied_mime: &str,
+        body: AttachmentBody<'_>,
+    ) -> Result<Value, FileError> {
+        let size = body.len()?;
+        if size == 0 {
             return Err(FileError::new(
                 400,
                 "file_upload_empty",
                 "附件为空或缺少 Content-Length",
             ));
         }
-        if bytes.len() > BUG_REPORT_ATTACHMENT_MAX_BYTES {
+        if size > BUG_REPORT_ATTACHMENT_MAX_BYTES as u64 {
             return Err(FileError::new(
                 413,
                 "file_upload_too_large",
@@ -2024,7 +2112,7 @@ impl WriteService {
         cap_std::fs::OpenOptionsExt::mode(&mut options, 0o600);
         let written = (|| -> Result<(), FileError> {
             let mut temp = batch.open_with(&stamp, &options).map_err(FileError::io)?;
-            temp.write_all(bytes).map_err(FileError::io)?;
+            body.write_to(&mut temp)?;
             temp.sync_data().map_err(FileError::io)
         })();
         if let Err(error) = written {
@@ -2054,7 +2142,7 @@ impl WriteService {
             };
             match batch.symlink_metadata(&candidate) {
                 Ok(metadata) if metadata.is_symlink() => continue,
-                Ok(metadata) if metadata.is_file() && same_content(&batch, &candidate, bytes) => {
+                Ok(metadata) if metadata.is_file() && body.same_content(&batch, &candidate) => {
                     target = Some(candidate);
                     reused = true;
                     break;
@@ -2079,12 +2167,13 @@ impl WriteService {
                     cap_std::fs::OpenOptionsExt::mode(&mut create, 0o600);
                     match batch.open_with(&candidate, &create) {
                         Ok(mut file) => {
-                            if let Err(error) =
-                                file.write_all(bytes).and_then(|()| file.sync_data())
+                            if let Err(error) = body
+                                .write_to(&mut file)
+                                .and_then(|()| file.sync_data().map_err(FileError::io))
                             {
                                 let _ = batch.remove_file(&candidate);
                                 let _ = batch.remove_file(&stamp);
-                                return Err(FileError::io(error));
+                                return Err(error);
                             }
                             target = Some(candidate);
                             break;
@@ -2140,7 +2229,7 @@ impl WriteService {
         Ok(json!({
             "ok": true, "name": name, "original_name": original, "path": path,
             "relative_path": relative, "attachment_id": attachment_id, "mime": mime,
-            "kind": kind, "size": bytes.len(), "reused": reused, "media": Value::Null,
+            "kind": kind, "size": size, "reused": reused, "media": Value::Null,
             "path_style": if cfg!(windows) { "windows" } else { "posix" },
         }))
     }

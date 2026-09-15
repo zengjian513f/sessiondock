@@ -56,8 +56,8 @@ pub struct ExecutorLimits {
     /// After this long without acknowledgment the
     /// fixed confirmation fence is re-read, at most once per interval.
     pub confirm_timeout: Duration,
-    /// Automatic native tracking stops after this window; the receipt keeps
-    /// its state and is annotated once with the domain's timeout issue.
+    /// Claude is annotated once after this window and continues rate-limited
+    /// native reconciliation. Codex stops automatic tracking after the window.
     pub tracking_window: Duration,
     pub tick: Duration,
     /// Queued rows that could not be dispatched (unknown composer, lease held
@@ -1795,7 +1795,7 @@ impl DeliveryExecutor {
     async fn observe_row(&self, row: &Receipt, now: Instant) {
         let id = row.request.id.clone();
         let scope = row.request.payload.scope.clone();
-        let (overdue, replay, timed_out) = {
+        let (expired, replay, annotate_timeout) = {
             let mut tracking = self.tracking.lock().unwrap_or_else(|p| p.into_inner());
             let entry = tracking
                 .submitted
@@ -1808,34 +1808,31 @@ impl DeliveryExecutor {
                     timed_out: false,
                 });
             let elapsed = now.duration_since(entry.since);
-            if elapsed >= self.limits.tracking_window {
-                let first = !entry.timed_out;
-                entry.timed_out = true;
-                (true, false, Some(first))
-            } else {
-                let overdue = elapsed >= self.limits.confirm_timeout;
-                let replay = overdue
-                    && entry
-                        .last_replay
-                        .is_none_or(|at| now.duration_since(at) >= self.limits.confirm_timeout);
-                if replay {
-                    entry.last_replay = Some(now);
-                }
-                (overdue, replay, None)
+            let expired = elapsed >= self.limits.tracking_window;
+            let annotate_timeout = expired && !entry.timed_out;
+            entry.timed_out |= expired;
+            let replay = (expired || elapsed >= self.limits.confirm_timeout)
+                && entry
+                    .last_replay
+                    .is_none_or(|at| now.duration_since(at) >= self.limits.confirm_timeout);
+            if replay {
+                entry.last_replay = Some(now);
             }
+            (expired, replay, annotate_timeout)
         };
-        if let Some(first) = timed_out {
-            if first {
-                let _ = self
-                    .apply(Command::Timeout {
-                        id: id.clone(),
-                        scope: scope.clone(),
-                    })
-                    .await;
-            }
+        if annotate_timeout {
+            let _ = self
+                .apply(Command::Timeout {
+                    id: id.clone(),
+                    scope: scope.clone(),
+                })
+                .await;
+        }
+        // Old receipts, including those recovered after restart, still need
+        // one fixed-fence read per interval to find an existing or late input.
+        if expired && !replay {
             return;
         }
-        let _ = overdue;
         let Ok(applied) = self
             .apply(Command::InspectNative {
                 id: id.clone(),

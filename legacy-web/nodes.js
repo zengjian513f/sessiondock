@@ -115,6 +115,8 @@ function bindConsoleButton(button, uid, agent = null) {
   button.onclick = async () => {
     showConsoleToast('');
     const reason = consoleUnavailableReason(uid, agent, false);
+    // 重复点击等待中的连接只呈现提示；原生 alert 会阻塞响应回调和超时清理。
+    if (ConsoleUI.busy.has(uid)) return showConsoleToast(reason);
     if (reason) return alert('控制台不可用：\n' + reason);
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败原因由终端呈现。
     ConsoleUI.busy.add(uid);
@@ -130,6 +132,7 @@ function bindConsoleButton(button, uid, agent = null) {
     } finally {
       ConsoleUI.busy.delete(uid);
       if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
+      if (ConsoleUI.errors.has(uid)) showConsoleToast(ConsoleUI.errors.get(uid));
     }
   };
   paintConsoleAvailability(button, uid, agent);
