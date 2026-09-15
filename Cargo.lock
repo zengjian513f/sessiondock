@@ -1121,6 +1121,7 @@ dependencies = [
  "native-tls",
  "ptyhost-client",
  "regex",
+ "regex-syntax",
  "rustix",
  "serde",
  "serde_json",

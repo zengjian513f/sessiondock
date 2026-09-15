@@ -237,9 +237,13 @@ def run_explicit_paths_and_values(tmp, data):
     if code != 0:
         fail("small cache", out)
     code, out = check_config({"SESSIONDOCK_SEARCH_CACHE_DIR": str(explicit), "SESSIONDOCK_SEARCH_WORKERS": "3",
-                              "SESSIONDOCK_SEARCH_WARMUP": "7"}, data.root)
-    if code != 0 or f"search_cache_dir={explicit}" not in out or "search_workers=3" not in out or "search_warmup=7" not in out:
+                              "SESSIONDOCK_SEARCH_WARMUP": "7", "SESSIONDOCK_SEARCH_FOLD_BYTES": "4096"}, data.root)
+    if (code != 0 or f"search_cache_dir={explicit}" not in out or "search_workers=3" not in out
+            or "search_warmup=7" not in out or "search_fold_bytes=4096" not in out):
         fail("check-config", out)
+    code, out = check_config({"SESSIONDOCK_SEARCH_FOLD_BYTES": "lots"}, data.root)
+    if code == 0:
+        fail("check-config", "non-integer SESSIONDOCK_SEARCH_FOLD_BYTES accepted")
     passed("--check-config accepts cache aliases and values and echoes search settings")
 
 

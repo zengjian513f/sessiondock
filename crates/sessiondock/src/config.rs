@@ -79,6 +79,10 @@ pub struct Config {
     /// Byte cap of the on-disk search-text cache, least recently used entries
     /// evicted first (`SESSIONDOCK_SEARCH_CACHE_BYTES`, default 1 GiB).
     pub search_cache_bytes: u64,
+    /// Byte cap of the resident case-folded copies of cached bodies that the
+    /// search prefilter reads, least recently used evicted first
+    /// (`SESSIONDOCK_SEARCH_FOLD_BYTES`, default 128 MiB).
+    pub search_fold_bytes: u64,
     /// Parse slots the search-text producer may use at once, shared by all
     /// searches and the warm-up; independent of the read worker pool
     /// (`SESSIONDOCK_SEARCH_WORKERS`, default `clamp(cpus/2, 2, 8)`).
@@ -269,6 +273,7 @@ impl Default for Config {
             hostname: system_hostname(),
             search_cache_dir: None,
             search_cache_bytes: 1024 * 1024 * 1024,
+            search_fold_bytes: crate::search::cache::FOLD_BYTES,
             search_workers: default_search_workers(),
             search_warmup_secs: 300,
             pools: Pools::default(),
@@ -384,6 +389,17 @@ impl Config {
                     io::Error::new(
                         io::ErrorKind::InvalidInput,
                         "SESSIONDOCK_SEARCH_CACHE_BYTES must be an integer",
+                    )
+                })?;
+        }
+        if let Some(bytes) = env::var_os("SESSIONDOCK_SEARCH_FOLD_BYTES") {
+            config.search_fold_bytes = bytes
+                .to_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "SESSIONDOCK_SEARCH_FOLD_BYTES must be an integer",
                     )
                 })?;
         }
