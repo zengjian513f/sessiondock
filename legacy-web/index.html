@@ -187,11 +187,19 @@
     <div id="left">
       <div class="side-search">
         <div class="qbox">
-          <input id="q" autocomplete="off" placeholder="搜索标题…  Enter 搜索对话正文">
+          <input id="q" autocomplete="off" aria-label="搜索会话" placeholder="空格分词，双引号搜短语；Enter 搜正文">
+        </div>
+        <div class="search-controls">
+          <div class="opts" id="search-mode" role="group" aria-label="关键词匹配方式">
+            <button type="button" data-mode="all" title="所有关键词都出现，可在不同消息中" aria-pressed="true" class="on">全部词</button>
+            <button type="button" data-mode="any" title="任意一个关键词出现" aria-pressed="false">任一词</button>
+          </div>
           <div class="opts" id="opts">
             <button data-o="case" title="大小写敏感">Aa</button>
             <button data-o="word" title="全词匹配">ab|</button>
-            <button data-o="regex" title="正则表达式">.*</button>
+            <details id="search-advanced"><summary>高级</summary>
+              <button data-o="regex" title="整段输入作为正则表达式">正则</button>
+            </details>
           </div>
         </div>
         <div id="stat" role="status">加载中…</div>

@@ -77,7 +77,7 @@ const S = {
   closed: new Set(store.get('closed', [])),
   sel: null,
   term: '',           // 当前要高亮的词 (= 搜索框内容)
-  opts: Object.assign({ case: false, word: false, regex: false }, store.get('opts', {})),
+  opts: Object.assign({ case: false, word: false, regex: false, mode: 'all' }, store.get('opts', {})),
   cur: -1,            // 匹配跳转游标
   autoOpen: 0,        // 本次渲染已自动展开的命中消息数
   markCapped: false,  // 高亮是否因数量上限被截断
@@ -2518,7 +2518,7 @@ function visible() {
     && !S.off.has(s.source) && nodeSelected(s));
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
-  return pool.filter(s => hasTerm(s.title) || hasTerm(s.cwd) || hasTerm(s.node_name || ''));
+  return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n')));
 }
 
 // ---------------------------------------------------------------- 左栏
@@ -3569,15 +3569,54 @@ function renderSide() {
   fitTimelineDirectories();
 }
 
-// 与后端 build_pattern 保持同一套规则: 全词用环视而非 \b, 中文才能正常匹配
+function searchTerms(text) {
+  const terms = [], chars = Array.from(text);
+  let term = '', quoted = false;
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i];
+    if (quoted && c === '\\' && (chars[i + 1] === '"' || chars[i + 1] === '\\')) {
+      term += chars[++i];
+    } else if (c === '"') {
+      quoted = !quoted;
+    } else if (!quoted && /[\s\u0085]/u.test(c)) {
+      if (term) { terms.push(term); term = ''; }
+    } else {
+      term += c;
+    }
+  }
+  if (term) terms.push(term);
+  return [...new Set(terms)];
+}
+
+function literalSource(term) {
+  const src = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return S.opts.word ? `(?<![\\p{L}\\p{N}_])(?:${src})(?![\\p{L}\\p{N}_])` : src;
+}
+
+// Individual message previews and highlighting match any term, even when
+// the session-level AND is satisfied by terms in different messages.
 function reTerm(global) {
-  let src = S.opts.regex ? S.term : S.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (S.opts.word) src = `(?<!\\w)(?:${src})(?!\\w)`;
+  let src;
+  if (S.opts.regex) {
+    src = S.term;
+    if (S.opts.word) src = `(?<!\\w)(?:${src})(?!\\w)`;
+  } else {
+    const terms = searchTerms(S.term).sort((a, b) => b.length - a.length);
+    if (!terms.length) return null;
+    src = terms.map(literalSource).join('|');
+  }
   try {
-    return new RegExp(src, (S.opts.case ? '' : 'i') + (global ? 'g' : ''));
+    return new RegExp(src, (S.opts.case ? '' : 'i') + (global ? 'g' : '') + (S.opts.regex ? '' : 'u'));
   } catch {
     return null;   // 正则写到一半是常态, 不该炸掉整个界面
   }
+}
+
+function matchesSearch(text) {
+  if (S.opts.regex) return hasTerm(text);
+  const terms = searchTerms(S.term);
+  const test = term => new RegExp(literalSource(term), S.opts.case ? 'u' : 'iu').test(text);
+  return S.opts.mode === 'any' ? terms.some(test) : terms.every(test);
 }
 
 function hasTerm(t) {
@@ -3589,7 +3628,13 @@ function hasTerm(t) {
 function hl(text) {
   const re = S.term && reTerm(true);
   if (!re) return esc(text);
-  return esc(text).replace(re, m => `<mark>${m}</mark>`);
+  let html = '', last = 0;
+  for (const match of text.matchAll(re)) {
+    if (!match[0]) continue;
+    html += esc(text.slice(last, match.index)) + `<mark>${esc(match[0])}</mark>`;
+    last = match.index + match[0].length;
+  }
+  return html + esc(text.slice(last));
 }
 
 /** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
@@ -3622,7 +3667,7 @@ function markMatches(root) {
     let last = 0, m;
     re.lastIndex = 0;
     while ((m = re.exec(t.nodeValue))) {
-      if (!m[0]) { re.lastIndex++; continue; }
+      if (!m[0]) { re.lastIndex += re.unicode && t.nodeValue.codePointAt(re.lastIndex) > 0xffff ? 2 : 1; continue; }
       frag.append(t.nodeValue.slice(last, m.index));
       const mk = document.createElement('mark');
       mk.textContent = m[0];
@@ -7382,6 +7427,7 @@ async function runSearch() {
     return;
   }
   const p = new URLSearchParams({ q });
+  if (!S.opts.regex) p.set('mode', S.opts.mode === 'any' ? 'any' : 'all');
   if (HUB_MODE) p.set('source', Object.keys(SOURCES).filter(x => !S.off.has(x)).join(','));
   for (const k of ['case', 'word', 'regex']) if (S.opts[k]) p.set(k, '1');
   const ac = searchAbort = new AbortController();
@@ -7437,10 +7483,29 @@ $('#opts').onclick = e => {
   if (S.results) runSearch(); else renderSide();
 };
 
+$('#search-mode').onclick = e => {
+  const b = e.target.closest('button[data-mode]');
+  if (!b) return;
+  S.opts.mode = b.dataset.mode;
+  store.set('opts', S.opts);
+  renderOpts();
+  if (S.results) runSearch(); else renderSide();
+};
+
 function renderOpts() {
-  for (const b of $('#opts').children) b.classList.toggle('on', !!S.opts[b.dataset.o]);
+  for (const b of $('#opts').querySelectorAll('button[data-o]')) {
+    b.classList.toggle('on', !!S.opts[b.dataset.o]);
+    b.setAttribute('aria-pressed', String(!!S.opts[b.dataset.o]));
+  }
+  $('#search-mode').hidden = !!S.opts.regex;
+  for (const b of $('#search-mode').querySelectorAll('button')) {
+    const selected = b.dataset.mode === (S.opts.mode === 'any' ? 'any' : 'all');
+    b.classList.toggle('on', selected);
+    b.setAttribute('aria-pressed', String(selected));
+  }
+  $('#search-advanced').open = !!S.opts.regex;
   $('#q').placeholder = S.opts.regex ? '正则搜索…  Enter 搜索对话正文'
-                                     : '搜索标题…  Enter 搜索对话正文';
+                                     : '空格分词，双引号搜短语；Enter 搜正文';
 }
 
 $('#reload').onclick = () => { cancelSearch(true); loadSessions(true); };
