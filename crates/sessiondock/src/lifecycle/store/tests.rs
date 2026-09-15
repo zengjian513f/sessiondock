@@ -1030,7 +1030,9 @@ fn refresh_many_reloads_the_ledger_once_where_single_observations_reload_per_cal
     let spec = f.spec();
     let mut running = Vec::new();
     for index in 0..5 {
-        let created = store.create(&format!("request-batch-{index}"), &spec).unwrap();
+        let created = store
+            .create(&format!("request-batch-{index}"), &spec)
+            .unwrap();
         let start = store.begin_start(created.prepared.unwrap()).unwrap();
         running.push(store.mark_running(start).unwrap());
     }
@@ -1040,7 +1042,11 @@ fn refresh_many_reloads_the_ledger_once_where_single_observations_reload_per_cal
             .observe(ObservationEvidence::new(record, Observation::Running))
             .unwrap();
     }
-    assert_eq!(store.disk_reads(), before + running.len(), "observe reloads per call");
+    assert_eq!(
+        store.disk_reads(),
+        before + running.len(),
+        "observe reloads per call"
+    );
 
     let items = running
         .iter()
