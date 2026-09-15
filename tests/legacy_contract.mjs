@@ -147,6 +147,15 @@ test('selecting an existing pending terminal does not rebuild the full sidebar',
   assert.equal(renders, 2, 'new or not-yet-rendered rows still rebuild the sidebar');
 });
 
+test('the audit flush drains its response body', () => {
+  // An unread fetch response keeps a 2 MiB shared-memory data pipe (one fd) in
+  // the renderer until GC; at one audit POST per second the renderer's 1024-fd
+  // limit fills in minutes and the tab freezes in GPU code (2026-09-15).
+  const flush = appSource.slice(appSource.indexOf('async function flushBrowserAudit'),
+    appSource.indexOf('function flushBrowserAuditBeacon'));
+  assert.match(flush, /await response\.arrayBuffer\(\)\.catch\(\(\) => \{\}\);\n\s+if \(!response\.ok\)/);
+});
+
 test('terminals use the DOM renderer only', () => {
   // A WebGL context made this the one tab whose renderer froze for good when
   // Edge's GPU command buffer failed (NVIDIA + Wayland); synchronized frames
@@ -523,11 +532,15 @@ test('absent metadata flushes audit batches through auditPayload without keepali
     AUDIT_BATCH_BYTES: 48 * 1024, AUDIT_BATCH_COUNT: 20, auditEncoder: new TextEncoder(),
     AUDIT_PAGE_ID: 'page', BUILD_ID: 'build', S: {sel: 'codex:sel'}, appUrl: value => value,
     clearTimeout: () => {}, setTimeout: () => 1, navigator: {onLine: true},
-    fetch: async (url, options) => {calls.push({url, options}); return {ok: true, status: 200};},
+    fetch: async (url, options) => {
+      calls.push({url, options});
+      return {ok: true, status: 200, arrayBuffer: async () => { calls[calls.length - 1].drained = true; return new ArrayBuffer(0); }};
+    },
   });
   for (const name of ['auditEventBytes', 'spliceAuditBatch', 'capAuditQueue', 'auditPayload']) loadFunction(context, name);
   await loadFunction(context, 'flushBrowserAudit')();
   assert.equal(calls.length, 1);
+  assert.equal(calls[0].drained, true, 'the response body must be consumed, or its data pipe leaks a renderer fd');
   assert.equal(calls[0].url, 'api/audit/browser');
   assert.equal(calls[0].options.keepalive, undefined);
   const body = JSON.parse(calls[0].options.body);

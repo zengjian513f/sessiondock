@@ -216,6 +216,10 @@ async function flushBrowserAudit() {
       },
       body: auditPayload(events),
     });
+    // 必须把响应体读完：没读的 fetch 响应在渲染进程里各占着一条 2 MiB 共享内存
+    // 数据管道（一个 fd），直到 GC 才释放。这里每秒一条，渲染进程 1024 个 fd 的
+    // 上限十几分钟就满，之后 GPU 命令缓冲区拿不到共享内存，整页在原生代码里卡死。
+    await response.arrayBuffer().catch(() => {});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     browserAuditFailCount = 0;
   } catch (error) {
