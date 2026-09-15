@@ -302,7 +302,7 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
 test('continued-in: the old Claude file is hidden while its continuation is listed and never nests it as a child', () => {
   const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
   const context = ctx({S});
-  for (const name of ['spawnKey', 'spawnParentOf', 'nestTree', 'sessionContinued', 'sessionHidden']) load(context, name);
+  for (const name of ['spawnKey', 'spawnParentOf', 'nestTree', 'sessionContinued', 'hiddenForkParent', 'sessionHidden']) load(context, name);
   const old = {uid: 'claude:old', source: 'claude', sid: 'old', updated: '2026-09-12T00:00:00Z', continued_in: 'claude:new'};
   // The continuation inherits the old process's environment: the scan records the old session as its spawner.
   const fresh = {uid: 'claude:new', source: 'claude', sid: 'new', updated: '2026-09-12T01:00:00Z', spawned_by: {source: 'claude', sid: 'old'}};
@@ -321,6 +321,51 @@ test('continued-in: the old Claude file is hidden while its continuation is list
   // Fork parents keep their own rule.
   assert.equal(context.sessionHidden({uid: 'codex:p', fork_parent: true}), true);
   assert.equal(context.sessionHidden({uid: 'codex:p', fork_parent: true, fork_parent_visible: true}), false);
+});
+
+test('Codex rollback: the deepest branch is the leaf, live siblings first, and only a newly hidden selection follows it', async () => {
+  const S = {sel: 'codex:a', agent: null, live: new Set(), sessions: []};
+  const T = {uid: 'codex:a'};
+  const opened = [], migrated = [], audited = [];
+  const MOBILE = {matches: false}, page = new Map([['mobilePage', 'detail']]);
+  const context = ctx({S, T, MOBILE, store: {get: (key, fallback) => page.has(key) ? page.get(key) : fallback},
+    migrateComposerDraft: (from, to) => migrated.push([from, to]),
+    browserAuditEvent: (event, data, _content, fields) => audited.push([event, data, fields]),
+    openSession: async (uid, agent, options) => opened.push([uid, agent, options])});
+  for (const name of ['hiddenForkParent', 'forkAncestors', 'forkLeaf', 'forkLeafUid', 'followSelectedFork']) load(context, name);
+  const a = {uid: 'codex:a', source: 'codex', sid: 'sid-a', fork_parent: true, created: '2026-09-14T00:00:00Z'};
+  const b = {uid: 'codex:b', source: 'codex', sid: 'sid-b', forked_from_id: 'sid-a', fork_parent: true, created: '2026-09-14T06:00:00Z'};
+  const c = {uid: 'codex:c', source: 'codex', sid: 'sid-c', forked_from_id: 'sid-b', created: '2026-09-15T00:00:00Z'};
+  const stale = {uid: 'codex:s', source: 'codex', sid: 'sid-s', forked_from_id: 'sid-b', created: '2026-09-15T01:00:00Z'};
+  const other = {uid: 'codex:o', node_id: 'n2', source: 'codex', sid: 'sid-o', forked_from_id: 'sid-a'};
+  S.sessions = [a, b, c, stale, other];
+  // Newest sibling wins without liveness; a live sibling wins over a newer one.
+  assert.equal(context.forkLeafUid('codex:a'), 'codex:s');
+  S.live.add('codex:c');
+  assert.equal(context.forkLeafUid('codex:a'), 'codex:c');
+  assert.equal(context.forkLeafUid('codex:b'), 'codex:c');
+  assert.equal(context.forkLeafUid('codex:c'), 'codex:c');
+  assert.equal(context.forkLeafUid('codex:missing'), 'codex:missing');
+  // The page on the rolled-back parent moves to the leaf, console and draft included.
+  assert.equal(await context.followSelectedFork(), true);
+  same(opened, [['codex:c', null, {exact: true}]]);
+  same(migrated, [['codex:a', 'codex:c']]);
+  assert.equal(T.uid, 'codex:c');
+  assert.equal(audited[0][0], 'session.fork_followed');
+  // A parent the user chose to keep listed, a subagent view and a leaf itself stay put.
+  opened.length = 0;
+  S.sel = 'codex:c';
+  assert.equal(await context.followSelectedFork(), false);
+  S.sel = 'codex:a'; a.fork_parent_visible = true;
+  assert.equal(await context.followSelectedFork(), false);
+  a.fork_parent_visible = false; S.agent = 'agent-1';
+  assert.equal(await context.followSelectedFork(), false);
+  // A phone parked on the session list is not pulled into the detail page.
+  S.agent = null; MOBILE.matches = true; page.set('mobilePage', 'list');
+  assert.equal(await context.followSelectedFork(), false);
+  page.set('mobilePage', 'detail');
+  assert.equal(await context.followSelectedFork(), true);
+  same(opened, [['codex:c', null, {exact: true}]]);
 });
 
 test('unread rows carry only a count; the badge colour comes from the current state, grey once exited', () => {

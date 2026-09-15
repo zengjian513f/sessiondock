@@ -31,6 +31,8 @@ pub const SERVER_PAGE: &str = "sessiondock-delivery-executor";
 #[derive(Clone)]
 pub struct DeliveryTarget {
     pub name: String,
+    /// The uid the host's binding names (a Codex rollback branch delivers
+    /// under its ancestor's), which every guarded capture and write asserts.
     pub uid: String,
     pub instance_id: String,
     pub bound: Arc<BoundTarget>,
