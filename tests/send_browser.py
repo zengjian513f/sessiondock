@@ -65,6 +65,8 @@ def create_claude(page, base, work, *, open_terminal=True):
     assert receipt["running"] and receipt["launch_kind"] == "new_assigned", receipt
     expect(page.locator("#termpane")).to_be_hidden()
     expect(page.locator("#composer")).to_be_visible()
+    expect(page.locator("#cadd")).to_be_visible()
+    expect(page.locator("#cesc")).to_be_visible()
     assert page.evaluate("T.views.size === 0 && T.openViews.size === 0")
     if not open_terminal:
         return receipt
@@ -219,31 +221,51 @@ def main():
                     assert page.evaluate('T.views.size')==0
                     uid='tmux:'+receipt['name']
                     build=context.request.get(base+'/api/meta').json()['build']
-                    def send(text):
+                    def send(text, check_width=False):
                         page.fill('#cinput',text)
-                        with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as response:
-                            page.locator('#csend').click()
-                        assert response.value.status==200,response.value.text()
-                        assert response.value.json()['state']=='sent'
+                        if check_width:
+                            idle_width=page.locator('#csend').evaluate('el => el.getBoundingClientRect().width')
+                            with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as response:
+                                page.locator('#csend').click()
+                                page.wait_for_function("document.querySelector('#csend').getAttribute('aria-busy') === 'true'")
+                                busy=page.locator('#csend').evaluate('''el => {
+                                    const after=getComputedStyle(el,'::after');
+                                    return {width:el.getBoundingClientRect().width,text:el.textContent,
+                                            busy:el.getAttribute('aria-busy'),label:el.getAttribute('aria-label'),
+                                            spin:after.animationName};
+                                }''')
+                                assert busy['text']=='发送' and busy['busy']=='true' and busy['label']=='发送中',busy
+                                assert abs(busy['width']-idle_width)<0.51,(idle_width,busy)
+                                assert 'send-spin' in (busy['spin'] or ''),busy
+                            sent=response.value
+                        else:
+                            with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as response:
+                                page.locator('#csend').click()
+                            sent=response.value
+                        assert sent.status==200,sent.text()
+                        assert sent.json()['state']=='sent'
                         expect(page.locator('#cinput')).to_have_value('')
                         assert not page.locator('.client-outbox,.draft-saved').count()
                         return sends[-1]
-                    # Empty legacy evidence must leave a fresh server draft untouched.
+                    # Empty legacy evidence must not inject text. Launch may already
+                    # have bound the pending session identity into an empty draft.
                     response=context.request.post(base+'/api/session/conversation/import',data={'uid':uid,'value':{'text':'','attachments':[],'quotes':[]}})
                     assert response.status==200,response.text()
                     row=context.request.get(base+'/api/session/conversation?uid='+uid).json()['draft']
-                    assert row['revision']==0 and row['value'] is None,row
-                    # Repair the already-produced nullable shape without consuming any input.
-                    response=context.request.post(base+'/api/session/conversation',data={'uid':uid,'revision':0,'value':{'text':None,'attachments':None,'quotes':None}})
-                    assert response.status==200,response.text()
-                    repaired=response.json()['draft']['value']
-                    assert repaired['text']=='' and repaired['attachments']==[] and repaired['quotes']==[]
+                    value=row.get('value') or {}
+                    assert not value.get('text') and not value.get('quotes'),row
+                    if row['revision']==0 and row['value'] is None:
+                        # Repair the already-produced nullable shape without consuming any input.
+                        response=context.request.post(base+'/api/session/conversation',data={'uid':uid,'revision':0,'value':{'text':None,'attachments':None,'quotes':None}})
+                        assert response.status==200,response.text()
+                        repaired=response.json()['draft']['value']
+                        assert repaired['text']=='' and repaired['attachments']==[] and repaired['quotes']==[]
                     page.reload(wait_until='networkidle')
                     # With no native user turn yet, reopen the pending instance explicitly.
                     page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',receipt)
                     page.wait_for_function('composerUid && !composerDraft().loading')
                     assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
-                    first=send('first busy input')
+                    first=send('first busy input',check_width=True)
                     started=time.monotonic();second=send('second busy input')
                     assert time.monotonic()-started<2.5 # No JSONL confirmation wait.
                     assert first['request_id']!=second['request_id']
@@ -258,6 +280,22 @@ def main():
                     assert users==['first busy input','second busy input'],users
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
                     native=page.evaluate('S.sel')
+                    # The report worker uses the same SEND outside this page.
+                    # Its successful receipt must clear an already-open viewer.
+                    page.fill('#cinput','server-owned first task')
+                    page.evaluate('''async () => {
+                        const draft=composerDraft();
+                        draft.requestId='server-owned-task';
+                        draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
+                        await persistComposerDraft();
+                    }''')
+                    row=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
+                    external=context.request.post(base+'/api/session/conversation/send',data={
+                        'uid':native,'name':receipt['name'],'request_id':'server-owned-task',
+                        'text':'server-owned first task','draft_revision':row['revision'],
+                        'attachments':[],'quotes':[],'_build':build})
+                    assert external.status==200,external.text()
+                    expect(page.locator('#cinput')).to_have_value('',timeout=10000)
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     server=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
                     assert server['value']['text']=='draft survives refresh'

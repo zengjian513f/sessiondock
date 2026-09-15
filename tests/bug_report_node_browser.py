@@ -5,9 +5,10 @@ Three fake nodes behind `sessiondock-hub` (`tests/hub_fake_node.py`). The picker
 machine like the new-session dialog and defaults to the problem's machine (the selected
 session's); a worker elsewhere first asks the problem's machine for `/api/bug-report/capture`
 and hands the answer to the worker's machine as `captured` (a failed capture becomes
-`captured: {error}`); the chosen machine's missing CLIs are greyed out. `/api/bug-report` and
-`/api/bug-report/capture` are answered at the browser boundary so the bodies the page builds
-can be asserted. No CLI, no session root.
+`captured: {error}`); the chosen machine's missing CLIs are greyed out. Wide layout keeps
+source names and a bounded machine picker; 390px puts two attachments on one row.
+`/api/bug-report` and `/api/bug-report/capture` are answered at the browser boundary so the
+bodies the page builds can be asserted. No CLI, no session root.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import argparse
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
@@ -34,6 +36,8 @@ class Boundary:
         self.capture_status = 200
         self.drafts = {}
         self.uploads = []
+        self.defer = False
+        self.pending = []
 
     def conversation(self, route):
         request=route.request;path=urlsplit(request.url).path
@@ -62,7 +66,7 @@ class Boundary:
         if request.method != "POST":
             return route.continue_()
         body = json.loads(request.post_data or "{}")
-        path = request.url.split("?")[0].rsplit("/api/", 1)[1]
+        path = request.url.split("?")[0].rsplit("/api/", 1)[1].rstrip("/")
         self.calls.append((path, body))
         if path == "bug-report/capture":
             if self.capture_status != 200:
@@ -74,6 +78,9 @@ class Boundary:
                 "session": {"uid": body.get("uid", ""), "cwd": "/srv/a"}, "outbox": {},
                 "terminal_capture": "frame", "events": [{"event": "browser.click"}]}))
         if path == "bug-report":
+            if self.defer:
+                self.pending.append(route)
+                return
             node = body.get("_node", "")
             name = NAMES.get(node, "")
             return route.fulfill(status=202, content_type="application/json", body=json.dumps({
@@ -89,10 +96,11 @@ def options(page):
 
 
 def open_report(page):
-    button = page.locator("#report-bug")
-    if not button.is_visible():
-        page.locator("#header-more-btn").click()
-    button.click()
+    # Resizing can unfold the button between visibility lookup and click.
+    # Resolve whichever entry is currently visible on every click retry.
+    page.locator("#report-bug:visible, #header-more-btn:visible").first.click()
+    if not page.locator("#bug-report-dialog").is_visible():
+        page.locator("#report-bug").click()
 
 
 def check_report_scroll(page):
@@ -159,9 +167,100 @@ def check_report_scroll(page):
     page.set_viewport_size({"width": 1280, "height": 900})
 
 
+def check_send_busy_width(page, boundary):
+    page.evaluate("openBugReportDialog()")
+    page.wait_for_selector("#bug-report-dialog[open]")
+    page.fill("#bug-report-description", "发送按钮不要变宽")
+    idle = page.locator("#bug-report-go").evaluate("el => el.getBoundingClientRect().width")
+    boundary.defer = True
+    page.locator("#bug-report-go").click()
+    page.wait_for_function("document.querySelector('#bug-report-go').getAttribute('aria-busy') === 'true'")
+    busy = page.locator("#bug-report-go").evaluate("""el => {
+      const after = getComputedStyle(el, '::after');
+      return {
+        width: el.getBoundingClientRect().width, text: el.textContent,
+        busy: el.getAttribute('aria-busy'), spin: after.animationName,
+      };
+    }""")
+    assert busy["text"] == "发送" and busy["busy"] == "true", busy
+    assert abs(busy["width"] - idle) < 0.51, (idle, busy)
+    assert "send-spin" in (busy["spin"] or ""), busy
+    deadline = time.monotonic() + 10
+    while not boundary.pending:
+        assert time.monotonic() < deadline, ('bug-report not intercepted', busy, boundary.calls)
+        page.wait_for_timeout(20)
+    for route in boundary.pending:
+        route.fulfill(status=500, content_type="application/json",
+                      body='{"error":"synthetic hold"}')
+    boundary.pending.clear()
+    boundary.defer = False
+    page.wait_for_function("!bugReportSending")
+    page.evaluate("""() => {
+      document.querySelector('#bug-report-dialog').close();
+      clearBugReportDraft();
+    }""")
+    wait_drafts(page)
+    boundary.calls.clear()
+
 
 def wait_drafts(page):
     page.evaluate("async () => { for (;;) { const pending = composerDraftWrites; await pending; if (pending === composerDraftWrites) break; } }")
+
+
+def check_report_layout(page):
+    # Wide dialog: source buttons keep their names, and the machine picker
+    # stays on the same row without eating the leftover width.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.evaluate("openBugReportDialog()")
+    page.wait_for_selector("#bug-report-dialog[open]")
+    page.wait_for_function("!document.querySelector('#bug-report-node-label').hidden")
+    wide = page.evaluate("""() => {
+      const labels = [...document.querySelectorAll('#bug-report-source .src-label')];
+      const hidden = labels.filter(el => !el.offsetWidth || getComputedStyle(el).display === 'none');
+      const row = document.querySelector('.report-row').getBoundingClientRect();
+      const select = document.querySelector('#bug-report-node-label').getBoundingClientRect();
+      const sources = document.querySelector('#bug-report-source').getBoundingClientRect();
+      return {
+        names: labels.map(el => el.textContent),
+        hidden: hidden.length,
+        select_wider: select.width > sources.width,
+        one_row: Math.abs(select.top - sources.top) <= 2
+          && select.right <= sources.left + 1
+          && select.bottom <= row.bottom + 1,
+        select_frac: select.width / row.width,
+      };
+    }""")
+    assert wide["names"] == ["Claude", "Codex", "Grok"], wide
+    assert wide["hidden"] == 0, wide
+    assert wide["one_row"] and not wide["select_wider"] and wide["select_frac"] <= 0.42 + 1e-6, wide
+    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+
+    # Phone: two attachments share one row instead of stacking at 100% width.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.evaluate("openBugReportDialog()")
+    page.wait_for_selector("#bug-report-dialog[open]")
+    page.locator("#bug-report-file").set_input_files([
+        {"name": f"screen-{i}.png", "mimeType": "image/png", "buffer": PNG}
+        for i in range(2)])
+    page.wait_for_function("document.querySelectorAll('#bug-report-items .draft-card').length === 2")
+    phone = page.evaluate("""() => {
+      const cards = [...document.querySelectorAll('#bug-report-items .draft-card')]
+        .map(el => el.getBoundingClientRect());
+      const row = document.querySelector('#bug-report-items').getBoundingClientRect();
+      return {
+        same_row: Math.abs(cards[0].top - cards[1].top) <= 2,
+        gap: cards[1].left - cards[0].right,
+        overflow: cards[0].left < row.left - 1 || cards[1].right > row.right + 1,
+        frac: Math.max(cards[0].width, cards[1].width) / row.width,
+      };
+    }""")
+    assert phone["same_row"] and phone["gap"] >= 0 and not phone["overflow"] and phone["frac"] <= 0.55, phone
+    page.evaluate("""() => {
+      document.querySelector('#bug-report-dialog').close();
+      clearBugReportDraft();
+    }""")
+    wait_drafts(page)
+    page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def check_shared_draft_recovery(page, boundary):
@@ -233,6 +332,8 @@ def main():
 
                     check_shared_draft_recovery(page, boundary)
                     check_report_scroll(page)
+                    check_report_layout(page)
+                    check_send_busy_width(page, boundary)
 
                     # 1. No session selected, all machines ticked: picker lists all three,
                     #    defaults to the first usable machine.
@@ -322,6 +423,16 @@ def main():
                     assert not page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")
                     page.locator("#bug-report-dialog .modal-close").click()
 
+                    open_report(page)
+                    page.wait_for_selector("#bug-report-dialog[open]")
+                    page.evaluate("markStaleBuild('test-build')")
+                    assert page.locator("#bug-report-go").is_disabled()
+                    assert page.locator("#bug-report-add").is_disabled()
+                    page.fill("#bug-report-description", "过期页不能再提交")
+                    page.evaluate("document.querySelector('#bug-report-form').requestSubmit()")
+                    assert page.locator("#bug-report-error").inner_text() == "页面已更新，请重新加载后再提交"
+                    page.locator("#bug-report-dialog .modal-close").click()
+
                     assert not errors, errors
                     browser.close()
             finally:
@@ -329,7 +440,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS bug_report_node_browser: server drafts, session/node isolation, no selection upload, no browser message store, one-click removal, scrollable submit, picker and capture")
+    print("PASS bug_report_node_browser: server drafts, session/node isolation, no selection upload, no browser message store, one-click removal, scrollable submit, named sources, two-up attachments, picker and capture")
 
 
 if __name__ == "__main__":

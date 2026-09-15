@@ -226,7 +226,8 @@ def main():
                         time.sleep(0.1)
                     if dialogs[before:]:
                         assert dialogs[before][0] == "alert", dialogs[before:]
-                    assert not any(x.get("text") == "blocked by the other console" for x in sends), sends
+                    assert [u["content"][0]["text"] for u in user_records(rollout)] == [
+                        "Synthetic codex prompt", "hello from the composer"], user_records(rollout)
                     assert page_two.locator("#msgs .client-outbox").count() == 0
                     wait_server_outbox_empty(other, base, uid)
                     other.close()
