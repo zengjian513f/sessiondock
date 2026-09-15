@@ -924,7 +924,7 @@ mod tests {
             "guard",
             "guard\n",
             "\nguard",
-            "AgentHub was ported to Rust\nno match here at all",
+            "Predecessor was ported to Rust\nno match here at all",
         ];
         let long = format!(
             "{}\nguard {}\nGUARD{}\n{}",
@@ -962,7 +962,7 @@ mod tests {
             ("x", false, false, false),
             ("guard ", false, false, false),
             (" ", false, false, false),
-            ("agenthub.*rust", false, false, true),
+            ("predecessor.*rust", false, false, true),
             ("guard|ddp_?guard", true, false, true),
             ("a|ab", true, false, true),
             ("()", true, false, true),

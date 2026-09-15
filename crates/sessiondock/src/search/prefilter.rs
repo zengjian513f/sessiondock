@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn regex_queries_require_their_literals() {
         let cases: &[(&str, &[&[&str]])] = &[
-            ("agenthub.*rust", &[&["AGENTHUB"], &["RUST"]]),
+            ("predecessor.*rust", &[&["PREDECESSOR"], &["RUST"]]),
             ("guard|ddp_?guard", &[&["GUARD"]]),
             ("ddp_?guard|xyz", &[&["GUARD", "XYZ"]]),
             ("(?i)Foo(bar)+baz?", &[&["FOO"], &["BAR"], &["BA"]]),
@@ -228,7 +228,7 @@ mod tests {
     fn every_match_of_a_regex_passes_its_filter() {
         let bodies = [
             "The ddp_guard hook\nsecond line",
-            "AGENTHUB was ported to Rust",
+            "PREDECESSOR was ported to Rust",
             "guard\tddp guard\nDDPGUARD",
             "catcat and Cat",
             "\u{212A}elvin \u{17F}ession",
@@ -237,7 +237,7 @@ mod tests {
             "nothing here",
         ];
         for pattern in [
-            "agenthub.*rust",
+            "predecessor.*rust",
             "guard|ddp_?guard",
             "(?i)ddp_guard",
             r"(cat)\1",
