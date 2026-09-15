@@ -7485,9 +7485,9 @@ $('#opts').onclick = e => {
 };
 
 $('#search-mode').onclick = e => {
-  const b = e.target.closest('button[data-mode]');
-  if (!b) return;
-  S.opts.mode = b.dataset.mode;
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  S.opts.mode = S.opts.mode === 'any' ? 'all' : 'any';
   store.set('opts', S.opts);
   renderOpts();
   if (S.results) runSearch(); else renderSide();
@@ -7498,15 +7498,17 @@ function renderOpts() {
     b.classList.toggle('on', !!S.opts[b.dataset.o]);
     b.setAttribute('aria-pressed', String(!!S.opts[b.dataset.o]));
   }
-  $('#search-mode').hidden = !!S.opts.regex;
-  for (const b of $('#search-mode').querySelectorAll('button')) {
-    const selected = b.dataset.mode === (S.opts.mode === 'any' ? 'any' : 'all');
-    b.classList.toggle('on', selected);
-    b.setAttribute('aria-pressed', String(selected));
-  }
-  $('#search-advanced').open = !!S.opts.regex;
+  const mode = $('#search-mode-toggle'), any = S.opts.mode === 'any';
+  mode.textContent = any ? 'OR' : 'AND';
+  mode.disabled = !!S.opts.regex;
+  mode.classList.toggle('on', any && !S.opts.regex);
+  mode.setAttribute('aria-pressed', String(any));
+  mode.title = S.opts.regex ? '正则模式使用整段表达式，不使用 AND / OR'
+    : any ? '任一词（OR），点击切换为全部词（AND）'
+          : '全部词（AND），点击切换为任一词（OR）；关键词可在不同消息中';
+  mode.setAttribute('aria-label', mode.title);
   $('#q').placeholder = S.opts.regex ? '正则搜索…  Enter 搜索对话正文'
-                                     : '空格分词，双引号搜短语；Enter 搜正文';
+                                     : '搜索… Enter 搜正文';
 }
 
 $('#reload').onclick = () => { cancelSearch(true); loadSessions(true); };
