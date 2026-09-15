@@ -6,7 +6,10 @@ state machine (launchd pid, tasklist, shasum/certutil, web digests), so the exac
 command sequence of stage/backup/swap/restart/verify/rollback is asserted for both
 kinds and the verify invariants are shown to fail when ptyhost pids vanish, the
 on-disk hash differs, the build hash does not move with web, or the Windows service
-lands outside desktop session 1. No network, no subprocess, < 5 s.
+lands outside desktop session 1. The per-platform test step (DeployOptions.test_mode:
+Rust tests on the node between extraction and build) is pinned for both kinds: absent
+with `none`, present with `affected`/`full`, and a failing run stops stage() before
+anything is staged. No network, no subprocess, < 5 s.
 
     python3 tests/deploy_native_handlers.py
 """
@@ -69,9 +72,10 @@ MAC_TARGET = Target(name="macos-node", kind="macos-node", prefix="/Users/example
 class MacFake(base.Shell):
     """Answers like vela would; mutations move hashes/digests around in `self.state`."""
 
-    def __init__(self, target, *, web_differs: bool = True):
+    def __init__(self, target, *, web_differs: bool = True, tests_pass: bool = True):
         super().__init__(target)
         self.calls: list[str] = []
+        self.tests_pass = tests_pass
         p = target.prefix
         self.state = {"pid": 100, "ptyhost": [51212], "hosts": 2, "digest": {f"{p}/web": "d-old"},
                       "files": {f"{p}/bin/sessiondock": SHA_OLD}, "marker": None,
@@ -106,6 +110,9 @@ class MacFake(base.Shell):
             d = cmd.split()[1]
             out = s["digest"].get(d, "") + "\n" if d in s["digest"] else ""
             rc = 0 if d in s["digest"] else 1
+        elif "cargo test" in cmd:
+            rc = 0 if self.tests_pass else 101
+            out = "test result: ok. 12 passed\n" if self.tests_pass else "test result: FAILED. 1 failed\n"
         elif "cargo build" in cmd:
             out = "   Compiling sessiondock v0.1.0\n    Finished `release` profile [optimized] target(s) in 40.0s\n"
             files["/Users/example/sessiondock-src/target/release/sessiondock"] = SHA_NEW
@@ -147,11 +154,49 @@ class MacFake(base.Shell):
             self.state["digest"][remote.rstrip("/")] = "d-new" if self.web_differs else "d-old"
 
 
-def mac_handler(tmp, *, web_differs=True, opts=None, prefixed=False, web_only=False):
+def mac_handler(tmp, *, web_differs=True, opts=None, prefixed=False, web_only=False, tests_pass=True):
     h = macos.MacOSNode(MAC_TARGET, make_artifacts(tmp, prefixed=prefixed, web_only=web_only),
                         opts or DeployOptions(health_timeout=0), lambda s: None)
-    h.sh = MacFake(MAC_TARGET, web_differs=web_differs)
+    h.sh = MacFake(MAC_TARGET, web_differs=web_differs, tests_pass=tests_pass)
     return h
+
+
+def test_macos_test_step(tmp: Path) -> None:
+    """test_mode != none: workspace tests run on the node after tar -x and before cargo build."""
+    src, p = "/Users/example/sessiondock-src", MAC_TARGET.prefix
+    test_cmd = (f"cd {src} && mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest /Users/example/.cargo/bin/cargo "
+                "test --workspace --locked >.deploy-test.log 2>&1; rc=$?; tail -n 40 .deploy-test.log; "
+                "[ $rc -eq 0 ] && rm -f .deploy-test.log; exit $rc")
+    h = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected", log_dir=tmp / "logs"))
+    h.probe()
+    plan = h.plan()
+    at = [i for i, s in enumerate(plan) if s.startswith("test (affected): ") and "cargo test --workspace --locked" in s]
+    check(len(at) == 1, f"mac plan lacks the test step: {plan}")
+    check(at and at[0] < next(i for i, s in enumerate(plan) if "cargo build" in s), "mac plan: test before build")
+    h.sh.calls.clear()
+    h.stage()
+    check(h.sh.calls[3] == test_cmd, f"mac test command {h.sh.calls[3]!r}")
+    check("tar -xf" in h.sh.calls[2] and "cargo build" in h.sh.calls[4], f"mac test sits between tar -x and build: {h.sh.calls}")
+    check(h.expected_sha == {"sessiondock": SHA_NEW}, "mac stage still stages after passing tests")
+    # mode none: the default full-cycle pin already proves no `cargo test` call; `full` behaves like affected
+    h2 = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="full"))
+    h2.probe(); h2.sh.calls.clear(); h2.stage()
+    check(sum("cargo test" in c for c in h2.sh.calls) == 1, "mac full mode runs the tests once")
+    # a failing run stops stage() before anything is built or staged
+    h3 = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected", log_dir=tmp / "logs"), tests_pass=False)
+    h3.probe(); h3.sh.calls.clear()
+    try:
+        h3.stage()
+        check(False, "failing node tests must stop stage()")
+    except RuntimeError as e:
+        check("cargo test failed on the node (rc=101)" in str(e) and f"{src}/.deploy-test.log" in str(e)
+              and str(tmp / "logs" / "macos-node.log") in str(e), f"mac test failure message {e}")
+    check(not any("cargo build" in c or ".new" in c for c in h3.sh.calls) and h3.staged == [] and h3.expected_sha == {},
+          f"nothing built or staged after failing tests: {h3.sh.calls}")
+    # web-only never tests (there is nothing to build)
+    h4 = mac_handler(tmp, opts=DeployOptions(web_only=True, health_timeout=0, test_mode="full"))
+    h4.probe(); h4.sh.calls.clear(); h4.stage()
+    check(not any("cargo" in c for c in h4.sh.calls), "web-only stage runs no tests")
 
 
 def test_macos_full_cycle(tmp: Path) -> None:
@@ -318,9 +363,11 @@ WPY = "C:\\Example\\anaconda3\\python.exe"
 
 
 class WinFake(windows.CmdShell):
-    def __init__(self, target, *, web_differs=True, session="1"):
+    def __init__(self, target, *, web_differs=True, session="1", tests_pass=True):
         super().__init__(target)
         self.calls: list[str] = []
+        self.tests_pass = tests_pass
+        self.rendered_test = None     # set from the uploaded build.cmd (`set "TEST=..."`)
         p = target.prefix
         self.state = {"svc": [100], "ptyhost": [7064, 11268], "hosts": 3, "build": "build-d-old", "session": session,
                       "digest": {f"{p}\\web": "d-old"}, "files": {f"{p}\\bin\\sessiondock.exe": SHA_OLD},
@@ -354,10 +401,14 @@ class WinFake(windows.CmdShell):
         elif cmd.startswith("findstr /b"):
             out = f"set PY={WPY}\nset LNK=%SD%\\SessionDock.lnk\n"
         elif cmd.endswith("build.cmd\""):
-            files[f"{p}\\bin\\sessiondock.new.exe"] = SHA_NEW
-            out = ("===BUILD===\nMTIME_BEFORE sessiondock 638000000000000000\n   Compiling sessiondock v0.1.0\n"
-                   "    Finished `release` profile [optimized] target(s) in 60.0s\nMTIME_AFTER sessiondock 638000000600000000\n"
-                   f"===STAGE===\nNEW_SHA sessiondock {SHA_NEW.upper()}\nBUILD_OK\n")
+            if self.rendered_test == "1" and not self.tests_pass:
+                rc, out = 18, "===TEST===\ntest result: FAILED. 1 failed\nTEST_FAILED rc=101 log=C:\\Example\\sessiondock-src\\.deploy-test.log\n"
+            else:
+                files[f"{p}\\bin\\sessiondock.new.exe"] = SHA_NEW
+                test = "===TEST===\ntest result: ok. 12 passed\nTEST_OK\n" if self.rendered_test == "1" else "===TEST===\nTEST_SKIPPED\n"
+                out = (test + "===BUILD===\nMTIME_BEFORE sessiondock 638000000000000000\n   Compiling sessiondock v0.1.0\n"
+                       "    Finished `release` profile [optimized] target(s) in 60.0s\nMTIME_AFTER sessiondock 638000000600000000\n"
+                       f"===STAGE===\nNEW_SHA sessiondock {SHA_NEW.upper()}\nBUILD_OK\n")
         elif cmd.endswith("backup.cmd\""):
             out = "BACKUP_OK\n"
         elif cmd.endswith("swap-restart.cmd\""):
@@ -392,12 +443,63 @@ class WinFake(windows.CmdShell):
 
     def scp_upload(self, local, remote, *, timeout=300):
         self.calls.append(f"SCP {Path(local).name} -> {remote}")
+        if Path(local).name == "build.cmd":
+            m = re.search(r'set "TEST=(\d)"', Path(local).read_text(encoding="ascii"))
+            self.rendered_test = m.group(1) if m else None
 
 
-def win_handler(tmp, *, web_differs=True, session="1", opts=None):
+def win_handler(tmp, *, web_differs=True, session="1", opts=None, tests_pass=True):
     h = windows.WindowsNode(WIN_TARGET, make_artifacts(tmp), opts or DeployOptions(health_timeout=0), lambda s: None)
-    h.sh = WinFake(WIN_TARGET, web_differs=web_differs, session=session)
+    h.sh = WinFake(WIN_TARGET, web_differs=web_differs, session=session, tests_pass=tests_pass)
     return h
+
+
+def test_windows_test_step(tmp: Path) -> None:
+    """test_mode != none renders TEST=1 into build.cmd; TEST_FAILED / missing TEST_OK stop stage()."""
+    h = win_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="full"))
+    h.probe()
+    plan = "\n".join(h.plan())
+    check("cargo.exe test -p sessiondock --locked (full; TEST_FAILED = FAILED before staging)" in plan
+          and f"timeout {int(windows.BUILD_TIMEOUT + windows.TEST_TIMEOUT)}s" in plan, f"win plan lacks the test step: {plan[:600]}")
+    h.sh.calls.clear()
+    h.stage()
+    check(h.sh.rendered_test == "1" and h.expected_sha == {"sessiondock": SHA_NEW}, "win stage with tests on")
+    text = (Path(h.tmp.name) / "build.cmd").read_bytes().decode("ascii")
+    order = ["===EXTRACT===", "===TOOLCHAIN===", "===TEST===", 'if not "%TEST%"=="1" ( echo TEST_SKIPPED & goto build )',
+             '"%TC%\\cargo.exe" test -p sessiondock --locked > "%SRC%\\.deploy-test.log" 2>&1',
+             "TEST_FAILED rc=%RC% log=%SRC%\\.deploy-test.log & exit /b 18", "echo TEST_OK", ":build", "===BUILD===",
+             '"%TC%\\cargo.exe" build --release --locked -p sessiondock', "===STAGE==="]
+    positions = [text.find(n) for n in order]
+    check(all(x >= 0 for x in positions) and positions == sorted(positions), f"build.cmd test phase order {positions}")
+    check('set "RUSTC=%TC%\\rustc.exe"' in text and text.find('set "RUSTC=') < text.find("===TEST==="), "RUSTC set before the tests")
+    # mode none renders TEST=0 and the default full-cycle pin stays byte-identical in its command sequence
+    h0 = win_handler(tmp)
+    h0.probe(); h0.sh.calls.clear(); h0.stage()
+    check(h0.sh.rendered_test == "0" and "tests skipped (mode none)" in "\n".join(h0.plan()), "win mode none skips tests")
+    # TEST_FAILED (exit 18) stops before anything is staged
+    hf = win_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected"), tests_pass=False)
+    hf.probe(); hf.sh.calls.clear()
+    try:
+        hf.stage()
+        check(False, "TEST_FAILED must stop stage()")
+    except ShellError as e:
+        check("TEST_FAILED rc=101" in str(e) and ".deploy-test.log" in str(e), f"win test failure surfaces the log: {e}")
+    check(hf.staged == [] and hf.expected_sha == {} and not any("web.zip" in c for c in hf.sh.calls),
+          f"nothing staged after TEST_FAILED: {hf.sh.calls}")
+    # a script that exits 0 without TEST_OK while the phase is on is rejected too
+    hm = win_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected"))
+    hm.probe()
+    orig = hm.sh.run
+
+    def no_marker(cmd, timeout=60, check=False):
+        rc, out = orig(cmd, timeout, check)
+        return rc, out.replace("TEST_OK\n", "")
+    hm.sh.run = no_marker
+    try:
+        hm.stage()
+        check(False, "missing TEST_OK must be rejected")
+    except RuntimeError as e:
+        check("no TEST_OK" in str(e), f"missing TEST_OK message {e}")
 
 
 def test_windows_full_cycle(tmp: Path) -> None:
@@ -593,7 +695,7 @@ def test_registry_and_templates() -> None:
     except ValueError:
         pass
     build = windows.render("build.cmd", {"SD": "C:\\p", "SRC": "C:\\s", "TC": "C:\\tc", "ZIP": "C:\\s\\.deploy\\z.zip",
-                                         "BINS": "sessiondock", "PKGS": "-p sessiondock"})
+                                         "BINS": "sessiondock", "PKGS": "-p sessiondock", "TEST": "0"})
     for needle in ('set "RUSTC=%TC%\\rustc.exe"', 'set "RUSTDOC=%TC%\\rustdoc.exe"', '"%TC%\\cargo.exe" build --release --locked -p sessiondock',
                    'if /i not "%%~nxD"=="target"', "Expand-Archive -LiteralPath", "MTIME_", "certutil -hashfile", "BUILD_OK",
                    # the mtime probe carries single quotes, so the for /f command must be backquoted
@@ -606,8 +708,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="sd-native-handlers-") as d:
         tmp = Path(d)
         for fn in (test_registry_and_templates, test_windows_source_dir_guard, lambda: test_macos_full_cycle(tmp), lambda: test_macos_web_only_and_prefix(tmp),
-                   lambda: test_macos_verify_catches(tmp), lambda: test_windows_full_cycle(tmp),
-                   lambda: test_windows_verify_catches(tmp)):
+                   lambda: test_macos_verify_catches(tmp), lambda: test_macos_test_step(tmp), lambda: test_windows_full_cycle(tmp),
+                   lambda: test_windows_verify_catches(tmp), lambda: test_windows_test_step(tmp)):
             fn()
     print(f"deploy_native_handlers: {'FAILED ' + str(len(FAILURES)) if FAILURES else 'ok'} in {time.monotonic() - t0:.2f}s")
     return 1 if FAILURES else 0
