@@ -131,7 +131,9 @@ Drop. Only this invocation's own temporary file may be cleaned. Abandoned temps,
 partial initialization and unrelated files are preserved.
 
 An actual persistence error is returned and no optimistic state is acknowledged.
-Each operation reloads the current ledger data. Missing/corrupt ledgers fail closed,
+Each operation reloads the current ledger data; the list refresh's `refresh_many`
+reloads once for the whole batch and applies each observation and binding
+observation against that one load. Missing/corrupt ledgers fail closed,
 never as an empty store.
 
 Retained receipts and encoded ledger bytes have no fixed capacity quota. Existing

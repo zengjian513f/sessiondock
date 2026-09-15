@@ -21,6 +21,10 @@ and HTTP authorization. The service never guesses native scope.
   the existing intent and cannot spawn again; conflicting specs fail.
 - `get(record_id)` and `list(offset, limit)` refresh launched records using exact
   instance evidence. Lists include all retained receipts without a fixed record quota.
+  A list leaves settled receipts (Prepared, Failed, Exited) as stored — nothing about
+  them can change, and exited receipts accumulate — probes the live ones through
+  the host eight at a time, then persists every observation in one store pass
+  after a single ledger reload. Order follows the ledger.
 - `target(record_id)` performs a fresh observation and returns an immutable
   `Arc<LaunchTarget>` only for a verified Running, non-cancelled instance. This
   target still requires guarded revalidation when terminal ownership is claimed.
@@ -70,8 +74,9 @@ not add a second public receipt schema or build unbounded encoded response buffe
 Default readiness budget is five seconds, cancellation three seconds, each host
 operation one second, and polling 50 ms. Limits have explicit maxima of 30, 10,
 2 and 1 seconds respectively. A list shares one readiness observation deadline
-across all rows, not a separate five-second wait per host. Once it expires,
-unverified rows become Uncertain. Required bounded ledger fsyncs are still awaited:
+across all rows, not a separate five-second wait per host, and its host probes run
+concurrently so the deadline is spent on the slowest host, not on the sum of all of
+them. Once it expires, unverified rows become Uncertain. Required bounded ledger fsyncs are still awaited:
 a network deadline is not a promise that disk I/O can be safely interrupted.
 
 ## Create, observe and recover
