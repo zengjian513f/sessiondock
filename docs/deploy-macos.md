@@ -86,3 +86,38 @@ launchctl kickstart -k gui/$(id -u)/<label>      # 只重启 sessiondock；ptyho
   `online: true`，`/api/sessions?nodes=<id>` 能列出本机会话。
 - `POST /api/term/create {source: claude, cwd}` → `new-status` `running: true` → `POST /api/term/kill`。
 - 机器不能休眠（`pmset -g` 里 `sleep 0`），WireGuard 需随开机自启，否则节点随之离线。
+
+## 6. 用 deploy.py 部署
+
+`deploy/sdtargets/macos.py`（kind `macos-node`）把第 2、4、5 节固化为
+[deploy/deploy.py](deployment.md) 的一个目标。`deploy/targets.local.json`（不跟踪）里的条目形状见
+`deploy/targets.example.json`：`ssh`/`ssh_port`、`prefix=<PREFIX>`、`service.launchd_label` 与
+`service.gui_uid`、`build_on_target: true`、`extra.source_dir=<SD_SOURCE>`（必须在 `<PREFIX>` 之外）、
+`extra.cargo`。
+
+```sh
+python3 deploy/deploy.py build                    # 产出 source.tar（git archive HEAD）+ web 快照
+python3 deploy/deploy.py push --targets <name> --dry-run   # 只 probe 并打印计划
+python3 deploy/deploy.py push --targets <name>    # 完整一轮；--web-only 跳过构建；--with-ptyhost 一并构建 ptyhost
+python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-deploy-<short>-<UTC stamp>
+```
+
+每一步在节点上做的事（远程命令全部无通配，登录 shell 是 zsh 也不会中断）：
+
+- probe：`launchctl print gui/<uid>/<label>` 的 `state`/`pid`、`/api/meta` 的 `build`、`shasum -a 256
+  <PREFIX>/bin/<name>`、`pgrep -x ptyhost`、`<PREFIX>/host` 里的 `.json` 记录数、`etc/deployed-commit`，
+  以及 `web/` 的内容摘要。
+- stage：`source.tar` 上传到 `<SD_SOURCE>/.deploy/`，清空 `<SD_SOURCE>` 里 `target/` 以外的一切再
+  `tar -x`；`cargo build --release --locked -p sessiondock`（超时 900 s，M4 上热构建约 30–40 s）；
+  产物拷成 `<PREFIX>/bin/<name>.new` 并在节点上算 SHA-256 作为期望值（构建机的 Linux 哈希与此无关）；
+  web 快照 rsync 到 `<PREFIX>/web.staging/`，与线上 `web/` 比内容摘要决定"web 是否变化"。
+- backup：`cp -Rp bin web <PREFIX>/backup-deploy-<short>-<UTC stamp>/`。
+- swap：`mv -f bin/<name>.new bin/<name>`；`rsync -a --delete web.staging/ web/`。
+- restart：`launchctl kickstart -k gui/<uid>/<label>`——只重启 sessiondock。
+- verify：`/api/meta` 在健康超时内应答、`state = running` 且 launchd pid 已变、磁盘上的 SHA-256 等于
+  stage 时算的值、web 内容变了则 `build` 必须变（内容相同则必须不变）、probe 时的每个 ptyhost pid
+  仍在、host 记录数不少于之前。
+- rollback：从备份用同一条 `.new` + `mv` 路径恢复二进制、`rsync --delete` 恢复 `web/`，再 kickstart。
+
+2026-09-15 在 macOS 节点上实测 push → rollback → push 各一轮：构建 30 s、每轮总计约 40 s，
+重启前后 ptyhost pid 集合不变、同源重建的二进制哈希与线上完全一致、web 内容相同时 `build` 保持不变。

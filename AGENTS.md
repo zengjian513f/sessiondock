@@ -30,6 +30,9 @@
 - A production bug fix includes build, validation, deployment, restart and
   health check. Deploy the current workspace unless the user names another
   source. Preserve sessions, state and concurrent changes; keep a rollback.
+  Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
+  verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
+  for the read-only fleet table; do not hand-roll scp/restart sequences.
 
 ## Structure
 
