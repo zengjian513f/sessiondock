@@ -18,6 +18,12 @@
 //! caller parses, this module remembers.
 //!
 //! Without a directory the cache lives in memory only, capped at 64 MiB.
+//!
+//! Next to the bodies, the cache keeps in memory a case-folded copy
+//! (`search::fold`) of every body it has served or produced, under its own
+//! byte budget with the same least-recently-used eviction: a query's
+//! prefilter (`search::prefilter`) decides on the folded copy whether a
+//! body can match at all, so a body that cannot is never opened or read.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -25,7 +31,7 @@ use std::{
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
-        Condvar, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, UNIX_EPOCH},
@@ -33,7 +39,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::SearchError;
+use super::{SearchError, fold};
 use crate::sessions::SearchVersion;
 
 /// Bump when `search::body`'s text or the header format changes; the build
@@ -41,6 +47,12 @@ use crate::sessions::SearchVersion;
 pub const SCHEMA: u32 = 1;
 /// Memory-only cap when no directory is configured.
 pub const MEMORY_ONLY_BYTES: u64 = 64 * 1024 * 1024;
+/// Default byte budget of the resident folded copies
+/// (`SESSIONDOCK_SEARCH_FOLD_BYTES`); bodies beyond it are read from the
+/// cache file and matched without a prefilter.
+pub const FOLD_BYTES: u64 = 128 * 1024 * 1024;
+/// Per-entry accounting overhead of a folded copy (map entry, version key).
+const FOLD_ENTRY_BYTES: u64 = 256;
 /// One parse slot covers this many bytes of native input; larger files take
 /// proportionally more slots so concurrent cold parses stay bounded in RSS
 /// (a transient projection costs several times its file).
@@ -218,11 +230,30 @@ struct State {
     clock: u64,
 }
 
+/// The folded copy of one body at one version (`fold::fold`).
+pub struct Folded {
+    version: Value,
+    pub text: Box<[u8]>,
+}
+
+struct FoldEntry {
+    used: u64,
+    folded: Arc<Folded>,
+}
+
+struct FoldTier {
+    entries: HashMap<String, FoldEntry>,
+    total: u64,
+    clock: u64,
+}
+
 pub struct SearchCache {
     dir: Option<PathBuf>,
     limit: u64,
+    fold_limit: u64,
     fingerprint: String,
     state: Mutex<State>,
+    folded: Mutex<FoldTier>,
     inflight: Mutex<HashSet<String>>,
     inflight_free: Condvar,
 }
@@ -234,6 +265,10 @@ pub struct CacheStats {
     pub bytes: u64,
     pub limit: u64,
     pub persistent: bool,
+    /// Resident folded copies and their accounted bytes.
+    pub folded_entries: usize,
+    pub folded_bytes: u64,
+    pub fold_limit: u64,
 }
 
 /// Search-text of one uid is produced by one thread at a time; the second
@@ -305,8 +340,9 @@ fn check_private_dir(dir: &Path) -> io::Result<()> {
 impl SearchCache {
     /// Open the existing private directory and take stock of its entries;
     /// `None` keeps everything in memory. Leftover temporaries are removed;
-    /// foreign files are ignored.
-    pub fn open(dir: Option<PathBuf>, limit: u64) -> io::Result<Self> {
+    /// foreign files are ignored. `fold_limit` bounds the resident folded
+    /// copies.
+    pub fn open(dir: Option<PathBuf>, limit: u64, fold_limit: u64) -> io::Result<Self> {
         let fingerprint = build_fingerprint();
         let mut state = State {
             entries: HashMap::new(),
@@ -359,8 +395,14 @@ impl SearchCache {
         let mut cache = Self {
             dir,
             limit,
+            fold_limit,
             fingerprint,
             state: Mutex::new(state),
+            folded: Mutex::new(FoldTier {
+                entries: HashMap::new(),
+                total: 0,
+                clock: 0,
+            }),
             inflight: Mutex::new(HashSet::new()),
             inflight_free: Condvar::new(),
         };
@@ -374,11 +416,85 @@ impl SearchCache {
 
     pub fn stats(&self) -> CacheStats {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let folded = self.folded.lock().unwrap_or_else(|e| e.into_inner());
         CacheStats {
             entries: state.entries.len(),
             bytes: state.total,
             limit: self.limit,
             persistent: self.dir.is_some(),
+            folded_entries: folded.entries.len(),
+            folded_bytes: folded.total,
+            fold_limit: self.fold_limit,
+        }
+    }
+
+    /// The resident folded copy of `uid` when it is of exactly `version`.
+    pub fn folded(&self, uid: &str, version: &SearchVersion) -> Option<Arc<Folded>> {
+        let mut tier = self.folded.lock().unwrap_or_else(|e| e.into_inner());
+        tier.clock += 1;
+        let clock = tier.clock;
+        let entry = tier.entries.get_mut(uid)?;
+        if entry.folded.version != version.key {
+            return None;
+        }
+        entry.used = clock;
+        Some(entry.folded.clone())
+    }
+
+    /// Whether `folded(uid, version)` would answer, without touching it.
+    pub fn has_folded(&self, uid: &str, version: &SearchVersion) -> bool {
+        let tier = self.folded.lock().unwrap_or_else(|e| e.into_inner());
+        tier.entries
+            .get(uid)
+            .is_some_and(|entry| entry.folded.version == version.key)
+    }
+
+    /// Keep the folded copy of `text`, the body of `uid` at `version`,
+    /// evicting the least recently used copies past the budget; a copy
+    /// larger than the whole budget is not kept.
+    pub fn remember_folded(&self, uid: &str, version: &SearchVersion, text: &str) {
+        let folded = fold::fold(text).into_boxed_slice();
+        let bytes = folded.len() as u64 + FOLD_ENTRY_BYTES;
+        if bytes > self.fold_limit {
+            self.forget_folded(uid);
+            return;
+        }
+        let mut tier = self.folded.lock().unwrap_or_else(|e| e.into_inner());
+        tier.clock += 1;
+        let clock = tier.clock;
+        if let Some(previous) = tier.entries.remove(uid) {
+            tier.total -= previous.folded.text.len() as u64 + FOLD_ENTRY_BYTES;
+        }
+        tier.total += bytes;
+        tier.entries.insert(
+            uid.to_owned(),
+            FoldEntry {
+                used: clock,
+                folded: Arc::new(Folded {
+                    version: version.key.clone(),
+                    text: folded,
+                }),
+            },
+        );
+        while tier.total > self.fold_limit {
+            let Some(victim) = tier
+                .entries
+                .iter()
+                .filter(|(other, _)| other.as_str() != uid)
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(other, _)| other.clone())
+            else {
+                break;
+            };
+            let entry = tier.entries.remove(&victim).expect("selected entry");
+            tier.total -= entry.folded.text.len() as u64 + FOLD_ENTRY_BYTES;
+        }
+    }
+
+    fn forget_folded(&self, uid: &str) {
+        let mut tier = self.folded.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = tier.entries.remove(uid) {
+            tier.total -= entry.folded.text.len() as u64 + FOLD_ENTRY_BYTES;
         }
     }
 
@@ -544,6 +660,10 @@ impl SearchCache {
                 self.record(uid, bytes, Some((header, cached.clone())));
             }
         }
+        match cached {
+            Cached::Text(text) => self.remember_folded(uid, version, text),
+            Cached::Error { .. } => self.forget_folded(uid),
+        }
         self.evict(Some(uid));
     }
 
@@ -617,13 +737,14 @@ impl SearchCache {
             victims
         };
         for uid in victims {
+            self.forget_folded(&uid);
             if let Some(path) = self.path(&uid) {
                 let _ = fs::remove_file(path);
             }
         }
     }
 
-    /// Forget one session (its file is removed).
+    /// Forget one session (its file and folded copy are removed).
     pub fn remove(&self, uid: &str) {
         {
             let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -631,6 +752,7 @@ impl SearchCache {
                 state.total -= entry.bytes;
             }
         }
+        self.forget_folded(uid);
         if let Some(path) = self.path(uid) {
             let _ = fs::remove_file(path);
         }
@@ -642,8 +764,14 @@ impl Default for SearchCache {
         Self {
             dir: None,
             limit: MEMORY_ONLY_BYTES,
+            fold_limit: FOLD_BYTES,
             fingerprint: build_fingerprint(),
             state: Mutex::new(State {
+                entries: HashMap::new(),
+                total: 0,
+                clock: 0,
+            }),
+            folded: Mutex::new(FoldTier {
                 entries: HashMap::new(),
                 total: 0,
                 clock: 0,
@@ -802,7 +930,7 @@ mod tests {
     #[test]
     fn cache_directories_are_created_and_follow_ordinary_aliases() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(SearchCache::open(Some(dir.path().join("absent")), 1 << 20).is_ok());
+        assert!(SearchCache::open(Some(dir.path().join("absent")), 1 << 20, FOLD_BYTES).is_ok());
         let private = private_dir(dir.path(), "private");
         #[cfg(unix)]
         {
@@ -810,19 +938,19 @@ mod tests {
             let wide = dir.path().join("wide");
             fs::create_dir(&wide).unwrap();
             fs::set_permissions(&wide, fs::Permissions::from_mode(0o750)).unwrap();
-            assert!(SearchCache::open(Some(wide), 1 << 20).is_ok());
+            assert!(SearchCache::open(Some(wide), 1 << 20, FOLD_BYTES).is_ok());
             let link = dir.path().join("link");
             std::os::unix::fs::symlink(&private, &link).unwrap();
-            assert!(SearchCache::open(Some(link), 1 << 20).is_ok());
+            assert!(SearchCache::open(Some(link), 1 << 20, FOLD_BYTES).is_ok());
         }
-        assert!(SearchCache::open(Some(private), 1 << 20).is_ok());
+        assert!(SearchCache::open(Some(private), 1 << 20, FOLD_BYTES).is_ok());
     }
 
     #[test]
     fn disk_entries_round_trip_and_detect_versions() {
         let temp = tempfile::tempdir().unwrap();
         let dir = private_dir(temp.path(), "cache");
-        let cache = SearchCache::open(Some(dir.clone()), 1024 * 1024).unwrap();
+        let cache = SearchCache::open(Some(dir.clone()), 1024 * 1024, FOLD_BYTES).unwrap();
         let uid = "claude:0123456789abcdef";
         assert!(matches!(cache.get(uid, &version(10, "1")), Lookup::Miss));
         cache.put(uid, &version(10, "1"), &Cached::Text("hello 猫".into()));
@@ -855,7 +983,7 @@ mod tests {
             );
         }
         // A restart takes stock of what is on disk.
-        let reopened = SearchCache::open(Some(dir), 1024 * 1024).unwrap();
+        let reopened = SearchCache::open(Some(dir), 1024 * 1024, FOLD_BYTES).unwrap();
         assert_eq!(reopened.stats().entries, 1);
         assert!(matches!(
             reopened.get(uid, &version(20, "2")),
@@ -866,7 +994,12 @@ mod tests {
     #[test]
     fn eviction_is_least_recently_used_and_bounded() {
         let temp = tempfile::tempdir().unwrap();
-        let cache = SearchCache::open(Some(private_dir(temp.path(), "cache")), 3 * 1024).unwrap();
+        let cache = SearchCache::open(
+            Some(private_dir(temp.path(), "cache")),
+            3 * 1024,
+            FOLD_BYTES,
+        )
+        .unwrap();
         let text = Cached::Text("x".repeat(800));
         let uids = [
             "claude:0000000000000001",
@@ -904,7 +1037,7 @@ mod tests {
 
     #[test]
     fn memory_only_mode_and_foreign_files() {
-        let cache = SearchCache::open(None, 1 << 40).unwrap();
+        let cache = SearchCache::open(None, 1 << 40, FOLD_BYTES).unwrap();
         assert_eq!(cache.stats().limit, MEMORY_ONLY_BYTES);
         assert!(!cache.persistent());
         cache.put(
@@ -925,7 +1058,7 @@ mod tests {
         fs::write(dir.join("README"), b"not an entry").unwrap();
         fs::write(dir.join(".search-tmp-1-x"), b"leftover").unwrap();
         fs::write(dir.join("claude-zz"), b"bad name").unwrap();
-        let cache = SearchCache::open(Some(dir.clone()), 1 << 20).unwrap();
+        let cache = SearchCache::open(Some(dir.clone()), 1 << 20, FOLD_BYTES).unwrap();
         assert_eq!(cache.stats().entries, 0);
         assert!(!dir.join(".search-tmp-1-x").exists());
         assert!(dir.join("README").exists());
@@ -937,7 +1070,7 @@ mod tests {
     fn chunked_reads_are_line_aligned_and_complete() {
         let temp = tempfile::tempdir().unwrap();
         let dir = private_dir(temp.path(), "cache");
-        let cache = SearchCache::open(Some(dir.clone()), 1 << 30).unwrap();
+        let cache = SearchCache::open(Some(dir.clone()), 1 << 30, FOLD_BYTES).unwrap();
         let uid = "codex:0123456789abcdef";
         let long_line = "长".repeat(CHUNK_BYTES / 2);
         let text = format!("a\nbb\n{long_line}\n\nlast 猫");
@@ -979,6 +1112,75 @@ mod tests {
         bytes.truncate(bytes.len() - 3);
         fs::write(&path, bytes).unwrap();
         assert!(matches!(cache.get(uid, &version(1, "1")), Lookup::Miss));
+    }
+
+    #[test]
+    fn folded_copies_follow_versions_budget_and_removal() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = private_dir(temp.path(), "cache");
+        let cache = SearchCache::open(Some(dir), 1 << 20, 2 * (800 + FOLD_ENTRY_BYTES)).unwrap();
+        let uids = [
+            "claude:0000000000000001",
+            "claude:0000000000000002",
+            "claude:0000000000000003",
+        ];
+        // A stored text is folded at once, under its version only.
+        cache.put(
+            uids[0],
+            &version(1, "1"),
+            &Cached::Text("Guard 猫 ſ".into()),
+        );
+        let folded = cache.folded(uids[0], &version(1, "1")).unwrap();
+        assert_eq!(&*folded.text, fold::fold("guard 猫 S").as_slice());
+        assert!(cache.has_folded(uids[0], &version(1, "1")));
+        assert!(cache.folded(uids[0], &version(2, "1")).is_none());
+        assert!(!cache.has_folded(uids[0], &version(2, "1")));
+        let stats = cache.stats();
+        assert_eq!(stats.folded_entries, 1);
+        assert_eq!(
+            stats.folded_bytes,
+            folded.text.len() as u64 + FOLD_ENTRY_BYTES
+        );
+        // A later version replaces the copy; an error entry drops it.
+        cache.put(uids[0], &version(2, "1"), &Cached::Text("v2".into()));
+        assert!(cache.folded(uids[0], &version(1, "1")).is_none());
+        assert_eq!(
+            &*cache.folded(uids[0], &version(2, "1")).unwrap().text,
+            b"V2"
+        );
+        assert_eq!(cache.stats().folded_entries, 1);
+        cache.put(
+            uids[0],
+            &version(3, "1"),
+            &Cached::Error {
+                status: 501,
+                message: "坏".into(),
+            },
+        );
+        assert_eq!(cache.stats().folded_entries, 0);
+        // The fold budget evicts least recently used copies; the disk
+        // entries stay (the body is then read and folded again on demand).
+        let text = Cached::Text("x".repeat(800));
+        for uid in uids {
+            cache.put(uid, &version(1, "1"), &text);
+        }
+        assert_eq!(cache.stats().entries, 3);
+        assert_eq!(cache.stats().folded_entries, 2);
+        assert!(cache.folded(uids[0], &version(1, "1")).is_none());
+        assert!(cache.folded(uids[1], &version(1, "1")).is_some());
+        cache.remember_folded(uids[0], &version(1, "1"), "x");
+        assert!(
+            cache.folded(uids[2], &version(1, "1")).is_none(),
+            "LRU victim"
+        );
+        assert!(cache.folded(uids[1], &version(1, "1")).is_some());
+        // Oversized copies are never kept; removal forgets the copy.
+        cache.remember_folded(uids[1], &version(1, "1"), &"y".repeat(5000));
+        assert!(cache.folded(uids[1], &version(1, "1")).is_none());
+        cache.remove(uids[0]);
+        assert!(cache.folded(uids[0], &version(1, "1")).is_none());
+        assert_eq!(cache.stats().folded_entries, 0);
+        assert_eq!(cache.stats().folded_bytes, 0);
     }
 
     #[test]
