@@ -61,6 +61,25 @@ def main():
                 page.goto(base, wait_until="networkidle")
                 assert page.evaluate("SessionDockCapabilities.allows('search')") is True
                 expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
+
+                def single_row():
+                    layout = page.evaluate("""() => {
+                        const box = document.querySelector('.qbox').getBoundingClientRect();
+                        return {left: box.left, right: box.right,
+                            controls: [...document.querySelectorAll('.qbox input, .qbox button')]
+                                .map(el => { const r = el.getBoundingClientRect();
+                                    return {left: r.left, right: r.right, center: r.top + r.height / 2}; })};
+                    }""")
+                    centers = [control["center"] for control in layout["controls"]]
+                    assert len(centers) == 5 and max(centers) - min(centers) < 1, layout
+                    assert all(control["left"] >= layout["left"] and control["right"] <= layout["right"]
+                               for control in layout["controls"]), layout
+
+                single_row()
+                original_width = page.locator('#left').evaluate("el => el.style.width")
+                page.locator('#left').evaluate("el => el.style.width = '200px'")
+                single_row()
+                page.locator('#left').evaluate("(el, width) => el.style.width = width", original_width)
                 page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]').click()
                 expect(page.locator("#msgs")).to_contain_text("Needle Cat cat")
 
@@ -76,14 +95,14 @@ def main():
 
                 def flag(name):
                     old = page.locator("#stat").get_attribute("data-seq") or ""
-                    if name == "regex" and page.locator("#search-advanced").get_attribute("open") is None:
-                        page.locator("#search-advanced summary").click()
                     page.locator(f'#opts button[data-o="{name}"]').click()
                     wait_search(old)
 
                 def mode(name):
                     old = page.locator("#stat").get_attribute("data-seq") or ""
-                    page.locator(f'#search-mode button[data-mode="{name}"]').click()
+                    toggle = page.locator('#search-mode-toggle')
+                    assert toggle.inner_text() != ("OR" if name == "any" else "AND")
+                    toggle.click()
                     wait_search(old)
 
                 def hits(expected):
@@ -116,7 +135,8 @@ def main():
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 assert "mode=any" in searches[-1][0]
                 page.reload(wait_until="networkidle")
-                expect(page.locator('#search-mode button[data-mode="any"]')).to_have_attribute("aria-pressed", "true")
+                expect(page.locator('#search-mode-toggle')).to_have_text("OR")
+                expect(page.locator('#search-mode-toggle')).to_have_attribute("aria-pressed", "true")
                 search("Needle Synthetic")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 mode("all")
@@ -134,7 +154,8 @@ def main():
                 search("c.t")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(0)
                 flag("regex")
-                expect(page.locator("#search-mode")).to_be_hidden()
+                expect(page.locator("#search-mode-toggle")).to_be_disabled()
+                single_row()
                 hits(2)
                 assert any("word=1" in url and "case=1" in url and "regex=1" in url for url, _, _ in searches)
                 page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]').click()
@@ -160,7 +181,7 @@ def main():
                 assert all(url.startswith(base + "/") for url in requests)
                 assert any(status == 200 and "application/x-ndjson" in mime for _, status, mime in searches)
                 assert all("progress=1" in url for url, _, _ in searches)
-                print("PASS legacy search browser: AND/OR across messages, phrases, per-term highlighting, stored mode, advanced regex, NDJSON results/progress and flags")
+                print("PASS legacy search browser: AND/OR across messages, phrases, per-term highlighting, stored mode, inline regex, NDJSON results/progress and flags")
             finally:
                 browser.close()
 
