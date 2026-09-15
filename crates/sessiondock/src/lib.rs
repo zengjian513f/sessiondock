@@ -24,6 +24,7 @@ pub mod media;
 pub mod metadata;
 mod native_replay;
 mod observe;
+pub mod polls;
 pub mod runtime;
 pub mod search;
 mod security;
@@ -531,6 +532,7 @@ fn build_app(
         node,
         bug_report,
         prompts,
+        polls: Arc::new(polls::PollCache::default()),
     };
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {

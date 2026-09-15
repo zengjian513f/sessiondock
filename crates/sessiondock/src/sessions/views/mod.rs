@@ -13,6 +13,7 @@
 //! being read keeps its existing per-session retry codes (503/409).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -1089,7 +1090,8 @@ pub(crate) struct ViewStats {
     pub bytes: usize,
 }
 
-/// Bounded LRU of opened sessions. Never consulted by the list.
+/// Bounded LRU of opened sessions. The list never opens through it; it
+/// only borrows what a cached view already knows (`view_decorations`).
 #[derive(Default)]
 pub(crate) struct Views {
     files: BTreeMap<String, FileEntry>,
@@ -1097,6 +1099,12 @@ pub(crate) struct Views {
     records: records::RecordCache,
     /// Shared with the store's transient (search) projections.
     prefixes: Arc<Mutex<PrefixCache>>,
+    /// Bumped whenever a `(uid, agent)` entry is inserted, replaced by a
+    /// different snapshot or removed — exactly the changes that can alter
+    /// what the list borrows from this cache. Shared with the facade
+    /// (`revision_handle`) so the list's serialized-bytes cache can compare
+    /// it without taking this lock.
+    revision: Arc<AtomicU64>,
 }
 
 /// Which pin a parsed file must carry: the leaf's exact display pin, or any
@@ -1128,6 +1136,20 @@ impl Views {
         self.prefixes.clone()
     }
 
+    /// The counter behind [`Views::revision`], readable without the lock.
+    pub(crate) fn revision_handle(&self) -> Arc<AtomicU64> {
+        self.revision.clone()
+    }
+
+    /// The current revision of the cached-view set (see the field).
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    fn bump(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
+
     /// Open (or refresh) the view for `request`. Cheap when nothing changed:
     /// one `stat` per involved file. Run on the bounded blocking reader.
     pub(crate) fn open(
@@ -1147,8 +1169,12 @@ impl Views {
             let now = Instant::now();
             let snapshot = recompose(request, &cached.snapshot)?;
             let cached = self.views.get_mut(&key).expect("checked above");
+            let replaced = !Arc::ptr_eq(&cached.snapshot, &snapshot);
             cached.snapshot = snapshot.clone();
             cached.used = now;
+            if replaced {
+                self.bump();
+            }
             for id in snapshot.view.dependencies.clone() {
                 if let Some(entry) = self.files.get_mut(&id) {
                     entry.used = now;
@@ -1183,6 +1209,7 @@ impl Views {
                 used: Instant::now(),
             },
         );
+        self.bump();
         self.prune();
         Ok(snapshot)
     }
@@ -1229,13 +1256,20 @@ impl Views {
 
     /// Drop every view of this owner UID and the parsed files behind them.
     pub(crate) fn evict(&mut self, uid: &str) {
+        let before = self.views.len();
         self.views.retain(|key, _| key.0 != uid);
+        if self.views.len() != before {
+            self.bump();
+        }
         self.files.remove(uid);
         self.prune();
     }
 
     #[cfg(test)]
     pub(crate) fn clear(&mut self) {
+        if !self.views.is_empty() {
+            self.bump();
+        }
         self.views.clear();
         self.files.clear();
     }
@@ -1346,6 +1380,7 @@ impl Views {
     /// Views whose files were evicted or replaced are stale; drop them, then
     /// keep the view count within its bound (files are bounded on insert).
     fn prune(&mut self) {
+        let before = self.views.len();
         let files = &self.files;
         self.views.retain(|_, cached| {
             let leaf = &cached.snapshot.view.parsed;
@@ -1364,6 +1399,9 @@ impl Views {
                 .map(|(key, _)| key.clone());
             let Some(oldest) = oldest else { break };
             self.views.remove(&oldest);
+        }
+        if self.views.len() != before {
+            self.bump();
         }
     }
 }

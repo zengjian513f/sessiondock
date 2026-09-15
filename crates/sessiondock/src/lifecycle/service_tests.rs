@@ -529,6 +529,43 @@ async fn spawn_failure_and_duplicate_create_never_turn_into_false_running() {
     service.shutdown().await.unwrap();
 }
 
+/// The mutation counter behind the display caches: reads (`get`, `list`)
+/// leave it alone, a cancel — even a failed one — and a discard advance it.
+#[tokio::test]
+async fn generation_advances_on_mutating_commands_only() {
+    let (_gate, f) = fixture().await;
+    let record = f.seed("request-generation", State::Running);
+    let peer = Peer::new(&f, &record).await;
+    peer.exited.store(true, Ordering::SeqCst);
+    let service = f.open(limits()).await;
+    let opened = service.generation();
+    service.get(record.record_id().into()).await.unwrap();
+    service.list(0, usize::MAX).await.unwrap();
+    assert_eq!(service.generation(), opened, "reads never invalidate");
+    assert!(
+        service
+            .cancel(record.record_id().into(), "wrong-instance".into())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        service.generation(),
+        opened + 1,
+        "a refused mutation still turns the caches over"
+    );
+    service
+        .cancel(record.record_id().into(), record.instance_id().into())
+        .await
+        .unwrap();
+    assert_eq!(service.generation(), opened + 2);
+    service
+        .discard(record.record_id().into(), record.instance_id().into())
+        .await
+        .unwrap();
+    assert_eq!(service.generation(), opened + 3);
+    service.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn already_exited_exact_host_finishes_cancel_without_a_kill_or_cached_target() {
     let (_gate, f) = fixture().await;

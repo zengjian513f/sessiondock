@@ -160,6 +160,46 @@ Legacy reads only `uids`/`tmux_uids`/`started_at`; with `live: true` it polls
 `/api/live` on its own and treats an unlisted session as stopped — which is now
 correct.
 
+## Response caches
+
+Every open tab polls `/api/live` and `/api/term/list` every 3 s, and their
+answers are pure functions of a few source snapshots that already have
+freshness windows of their own. Since 2026-09-15 both routes keep the
+assembled answer per debug-run view (`polls::PollCache`, at most eight views;
+the predecessor's `_live_views` / `_panes`) and a hot request only checks
+that the sources are the ones the entry was built from:
+
+| route | key | expiry |
+| --- | --- | --- |
+| `/api/live` | the completed scan (`Arc` identity; 3 s TTL above), the shared managed observation (`Arc` identity; 2 s TTL, `None` without a host directory), the lifecycle generation, and the view's topology — the `SessionRow` fields of the visible rows in list order plus the uids the registry hides — so a session file that only grew keeps the entry | none of its own: the sources' TTLs bound it |
+| `/api/term/list` | the lifecycle generation and the debug-run registry (`Arc` identity) | `TERM_LIST_TTL` = 2 s: host discovery and the receipt list carry no version |
+
+The **lifecycle generation** (`LifecycleService::generation`, `0` without the
+service) is a counter the coordinator advances after every mutating command
+— create, kill/cancel, takeover, bind, native authorization, stop, discard —
+from whichever caller (HTTP, the autobind task, the bug-report worker) and
+whatever the outcome (a refused cancel may still have recorded its intent).
+The shared managed observation is keyed on it as well
+(`ManagedRuntime::observe_shared(force, generation, …)`; `invalidate()`
+drops it outright), so an API mutation misses every display cache at once
+while a change made behind the server's back — a host started by another
+backend, a session file appended — shows up when its source refreshes,
+within one poll interval. `?force=1` bypasses both caches (and the shared
+observation) and re-populates them.
+
+Only three fields of `/api/live` are per request and are filled in after the
+lookup: `managed.cache` and `scan.cache` (`hit`, `age_ms`, `ttl_ms` of the
+two source caches) and `scan.spawned_recorded` — a hit reports `0` (or
+`null` without a state directory) because nothing was written by that call:
+the entry's builder recorded this scan's spawners, and the 10 s tick
+records anyway.
+
+`/api/term/list` authorizes nothing, so it reads the shared observation
+(the same one `/api/live` reads, `hosts` are identical) instead of a fresh
+probe; claim, attach, unleased send, stop and process-evidence binding keep
+`runtime::observe`, the fresh uncached probe. Its `sessions` and `pending`
+rows are therefore at most 2 s old, the predecessor's `PANES_TTL`.
+
 ## Pending launches bound by process evidence
 
 The same scan pairs a `Running` receipt of launch kind `new_pending` with its
@@ -200,6 +240,12 @@ service (the launcher `env_clear`s).
 
 ## Validation
 
+- `cargo test -p sessiondock --lib polls:: runtime::tests::shared_observation
+  lifecycle::service::tests::generation_advances` — the response cache keys
+  (same sources hit; generation, topology, scan state, hidden set and view
+  miss; `term/list` TTL turnover and registry change), the shared
+  observation turning over with the generation and `invalidate`, and the
+  generation advancing on mutating commands only.
 - `cargo test -p sessiondock --lib runtime::procscan runtime::spawn
   api::runtime metadata::` — every `tests/test_live.py` and
   `test_session_meta.py` case over a synthetic tree (`FakeProc`): bare claude

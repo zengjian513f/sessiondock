@@ -614,11 +614,29 @@ fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     true
 }
 
+/// `GET /api/term/list`: the managed panes with their verified session
+/// identity, the pending receipts and the source table. The assembled body
+/// is served for [`crate::polls::TERM_LIST_TTL`] per debug-run view
+/// (`polls::PollCache`) and dropped at once by any lifecycle mutation
+/// (create, kill, takeover, bind, stop, discard: the service generation)
+/// or a changed debug-run registry; `?force=1` bypasses it and the shared
+/// managed observation. The list authorizes nothing, so it reads the
+/// shared observation (`runtime::shared`, 2 s) that `/api/live` reads;
+/// claim, attach, stop and process-evidence binding keep their fresh probes.
 pub async fn list(
     State(state): State<AppState>,
     RawQuery(query): RawQuery,
 ) -> Result<Response, ApiError> {
     let permit = super::lifecycle::admit(&state).await?;
+    let force = query
+        .as_deref()
+        .is_some_and(|query| query.split('&').any(|pair| pair == "force=1"));
+    let debug_run = crate::sessions::debug_run_of(query.as_deref());
+    let runs = state.reader.store.debug_runs();
+    let generation = super::runtime::lifecycle_generation(&state);
+    if !force && let Some(bytes) = state.polls.term_list(&debug_run, generation, &runs) {
+        return Ok(super::lifecycle::response_bytes(bytes, permit));
+    }
     // The frontend abbreviates cwd with it.
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -629,8 +647,10 @@ pub async fn list(
         "sources":{},"home":home,"backend":"ptyhost","backends":[],"sessions":[],"pending":[],"hosts":[]});
     if let Some(service) = &state.terminal {
         response["hosts"] = json!(service.hosts().await?);
-        if let Some(observed) = super::runtime::observe(&state).await? {
+        if let Some(runtime) = &state.runtime {
+            let observed = super::runtime::shared(&state, runtime, force).await?;
             let sessions: Vec<Value> = observed
+                .snapshot
                 .hosts
                 .iter()
                 .filter_map(|host| {
@@ -652,10 +672,10 @@ pub async fn list(
             json!("Rust 后端当前为只读开发阶段，尚未接入控制台或 CLI 进程。");
     }
     if let Some(service) = &state.lifecycle {
-        let records = service
-            .list(0, 128)
-            .await
-            .map_err(super::lifecycle::failure)?;
+        // The first 128 receipts in ledger order, as before, out of the
+        // shared list (`force=1` refreshes it like everything else).
+        let shared = super::lifecycle::shared_records(&state, service, force).await?;
+        let records = &shared[..shared.len().min(128)];
         // A bug-report worker's row carries the pending record
         // fields (`kind`, `title` "处理 <id>", `report_id`) so the sidebar
         // names the report instead of "新建 … 会话".
@@ -729,8 +749,6 @@ pub async fn list(
     }
     // The pane list and the pending receipts are filtered through the
     // debug-run registry exactly like the session list (`filter_rows`).
-    let debug_run = crate::sessions::debug_run_of(query.as_deref());
-    let runs = state.reader.store.debug_runs();
     if !debug_run.is_empty() || !runs.is_empty() {
         if let Some(sessions) = response["sessions"].as_array_mut() {
             sessions.retain(|row| runs.keeps(row, &debug_run));
@@ -745,5 +763,9 @@ pub async fn list(
             });
         }
     }
-    super::lifecycle::response(response, permit).await
+    let (bytes, permit) = super::lifecycle::serialize(response, permit).await?;
+    state
+        .polls
+        .store_term_list(&debug_run, generation, runs, bytes.clone());
+    Ok(super::lifecycle::response_bytes(bytes, permit))
 }
