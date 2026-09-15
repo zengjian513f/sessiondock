@@ -52,8 +52,8 @@ pub async fn list(
     state
         .reader
         .run(move |store| {
-            let value = store.list_view_unless(query.force == "1", &debug_run, &query.sig)?;
-            Ok(JsonBytes::new(&value))
+            let bytes = store.list_view_bytes(query.force == "1", &debug_run, &query.sig)?;
+            Ok(JsonBytes(bytes))
         })
         .await
 }
@@ -147,7 +147,7 @@ pub struct PageQuery {
     debug_run: String,
 }
 struct PageBody {
-    bytes: Vec<u8>,
+    bytes: Bytes,
     _permit: Arc<tokio::sync::OwnedSemaphorePermit>,
 }
 impl AsRef<[u8]> for PageBody {

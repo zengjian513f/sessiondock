@@ -212,6 +212,30 @@ pub async fn bind(
     let result = service.bind(authority).await.map_err(failure)?;
     response(project(&result), permit).await
 }
+/// The receipt list for the display polls (`/api/live` exit receipts,
+/// `/api/term/list.pending`): one `LifecycleService::list` — every live
+/// receipt probed through its host — serves both for
+/// [`crate::polls::RECEIPTS_TTL`] under one lifecycle generation; concurrent
+/// misses wait for one refresh and `force` refreshes regardless. Mutation
+/// paths keep their own fresh lists.
+pub(super) async fn shared_records(
+    state: &AppState,
+    service: &LifecycleService,
+    force: bool,
+) -> Result<std::sync::Arc<Vec<Record>>, ApiError> {
+    let generation = service.generation();
+    if !force && let Some(records) = state.polls.receipts(generation) {
+        return Ok(records);
+    }
+    let _flight = state.polls.receipts_flight.lock().await;
+    let generation = service.generation();
+    if !force && let Some(records) = state.polls.receipts(generation) {
+        return Ok(records);
+    }
+    let records = std::sync::Arc::new(service.list(0, usize::MAX).await.map_err(failure)?);
+    state.polls.store_receipts(generation, records.clone());
+    Ok(records)
+}
 pub(super) async fn admit(state: &AppState) -> Result<tokio::sync::OwnedSemaphorePermit, ApiError> {
     crate::state::admit(&state.lifecycle_http, "lifecycle_response_busy").await
 }
@@ -219,6 +243,15 @@ pub(super) async fn response(
     value: Value,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Result<Response, ApiError> {
+    let (bytes, permit) = serialize(value, permit).await?;
+    Ok(response_bytes(bytes, permit))
+}
+/// Encode a lifecycle answer off the reactor; the response permit travels
+/// with the bytes.
+pub(super) async fn serialize(
+    value: Value,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Result<(axum::body::Bytes, tokio::sync::OwnedSemaphorePermit), ApiError> {
     let (bytes, permit) = tokio::task::spawn_blocking(move || (serde_json::to_vec(&value), permit))
         .await
         .map_err(|_| {
@@ -229,13 +262,20 @@ pub(super) async fn response(
             )
         })?;
     let bytes = bytes.map_err(|_| invalid())?;
+    Ok((axum::body::Bytes::from(bytes), permit))
+}
+/// The lifecycle response shape over already encoded bytes: the permit is
+/// held until the body has been sent or dropped.
+pub(super) fn response_bytes(
+    mut bytes: axum::body::Bytes,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> Response {
     let length = bytes.len();
-    let mut bytes = axum::body::Bytes::from(bytes);
     let body = axum::body::Body::from_stream(async_stream::stream! {
         let _permit=permit;
         while !bytes.is_empty(){yield Ok::<_,std::convert::Infallible>(bytes.split_to(bytes.len().min(32*1024)));}
     });
-    Ok((
+    (
         [
             (header::CACHE_CONTROL, "no-store"),
             (header::CONTENT_TYPE, "application/json"),
@@ -243,7 +283,7 @@ pub(super) async fn response(
         [(header::CONTENT_LENGTH, length.to_string())],
         body,
     )
-        .into_response())
+        .into_response()
 }
 
 #[cfg(test)]

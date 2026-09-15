@@ -36,8 +36,11 @@ pub(crate) use scope::CatalogEntry as NativeCatalogEntry;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::UNIX_EPOCH;
+
+use axum::body::Bytes;
 
 use crate::metadata::{MetadataSnapshot, MetadataStore};
 use serde::Deserialize;
@@ -365,22 +368,40 @@ impl SessionSnapshot {
 }
 
 /// One debug-run view of a published list,
-/// kept while the list, the registry and the run id are
-/// the same so the polling default view costs no re-filtering.
+/// kept while the list and the registry are the same so the polling
+/// default view costs no re-filtering (one per run id, so a monkey's view
+/// and the ordinary view alternating keep both documents).
 struct Filtered {
     published: Arc<Published>,
     runs: Arc<RunIndex>,
-    run_id: String,
     document: Arc<Value>,
 }
 
 struct ListState {
     published: Option<Arc<Published>>,
-    filtered: Option<Filtered>,
+    /// By run id (`""` = the ordinary view); at most [`SERIALIZED_VIEWS`].
+    filtered: BTreeMap<String, Filtered>,
     /// Owner uids that vanished from the index since the views were last
     /// touched; applied before the next use of the view cache.
     evictions: Vec<String>,
 }
+
+/// The serialized `/api/sessions` body of one view (docs/read-model.md
+/// "列表响应字节缓存"): the exact bytes a hot request returns while the view
+/// document (`sig`, `built_at`, rows) and the cached-view set it borrowed
+/// decorations from are the ones it was rendered for.
+struct SerializedList {
+    /// The view document the bytes were rendered from (pointer identity:
+    /// `publish` republishes the same `Arc` while `sig` is unchanged).
+    document: Arc<Value>,
+    /// `Views::revision` when the decorations were borrowed.
+    revision: u64,
+    bytes: Bytes,
+}
+
+/// At most this many debug-run views keep serialized bytes (the ordinary
+/// view plus a few monkeys); more evict everything, like the predecessor.
+const SERIALIZED_VIEWS: usize = 8;
 
 /// Dependency resolution over one index snapshot: Codex `history_base`
 /// parents by native thread id, with the graph's 501/409 codes. Paths are
@@ -409,6 +430,12 @@ pub struct SessionStore {
     debug_runs: Option<debug_runs::DebugRuns>,
     list: Mutex<ListState>,
     views: Mutex<Views>,
+    /// `Views::revision`, readable while an open holds the view lock.
+    views_revision: Arc<AtomicU64>,
+    /// Serialized list bodies by debug-run id; its lock also makes
+    /// concurrent renders of one view single-flight (the second waits and
+    /// then hits). Never held while waiting for the list or view lock.
+    serialized: Mutex<BTreeMap<String, SerializedList>>,
 }
 
 impl SessionStore {
@@ -432,17 +459,27 @@ impl SessionStore {
         let debug_runs = metadata.as_ref().map(|metadata| {
             debug_runs::DebugRuns::new(metadata.directory().join(DEBUG_RUNS_FILENAME))
         });
+        let views = Views::new();
+        let views_revision = views.revision_handle();
         Self {
             index: index::Index::new(roots, index_path),
             metadata,
             debug_runs,
             list: Mutex::new(ListState {
                 published: None,
-                filtered: None,
+                filtered: BTreeMap::new(),
                 evictions: Vec::new(),
             }),
-            views: Mutex::new(Views::new()),
+            views: Mutex::new(views),
+            views_revision,
+            serialized: Mutex::new(BTreeMap::new()),
         }
+    }
+
+    /// The revision of the cached-view set (tests pin the byte cache on it).
+    #[cfg(test)]
+    pub(crate) fn views_revision(&self) -> u64 {
+        self.views_revision.load(Ordering::Acquire)
     }
 
     /// The debug-run registry as it is now (reloaded when the file changed);
@@ -593,6 +630,15 @@ impl SessionStore {
         Ok(document)
     }
 
+    /// `list_recent` without the clone and the view decorations: the
+    /// published document itself (rows, `sig`, `built_at`), for consumers
+    /// that read topology fields only (`/api/live`) and key their own
+    /// caches on its identity. The same `Arc` comes back while the rows
+    /// and metadata are unchanged.
+    pub fn recent_document(&self) -> Result<Arc<Value>, SessionError> {
+        Ok(self.publish_within(false, OPEN_TTL)?.document.clone())
+    }
+
     /// `/api/sessions` for one view: the published list with the debug-run
     /// registry applied (the ordinary view
     /// hides every registered run, `debug_run` shows only that run), fork
@@ -615,16 +661,96 @@ impl SessionStore {
         debug_run: &str,
         sig: &str,
     ) -> Result<Value, SessionError> {
+        let (published, document) = self.view_document(force, debug_run)?;
+        if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
+            return Ok(json!({"unchanged": true, "sig": sig}));
+        }
+        Ok(self.render_view(&published, &document).0)
+    }
+
+    /// `list_view_unless` as the response bytes, served from the per-view
+    /// byte cache: a hot request whose `sig` differs (or is absent) is a
+    /// lookup, not clone-decorate-serialize. An entry is reused while the
+    /// view document is the same `Arc` (so `sig` and `built_at` are
+    /// unchanged) and no cached view was inserted, replaced or evicted
+    /// (`Views::revision`, which is what the decorations depend on).
+    /// `force=1` rescans and re-renders like the predecessor; a render
+    /// while an open holds the view lock is undecorated and not kept.
+    pub fn list_view_bytes(
+        &self,
+        force: bool,
+        debug_run: &str,
+        sig: &str,
+    ) -> Result<Bytes, SessionError> {
+        let (published, document) = self.view_document(force, debug_run)?;
+        if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
+            let unchanged = json!({"unchanged": true, "sig": sig});
+            return Ok(Bytes::from(
+                serde_json::to_vec(&unchanged).expect("serde_json::Value serializes"),
+            ));
+        }
+        let mut cache = self
+            .serialized
+            .lock()
+            .map_err(|_| SessionError::new(500, "会话列表缓存锁不可用"))?;
+        if !force
+            && let Some(entry) = cache.get(debug_run)
+            && Arc::ptr_eq(&entry.document, &document)
+            && entry.revision == self.views_revision.load(Ordering::Acquire)
+        {
+            return Ok(entry.bytes.clone());
+        }
+        let (value, revision) = self.render_view(&published, &document);
+        let bytes = Bytes::from(serde_json::to_vec(&value).expect("serde_json::Value serializes"));
+        if let Some(revision) = revision {
+            if cache.len() >= SERIALIZED_VIEWS && !cache.contains_key(debug_run) {
+                cache.clear();
+            }
+            cache.insert(
+                debug_run.to_owned(),
+                SerializedList {
+                    document,
+                    revision,
+                    bytes: bytes.clone(),
+                },
+            );
+        }
+        Ok(bytes)
+    }
+
+    /// The published list rendered for the wire: cloned, decorated from the
+    /// view cache when its lock is free (an open in progress is never
+    /// waited for; anchors then stay absent and `None` says so) and with
+    /// the non-fatal row warnings stripped.
+    fn render_view(&self, published: &Published, document: &Value) -> (Value, Option<u64>) {
+        let mut value = document.clone();
+        let revision = match self.views.try_lock() {
+            Ok(views) => {
+                view_decorations(&mut value, &views, published);
+                Some(views.revision())
+            }
+            Err(_) => None,
+        };
+        strip_row_warnings(&mut value);
+        (value, revision)
+    }
+
+    /// The signed document of one view: the published list itself for the
+    /// ordinary view without registered runs, else the debug-run filtered
+    /// document cached per (published list, registry, run id).
+    fn view_document(
+        &self,
+        force: bool,
+        debug_run: &str,
+    ) -> Result<(Arc<Published>, Arc<Value>), SessionError> {
         let published = self.publish(force)?;
         let runs = self.debug_runs();
         let document: Arc<Value> = if debug_run.is_empty() && runs.is_empty() {
             published.document.clone()
         } else {
             let mut state = self.list_state()?;
-            let cached = state.filtered.as_ref().filter(|filtered| {
-                Arc::ptr_eq(&filtered.published, &published)
-                    && Arc::ptr_eq(&filtered.runs, &runs)
-                    && filtered.run_id == debug_run
+            let cached = state.filtered.get(debug_run).filter(|filtered| {
+                Arc::ptr_eq(&filtered.published, &published) && Arc::ptr_eq(&filtered.runs, &runs)
             });
             match cached {
                 Some(filtered) => filtered.document.clone(),
@@ -644,27 +770,24 @@ impl SessionStore {
                         "sessions": rows, "sig": sig,
                         "built_at": published.document["built_at"],
                     }));
-                    state.filtered = Some(Filtered {
-                        published: published.clone(),
-                        runs: runs.clone(),
-                        run_id: debug_run.to_owned(),
-                        document: document.clone(),
-                    });
+                    if state.filtered.len() >= SERIALIZED_VIEWS
+                        && !state.filtered.contains_key(debug_run)
+                    {
+                        state.filtered.clear();
+                    }
+                    state.filtered.insert(
+                        debug_run.to_owned(),
+                        Filtered {
+                            published: published.clone(),
+                            runs: runs.clone(),
+                            document: document.clone(),
+                        },
+                    );
                     document
                 }
             }
         };
-        if !force && !sig.is_empty() && document["sig"].as_str() == Some(sig) {
-            return Ok(json!({"unchanged": true, "sig": sig}));
-        }
-        let mut document = (*document).clone();
-        // Never wait for an open in progress: a list is independent of the
-        // sessions being parsed; their anchors simply stay absent.
-        if let Ok(views) = self.views.try_lock() {
-            view_decorations(&mut document, &views, &published);
-        }
-        strip_row_warnings(&mut document);
-        Ok(document)
+        Ok((published, document))
     }
 
     pub fn messages(&self, uid: &str, query: &MessageQuery) -> Result<Value, SessionError> {

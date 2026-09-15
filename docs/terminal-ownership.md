@@ -113,7 +113,10 @@ The browser abandons an attach that remains in WebSocket `CONNECTING` for 15
 seconds, refreshes host liveness and enters the normal reconnect path. This
 transport timeout does not imply that the independent ptyhost process exited.
 
-`/api/term/list` publishes fresh observed sessions plus pending
-and source information. Explicit stop and force takeover cover managed and
-external sessions through lifecycle discovery; resume creates a newly observed
-instance rather than reclaiming an exited one.
+`/api/term/list` publishes the observed sessions plus pending and source
+information from the shared managed observation and a 2 s response cache
+that every lifecycle mutation drops at once
+([liveness.md](liveness.md#response-caches)); it authorizes nothing, and
+claim/attach keep their fresh probes. Explicit stop and force takeover cover
+managed and external sessions through lifecycle discovery; resume creates a
+newly observed instance rather than reclaiming an exited one.

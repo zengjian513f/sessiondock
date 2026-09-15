@@ -659,6 +659,13 @@ pub struct SharedObservation {
     pub cached: bool,
 }
 
+/// What a shared observation was taken under: the lifecycle mutation
+/// counter (`LifecycleService::generation`, `0` without the service). A
+/// cached observation answers only the same generation, so a create, kill,
+/// takeover, bind or stop is visible to the next display request at once
+/// instead of after the TTL.
+pub type Generation = u64;
+
 #[derive(Debug)]
 pub enum SharedError<E> {
     Prepare(E),
@@ -667,6 +674,7 @@ pub enum SharedError<E> {
 
 struct CachedSnapshot {
     observed: Instant,
+    generation: Generation,
     snapshot: Arc<RuntimeSnapshot>,
 }
 
@@ -724,10 +732,14 @@ impl ManagedRuntime {
         *self.clock.get_or_init(process::load_clock).await
     }
 
-    /// The last shared observation if it is younger than the cache TTL.
-    pub fn cached(&self) -> Option<SharedObservation> {
+    /// The last shared observation if it is younger than the cache TTL and
+    /// was taken under `generation`.
+    pub fn cached(&self, generation: Generation) -> Option<SharedObservation> {
         let cached = lock(&self.cached);
         let entry = cached.as_ref()?;
+        if entry.generation != generation {
+            return None;
+        }
         let age = entry.observed.elapsed();
         (age < self.limits.cache_ttl).then(|| SharedObservation {
             snapshot: entry.snapshot.clone(),
@@ -736,21 +748,28 @@ impl ManagedRuntime {
         })
     }
 
+    /// Drop the shared observation: the next display request probes again.
+    pub fn invalidate(&self) {
+        *lock(&self.cached) = None;
+    }
+
     /// Single-flight shared observation: concurrent callers wait for one
-    /// refresh and reuse it; `force` bypasses the TTL but still serializes.
+    /// refresh and reuse it; `force` bypasses the TTL but still serializes,
+    /// and a cached observation of another `generation` is never reused.
     /// `prepare` runs only when a refresh is really needed, so it may hold
     /// admission and freeze the native catalog; its guard lives through the
     /// probe and is dropped before the result is published.
     pub async fn observe_shared<T, E>(
         &self,
         force: bool,
+        generation: Generation,
         prepare: impl AsyncFnOnce() -> Result<(T, NativeCatalog, Vec<ExitReceipt>), E>,
     ) -> Result<SharedObservation, SharedError<E>> {
-        if !force && let Some(hit) = self.cached() {
+        if !force && let Some(hit) = self.cached(generation) {
             return Ok(hit);
         }
         let _refresh = self.refresh.lock().await;
-        if !force && let Some(hit) = self.cached() {
+        if !force && let Some(hit) = self.cached(generation) {
             return Ok(hit);
         }
         let (guard, catalog, receipts) = prepare().await.map_err(SharedError::Prepare)?;
@@ -762,6 +781,7 @@ impl ManagedRuntime {
         drop(guard);
         *lock(&self.cached) = Some(CachedSnapshot {
             observed: Instant::now(),
+            generation,
             snapshot: snapshot.clone(),
         });
         Ok(SharedObservation {

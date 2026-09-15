@@ -222,6 +222,59 @@ VmRSS，MB：
 `tikv-jemallocator` 未试：需要新增外部依赖（联网取包）；`malloc_trim` 已让释放
 真正回落，且只新增已在 lock 里的 `libc` 直接依赖。
 
+## 轮询路径：最终响应缓存（2026-09-15）
+
+前身 Python 在轮询路径上曾反超本服务：它缓存得晚一层——最终序列化字节——并把
+`/api/live`、`/api/term/list` 按 2 s 的结果缓存返回。本轮把同样的三层缓存搬过来
+（设计见 [read-model.md](read-model.md#列表索引与摘要) "列表响应字节缓存" 与
+[liveness.md](liveness.md#response-caches)）：
+
+- `/api/sessions`：`sig` 短路之后，按 `debug_run` 视图缓存最终响应字节，键是视图文档
+  的 `Arc` 身份（⇔ 当前 `sig`）+ 视图缓存修订号（列表借的 `cursor.anchor` /
+  `timeline_pin` 只依赖它）；并发全列表请求排队后依次命中同一块缓冲。
+- `/api/live`：按视图缓存装配好的文档，键是 `/proc` 扫描身份、共享受控观察身份、
+  生命周期修订号、视图拓扑（行的判活字段 + 被注册表隐藏的 uid）；每请求只补
+  `managed.cache` / `scan.cache` / `spawned_recorded` 三个字段。
+- `/api/term/list`：改读共享受控观察（不再每次新鲜探测：列表不授权任何东西），
+  装配结果按视图缓存 2 s；受控观察与 pending 用的回执列表也按生命周期修订号 + 2 s
+  共享一份（`LifecycleService::list` 对 26 个存活回执要 52 次 socket 往返）。
+- 生命周期协调器每完成一条变更命令（create / kill / takeover / bind / stop /
+  discard，不论结果）推进 `generation`；三层缓存和共享受控观察都以它为键，API 变更
+  立即失效；服务背后的变化（别的后端起的 host、被追加的文件）随各来源自己的 TTL
+  （扫描 3 s、观察 2 s、列表 3 s）在一个轮询周期内可见。`force=1` 全部绕过并回填。
+
+隔离实例基准（`scratchpad/bench_polls.py`，只读真实根 + 生产 `debug-runs.json`
+的只读拷贝 → 483 行 / 435 KB，临时 state/host/lifecycle 目录，26 个
+`/api/term/create` 起的 free-shell ptyhost 实例，loopback，urllib + `perf_counter`
+5 次取中位数；"修改前"是同一台机器上从 `main` 构建的二进制，同一配置先后运行）：
+
+| op | 修改前 | 修改后 | 目标 |
+| --- | ---: | ---: | ---: |
+| `GET /api/sessions`（全列表，435 KB）热 | 9.98 ms | 1.02 ms | ≤ 3 ms |
+| `GET /api/sessions?sig=<当前>` 热 | 0.68 ms | 0.76 ms | 保持 |
+| `GET /api/live` 热 | 22.28 ms | 4.34 ms | ≤ 5 ms |
+| `GET /api/term/list` 热 | 69.60 ms | 0.61 ms | ≤ 10 ms |
+| 8 并发 `GET /api/sessions`（墙钟） | 10.94 ms | 9.07 ms | ≤ 15 ms |
+| `GET /api/sessions?force=1`（重扫，未变） | 33.4 ms | 40.6 ms | — |
+| `GET /api/live?force=1` | 141 ms | 133 ms | — |
+| `GET /api/term/list?force=1` | 67 ms | 111 ms（两次回执列表 + 新鲜探测） | — |
+| 浏览器节奏：每 3.1 s 一次 `/api/live` | 213 ms | 147 ms | — |
+| 浏览器节奏：每 3.1 s 一次 `/api/term/list` | 156 ms | 177 ms | — |
+| 浏览器节奏：每 8.5 s 一次 `/api/sessions?sig=`（根在变，返回全文） | 125 ms | 72 ms | — |
+| VmRSS 启动 / 26 host 后 / 基准结束 | 35 / 147 / 362 MB | 44 / 126 / 247 MB | — |
+
+同一时刻只读 GET 生产实例作参考（medians of 5）：本服务 8741 为
+9.27 / 1.10 / 19.71 / 90.54 ms、8 并发 14.9 ms；Python 8710 为
+1.64 / 1.24 / 1.20 / 3.34 ms、8 并发 10.2 ms。机器负载 8–12（256 核）下同一二进制
+两次运行的热数值差 ±0.4 ms（例如 `sig` 命中 0.39 与 0.76 ms），按较差的一次报告。
+
+"浏览器节奏"一行是缓存过期后的来源刷新成本，本轮不在范围内、也没有变好：
+`/proc` 扫描 ~70–100 ms（3 s TTL）、26 个 host 的受控观察 ~30–50 ms、回执列表
+~40–60 ms、根变化后的索引重建 ~70–120 ms。Python 靠一条只在有人轮询时运行的预热
+线程（`WARM_INTERVAL` 1.7 s）把这些搬离请求路径；本服务尚未这样做（空闲 CPU
+预算见下节），单次 3 s 节奏的 `/api/term/list` 因此比修改前还多付一次共享观察的
+刷新（修改前它自己新鲜探测、不刷新共享观察）。
+
 ## 空闲页面 CPU
 
 一个无头页面停在活动会话 `claude:179009468904dece`（22 个子代理，文件持续追加）

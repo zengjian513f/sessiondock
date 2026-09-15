@@ -18,8 +18,9 @@ use serde_json::{Value, json};
 use crate::{
     error::ApiError,
     lifecycle::model::{BindingState, State as LaunchState},
+    polls::{LiveKey, ScanState, topology},
     runtime::{
-        ExitReceipt, ManagedRuntime, RuntimeSnapshot, SharedError, SharedObservation,
+        ExitReceipt, Generation, ManagedRuntime, RuntimeSnapshot, SharedError, SharedObservation,
         procscan::{Scan, ScanError, ScanSnapshot, SessionRow},
     },
     state::AppState,
@@ -102,13 +103,47 @@ fn seed_managed_status(response: &mut Value, running: &[String], started: &BTree
     response["started_at"] = json!(started);
 }
 
+/// The per-request fields of a `/api/live` body: how the two source
+/// caches answered and how many spawners this call wrote.
+struct Volatile {
+    managed: Option<Value>,
+    scan: Option<Value>,
+    recorded: Option<Value>,
+}
+
+fn cache_report(hit: bool, age: std::time::Duration, ttl: std::time::Duration) -> Value {
+    json!({
+        "hit": hit,
+        "age_ms": u64::try_from(age.as_millis()).unwrap_or(u64::MAX),
+        "ttl_ms": u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX),
+    })
+}
+
+fn finish(mut response: Value, volatile: Volatile) -> Response {
+    if let (Some(report), Some(managed)) = (volatile.managed, response["managed"].as_object_mut()) {
+        managed.insert("cache".into(), report);
+    }
+    if let Some(scan) = response["scan"].as_object_mut() {
+        if let Some(report) = volatile.scan {
+            scan.insert("cache".into(), report);
+        }
+        if let Some(recorded) = volatile.recorded {
+            scan.insert("spawned_recorded".into(), recorded);
+        }
+    }
+    ([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response()
+}
+
 /// Legacy envelope. Without the scan, `uids` lists only sessions whose managed
 /// instance is verified running and everything else is unknown, never
 /// stopped. With the scan (Linux, explicit switch) the answer is:
 /// `uids` = sessions with a live CLI process (list order), `tmux_uids` those
 /// running under tmux or a managed host, `started_at[uid]` the earliest CLI
 /// main-process start; spawners are recorded on the way. `?force=1` bypasses
-/// both caches.
+/// every cache. The assembled body is kept per view while the scan, the
+/// managed observation, the lifecycle generation and the list topology are
+/// the ones it was built from (`polls::PollCache`); only the two `cache`
+/// reports and `spawned_recorded` are per request.
 pub async fn live(
     State(state): State<AppState>,
     RawQuery(query): RawQuery,
@@ -120,6 +155,105 @@ pub async fn live(
     // pairing processes: a hidden session is never a live uid of this view.
     let debug_run = crate::sessions::debug_run_of(query.as_deref());
     let runs = state.reader.store.debug_runs();
+    let generation = lifecycle_generation(&state);
+    let shared = match &state.runtime {
+        Some(runtime) => Some(shared(&state, runtime, force).await?),
+        None => None,
+    };
+    let scanner = state.proc_scan.clone().unwrap_or_else(|| {
+        Arc::new(crate::runtime::procscan::ProcScanner::new(
+            "/proc".into(),
+            None,
+            crate::runtime::procscan::SessionRoots::default(),
+        ))
+    });
+    let scanned = scanner.snapshot(force).await;
+    // Wait for a reader like the SSE coordinators: the legacy poller must
+    // not see a spurious `reader_busy` from liveness. Only the topology
+    // fields leave the reader; the document itself is neither cloned nor
+    // decorated.
+    let (rows, hidden) = match &scanned {
+        Ok(_) => {
+            let runs = runs.clone();
+            let debug_run = debug_run.clone();
+            state
+                .reader
+                .run_wait(&state.shutdown, move |store| {
+                    let document = store.recent_document()?;
+                    Ok(topology(&document, &runs, &debug_run))
+                })
+                .await?
+        }
+        Err(_) => (Vec::new(), BTreeSet::new()),
+    };
+    let key = LiveKey {
+        scan: match &scanned {
+            Ok(snapshot) => ScanState::Scan(snapshot.scan.clone()),
+            Err(ScanError::UnsupportedPlatform) => ScanState::Unsupported,
+            Err(ScanError::Failed) => ScanState::Failed,
+        },
+        runtime: shared.as_ref().map(|shared| shared.snapshot.clone()),
+        generation,
+        rows,
+        hidden,
+    };
+    let managed_report = match (&shared, &state.runtime) {
+        (Some(shared), Some(runtime)) => Some(cache_report(
+            shared.cached,
+            shared.age,
+            runtime.limits().cache_ttl,
+        )),
+        _ => None,
+    };
+    let scan_report = scanned
+        .as_ref()
+        .ok()
+        .map(|snapshot| cache_report(snapshot.cached, snapshot.age, scanner.ttl()));
+    if !force && let Some(cached) = state.polls.live(&debug_run, &key) {
+        // Nothing was written by this call: the entry's builder recorded
+        // this scan's spawners (write once, memoised per scan).
+        let recorded = scanned
+            .is_ok()
+            .then(|| json!(state.spawn_watch.as_ref().map(|_| 0)));
+        return Ok(finish(
+            (*cached).clone(),
+            Volatile {
+                managed: managed_report,
+                scan: scan_report,
+                recorded,
+            },
+        ));
+    }
+    let (response, recorded) = assemble(&state, shared.as_ref(), scanned, &key).await?;
+    let response = Arc::new(response);
+    state.polls.store_live(&debug_run, key, response.clone());
+    Ok(finish(
+        (*response).clone(),
+        Volatile {
+            managed: managed_report,
+            scan: scan_report,
+            recorded,
+        },
+    ))
+}
+
+/// The lifecycle mutation counter, `0` without the service.
+pub(crate) fn lifecycle_generation(state: &AppState) -> Generation {
+    state
+        .lifecycle
+        .as_ref()
+        .map_or(0, |service| service.generation())
+}
+
+/// Build the `/api/live` body from the sources in `key` (without the
+/// per-request fields), recording spawners on the way; the second value is
+/// `scan.spawned_recorded`.
+async fn assemble(
+    state: &AppState,
+    shared: Option<&SharedObservation>,
+    scanned: Result<ScanSnapshot, ScanError>,
+    key: &LiveKey,
+) -> Result<(Value, Option<Value>), ApiError> {
     let mut response = json!({"enabled":false,"known":false,"partial":true,
         "unavailable_reason":UNCONFIGURED,
         "uids":[],"tmux_uids":[],"started_at":{},"managed":null});
@@ -130,8 +264,7 @@ pub async fn live(
     let mut managed_started: BTreeMap<String, f64> = BTreeMap::new();
     let mut host_roots: BTreeSet<u32> = BTreeSet::new();
     let mut host_uids: BTreeSet<String> = BTreeSet::new();
-    if let Some(runtime) = &state.runtime {
-        let shared = shared(&state, runtime, force).await?;
+    if let Some(shared) = shared {
         let snapshot: &RuntimeSnapshot = &shared.snapshot;
         for uid in snapshot.running_uids() {
             managed_running.push(uid.to_owned());
@@ -150,140 +283,122 @@ pub async fn live(
         response["known"] = json!(snapshot.known);
         response["unavailable_reason"] = json!(PARTIAL);
         seed_managed_status(&mut response, &managed_running, &managed_started);
-        let mut managed = serde_json::to_value(snapshot).map_err(|_| {
+        let managed = serde_json::to_value(snapshot).map_err(|_| {
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "runtime_encoding",
                 "受控进程观察无法编码",
             )
         })?;
-        managed["cache"] = json!({
-            "hit": shared.cached,
-            "age_ms": u64::try_from(shared.age.as_millis()).unwrap_or(u64::MAX),
-            "ttl_ms": u64::try_from(runtime.limits().cache_ttl.as_millis()).unwrap_or(u64::MAX),
-        });
         response["managed"] = managed;
     }
-    {
-        let scanner = state.proc_scan.clone().unwrap_or_else(|| {
-            Arc::new(crate::runtime::procscan::ProcScanner::new(
-                "/proc".into(),
-                None,
-                crate::runtime::procscan::SessionRoots::default(),
-            ))
-        });
-        let mut scan_report = json!({"enabled": true, "root": scanner.root().to_string_lossy()});
-        match scanner.snapshot(force).await {
-            Ok(snapshot) => {
-                // Wait for a reader like the SSE coordinators: the legacy
-                // poller must not see a spurious `reader_busy` from liveness.
-                let mut document = state
-                    .reader
-                    .run_wait(&state.shutdown, |store| store.list_recent())
-                    .await?;
-                let hidden = runs.split_document(&mut document, &debug_run);
-                managed_running.retain(|uid| !hidden.contains(uid));
-                let scan = snapshot.scan.clone();
-                let watcher = state.spawn_watch.clone();
-                // Pairing, ancestry walks and the spawner write touch the
-                // process table and the metadata file: off the reactor.
-                let merged = tokio::task::spawn_blocking(move || {
-                    let sessions = SessionRow::from_list(&document);
-                    let active = scan.active_processes(&sessions);
-                    let by_uid: HashMap<&str, &SessionRow> = sessions
-                        .iter()
-                        .map(|session| (session.uid.as_str(), session))
-                        .collect();
-                    let mut merged = Merged::default();
-                    let live: BTreeSet<&str> = active
-                        .uids
-                        .iter()
-                        .map(String::as_str)
-                        .chain(managed_running.iter().map(String::as_str))
-                        .collect();
-                    merged.uids = sessions
-                        .iter()
-                        .filter(|session| live.contains(session.uid.as_str()))
-                        .map(|session| session.uid.clone())
-                        .collect();
-                    for uid in &managed_running {
-                        if !merged.uids.contains(uid) {
-                            merged.uids.push(uid.clone());
-                        }
+    let mut recorded = None;
+    let scanner = state.proc_scan.clone().unwrap_or_else(|| {
+        Arc::new(crate::runtime::procscan::ProcScanner::new(
+            "/proc".into(),
+            None,
+            crate::runtime::procscan::SessionRoots::default(),
+        ))
+    });
+    let mut scan_report = json!({"enabled": true, "root": scanner.root().to_string_lossy()});
+    match scanned {
+        Ok(snapshot) => {
+            managed_running.retain(|uid| !key.hidden.contains(uid));
+            let scan = snapshot.scan.clone();
+            let watcher = state.spawn_watch.clone();
+            let sessions = key.rows.clone();
+            // Pairing, ancestry walks and the spawner write touch the
+            // process table and the metadata file: off the reactor.
+            let merged = tokio::task::spawn_blocking(move || {
+                let active = scan.active_processes(&sessions);
+                let by_uid: HashMap<&str, &SessionRow> = sessions
+                    .iter()
+                    .map(|session| (session.uid.as_str(), session))
+                    .collect();
+                let mut merged = Merged::default();
+                let live: BTreeSet<&str> = active
+                    .uids
+                    .iter()
+                    .map(String::as_str)
+                    .chain(managed_running.iter().map(String::as_str))
+                    .collect();
+                merged.uids = sessions
+                    .iter()
+                    .filter(|session| live.contains(session.uid.as_str()))
+                    .map(|session| session.uid.clone())
+                    .collect();
+                for uid in &managed_running {
+                    if !merged.uids.contains(uid) {
+                        merged.uids.push(uid.clone());
                     }
-                    for uid in &merged.uids {
-                        let pids = active.owned.get(uid).map_or(&[][..], Vec::as_slice);
-                        // Managed = it is the CLI of a pane itself (a managed
-                        // instance runs under its host by construction), or a
-                        // continued Claude session that inherited the origin's
-                        // pane; a grandchild the pane's CLI spawned is not, it
-                        // has no console of its own.
-                        if managed_running.contains(uid)
-                            || scan.tree.in_tmux(pids)
-                            || scan.tree.hosted(pids, &host_roots)
-                            || by_uid.get(uid.as_str()).is_some_and(|session| {
-                                inherits_pane(&scan, &sessions, session, &host_uids, &host_roots)
-                            })
-                        {
-                            merged.tmux_uids.push(uid.clone());
-                        }
-                        if let Some(at) = scan
-                            .started_at(pids)
-                            .or_else(|| managed_started.get(uid).copied())
-                        {
-                            merged.started.insert(uid.clone(), at);
-                        }
-                    }
-                    // Spawners are recorded on every `/api/live` (趁每次判活顺手记下).
-                    merged.recorded = watcher
-                        .as_ref()
-                        .map(|watcher| watcher.record(&scan, &sessions, &active.owned));
-                    merged
-                })
-                .await
-                .map_err(|_| {
-                    ApiError::new(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "live_failed",
-                        "进程表配对失败",
-                    )
-                })?;
-                response["enabled"] = json!(true);
-                response["known"] = json!(true);
-                response["partial"] = json!(false);
-                response
-                    .as_object_mut()
-                    .expect("object")
-                    .remove("unavailable_reason");
-                response["uids"] = json!(merged.uids);
-                response["tmux_uids"] = json!(merged.tmux_uids);
-                response["started_at"] = json!(merged.started);
-                if let Some(managed) = response["managed"].as_object_mut() {
-                    managed.insert("external_detection".into(), json!("proc_scan"));
                 }
-                scan_report["stats"] = json!(snapshot.scan.stats);
-                scan_report["cache"] = json!({
-                    "hit": snapshot.cached,
-                    "age_ms": u64::try_from(snapshot.age.as_millis()).unwrap_or(u64::MAX),
-                    "ttl_ms": u64::try_from(scanner.ttl().as_millis()).unwrap_or(u64::MAX),
-                });
-                scan_report["spawned_recorded"] = match merged.recorded {
-                    Some(Ok(count)) => json!(count),
-                    Some(Err(error)) => json!({"error": error.code}),
-                    None => Value::Null,
-                };
+                for uid in &merged.uids {
+                    let pids = active.owned.get(uid).map_or(&[][..], Vec::as_slice);
+                    // Managed = it is the CLI of a pane itself (a managed
+                    // instance runs under its host by construction), or a
+                    // continued Claude session that inherited the origin's
+                    // pane; a grandchild the pane's CLI spawned is not, it
+                    // has no console of its own.
+                    if managed_running.contains(uid)
+                        || scan.tree.in_tmux(pids)
+                        || scan.tree.hosted(pids, &host_roots)
+                        || by_uid.get(uid.as_str()).is_some_and(|session| {
+                            inherits_pane(&scan, &sessions, session, &host_uids, &host_roots)
+                        })
+                    {
+                        merged.tmux_uids.push(uid.clone());
+                    }
+                    if let Some(at) = scan
+                        .started_at(pids)
+                        .or_else(|| managed_started.get(uid).copied())
+                    {
+                        merged.started.insert(uid.clone(), at);
+                    }
+                }
+                // Spawners are recorded on every `/api/live` (趁每次判活顺手记下).
+                merged.recorded = watcher
+                    .as_ref()
+                    .map(|watcher| watcher.record(&scan, &sessions, &active.owned));
+                merged
+            })
+            .await
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "live_failed",
+                    "进程表配对失败",
+                )
+            })?;
+            response["enabled"] = json!(true);
+            response["known"] = json!(true);
+            response["partial"] = json!(false);
+            response
+                .as_object_mut()
+                .expect("object")
+                .remove("unavailable_reason");
+            response["uids"] = json!(merged.uids);
+            response["tmux_uids"] = json!(merged.tmux_uids);
+            response["started_at"] = json!(merged.started);
+            if let Some(managed) = response["managed"].as_object_mut() {
+                managed.insert("external_detection".into(), json!("proc_scan"));
             }
-            Err(ScanError::UnsupportedPlatform) => {
-                scan_report["status"] = json!("unsupported_platform");
-            }
-            Err(ScanError::Failed) => {
-                scan_report["status"] = json!("failed");
-                response["unavailable_reason"] = json!(SCAN_FAILED);
-            }
+            scan_report["stats"] = json!(snapshot.scan.stats);
+            recorded = Some(match merged.recorded {
+                Some(Ok(count)) => json!(count),
+                Some(Err(error)) => json!({"error": error.code}),
+                None => Value::Null,
+            });
         }
-        response["scan"] = scan_report;
+        Err(ScanError::UnsupportedPlatform) => {
+            scan_report["status"] = json!("unsupported_platform");
+        }
+        Err(ScanError::Failed) => {
+            scan_report["status"] = json!("failed");
+            response["unavailable_reason"] = json!(SCAN_FAILED);
+        }
     }
-    Ok(([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response())
+    response["scan"] = scan_report;
+    Ok((response, recorded))
 }
 
 /// Continued-in fallback: a Claude session no
@@ -343,13 +458,14 @@ pub(crate) async fn shared(
     runtime: &ManagedRuntime,
     force: bool,
 ) -> Result<SharedObservation, ApiError> {
+    let generation = lifecycle_generation(state);
     tokio::select! {
         biased;
         _ = state.shutdown.cancelled() => Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutdown", "服务正在关闭")),
-        result = runtime.observe_shared(force, async || {
+        result = runtime.observe_shared(force, generation, async || {
             let permit = admit(state).await?;
             let catalog = state.reader.run(|store| store.native_catalog()).await?;
-            let receipts = exit_receipts(state).await?;
+            let receipts = exit_receipts(state, force).await?;
             Ok::<_, ApiError>((permit, catalog, receipts))
         }) => result.map_err(|error| match error {
             SharedError::Prepare(error) => error,
@@ -361,14 +477,11 @@ pub(crate) async fn shared(
 /// Durable lifecycle exit receipts for operator-bound instances. A receipt
 /// names one exact instance; the runtime never lets it outrank a newer
 /// reachable instance of the same session.
-async fn exit_receipts(state: &AppState) -> Result<Vec<ExitReceipt>, ApiError> {
+async fn exit_receipts(state: &AppState, force: bool) -> Result<Vec<ExitReceipt>, ApiError> {
     let Some(service) = &state.lifecycle else {
         return Ok(Vec::new());
     };
-    let records = service
-        .list(0, usize::MAX)
-        .await
-        .map_err(super::lifecycle::failure)?;
+    let records = super::lifecycle::shared_records(state, service, force).await?;
     Ok(records
         .iter()
         .filter(|record| record.state() == LaunchState::Exited)
@@ -396,8 +509,10 @@ fn unavailable() -> ApiError {
     )
 }
 
-/// Fresh admission for claim/list. No stale cross-request cache is used to
-/// authorize a new ownership claim.
+/// Fresh admission for claim, attach, unleased send, stop and process-evidence
+/// binding. No stale cross-request cache is used to authorize a new
+/// ownership claim; the display lists (`/api/live`, `/api/term/list`) read
+/// the shared observation instead.
 pub(crate) async fn observe(state: &AppState) -> Result<Option<RuntimeSnapshot>, ApiError> {
     if let Some(runtime) = &state.runtime {
         let _permit = admit(state).await?;
