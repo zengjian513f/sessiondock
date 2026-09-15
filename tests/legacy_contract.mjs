@@ -147,11 +147,12 @@ test('selecting an existing pending terminal does not rebuild the full sidebar',
   assert.equal(renders, 2, 'new or not-yet-rendered rows still rebuild the sidebar');
 });
 
-test('pending terminals attach before any synchronous WebGL initialization', () => {
-  const context = contextWithCapabilities(disabled, {T: {uid: 'tmux:pane'}});
-  const shouldUse = loadFunction(context, 'shouldUseTermWebgl', read('term.js'));
-  assert.equal(shouldUse(), false);
-  assert.equal(shouldUse('codex:native'), true);
+test('terminals use the DOM renderer only', () => {
+  // A WebGL context made this the one tab whose renderer froze for good when
+  // Edge's GPU command buffer failed (NVIDIA + Wayland); synchronized frames
+  // are coalesced before the write now, so nothing needs it.
+  assert.doesNotMatch(read('term.js'), /WebglAddon/);
+  assert.doesNotMatch(read('index.html'), /addon-webgl/);
 });
 
 test('Codex side-thread detection reads only the live screen footer', () => {
