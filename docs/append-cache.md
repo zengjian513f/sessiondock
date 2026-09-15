@@ -10,11 +10,16 @@ Every changed candidate still goes through the existing full bounded file read,
 trusted-path/open-handle checks and before/after restamping. A cache entry can be
 reused only when it corresponds to the exact previous published Parsed candidate,
 has no incomplete/error checkpoint, and the entire previously committed byte
-prefix is verified against the freshly read prefix. Verification uses SHA-256 over
-every byte through that complete-line boundary, replacing retained raw-byte
-comparison; it never substitutes a sampled header hash. Source/root/data/summary paths and stable
-file identity must also agree. The 4 KiB public head, file size and mtime alone are
-never evidence of append-only contents.
+prefix is verified against the freshly read prefix. Verification is the content
+fingerprint (`crate::fingerprint`, a 128-bit non-cryptographic mix that runs at
+several GB/s; it replaced SHA-256 on 2026-09-15 because hashing cost more than
+reading the file on gigabyte sessions) over every byte through that complete-line
+boundary, replacing retained raw-byte comparison; it never substitutes a sampled
+header hash. The fingerprint detects our own files changing under us — an actor
+who can rewrite the native root already owns the data, so a MAC would add
+nothing. Source/root/data/summary paths and stable file identity must also agree.
+The 4 KiB public head, file size and mtime alone are never evidence of
+append-only contents.
 
 Stable file identity is distinct from the full change stamp: on Unix dev/inode
 identify an incarnation, while ctime remains part of the ordinary change stamp.

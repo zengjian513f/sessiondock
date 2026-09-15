@@ -34,9 +34,9 @@ fn prepare_value(source: &str, value: Value) -> Result<(Value, Vec<Sidecar>), St
             end: image.span.end(),
             plan: image.plan,
             decoded_len: image.span.decoded_len(),
-            decoded_sha1: *image.span.digest(),
+            decoded_digest: *image.span.digest(),
             encoded_offset: image.encoded_offset,
-            payload_sha1: image.payload_sha1,
+            payload_digest: image.payload_digest,
             mime: image.mime,
         })
         .map_err(|error| error.to_string())
@@ -220,9 +220,9 @@ fn structured_giant_data_url_streams_into_only_small_private_sidecar() {
             end: image.span.end(),
             plan: image.plan,
             decoded_len: image.span.decoded_len(),
-            decoded_sha1: *image.span.digest(),
+            decoded_digest: *image.span.digest(),
             encoded_offset: image.encoded_offset,
-            payload_sha1: image.payload_sha1,
+            payload_digest: image.payload_digest,
             mime: image.mime,
         })
         .map_err(|e| e.to_string())

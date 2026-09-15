@@ -114,10 +114,10 @@ fn prepare(output: Value) -> Result<Prepared, String> {
                 end,
                 plan: image.plan,
                 decoded_len: image.span.decoded_len(),
-                decoded_sha1: *image.span.digest(),
+                decoded_digest: *image.span.digest(),
                 mime: image.mime,
                 encoded_offset: image.encoded_offset,
-                payload_sha1: image.payload_sha1,
+                payload_digest: image.payload_digest,
             })
             .map_err(|error| error.to_string())
         },

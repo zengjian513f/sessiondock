@@ -1,5 +1,5 @@
 use super::*;
-use sha1::{Digest, Sha1};
+use crate::fingerprint::{self, Fingerprint};
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
 use std::time::{Duration, UNIX_EPOCH};
@@ -42,7 +42,7 @@ fn scan(bytes: &[u8]) -> RawIndex {
     RawIndex::scan(bytes).unwrap()
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha1::digest(bytes))
+    fingerprint::hex(&Fingerprint::digest(bytes))
 }
 fn assert_index(index: &RawIndex, bytes: &[u8]) {
     assert_eq!(index.length(), bytes.len() as u64);
@@ -487,12 +487,12 @@ fn sha256_probe_accepts_only_zero_and_complete_lf_boundaries() {
         for end in (0..=bytes.len() as u64 + 1).chain([u64::MAX]) {
             let index = RawIndex::scan_with_probe(bytes, Some(end)).unwrap();
             assert_index(&index, bytes);
-            let expected: [u8; 32] = Sha256::digest(&bytes[..committed]).into();
+            let expected = Fingerprint::digest(&bytes[..committed]);
             assert_eq!(index.committed_digest(), expected);
             if end == 0 || (end <= committed as u64 && bytes[end as usize - 1] == b'\n') {
                 assert_eq!(
                     index.probe_digest(),
-                    Some(Sha256::digest(&bytes[..end as usize]).into())
+                    Some(Fingerprint::digest(&bytes[..end as usize]))
                 );
             } else {
                 assert_eq!(index.probe_digest(), None);
@@ -502,7 +502,7 @@ fn sha256_probe_accepts_only_zero_and_complete_lf_boundaries() {
         assert_eq!(ordinary.probe_digest(), None);
         assert_eq!(
             ordinary.committed_digest(),
-            Sha256::digest(&bytes[..committed]).as_slice()
+            Fingerprint::digest(&bytes[..committed]).as_slice()
         );
     }
 }
@@ -523,9 +523,9 @@ fn sha256_probe_and_committed_hash_cross_chunks_without_including_partial_tail()
             let index = RawIndex::scan_with_probe(reader, Some(end as u64)).unwrap();
             assert_eq!(
                 index.probe_digest(),
-                Some(Sha256::digest(&bytes[..end]).into())
+                Some(Fingerprint::digest(&bytes[..end]))
             );
-            let expected: [u8; 32] = Sha256::digest(&bytes[..2 * CHUNK + 2]).into();
+            let expected = Fingerprint::digest(&bytes[..2 * CHUNK + 2]);
             assert_eq!(index.committed_digest(), expected);
             assert_eq!(index.prefix_hash(end as u64), Some(hash(&bytes[..end])));
             assert_eq!(index.digest(), hash(&bytes));

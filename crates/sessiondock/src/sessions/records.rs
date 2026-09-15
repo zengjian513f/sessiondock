@@ -31,19 +31,35 @@ fn record_limits() -> scanner::Limits {
 
 /// Strict small-record adapter. The pull decoder separately handles private
 /// large spans; never replace them with public markers or empty strings here.
+/// A line short enough to arrive here (at most `SMALL` physical bytes, see
+/// `native_records`) cannot hold a string above the inline threshold, so the
+/// two decoders agree and the faster one goes first.
 pub(super) fn decode_record(line: &[u8]) -> Result<Value, scanner::ScanError> {
-    scanner::scan_value(line, record_limits())
+    decode_inline(line, record_limits())
 }
 
 /// A whole resident line (push path: tests and the empty Grok chat) has no
 /// file to read spans back from; all strings from the actual line stay inline.
 fn decode_resident_record(line: &[u8]) -> Result<Value, scanner::ScanError> {
-    scanner::scan_value(
+    decode_inline(
         line,
         scanner::Limits {
             inline_string_bytes: line.len(),
         },
     )
+}
+
+/// serde_json is several times faster than the structural scanner on an
+/// ordinary record and produces the same `Value` for everything it accepts
+/// (order-preserving maps, last duplicate key wins, numbers through the same
+/// parser, the same UTF-8/control-character rules). Whatever it rejects — a
+/// record nested deeper than its recursion limit, or a real syntax error —
+/// gets the scanner's verdict, which has no depth quota.
+fn decode_inline(line: &[u8], limits: scanner::Limits) -> Result<Value, scanner::ScanError> {
+    if let Ok(value) = serde_json::from_slice::<Value>(line) {
+        return Ok(value);
+    }
+    scanner::scan_value(line, limits)
 }
 
 struct Entry {
@@ -104,8 +120,9 @@ pub(crate) fn invalid_lines_warning(count: usize) -> Option<String> {
 }
 impl RecordCache {
     /// All raw bytes pass the index, even when prior ASTs are candidates for
-    /// reuse. A full SHA-256 prefix match is required before exposing reused
-    /// records. On mismatch, reopen the same stamped input for a cold pass.
+    /// reuse. The fingerprint of the whole old committed prefix must match
+    /// before reused records are exposed. On mismatch, reopen the same
+    /// stamped input for a cold pass.
     pub(super) fn decode_input(
         &mut self,
         candidate: &Candidate,
@@ -356,6 +373,10 @@ fn same_file(old: &Candidate, new: &Candidate) -> bool {
         && old.summary == new.summary
         && old.data_stamp().map(|stamp| &stamp.file_identity)
             == new.data_stamp().map(|stamp| &stamp.file_identity)
+}
+#[cfg(test)]
+pub(super) fn value_weight_for_bench(value: &Value) -> usize {
+    value_weight(value)
 }
 // A conservative logical weight, not an allocator/RSS assertion. Containers pay
 // per capacity/entry and each nested Value pays a base node charge; an AST of

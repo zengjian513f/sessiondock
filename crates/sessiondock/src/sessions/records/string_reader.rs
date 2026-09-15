@@ -1,7 +1,7 @@
 //! A bounded decoder for the physical INSIDE of one JSON string (no quotes).
 //! No path access, media classification or authorization lives here. The caller
 //! must retain/finish its checked source and discard output on any read error.
-use sha1::{Digest, Sha1};
+use crate::fingerprint::{Digest, Fingerprint};
 use std::io::{self, Read};
 
 const BUFFER: usize = 8192;
@@ -14,7 +14,7 @@ fn incomplete() -> io::Error {
 }
 
 /// Emits unescaped UTF-8, never a resident copy of the entire input string.
-/// Successful EOF verifies the expected decoded length and SHA-1. Output before
+/// Successful EOF verifies the expected decoded length and fingerprint. Output before
 /// EOF is provisional; `finish` is mandatory before publishing/materializing it.
 pub(crate) struct JsonStringReader<R: Read> {
     reader: R,
@@ -27,9 +27,9 @@ pub(crate) struct JsonStringReader<R: Read> {
     pending_position: usize,
     pending_length: usize,
     expected_len: u64,
-    expected_sha1: [u8; 20],
+    expected_digest: Digest,
     decoded: u64,
-    hash: Sha1,
+    hash: Fingerprint,
     eof: bool,
     verified: bool,
     failed: bool,
@@ -39,7 +39,7 @@ impl<R: Read> JsonStringReader<R> {
     pub(crate) fn new(
         reader: R,
         expected_decoded_len: u64,
-        expected_sha1: [u8; 20],
+        expected_digest: Digest,
         physical_limit: u64,
     ) -> io::Result<Self> {
         if expected_decoded_len > physical_limit {
@@ -59,9 +59,9 @@ impl<R: Read> JsonStringReader<R> {
             pending_position: 0,
             pending_length: 0,
             expected_len: expected_decoded_len,
-            expected_sha1,
+            expected_digest,
             decoded: 0,
-            hash: Sha1::new(),
+            hash: Fingerprint::new(),
             eof: false,
             verified: false,
             failed: false,
@@ -239,8 +239,7 @@ impl<R: Read> Read for JsonStringReader<R> {
             }
             self.hash.update(&output[..count]);
             if self.eof {
-                if self.decoded != self.expected_len
-                    || <[u8; 20]>::from(self.hash.clone().finalize()) != self.expected_sha1
+                if self.decoded != self.expected_len || self.hash.finalize() != self.expected_digest
                 {
                     return Err(invalid());
                 }
