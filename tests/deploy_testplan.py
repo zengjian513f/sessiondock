@@ -42,6 +42,7 @@ brand_names_check python 900s python3 tests/brand_names_check.py
 bug_report_http_suite python 900s python3 tests/bug_report_http_suite.py
 claude_prompt_suite python 900s python3 tests/claude_prompt_suite.py
 deploy_native_handlers python 900s python3 tests/deploy_native_handlers.py
+deploy_lock python 900s python3 tests/deploy_lock.py
 deploy_testplan python 900s python3 tests/deploy_testplan.py
 files_browser python 900s python3 tests/files_browser.py
 files_read_suite python 900s python3 tests/files_read_suite.py
@@ -65,7 +66,7 @@ sessions_list_suite python 900s python3 tests/sessions_list_suite.py
 terminal_browser python 900s python3 tests/terminal_browser.py
 term_send_http_suite python 900s python3 tests/term_send_http_suite.py
 trash_http_suite python 900s python3 tests/trash_http_suite.py
-36 suites
+37 suites
 """
 NAMES = [ln.split()[0] for ln in STUB.splitlines() if not ln.endswith(" suites")]
 CARGO = {n for n in NAMES if n.startswith("cargo_")}
@@ -135,7 +136,7 @@ class MappingTest(unittest.TestCase):
         self.assertEqual(s, BROWSERS | {"node_contracts", "brand_names_check"})
         self.assertTrue(s.isdisjoint(CARGO))
         s, sc, full = suites_of("deploy/deploy.py")
-        self.assertEqual((s, sc, full), ({"deploy_native_handlers", "deploy_testplan"}, {"tests/deploy_dry_run.py"}, False))
+        self.assertEqual((s, sc, full), ({"deploy_lock", "deploy_native_handlers", "deploy_testplan"}, {"tests/deploy_dry_run.py"}, False))
         for doc in ("docs/deployment.md", "README.md", "crates/ptyhost-client/README.md"):
             s, sc, full = suites_of(doc)
             self.assertEqual((s, sc, full), (set(), {"tests/check_docs_links.py", "tests/check_agents_md.py"}, False), doc)
@@ -178,7 +179,7 @@ class MappingTest(unittest.TestCase):
         s = set(tp.plan_for("affected", ["legacy-web/index.html"], names)["suites"])
         self.assertTrue({"node_contracts", "legacy_browser", "brand_names_check"} <= s and len(s) > 20, s)
         self.assertEqual(set(tp.plan_for("affected", ["deploy/sdtargets/linux.py"], names)["suites"]),
-                         {"deploy_native_handlers", "deploy_testplan"})
+                         {"deploy_lock", "deploy_native_handlers", "deploy_testplan"})
 
 
 class BaseCommitTest(unittest.TestCase):
@@ -270,7 +271,8 @@ class GateCliTest(unittest.TestCase):
     def cli(self, *argv: str) -> tuple[int, str, str]:
         out, err = io.StringIO(), io.StringIO()
         before = set(STAGE_ROOT.iterdir()) if STAGE_ROOT.is_dir() else set()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                patch.object(deploy, "repository_lock", return_value=self.root / "deploy.lock"):
             try:
                 rc = deploy.main([*argv, "--targets-file", str(self.targets)])
             except SystemExit as e:

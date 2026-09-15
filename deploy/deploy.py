@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shlex
 import shutil
@@ -51,6 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sdtargets import Artifacts, DeployOptions, ProbeResult, Target, handler_for, load_targets  # noqa: E402
 from sdtargets.base import ShellError  # noqa: E402
 import testplan  # noqa: E402
+from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_DIR = ROOT / "deploy"
@@ -675,6 +677,8 @@ def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--targets-file", help="default deploy/targets.local.json (else targets.example.json)")
     common.add_argument("-v", "--verbose", action="store_true", help="echo per-target log lines to stdout")
+    common.add_argument("--lock-timeout", type=float, metavar="SECONDS",
+                        help="wait for the repository deployment lock (default: indefinitely; 0: fail immediately)")
     build_flags = argparse.ArgumentParser(add_help=False)
     build_flags.add_argument("--allow-dirty", action="store_true",
                              help="build although crates/, legacy-web/ or Cargo.* differ from HEAD (web then comes from the working tree)")
@@ -722,7 +726,13 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_rollback)
 
     args = ap.parse_args(argv)
-    return args.func(args)
+    if args.lock_timeout is not None and (args.lock_timeout < 0 or not math.isfinite(args.lock_timeout)):
+        ap.error("--lock-timeout must be a finite nonnegative number")
+    try:
+        with DeploymentLock(repository_lock(ROOT), args.command, args.lock_timeout):
+            return args.func(args)
+    except TimeoutError as exc:
+        die(str(exc))
 
 
 if __name__ == "__main__":
