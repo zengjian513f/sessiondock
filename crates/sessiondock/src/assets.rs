@@ -1,7 +1,10 @@
 //! Startup snapshot of regular frontend files. Requests never walk the disk.
 //! In-root aliases are resolved at load. HTML pages receive mode, hostname, build and
-//! capabilities; other assets use the build ETag. GET and HEAD only; `files.html`
-//! with `open=1` redirects to `file.html`. This is not a dynamic static-file server.
+//! capabilities; stylesheets receive the build for their `?v=` font URLs; other assets
+//! use the build ETag. A non-HTML request whose `?v=` equals the build is immutable
+//! (one year), so revisits fetch only the page and the API; any other asset request
+//! revalidates (`no-cache` + ETag). GET and HEAD only; `files.html` with `open=1`
+//! redirects to `file.html`. This is not a dynamic static-file server.
 //! The hub binary serves the same snapshot in `Mode::Hub` (`__SESSIONDOCK_MODE__`
 //! `hub`, hostname `SessionDock`, storage namespace `sessiondock.hub.<path>.`).
 use std::{collections::BTreeMap, fs, io, path::Path};
@@ -149,6 +152,12 @@ impl Assets {
                         .replace("__SESSIONDOCK_ASSET_VERSION__", &build)
                         .replace(&marker, &injection)
                         .into_bytes();
+                } else if path.ends_with(".css") {
+                    // typography.css versions its font URLs the same way the pages
+                    // version their scripts, so fonts are immutable-cacheable too.
+                    data = String::from_utf8_lossy(&data)
+                        .replace("__SESSIONDOCK_ASSET_VERSION__", &build)
+                        .into_bytes();
                 }
                 let mut content_type = mime_guess::from_path(&path)
                     .first_or_octet_stream()
@@ -215,11 +224,28 @@ pub fn serve_asset(
         return StatusCode::NOT_FOUND.into_response();
     };
     let etag = format!("\"{}\"", assets.build);
+    // Pages embed `?v=<build>` in every asset URL; a matching request can be
+    // cached forever because a new build changes the URL. Stale or missing
+    // versions keep revalidating.
+    let versioned = !asset.html
+        && uri
+            .query()
+            .unwrap_or("")
+            .split('&')
+            .any(|part| part.strip_prefix("v=") == Some(assets.build.as_str()));
+    // A compressing reverse proxy (nginx gzip) downgrades the ETag to a weak
+    // `W/"build"`, and that is what the browser sends back; the snapshot is
+    // byte-identical per build, so weak and strong validators both match.
     let cached = !asset.html
         && headers
             .get(header::IF_NONE_MATCH)
             .and_then(|h| h.to_str().ok())
-            == Some(&etag);
+            .is_some_and(|value| {
+                value.split(',').any(|candidate| {
+                    let candidate = candidate.trim();
+                    candidate == "*" || candidate.strip_prefix("W/").unwrap_or(candidate) == etag
+                })
+            });
     let mut response = if cached {
         StatusCode::NOT_MODIFIED.into_response()
     } else {
@@ -239,9 +265,15 @@ pub fn serve_asset(
     };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
-        if asset.html { "no-store" } else { "no-cache" }
-            .parse()
-            .unwrap(),
+        if asset.html {
+            "no-store"
+        } else if versioned {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        }
+        .parse()
+        .unwrap(),
     );
     response
         .headers_mut()
@@ -262,6 +294,70 @@ mod tests {
         let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
         assert!(assets.entries.contains_key("/large.bin"));
         assert!(assets.entries.contains_key("/.asset"));
+    }
+
+    #[test]
+    fn versioned_assets_are_immutable_and_stylesheets_get_the_build() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("index.html"), "<html></html>").unwrap();
+        fs::write(root.path().join("app.js"), "1").unwrap();
+        fs::write(
+            root.path().join("typography.css"),
+            "url(\"fonts/a.woff2?v=__SESSIONDOCK_ASSET_VERSION__\")",
+        )
+        .unwrap();
+        let assets = Assets::load(root.path(), "test", &serde_json::json!({})).unwrap();
+        let cache = |target: &str| {
+            let uri: axum::http::Uri = target.parse().unwrap();
+            let response = serve_asset(&assets, &uri, &Method::GET, &HeaderMap::new());
+            let cache = response.headers().get(header::CACHE_CONTROL).unwrap();
+            (response.status(), cache.to_str().unwrap().to_owned())
+        };
+        let immutable = "public, max-age=31536000, immutable".to_owned();
+        let build = assets.build.clone();
+        assert_eq!(
+            cache(&format!("/app.js?v={build}")),
+            (StatusCode::OK, immutable.clone())
+        );
+        assert_eq!(
+            cache(&format!("/typography.css?x=1&v={build}")),
+            (StatusCode::OK, immutable)
+        );
+        assert_eq!(cache("/app.js"), (StatusCode::OK, "no-cache".to_owned()));
+        assert_eq!(
+            cache("/app.js?v=stale"),
+            (StatusCode::OK, "no-cache".to_owned())
+        );
+        assert_eq!(
+            cache(&format!("/?v={build}")),
+            (StatusCode::OK, "no-store".to_owned())
+        );
+        assert_eq!(
+            cache(&format!("/index.html?v={build}")),
+            (StatusCode::OK, "no-store".to_owned())
+        );
+        let css = assets.entries.get("/typography.css").unwrap();
+        assert_eq!(
+            css.body.as_ref(),
+            format!("url(\"fonts/a.woff2?v={build}\")").as_bytes()
+        );
+        let uri: axum::http::Uri = format!("/app.js?v={build}").parse().unwrap();
+        let revalidate = |value: String| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::IF_NONE_MATCH, value.parse().unwrap());
+            serve_asset(&assets, &uri, &Method::GET, &headers).status()
+        };
+        assert_eq!(revalidate(format!("\"{build}\"")), StatusCode::NOT_MODIFIED);
+        assert_eq!(
+            revalidate(format!("W/\"{build}\"")),
+            StatusCode::NOT_MODIFIED
+        );
+        assert_eq!(
+            revalidate(format!("\"old\", W/\"{build}\"")),
+            StatusCode::NOT_MODIFIED
+        );
+        assert_eq!(revalidate("\"old\"".to_owned()), StatusCode::OK);
+        assert_eq!(revalidate(build.clone()), StatusCode::OK);
     }
 
     #[cfg(unix)]

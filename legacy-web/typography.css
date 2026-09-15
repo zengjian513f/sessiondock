@@ -1,6 +1,6 @@
 @font-face {
   font-family: "SessionDock Cascadia Mono";
-  src: url("fonts/CascadiaMono.woff2") format("woff2-variations");
+  src: url("fonts/CascadiaMono.woff2?v=__SESSIONDOCK_ASSET_VERSION__") format("woff2-variations");
   font-weight: 200 700; font-style: normal; font-display: swap;
 }
 
@@ -9,7 +9,7 @@
  * 轮廓来凑字体度量上的 1:2。字体文件本身不作修改。 */
 @font-face {
   font-family: "SessionDock Ubuntu Sans Mono";
-  src: url("fonts/UbuntuSansMono.ttf") format("truetype-variations");
+  src: url("fonts/UbuntuSansMono.woff2?v=__SESSIONDOCK_ASSET_VERSION__") format("woff2-variations");
   font-weight: 100 700; font-style: normal; font-display: swap;
 }
 

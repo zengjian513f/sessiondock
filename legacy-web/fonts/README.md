@@ -1,8 +1,10 @@
 # Bundled terminal fonts
 
-`UbuntuSansMono.ttf` is the unmodified Ubuntu Sans Mono variable font installed
-by Ubuntu 26.04 (`fonts-ubuntu` 0.869+git20240321-0ubuntu2). Its SHA-256 value is
-`507870a3fe5737eb5b02f366587d30607c02a5ad45d8fe94b3ee20a80ccad32a`.
+`UbuntuSansMono.woff2` is the Ubuntu Sans Mono variable font installed by
+Ubuntu 26.04 (`fonts-ubuntu` 0.869+git20240321-0ubuntu2, TTF SHA-256
+`507870a3fe5737eb5b02f366587d30607c02a5ad45d8fe94b3ee20a80ccad32a`), repackaged
+as WOFF2 with fontTools (`TTFont(ttf).flavor = "woff2"`); glyphs, the `wght` axis
+and metadata are unchanged, the transfer size halves.
 
 See `LICENSE-Ubuntu-Font.txt` for the Ubuntu Font Licence 1.0.
 

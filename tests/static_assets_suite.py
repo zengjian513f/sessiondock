@@ -110,6 +110,24 @@ def run(base, opener):
             fail(path, f"ETag {etag!r} != HTML version {version!r}", raw)
     passed("asset revalidation")
 
+    for path in ("/app.js", "/vendor/xterm.js", "/fonts/UbuntuSansMono.woff2"):
+        status, hdrs, raw = fetch(opener, base, f"{path}?v={version}")
+        cache = (hdrs.get("cache-control") or "").lower()
+        if status != 200 or "immutable" not in cache or "max-age=" not in cache:
+            fail(path, f"versioned HTTP {status} Cache-Control={cache!r} (want immutable)", raw)
+    status, hdrs, raw = fetch(opener, base, "/app.js?v=stale")
+    if status != 200 or "immutable" in (hdrs.get("cache-control") or "").lower():
+        fail("/app.js?v=stale", f"HTTP {status} Cache-Control={hdrs.get('cache-control')!r} must revalidate", raw)
+    unversioned = [url for url in re.findall(r"""(?:src|href)=["']([^"']+)["']""", page)
+                   if re.search(r"\.(?:js|css|woff2|ttf)$", url)]
+    if unversioned:
+        fail("asset version", f"asset URLs without ?v= in HTML: {unversioned}", body)
+    status, _, raw = fetch(opener, base, "/typography.css")
+    css = raw.decode("utf-8", "replace")
+    if status != 200 or PLACEHOLDER.search(css) or f"?v={version}" not in css:
+        fail("/typography.css", f"HTTP {status}; font URLs must carry ?v={version}", raw)
+    passed("immutable versioned assets")
+
     status, _, raw = fetch(opener, base, "/__no_such_asset__.js")
     if status != 404:
         fail("unknown", f"HTTP {status} (want 404)", raw)
