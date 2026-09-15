@@ -13,6 +13,7 @@ pub enum Source {
     Claude,
     Codex,
     Grok,
+    Shell,
 }
 
 /// Private persisted intent data, not authority to bind a native session.
@@ -42,6 +43,7 @@ impl BindingSpec {
             Source::Claude => "claude:",
             Source::Codex => "codex:",
             Source::Grok => "grok:",
+            Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
             || !self
@@ -134,7 +136,7 @@ impl Launch {
             // A UUID is assigned to Claude and Grok; Codex discovers its
             // thread identity after launch.
             Self::NewPending => source == Source::Codex,
-            Self::NewAssigned => source != Source::Codex,
+            Self::NewAssigned => matches!(source, Source::Claude | Source::Grok),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
         if ok { Ok(()) } else { Err(Error::InvalidSpec) }
@@ -151,6 +153,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Claude => "claude:",
         Source::Codex => "codex:",
         Source::Grok => "grok:",
+        Source::Shell => return false,
     };
     text.strip_prefix(prefix)
         .is_some_and(|suffix| !suffix.is_empty())
@@ -175,7 +178,9 @@ impl LaunchSpec {
     }
     /// CLI-profile new session; the kind follows the fixed per-source rule.
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
-        let launch = if source != Source::Codex {
+        let launch = if source == Source::Shell {
+            Launch::Fixed
+        } else if source != Source::Codex {
             Launch::NewAssigned
         } else {
             Launch::NewPending

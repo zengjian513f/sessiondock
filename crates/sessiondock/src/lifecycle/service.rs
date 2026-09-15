@@ -1387,6 +1387,7 @@ fn host_source(source: Source) -> ptyhost_client::Source {
         Source::Claude => ptyhost_client::Source::Claude,
         Source::Codex => ptyhost_client::Source::Codex,
         Source::Grok => ptyhost_client::Source::Grok,
+        Source::Shell => ptyhost_client::Source::Shell,
     }
 }
 fn binding_observation(

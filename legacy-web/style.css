@@ -478,6 +478,10 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   margin: 0; padding: 0; border: 0;
 }
 .new-row .new-source { flex: 1 1 264px; min-width: 0; }
+#new-session-form .new-source { grid-template-columns: repeat(4, minmax(0, 1fr)); flex-basis: 340px; }
+@media (max-width: 720px) {
+  #new-session-form .new-source { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 /* 新建会话与报告问题共用的机器下拉。 */
 .node-select:not([hidden]) {
   display: flex; align-items: center; gap: 7px; flex: 1 1 172px; min-width: 108px;

@@ -11,6 +11,7 @@ pub enum Source {
     Claude,
     Codex,
     Grok,
+    Shell,
 }
 
 impl Source {
@@ -19,6 +20,7 @@ impl Source {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
             "grok" => Some(Self::Grok),
+            "shell" => Some(Self::Shell),
             _ => None,
         }
     }
@@ -28,6 +30,7 @@ impl Source {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Grok => "grok",
+            Self::Shell => "shell",
         }
     }
 }
@@ -183,7 +186,9 @@ pub(crate) fn deserialize_metadata<'de, D: Deserializer<'de>>(
             string("sid", 256),
             string("uid", 256),
         ) {
-            (Some(source), Ok(sid), Ok(uid)) if sid.is_some() || uid.is_some() => {
+            (Some(source), Ok(sid), Ok(uid))
+                if source != Source::Shell && (sid.is_some() || uid.is_some()) =>
+            {
                 if uid.as_deref().is_some_and(|uid| {
                     !uid.starts_with(&format!("{}:", source.as_str()))
                         || uid.len() == source.as_str().len() + 1

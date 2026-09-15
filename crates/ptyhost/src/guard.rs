@@ -246,7 +246,7 @@ fn prepare_launch<'a>(request: &'a Value, metadata: &Value) -> Result<Prepared<'
         || !identifier(instance, 128)
         || launch.len() < 16
         || !identifier(launch, 128)
-        || !matches!(source, "claude" | "codex" | "grok")
+        || !matches!(source, "claude" | "codex" | "grok" | "shell")
         || metadata["instance_id"] != instance
         || metadata["source"] != source
         || metadata["launch_id"] != launch

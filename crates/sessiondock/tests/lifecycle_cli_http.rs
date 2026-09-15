@@ -439,7 +439,7 @@ async fn real_cli_profiles_launch_exact_argv_declare_identity_and_stay_pending_f
     );
     assert_eq!(
         list["sources"],
-        json!({"claude":true,"codex":true,"grok":false})
+        json!({"claude":true,"codex":true,"grok":false,"shell":true})
     );
     assert_eq!(list["backend"], "ptyhost");
     assert_eq!(list["backends"][0]["name"], "ptyhost");

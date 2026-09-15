@@ -2,7 +2,8 @@
 
 `lifecycle::launcher` turns a server-configured source profile into the argv
 passed to `ptyhost`. Browser requests choose `claude`, `codex`, or `grok` and a
-working directory; executable, fixed arguments, and environment still come
+working directory; the `shell` source opens the selected node's interactive
+terminal (labelled SSH in the browser). Executable, fixed arguments, and environment still come
 from server configuration, so request JSON cannot become an arbitrary command.
 
 ## Configuration compatibility
@@ -12,6 +13,18 @@ The launcher JSON contains `host_binary`, `host_dir`, and either `adapters` or
 members and duplicate environment-map keys are accepted by normal serde mapping.
 Adapter/profile IDs use the persisted identifier alphabet and do not need a
 version suffix.
+
+Existing launcher files automatically gain a fixed `shell` adapter: Unix uses
+the service's usable `SHELL`, falling back to `/bin/sh`, with `-i`; Windows uses
+`COMSPEC`, falling back to the system `cmd.exe`. An explicit `shell` adapter or
+profile overrides this default. Shell launches have `launch_kind: fixed`, no
+native SID/UID, and no resume or native binding. They remain reopenable terminal
+rows without waiting for an AI conversation record. A node with only host
+configuration can offer this terminal without an AI CLI installation.
+Verified exit removes the shell row immediately. Only its lifecycle receipt
+remains on disk; terminal scrollback is bounded and held in the host's memory,
+and an exited shell has no resume operation. Shell-managed history files still
+follow the selected machine's shell configuration.
 
 The host and CLI executable paths must be usable absolute executable files, and
 the host directory must be usable by `ptyhost`. The launcher rechecks the exact

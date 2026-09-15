@@ -14,7 +14,8 @@ from terminal_browser import SHELL_SCRIPT
 from terminal_exit_browser import XTERM_TEXT
 
 
-def main(bind_native=False):
+def main(bind_native=False, bare_shell=False):
+    source = "shell" if bare_shell else "codex"
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-ui-") as temporary:
@@ -30,7 +31,7 @@ def main(bind_native=False):
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
             "host_dir":str(root/"host"),"adapters":[{
-                "id":"synthetic-shell-v1","source":"codex","executable":str(Path("/bin/sh").resolve()),
+                "id":"synthetic-shell-v1","source":source,"executable":str(Path("/bin/sh").resolve()),
                 "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$SESSIONDOCK_TEST_START_LOG"\n'+SHELL_SCRIPT],
                 "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","SESSIONDOCK_TEST_START_LOG":str(root/"work/starts")}}]}))
         initialized=subprocess.run([str(BINARY),"--initialize-lifecycle",str(root/"ledger")],
@@ -76,19 +77,32 @@ def main(bind_native=False):
                         expect(page.locator("#new-session")).to_be_visible()
                         if not restarted:
                             page.locator("#new-session").click()
-                            page.locator('input[name="new-source"][value="codex"]').check()
+                            if bare_shell:
+                                page.set_viewport_size({"width":390,"height":844})
+                            page.locator(f'input[name="new-source"][value="{source}"]').check()
+                            if bare_shell:
+                                for label in page.locator("#new-session-form .new-source label").all():
+                                    bounds = label.bounding_box()
+                                    assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 390, bounds
                             page.locator("#new-cwd").fill(str(root/"work"))
                             with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/create") as created:
                                 page.locator("#new-session-go").click()
                             response=created.value
                             assert response.status==200,response.text()
                             receipt=response.json()
+                            if bare_shell:
+                                page.set_viewport_size({"width":1280,"height":900})
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
                             # Pending-only actions may be promoted from the overflow
                             # menu on a wide header. They must remain compact icons;
                             # their full labels belong in title/aria and in the menu.
-                            for selector,label in [("#a-native-bind","关联原生会话"),
-                                ("#a-pending-release","释放本页控制台")]:
+                            if bare_shell:
+                                expect(page.locator("#a-native-bind")).to_have_count(0)
+                                expect(page.locator(".new-session-wait")).to_have_text("SSH 终端已就绪，可直接输入命令。")
+                                assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
+                                assert not receipt.get("declared_sid"), receipt
+                            for selector,label in ([] if bare_shell else [("#a-native-bind","关联原生会话"),
+                                ("#a-pending-release","释放本页控制台")]):
                                 action=page.locator(selector)
                                 expect(action).to_be_visible()
                                 expect(action).to_have_attribute("title",label)
@@ -220,7 +234,15 @@ def main(bind_native=False):
                                 with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/kill") as stopped:
                                     action.click()
                                 assert stopped.value.status==200,stopped.value.text()
-                                action_page.wait_for_function("id => T.pending.some(row=>row.record_id===id && row.stale)",arg=receipt["record_id"])
+                                if bare_shell:
+                                    action_page.wait_for_function("id => !T.pending.some(row=>row.record_id===id)",arg=receipt["record_id"])
+                                    expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
+                                    final = context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
+                                    assert final.status == 200 and final.json()["state"] == "exited", final.text()
+                                    replay = context.request.post(base+"/api/term/create",data=original_request)
+                                    assert replay.status == 200 and replay.json()["record_id"] == receipt["record_id"] and not replay.json()["running"], replay.text()
+                                else:
+                                    action_page.wait_for_function("id => T.pending.some(row=>row.record_id===id && row.stale)",arg=receipt["record_id"])
                                 expect(action_page.locator("#a-term")).to_have_attribute("data-unavailable","true")
                                 again=context.request.post(base+"/api/term/kill",data={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
                                 assert again.status==200
@@ -228,6 +250,19 @@ def main(bind_native=False):
                                 assert len(claims)==before_cancel_claims,"retired launch automatically reclaimed"
                                 assert (root/"work/starts").read_text().splitlines()==["START"]
                             if action_context: action_context.close()
+                            if bare_shell:
+                                natural = context.request.post(base+"/api/term/create",data={"source":"shell","cwd":str(root/"work"),"request_id":"shell-natural-exit"})
+                                assert natural.status == 200 and natural.json()["running"], natural.text()
+                                natural = natural.json()
+                                page.evaluate("info => openPendingSession(info)",natural)
+                                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                                page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
+                                page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
+                                page.wait_for_function("name => T.views.get(name)?.ended",arg=natural["name"])
+                                page.wait_for_function("async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }",arg=natural["record_id"])
+                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(0)
+                                final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
+                                assert final.status == 200 and final.json()["state"] == "exited", final.text()
                         assert not errors,errors
                         context.close()
                 assert corpus.paths["fixture"].read_bytes()==native
@@ -258,4 +293,7 @@ if __name__=="__main__":
     import argparse
     parser=argparse.ArgumentParser()
     parser.add_argument("--native-binding",action="store_true")
-    main(parser.parse_args().native_binding)
+    args = parser.parse_args()
+    main(args.native_binding)
+    if not args.native_binding:
+        main(bare_shell=True)
