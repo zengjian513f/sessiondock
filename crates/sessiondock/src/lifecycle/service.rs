@@ -8,6 +8,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
+use futures_util::{StreamExt, stream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -516,6 +517,17 @@ async fn coordinate(
     let _ = done.send(Some(result));
 }
 
+/// Host round trips a list refresh runs concurrently for live receipts.
+const LIST_PARALLEL_PROBES: usize = 8;
+
+/// What the host said about one receipt (see `Core::probe_remote`).
+enum RemoteProbe {
+    Observed(Box<ptyhost_client::HostObservation>),
+    /// The host record was retired because its local process is dead.
+    Retired,
+    Unavailable,
+}
+
 struct Core {
     store: Arc<Mutex<LifecycleStore>>,
     launcher: Arc<Launcher>,
@@ -559,11 +571,7 @@ impl Core {
                     .work(move |store| store.list(offset, limit).map_err(Error::Store))
                     .await?;
                 let deadline = Instant::now() + self.limits.readiness_timeout;
-                let mut results = Vec::with_capacity(records.len());
-                for record in records {
-                    results.push(self.refresh(record, deadline).await?);
-                }
-                Ok(Answer::Records(results))
+                self.refresh_all(records, deadline).await.map(Answer::Records)
             }
             Command::Target(id) => {
                 let record = self.get(id.clone()).await?;
@@ -764,6 +772,15 @@ impl Core {
             .is_some_and(|state| *state.borrow() == ChildState::Exited)
     }
     async fn probe(&mut self, record: &Record, deadline: Instant) -> Observation {
+        if let Some(observation) = self.probe_local(record, deadline) {
+            return observation;
+        }
+        let outcome = Self::probe_remote(self.client.clone(), record, deadline).await;
+        self.apply_remote(record, outcome)
+    }
+    /// Evidence that needs no host round trip: the owned child's exit state and
+    /// the deadline. `Some` settles the receipt; `None` means ask the host.
+    fn probe_local(&mut self, record: &Record, deadline: Instant) -> Option<Observation> {
         self.bindings.remove(record.record_id());
         if !self.children.contains_key(record.record_id())
             && let Some(reaper) = REAPER.get().and_then(|result| result.as_ref().ok())
@@ -773,19 +790,20 @@ impl Core {
         }
         if self.child_exited(record.record_id()) {
             self.targets.remove(record.record_id());
-            return Observation::Exited;
+            return Some(Observation::Exited);
         }
         if self.stop.is_cancelled() || Instant::now() >= deadline {
-            return Observation::Unavailable;
+            return Some(Observation::Unavailable);
         }
-        let source = match record.spec().source() {
-            super::model::Source::Claude => ptyhost_client::Source::Claude,
-            super::model::Source::Codex => ptyhost_client::Source::Codex,
-            super::model::Source::Grok => ptyhost_client::Source::Grok,
-        };
+        None
+    }
+    /// The host round trips for one receipt, without `&mut self` so a list can
+    /// run several at once. Mutations happen afterwards in `apply_remote`.
+    async fn probe_remote(client: HostClient, record: &Record, deadline: Instant) -> RemoteProbe {
+        let source = host_source(record.spec().source());
         let observation = tokio::time::timeout_at(
             deadline,
-            self.client.status_launch(
+            client.status_launch(
                 record.host_name(),
                 source,
                 record.launch_id(),
@@ -794,13 +812,29 @@ impl Core {
         )
         .await;
         match observation {
-            Ok(Ok(observation)) if observation.exited => {
+            Ok(Ok(observation)) => RemoteProbe::Observed(Box::new(observation)),
+            _ if record.state() != State::Starting => {
+                match client.retire_if_local_process_dead(record.host_name()).await {
+                    Ok(true) => RemoteProbe::Retired,
+                    _ => RemoteProbe::Unavailable,
+                }
+            }
+            // A freshly spawned ptyhost has not necessarily written its record
+            // before the first readiness probe. The owned live child remains
+            // authoritative while Starting; missing metadata is not an exit.
+            _ => RemoteProbe::Unavailable,
+        }
+    }
+    fn apply_remote(&mut self, record: &Record, outcome: RemoteProbe) -> Observation {
+        let source = host_source(record.spec().source());
+        match outcome {
+            RemoteProbe::Observed(observation) if observation.exited => {
                 self.bindings
                     .insert(record.record_id().into(), observation.native_binding);
                 self.targets.remove(record.record_id());
                 Observation::Exited
             }
-            Ok(Ok(observation)) => {
+            RemoteProbe::Observed(observation) => {
                 self.bindings.insert(
                     record.record_id().into(),
                     observation.native_binding.clone(),
@@ -819,22 +853,70 @@ impl Core {
                     Err(_) => Observation::Unavailable,
                 }
             }
-            _ if record.state() != State::Starting => match self
-                .client
-                .retire_if_local_process_dead(record.host_name())
-                .await
-            {
-                Ok(true) => {
-                    self.targets.remove(record.record_id());
-                    Observation::Exited
-                }
-                _ => Observation::Unavailable,
-            },
-            // A freshly spawned ptyhost has not necessarily written its record
-            // before the first readiness probe. The owned live child remains
-            // authoritative while Starting; missing metadata is not an exit.
-            _ => Observation::Unavailable,
+            RemoteProbe::Retired => {
+                self.targets.remove(record.record_id());
+                Observation::Exited
+            }
+            RemoteProbe::Unavailable => Observation::Unavailable,
         }
+    }
+    /// The list refresh. Settled receipts (Prepared, Failed, Exited) are
+    /// returned as stored: nothing about them can change any more, and `exited`
+    /// receipts accumulate, so probing each one made `term/list` grow linearly
+    /// with ledger history (73 receipts ≈ 0.5–0.7 s). Live receipts get their
+    /// host round trips in parallel, then one store pass persists every
+    /// observation after a single ledger reload. Order is preserved.
+    async fn refresh_all(
+        &mut self,
+        records: Vec<Record>,
+        deadline: Instant,
+    ) -> Result<Vec<Record>, Error> {
+        let mut slots: Vec<Option<Record>> = Vec::with_capacity(records.len());
+        let mut observed: Vec<(usize, Record, Observation)> = Vec::new();
+        let mut remote: Vec<(usize, Record)> = Vec::new();
+        for record in records {
+            let slot = slots.len();
+            if matches!(record.state(), State::Prepared | State::Failed | State::Exited) {
+                slots.push(Some(record));
+                continue;
+            }
+            slots.push(None);
+            match self.probe_local(&record, deadline) {
+                Some(observation) => observed.push((slot, record, observation)),
+                None => remote.push((slot, record)),
+            }
+        }
+        let client = self.client.clone();
+        let outcomes: Vec<(usize, Record, RemoteProbe)> = stream::iter(remote)
+            .map(|(slot, record)| {
+                let client = client.clone();
+                async move {
+                    let outcome = Self::probe_remote(client, &record, deadline).await;
+                    (slot, record, outcome)
+                }
+            })
+            .buffer_unordered(LIST_PARALLEL_PROBES)
+            .collect()
+            .await;
+        for (slot, record, outcome) in outcomes {
+            let observation = self.apply_remote(&record, outcome);
+            observed.push((slot, record, observation));
+        }
+        let items: Vec<(usize, ObservationEvidence, BindingObservation)> = observed
+            .into_iter()
+            .map(|(slot, record, observation)| {
+                let binding =
+                    binding_observation(&record, self.bindings.get(record.record_id()));
+                (slot, ObservationEvidence::new(&record, observation), binding)
+            })
+            .collect();
+        let refreshed = self
+            .work(move |store| store.refresh_many(items).map_err(binding_store_error))
+            .await?;
+        for (slot, record) in refreshed {
+            slots[slot] = Some(record);
+        }
+        Ok(slots.into_iter().flatten().collect())
     }
     async fn refresh(&mut self, record: Record, deadline: Instant) -> Result<Record, Error> {
         if matches!(record.state(), State::Prepared | State::Failed) {

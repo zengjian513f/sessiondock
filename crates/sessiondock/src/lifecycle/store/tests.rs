@@ -1022,3 +1022,58 @@ fn assigned_session_ids_are_minted_once_and_declared_launches_refuse_operator_bi
         Err(Error::Invalid)
     ));
 }
+
+#[test]
+fn refresh_many_reloads_the_ledger_once_where_single_observations_reload_per_call() {
+    let f = Fixture::new();
+    let mut store = f.store();
+    let spec = f.spec();
+    let mut running = Vec::new();
+    for index in 0..5 {
+        let created = store.create(&format!("request-batch-{index}"), &spec).unwrap();
+        let start = store.begin_start(created.prepared.unwrap()).unwrap();
+        running.push(store.mark_running(start).unwrap());
+    }
+    let before = store.disk_reads();
+    for record in &running {
+        store
+            .observe(ObservationEvidence::new(record, Observation::Running))
+            .unwrap();
+    }
+    assert_eq!(store.disk_reads(), before + running.len(), "observe reloads per call");
+
+    let items = running
+        .iter()
+        .enumerate()
+        .map(|(slot, record)| {
+            (
+                slot,
+                ObservationEvidence::new(record, Observation::Running),
+                BindingObservation::Unavailable,
+            )
+        })
+        .collect();
+    let before = store.disk_reads();
+    let refreshed = store.refresh_many(items).unwrap();
+    assert_eq!(store.disk_reads(), before + 1, "one batch, one reload");
+    assert_eq!(refreshed.len(), running.len());
+    assert!(refreshed.iter().all(|(_, r)| r.state() == State::Running));
+    assert_eq!(
+        refreshed.iter().map(|(slot, _)| *slot).collect::<Vec<_>>(),
+        (0..running.len()).collect::<Vec<_>>()
+    );
+
+    // A batch still applies each observation: one host reports an exit.
+    let items = vec![(
+        7,
+        ObservationEvidence::new(&running[2], Observation::Exited),
+        BindingObservation::Unavailable,
+    )];
+    let refreshed = store.refresh_many(items).unwrap();
+    assert_eq!(refreshed[0].0, 7);
+    assert_eq!(refreshed[0].1.state(), State::Exited);
+    assert_eq!(
+        store.get(running[2].record_id()).unwrap().state(),
+        State::Exited
+    );
+}
