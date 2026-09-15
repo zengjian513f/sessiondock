@@ -40,6 +40,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -85,6 +86,25 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def source_tree(worktree: bool) -> str:
+    """Snapshot tracked working files without changing the shared Git index."""
+    if not worktree:
+        return git("rev-parse", "HEAD^{tree}")
+    with tempfile.TemporaryDirectory(prefix="sessiondock-source-index-") as temporary:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(temporary) / "index"))
+        for argv in (["git", "read-tree", "HEAD"], ["git", "add", "--update", "--", "."]):
+            subprocess.run(argv, cwd=ROOT, env=env, check=True, timeout=300)
+        return subprocess.run(["git", "write-tree"], cwd=ROOT, env=env,
+                              capture_output=True, text=True, check=True, timeout=300).stdout.strip()
+
+
+def archive_source(path: Path, worktree: bool) -> str:
+    tree = source_tree(worktree)
+    subprocess.run(["git", "archive", "--format=tar", tree if worktree else "HEAD", "-o", str(path)],
+                   cwd=ROOT, check=True, timeout=300)
+    return tree
 
 
 class Log:
@@ -207,8 +227,8 @@ def cmd_build(args) -> Path:
         print("web: git archive HEAD legacy-web")
     if not (stage / "web" / "index.html").is_file():
         die("web snapshot has no index.html")
-    subprocess.run(["git", "archive", "--format=tar", "HEAD", "-o", str(stage / "source.tar")],
-                   cwd=ROOT, check=True, timeout=300)
+    snapshot_tree = archive_source(stage / "source.tar", args.allow_dirty)
+    print(f"source: {'tracked working tree' if args.allow_dirty else 'HEAD'} ({snapshot_tree})")
 
     binaries: dict[str, Path] = {}
     sha256: dict[str, str] = {}
@@ -236,6 +256,9 @@ def cmd_build(args) -> Path:
             shutil.copy2(src, dst)
             binaries[name], sha256[name] = dst, sha256_file(dst)
 
+    if args.allow_dirty and source_tree(True) != snapshot_tree:
+        die("tracked working files changed during build; rerun to produce a consistent stage", 1)
+
     crates_dirty = any(not line[3:].startswith("legacy-web/") for line in dirty)
     web_dirty = any(line[3:].startswith("legacy-web/") for line in dirty)
     art = Artifacts(commit=commit, short=short,
@@ -247,7 +270,8 @@ def cmd_build(args) -> Path:
            "web_dir": "web", "binaries": {n: f"bin/{n}" for n in binaries}, "sha256": sha256,
            "source_archive": "source.tar", "web_only": art.web_only, "stage": str(stage),
            "web_source": "worktree" if web_from_worktree else "HEAD", "dirty_files": dirty,
-           "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost}
+           "cargo": cargo_argv, "with_ptyhost": args.with_ptyhost,
+           "source_tree": snapshot_tree, "source_source": "worktree" if args.allow_dirty else "HEAD"}
     (stage / "artifacts.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     print(f"commit {commit} ({short}) dirty={art.dirty} built_at={art.built_at}")
     for name, digest in sha256.items():

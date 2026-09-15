@@ -40,12 +40,17 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
 | --- | --- | --- |
 | `bin/<name>` + `artifacts.json` 里的 `sha256` | `cargo build --release --locked` 的 glibc 二进制，从 `target/release/` 拷进 stage | `linux-node`、`hub` 直接上传；stage 一旦生成就不再受后续构建影响 |
 | `web/` | `git archive HEAD legacy-web` 解出的快照（或 `--allow-dirty` 的工作树，排除 `node_modules`、`.DS_Store`、`*.swp`） | 所有 kind 的 `web/` |
-| `source.tar` | `git archive --format=tar HEAD` | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建 |
+| `source.tar` | 默认 `git archive --format=tar HEAD`；`--allow-dirty` 使用所有已跟踪文件的工作区快照 | `build_on_target` 的 kind（macOS、Windows）在节点上原生构建，与本机构建使用相同源码 |
 
 `artifacts.json` 还记录 commit、`dirty`、`built_at`、web 来源和 cargo 命令，以及测试门的结果
 （`test_mode`、`test_base`、`test_full`、`test_suites`、`test_result`、`test_log`）；`logs/` 放 cargo 日志、
 测试门的 `tests.log` / `tests.json` / `validation/<suite>.log` 和每台目标的 `<name>.log`；每次 push/rollback
 写一份 `report-<stamp>.json`。
+
+`--allow-dirty` 的源码快照通过临时 Git index 生成，不改变共享工作区的暂存区，
+也不包含未跟踪的本地配置、凭据或运行数据。新增源码应先提交，使其成为已跟踪文件。
+`source_tree` 与 `source_source` 记录源码树及来源；构建期间已跟踪文件变化会中止本次
+stage，须重新构建，避免不同平台部署不同版本。
 
 ## 测试门（build → test → push）
 
