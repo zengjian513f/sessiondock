@@ -119,6 +119,20 @@ impl LivePrompts {
     /// failed `tool_result` with the same `tool_use_id` always lands; the id is
     /// unique within a session, so a record beats a `waiting` file.
     pub fn claude_prompt(&self, sid: &str, messages: &Value) -> Value {
+        self.claude_prompt_unless(sid, |tool_id| {
+            messages.as_array().is_some_and(|rows| {
+                rows.iter().any(|message| {
+                    message["call_id"].as_str() == Some(tool_id)
+                        && matches!(message["role"].as_str(), Some("answer" | "tool_result"))
+                })
+            })
+        })
+    }
+
+    /// `claude_prompt` with the batch's messages behind a predicate:
+    /// `answered(tool_id)` says whether the batch carries the `answer` /
+    /// `tool_result` of that call. Only consulted while a card is live.
+    pub fn claude_prompt_unless(&self, sid: &str, answered: impl FnOnce(&str) -> bool) -> Value {
         let Some(store) = &self.claude else {
             return Value::Null;
         };
@@ -126,14 +140,7 @@ impl LivePrompts {
             return Value::Null;
         };
         let tool_id = prompt["id"].as_str().unwrap_or("");
-        let answered = !tool_id.is_empty()
-            && messages.as_array().is_some_and(|rows| {
-                rows.iter().any(|message| {
-                    message["call_id"].as_str() == Some(tool_id)
-                        && matches!(message["role"].as_str(), Some("answer" | "tool_result"))
-                })
-            });
-        if answered {
+        if !tool_id.is_empty() && answered(tool_id) {
             store.clear(sid, tool_id);
             return Value::Null;
         }
