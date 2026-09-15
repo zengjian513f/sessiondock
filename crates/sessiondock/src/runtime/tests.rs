@@ -175,6 +175,7 @@ async fn only_unique_running_guard_capable_instances_offer_a_nonserializable_con
 /// the CLI, which now writes the branch's file. The host stays bound to the
 /// parent; the branch resolves to it only with process evidence under that
 /// host, and never once the process moved on to a deeper branch.
+#[cfg(unix)]
 #[tokio::test]
 async fn codex_rollback_branch_resolves_to_its_ancestors_host_by_process_evidence() {
     let directory = tempfile::tempdir().unwrap();
