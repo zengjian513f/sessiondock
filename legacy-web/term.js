@@ -1362,8 +1362,8 @@ function showNewSessionStage(info) {
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
       <button class="session-menu-action danger" id="a-session-action" title="停止会话" aria-label="停止会话">${uiIcon('power')}</button>
       ${SessionDockCapabilities.config.backend === 'rust' && SessionDockCapabilities.allows('terminal_bind')
-        ? `<button class="session-menu-action" id="a-native-bind" title="关联原生会话"
-            aria-label="关联原生会话">${uiIcon('link')}</button>
+        ? `${info.source !== 'shell' ? `<button class="session-menu-action" id="a-native-bind" title="关联原生会话"
+            aria-label="关联原生会话">${uiIcon('link')}</button>` : ''}
           <button class="session-menu-action" id="a-pending-release" title="释放本页控制台"
             aria-label="释放本页控制台">${uiIcon('log-out')}</button>` : ''}
       `, `
@@ -1416,10 +1416,12 @@ function pendingStateLabel(s) {
   if (s.state === 'uncertain') return '运行状态不确定';
   if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting')
     return WORKER_STATUS_TEXT[s.worker_status] || s.worker_status;
-  return '等待首条消息';
+  return s.source === 'shell' ? '交互式终端' : '等待首条消息';
 }
 
 function pendingBindingMessage(info) {
+  if (info.source === 'shell') return info.unavailable_reason || (info.running
+    ? 'SSH 终端已就绪，可直接输入命令。' : 'SSH 终端已退出。');
   const worker = typeof workerStatusMessage === 'function' ? workerStatusMessage(info) : '';
   if (info.unavailable_reason) return worker ? `${info.unavailable_reason}；${worker}` : info.unavailable_reason;
   if (info.declared_sid)

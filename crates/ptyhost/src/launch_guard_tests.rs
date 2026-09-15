@@ -109,14 +109,14 @@ fn identifier_validation_applies_even_if_invalid_metadata_matches() {
             assert!(prepare(&request, &metadata).is_ok());
         }
     }
-    for source in ["claude", "codex", "grok", "Claude", "unknown", ""] {
+    for source in ["claude", "codex", "grok", "shell", "Claude", "unknown", ""] {
         let mut request = envelope(json!({"op":"info"}));
         let mut metadata = metadata();
         request["expected_source"] = json!(source);
         metadata["source"] = json!(source);
         assert_eq!(
             prepare(&request, &metadata).is_ok(),
-            matches!(source, "claude" | "codex" | "grok")
+            matches!(source, "claude" | "codex" | "grok" | "shell")
         );
     }
 }

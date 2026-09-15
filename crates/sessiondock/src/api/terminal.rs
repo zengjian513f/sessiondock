@@ -607,6 +607,9 @@ fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
         return false;
     }
     if matches!(record.state(), State::Exited | State::Failed) {
+        if record.spec().source() == crate::lifecycle::model::Source::Shell {
+            return false;
+        }
         return record
             .finished_at()
             .is_some_and(|finished| now.saturating_sub(finished) < PENDING_ARCHIVE_AFTER);
@@ -725,6 +728,7 @@ pub async fn list(
             crate::lifecycle::model::Source::Claude,
             crate::lifecycle::model::Source::Codex,
             crate::lifecycle::model::Source::Grok,
+            crate::lifecycle::model::Source::Shell,
         ];
         for source in sources {
             let key = serde_json::to_value(source).expect("source enum");
@@ -738,7 +742,9 @@ pub async fn list(
                     == 1
             );
             // Resume/takeover needs exactly one resume-capable CLI profile.
-            response["resume_sources"][key] = json!(service.entry_for(source, true).is_some());
+            if source != crate::lifecycle::model::Source::Shell {
+                response["resume_sources"][key] = json!(service.entry_for(source, true).is_some());
+            }
         }
         response["backends"] = super::lifecycle::backends();
         response["enabled"] = json!(true);

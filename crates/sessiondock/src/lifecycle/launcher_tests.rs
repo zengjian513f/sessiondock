@@ -637,12 +637,20 @@ fn profile_configuration_rejects_only_unusable_process_inputs() {
             .unwrap();
     assert_eq!(
         launcher.entries(),
-        &[Entry {
-            id: "codex-cli-v1".into(),
-            source: Source::Codex,
-            profile: true,
-            resume: true,
-        }]
+        &[
+            Entry {
+                id: "shell".into(),
+                source: Source::Shell,
+                profile: false,
+                resume: false
+            },
+            Entry {
+                id: "codex-cli-v1".into(),
+                source: Source::Codex,
+                profile: true,
+                resume: true,
+            }
+        ]
     );
     json["profiles"][0]["shell"] = serde_json::json!("/bin/sh -c");
     assert!(read_config(&fixture.config_file(json.to_string().as_bytes())).is_ok());
@@ -958,12 +966,20 @@ fn a_leftover_bug_report_profiles_table_is_ignored() {
     let launcher = Launcher::new(config).unwrap();
     assert_eq!(
         launcher.entries(),
-        &[Entry {
-            id: "shell-v1".into(),
-            source: Source::Codex,
-            profile: false,
-            resume: false,
-        }]
+        &[
+            Entry {
+                id: "shell-v1".into(),
+                source: Source::Codex,
+                profile: false,
+                resume: false,
+            },
+            Entry {
+                id: "shell".into(),
+                source: Source::Shell,
+                profile: false,
+                resume: false
+            }
+        ]
     );
 }
 
@@ -985,4 +1001,34 @@ fn existing_tab_named_working_directory_can_be_launched_and_completed() {
         launcher.complete_directories(&prefix, 50).unwrap(),
         vec![format!("{}/", cwd.display())]
     );
+}
+
+#[test]
+fn default_and_explicit_shells_use_fixed_argv_without_native_identity() {
+    let fixture = Fixture::new();
+    let mut json = fixture.json();
+    // A node with no AI installation can still offer the SSH terminal.
+    json["adapters"] = serde_json::json!([]);
+    let config = read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap();
+    assert_eq!(entries(&config).len(), 1);
+    assert_eq!(config.adapters[0].source, Source::Shell);
+    assert_eq!(config.adapters[0].args, ["-i"]);
+    let launcher = Launcher::new(config).unwrap();
+    let spec = LaunchSpec::profile_new(Source::Shell, "shell".into(), &fixture.work).unwrap();
+    launcher.validate_spec(&spec).unwrap();
+    let mut store = LifecycleStore::initialize(&fixture.directory.path().join("ledger")).unwrap();
+    let record = store.create("shell-default-request", &spec).unwrap().record;
+    assert!(record.spec().launch() == &Launch::Fixed);
+    assert!(record.session_id().is_none());
+    let argv = launcher.argv(&record).unwrap();
+    assert_eq!(argv.len(), 2);
+    assert_eq!(argv[1], "-i");
+    assert!(!model::native_uid(Source::Shell, "shell:fake"));
+    assert!(model::BindingSpec::new(Source::Shell, "fake".into(), "shell:fake".into()).is_err());
+    json["adapters"] = serde_json::json!([{"id":"custom-shell", "source":"shell",
+        "executable":fixture.config.adapters[0].executable,"args":["custom-arg"]}]);
+    let config = read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap();
+    assert_eq!(entries(&config).len(), 1);
+    assert_eq!(config.adapters[0].id, "custom-shell");
+    assert_eq!(config.adapters[0].args, ["custom-arg"]);
 }
