@@ -164,6 +164,13 @@ pub async fn launch(
     value["report_prompt"] = json!(report.prompt);
     value["requestId"] = json!(request_id);
     value["report_text"] = value["text"].clone();
+    value["requestText"] = json!(serde_json::to_string(&json!({
+        "text":value["text"],
+        "attachments":value["attachments"].as_array().into_iter().flatten()
+            .filter(|a| a["uploaded"]["upload_id"].is_string())
+            .map(|a| json!({"upload_id":a["uploaded"]["upload_id"],"number":a["number"]})).collect::<Vec<_>>(),
+        "quotes":value["quotes"].as_array().cloned().unwrap_or_default()
+    })).map_err(|e| e.to_string())?);
     let draft = conversations
         .store
         .save(&identity.key, previous.revision, value)

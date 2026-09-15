@@ -598,8 +598,10 @@ function markStaleBuild(serverBuild = '') {
   reload.onclick = () => location.reload();
   notice.appendChild(reload);
   document.body.appendChild(notice);
-  const send = $('#csend');
-  if (send) send.disabled = true;
+  for (const sel of ['#csend', '#bug-report-go', '#cadd', '#bug-report-add']) {
+    const button = $(sel);
+    if (button) button.disabled = true;
+  }
 }
 
 async function checkServerBuild() {
@@ -4586,10 +4588,16 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
   document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
 }
 
-// 顶栏右侧按钮只在放不下时才折进 ⋯ 菜单，任何宽度都不因折叠留白：先全部平铺量一次，
-// 筛选条被挤压（内容比可见宽度宽）或整条顶栏横向溢出，才从最不常用的一头逐个折起，
-// 直到不再挤压。平铺顺序即重要程度：新建、重新扫描、回收站、报告问题、设置。
+// 顶栏按空间逐级收，任何一级都不因折叠留白：
+//   1. Agent / 组织方式 / 分层 的文字标签
+//   2. 主机标题（.brand-name）
+//   3. 机器名从平铺收进下拉（仅中央站、机器筛选可见时）
+//   4. 右侧按钮从末尾折进 ⋯（新建、重新扫描、回收站、报告问题、设置）
+// 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
 const HEADER_ACTIONS = ['new-session', 'reload', 'trash', 'report-bug', 'settings'];
+const HEADER_FOLD_LABELS = 'header-fold-labels';
+const HEADER_FOLD_BRAND = 'header-fold-brand';
+const HEADER_FOLD_NODES = 'header-fold-nodes';
 function closeHeaderMenu(restoreFocus = false) {
   const menu = $('#header-menu');
   if (!menu || menu.hidden) return;
@@ -4602,37 +4610,84 @@ function layoutHeader() {
   const header = $('header'), filters = header?.querySelector('.header-filters');
   const more = $('#header-more'), menu = $('#header-menu');
   if (!filters || !more || !menu) return;
+  if (getComputedStyle(header).display === 'none') return;
   const squeezed = () => filters.scrollWidth > filters.clientWidth
     || header.scrollWidth > header.clientWidth;
-  // 现状仍成立（没被挤压，且折起的第一个按钮拿出来也放不下）就不动 DOM：
-  // 计数变宽之类的重排大多如此，别把用户正开着的菜单或键盘焦点弄丢
-  const actions = more.parentElement;
-  if (!squeezed()) {
-    const free = actions.getBoundingClientRect().left - filters.getBoundingClientRect().right
-      - (parseFloat(getComputedStyle(header).columnGap) || 0);
-    const unit = more.getBoundingClientRect().width + (parseFloat(getComputedStyle(actions).columnGap) || 0);
-    if (!menu.children.length || free < unit) return;
-  }
-  closeHeaderMenu();
-  const buttons = HEADER_ACTIONS.map(id => document.getElementById(id)).filter(Boolean);
-  for (const button of buttons) {
+  const picker = $('#node-picker');
+  const canFoldNodes = !!(picker && !picker.hidden);
+  const restoreButton = button => {
     button.querySelector(':scope > span.menu-label')?.remove();
     button.removeAttribute('role');
     more.before(button);
-  }
-  more.hidden = true;
-  // 折起第一个按钮只是把它换成 ⋯，宽度没省出来；所以真要折就至少折两个，循环自然做到
-  let folded = 0;
-  while (folded < buttons.length && squeezed()) {
-    more.hidden = false;
-    const button = buttons[buttons.length - 1 - folded++];
+  };
+  const foldButton = button => {
     let label = button.querySelector(':scope > span.menu-label');
     if (!label) button.appendChild(label = el('span', 'menu-label'));
     label.textContent = button.ariaLabel || button.title;
     button.setAttribute('role', 'menuitem');
-    menu.prepend(button);   // 从末尾往前折，菜单里仍是平铺时的顺序
+    menu.prepend(button);
+  };
+  const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
+    .filter(button => button && button.parentElement !== menu);
+  if (MOBILE.matches && canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
+    header.classList.add(HEADER_FOLD_NODES);
+    if (typeof closeNodePick === 'function') closeNodePick();
   }
-  more.hidden = !folded;
+  if (squeezed()) {
+    closeHeaderMenu();
+    if (!header.classList.contains(HEADER_FOLD_LABELS)) {
+      header.classList.add(HEADER_FOLD_LABELS);
+      if (!squeezed()) return;
+    }
+    if (!header.classList.contains(HEADER_FOLD_BRAND)) {
+      header.classList.add(HEADER_FOLD_BRAND);
+      if (!squeezed()) return;
+    }
+    if (canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
+      header.classList.add(HEADER_FOLD_NODES);
+      if (typeof closeNodePick === 'function') closeNodePick();
+      if (!squeezed()) return;
+    }
+    const buttons = inlineButtons();
+    // 折起第一个按钮只是把它换成 ⋯，宽度没省出来；所以真要折就至少折两个，循环自然做到
+    for (let i = buttons.length - 1; i >= 0 && squeezed(); i--) {
+      more.hidden = false;
+      foldButton(buttons[i]);
+    }
+    more.hidden = !menu.children.length;
+    return;
+  }
+  // 没被挤压：按相反顺序展开。同步试探并立刻收回放不下的那一级，避免中间态闪一下。
+  if (menu.children.length) closeHeaderMenu();
+  while (menu.children.length) {
+    const button = menu.children[0];
+    restoreButton(button);
+    more.hidden = !menu.children.length;
+    if (!squeezed()) continue;
+    foldButton(button);
+    more.hidden = false;
+    return;
+  }
+  if (MOBILE.matches) return;
+  if (header.classList.contains(HEADER_FOLD_NODES)) {
+    if (typeof closeNodePick === 'function') closeNodePick();
+    header.classList.remove(HEADER_FOLD_NODES);
+    if (squeezed()) {
+      header.classList.add(HEADER_FOLD_NODES);
+      return;
+    }
+  }
+  if (header.classList.contains(HEADER_FOLD_BRAND)) {
+    header.classList.remove(HEADER_FOLD_BRAND);
+    if (squeezed()) {
+      header.classList.add(HEADER_FOLD_BRAND);
+      return;
+    }
+  }
+  if (header.classList.contains(HEADER_FOLD_LABELS)) {
+    header.classList.remove(HEADER_FOLD_LABELS);
+    if (squeezed()) header.classList.add(HEADER_FOLD_LABELS);
+  }
 }
 {
   const button = $('#header-more-btn'), menu = $('#header-menu');
@@ -4672,8 +4727,9 @@ function layoutHeader() {
   }, true);
   addEventListener('resize', () => closeHeaderMenu());
   for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', layoutHeader);
-  // 视口、断点换挡、机器/来源筛选增减、会话计数变宽都会改变筛选条的内容宽度；
-  // 观察的都是 flex: none 的组，重排只搬右侧按钮，不会改它们的尺寸而形成回环。
+  // 视口、断点换挡、机器/来源筛选增减、会话计数变宽都会改变筛选条的内容宽度。
+  // 收标签/标题会改 chips 和 brand 的宽度，observer 会再进来一次；layoutHeader
+  // 只在仍被挤压时加下一级、放得下才展开，同步试探并收回，不会收-放循环。
   // 新建按钮随终端能力出现/消失时由 term.js 直接调 layoutHeader()。
   const observer = new ResizeObserver(() => layoutHeader());
   for (const node of [$('header'), $('.brand'), ...$('.header-filters').children]) observer.observe(node);
