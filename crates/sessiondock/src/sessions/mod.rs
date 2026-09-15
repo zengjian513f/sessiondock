@@ -22,11 +22,13 @@ mod views;
 pub use pages::PageStore;
 pub use views::ViewSnapshot;
 pub(crate) use views::{
-    Dependencies, Event, Parsed, Selected, ViewRequest, Views, open_transient, project_selected,
+    Dependencies, Event, MessageBody, Parsed, Selected, ViewRequest, Views, open_transient,
     validate_message_query,
 };
 #[cfg(test)]
-pub(crate) use views::{View, ViewStats, projection_digest, read_bounded, semantic_anchor};
+pub(crate) use views::{
+    EncodedEvents, View, ViewParts, ViewStats, project_selected, read_bounded, semantic_anchor,
+};
 mod providers;
 mod records;
 pub(crate) use records::string_reader::JsonStringReader;
@@ -68,6 +70,41 @@ pub mod memory {
         unsafe {
             libc::malloc_trim(0);
         }
+    }
+
+    /// How long a large response gets to leave the process before the
+    /// coalesced trim runs (loopback sends 50 MB in well under this).
+    const SOON: std::time::Duration = std::time::Duration::from_millis(500);
+
+    /// `release`, off the request path: a large response body (tens of MB
+    /// for a full read) is freed on whichever thread finished sending it
+    /// and would otherwise stay in that arena; a hot read itself allocates
+    /// nothing else worth a ~10 ms trim. One sleeping thread coalesces
+    /// requests and trims once per burst, `SOON` after its last request
+    /// (a burst that never pauses is trimmed every `4 × SOON` at most).
+    pub fn release_soon() {
+        use std::sync::{OnceLock, mpsc};
+        static TRIMMER: OnceLock<mpsc::SyncSender<()>> = OnceLock::new();
+        let sender = TRIMMER.get_or_init(|| {
+            let (sender, receiver) = mpsc::sync_channel::<()>(1);
+            std::thread::Builder::new()
+                .name("memory-trim".into())
+                .spawn(move || {
+                    while receiver.recv().is_ok() {
+                        for _ in 0..4 {
+                            std::thread::sleep(SOON);
+                            if receiver.try_recv().is_err() {
+                                break;
+                            }
+                        }
+                        release();
+                    }
+                })
+                .expect("spawn the memory trim thread");
+            sender
+        });
+        // A full slot means a trim is already pending.
+        let _ = sender.try_send(());
     }
 }
 
