@@ -7,6 +7,12 @@
 //! against the read model's memory rule). One producer
 //! per uid; a second search waits and re-reads the cache. The warm-up walks
 //! the same path at background priority (docs/read-model.md "搜索").
+//!
+//! The query's prefilter runs on the cache's resident folded copy first, so
+//! a body that cannot match is never opened (its version is still taken
+//! from `stat`, the contract being that an append is visible to the next
+//! search). A body served without a folded copy yet (first search after a
+//! start) is read whole once to fold it.
 
 use std::{
     sync::{
@@ -20,7 +26,7 @@ use super::{
     Outcome, PreparedSearch, Scanned, Scanner, SearchError, body,
     cache::{Cached, Hit, Lookup, ParseSlots, Priority, SearchCache, TextReader},
 };
-use crate::sessions::{SearchPool, SessionError, SessionStore};
+use crate::sessions::{SearchPool, SearchVersion, SessionError, SessionStore};
 
 /// Bytes of cached bodies that may be held in memory whole at once, for the
 /// queries that cannot be matched chunk by chunk.
@@ -102,12 +108,13 @@ impl SearchService {
         store: Arc<SessionStore>,
         cache_dir: Option<std::path::PathBuf>,
         cache_bytes: u64,
+        fold_bytes: u64,
         workers: usize,
         warmup_secs: u64,
     ) -> std::io::Result<Self> {
         Ok(Self {
             store,
-            cache: Arc::new(SearchCache::open(cache_dir, cache_bytes)?),
+            cache: Arc::new(SearchCache::open(cache_dir, cache_bytes, fold_bytes)?),
             slots: Arc::new(ParseSlots::new(workers)),
             whole_reads: ParseSlots::with_unit(
                 (WHOLE_BODY_BUDGET / WHOLE_BODY_UNIT) as usize,
@@ -134,22 +141,57 @@ impl SearchService {
         cancelled: &AtomicBool,
     ) -> Result<(Source, bool), SessionError> {
         let version = self.store.search_version(pool, uid)?;
-        if let Lookup::Hit(hit) = self.cache.get(uid, &version) {
-            return Ok((hit.into(), false));
+        self.source_at(pool, uid, &version, priority, cancelled)
+    }
+
+    /// A cache hit as a source, folding its text first when no folded copy
+    /// of this version is resident yet (the body is read whole once for
+    /// that, and served from memory). `None` when the entry is unreadable:
+    /// it is dropped and the body produced again.
+    fn folded_hit(&self, uid: &str, version: &SearchVersion, hit: Hit) -> Option<Source> {
+        match hit {
+            Hit::Text(reader) if !self.cache.has_folded(uid, version) => match reader.read_all() {
+                Ok(text) => {
+                    self.cache.remember_folded(uid, version, &text);
+                    Some(Source::Text(TextReader::memory(text)))
+                }
+                Err(_) => {
+                    self.cache.remove(uid);
+                    None
+                }
+            },
+            hit => Some(hit.into()),
+        }
+    }
+
+    fn source_at(
+        &self,
+        pool: &SearchPool,
+        uid: &str,
+        version: &SearchVersion,
+        priority: Priority,
+        cancelled: &AtomicBool,
+    ) -> Result<(Source, bool), SessionError> {
+        if let Lookup::Hit(hit) = self.cache.get(uid, version)
+            && let Some(source) = self.folded_hit(uid, version, hit)
+        {
+            return Ok((source, false));
         }
         // A view the LRU still holds for exactly these files costs nothing.
         if let Some(view) = self.store.search_view_cached(pool, uid)? {
             let text = body(&view);
             drop(view);
             let cached = Cached::Text(text);
-            if self.store.search_version(pool, uid)? == version {
-                self.cache.put(uid, &version, &cached);
+            if self.store.search_version(pool, uid)? == *version {
+                self.cache.put(uid, version, &cached);
             }
             return Ok((cached.into(), false));
         }
         let _producer = self.cache.inflight(uid);
-        if let Lookup::Hit(hit) = self.cache.get(uid, &version) {
-            return Ok((hit.into(), false));
+        if let Lookup::Hit(hit) = self.cache.get(uid, version)
+            && let Some(source) = self.folded_hit(uid, version, hit)
+        {
+            return Ok((source, false));
         }
         let bytes = version.data.as_ref().map_or(0, |(_, size)| *size);
         let Some(_slot) = self
@@ -174,8 +216,8 @@ impl SearchService {
         };
         // Never persist a body under a version that changed while it was
         // being read; the next search parses once more.
-        if self.store.search_version(pool, uid)? == version {
-            self.cache.put(uid, &version, &cached);
+        if self.store.search_version(pool, uid)? == *version {
+            self.cache.put(uid, version, &cached);
         }
         let produced = self.produced.fetch_add(1, Ordering::Relaxed) + 1;
         // Each worker thread's arena keeps the high-water mark of its largest
@@ -188,9 +230,11 @@ impl SearchService {
         Ok((cached.into(), true))
     }
 
-    /// Match one candidate for a search request: cached bodies stream through
-    /// `buffer` chunk by chunk; a query that may match across newlines reads
-    /// the body whole under the whole-body budget.
+    /// Match one candidate for a search request: the prefilter over the
+    /// resident folded copy first (no file is touched for a body it rules
+    /// out), then cached bodies stream through `buffer` chunk by chunk; a
+    /// query that may match across newlines reads the body whole under the
+    /// whole-body budget.
     pub fn scan(
         &self,
         pool: &SearchPool,
@@ -199,13 +243,32 @@ impl SearchService {
         cancelled: &AtomicBool,
         buffer: &mut Vec<u8>,
     ) -> Scanned {
-        let reader = match self.source(pool, uid, Priority::Foreground, cancelled) {
+        let version = match self.store.search_version(pool, uid) {
+            Ok(version) => version,
+            Err(error) => return Scanned::Error(error),
+        };
+        let filtered = !query.prefilter().is_none();
+        let folded = filtered.then(|| self.cache.folded(uid, &version)).flatten();
+        if let Some(folded) = &folded
+            && !query.admits(&folded.text)
+        {
+            return Scanned::Matched(None);
+        }
+        let reader = match self.source_at(pool, uid, &version, Priority::Foreground, cancelled) {
             Ok((Source::Text(reader), _)) => reader,
             Ok((Source::Error { status, message }, _)) => {
                 return Scanned::Error(SessionError { status, message });
             }
             Err(error) => return Scanned::Error(error),
         };
+        // The folded copy made just now (first service of this version).
+        if filtered
+            && folded.is_none()
+            && let Some(folded) = self.cache.folded(uid, &version)
+            && !query.admits(&folded.text)
+        {
+            return Scanned::Matched(None);
+        }
         match self.matches(reader, uid, query, cancelled, buffer) {
             Ok(outcome) => Scanned::Matched(outcome),
             Err(error) => Scanned::Error(SessionError {
