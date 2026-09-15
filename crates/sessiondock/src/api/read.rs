@@ -101,7 +101,7 @@ pub async fn messages(
         )
         .await;
     }
-    Ok(JsonBytes(body.finish(prompt.as_ref())))
+    Ok(JsonBytes(body.finish(prompt.as_ref()).into()))
 }
 
 /// The Claude half of the `prompt` field, on the blocking reader (it reads
@@ -189,7 +189,7 @@ where
         .reader
         .run(move |store| {
             let _permit = worker_permit;
-            Ok(JsonBytes(work(store, &resources, &query)?))
+            Ok(JsonBytes(work(store, &resources, &query)?.into()))
         })
         .await?;
     let length = bytes.0.len();
@@ -246,7 +246,7 @@ pub async fn media_page(
             resources.files.as_deref(),
             &resources.pages,
         )?;
-        Ok(JsonBytes::new(&value).0)
+        Ok(JsonBytes::new(&value).0.to_vec())
     })
     .await
 }
