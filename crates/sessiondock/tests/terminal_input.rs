@@ -740,8 +740,26 @@ async fn reservation_input_reports_a_gone_instance_after_exit() {
         .await;
     assert_eq!(status, StatusCode::GONE, "{body}");
     assert_eq!(body["code"], "terminal_exited");
-    let (_, list) = h.request("GET", "/api/term/list", Value::Null).await;
-    assert_eq!(list["sessions"], json!([]));
+    // The host left behind the server's back, so the list — served from the
+    // shared observation and its 2 s response cache — drops the row within
+    // one poll interval, not on the very next request.
+    let started = std::time::Instant::now();
+    timeout(Duration::from_secs(5), async {
+        loop {
+            let (_, list) = h.request("GET", "/api/term/list", Value::Null).await;
+            if list["sessions"] == json!([]) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the exited instance must leave term/list within one poll interval");
+    assert!(
+        started.elapsed() <= Duration::from_millis(3000),
+        "took {:?}",
+        started.elapsed()
+    );
 }
 
 #[tokio::test]
