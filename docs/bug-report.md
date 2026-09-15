@@ -41,8 +41,47 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
 _trace_id, _build, source ∈ claude|codex|grok (default codex), terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
-attachment_id}], cols (40–300), rows (12–120)}`; unknown fields are ignored,
-non-numeric `cols`/`rows` are `400`.
+attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
+uid}, optional), captured (object, optional)}`; unknown fields are ignored,
+non-numeric `cols`/`rows` are `400`. The body limit is 16 MiB (a `captured`
+object carries another machine's audit window and terminal frame).
+
+`origin` names the machine the problem was seen on, as the page names it:
+the Hub node id and registered name, or nothing standalone (the local host
+then). It reaches the manifest as `origin` and the prompt as `问题机器：<node
+name>（主机 <hostname>）`; `origin.uid` is the session reference as the
+reporter saw it (Hub-scoped in Hub mode) and is what the prompt's `相关会话`
+shows when the body `uid` is empty.
+
+### A worker on another machine (`POST /api/bug-report/capture`)
+
+The report dialog offers the same machine picker as the new-session dialog,
+so a problem seen on Lyra can be handled by a worker on Cygnus. The Hub
+proxy insists that `uid`/`terminal_name` and `_node` name one machine, so the
+page does it in two requests:
+
+1. `POST /api/bug-report/capture` to the problem's machine (`_node` = origin,
+   `uid`/`terminal_name` scoped to it): the same server-side context
+   `create` would have gathered there — `{ok, hostname, captured_at, uid,
+   terminal_name, session (list row), outbox (delivery ledger), terminal_capture
+   (8000 rows, managed instance only), events (the 900 s audit window matching
+   `uid`/`page_id`/`_trace_id`, newest 20 000 rows)}`. Gated like the report
+   route (`403 terminal_disabled`, `501 bug_report_disabled`).
+2. `POST /api/bug-report` to the worker's machine with `uid: ""`,
+   `terminal_name: ""`, `origin` and `captured` = the answer of step 1. The
+   worker's machine then skips its own session/ledger/terminal capture, writes
+   `captured.session`/`outbox`/`terminal_capture` into the bundle and puts
+   `captured.events` in front of its own audit window in `events.jsonl`
+   (`event_count` counts both). `captured.hostname` becomes
+   `origin.hostname`; a `captured` object without it is `400` unless it carries
+   `captured.error`.
+
+When the problem's machine is offline or the capture fails, the page sends
+`captured: {error}` instead: the report is still saved, `origin.capture_error`
+records why, and the prompt says the bundle only has the browser snapshot and
+the worker machine's audit rows. Attachments are uploaded to the worker's
+machine (they live in its repository). The prompt of a remote worker also
+tells it that the session's native JSONL and ledgers are not on its machine.
 
 | Status | When |
 | --- | --- |
@@ -69,12 +108,12 @@ private temp file renamed into place):
 | --- | --- |
 | `description.md` | the trimmed description plus newline |
 | `browser-state.json` | the request's `snapshot` object, redacted |
-| `events.jsonl` | audit rows of the last 900 s whose `uid`, `page_id` or `trace_id` match the report, or whose `data.report_id` is the report — always including the report's own `bug_report.created` row |
+| `events.jsonl` | audit rows of the last 900 s whose `uid`, `page_id` or `trace_id` match the report, or whose `data.report_id` is the report — always including the report's own `bug_report.created` row; a remote `captured.events` window comes first |
 | `environment.json` | `repository`, Rust `build`, `git rev-parse HEAD` / `status --short` / `diff --stat` run with cwd = repository (10 s bound, stdout tail 200 000 / stderr tail 40 000 chars) |
 | `terminal.txt` | only when `terminal_name` is a managed instance: 8000 scrollback rows (screen as fallback) read through the instance's guard envelope |
 | `attachments/NN-<name>` | hard link or copy of each validated upload |
 | `worker-prompt.md` | the prompt (below) |
-| `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname, client_ip, session (list row of `uid`), outbox (delivery ledger snapshot), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
+| `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname (the worker's machine), client_ip, origin: {node_id, node_name, hostname, uid, remote, capture_error}, session (list row of `uid`), outbox (delivery ledger snapshot), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
 
 Redaction follows `audit.sanitize`: keys
 (authorization, cookie, api-key, password, secret, access/refresh token …)
@@ -158,7 +197,11 @@ first event that diverges across layers, keep the user's working-tree changes,
 make the minimal complete fix, run only the validation proportionate to the
 change, and **never push, deploy, restart a deployed service or touch
 production directories** — explain in the session instead. Push /
-Hub-sync steps are gone.
+Hub-sync steps are gone. The header names the machine the problem was seen
+on (`问题机器：Lyra（主机 lyra）`); a worker on another machine is told that
+the bundle's session row, ledger, terminal frame and audit rows were fetched
+from that machine and that the session's native files are not local, and a
+failed capture is spelled out with its reason.
 
 ## Audit events (`audit/query.rs`)
 
@@ -191,9 +234,14 @@ window's dates line by line (≤ 100 000 rows).
 - `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
   501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
   files, `submitted` from the synthetic native record, second report sees the
-  first in its window).
+  first in its window, the capture route's answer and the `captured` validation).
 - `python3 tests/bug_report_http_suite.py` (binary, fake Claude + fake Codex:
   9 scenarios including Codex `submitted_unconfirmed` and the audit trail).
+- `python3 tests/bug_report_node_browser.py` (hub page over three fake nodes:
+  the dialog's machine picker defaults to the problem's machine, a worker on
+  another machine goes through `/api/bug-report/capture` and hands `captured`
+  over, a failed capture becomes `captured: {error}`, the chosen machine's
+  missing CLIs are greyed out).
 - `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
   `python3 tests/meta_capabilities_suite.py`.
 - `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real
