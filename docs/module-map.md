@@ -10,7 +10,7 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 189 files, 107925 lines, 969 tests, 45 undocumented.
+`crates/sessiondock/src`: 190 files, 109025 lines, 978 tests, 45 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines, 0 tests)
@@ -19,16 +19,16 @@ python3 tests/module_map.py --write
   - `files.rs` — File transport. Every request resolves the selected session; opening a (977 lines, 1 tests)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines, 0 tests)
   - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (669 lines, 0 tests)
-  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1078 lines, 1 tests)
+  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1118 lines, 1 tests)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (242 lines, 1 tests)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (292 lines, 0 tests)
   - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (292 lines, 0 tests)
     - mods: `audit`, `bug_report`, `delivery`, `files`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `node_auth`, `read`, `runtime`, `search`, `terminal`, `trash`
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (215 lines, 2 tests)
   - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (460 lines, 0 tests)
-  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (621 lines, 4 tests)
+  - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (736 lines, 4 tests)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (222 lines, 1 tests)
-  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (749 lines, 0 tests)
+  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (771 lines, 0 tests)
   - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (397 lines, 0 tests)
 - `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (285 lines, 2 tests)
 - `audit.rs` — Best-effort browser diagnostics intake. (413 lines, 0 tests)
@@ -111,7 +111,7 @@ python3 tests/module_map.py --write
   - `tests.rs` — (no module doc) (890 lines, 17 tests)
   - `write.rs` — Authenticated operator file mutations through checked parent handles. (2203 lines, 1 tests)
   - `write_tests.rs` — Synthetic-only write-side tests: authorization boundaries, TOCTOU, atomic (956 lines, 14 tests)
-- `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (186 lines, 4 tests)
+- `fingerprint.rs` — 128-bit streaming content fingerprint of native bytes. (191 lines, 4 tests)
 - `hub/`
   - `aggregate.rs` — Hub aggregation (`hub.py` `HubHandler.selected/aggregate/search_aggregate/ (864 lines, 0 tests)
     - mods: `tests`
@@ -140,8 +140,8 @@ python3 tests/module_map.py --write
   - `registry/`
     - `tests.rs` — Registry rules against an in-process fake node (tokio listener) so faults (1330 lines, 12 tests)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (180 lines, 2 tests)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (562 lines, 0 tests)
-  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `media`, `metadata`, `native_replay`, `observe`, `runtime`, `search`, `security`, `sessions`, `state`, `terminal`, `trash`
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (564 lines, 0 tests)
+  - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `state`, `terminal`, `trash`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (303 lines, 0 tests)
   - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (800 lines, 1 tests)
@@ -150,15 +150,15 @@ python3 tests/module_map.py --write
   - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (6 lines, 0 tests)
     - mods: `autobind`, `launcher`, `model`, `service`, `store`
   - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (567 lines, 0 tests)
-  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1480 lines, 0 tests)
+  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1522 lines, 0 tests)
     - mods: `tests`
-  - `service_tests.rs` — (no module doc) (1224 lines, 22 tests)
+  - `service_tests.rs` — (no module doc) (1267 lines, 23 tests)
   - `store/`
-    - `disk.rs` — Adapted locally from delivery/store/disk.rs; keep its reviewed durability (246 lines, 0 tests)
+    - `disk.rs` — Adapted locally from delivery/store/disk.rs; keep its reviewed durability (247 lines, 0 tests)
     - `json.rs` — Strict JSON grammar without duplicating the lifecycle receipt schema. (99 lines, 0 tests)
     - `mod.rs` — Single-writer durable creation receipts. No process, native history or HTTP I/O. (797 lines, 0 tests)
       - mods: `disk`, `json`, `tests`
-    - `tests.rs` — (no module doc) (1079 lines, 21 tests)
+    - `tests.rs` — (no module doc) (1085 lines, 21 tests)
 - `main.rs` — Loopback development binary. No option starts the Web service. (358 lines, 0 tests)
 - `media.rs` — Private image projection. File capabilities require an explicit selected scope; (801 lines, 0 tests)
   - mods: `descriptors`, `discovery`, `file_media`, `formats`, `native_media`, `tests`
@@ -189,8 +189,9 @@ python3 tests/module_map.py --write
 - `native_replay/`
   - `tests.rs` — (no module doc) (325 lines, 12 tests)
 - `observe.rs` — One bounded publisher per logical view. Subscribers keep their own cursor; (388 lines, 4 tests)
+- `polls.rs` — Response caches of the two liveness polls every open tab repeats every (407 lines, 5 tests)
 - `runtime/`
-  - `mod.rs` — Read-only controlled-host observations against a frozen native inventory. (1328 lines, 0 tests)
+  - `mod.rs` — Read-only controlled-host observations against a frozen native inventory. (1348 lines, 0 tests)
     - mods: `process`, `procscan`, `spawn`, `tests`, `native_binding_tests`
   - `native_binding_tests.rs` — (no module doc) (353 lines, 7 tests)
   - `process.rs` — Process identity evidence for host-managed instances. (676 lines, 6 tests)
@@ -202,7 +203,7 @@ python3 tests/module_map.py --write
     - mods: `tests`
   - `spawn/`
     - `tests.rs` — The SpawnParentTests cases over the synthetic tree, plus the write-once (313 lines, 3 tests)
-  - `tests.rs` — (no module doc) (969 lines, 15 tests)
+  - `tests.rs` — (no module doc) (1018 lines, 16 tests)
 - `search.rs` — Bounded on-demand search over semantic session views, never raw JSONL. (879 lines, 8 tests)
   - mods: `cache`, `service`
 - `search/`
@@ -235,7 +236,7 @@ python3 tests/module_map.py --write
     - `tests.rs` — (no module doc) (2977 lines, 22 tests)
   - `media_projection.rs` — Window selection precedes file opens; authority uses the complete branch. (216 lines, 0 tests)
   - `media_tests.rs` — Synthetic native inputs only; projection and cursor boundaries for media. (257 lines, 6 tests)
-  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1316 lines, 0 tests)
+  - `mod.rs` — Session read model: the lazy index (`index/`) is the only inventory, and (1439 lines, 0 tests)
     - mods: `debug_runs`, `history`, `index`, `native_input`, `native_media`, `native_tail`, `pages`, `views`, `providers`, `records`, `scope`, `grok_tests`, `media_projection`, `media_tests`, `native_scope_tests`, `native_catalog_tests`, `tests`
   - `native_catalog_tests.rs` — (no module doc) (240 lines, 5 tests)
   - `native_input.rs` — Checked, chunked native input and a disposable raw-prefix index. (350 lines, 0 tests)
@@ -276,24 +277,24 @@ python3 tests/module_map.py --write
     - `scanner.rs` — Private streaming JSON structure scanner. This is not a media classifier or (819 lines, 0 tests)
       - mods: `tests`
     - `scanner/`
-      - `tests.rs` — (no module doc) (708 lines, 17 tests)
+      - `tests.rs` — (no module doc) (709 lines, 17 tests)
     - `scanner_contract_tests.rs` — Independent differential contract against serde_json, using only synthetic (427 lines, 11 tests)
-    - `string_reader.rs` — A bounded decoder for the physical INSIDE of one JSON string (no quotes). (259 lines, 0 tests)
+    - `string_reader.rs` — A bounded decoder for the physical INSIDE of one JSON string (no quotes). (258 lines, 0 tests)
       - mods: `tests`
     - `string_reader/`
-      - `tests.rs` — (no module doc) (332 lines, 12 tests)
+      - `tests.rs` — (no module doc) (327 lines, 12 tests)
     - `tests.rs` — (no module doc) (544 lines, 19 tests)
     - `tool_envelopes.rs` — Streaming discovery of a known Codex tool envelope inside ONE (247 lines, 0 tests)
       - mods: `tests`
     - `tool_envelopes/`
       - `tests.rs` — (no module doc) (639 lines, 17 tests)
   - `scope.rs` — Identity provenance captured once from already parsed, committed records. (89 lines, 0 tests)
-  - `tests.rs` — (no module doc) (1522 lines, 40 tests)
+  - `tests.rs` — (no module doc) (1690 lines, 42 tests)
   - `views/`
-    - `mod.rs` — Per-session views on demand: one opened session is (1850 lines, 0 tests)
+    - `mod.rs` — Per-session views on demand: one opened session is (1896 lines, 0 tests)
       - mods: `tests`
-    - `tests.rs` — `Views` against private temporary roots: on-demand builds, incremental (945 lines, 17 tests)
-- `state.rs` — (no module doc) (258 lines, 3 tests)
+    - `tests.rs` — `Views` against private temporary roots: on-demand builds, incremental (954 lines, 17 tests)
+- `state.rs` — (no module doc) (265 lines, 3 tests)
 - `terminal/`
   - `device.rs` — Coarse device label from a browser `User-Agent` for ownership prompts. (101 lines, 2 tests)
   - `input.rs` — Raw HTTP terminal input: named-key mapping and host protocol bounds. (279 lines, 4 tests)
