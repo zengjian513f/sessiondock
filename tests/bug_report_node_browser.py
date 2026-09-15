@@ -125,9 +125,11 @@ def check_report_scroll(page):
             const add = document.querySelector('#bug-report-add').getBoundingClientRect();
             const send = document.querySelector('#bug-report-go').getBoundingClientRect();
             const items = document.querySelector('#bug-report-items').getBoundingClientRect();
+            const sources = document.querySelector('#bug-report-source').getBoundingClientRect();
             return Math.abs(add.bottom - input.bottom) < 1
                 && Math.abs(send.bottom - input.bottom) < 1 && items.bottom <= input.top
-                && add.right <= input.left && input.right <= send.left;
+                && add.right <= input.left && input.right <= send.left
+                && Math.abs(send.right - sources.right) <= 1;
         }""")
         # Grow to the same 180px cap as the session composer, without imposing
         # any input limit. Overflowing text remains editable inside the textarea.
@@ -220,6 +222,7 @@ def check_report_layout(page):
       const row = document.querySelector('.report-row').getBoundingClientRect();
       const select = document.querySelector('#bug-report-node-label').getBoundingClientRect();
       const sources = document.querySelector('#bug-report-source').getBoundingClientRect();
+      const send = document.querySelector('#bug-report-go').getBoundingClientRect();
       return {
         names: labels.map(el => el.textContent),
         hidden: hidden.length,
@@ -228,11 +231,13 @@ def check_report_layout(page):
           && select.right <= sources.left + 1
           && select.bottom <= row.bottom + 1,
         select_frac: select.width / row.width,
+        send_align: Math.abs(send.right - sources.right),
       };
     }""")
     assert wide["names"] == ["Claude", "Codex", "Grok"], wide
     assert wide["hidden"] == 0, wide
     assert wide["one_row"] and not wide["select_wider"] and wide["select_frac"] <= 0.42 + 1e-6, wide
+    assert wide["send_align"] <= 1, wide
     page.evaluate("document.querySelector('#bug-report-dialog').close()")
 
     # Phone: two attachments share one row instead of stacking at 100% width.
