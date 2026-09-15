@@ -1619,7 +1619,7 @@ fn list_bytes_keep_one_entry_per_debug_run_view() {
     let temp = TempDir::new().unwrap();
     let root = temp.path().join("claude");
     for (name, cwd) in [
-        ("ordinary", "/home/user/work"),
+        ("ordinary", "/home/example/work"),
         ("by-root", "/tmp/monkey-run-1/x"),
     ] {
         write_rows(
