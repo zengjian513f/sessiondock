@@ -20,6 +20,11 @@ avif-parse = { version = "2", default-features = false }
 html-escape = "0.2"
 regex = "1"
 fancy-regex = "0.18"
+# Search prefilter: the matcher's own simple case-folding tables and the
+# `[\p{L}\p{N}_]` word class (regex-syntax), substring search over folded
+# bodies (memchr); both already in the graph through `regex`.
+regex-syntax = "0.8"
+memchr = "2"
 getrandom = "0.3"
 subtle = "2"
 futures-util = { version = "0.3", features = ["sink"] }

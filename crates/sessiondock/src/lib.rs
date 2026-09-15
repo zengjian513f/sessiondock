@@ -405,6 +405,7 @@ fn build_app(
         reader.store.clone(),
         search_cache_dir,
         config.search_cache_bytes,
+        config.search_fold_bytes,
         config.search_workers,
         config.search_warmup_secs,
     )?);
