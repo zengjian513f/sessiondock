@@ -665,7 +665,7 @@ fn transient_open_retains_nothing_and_cached_current_borrows_only_fresh_views() 
     let fixture = codex_fork_fixture();
     let deps = deps_for(&fixture);
     let request = child_request(&fixture);
-    let transient = open_transient(&request, &deps).unwrap();
+    let transient = open_transient(&request, &deps, None).unwrap();
     assert_eq!(texts(&transient), ["kept", "new branch"]);
     let mut views = Views::new();
     assert!(views.cached_current(&request, &deps).unwrap().is_none());
@@ -768,4 +768,187 @@ fn serialized_history_above_one_gib_is_counted_without_a_read_quota() {
         one * 1025
     );
     assert!(one * 1025 > 1024 * 1024 * 1024);
+}
+
+/// Phase timings of one native file (read-only), for docs/performance.md:
+/// `SESSIONDOCK_BENCH_FILE=/path [SESSIONDOCK_BENCH_SOURCE=codex] cargo test -p sessiondock
+/// --release --lib sessions::views::tests::benchmark_parse_phases -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn benchmark_parse_phases() {
+    use std::io::Read;
+    use std::time::Instant;
+    let Ok(path) = std::env::var("SESSIONDOCK_BENCH_FILE") else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    let root = path.parent().unwrap().to_path_buf();
+    let source: &'static str = match std::env::var("SESSIONDOCK_BENCH_SOURCE").as_deref() {
+        Ok("claude") => "claude",
+        Ok("grok") => "grok",
+        _ => "codex",
+    };
+    let candidate = candidate(source, &root, &path);
+    let size = candidate.data_stamp().unwrap().size;
+    eprintln!("file {} size={} MB", path.display(), size >> 20);
+    let t = Instant::now();
+    {
+        let mut file = fs::File::open(&path).unwrap();
+        let mut buffer = vec![0u8; 1 << 20];
+        let mut total = 0u64;
+        loop {
+            let count = file.read(&mut buffer).unwrap();
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+        }
+        eprintln!("read_only {:?} {} MB", t.elapsed(), total >> 20);
+    }
+    let t = Instant::now();
+    let mut reader = native_input::CheckedNative::open(
+        &candidate.root,
+        &candidate.data,
+        candidate.data_stamp().unwrap(),
+    )
+    .unwrap();
+    let index = native_input::RawIndex::scan(&mut reader).unwrap();
+    reader.finish().unwrap();
+    eprintln!(
+        "raw_index(hash only) {:?} committed={}",
+        t.elapsed(),
+        index.committed()
+    );
+    let t = Instant::now();
+    let mut decoder = records::Decoder::cold();
+    let index = read_native_input(&candidate, &mut decoder, None).unwrap();
+    let batch = decoder.finish(index.committed() as usize);
+    eprintln!(
+        "scan_native_records(index+decode) {:?} records={} invalid={} error={:?}",
+        t.elapsed(),
+        batch.records.len(),
+        batch.invalid,
+        batch.error
+    );
+    drop(batch);
+    drop(index);
+    let t = Instant::now();
+    let mut cache = records::RecordCache::default();
+    let parsed = parse_candidate(candidate.clone(), None, &mut cache, None).unwrap();
+    eprintln!(
+        "parse_candidate(total) {:?} events={} unsupported={:?}",
+        t.elapsed(),
+        parsed.events.len(),
+        parsed.unsupported
+    );
+    let t = Instant::now();
+    let encoded = parsed.encoded_bytes().unwrap();
+    eprintln!("encoded_bytes {:?} {} MB", t.elapsed(), encoded >> 20);
+    let t = Instant::now();
+    let digest = projection_digest(&parsed.events, parsed.committed);
+    eprintln!("projection_digest {:?} {}", t.elapsed(), &digest[..8]);
+    let media = parsed
+        .events
+        .iter()
+        .map(|event| {
+            event
+                .media
+                .iter()
+                .map(|image| image.resident_len())
+                .sum::<usize>()
+        })
+        .sum::<usize>();
+    eprintln!("resident media {} MB", media >> 20);
+    let t = Instant::now();
+    let again = parse_candidate(candidate.clone(), Some(&parsed), &mut cache, None).unwrap();
+    eprintln!(
+        "parse_candidate(again, same stamp) {:?} events={}",
+        t.elapsed(),
+        again.events.len()
+    );
+}
+
+#[test]
+fn forks_of_one_parent_share_a_single_inherited_prefix_parse() {
+    let fixture = codex_fork_fixture();
+    let mut deps = deps_for(&fixture);
+    let sibling = fixture.root.join("2026/09/11/rollout-sibling.jsonl");
+    write(
+        &sibling,
+        &[
+            codex_fork("sibling-sid", "parent-sid", fixture.cut),
+            codex_message("user", "other branch"),
+        ],
+    );
+    let mut views = Views::new();
+    let first = views.open(&child_request(&fixture), &deps).unwrap();
+    let owner = candidate("codex", &fixture.root, &sibling);
+    let sibling_request = request(&uid_for("codex", &sibling), &owner, "sibling");
+    let second = views.open(&sibling_request, &deps).unwrap();
+    assert_eq!(texts(&first), ["kept", "new branch"]);
+    assert_eq!(texts(&second), ["kept", "other branch"]);
+    // One parent prefix, one parse: both views hold the same projected events.
+    assert!(Arc::ptr_eq(&first.view.inherited, &second.view.inherited));
+    let prefixes = views.prefixes();
+    assert_eq!(prefixes.lock().unwrap().len(), 1);
+    // A transient (search) projection borrows the same prefix.
+    let transient = open_transient(&sibling_request, &deps, Some(&prefixes)).unwrap();
+    assert!(Arc::ptr_eq(
+        &transient.view.inherited,
+        &second.view.inherited
+    ));
+    assert_eq!(transient.anchor, second.anchor);
+    // The parent growing is a new stamp: the prefix is read again (same
+    // content, new projection), never served from the stale entry.
+    append(&fixture.parent, &[codex_message("user", "parent tail")]);
+    deps.threads.insert(
+        "parent-sid".into(),
+        candidate("codex", &fixture.root, &fixture.parent),
+    );
+    let third = open_transient(&sibling_request, &deps, Some(&prefixes)).unwrap();
+    assert!(!Arc::ptr_eq(&third.view.inherited, &second.view.inherited));
+    assert_eq!(texts(&third), ["kept", "other branch"]);
+    assert_eq!(third.anchor, second.anchor);
+    assert_eq!(prefixes.lock().unwrap().len(), 1);
+    // The child's own append does not touch the parent prefix.
+    append(&sibling, &[codex_message("user", "more")]);
+    let owner = candidate("codex", &fixture.root, &sibling);
+    let grown = request(&uid_for("codex", &sibling), &owner, "sibling");
+    let fourth = views.open(&grown, &deps).unwrap();
+    assert!(Arc::ptr_eq(&fourth.view.inherited, &third.view.inherited));
+    assert_eq!(texts(&fourth), ["kept", "other branch", "more"]);
+}
+
+/// Pure decoder baseline for `benchmark_parse_phases`: every complete line of
+/// the file through `serde_json` alone (what the record path cannot beat).
+#[test]
+#[ignore]
+fn benchmark_serde_baseline() {
+    use std::time::Instant;
+    let Ok(path) = std::env::var("SESSIONDOCK_BENCH_FILE") else {
+        return;
+    };
+    let bytes = fs::read(&path).unwrap();
+    let t = Instant::now();
+    let mut lines = 0usize;
+    let mut weight = 0usize;
+    let mut values = Vec::new();
+    for line in bytes.split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_slice(line).unwrap();
+        lines += 1;
+        weight += records::value_weight_for_bench(&value);
+        values.push(value);
+    }
+    eprintln!(
+        "serde_json all lines {:?} lines={} weight={} MB",
+        t.elapsed(),
+        lines,
+        weight >> 20
+    );
+    let t = Instant::now();
+    drop(values);
+    eprintln!("drop values {:?}", t.elapsed());
 }

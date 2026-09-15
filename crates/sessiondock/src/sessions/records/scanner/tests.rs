@@ -21,12 +21,15 @@ fn span_data_url_prefix_and_payload_evidence_survive_all_chunk_boundaries() {
             let span = span(&document);
             assert_eq!(
                 span.digest(),
-                &<[u8; 20]>::from(Sha1::digest(decoded.as_bytes()))
+                &crate::fingerprint::Fingerprint::digest(decoded.as_bytes())
             );
             assert_eq!(span.prefix(), &decoded.as_bytes()[..256]);
             assert_eq!(
                 span.data_suffix(),
-                Some((22, Sha1::digest(payload.as_bytes()).into()))
+                Some((
+                    22,
+                    crate::fingerprint::Fingerprint::digest(payload.as_bytes())
+                ))
             );
             assert_eq!(span.decoded_len(), decoded.len() as u64);
             assert!(span.escaped());
@@ -293,7 +296,8 @@ fn span_offsets_exclude_quotes_and_digest_covers_unescaped_utf8_not_spelling() {
     };
     let a = scan(Chunked::new(raw.as_bytes(), 1), limits).unwrap();
     let b = scan(Chunked::new(escaped.as_bytes(), 1), limits).unwrap();
-    let expected: [u8; 20] = Sha1::digest("a/é😀".as_bytes()).into();
+    let expected: crate::fingerprint::Digest =
+        crate::fingerprint::Fingerprint::digest("a/é😀".as_bytes());
     assert_eq!(span(&a).start(), 3);
     assert_eq!(span(&a).end(), raw.len() as u64 - 2);
     assert_eq!(
@@ -386,7 +390,7 @@ fn huge_base64_shaped_source_streams_without_a_giant_resident_string() {
     assert_eq!(span.end(), encoded + 1);
     assert_eq!(span.decoded_len(), encoded); // NOT the decoded-image byte count.
     assert!(!span.escaped());
-    let mut expected = Sha1::new();
+    let mut expected = Fingerprint::new();
     let repeated = [b'A'; 8192];
     let mut remaining = encoded - 1;
     while remaining != 0 {
@@ -395,7 +399,7 @@ fn huge_base64_shaped_source_streams_without_a_giant_resident_string() {
         remaining -= count as u64;
     }
     expected.update(b"=");
-    assert_eq!(span.digest(), &<[u8; 20]>::from(expected.finalize()));
+    assert_eq!(span.digest(), &expected.finalize());
     assert_eq!(reader.bytes as u64, encoded + 2);
     assert!(reader.calls > 30_000);
     assert!(reader.maximum_request <= BUFFER);
@@ -418,13 +422,10 @@ fn escaped_stream_hash_covers_discarded_prefix_middle_and_tail() {
         },
     )
     .unwrap();
-    let mut expected = Sha1::new();
-    expected.update(vec![b'A'; 32_769]);
+    let mut expected = Fingerprint::new();
+    expected.update(&vec![b'A'; 32_769]);
     expected.update("\0😀".as_bytes());
-    assert_eq!(
-        span(&document).digest(),
-        &<[u8; 20]>::from(expected.finalize())
-    );
+    assert_eq!(span(&document).digest(), &expected.finalize());
     assert_eq!(span(&document).decoded_len(), 32_769 + 5);
     assert!(span(&document).escaped());
     let mut changed = input.into_bytes();

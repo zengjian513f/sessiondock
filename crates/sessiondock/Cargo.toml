@@ -28,6 +28,8 @@ cap-std = "4"
 cap-fs-ext = "4"
 # Glibc arena cap and trim so evicted views really leave RSS.
 libc = "0.2"
+# SIMD byte search for the JSONL line splitter and the string skipper.
+memchr = "2"
 # Atomic no-clobber file/directory/symlink rename through checked parent handles.
 rustix = { version = "1", features = ["fs"] }
 axum.workspace = true

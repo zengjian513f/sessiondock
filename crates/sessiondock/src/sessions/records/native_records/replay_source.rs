@@ -49,7 +49,7 @@ impl CheckedReplay for NativeToolReader {
 
 /// Read one ordinary giant string back from the stamped current record
 /// through the same checked range reader images use, verifying the span's
-/// decoded length and SHA-1 before the text becomes part of the row. The
+/// decoded length and fingerprint before the text becomes part of the row. The
 /// source range bounds the read; there is no ordinary-body size quota.
 fn materialize_text(
     candidate: &Candidate,
@@ -136,10 +136,10 @@ pub(super) fn prepare(
                 start: physical_start,
                 end: physical_end,
                 decoded_len: image.span.decoded_len(),
-                decoded_sha1: *image.span.digest(),
+                decoded_digest: *image.span.digest(),
                 mime: image.mime,
                 encoded_offset: image.encoded_offset,
-                payload_sha1: image.payload_sha1,
+                payload_digest: image.payload_digest,
                 plan,
             })
             .map_err(|error| error.to_string())
@@ -186,8 +186,8 @@ pub(super) fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fingerprint::{Digest, Fingerprint};
     use crate::native_replay::StringRange;
-    use sha1::{Digest, Sha1};
 
     #[test]
     fn finish_retains_parent_tail_failure_and_preserves_the_first_error() {
@@ -199,20 +199,20 @@ mod tests {
             let physical = serde_json::to_vec(&parent).unwrap();
             std::fs::write(&path, &physical).unwrap();
             let stamp = crate::sessions::stamp(&path).unwrap();
-            let mut parent_hash: [u8; 20] = Sha1::digest(parent.as_bytes()).into();
+            let mut parent_hash: Digest = Fingerprint::digest(parent.as_bytes());
             parent_hash[0] ^= 1;
             let plan = DecodePlan::new(vec![
                 StringRange {
                     start: 1,
                     end: physical.len() as u64 - 1,
                     decoded_len: parent.len() as u64,
-                    decoded_sha1: parent_hash,
+                    decoded_digest: parent_hash,
                 },
                 StringRange {
                     start: 1,
                     end: 2,
                     decoded_len: 1,
-                    decoded_sha1: Sha1::digest(b"x").into(),
+                    decoded_digest: Fingerprint::digest(b"x"),
                 },
             ])
             .unwrap();

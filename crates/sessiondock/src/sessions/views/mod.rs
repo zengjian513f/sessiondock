@@ -13,7 +13,7 @@
 //! being read keeps its existing per-session retry codes (503/409).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -961,6 +961,98 @@ impl CachedView {
     }
 }
 
+/// One projected inherited prefix `[0, cut)` of a parent file (events with
+/// physical end zero), shared by every view and transient search projection
+/// that declares it: ten forks of one gigabyte parent read it once, not ten
+/// times. An entry is valid only for exactly the stamp it was read with.
+struct PrefixEntry {
+    candidate: Candidate,
+    meta: Value,
+    events: Arc<Vec<Event>>,
+    digest: String,
+    encoded: usize,
+    used: Instant,
+}
+
+/// Bounded LRU of inherited prefixes keyed by (parent uid, cut).
+#[derive(Default)]
+pub(crate) struct PrefixCache {
+    entries: BTreeMap<(String, usize), PrefixEntry>,
+}
+
+/// Retained inherited prefixes: a handful of parents, within the view byte
+/// budget (serialized event bytes, like the view LRU).
+const PREFIX_ENTRIES: usize = 8;
+
+impl PrefixCache {
+    fn get(
+        &mut self,
+        candidate: &Candidate,
+        cut: usize,
+    ) -> Option<(Value, Arc<Vec<Event>>, String)> {
+        let key = (uid_for(candidate.source, &candidate.path), cut);
+        let entry = self.entries.get_mut(&key)?;
+        if entry.candidate != *candidate {
+            self.entries.remove(&key);
+            return None;
+        }
+        entry.used = Instant::now();
+        Some((
+            entry.meta.clone(),
+            entry.events.clone(),
+            entry.digest.clone(),
+        ))
+    }
+    fn insert(
+        &mut self,
+        candidate: Candidate,
+        cut: usize,
+        meta: Value,
+        events: Arc<Vec<Event>>,
+        digest: String,
+        encoded: usize,
+    ) {
+        let limit = view_byte_limit();
+        if encoded > limit {
+            return;
+        }
+        let bytes = |entries: &BTreeMap<(String, usize), PrefixEntry>| {
+            entries
+                .values()
+                .map(|entry| entry.encoded)
+                .fold(0usize, usize::saturating_add)
+        };
+        while !self.entries.is_empty()
+            && (self.entries.len() >= PREFIX_ENTRIES
+                || bytes(&self.entries).saturating_add(encoded) > limit)
+        {
+            let oldest = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.used)
+                .map(|(key, _)| key.clone())
+                .expect("nonempty");
+            self.entries.remove(&oldest);
+        }
+        let key = (uid_for(candidate.source, &candidate.path), cut);
+        self.entries.insert(
+            key,
+            PrefixEntry {
+                candidate,
+                meta,
+                events,
+                digest,
+                encoded,
+                used: Instant::now(),
+            },
+        );
+    }
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
 /// The cached view with the request's row: the same snapshot when the
 /// published row is unchanged, otherwise the same immutable parts under a
 /// new meta (star, rename, agent menu) without touching any file.
@@ -1003,6 +1095,8 @@ pub(crate) struct Views {
     files: BTreeMap<String, FileEntry>,
     views: BTreeMap<(String, String), CachedView>,
     records: records::RecordCache,
+    /// Shared with the store's transient (search) projections.
+    prefixes: Arc<Mutex<PrefixCache>>,
 }
 
 /// Which pin a parsed file must carry: the leaf's exact display pin, or any
@@ -1027,6 +1121,11 @@ trait FileSource {
 impl Views {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// The inherited-prefix cache, to share with `open_transient`.
+    pub(crate) fn prefixes(&self) -> Arc<Mutex<PrefixCache>> {
+        self.prefixes.clone()
     }
 
     /// Open (or refresh) the view for `request`. Cheap when nothing changed:
@@ -1058,10 +1157,12 @@ impl Views {
             return Ok(snapshot);
         }
         let previous = self.views.remove(&key);
+        let prefixes = self.prefixes.clone();
         let built = build(
             request,
             deps,
             &mut CachedFiles { views: self },
+            Some(&prefixes),
             owner,
             selected,
             pin.clone(),
@@ -1314,11 +1415,14 @@ impl FileSource for ColdFiles {
     }
 }
 
-/// Project one session without any cache: the result is returned, not
-/// retained, and the ASTs it decoded are dropped with this call.
+/// Project one session without retaining it: the result is returned, the
+/// ASTs it decoded are dropped with this call; only inherited prefixes go
+/// through the shared prefix cache (when given), so forks of one parent do
+/// not stream that parent once per search miss.
 pub(crate) fn open_transient(
     request: &ViewRequest,
     deps: &dyn Dependencies,
+    prefixes: Option<&Mutex<PrefixCache>>,
 ) -> Result<Arc<ViewSnapshot>, SessionError> {
     validate_request(request)?;
     let owner = restamp(&request.owner)?;
@@ -1328,7 +1432,9 @@ pub(crate) fn open_transient(
     let mut files = ColdFiles {
         records: records::RecordCache::default(),
     };
-    let built = build(request, deps, &mut files, owner, selected, pin, None, None)?;
+    let built = build(
+        request, deps, &mut files, prefixes, owner, selected, pin, None, None,
+    )?;
     Ok(Arc::new(ViewSnapshot::new(Arc::new(built.view))))
 }
 
@@ -1452,6 +1558,7 @@ fn build(
     request: &ViewRequest,
     deps: &dyn Dependencies,
     files: &mut dyn FileSource,
+    prefix_cache: Option<&Mutex<PrefixCache>>,
     owner: Candidate,
     selected: Option<Candidate>,
     pin: Option<TimelinePin>,
@@ -1495,13 +1602,15 @@ fn build(
         _ => {
             let mut chain = Chain {
                 deps,
-                events: Vec::new(),
+                cache: prefix_cache,
+                segments: Vec::new(),
                 raw_bytes: 0,
                 prefixes: Vec::new(),
                 seen: BTreeSet::from([uid_for(parsed.candidate.source, &parsed.candidate.path)]),
             };
             chain.inherit(parsed.candidate.source, &parsed.meta)?;
-            (chain.prefixes, Arc::new(chain.events))
+            let prefixes = std::mem::take(&mut chain.prefixes);
+            (prefixes, chain.inherited())
         }
     };
     let inherited_encoded = encoded_bytes(inherited.iter())?;
@@ -1580,13 +1689,71 @@ fn native_scope(
 /// retain later rollback/interrupt edits to earlier messages.
 struct Chain<'a> {
     deps: &'a dyn Dependencies,
-    events: Vec<Event>,
+    cache: Option<&'a Mutex<PrefixCache>>,
+    /// Projected prefixes, deepest ancestor first, already at physical end 0.
+    segments: Vec<Arc<Vec<Event>>>,
     raw_bytes: usize,
     prefixes: Vec<Prefix>,
     seen: BTreeSet<String>,
 }
 
 impl Chain<'_> {
+    /// The inherited events: one parent's prefix is shared as-is, a deeper
+    /// chain is concatenated once.
+    fn inherited(mut self) -> Arc<Vec<Event>> {
+        match self.segments.len() {
+            0 => Arc::new(Vec::new()),
+            1 => self.segments.pop().expect("one segment"),
+            _ => Arc::new(
+                self.segments
+                    .iter()
+                    .flat_map(|segment| segment.iter().cloned())
+                    .collect(),
+            ),
+        }
+    }
+
+    /// `[0, cut)` of `candidate` projected: from the shared cache when it holds
+    /// exactly this stamp, else parsed now (and retained for the next fork).
+    fn prefix(
+        &self,
+        candidate: &Candidate,
+        sid: &str,
+        cut: usize,
+    ) -> Result<(Value, Arc<Vec<Event>>, String), SessionError> {
+        if let Some(cache) = self.cache
+            && let Ok(mut cache) = cache.lock()
+            && let Some(hit) = cache.get(candidate, cut)
+        {
+            return Ok(hit);
+        }
+        let (meta, events, digest) = parse_prefix(candidate, sid, cut)?;
+        let events = Arc::new(
+            events
+                .into_iter()
+                .map(|event| Event {
+                    end: 0,
+                    message: event.message,
+                    media: event.media,
+                })
+                .collect::<Vec<_>>(),
+        );
+        if let Some(cache) = self.cache {
+            let encoded = encoded_bytes(events.iter())?;
+            if let Ok(mut cache) = cache.lock() {
+                cache.insert(
+                    candidate.clone(),
+                    cut,
+                    meta.clone(),
+                    events.clone(),
+                    digest.clone(),
+                    encoded,
+                );
+            }
+        }
+        Ok((meta, events, digest))
+    }
+
     fn inherit(&mut self, source: &str, meta: &Value) -> Result<(), SessionError> {
         let Some((sid, cut)) = history::history_link(source, meta)? else {
             return Ok(());
@@ -1601,28 +1768,25 @@ impl Chain<'_> {
             .raw_bytes
             .checked_add(cut)
             .ok_or_else(|| SessionError::new(413, "继承历史预算溢出"))?;
-        let (prefix_meta, prefix_events, digest) = match parse_prefix(&candidate, sid, cut) {
-            // A parent appended between the index's stat and this open is an
-            // ordinary append of an unrelated tail: read it once more with
-            // its current stamp before reporting a retry.
-            Err(error) if error.status == 503 => {
-                let fresh = restamp(&candidate)?;
-                if fresh == candidate {
-                    return Err(error);
+        let (candidate, (prefix_meta, prefix_events, digest)) =
+            match self.prefix(&candidate, sid, cut) {
+                // A parent appended between the index's stat and this open is an
+                // ordinary append of an unrelated tail: read it once more with
+                // its current stamp before reporting a retry.
+                Err(error) if error.status == 503 => {
+                    let fresh = restamp(&candidate)?;
+                    if fresh == candidate {
+                        return Err(error);
+                    }
+                    let parsed = self.prefix(&fresh, sid, cut)?;
+                    (fresh, parsed)
                 }
-                parse_prefix(&fresh, sid, cut)?
-            }
-            other => other?,
-        };
+                other => (candidate, other?),
+            };
         // Zero is an empty prefix, not permission to include grandparents.
         if cut > 0 {
             self.inherit(candidate.source, &prefix_meta)?;
-            self.events
-                .extend(prefix_events.into_iter().map(|event| Event {
-                    end: 0,
-                    message: event.message,
-                    media: event.media,
-                }));
+            self.segments.push(prefix_events);
         }
         self.prefixes.push(Prefix {
             thread: sid.to_owned(),

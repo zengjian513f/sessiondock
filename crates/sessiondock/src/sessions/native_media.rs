@@ -78,7 +78,7 @@ pub(super) fn authorized_reader(
             let direct = JsonStringReader::new(
                 reader,
                 span.decoded_len,
-                span.decoded_sha1,
+                span.decoded_digest,
                 span.end - span.start,
             )
             .map_err(|_| SessionError::new(409, "原生图片区段无效"))?;

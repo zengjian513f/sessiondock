@@ -75,7 +75,7 @@ pub(crate) mod budgets {
     /// [`caches()`] 为准，可用环境变量覆盖）。
     pub const VIEW_CACHE_ENTRIES: usize = 16;
     pub const VIEW_CACHE_BYTES: usize = 128 * MIB;
-    pub const INLINE_STRING_BYTES: usize = 2 * MIB;
+    pub const INLINE_STRING_BYTES: usize = 64 * 1024;
     /// Reusable decoded-AST cache behind incremental append: one entry per
     /// cached view, weight-bounded like the view cache. Its weight is a
     /// conservative estimate of the resident `serde_json::Value` tree, so
@@ -741,7 +741,8 @@ impl SessionStore {
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
-        open_transient(&prepared.request, &deps)
+        let prefixes = self.views()?.prefixes();
+        open_transient(&prepared.request, &deps, Some(&prefixes))
     }
 
     /// Everything the searchable text of the main view depends on, from
