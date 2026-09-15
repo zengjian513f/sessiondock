@@ -108,7 +108,10 @@ python3 deploy/deploy.py rollback --targets <name> --backup <PREFIX>/backup-depl
   <PREFIX>/bin/<name>`、`pgrep -x ptyhost`、`<PREFIX>/host` 里的 `.json` 记录数、`etc/deployed-commit`，
   以及 `web/` 的内容摘要。
 - stage：`source.tar` 上传到 `<SD_SOURCE>/.deploy/`，清空 `<SD_SOURCE>` 里 `target/` 以外的一切再
-  `tar -x`；`cargo build --release --locked -p sessiondock`（超时 900 s，M4 上热构建约 30–40 s）；
+  `tar -x`；stage 的测试模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）
+  不是 `none` 时先按第 2 节跑 `mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest <cargo> test
+  --workspace --locked`（超时 1800 s；失败即该目标 `FAILED`，在构建和换入之前中止，`.deploy-test.log`
+  留在 `<SD_SOURCE>` 供查看）；`cargo build --release --locked -p sessiondock`（超时 900 s，M4 上热构建约 30–40 s）；
   产物拷成 `<PREFIX>/bin/<name>.new` 并在节点上算 SHA-256 作为期望值（构建机的 Linux 哈希与此无关）；
   web 快照 rsync 到 `<PREFIX>/web.staging/`，与线上 `web/` 比内容摘要决定"web 是否变化"。
 - backup：`cp -Rp bin web <PREFIX>/backup-deploy-<short>-<UTC stamp>/`。
