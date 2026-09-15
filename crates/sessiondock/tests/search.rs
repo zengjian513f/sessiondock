@@ -169,6 +169,47 @@ async fn literal_case_whole_word_and_regex_flags_match_visible_text() {
 }
 
 #[tokio::test]
+async fn multi_term_search_matches_session_body_and_streams_the_same_cached_results() {
+    let (_temp, cfg, _) = corpus(1);
+    let app = sessiondock::app(cfg).unwrap();
+    for (query, hits) in [
+        ("q=Needle%20answer", 2),          // different messages
+        ("q=answer%20Needle&mode=all", 2), // reverse order
+        ("q=Needle%20absent", 0),
+        ("q=Needle%20absent&mode=any", 1),
+        ("q=%22Needle%20Cat%22%20answer", 2),
+        ("q=%22Needle%20answer%22", 0),
+        ("q=Needle%20ANSWER&case=1", 0),
+        ("q=Needle%20answer&word=1", 2),
+        ("q=Needle%20answer&regex=1&mode=any", 0),
+        ("q=Needle%7Canswer&regex=1&mode=all", 2),
+        ("q=%22%22", 0),
+    ] {
+        let result = json_body(get(&app, &format!("/api/search?{query}")).await).await;
+        assert_eq!(
+            result["results"].as_array().unwrap().len(),
+            usize::from(hits > 0),
+            "{query}"
+        );
+        if hits > 0 {
+            assert_eq!(result["results"][0]["hits"], hits, "{query}");
+        }
+        let response = get(&app, &format!("/api/search?{query}&progress=1")).await;
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let events: Vec<Value> = std::str::from_utf8(&body)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            events.last().unwrap()["data"],
+            result,
+            "cached NDJSON: {query}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn source_filter_limit_and_explicit_partial_errors_are_not_fake_complete() {
     let (temp, mut cfg, _) = corpus(3);
     write(

@@ -76,8 +76,11 @@ checkpoint仍核对投影。
   （`SESSIONDOCK_SEARCH_WORKERS`，不占普通读池）；
   取消响应会取消工作并释放阻塞发送，blocking permit保持到实际工作结束。JSON大对象
   序列化也在worker。
-- Rust regex只接受有界非回溯方言，lookaround/backreference明确400；全词边界
-  单独适配，Unicode大小写和字符类差异在legacy选项说明和模块契约中公开。
+- 字面搜索按空白拆词、双引号保留短语，默认 AND（整个会话内全部词出现），
+  `mode=any` 选择 OR。每个词用字面匹配器和 Unicode 全词边界，复用缓存预筛，
+  不合成为回溯正则；前端切换“全部词 / 任一词”，正则放在高级选项。
+  `regex=1` 不拆词、忽略 `mode`，由 `fancy-regex` 支持 lookaround/backreference。
+  详见 [read-model.md](read-model.md#搜索)。
 - 工具changes是原生参数的纯投影，不读取被编辑文件。完整Write/片段Edit和
   patch保持原有before/after可信程度；生成差异超预算时保留原始参数并解释原因。
 
