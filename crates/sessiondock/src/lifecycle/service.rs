@@ -6,7 +6,10 @@ use std::{
     collections::BTreeMap,
     path::PathBuf,
     process::Child,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
@@ -228,6 +231,16 @@ enum Command {
     Stop(String, StopCandidate),
     Discard(String, String),
 }
+impl Command {
+    /// Commands that may change what a receipt list or a host observation
+    /// shows (a spawn, a kill, a binding, a tombstone), so the display
+    /// caches keyed on [`LifecycleService::generation`] are invalidated
+    /// after them whatever their outcome — a failed cancel may still have
+    /// recorded its intent.
+    fn mutates(&self) -> bool {
+        !matches!(self, Self::Get(_) | Self::List(..) | Self::Target(_))
+    }
+}
 enum Answer {
     Record(Box<Record>),
     Records(Vec<Record>),
@@ -252,6 +265,11 @@ pub struct LifecycleService {
     /// Shared read-only allowlist handles for completion and catalog queries;
     /// spawning still happens only inside the coordinator.
     launcher: Arc<Launcher>,
+    /// Incremented by the coordinator after every mutating command
+    /// (`Command::mutates`), from whichever caller (HTTP, autobind, the
+    /// bug-report worker). Display caches (`/api/live`, `/api/term/list`,
+    /// the shared managed observation) compare it and drop their entries.
+    generation: Arc<AtomicU64>,
 }
 impl LifecycleService {
     pub async fn open(
@@ -299,6 +317,7 @@ impl LifecycleService {
         let admission = Arc::new(Semaphore::new(limits.capacity));
         let (done_tx, done) = watch::channel(None);
         let launcher = Arc::new(launcher);
+        let generation = Arc::new(AtomicU64::new(1));
         let core = Core {
             store: Arc::new(Mutex::new(store)),
             launcher: launcher.clone(),
@@ -316,6 +335,7 @@ impl LifecycleService {
             admission.clone(),
             stop.clone(),
             done_tx,
+            generation.clone(),
         ));
         Ok(Self {
             tx,
@@ -323,7 +343,13 @@ impl LifecycleService {
             stop,
             done,
             launcher,
+            generation,
         })
+    }
+    /// The mutation counter (see the field): equal values mean no create,
+    /// cancel, bind, authorization, stop or discard completed in between.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
     /// Configured adapter/profile IDs with their source and capabilities.
     pub fn entries(&self) -> &[launcher::Entry] {
@@ -493,10 +519,15 @@ async fn coordinate(
     admission: Arc<Semaphore>,
     stop: CancellationToken,
     done: watch::Sender<Option<Result<(), Error>>>,
+    generation: Arc<AtomicU64>,
 ) {
     loop {
         let request = tokio::select! { biased; _ = stop.cancelled() => break, request = rx.recv() => match request { Some(request) => request, None => break } };
+        let mutates = request.command.mutates();
         let answer = core.execute(request.command).await;
+        if mutates {
+            generation.fetch_add(1, Ordering::AcqRel);
+        }
         let _ = request.reply.send(Response {
             answer,
             _permit: request.permit,

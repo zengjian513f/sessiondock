@@ -155,6 +155,19 @@
   `/api/live` 与 spawner tick 用同样的 3 s 窗口（`list_recent`）。目录遍历后如果
   每个文件的 stamp 都与上次相同（且名称索引未变），直接复用上一份快照，不重建
   行 / 图 / 签名。`/api/sessions?sig=` 命中时不克隆、不装饰、不序列化文档。
+- **列表响应字节缓存**（`SessionStore::list_view_bytes`，2026-09-15）：`sig` 短路之后、
+  `sig` 变了或没带 `sig` 的热请求也不再"克隆文档 → 借视图装饰 → 去警告 → 序列化"
+  （真实根 480 行 / 438 KB 一次约 10 ms），而是按 `debug_run` 视图各留一份最终响应
+  字节（`Bytes`，最多 8 个视图，超出整体清空），键是 **视图文档的 `Arc` 身份**
+  （`publish` 在 `sig` 不变时复用同一份 `Arc<Value>`，所以键变化 ⇔ 当前 `sig`
+  会变；`debug_run` 过滤文档也按 run id 各自缓存，两个视图交替轮询互不驱逐）
+  加 **视图缓存修订号** `Views::revision`（缓存的 `(uid, agent)` 视图被插入、
+  换成新快照或淘汰时递增——列表从视图缓存借来的只有 `cursor.anchor` 与
+  `timeline_pin`，修订号不变即装饰不变；同一文件未变的重复打开返回同一快照，
+  不递增）。命中返回同一块共享缓冲，8 个并发全列表请求排队在缓存锁后依次命中
+  而不是各自重建。`force=1` 仍然重扫并重新渲染（与前身一致），结果替换缓存项；
+  渲染时视图锁被正在进行的打开占住则照旧无装饰返回且不缓存。缓存与非缓存
+  路径字节相同（`sessions::tests::list_bytes_*` 断言）。
 
 ## debug_run 视图
 
@@ -168,7 +181,7 @@
 - 视图（`SessionStore::list_view`）：默认视图剔除全部登记会话；
   `?debug_run=<id>` 只显示该 run（未登记或不合法的 id → 空列表，不是错误）。视图对
   可见行重新推导 `fork_parent`，并以可见行 + run id 重签 `sig`（`_view_signature`），
-  按（已发布列表、注册表、run id）缓存。`/api/live`、`/api/term/list`（sessions 与
+  按 run id 各缓存一份（已发布列表与注册表未变即复用，最多 8 个视图）。`/api/live`、`/api/term/list`（sessions 与
   pending）、`/api/search`（候选与 `total_pool`）用同一注册表筛；`/api/messages` 等
   详情路由忽略该参数。`security.rs` 不再对 `debug_run` 返回 501。
 

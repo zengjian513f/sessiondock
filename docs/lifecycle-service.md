@@ -36,6 +36,12 @@ and HTTP authorization. The service never guesses native scope.
   or re-authorizes anything; a live receipt is `NotReady`.
 - `shutdown().await` closes admission, explicitly rejects queued work, lets
   already-started blocking work finish, and waits for the store lock to release.
+- `generation()` is a counter the coordinator advances after every mutating
+  command (create, cancel, bind, native authorization, stop, discard —
+  whatever its outcome; `get`, `list` and `target` never move it). It carries
+  no authority; the display caches of `/api/live`, `/api/term/list` and the
+  shared managed observation compare it to drop their entries
+  ([liveness.md](liveness.md#response-caches)).
 
 `bind(VerifiedNativeBinding)` and `authorize_native(&BoundTarget)` add explicit
 operator-confirmed (or process-evidence) association and fresh

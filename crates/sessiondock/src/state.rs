@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -77,6 +77,9 @@ pub struct AppState {
     /// Claude question-card files under the state dir, Codex approvals off
     /// the managed instance screen; JSON `null` when neither applies.
     pub prompts: Arc<crate::bridge::LivePrompts>,
+    /// Assembled `/api/live` and `/api/term/list` answers keyed on the
+    /// source snapshots they came from (docs/liveness.md "Response caches").
+    pub polls: Arc<crate::polls::PollCache>,
 }
 
 #[derive(Clone)]
@@ -162,12 +165,16 @@ impl Reader {
     }
 }
 
-/// Serialize large read results inside the bounded worker, not on the async reactor.
-pub struct JsonBytes(pub Vec<u8>);
+/// Serialize large read results inside the bounded worker, not on the async
+/// reactor. Holds `Bytes` so a body served from a cache (the session list)
+/// is shared, not copied.
+pub struct JsonBytes(pub Bytes);
 
 impl JsonBytes {
     pub fn new(value: &Value) -> Self {
-        Self(serde_json::to_vec(value).expect("serde_json::Value serializes"))
+        Self(Bytes::from(
+            serde_json::to_vec(value).expect("serde_json::Value serializes"),
+        ))
     }
 }
 

@@ -173,9 +173,12 @@ scan supplies that complete set:
 managed `running` instances are merged into `uids`/`tmux_uids`/`started_at`
 ([liveness.md](liveness.md#apilive-with-the-scan)).
 
-Concurrent `/api/live` requests share one cached snapshot (TTL two seconds,
-single-flight refresh, `?force=1` bypasses the TTL but still serializes);
-`/api/term/list` and claim keep the fresh, uncached observation. The identity
+Concurrent `/api/live` and `/api/term/list` requests share one cached
+snapshot (TTL two seconds, single-flight refresh, keyed on the lifecycle
+mutation generation so a create/kill/bind/stop misses at once, `?force=1`
+bypasses the TTL but still serializes;
+[liveness.md](liveness.md#response-caches)); claim, attach, stop and
+process-evidence binding keep the fresh, uncached observation. The identity
 memory holds at most 1024 instances, evicting gone/oldest entries first;
 re-checking stale memory runs under the same deadline and concurrency limits.
 

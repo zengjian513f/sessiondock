@@ -922,32 +922,41 @@ async fn shared_observation_is_single_flight_cached_and_force_bypasses_ttl() {
             Ok::<_, ()>(((), NativeCatalog::from_rows(&rows()), Vec::new()))
         }
     };
-    assert!(service.cached().is_none());
-    let first = service.observe_shared(false, prepare(None)).await.unwrap();
+    assert!(service.cached(0).is_none());
+    let first = service
+        .observe_shared(false, 0, prepare(None))
+        .await
+        .unwrap();
     assert!(!first.cached && first.age.is_zero());
     assert_eq!(prepared.load(Ordering::SeqCst), 1);
-    let second = service.observe_shared(false, prepare(None)).await.unwrap();
+    let second = service
+        .observe_shared(false, 0, prepare(None))
+        .await
+        .unwrap();
     assert!(second.cached);
     assert!(Arc::ptr_eq(&first.snapshot, &second.snapshot));
     assert_eq!(prepared.load(Ordering::SeqCst), 1);
-    let forced = service.observe_shared(true, prepare(None)).await.unwrap();
+    let forced = service
+        .observe_shared(true, 0, prepare(None))
+        .await
+        .unwrap();
     assert!(!forced.cached && !Arc::ptr_eq(&first.snapshot, &forced.snapshot));
     assert_eq!(prepared.load(Ordering::SeqCst), 2);
     // Concurrent refreshes: the second waiter reuses the first refresh.
     tokio::time::sleep(Duration::from_millis(450)).await;
-    assert!(service.cached().is_none());
+    assert!(service.cached(0).is_none());
     let gate = Arc::new(tokio::sync::Notify::new());
     let leader = {
         let service = service.clone();
         let prepare = prepare(Some(gate.clone()));
-        tokio::spawn(async move { service.observe_shared(false, prepare).await.unwrap() })
+        tokio::spawn(async move { service.observe_shared(false, 0, prepare).await.unwrap() })
     };
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(prepared.load(Ordering::SeqCst), 3);
     let follower = {
         let service = service.clone();
         let prepare = prepare(None);
-        tokio::spawn(async move { service.observe_shared(false, prepare).await.unwrap() })
+        tokio::spawn(async move { service.observe_shared(false, 0, prepare).await.unwrap() })
     };
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(prepared.load(Ordering::SeqCst), 3);
@@ -959,11 +968,51 @@ async fn shared_observation_is_single_flight_cached_and_force_bypasses_ttl() {
     // A failed preparation releases the single flight and caches nothing new.
     tokio::time::sleep(Duration::from_millis(450)).await;
     let failed = service
-        .observe_shared(false, async || {
+        .observe_shared(false, 0, async || {
             Err::<((), NativeCatalog, Vec<ExitReceipt>), &str>("busy")
         })
         .await;
     assert!(matches!(failed, Err(SharedError::Prepare("busy"))));
-    assert!(service.cached().is_none());
+    assert!(service.cached(0).is_none());
+    peer.abort();
+}
+
+/// The shared observation answers only the lifecycle generation it was
+/// taken under, so a create/kill/bind/stop (a new generation) probes again
+/// inside the TTL; `invalidate` drops it outright.
+#[tokio::test]
+async fn shared_observation_turns_over_with_the_generation_and_invalidate() {
+    let directory = tempfile::tempdir().unwrap();
+    let peer = serving_host(
+        &directory,
+        "one",
+        meta_one("synthetic-instance-0001"),
+        false,
+        u32::MAX,
+        u32::MAX - 1,
+        12,
+    )
+    .await;
+    let mut service = runtime(&directory);
+    service.limits.cache_ttl = Duration::from_secs(30);
+    let service = Arc::new(service);
+    let prepare = || async { Ok::<_, ()>(((), NativeCatalog::from_rows(&rows()), Vec::new())) };
+    let first = service.observe_shared(false, 7, prepare).await.unwrap();
+    assert!(!first.cached);
+    assert!(service.cached(7).is_some());
+    assert!(
+        service.cached(8).is_none(),
+        "another generation never reuses it"
+    );
+    let same = service.observe_shared(false, 7, prepare).await.unwrap();
+    assert!(same.cached && Arc::ptr_eq(&first.snapshot, &same.snapshot));
+    let next = service.observe_shared(false, 8, prepare).await.unwrap();
+    assert!(!next.cached && !Arc::ptr_eq(&first.snapshot, &next.snapshot));
+    assert!(service.cached(7).is_none(), "the old generation is gone");
+    assert!(service.cached(8).is_some());
+    service.invalidate();
+    assert!(service.cached(8).is_none());
+    let again = service.observe_shared(false, 8, prepare).await.unwrap();
+    assert!(!again.cached);
     peer.abort();
 }
