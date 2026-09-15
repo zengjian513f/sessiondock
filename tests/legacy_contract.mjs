@@ -42,6 +42,7 @@ test('literal search supports AND/OR, quoted phrases and safe per-term highlight
   S.opts.word = false;
   S.term = '<img> x+y';
   assert.equal(context.hl('<img> & x+y'), '<mark>&lt;img&gt;</mark> &amp; <mark>x+y</mark>');
+  assert.equal(context.hl(undefined), 'undefined', 'missing title retains the legacy fallback');
   S.opts.regex = true;
   S.opts.mode = 'any';
   S.term = 'foo bar';

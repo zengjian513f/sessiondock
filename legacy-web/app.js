@@ -3626,6 +3626,7 @@ function hasTerm(t) {
 }
 
 function hl(text) {
+  text = String(text);
   const re = S.term && reTerm(true);
   if (!re) return esc(text);
   let html = '', last = 0;
