@@ -54,7 +54,7 @@ fn append(path: &Path, records: &[Value]) {
         .write_all(&encoded(records))
         .unwrap();
 }
-fn candidate(source: &'static str, root: &Path, path: &Path) -> Candidate {
+pub(super) fn candidate(source: &'static str, root: &Path, path: &Path) -> Candidate {
     restamp(&Candidate {
         source,
         root: root.to_path_buf(),
@@ -93,7 +93,7 @@ fn continuation(batch: &Value) -> MessageQuery {
 
 /// Dependencies over a fixed thread-id map, the way the index answers them.
 #[derive(Default)]
-struct MapDeps {
+pub(super) struct MapDeps {
     threads: BTreeMap<String, Candidate>,
     ambiguous: BTreeSet<String>,
 }
@@ -763,9 +763,8 @@ fn serialized_history_above_one_gib_is_counted_without_a_read_quota() {
         media: Vec::new(),
     };
     let one = serde_json::to_vec(&event.message).unwrap().len();
-    assert_eq!(
-        encoded_bytes(std::iter::repeat_n(&event, 1025)).unwrap(),
-        one * 1025
-    );
+    let encoded = EncodedEvents::build(std::iter::repeat_n(&event, 1025), false, None).unwrap();
+    assert_eq!(encoded.total_len(), one * 1025);
+    assert_eq!(accounted_bytes(&encoded, std::iter::empty()), one * 1025);
     assert!(one * 1025 > 1024 * 1024 * 1024);
 }

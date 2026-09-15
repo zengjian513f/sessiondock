@@ -49,9 +49,28 @@ old Event vectors would be incorrect for these cases.
 
 Inherited fixed prefixes, semantic digests, byte/head/anchor cursor validation,
 window selection, search and file/media selected-view authority remain unchanged.
-Full native reads, timeline projection, event clones, hashing, inherited-prefix
-parsing and HTTP serialization can still dominate large-history latency. Further
-optimization must measure these costs and preserve their separate invariants.
+Full native reads, timeline projection, hashing and inherited-prefix parsing can
+still dominate large-history latency. Further optimization must measure these
+costs and preserve their separate invariants.
+
+## Serialized bytes on append (2026-09-15)
+
+The projection is still recomputed from every validated record, but its
+serialized form is not: `Parsed.encoded` (docs/read-model.md "视图字节缓存")
+keeps the exact `serde_json::to_vec` bytes of every projected message, and the
+encoder of the new parse walks the old and new event lists side by side. A
+message whose event has the same physical `end`, no typed media and a
+structurally identical tree (`same_value`: key-order and float-sign sensitive,
+so equality implies identical bytes) copies the old bytes; everything else —
+the appended tail, a Codex `turn_aborted` amendment, a Claude branch that
+disappeared or moved — is serialized afresh. A rewrite or truncation fails the
+comparison from the first differing message on, so nothing stale survives, and
+a view whose bytes were not retained (a transient search projection) lends
+nothing. The hot-read responses (full, `window=1`, increments, history pages)
+then splice those bytes instead of cloning and re-serializing; the committed
+semantic digest and the LRU accounting come from the same single pass. Unit
+tests (`views/body_tests.rs`, `views/encoded.rs`) assert the reused count and
+that the extended bytes equal a cold projection's.
 
 ## Resource tradeoff and measurement
 
