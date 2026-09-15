@@ -833,6 +833,9 @@ impl Machine {
 
     fn queue_event(&mut self, id: &str, evidence: QueueEvidence) -> Result<Vec<Effect>, Error> {
         let mut row = self.row(id, &evidence.context.scope)?;
+        if row.enter.is_none() {
+            return Err(Error::Unproven);
+        }
         context_matches(&row, &evidence.context)?;
         if row.accepted.is_some() {
             return Err(Error::WrongState);
@@ -943,6 +946,7 @@ impl Machine {
         ) || !evidence.real_human_input
             || !payload_matches(&row, &evidence.text, &evidence.attachments)
             || !associated(&row, &evidence.association, true)
+            || (row.enter.is_none() && evidence.association != Association::PossibleTextMatch)
         {
             return Err(Error::Unproven);
         }
@@ -1184,7 +1188,6 @@ fn record_matches(row: &Receipt, record: &NativeRecord) -> Result<(), Error> {
 fn context_matches(row: &Receipt, context: &NativeContext) -> Result<(), Error> {
     if row.request.payload.scope != context.scope
         || row.confirmation.as_ref() != Some(&context.confirmation)
-        || row.enter.is_none()
     {
         return Err(Error::Unproven);
     }
@@ -1357,7 +1360,9 @@ pub(super) fn validate(snapshot: &Snapshot) -> Result<(), Error> {
         if let Some(accepted) = &row.accepted {
             record_matches(row, &accepted.record)?;
             validate_turn(&accepted.turn)?;
-            if !associated(row, &accepted.association, true) || row.enter.is_none() {
+            if !associated(row, &accepted.association, true)
+                || (row.enter.is_none() && accepted.association != Association::PossibleTextMatch)
+            {
                 return Err(Error::Unproven);
             }
             for key in [

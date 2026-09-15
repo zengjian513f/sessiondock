@@ -1,5 +1,11 @@
 # Claude reliable send
 
+The production browser now uses [server conversation drafts and one-shot SEND](conversation.md).
+When that service is configured, the legacy executor is not started: old receipts
+are preserved as read-only `legacy_delivery` data and never redispatched. The
+remaining document describes the retained legacy domain and diagnostic contracts;
+it does not define new conversation submissions.
+
 This connects the [pure Claude domain](delivery.md), the
 [durable store](delivery-store.md), the [engine](delivery-engine.md) and the
 [async service](delivery-service.md) to a real terminal driver, a native
@@ -106,7 +112,7 @@ admission (`workers`, default 4) caps concurrent operations across sessions.
 Physical terminal write critical sections are already mutually exclusive in the
 ownership gate.
 
-## Native acknowledgment: JSONL only, `VerifiedEnter`
+## Native acknowledgment: JSONL only
 
 Confirmation comes only from the session file, through the SessionStore's
 checked readers (`claude_native_inputs`), never an ad-hoc read:
@@ -123,15 +129,21 @@ checked readers (`claude_native_inputs`), never an ad-hoc read:
   verified the composer and pressed Enter, so the first matching human input
   after that boundary is this delivery. Records before the fence, without a
   UUID, or already consumed by another receipt never acknowledge.
+- If paste was attempted but preparation could not be verified, no managed
+  Enter is recorded. A matching human input after the same validated fence
+  still acknowledges via `Association::PossibleTextMatch`, including when the
+  user manually submits the pasted draft. This never authorizes another paste
+  or Enter and never invents a managed Enter operation.
 - Without a qualifying native text-and-time match the row stays uncertain.
   Screen text and assistant activity do not acknowledge it, and the real
   Claude TUI supplies no request-ID echo.
 
 The tracker re-reads from the advancing watch cursor; when a receipt is overdue
 (8 s) it re-reads from the **fixed confirmation
-fence**, rate-limited to once per interval. Automatic tracking stops after a
-one-hour window (annotating the receipt once with the domain's timeout issue,
-without making it retryable). A dismissed (discarded) receipt is dropped from
+fence**, rate-limited to once per interval. After one hour it annotates the
+receipt once with the domain's timeout issue and continues only the rate-limited
+fixed-fence reads, including after restart, without making it retryable.
+A dismissed (discarded) receipt is dropped from
 automatic tracking so a later identical human input acknowledges the next
 receipt, not the tombstone.
 
@@ -185,6 +197,12 @@ Body: `uid`, `id`. Dismisses the row (hides it, cancels an unwritten waiter),
 keeps the deduplication tombstone (a later replay of the ID is still a lookup),
 never cancels Claude. Unknown/already-gone row → `404`.
 
+Claude `ambiguous` rows expose both "检查终端" and "移除". Clicking "移除"
+clears only that receipt after the server succeeds; `delivery_missing` also
+clears a stale local copy. Other pending receipts remain until their own native
+records arrive. The page remembers explicitly dismissed IDs until reload so
+delayed snapshots cannot restore them. Other errors keep the receipt visible.
+
 `GET /api/session/outbox` is unchanged (read-only projection). The front-end
 retires its **optimistic** row from the native SSE record independently; the
 **server ledger** row is retired by the tracker's confirmation, so the two can
@@ -203,6 +221,10 @@ error. A raw text-submit with Enter still routes to the reliable-send composer
 
 ## Validation
 
+- Dismissal UI: `python3 tests/outbox_discard_browser.py` — isolated Chromium
+  at desktop and 390 px, using actual legacy outbox functions and intercepted
+  server responses. Covers ambiguous-row controls, targeted dismissal, late
+  snapshots, reopening/new sends, reload, already-missing receipts and failures.
 - Unit: `cargo test -p sessiondock --lib delivery::driver` (composer model,
   dim suggestions, lag/dropped health, fingerprints, busy footer),
   `delivery::claude_adapter` (end-trim match, byte-order, fence invalidation,

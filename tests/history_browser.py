@@ -126,6 +126,18 @@ def main():
                 page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-parent")}"] .chain-open').click()
                 expect(page.locator("#msgs")).to_contain_text("Codex discarded parent tail")
                 expect(page.locator("#msgs")).not_to_contain_text("Codex fork answer")
+                # The parent's own menu lists its branch so the reader can go
+                # back the way they came.
+                expect(page.locator("#a-fork-chain")).to_have_attribute("title", "子会话")
+                page.locator("#a-fork-chain").click()
+                expect(page.locator("#fork-chain-menu .chain-open")).to_have_count(1)
+                page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-fork")}"] .chain-open').click()
+                expect(page.locator("#msgs")).to_contain_text("Codex fork answer")
+                expect(page.locator("#msgs")).not_to_contain_text("Codex discarded parent tail")
+                page.locator("#a-fork-chain").click()
+                expect(page.locator("#fork-chain-menu .chain-open")).to_have_count(2)
+                page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-parent")}"] .chain-open').click()
+                expect(page.locator("#msgs")).to_contain_text("Codex discarded parent tail")
                 agent("codex-agent", "Synthetic codex-agent answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Codex parent prefix OLD")
                 agent("codex-nested-agent", "Synthetic codex-nested-agent answer")

@@ -32,6 +32,7 @@ struct FakeState {
     keys: Vec<Vec<&'static str>>,
     conflict: Option<IpAddr>,
     paste_fail_once: bool,
+    hide_pasted_composer: bool,
     enter_ambiguous: bool,
     swallow: bool,
     record_path: PathBuf,
@@ -53,6 +54,7 @@ impl FakeDriver {
                 keys: Vec::new(),
                 conflict: None,
                 paste_fail_once: false,
+                hide_pasted_composer: false,
                 enter_ambiguous: false,
                 swallow: false,
                 record_path,
@@ -67,7 +69,7 @@ impl FakeDriver {
         self.state.lock().unwrap()
     }
     fn screen(state: &FakeState) -> ScreenCapture {
-        if state.no_composer {
+        if state.no_composer || (state.hide_pasted_composer && !state.buffer.is_empty()) {
             return ScreenCapture {
                 text: "Choose an option\n❯ 1. yes\n  2. no".into(),
                 cursor: (2, 1),
@@ -742,7 +744,7 @@ async fn unknown_composer_keeps_row_persisted_until_redispatch_succeeds() {
 }
 
 #[tokio::test]
-async fn tracking_window_annotates_once_and_stops_polling() {
+async fn tracking_window_annotates_once_and_still_confirms_late_native_input() {
     let mut limits = limits();
     limits.tracking_window = Duration::ZERO;
     let harness = Harness::with_limits(limits).await;
@@ -760,16 +762,79 @@ async fn tracking_window_annotates_once_and_stops_polling() {
         Some("等待确认超时，只允许限频复核，不能重新注入")
     );
     let revision = receipt.revision;
-    // A record that appears after the window is not observed automatically.
+    harness.exec().tick().await.unwrap();
+    assert_eq!(
+        harness.receipt("request-0011").await.unwrap().revision,
+        revision
+    );
+    // A record after the window still confirms without a second injection.
     {
         let mut state = harness.driver.state();
         FakeDriver::write_record(&mut state, "expired");
     }
     tokio::time::sleep(Duration::from_millis(600)).await;
     harness.exec().tick().await.unwrap();
-    let receipt = harness.receipt("request-0011").await.unwrap();
+    let receipt = harness.settle("request-0011", State::Accepted).await;
+    assert_eq!(receipt.state, State::Accepted);
+    assert!(receipt.issue.is_none());
+    assert_eq!(harness.driver.state().pasted, vec!["expired".to_owned()]);
+}
+
+#[tokio::test]
+async fn manually_submitted_unverified_paste_confirms_after_expired_restart() {
+    let mut harness = Harness::new().await;
+    harness.driver.state().hide_pasted_composer = true;
+    let text = "manual submit\n\nattachment: ./synthetic/file.json";
+    let id = "request-manual-paste";
+    let reply = harness.exec().send(harness.request(id, text, "")).await;
+    assert_eq!(reply.status, 200);
+    let receipt = harness.receipt(id).await.unwrap();
     assert_eq!(receipt.state, State::Uncertain);
-    assert_eq!(receipt.revision, revision);
+    assert!(receipt.attempted && receipt.enter.is_none());
+    assert!(receipt.issue.as_deref().unwrap().contains("未发送 Enter"));
+    assert_eq!(harness.driver.state().pasted, vec![text.to_owned()]);
+    assert!(harness.driver.state().keys.is_empty());
+    assert_eq!(
+        harness
+            .exec()
+            .retry(&harness.uid, id, "", None)
+            .await
+            .status,
+        409
+    );
+
+    // The operator submits the prepared buffer; this is not a managed Enter.
+    {
+        let mut state = harness.driver.state();
+        FakeDriver::write_record(&mut state, text);
+        state.buffer.clear();
+    }
+    let mut expired = limits();
+    expired.tracking_window = Duration::ZERO;
+    harness.restart(expired).await;
+    let receipt = harness.settle(id, State::Accepted).await;
+    assert_eq!(receipt.state, State::Accepted);
+    assert!(receipt.enter.is_none());
+    assert_eq!(
+        receipt.accepted.unwrap().association,
+        claude::Association::PossibleTextMatch
+    );
+    assert!(
+        harness.outbox().await["outbox"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(harness.driver.state().pasted.is_empty());
+    assert!(harness.driver.state().keys.is_empty());
+
+    // The installed ledger must remain valid on another restart, and replay
+    // of the original ID must remain a confirmed lookup.
+    harness.restart(expired).await;
+    assert_eq!(harness.receipt(id).await.unwrap().state, State::Accepted);
+    let reply = harness.exec().send(harness.request(id, text, "")).await;
+    assert_eq!(reply.body["item"]["state"], "confirmed");
+    assert!(harness.driver.state().pasted.is_empty());
 }
 
 #[tokio::test]

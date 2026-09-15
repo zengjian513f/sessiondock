@@ -101,6 +101,22 @@ fn json_body(status: StatusCode, body: Value) -> Response {
 }
 
 pub async fn report(
+    state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    body: Result<Json<Value>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    tokio::spawn(report_inner(state, peer, body))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "bug_report_failed",
+                "报告任务异常退出，输入保留",
+            )
+        })?
+}
+
+async fn report_inner(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     body: Result<Json<Value>, JsonRejection>,
@@ -109,7 +125,7 @@ pub async fn report(
         return Err(terminal_off("终端未启用，无法启动处理会话"));
     }
     let ctx = state.bug_report.clone().ok_or_else(disabled)?;
-    let Json(body) = body.map_err(|error| {
+    let Json(mut body) = body.map_err(|error| {
         if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
             ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -148,6 +164,88 @@ pub async fn report(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({"error": format!("本机找不到 {} 命令", source_name(source)), "code": "bug_report_source_unavailable"}),
         ));
+    }
+    let conversations = state.conversations.clone().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "conversation_disabled",
+            "服务端会话草稿未配置，无法转交报告",
+        )
+    })?;
+    let draft_uid = match body["draft_uid"]
+        .as_str()
+        .filter(|s| s.starts_with("report:") && s.len() > 7)
+    {
+        Some(uid) => uid.to_owned(),
+        None => format!(
+            "report:{}",
+            crate::conversation::random_id().map_err(|e| ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                e.code,
+                e.message
+            ))?
+        ),
+    };
+    let request_id = body["request_id"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| draft_uid.clone());
+    let identity = conversations.identity(&draft_uid).await.map_err(|e| {
+        ApiError::new(
+            StatusCode::from_u16(e.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+            e.code,
+            e.message,
+        )
+    })?;
+    let report_lock = conversations.upload_lock(&identity.key, "report-submission");
+    let _report_guard = report_lock.lock().await;
+    let payload = json!({"description":body["description"],"source":source_text,
+        "attachments":body["attachments"],"origin":body["origin"],"uid":body["uid"]});
+    if let Some(old) = conversations.store.report(&identity.key, &request_id) {
+        if old["payload"] != payload {
+            return Err(invalid("相同报告提交 ID 对应了不同内容"));
+        }
+        if old["result"].is_object() {
+            return Ok(json_body(
+                StatusCode::from_u16(old["status"].as_u64().unwrap_or(202) as u16)
+                    .unwrap_or(StatusCode::ACCEPTED),
+                old["result"].clone(),
+            ));
+        }
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "report_result_unknown",
+            "此报告已开始保存，请核对诊断和处理会话；原输入保留，不会重复创建报告",
+        ));
+    }
+    if body["draft_revision"]
+        .as_u64()
+        .is_some_and(|r| r != conversations.store.draft(&identity.key).revision)
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "draft_revision",
+            "另一页面已更新报告草稿，未发布附件和创建诊断",
+        ));
+    }
+    let private = body["attachments"]
+        .as_array()
+        .is_some_and(|a| a.iter().any(|v| v["upload_id"].is_string()));
+    if private {
+        let mut destination = identity.clone();
+        destination.cwd = ctx.service.repository().into();
+        let published = conversations
+            .publish(&destination, body["attachments"].as_array().unwrap())
+            .await
+            .map_err(|e| {
+                ApiError::new(
+                    StatusCode::from_u16(e.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                    e.code,
+                    e.message,
+                )
+            })?;
+        body["attachments"] = json!(published);
     }
     let cols = dimension(&body["cols"], 120, 40, 300)?;
     let rows = dimension(&body["rows"], 36, 12, 120)?;
@@ -247,6 +345,14 @@ pub async fn report(
         origin,
         remote_events,
     };
+    conversations
+        .store
+        .note_report(
+            &identity.key,
+            &request_id,
+            json!({"payload":payload,"phase":"capturing"}),
+        )
+        .map_err(|e| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, e.code, e.message))?;
     let audit = ctx.audit.clone();
     let service = ctx.service.clone();
     let created = tokio::task::spawn_blocking(move || service.create(&audit, input))
@@ -278,12 +384,23 @@ pub async fn report(
             });
         }
     };
-    match worker::launch(&ctx, &report, source, cols, rows).await {
-        Ok(worker) => Ok(json_body(
+    let response_body = match worker::launch(
+        &ctx,
+        &report,
+        source,
+        cols,
+        rows,
+        conversations.clone(),
+        draft_uid,
+        body["draft_revision"].as_u64(),
+    )
+    .await
+    {
+        Ok(worker) => (
             StatusCode::ACCEPTED,
             json!({"ok": true, "report_id": report.report_id, "path": report.path,
                 "worker": worker}),
-        )),
+        ),
         Err(error) => {
             let message = format!(
                 "诊断已保存，但 {} 会话启动失败：{error}",
@@ -300,13 +417,23 @@ pub async fn report(
                 build: "",
                 data: json!({"report_id": report.report_id, "error": error}),
             });
-            Ok(json_body(
+            (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": message, "code": "bug_report_worker_failed",
                     "report_id": report.report_id, "path": report.path}),
-            ))
+            )
         }
-    }
+    };
+    conversations
+        .store
+        .note_report(
+            &identity.key,
+            &request_id,
+            json!({"payload":payload,
+        "phase":"complete","status":response_body.0.as_u16(),"result":response_body.1}),
+        )
+        .map_err(|e| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, e.code, e.message))?;
+    Ok(json_body(response_body.0, response_body.1))
 }
 
 /// The server-side context of a report: the session's list row, its

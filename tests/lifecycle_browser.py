@@ -118,6 +118,9 @@ def main(bind_native=False, bare_shell=False):
                             page.locator("#a-term").click()
                         else:
                             page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]').click()
+                        if not (bind_native and restarted):
+                            expect(page.locator("#termpane")).to_be_hidden()
+                            page.locator("#a-term").click()
                         expect(page.locator("#termpane")).to_be_visible()
                         if not (bind_native and restarted):
                             expect(page.locator("#composer")).to_be_hidden()
@@ -236,6 +239,8 @@ def main(bind_native=False, bare_shell=False):
                                 assert natural.status == 200 and natural.json()["running"], natural.text()
                                 natural = natural.json()
                                 page.evaluate("info => openPendingSession(info)",natural)
+                                expect(page.locator("#termpane")).to_be_hidden()
+                                page.locator("#a-term").click()
                                 page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")

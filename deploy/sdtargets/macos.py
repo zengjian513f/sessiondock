@@ -114,7 +114,7 @@ class MacOSNode(TargetHandler):
     def test_cmd(self) -> str:
         """Section 2 of docs/deploy-macos.md; the log stays on the node when tests fail."""
         return (f"cd {_q(self.source_dir)} && mkdir -p {TEST_TMPDIR} && TMPDIR={TEST_TMPDIR} {self.cargo} test "
-                f"--workspace --locked >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
+                f"--workspace --locked -- --test-threads=1 >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
                 f"[ $rc -eq 0 ] && rm -f {TEST_LOG}; exit $rc")
 
     # -- remote helpers -----------------------------------------------------------
@@ -184,7 +184,7 @@ class MacOSNode(TargetHandler):
             steps.append(f"rsync {self.a.source_archive} -> {src}/.deploy/source.tar; wipe {src}/* except target/ ; tar -x")
             if self.run_tests:
                 steps.append(f"test ({self.o.test_mode}): cd {src} && TMPDIR={TEST_TMPDIR} {self.cargo} test --workspace "
-                             f"--locked   (timeout {int(TEST_TIMEOUT)}s; failure = FAILED before anything is staged)")
+                             f"--locked -- --test-threads=1   (timeout {int(TEST_TIMEOUT)}s; failure = FAILED before anything is staged)")
             steps += [
                 f"cd {src} && {self.cargo} build --release --locked {pk}   (timeout {int(BUILD_TIMEOUT)}s)",
             ] + [f"cp -f {src}/target/release/{n} {p}/bin/{n}.new && shasum -a 256 (expected hash)"

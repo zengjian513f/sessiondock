@@ -5,6 +5,7 @@
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
 const TERM_CONNECT_TIMEOUT_MS = 15_000;
+const TERM_CLAIM_TIMEOUT_MS = 5_000;
 // DEC 2026 同步帧在页面这层暂存的上限：超过就先交给 xterm（它自己对 2026 还有
 // 1 s 兜底），不让一个没收尾的帧无限占住输出。
 const TERM_SYNC_HOLD_MAX = 256 * 1024;
@@ -269,8 +270,47 @@ function adaptSgrBody(body) {
 }
 
 function stripOscColorSets(s) {
-  // 丢掉 CLI 把默认前景/背景/光标改成黑底的 OSC。查询（11;?）仍交给 xterm。
+  // 丢掉 CLI 把默认前景/背景/光标改成黑底的 OSC。查询（11;?）仍交给 xterm；
+  // 回包在 rewriteOscColorReports 里改写成暗色 palettes，不把亮色页面告诉 CLI。
   return s.replace(/\x1b\](?:10|11|12|104|110|111|112);(?!\?)[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
+}
+
+// OSC 10/11/12/4 查询回包始终用暗色控制台 palettes（与 style.css
+// :root[data-theme="dark"] #xterm 一致）。亮色页面只在浏览器反色，
+// 不让 Codex/Claude/Grok 按 OSC 11 切浅色 TUI。
+const DARK_TERM_REPORT = {
+  10: [0x9d, 0xa5, 0xb0],
+  11: [0x00, 0x00, 0x00],
+  12: [0x6d, 0x95, 0xff],
+  ansi: [
+    [0x48, 0x4f, 0x58], [0xff, 0x7b, 0x72], [0x7e, 0xe7, 0x87], [0xe3, 0xb3, 0x41],
+    [0x79, 0xc0, 0xff], [0xd2, 0xa8, 0xff], [0x56, 0xd4, 0xdd], [0x9d, 0xa5, 0xb0],
+    [0x6e, 0x76, 0x81], [0xff, 0xa1, 0x98], [0xa7, 0xf3, 0xb2], [0xf2, 0xcc, 0x60],
+    [0xa5, 0xd6, 0xff], [0xe2, 0xc5, 0xff], [0x7e, 0xe6, 0xed], [0xb9, 0xc0, 0xca],
+  ],
+};
+
+function oscRgbString(r, g, b) {
+  const hex = n => Number(n).toString(16).padStart(2, '0').repeat(2);
+  return `rgb:${hex(r)}/${hex(g)}/${hex(b)}`;
+}
+
+function oscColorReport(id, rgb, bel) {
+  const body = `\x1b]${id};${oscRgbString(...rgb)}`;
+  return bel ? `${body}\x07` : `${body}\x1b\\`;
+}
+
+function rewriteOscColorReports(s) {
+  if (!s || !s.includes('\x1b]')) return s;
+  s = s.replace(
+    /\x1b\](10|11|12);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g,
+    (full, id) => oscColorReport(id, DARK_TERM_REPORT[id], full.endsWith('\x07')));
+  return s.replace(
+    /\x1b\]4;(\d+);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g,
+    (full, index) => {
+      const rgb = DARK_TERM_REPORT.ansi[+index];
+      return rgb ? oscColorReport(`4;${index}`, rgb, full.endsWith('\x07')) : full;
+    });
 }
 
 function lightTerminalAnsi(s) {
@@ -368,6 +408,8 @@ async function fetchTermList() {
     T.backend = data.backend || '';
     T.backends = data.backends || [];
     T.pending = data.pending || [];
+    if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
+    if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
     if (SessionDockCapabilities.config.backend === 'rust') {
       for (const [uid, ended] of T.ended) {
         const replacement = T.list.find(row => row.uid === uid && row.instance_id !== ended.instanceId);
@@ -544,7 +586,7 @@ function takenOver(uid) {
  *  error. Undeclared capabilities send nothing extra. */
 function termSendLease(name) {
   if (SessionDockCapabilities.config.backend !== 'rust'
-      || !SessionDockCapabilities.allows('outbox')) return {};
+      || (!SessionDockCapabilities.allows('outbox') && SessionDockCapabilities.config.conversation_send!==true)) return {};
   const lease = T.views.get(name)?.inputLease;
   if (!lease?.token || !lease?.instance_id) return {};
   const out = { page: TERM_PAGE_ID, token: lease.token, instance_id: lease.instance_id };
@@ -677,7 +719,7 @@ async function takeover(uid, btn) {
   }
 }
 
-async function post(url, body) {
+async function post(url, body, {timeoutMs = 0} = {}) {
   const traceId = String(body?.request_id || globalThis.crypto?.randomUUID?.()
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   const payload = { ...body, _build: BUILD_ID, _trace_id: traceId,
@@ -686,6 +728,8 @@ async function post(url, body) {
     uid: body?.uid || '', traceId, requestId: body?.request_id || '',
   });
   const started = performance.now();
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
     const r = await fetch(appUrl(url), {
       method: 'POST', headers: {
@@ -693,6 +737,7 @@ async function post(url, body) {
         'X-SessionDock-Page': TERM_PAGE_ID, 'X-SessionDock-Build': BUILD_ID,
       },
       body: JSON.stringify(payload),
+      ...(controller ? {signal: controller.signal} : {}),
     });
     const data = await r.json();
     browserAuditEvent?.('http.response.received', {
@@ -703,12 +748,18 @@ async function post(url, body) {
     if (data?.reload) markStaleBuild(data.build);
     return data;
   } catch (error) {
+    if (controller?.signal.aborted) {
+      error = new Error('请求超时，服务端可能已执行；请重新核对状态。');
+      error.name = 'TimeoutError';
+    }
     browserAuditEvent?.('http.request.failed', {
       url, error: String(error?.stack || error),
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
     }, null, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
       severity: 'error'});
     throw error;
+  } finally {
+    if (timer !== null) clearTimeout(timer);
   }
 }
 
@@ -790,12 +841,18 @@ function showBugReportToast(report, worker) {
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
 // 引用，以及同一个上传接口。处理会话的 cwd 固定为仓库根目录，因此上传
-// 先落到仓库的 sessiondock_attachments/，与在该目录的会话里发送附件完全一致。
-const BUG_REPORT_UPLOAD_UID = 'bug-report';
+// 先流式暂存到服务端私有目录，点击发送后才发布到仓库 sessiondock_attachments/。
 // newComposerDraft 定义在下方的对话输入框段落，只能在运行时按需创建。
-let bugReportDraft = null;
+let BUG_REPORT_DRAFT_UID = '';
+function bindBugReportDraft() {
+  const node=bugReportNode();
+  const key='reportDraftId.' + node;
+  let id=store.get(key,'');
+  if (!id) {id=crypto.randomUUID(); store.set(key,id);}
+  BUG_REPORT_DRAFT_UID='report:' + (HUB_MODE ? node + '~' : '') + id;
+}
 let bugReportSending = false;
-const bugReportDraftObject = () => (bugReportDraft ||= newComposerDraft());
+const bugReportDraftObject = () => composerDraft(BUG_REPORT_DRAFT_UID);
 
 function renderBugReportItems() {
   renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
@@ -804,13 +861,18 @@ function renderBugReportItems() {
     onRemove: id => {
       if (bugReportSending) return;
       removeDraftAttachment(bugReportDraftObject(), id);
+      persistComposerDraft(BUG_REPORT_DRAFT_UID);
       renderBugReportItems();
     },
   });
+  renderSavedComposerInputs($('#bug-report-items'), bugReportDraftObject(), BUG_REPORT_DRAFT_UID);
+  $('#bug-report-description').disabled = bugReportSending || !!bugReportDraftObject().loading;
+  $('#bug-report-add').disabled = bugReportSending || !!bugReportDraftObject().loading;
 }
 
 function addBugReportFiles(files) {
   addDraftFiles(bugReportDraftObject(), files);
+  persistComposerDraft(BUG_REPORT_DRAFT_UID);
   renderBugReportItems();
 }
 
@@ -818,7 +880,10 @@ function clearBugReportDraft() {
   for (const attachment of bugReportDraftObject().attachments) {
     if (attachment.preview) URL.revokeObjectURL(attachment.preview);
   }
-  bugReportDraft = newComposerDraft();
+  const draft=bugReportDraftObject();
+  draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
+  delete draft.requestId;delete draft.requestText;
+  persistComposerDraft(BUG_REPORT_DRAFT_UID);
   renderBugReportItems();
 }
 
@@ -875,6 +940,7 @@ async function captureBugReportContext(originNode, uid, terminalName) {
 
 function closeBugReportAttachMenu() {
   $('#bug-report-attach-menu').classList.add('hidden');
+  $('#bug-report-form .report-composer').style.removeProperty('padding-top');
   $('#bug-report-add').classList.remove('on');
   $('#bug-report-add').setAttribute('aria-expanded', 'false');
 }
@@ -883,11 +949,28 @@ function openBugReportDialog() {
   const dialog = $('#bug-report-dialog');
   $('#bug-report-error').textContent = '';
   $('#bug-report-go').disabled = false;
-  $('#bug-report-go').textContent = '保存并启动处理会话';
-  renderBugReportItems();
+  $('#bug-report-go').textContent = '发送';
   prepareBugReportNode();
+  bindBugReportDraft();
+  renderBugReportItems();
+  $('#bug-report-description').value = bugReportDraftObject().text;
+  hydrateComposerDraft(BUG_REPORT_DRAFT_UID).then(async () => {
+    const handedOff=bugReportDraftObject().handedOffSession;
+    if (handedOff) {
+      showBugReportToast(handedOff.report_id,handedOff);
+      store.set('reportDraftId.'+bugReportNode(),crypto.randomUUID());bindBugReportDraft();
+      await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+    }
+    if (!bugReportSending) {
+      $('#bug-report-description').value = bugReportDraftObject().text;
+      renderBugReportItems();
+      autoGrow($('#bug-report-description'));
+    }
+  });
   syncBugReportSources();
   dialog.showModal();
+  closeBugReportAttachMenu();
+  autoGrow($('#bug-report-description'));
   setTimeout(() => $('#bug-report-description').focus(), 0);
 }
 
@@ -899,11 +982,23 @@ document.addEventListener('click', event => {
 });
 $('#bug-report-node').onchange = () => {
   store.set('bugReportNode', bugReportNode());
+  bindBugReportDraft();
+  $('#bug-report-description').value=bugReportDraftObject().text;
+  renderBugReportItems();
+  hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
   $('#bug-report-error').textContent = '';
 };
+$('#bug-report-source').addEventListener('change', () => store.set('bugReportSource', bugReportSource()));
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
-$('#bug-report-dialog .modal-cancel').onclick = () => $('#bug-report-dialog').close();
+$('#bug-report-description').addEventListener('input', event => {
+  bugReportDraftObject().text = event.target.value;
+  persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  autoGrow(event.target);
+});
+window.addEventListener('resize', () => {
+  if ($('#bug-report-dialog').open) autoGrow($('#bug-report-description'));
+});
 $('#bug-report-dialog').addEventListener('click', event => {
   if (event.target === $('#bug-report-dialog')) $('#bug-report-dialog').close();
 });
@@ -913,6 +1008,12 @@ $('#bug-report-add').onclick = event => {
   const open = menu.classList.toggle('hidden');
   $('#bug-report-add').classList.toggle('on', !open);
   $('#bug-report-add').setAttribute('aria-expanded', String(!open));
+  const row = $('#bug-report-form .report-composer');
+  if (open) row.style.removeProperty('padding-top');
+  else {
+    row.style.paddingTop = `${menu.offsetHeight + 7}px`;
+    $('#bug-report-add').scrollIntoView({block: 'nearest'});
+  }
 };
 $('#bug-report-attach-menu').onclick = event => {
   const button = event.target.closest('button[data-attach]');
@@ -933,10 +1034,24 @@ $('#bug-report-dialog').addEventListener('click', event => {
 $('#bug-report-form').addEventListener('paste', event => pasteAttachmentFiles(event, addBugReportFiles));
 bindFileDrop($('#bug-report-form'), addBugReportFiles);
 
+function completeBugReportSubmission(data,node) {
+  const oldUid=BUG_REPORT_DRAFT_UID,draft=composerDrafts.get(oldUid);
+  if (draft) {
+    for (const item of draft.attachments) if (item.preview) URL.revokeObjectURL(item.preview);
+    composerSaveQueues.delete(draft);composerPendingSaves.delete(draft);composerSaving.delete(draft);
+  }
+  composerDrafts.delete(oldUid);composerHydrations.delete(oldUid);
+  store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
+  $('#bug-report-description').value='';
+  showBugReportToast(data.report_id,data.worker);$('#bug-report-dialog').close();
+  void loadTermList();
+}
+
 $('#bug-report-form').onsubmit = async event => {
   event.preventDefault();
   if (bugReportSending) return;
-  const description = $('#bug-report-description').value.trim();
+  const reportText = $('#bug-report-description').value;
+  const description = reportText.trim();
   const error = $('#bug-report-error');
   if (!description) {
     error.textContent = '请先描述遇到的问题';
@@ -964,34 +1079,46 @@ $('#bug-report-form').onsubmit = async event => {
     worker_node: node, origin_node: origin.node_id || '', remote,
   }, snapshot.content);
   try {
+    bugReportDraftObject().text = reportText;
+    await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
+    const pending=bugReportDraftObject();
+    const priorPayload=JSON.stringify({description,source:bugReportSource(),
+      attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
+    if (pending.requestId && pending.requestText===priorPayload) {
+      const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
+      if (previous?.worker) {completeBugReportSubmission(previous,node);return;}
+    }
+    if (!await persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(bugReportDraftObject().storageError || '报告草稿保存失败');
     // 与对话发送一致：同一批附件共用一个编号目录，失败的附件保留在卡片上重试。
     const uploaded = [];
-    let attachmentId = attachments.find(x => x.uploaded?.uid === BUG_REPORT_UPLOAD_UID)
-      ?.uploaded?.attachment_id || null;
+    let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
       button.textContent = `上传 ${i + 1}/${attachments.length}`;
       const result = await uploadComposerAttachment(
-        attachments[i], BUG_REPORT_UPLOAD_UID, attachmentId, { node, render: renderBugReportItems });
+        attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
-      uploaded.push({
-        number: attachments[i].number, path: result.path, relative_path: result.relative_path,
-        name: result.name, kind: result.kind, mime: result.mime, size: result.size,
-        attachment_id: result.attachment_id,
-      });
+      uploaded.push({upload_id:result.upload_id,number:attachments[i].number});
     }
     const terminalName = takenOver(S.sel) || (T.uid === S.sel ? T.name : '') || '';
     let captured = null;
     if (remote) {
-      button.textContent = `正在从 ${origin.node_name || '问题机器'} 抓取上下文…`;
+      button.textContent = '抓取中…';
       captured = await captureBugReportContext(origin.node_id, S.sel || '', terminalName);
     }
-    button.textContent = '正在提交…';
+    button.textContent = '提交中…';
     const source = bugReportSource();
     store.set('bugReportSource', source);
+    const reportDraft=bugReportDraftObject();
+    const requestText=JSON.stringify({description,source,attachments:uploaded,origin});
+    if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
+      reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
+    }
+    if (!await persistComposerDraft(BUG_REPORT_DRAFT_UID)) throw new Error(reportDraft.storageError || '报告草稿保存失败');
     // 远端抓取时会话与终端引用不再随请求下发：中央站要求 uid 与 _node 指向
     // 同一台机器，问题会话的引用改由 origin.uid 与 captured 携带。
     const d = await post('api/bug-report', {
       ...(HUB_MODE ? {_node: node} : {}),
+      draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
       description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source,
       terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
       origin, ...(captured ? {captured} : {}),
@@ -1001,18 +1128,14 @@ $('#bug-report-form').onsubmit = async event => {
       error.textContent = d.error;
       return;
     }
-    $('#bug-report-dialog').close();
-    $('#bug-report-description').value = '';
-    clearBugReportDraft();
-    await loadTermList();
-    showBugReportToast(d.report_id, d.worker);
+    completeBugReportSubmission(d,node);
   } catch (failure) {
     error.textContent = `提交失败：${failure.message || failure}`;
   } finally {
     bugReportSending = false;
     button.disabled = false;
     $('#bug-report-add').disabled = false;
-    button.textContent = '保存并启动处理会话';
+    button.textContent = '发送';
     renderBugReportItems();
   }
 };
@@ -1349,6 +1472,8 @@ function showNewSessionStage(info) {
   if (added) T.pending.push({ ...info, started: Date.now() / 1000 });
   cancelSearch(true);
   S.sel = pendingUid(info.name);
+  rememberComposerSession(composerDraft(S.sel), info);
+  persistComposerDraft(S.sel);
   S.agent = null;
   store.set('sel', S.sel);
   store.set('agent', null);
@@ -1382,7 +1507,6 @@ function showNewSessionStage(info) {
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
   showMobileDetail();
   T.uid = S.sel;
-  if (!MOBILE.matches) T.mode = 'full';   // 手机本来就是终端覆盖层，不污染桌面保存的高度模式
   renderComposer();
   renderTakeoverBtn();
 }
@@ -1390,8 +1514,8 @@ function showNewSessionStage(info) {
 // Bug-report worker rows (`kind: "bug-report"`) carry the manifest status so
 // an injection failure is visible instead of a silently idle CLI.
 const WORKER_STATUS_TEXT = {
-  starting: '处理会话正在启动', injecting: '正在注入缺陷报告提示词', submitted: '提示词已提交',
-  submitted_unconfirmed: '提示词已粘贴，但未能确认提交', failed: '提示词注入失败',
+  starting: '处理会话正在启动', injecting: '正在注入缺陷报告提示词', submitted: '已发送',
+  submitted_unconfirmed: '提示词已粘贴，但未能确认提交', failed: '未发送，输入已保留',
 };
 function workerStatusMessage(info) {
   if (info?.kind !== 'bug-report' || !info.worker_status) return '';
@@ -1501,7 +1625,10 @@ async function discardPendingSession(info) {
 async function openPendingSession(info) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending);
-  if (SessionDockCapabilities.config.backend !== 'rust' || (pending.running && !pending.stale))
+  // Creating a backend instance does not opt the user into the terminal UI.
+  // Restore a pane only when the user previously opened this same session.
+  if (T.openViews.has(pending.name)
+      && (SessionDockCapabilities.config.backend !== 'rust' || (pending.running && !pending.stale)))
     await openTermPane(pending.name);
   resolveNewSession(pending);
 }
@@ -1521,7 +1648,9 @@ function discardAbandonedNewSession(info) {
     if (attachment.preview) URL.revokeObjectURL(attachment.preview);
   }
   composerDrafts.delete(uid);
+  deleteComposerDraftStorage(uid);
   if (composerUid === uid) composerUid = null;
+  syncComposerUnloadProtection();
 
   if (S.sel === uid) {
     const previousMode = T.pendingModes.get(info.name);
@@ -1611,7 +1740,13 @@ async function resolveNewSession(info) {
       // 另一浏览器可能已经先清理了同一临时记录；gone 与本页观察到
       // exited 的收尾动作完全相同，不能退化成一个关联失败的孤儿页。
       if (d.exited || d.gone) {
-        discardAbandonedNewSession(info);
+        if (conversationSendEnabled()) {composerDraft(pendingId);await hydrateComposerDraft(pendingId);}
+        const draft = composerDrafts.get(pendingId);
+        if (draft && (draft.text || draft.attachments.length || draft.quotes.length)) {
+          const wait = $('.new-session-wait');
+          if (wait && S.sel === pendingId) wait.textContent = 'CLI 已退出，输入已保留';
+          persistComposerDraft(pendingId);
+        } else discardAbandonedNewSession(info);
         return;
       }
       if (d.error) {
@@ -1636,7 +1771,7 @@ async function resolveNewSession(info) {
       }
       await openSession(d.uid);
       if (S.sel !== d.uid || S.agent) return;
-      if (d.running) await openTermPane(d.name);
+      if (d.running && T.openViews.has(d.name)) await openTermPane(d.name);
       else closeTermPane();
       T.pendingModes.delete(info.name);
       paintLive();
@@ -1689,13 +1824,13 @@ async function createNewSession(e) {
     store.set(dirsKey, recent);
     $('#new-session-dialog').close();
     await openPendingSession(d);
-    // create 已确认目标终端；全节点列表刷新不能阻塞新终端的显示与连接。
+    // The backend instance is ready; list refresh must not block the conversation.
     void loadTermList();
   } catch (err) {
     error.textContent = err.message || '创建失败';
   } finally {
     go.disabled = false;
-    go.textContent = '创建并打开';
+    go.textContent = '创建';
   }
 }
 
@@ -2052,6 +2187,7 @@ function ensureTerm(name) {
   term.onData(d => {
     if (T.name !== name) return;
     d = applyTermCtrl(d);
+    d = rewriteOscColorReports(d);
     if (view.ws?.readyState !== 1) return;
     browserAuditEvent('terminal.input', {name, bytes: new TextEncoder().encode(d).length},
       d, {uid: T.uid || '', connectionId: view.auditConnectionId || ''});
@@ -2459,7 +2595,16 @@ function layoutTermPane() {
 // `auto`：由布局恢复（选中会话、刷新、题卡）自动打开的 pty。进入对话页不该被
 // 抢占问题打断：别处持有时静默放弃、留在对话页；只有用户主动打开 pty 才问。
 async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false) {
-  let result = await post('api/term/claim', {name, page: TERM_PAGE_ID, ...binding});
+  const claim = async force => {
+    try {
+      return await post('api/term/claim', {name, page: TERM_PAGE_ID,
+        ...(force ? {force: true} : {}), ...binding}, {timeoutMs: TERM_CLAIM_TIMEOUT_MS});
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      return {timeout: true, error: '控制台控制权请求超时；服务端可能已取得控制权。请重新打开控制台核对状态。'};
+    }
+  };
+  let result = await claim(false);
   if (result.conflict) {
     if (auto) {
       auditTermPane('restore-held', {target: name, by: result.owner?.label || ''});
@@ -2468,12 +2613,12 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false)
     const holder = describeTermTaker(result.owner?.label,
       result.same_address === false ? result.owner?.ip : '');
     if (!confirm(`该终端正由${holder}控制。\n\n是否抢占终端？`)) return null;
-    result = await post('api/term/claim', {name, page: TERM_PAGE_ID, force: true, ...binding});
+    result = await claim(true);
   }
   if (result.error || !result.token) {
     ConsoleUI.errors.set(uid, result.error || '无法取得终端控制权');
     renderTakeoverBtn();
-    alert('打开终端失败：' + (result.error || '无法取得终端控制权'));
+    if (!auto && !result.timeout) alert('打开终端失败：' + (result.error || '无法取得终端控制权'));
     return null;
   }
   return result.token;
@@ -2873,6 +3018,7 @@ const COMPOSER_MAX_FILES = 12;
 const COMPOSER_MAX_FILE_BYTES = 512 * 1024 * 1024;
 const ATTACH_ACCEPT = { image: 'image/*', video: 'video/*', audio: 'audio/*', file: '' };
 const composerDrafts = new Map();
+const composerDraftAliases = new Map();
 const composerInputHistoryCache = new Map();
 const composerHistoryPicker = {
   open: false, uid: null, items: [], index: -1, seq: 0,
@@ -2882,13 +3028,304 @@ let composerDraftSeq = 0;
 let lastMessageSelection = '';
 let lastMessageSelectionUid = null;
 
-const newComposerDraft = () => ({ text: '', attachments: [], quotes: [], nextAttachmentNumber: 1 });
+// Input content is owned by the server. Only unsent File objects live in RAM.
+const conversationSendEnabled = () => SessionDockCapabilities.config.conversation_send === true;
+const newComposerDraft = () => ({text:'', attachments:[], quotes:[], nextAttachmentNumber:1,
+  revision:0, editVersion:0, savedVersion:0});
+const snapshotComposerAttachments = items => items.map(item => ({...item,
+  uploaded:item.uploaded ? {...item.uploaded} : null}));
+const composerDraftFiles = draft => draft.attachments;
+const composerHydrations = new Map();
+let composerDraftWrites = Promise.resolve();
+const composerSaveQueues = new Map();
+function composerDraftOwner(uid) {
+  const seen = new Set();
+  while (composerDraftAliases.has(uid) && !seen.has(uid)) {
+    seen.add(uid); uid = composerDraftAliases.get(uid);
+  }
+  return uid;
+}
+function restoreComposerDraftRecord(record) {
+  const draft = Object.assign(newComposerDraft(), record || {});
+  delete draft.saved;
+  // Optional/nullable fields in old server records must retain editor defaults.
+  draft.text ??= '';
+  draft.attachments ??= [];
+  draft.quotes ??= [];
+  for (const attachment of draft.attachments) {
+    attachment.status = ''; attachment.preview = '';
+  }
+  return ensureComposerAttachmentNumbers(draft);
+}
 function composerDraft(uid = composerUid, create = true) {
+  uid = composerDraftOwner(uid);
   if (!uid) return null;
   if (!composerDrafts.has(uid) && create) composerDrafts.set(uid, newComposerDraft());
-  const draft = composerDrafts.get(uid) || null;
-  if (draft) ensureComposerAttachmentNumbers(draft);
-  return draft;
+  if (create) hydrateComposerDraft(uid);
+  return composerDrafts.get(uid) || null;
+}
+function composerDraftRecord(draft, uid) {
+  return {text:draft.text, quotes:draft.quotes.map(item => ({...item})),
+    attachments:draft.attachments.map(item => ({id:item.id, number:item.number, kind:item.kind,
+      uploaded:item.uploaded, file:{name:item.file.name, size:item.file.size,
+        type:item.file.type, lastModified:item.file.lastModified}})),
+    nextAttachmentNumber:draft.nextAttachmentNumber, requestId:draft.requestId,
+    requestText:draft.requestText, session:{...draft.session, uid},
+    ...(draft.report_prompt ? {report_prompt:draft.report_prompt,report_text:draft.report_text} : {})};
+}
+async function priorComposerSubmission(uid,id,report=false) {
+  const query=new URLSearchParams({uid,[report?'report_request_id':'request_id']:id});
+  const response=await fetch(appUrl('api/session/conversation?'+query),{cache:'no-store'});
+  const data=await response.json();
+  if (response.status===404) return null;
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+function acceptComposerServerRevision(draft,row) {
+  if (!row || row.revision<=draft.revision) return;
+  const value=row.value;
+  const empty=!value?.text && !value?.attachments?.length && !value?.quotes?.length;
+  const same=value?.text===draft.text
+    && JSON.stringify((value?.attachments || []).map(a=>a.id))===JSON.stringify(draft.attachments.map(a=>a.id))
+    && JSON.stringify(value?.quotes || [])===JSON.stringify(draft.quotes);
+  if (empty || same) draft.revision=row.revision;
+}
+async function consumeComposerSubmission(uid,text,attachments,quotes) {
+  const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
+  if (!draft) return;
+  delete draft.requestId;delete draft.requestText;delete draft.report_prompt;delete draft.report_text;
+  if (draft.text===text) draft.text='';
+  const files=new Set(attachments.map(a=>a.id)),quoted=new Map(quotes.map(q=>[q.id,q.text]));
+  for (const item of draft.attachments.filter(a=>files.has(a.id))) {
+    if (item.preview) URL.revokeObjectURL(item.preview);
+  }
+  draft.attachments=draft.attachments.filter(a=>!files.has(a.id));
+  draft.quotes=draft.quotes.filter(q=>quoted.get(q.id)!==q.text);
+  if (!draft.text && !draft.attachments.length && !draft.quotes.length) draft.nextAttachmentNumber=1;
+  await persistComposerDraft(owner);refreshComposerDraft(owner);
+}
+async function readServerComposerDraft(uid) {
+  const response = await fetch(appUrl('api/session/conversation?' + new URLSearchParams({uid})),
+    {cache:'no-store'});
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+  return data.draft;
+}
+// Read old browser copies once; never write new input into browser storage.
+// Migration copies legacy File bytes to the server before removing verified originals.
+let legacyComposerDatabase;
+async function oldComposerDatabase() {
+  if (legacyComposerDatabase !== undefined) return legacyComposerDatabase;
+  legacyComposerDatabase = null;
+  if (!globalThis.indexedDB?.databases) return null;
+  const databases = await indexedDB.databases();
+  if (!databases.some(db => db.name === STORAGE_PREFIX + 'composer-drafts')) return null;
+  legacyComposerDatabase = await new Promise((resolve, reject) => {
+    const request = indexedDB.open(STORAGE_PREFIX + 'composer-drafts');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return legacyComposerDatabase;
+}
+async function importLegacyComposer(uid) {
+  let record = store.get('composerDraft.' + uid, null);
+  const db = await oldComposerDatabase();
+  if (db) {
+    const indexed = await new Promise((resolve, reject) => {
+      const request = db.transaction('drafts').objectStore('drafts').get(uid);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    if (indexed && (!record || (+indexed.revision || 0) > (+record.revision || 0))) record = indexed;
+  }
+  const oldQueue=store.get('queuedMessages',[]).find(([key])=>key===uid)?.[1];
+  if (oldQueue?.length) {
+    const imported=await post('api/session/conversation/import',{uid,value:{legacy_queue:oldQueue}});
+    if (imported.error) throw new Error(imported.error);
+    const remaining=store.get('queuedMessages',[]).filter(([key])=>key!==uid);
+    if (remaining.length) store.set('queuedMessages',remaining);
+    else localStorage.removeItem(STORAGE_PREFIX+'queuedMessages');
+  }
+  if (!record || record.removed) return null;
+  const converted=structuredClone(record);
+  const attachments=[...(converted.attachments || []),
+    ...(converted.saved || []).flatMap(item=>item.attachments || [])];
+  if (db) for (const item of attachments) {
+    if (item.uploaded?.upload_id) continue;
+    const file=await new Promise((resolve,reject) => {
+      const request=db.transaction('files').objectStore('files').get(uid+'\0'+item.id);
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+    });
+    if (!(file instanceof Blob)) continue;
+    const url=new URL(appUrl('api/session/conversation/attachment'));
+    url.searchParams.set('uid',uid);url.searchParams.set('id','legacy-'+item.id);
+    url.searchParams.set('name',item.file.name);
+    const response=await fetch(url,{method:'POST',headers:{'Content-Type':item.file.type || 'application/octet-stream'},body:file});
+    const uploaded=await response.json();
+    if (!response.ok || uploaded.error) throw new Error(uploaded.error || `HTTP ${response.status}`);
+    item.uploaded={...uploaded,uid};
+  }
+  const result=await post('api/session/conversation/import',{uid,value:converted});
+  if (result.error) throw new Error(result.error);
+  // Delete browser originals only after every existing File has a durable
+  // server reference. Unknown/missing bytes keep their original recovery store.
+  if (attachments.every(item=>item.uploaded?.upload_id)) {
+    if (db) await new Promise((resolve,reject) => {
+      const transaction=db.transaction(['drafts','files'],'readwrite');
+      transaction.objectStore('drafts').delete(uid);
+      const prefix=uid+'\0';
+      const request=transaction.objectStore('files').openKeyCursor(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+      request.onsuccess=()=>{const cursor=request.result;if (cursor){transaction.objectStore('files').delete(cursor.key);cursor.continue();}};
+      transaction.oncomplete=resolve;transaction.onabort=transaction.onerror=()=>reject(transaction.error);
+    });
+    localStorage.removeItem(STORAGE_PREFIX+'composerDraft.'+uid);
+    const remaining=store.get('composerDraftUids',[]).filter(key=>key!==uid);
+    if (remaining.length) store.set('composerDraftUids',remaining);
+    else localStorage.removeItem(STORAGE_PREFIX+'composerDraftUids');
+  }
+  return {record:converted,db};
+}
+function hydrateComposerDraft(uid) {
+  uid = composerDraftOwner(uid);
+  if (composerHydrations.has(uid)) return composerHydrations.get(uid);
+  if (!conversationSendEnabled()) return Promise.resolve();
+  const task = (async () => {
+    const draft = composerDrafts.get(uid);
+    if (!draft) return;
+    draft.loading = true;
+    try {
+      const legacy = await importLegacyComposer(uid);
+      const row = await readServerComposerDraft(uid);
+      draft.revision = row.revision;
+      if (uid.startsWith('report:') && row.value?.session?.kind==='bug-report'
+          && row.value.session.uid && !row.value.session.uid.startsWith('report:')) {
+        draft.handedOffSession=row.value.session;return;
+      }
+      if (!draft.editVersion && row.value && !row.value.removed) {
+        Object.assign(draft, restoreComposerDraftRecord(row.value), {revision:row.revision});
+        if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
+          if (item.uploaded?.upload_id) return;
+          const file = await new Promise((resolve, reject) => {
+            const request = legacy.db.transaction('files').objectStore('files').get(uid + '\0' + item.id);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+          if (file) {
+            item.file = new File([file], item.file.name, {type:item.file.type,
+              lastModified:item.file.lastModified});
+            if (item.kind === 'image') item.preview = URL.createObjectURL(item.file);
+          }
+        }));
+      }
+      draft.storageError = '';
+    } catch (error) {
+      draft.storageError = '服务端草稿读取失败，当前输入保留：' + (error.message || error);
+      draft.loadFailed = true;
+    } finally {
+      draft.loading = false;
+      refreshComposerDraft(composerDraftOwner(uid)); syncComposerUnloadProtection();
+    }
+  })();
+  composerHydrations.set(uid, task);
+  return task;
+}
+function refreshComposerDraft(uid) {
+  if (composerUid === uid) {
+    const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
+    renderComposerItems(); autoGrow(ta);
+  }
+  if (uid === BUG_REPORT_DRAFT_UID) {
+    const ta = $('#bug-report-description'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
+    renderBugReportItems(); autoGrow(ta);
+  }
+}
+const composerPendingSaves=new Map();
+const composerSaving=new Set();
+function persistComposerDraft(uid = composerUid) {
+  uid = composerDraftOwner(uid);
+  const draft = composerDrafts.get(uid);
+  if (!draft) return Promise.resolve(false);
+  composerPendingSaves.set(draft,{uid,version:++draft.editVersion,value:composerDraftRecord(draft,uid)});
+  syncComposerUnloadProtection();
+  if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
+  composerSaving.add(draft);
+  const task=(async () => {
+    await new Promise(resolve=>setTimeout(resolve,150));
+    try {
+      await hydrateComposerDraft(uid);
+      if (!conversationSendEnabled() || draft.loadFailed) throw new Error(draft.storageError || '草稿保存未启用');
+      while (composerPendingSaves.has(draft)) {
+        const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
+        const data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        if (data.error) throw new Error(data.error);
+        draft.revision=data.draft.revision;draft.savedVersion=pending.version;draft.storageError='';
+      }
+      return true;
+    } catch (error) {
+      draft.storageError='服务端草稿保存失败，当前输入保留：'+(error.message || error);
+      return false;
+    } finally {
+      composerSaving.delete(draft);syncComposerUnloadProtection();refreshComposerDraft(composerDraftOwner(uid));
+    }
+  })();
+  composerSaveQueues.set(draft,task);
+  composerDraftWrites=Promise.all([...composerSaveQueues.values()]);
+  return task;
+}
+const composerUnloadWarning = event => {event.preventDefault(); event.returnValue = '';};
+let composerUnloadProtected = false;
+function syncComposerUnloadProtection() {
+  const pending = [...composerDrafts.values()].some(draft => draft.storageError
+    || draft.editVersion > draft.savedVersion
+    || draft.attachments.some(item => !item.uploaded?.upload_id));
+  if (pending === composerUnloadProtected) return;
+  composerUnloadProtected = pending;
+  if (pending) window.addEventListener('beforeunload', composerUnloadWarning);
+  else window.removeEventListener('beforeunload', composerUnloadWarning);
+}
+function renderSavedComposerInputs(box, draft) {
+  if (draft.storageError) {
+    const error = el('div', 'draft-save-error', draft.storageError);
+    error.setAttribute('role','alert'); box.append(error);
+  }
+}
+const composerDraftRecoveryReady = Promise.resolve();
+
+let composerServerRecovery;
+function recoverServerComposerDrafts() {
+  if (!conversationSendEnabled()) return Promise.resolve();
+  if (composerServerRecovery) return composerServerRecovery;
+  const task=(async () => {
+    const nodes=HUB_MODE ? Nodes.list.map(n=>n.id) : [''];
+    const results=await Promise.allSettled(nodes.map(async node=> {
+      const url=appUrl('api/session/conversation/drafts' + (node?'?node='+node:''));
+      const response=await fetch(url,{cache:'no-store'}),data=await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      for (const row of data.drafts || []) {
+        if (!row.uid || row.uid.startsWith('report:') || composerDrafts.has(row.uid)) continue;
+        const draft=restoreComposerDraftRecord(row.draft.value);draft.revision=row.draft.revision;
+        composerDrafts.set(row.uid,draft);
+      }
+    }));
+    if (results.some(result=>result.status==='rejected')) composerServerRecovery=null;
+    if (S.sig && typeof renderSide==='function') renderSide();
+  })();
+  composerServerRecovery=task;return task;
+}
+
+function rememberComposerSession(draft, info) {
+  draft.session = Object.fromEntries(['uid', 'name', 'source', 'cwd', 'node_id', 'node_name',
+    'record_id', 'launch_id', 'instance_id', 'title', 'kind', 'report_id']
+    .filter(key => info[key] != null).map(key => [key, info[key]]));
+}
+
+function syncComposerDraftBindings() {
+  for (const [uid, draft] of [...composerDrafts]) {
+    if (!uid.startsWith('tmux:') || !draft.session?.instance_id) continue;
+    const row = (T.list || []).find(row => row.name === draft.session.name
+      && row.instance_id === draft.session.instance_id && row.uid);
+    if (row) migrateComposerDraft(uid, row.uid);
+  }
 }
 
 function composerHistoryStamp(entry) {
@@ -3094,45 +3531,24 @@ function remapAttachmentReferences(text, remap) {
 
 function migrateComposerDraft(fromUid, toUid) {
   if (!fromUid || !toUid || fromUid === toUid) return;
-  if (typeof migrateQueuedMessages === 'function') migrateQueuedMessages(fromUid, toUid);
   const draft = composerDrafts.get(fromUid);
   if (!draft) return;
+  // This is only called after the terminal instance is explicitly bound.
+  // Never concatenate an already edited destination with another draft.
   const target = composerDrafts.get(toUid);
-  if (target) {
-    ensureComposerAttachmentNumbers(target);
-    ensureComposerAttachmentNumbers(draft);
-    const used = new Set(target.attachments.map(x => x.number));
-    const remap = new Map();
-    for (const attachment of draft.attachments) {
-      if (used.has(attachment.number)) {
-        let number = target.nextAttachmentNumber;
-        while (used.has(number)) number++;
-        remap.set(attachment.number, number);
-        attachment.number = number;
-        target.nextAttachmentNumber = number + 1;
-      }
-      used.add(attachment.number);
-    }
-    draft.text = remapAttachmentReferences(draft.text, remap);
-    if (draft.text) target.text = target.text ? `${target.text}\n${draft.text}` : draft.text;
-    target.attachments.push(...draft.attachments);
-    target.quotes.push(...draft.quotes);
-    ensureComposerAttachmentNumbers(target);
-  } else {
-    ensureComposerAttachmentNumbers(draft);
-    composerDrafts.set(toUid, draft);
-  }
+  if (target?.editVersion && (target.text || target.attachments.length || target.quotes.length)) return;
+  composerDrafts.set(toUid, draft);
+  composerDraftAliases.set(fromUid, toUid);
+  composerDrafts.delete(fromUid);
+  if (composerHydrations.has(fromUid)) composerHydrations.set(toUid, composerHydrations.get(fromUid));
   for (const attachment of draft.attachments) {
-    // pending 与正式会话只有 cwd 一致时才会关联，已经落盘的路径仍然有效。
     if (attachment.uploaded?.uid === fromUid) attachment.uploaded.uid = toUid;
   }
-  composerDrafts.delete(fromUid);
   if (composerUid === fromUid) composerUid = toUid;
 }
 
 function switchComposerDraft(uid) {
   const ta = $('#cinput');
-  if (composerUid && ta) composerDraft(composerUid).text = ta.value;
   if (composerUid === uid) return;
   closeComposerHistory();
   composerUid = uid;
@@ -3143,11 +3559,13 @@ function switchComposerDraft(uid) {
 }
 
 function renderComposer() {
-  const name = SessionDockCapabilities.allows('outbox') && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
+  const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox');
+  const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
+  const pending = enabled && String(S.sel || '').startsWith('tmux:');
   const box = $('#composer');
-  box.classList.toggle('hidden', !name);
-  switchComposerDraft(name ? S.sel : null);
-  if (name) syncComposerMode();
+  box.classList.toggle('hidden', !name && !pending);
+  switchComposerDraft(name || pending ? S.sel : null);
+  if (name || pending) syncComposerMode();
 }
 
 function autoGrow(ta) {
@@ -3192,6 +3610,24 @@ async function prepareTerminalDraft(uid) {
 async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) {
   const name = takenOver(uid);
   if (!name) return false;
+  if ((text || options.requestId) && !keys && conversationSendEnabled()) {
+    try {
+      const draft = composerDraft(uid);
+      const data = await post('api/session/conversation/send', {
+        uid, name, text, request_id:options.requestId || crypto.randomUUID(),
+        draft_revision:options.draftRevision, attachments:options.attachments || [],
+        quotes:options.quotes || [], lease:termSendLease(name).lease || null,
+      });
+      if (data.error) throw new Error(data.error);
+      acceptComposerServerRevision(draft,data.draft);
+      S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
+      paintLive();
+      return true;
+    } catch (error) {
+      alert('发送失败，输入保留：' + (error.message || error));
+      return false;
+    }
+  }
   const cli = sessiondockCli(uid);
   const serverQueued = !!text && ['claude', 'codex'].includes(cli?.source)
     && !uid.startsWith('tmux:');
@@ -3317,22 +3753,46 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, disabled 
     const kindName = attachment.kind === 'file' ? '文件'
       : ({ image: '图片', video: '视频', audio: '音频' }[attachment.kind]);
     const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file.size)}`;
-    meta.textContent = attachment.status === 'uploading' ? `${summary} · 正在上传…`
+    meta.textContent = attachment.status === 'uploading' ? `${summary} · ${attachment.progress || 0}%`
       : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
         : summary;
     info.append(name, meta);
     const remove = el('button', 'draft-remove', '×');
     remove.type = 'button';
-    remove.title = remove.ariaLabel = '移除附件';
-    remove.disabled = disabled;
+    remove.title = remove.ariaLabel = attachment.cancelUpload ? '取消上传' : '移除附件';
+    remove.disabled = disabled && !attachment.cancelUpload;
     remove.onclick = e => {
       e.stopPropagation();
-      onRemove(attachment.id);
+      if (attachment.cancelUpload) attachment.cancelUpload();
+      else onRemove(attachment.id);
     };
     card.append(thumb, info, remove);
     box.appendChild(card);
   }
 }
+
+function syncComposerSendState() {
+  const draft=composerDrafts.get(composerUid);
+  $('#csend').disabled=composerSending || !!draft?.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
+}
+
+let composerQuestionProbeBusy=false;
+setInterval(async () => {
+  const uid=composerUid;
+  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerQuestionProbeBusy
+      || $('#composer').classList.contains('hidden') || !takenOver(uid)) return;
+  composerQuestionProbeBusy=true;
+  try {
+    const data=await post('api/session/conversation/check',{uid,name:takenOver(uid),
+      lease:termSendLease(takenOver(uid)).lease || null});
+    const draft=composerDrafts.get(composerDraftOwner(uid));
+    if (draft) {
+      const question=data.code==='cli_question';
+      if (draft.cliQuestion!==question) {draft.cliQuestion=question;if (composerUid===uid) renderComposerItems();}
+    }
+  } catch { /* The SEND endpoint independently checks the current question. */ }
+  finally {composerQuestionProbeBusy=false;}
+},1500);
 
 function renderComposerItems() {
   const box = $('#compose-items');
@@ -3355,7 +3815,7 @@ function renderComposerItems() {
     text.maxLength = 16000;
     text.placeholder = '粘贴或输入要引用的文字';
     text.setAttribute('aria-label', '引用文字');
-    text.oninput = () => { quote.text = text.value; };
+    text.oninput = () => { quote.text = text.value; persistComposerDraft(); };
     const remove = el('button', 'draft-remove', '×');
     remove.type = 'button';
     remove.title = remove.ariaLabel = '移除引用';
@@ -3364,12 +3824,37 @@ function renderComposerItems() {
     card.append(mark, text, remove);
     box.appendChild(card);
   }
+  if (composerUid?.startsWith('tmux:') && !takenOver(composerUid)
+      && ['exited','failed'].includes((T.pending || []).find(r=>pendingUid(r.name)===composerUid)?.state)
+      && (draft.text || draft.attachments.length || draft.quotes.length)) {
+    const restart=el('button','btn','重新启动');restart.type='button';
+    restart.onclick=async () => {
+      restart.disabled=true;
+      try {
+        draft.restartId ||= crypto.randomUUID();
+        const uid=composerUid;
+        const data=await post('api/session/conversation/restart',{uid,request_id:draft.restartId});
+        if (data.error) throw new Error(data.error);
+        const next=pendingUid(data.name);
+        // The server has already bound both instances to the same logical draft.
+        migrateComposerDraft(uid,next);composerHydrations.delete(next);
+        await loadTermList();await openPendingSession(data);
+      } catch (error){draft.storageError=error.message || String(error);renderComposerItems();}
+    };
+    box.append(restart);
+  }
+  renderSavedComposerInputs(box, draft, composerUid);
+  if (draft.cliQuestion) box.append(el('div','draft-save-error','CLI 等待选择，请切换终端回答'));
+  $('#cinput').disabled = !!draft.loading;
+  $('#cadd').disabled = composerSending || !!draft.loading;
+  $('#csend').disabled = composerSending || !!draft.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
 }
 
 function addComposerFiles(files) {
   const draft = composerDraft();
   if (!draft) return;
   addDraftFiles(draft, files);
+  persistComposerDraft();
   renderComposerItems();
 }
 
@@ -3385,7 +3870,7 @@ function addDraftFiles(draft, files) {
     }
     const kind = composerFileKind(file);
     draft.attachments.push({
-      id: `attachment-${++composerDraftSeq}`, number: draft.nextAttachmentNumber++, file, kind,
+      id: `attachment-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, number: draft.nextAttachmentNumber++, file, kind,
       preview: kind === 'image' ? URL.createObjectURL(file) : '',
       status: '', uploaded: null, error: '',
     });
@@ -3476,6 +3961,7 @@ function removeDraftAttachment(draft, id) {
 function removeComposerAttachment(id, draft = composerDraft()) {
   if (!draft || composerSending) return;
   removeDraftAttachment(draft, id);
+  persistComposerDraft();
   renderComposerItems();
 }
 
@@ -3483,7 +3969,8 @@ function addComposerQuote(text = '') {
   const draft = composerDraft();
   if (!draft) return;
   if (draft.quotes.length >= 4) return alert('一次最多添加 4 段引用');
-  draft.quotes.push({ id: `quote-${++composerDraftSeq}`, text: String(text).trim().slice(0, 16000) });
+  draft.quotes.push({ id: `quote-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, text: String(text).trim().slice(0, 16000) });
+  persistComposerDraft();
   renderComposerItems();
   boxFocusLastQuote();
 }
@@ -3499,6 +3986,7 @@ function removeComposerQuote(id, draft = composerDraft()) {
   if (!draft || composerSending) return;
   const at = draft.quotes.findIndex(x => x.id === id);
   if (at >= 0) draft.quotes.splice(at, 1);
+  persistComposerDraft();
   renderComposerItems();
 }
 
@@ -3533,35 +4021,43 @@ function buildComposerPrompt(text, attachments = [], quotes = []) {
 }
 
 async function uploadComposerAttachment(attachment, uid, attachmentId = null,
-  { node = '', render = renderComposerItems } = {}) {
-  if (attachment.uploaded?.uid === uid) return attachment.uploaded;
-  attachment.status = 'uploading';
-  attachment.error = '';
-  render();
-  const url = new URL(appUrl('api/session/attachment'));
-  for (const [key, value] of Object.entries(composerAttachmentIdentity(uid))) {
-    if (value) url.searchParams.set(key, value);
-  }
+  {node = '', render = renderComposerItems} = {}) {
+  if (attachment.uploaded?.upload_id && composerDraftOwner(attachment.uploaded.uid) === composerDraftOwner(uid)
+      && (!node || attachment.uploaded.node === node || nodeOf(attachment.uploaded.uid) === node)) return attachment.uploaded;
+  if (!(attachment.file instanceof Blob)) throw new Error('请重新选择未上传的附件：' + attachment.file.name);
+  if (attachment.file.size > COMPOSER_MAX_FILE_BYTES) throw new Error('单个附件不能超过 512 MiB');
+  attachment.status = 'uploading'; attachment.error = ''; attachment.progress = 0; render();
+  const url = new URL(appUrl('api/session/conversation/attachment'));
+  url.searchParams.set('uid', uid); url.searchParams.set('id', attachment.id);
   url.searchParams.set('name', attachment.file.name || 'attachment');
-  if (attachmentId) url.searchParams.set('id', attachmentId);
   if (node) url.searchParams.set('node', node);
   try {
-    const response = await fetch(url, {
-      method: 'POST', headers: { 'Content-Type': attachment.file.type || 'application/octet-stream' },
-      body: attachment.file,
+    const data = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      attachment.cancelUpload = () => xhr.abort();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Content-Type', attachment.file.type || 'application/octet-stream');
+      xhr.upload.onprogress = event => {
+        if (event.lengthComputable) attachment.progress = Math.floor(event.loaded / event.total * 100);
+        render();
+      };
+      xhr.onload = () => {
+        let data;
+        try {data = JSON.parse(xhr.responseText);} catch {return reject(new Error(`HTTP ${xhr.status}`));}
+        if (xhr.status < 200 || xhr.status >= 300 || data.error) reject(new Error(data.error || `HTTP ${xhr.status}`));
+        else resolve(data);
+      };
+      xhr.onerror = () => reject(new Error('上传连接中断'));
+      xhr.onabort = () => reject(new Error('上传已取消'));
+      xhr.send(attachment.file);
     });
-    const data = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
-    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-    attachment.uploaded = { ...data, uid };
-    attachment.status = 'ready';
-    render();
+    attachment.uploaded = {...data, uid, node}; attachment.status = 'ready'; render();
+    // Uploaded references become durable before any publication or SEND.
+    if (!await persistComposerDraft(uid)) throw new Error('附件已上传，草稿引用保存失败');
     return attachment.uploaded;
   } catch (error) {
-    attachment.status = 'failed';
-    attachment.error = error.message || String(error);
-    render();
-    throw error;
-  }
+    attachment.status = 'failed'; attachment.error = error.message || String(error); render(); throw error;
+  } finally {delete attachment.cancelUpload;}
 }
 
 function composerAttachmentIdentity(uid) {
@@ -3579,83 +4075,65 @@ function composerAttachmentIdentity(uid) {
 
 let composerSending = false;
 async function submitComposer() {
-  if (!SessionDockCapabilities.allows('outbox')) {
-    alert('可靠发送尚未启用；可在已验证的控制台内手动输入。');
-    return;
+  if (!conversationSendEnabled()) {
+    alert('此服务尚未启用会话发送，请更新服务后重试'); return;
   }
-  const ta = $('#cinput');
-  const button = $('#csend');
-  const add = $('#cadd');
+  const ta = $('#cinput'), button = $('#csend'), add = $('#cadd');
   const uid = composerUid;
-  const draft = composerDraft(uid);
-  const text = ta.value;
-  const attachments = [...(draft?.attachments || [])];
-  const quotes = (draft?.quotes || []).map(x => ({ id: x.id, text: x.text })).filter(x => x.text.trim());
+  let draft = composerDraft(uid);
+  if (!draft || !takenOver(uid)) {
+    alert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
+  }
+  const text = ta.value, attachments = [...draft.attachments];
+  const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
   if (composerSending || (!text.trim() && !attachments.length && !quotes.length)) return;
-  closeComposerHistory();
-  composerSending = true;
-  button.disabled = true;
-  add.disabled = true;
-  renderComposerItems();
+  if (activeCliQuestion(uid)) {
+    alert('CLI 正在等待选择题回答，请先回答；输入已保留'); return;
+  }
+  closeComposerHistory(); composerSending = true;
+  button.disabled = true; add.disabled = true; renderComposerItems();
   try {
-    const draftPolicy = await prepareTerminalDraft(uid);
-    if (!draftPolicy.proceed) return;
+    draft.text = text;
+    const priorPayload=JSON.stringify({text,attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),quotes});
+    if (draft.requestId && (draft.requestText===priorPayload || (draft.report_prompt && draft.report_text===text))) {
+      const previous=await priorComposerSubmission(uid,draft.requestId);
+      if (previous?.state==='sent') {
+        acceptComposerServerRevision(draft,previous.draft);
+        await consumeComposerSubmission(uid,text,attachments,quotes);return;
+      }
+    }
+    if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
+    const name = takenOver(uid);
+    const check = await post('api/session/conversation/check', {uid, name,
+      lease:termSendLease(name).lease || null});
+    if (check.error) throw new Error(check.error);
     const uploaded = [];
-    let attachmentId = attachments.find(x => x.uploaded?.uid === uid)?.uploaded?.attachment_id || null;
     for (let i = 0; i < attachments.length; i++) {
       button.textContent = `上传 ${i + 1}/${attachments.length}`;
-      const result = await uploadComposerAttachment(attachments[i], uid, attachmentId);
-      attachmentId ||= result.attachment_id;
-      uploaded.push({ ...result, number: attachments[i].number });
+      uploaded.push({...await uploadComposerAttachment(attachments[i], uid), number:attachments[i].number});
     }
+    const requestText = JSON.stringify({text, attachments:uploaded.map(a => ({upload_id:a.upload_id,number:a.number})), quotes});
+    if (!(draft.report_prompt && draft.report_text===text && draft.requestId)
+        && (draft.requestText !== requestText || !draft.requestId)) {
+      draft.requestText = requestText; draft.requestId = crypto.randomUUID();
+    }
+    if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
+    const submittedRevision = draft.revision;
     button.textContent = '发送中…';
-    const prompt = buildComposerPrompt(text, uploaded, quotes);
-    const sentMedia = uploaded.flatMap(a => a.media ? [{ ...a.media, gallery: true }] : []);
-    // Keep one idempotency key while retrying the exact same draft after a lost
-    // HTTP response.  Editing the prompt intentionally starts a new submission.
-    if (draft.requestText !== prompt || !draft.requestId) {
-      draft.requestText = prompt;
-      draft.requestId = globalThis.crypto?.randomUUID?.()
-        || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    }
-    const sent = await sendToSession(
-      prompt, null, uid, sentMedia,
-      { overwriteDraft: draftPolicy.overwriteDraft, requestId: draft.requestId });
-    // 请求失败时保留草稿；等待响应期间若用户继续编辑，也不能抹掉新内容。
-    if (sent) {
-      delete draft.requestId;
-      delete draft.requestText;
-      if (draft.text === text || (composerUid === uid && ta.value === text)) draft.text = '';
-      const sentFiles = new Set(attachments.map(x => x.id));
-      const sentQuotes = new Map(quotes.map(x => [x.id, x.text]));
-      for (const attachment of draft.attachments.filter(x => sentFiles.has(x.id))) {
-        if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-      }
-      draft.attachments = draft.attachments.filter(x => !sentFiles.has(x.id));
-      draft.quotes = draft.quotes.filter(x => sentQuotes.get(x.id) !== x.text);
-      if (!draft.text && !draft.attachments.length && !draft.quotes.length) {
-        draft.nextAttachmentNumber = 1;
-      }
-      if (composerUid === uid) {
-        ta.value = draft.text;
-        renderComposerItems();
-      }
-    }
+    const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
+      draftRevision:submittedRevision, attachments:uploaded, quotes});
+    if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);
   } catch (error) {
-    alert('附件上传失败: ' + (error.message || error));
+    alert('发送失败，输入保留：' + (error.message || error));
   } finally {
-    composerSending = false;
-    button.disabled = false;
-    add.disabled = false;
-    button.textContent = '发送';
-    renderComposerItems();
-    autoGrow(ta);
+    composerSending = false; button.textContent = '发送'; add.disabled = false;
+    renderComposerItems(); autoGrow(ta);
   }
 }
 
 $('#cinput').addEventListener('input', e => {
   const draft = composerDraft();
-  if (draft) draft.text = e.target.value;
+  if (draft) { draft.text = e.target.value; persistComposerDraft(); }
   if (composerHistoryPicker.open && e.target.value !== '') closeComposerHistory();
   autoGrow(e.target);
 });

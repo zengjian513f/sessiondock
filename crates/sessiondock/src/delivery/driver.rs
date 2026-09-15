@@ -657,6 +657,60 @@ impl HostTerminalDriver {
         Self { terminal }
     }
 
+    /// The same lease registry and launch guard, before a native history exists.
+    pub async fn acquire_launch(
+        &self,
+        target: Arc<ptyhost_client::LaunchTarget>,
+        page: Option<&PageLease>,
+    ) -> Result<LeaseHandle, DriverError> {
+        if let Some(page) = page.filter(|p| {
+            p.instance_id == target.instance_id()
+                && p.launch_id.as_deref() == Some(target.launch_id())
+        }) {
+            let handle = LeaseHandle {
+                name: target.name().into(),
+                uid: format!("tmux:{}", target.name()),
+                instance_id: target.instance_id().into(),
+                launch_id: Some(target.launch_id().into()),
+                page: page.page.clone(),
+                token: page.token.clone(),
+                owned: false,
+            };
+            match self
+                .terminal
+                .capture_screen(&handle.name, &handle.page, &handle.token, handle.expected())
+                .await
+            {
+                Ok(_) => return Ok(handle),
+                Err(error) if error.code == "terminal_ownership" => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let name = target.name().to_owned();
+        let instance = target.instance_id().to_owned();
+        let launch = target.launch_id().to_owned();
+        let response = self
+            .terminal
+            .claim_launch(target, SERVER_PAGE, IpAddr::V4(Ipv4Addr::LOCALHOST), false)
+            .await?;
+        let token = response.into_server_token().map_err(|_| DriverError {
+            status: 409,
+            code: "terminal_ownership",
+            message: "终端控制权由其他页面持有".into(),
+            ambiguous: false,
+            owner_ip: None,
+        })?;
+        Ok(LeaseHandle {
+            uid: format!("tmux:{name}"),
+            name,
+            instance_id: instance,
+            launch_id: Some(launch),
+            page: SERVER_PAGE.into(),
+            token,
+            owned: true,
+        })
+    }
+
     async fn claim_server_lease(
         &self,
         target: &DeliveryTarget,

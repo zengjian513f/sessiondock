@@ -49,6 +49,18 @@ def main():
                     expect(first.locator("#msgs")).to_contain_text("Codex nested fork answer")
                     parent = f'#side .item[data-uid="{corpus.uid("codex-parent")}"]'
                     expect(first.locator(parent)).to_have_count(0)
+                    # Opening the hidden parent from the chain leaves it out of the
+                    # sidebar; its own menu is the way back to the branch.
+                    first.locator("#a-fork-chain").click()
+                    first.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-parent")}"] .chain-open').click()
+                    expect(first.locator("#msgs")).to_contain_text("Codex discarded parent tail")
+                    expect(first.locator(parent)).to_have_count(0)
+                    expect(first.locator("#a-fork-chain")).to_have_attribute("title", "子会话")
+                    first.locator("#a-fork-chain").click()
+                    first.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-fork")}"] .chain-open').click()
+                    expect(first.locator("#msgs")).to_contain_text("Codex fork answer")
+                    first.locator(f'#side .item[data-uid="{corpus.uid("codex-grandchild")}"]').click()
+                    expect(first.locator("#msgs")).to_contain_text("Codex nested fork answer")
                     first.locator("#a-fork-chain").click()
                     toggle = first.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("codex-parent")}"] .chain-toggle')
                     toggle.click()

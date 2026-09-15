@@ -587,6 +587,55 @@ fn hook_ids_and_nonmatching_text_are_rejected() {
 }
 
 #[test]
+fn manual_submission_after_failed_prepare_is_accepted_and_restorable() {
+    let mut m = machine();
+    let operation = begin_prepare(&mut m, "manual-request");
+    commit(
+        &mut m,
+        Command::InjectionFailed {
+            operation,
+            reason: "prepared screen was clipped; no managed Enter".into(),
+        },
+    );
+    let proof = UserEvidence {
+        context: context("manual-user", 100),
+        text: request("manual-request").payload.text,
+        attachments: vec![],
+        turn: Turn {
+            user_uuid: "manual-user".into(),
+            parent_turn_uuid: None,
+        },
+        real_human_input: true,
+        association: Association::PossibleTextMatch,
+    };
+    let mut unproven = proof.clone();
+    unproven.association = Association::NativeRequestId("manual-request".into());
+    assert_eq!(
+        m.apply(Command::ObserveUser {
+            id: "manual-request".into(),
+            evidence: unproven,
+        })
+        .unwrap_err(),
+        Error::Unproven
+    );
+    commit(
+        &mut m,
+        Command::ObserveUser {
+            id: "manual-request".into(),
+            evidence: proof,
+        },
+    );
+    let row = &m.snapshot().receipts["manual-request"];
+    assert_eq!(row.state, State::Accepted);
+    assert!(row.enter.is_none());
+    let (restored, _) = Machine::restore(m.snapshot().clone(), "restarted".into()).unwrap();
+    assert_eq!(
+        restored.snapshot().receipts["manual-request"].state,
+        State::Accepted
+    );
+}
+
+#[test]
 fn a_late_ack_for_another_request_cannot_consume_this_identical_prompt() {
     let mut machine = machine();
     submitted(&mut machine, "request-one");

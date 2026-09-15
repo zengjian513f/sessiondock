@@ -45,9 +45,16 @@ pub const ATTACHMENT_MAX_BYTES: u64 = 512 * 1024 * 1024;
 /// its machine with `?node=` instead of a scoped uid.
 pub const BUG_REPORT_UPLOAD_UID: &str = "bug-report";
 /// Raw-body uploads the hub streams instead of parsing as JSON.
-pub const ATTACHMENT_PATHS: [&str; 2] = ["/api/session/attachment", "/api/session/files/upload"];
+pub const ATTACHMENT_PATHS: [&str; 3] = [
+    "/api/session/attachment",
+    "/api/session/files/upload",
+    "/api/session/conversation/attachment",
+];
 /// Writes that must carry the page's build (`_build`) or answer 409.
-pub const BUILD_CHECKED_PATHS: [&str; 4] = [
+pub const BUILD_CHECKED_PATHS: [&str; 7] = [
+    "/api/session/conversation/send",
+    "/api/session/conversation/check",
+    "/api/session/conversation/restart",
     "/api/session/send",
     "/api/session/outbox/retry",
     "/api/term/send",
@@ -306,22 +313,25 @@ pub fn resolve(
             }
         }
         if let Some(map) = body.as_mut().filter(|map| !map.is_empty()) {
-            for key in ["uid", "name"] {
+            for key in ["uid", "name", "draft_uid"] {
                 let scoped = map
                     .get(key)
                     .filter(|value| truthy(value))
                     .map(reference_text);
                 if let Some(value) = scoped
                     && (key == "uid"
+                        || key == "draft_uid"
                         || path.starts_with("/api/term/")
                         || matches!(
                             path.as_str(),
                             "/api/session/draft-status"
                                 | "/api/session/rewind"
                                 | "/api/session/send"
+                                | "/api/session/conversation/send"
+                                | "/api/session/conversation/check"
                         ))
                 {
-                    let local = decode(&value, key == "uid")?;
+                    let local = decode(&value, key == "uid" || key == "draft_uid")?;
                     map.insert(key.to_string(), Value::String(local));
                 }
             }

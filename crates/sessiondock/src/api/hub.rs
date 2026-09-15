@@ -78,7 +78,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "media_continuation": true,
         "history_semantics": "limited_native"
     })

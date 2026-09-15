@@ -6,6 +6,7 @@
 
 mod audit;
 mod bug_report;
+mod conversation;
 mod delivery;
 mod files;
 mod health;
@@ -61,6 +62,33 @@ pub fn router() -> Router<AppState> {
         .route("/media/{token}", get(media::get))
         .route("/session/input-history", get(read::input_history))
         .route("/session/outbox", get(delivery::outbox))
+        .route(
+            "/session/conversation",
+            get(conversation::get).post(conversation::save).layer(
+                axum::extract::DefaultBodyLimit::max(request_body_limit(
+                    "/api/session/conversation",
+                )),
+            ),
+        )
+        .route("/session/conversation/restart", post(conversation::restart))
+        .route(
+            "/session/conversation/send",
+            post(conversation::send).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/session/conversation/send"),
+            )),
+        )
+        .route("/session/conversation/check", post(conversation::check))
+        .route(
+            "/session/conversation/attachment",
+            post(conversation::upload).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/session/conversation/import",
+            post(conversation::import).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/session/conversation/import"),
+            )),
+        )
+        .route("/session/conversation/drafts", get(conversation::drafts))
         // Claude reliable send on managed instances; 501 until both
         // the delivery ledger and the terminal transport are configured.
         .route(

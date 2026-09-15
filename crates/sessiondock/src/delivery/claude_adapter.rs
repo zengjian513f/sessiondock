@@ -2,11 +2,13 @@
 //!
 //! Turns one checked read of a Claude main session's committed `user` inputs
 //! into the Claude Machine's evidence types. The only association it can
-//! establish is `VerifiedEnter`: the executor itself held the write lease,
+//! establish after a managed Enter is `VerifiedEnter`: the executor held the write lease,
 //! verified the exact prepared composer, captured the physical fence before
 //! any write and pressed Enter; a real human `user` record that begins after
 //! that fence and carries exactly the delivered text (end-trimmed only) is
-//! attributed to that Enter. Nothing here reads a screen, a hook or a timer,
+//! attributed to that Enter. A matching native input after an attempted paste
+//! also confirms a manually submitted draft via `PossibleTextMatch`.
+//! Nothing here reads a screen, a hook or a timer,
 //! and nothing here can turn "no record yet" into failure or retry.
 
 use super::claude::{
@@ -49,8 +51,7 @@ pub enum Observation {
     FenceInvalid,
 }
 
-/// Relate one read (taken from `from`, which is the receipt's watch or its
-/// fixed confirmation cursor) to a receipt that already pressed Enter.
+/// Relate one checked read to a receipt that crossed the paste boundary.
 pub fn observe(
     receipt: &Receipt,
     scope: &Scope,
@@ -60,9 +61,12 @@ pub fn observe(
     if !read.fence_valid || read.current.source_identity != from.source_identity {
         return Observation::FenceInvalid;
     }
-    let (Some(confirmation), Some(enter)) = (&receipt.confirmation, &receipt.enter) else {
+    let Some(confirmation) = &receipt.confirmation else {
         return Observation::Nothing { next: None };
     };
+    if !receipt.attempted {
+        return Observation::Nothing { next: None };
+    }
     let wanted = prompt_key(&receipt.request.payload.text);
     let matched = read.inputs.iter().find(|input| {
         input.end > input.start
@@ -90,7 +94,10 @@ pub fn observe(
                 parent_turn_uuid: None,
             },
             real_human_input: true,
-            association: Association::VerifiedEnter(enter.clone()),
+            association: receipt
+                .enter
+                .clone()
+                .map_or(Association::PossibleTextMatch, Association::VerifiedEnter),
         }));
     }
     let current = cursor_of(&read.current);

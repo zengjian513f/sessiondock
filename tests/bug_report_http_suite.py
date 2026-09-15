@@ -57,8 +57,9 @@ def server(binary, root, extra):
     env.update(SESSIONDOCK_BIND=f"127.0.0.1:{port}", SESSIONDOCK_WEB_DIR=str(REPO / "legacy-web"),
                SESSIONDOCK_CLAUDE_ROOT=str(root / "claude"), SESSIONDOCK_CODEX_ROOT=str(root / "codex"),
                SESSIONDOCK_GROK_ROOT=str(root / "grok"), SESSIONDOCK_PTYHOST_DIR=str(root / "host"),
-               SESSIONDOCK_LIFECYCLE_DIR=str(root / "ledger"), SESSIONDOCK_AUDIT_DIR=str(root / "audit"),
+               SESSIONDOCK_STATE_DIR=str(root / "state"), SESSIONDOCK_LIFECYCLE_DIR=str(root / "ledger"), SESSIONDOCK_AUDIT_DIR=str(root / "audit"),
                SESSIONDOCK_FILE_ROOTS=str(root / "work"), SESSIONDOCK_FILE_WRITE_ROOTS=str(root / "work"))
+    (root / "state").mkdir(mode=0o700,exist_ok=True)
     env.update(extra)
     opener = build_opener(ProxyHandler({}))
     base = f"http://127.0.0.1:{port}"
@@ -249,12 +250,11 @@ def run(opener, base, root, repo):
     passed("bundle")
 
     final = wait_final(reply["path"], "claude submitted")
-    if final.get("status") != "submitted" or (final.get("confirmed_from") or {}).get("method") != "native_user_record":
+    if final.get("status") != "submitted" or (final.get("injection") or {}).get("basis") != "SEND":
         fail("claude submitted", json.dumps(final, ensure_ascii=False))
     injection = final.get("injection") or {}
-    for key in ("paste_started_at", "pasted_at", "paste_verified", "entered_at", "enter_acknowledged"):
-        if key not in injection:
-            fail("claude submitted", f"injection.{key} missing", json.dumps(injection))
+    assert injection.get("basis") == "SEND" and injection.get("submitted_at")
+    assert "confirmed_from" not in final and "composer_cleared" not in final
     jsonl = root / "claude/project-history" / f"{worker['sid']}.jsonl"
     users = [json.loads(line) for line in jsonl.read_text(encoding="utf-8").splitlines()]
     users = [row for row in users if row.get("type") == "user"]
@@ -270,34 +270,89 @@ def run(opener, base, root, repo):
                        {"description": "codex worker", "page_id": "page-1"}, want=202)
     worker2 = reply2.get("worker") or {}
     if worker2.get("source") != "codex" or worker2.get("sid") is not None:
-        fail("codex unconfirmed", "default source is codex with a pending identity", raw)
+        fail("codex SEND without native history", "default source is codex with a pending identity", raw)
     created.append(worker2)
-    check_bundle(reply2["path"], "codex unconfirmed")
+    check_bundle(reply2["path"], "codex SEND without native history")
     events2 = (Path(reply2["path"]) / "events.jsonl").read_text(encoding="utf-8")
     if reply["report_id"] not in events2:
-        fail("codex unconfirmed", "the first report's events are not in the page window")
-    final2 = wait_final(reply2["path"], "codex unconfirmed")
-    # The fake Codex records no rollout for a new session, so nothing can
-    # confirm the prompt: the manifest says so instead of pretending.
-    if final2.get("status") != "submitted_unconfirmed" or "未能确认已提交" not in final2.get("error", ""):
-        fail("codex unconfirmed", json.dumps(final2, ensure_ascii=False))
-    if (final2.get("injection") or {}).get("enter_acknowledged") is not True:
-        fail("codex unconfirmed", "Enter was not acknowledged", json.dumps(final2.get("injection")))
-    passed("codex unconfirmed")
+        fail("codex SEND without native history", "the first report's events are not in the page window")
+    final2 = wait_final(reply2["path"], "codex SEND without native history")
+    # Successful SEND belongs to the CLI even without a native rollout.
+    if final2.get("status") != "submitted" or (final2.get("injection") or {}).get("basis") != "SEND":
+        fail("codex SEND", json.dumps(final2, ensure_ascii=False))
+    if "confirmed_from" in final2:
+        fail("codex SEND", "must not fabricate native confirmation")
+    passed("codex SEND without native history")
+
+    # Private attachments and diagnostics share stable report/session submission.
+    owner='report:private-test'
+    private,_=call(opener,base,'POST','/api/session/conversation/attachment?uid='+owner+'&id=private&name=private.bin',raw=b'private report bytes',content_type='application/octet-stream')
+    assert private['upload_id']=='private' and 'path' not in private
+    draft,_=call(opener,base,'POST','/api/session/conversation',{'uid':owner,'revision':0,'value':{
+        'text':'private report','attachments':[{'id':'private','number':7,'file':{'name':'private.bin','size':20,'type':'application/octet-stream'},'uploaded':{**private,'uid':owner}}],'quotes':[]}})
+    request={'draft_uid':owner,'draft_revision':draft['draft']['revision'],'request_id':'private-report-submit',
+        'description':'private report','source':'claude','attachments':[{'upload_id':'private','number':7}]}
+    before=len(list(reports.iterdir()))
+    answer,_=call(opener,base,'POST','/api/bug-report',request,want=202)
+    replay,_=call(opener,base,'POST','/api/bug-report',request,want=202)
+    lookup,_=call(opener,base,'GET','/api/session/conversation?uid='+owner+'&report_request_id=private-report-submit')
+    assert answer['report_id']==replay['report_id']==lookup['report_id']
+    assert answer['worker']['record_id']==replay['worker']['record_id'] and len(list(reports.iterdir()))==before+1
+    created.append(answer['worker'])
+    final_private=wait_final(answer['path'],'private report SEND')
+    assert final_private['status']=='submitted' and final_private['attachments'][0]['number']==7
+    assert Path(final_private['attachments'][0]['path']).read_bytes()==b'private report bytes'
+    retained,_=call(opener,base,'GET','/api/session/conversation?uid=tmux:'+answer['worker']['name'])
+    assert not retained['draft']['value']['text']
+    assert retained['draft']['value']['session']['kind']=='bug-report'
+    assert not list((root/'state/conversations/conversation-uploads').glob('*'))
+    passed('private report, stable response lookup, no duplicate bundle/launch, clear and retain session identity')
+
+    # A blocked first task is the ordinary draft; restart updates every report reference.
+    (root/'gate').write_text('Update available\n❯ 1. Update and exit\n  2. Skip\nPress Enter to continue')
+    blocked_owner='report:startup-test'
+    saved,_=call(opener,base,'POST','/api/session/conversation',{'uid':blocked_owner,'revision':0,'value':{'text':'preserve through update','attachments':[],'quotes':[]}})
+    blocked,_=call(opener,base,'POST','/api/bug-report',{'description':'preserve through update','source':'claude','draft_uid':blocked_owner,'draft_revision':saved['draft']['revision'],'request_id':'startup-report','_build':build},want=202)
+    created.append(blocked['worker'])
+    failed=wait_final(blocked['path'],'update menu refusal')
+    assert failed['status']=='failed' and not (root/'gate.trace').exists()
+    blocked_uid='tmux:'+blocked['worker']['name']
+    retained,_=call(opener,base,'GET','/api/session/conversation?uid='+blocked_uid)
+    assert retained['draft']['value']['text']=='preserve through update'
+    kill(opener,base,blocked['worker'])
+    (root/'gate').unlink()
+    restarted,_=call(opener,base,'POST','/api/session/conversation/restart',{'uid':blocked_uid,'request_id':'resume-report','_build':build})
+    created.append(restarted)
+    next_uid='tmux:'+restarted['name']
+    retained,_=call(opener,base,'GET','/api/session/conversation?uid='+next_uid)
+    value=retained['draft']['value']
+    sent,_=call(opener,base,'POST','/api/session/conversation/send',{'uid':next_uid,'name':restarted['name'],'text':value['text'],'request_id':value['requestId'],'draft_revision':retained['draft']['revision'],'attachments':[],'quotes':[],'_build':build})
+    assert sent['state']=='sent' and not sent['draft']['value']['text']
+    resumed=wait_final(blocked['path'],'resumed first task')
+    assert resumed['status']=='submitted' and resumed['error'] is None and resumed['worker']['record_id']==restarted['record_id']
+    cached,_=call(opener,base,'GET','/api/session/conversation?uid='+blocked_owner+'&report_request_id=startup-report')
+    assert cached['worker']['record_id']==restarted['record_id']
+    users=[json.loads(line) for line in (root/'claude/project-history'/f"{restarted['sid']}.jsonl").read_text().splitlines()]
+    users=[row for row in users if row.get('type')=='user']
+    assert len(users)==1 and users[0]['message']['content'].strip()==(Path(blocked['path'])/'worker-prompt.md').read_text().strip()
+    listing,_=call(opener,base,'GET','/api/term/list')
+    assert any(row.get('record_id')==restarted['record_id'] and row.get('kind')=='bug-report' and row.get('worker_status')=='submitted' for row in listing.get('pending',[]))
+    ledger=json.loads((root/'state/conversations/conversation-ledger.json').read_text())
+    assert all(isinstance(row['payload'],str) and 'text' not in row['result'] for row in ledger['requests'].values())
+    passed('update menu refusal, report draft restart, common first-task SEND and synchronized status')
 
     health, raw = call(opener, base, "GET", "/api/health")
     audit = health.get("audit") or {}
     if audit.get("written_events", 0) < 4:
         fail("audit trail", "server events not written", raw)
     segments = "".join(path.read_text(encoding="utf-8") for path in (root / "audit").glob("browser-*.jsonl"))
-    for event in ("bug_report.created", "bug_report.worker_started", "bug_report.worker_submitted",
-                  "bug_report.worker_unconfirmed"):
+    for event in ("bug_report.created", "bug_report.worker_started", "bug_report.worker_submission"):
         if event not in segments:
             fail("audit trail", f"{event} missing from the audit log")
     passed("audit trail")
     for worker in created:
         kill(opener, base, worker)
-    return 8
+    return 10
 
 
 def main():
@@ -316,12 +371,12 @@ def main():
         (root / "work").mkdir(mode=0o755)
         repo = root / "work/repo"
         repo.mkdir(mode=0o755)
-        for name, script in (("fake-claude", "fake_claude_cli.py"), ("fake-codex", "fake_codex_cli.py")):
+        for name, script in (("fake-claude", "fake_conversation_cli.py"), ("fake-codex", "fake_codex_cli.py")):
             path = root / "bin" / name
             path.write_text(f"#!/bin/sh\nexec {PY} {REPO / 'tests' / script} \"$@\"\n")
             path.chmod(0o700)
         shared = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color", "LANG": "C.UTF-8"}
-        env_c = {**shared, "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}
+        env_c = {**shared, "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"), "SESSIONDOCK_TEST_GATE": str(root / "gate"), "SESSIONDOCK_TEST_GATE_TRACE": str(root / "gate.trace")}
         env_x = {**shared, "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex")}
 
         def prof(pid, source, exe, args, env):

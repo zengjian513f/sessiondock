@@ -354,30 +354,17 @@ header .header-actions .header-menu .btn:focus-visible { outline: 2px solid var(
 #new-session-dialog::backdrop, .app-dialog::backdrop { background: rgba(10, 14, 22, .48); backdrop-filter: blur(2px); }
 #new-session-form { display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow-y: auto; }
 .settings-form, .report-form { display: flex; flex-direction: column; gap: 8px; padding: 17px; }
-.settings-form {
+.settings-form, .report-form {
   box-sizing: border-box; max-height: inherit; overflow-y: auto;
   overscroll-behavior-y: contain;
 }
-.report-label { margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 600; }
-#bug-report-description {
-  width: 100%; min-height: 132px; resize: vertical; padding: 9px 10px;
-  border: 1px solid var(--border); border-radius: 8px; outline: none;
-  background: var(--panel-2); color: var(--text); font: 13px/1.5 var(--sans);
-}
-#bug-report-description:focus { border-color: var(--accent); }
-.report-capture-note {
-  padding: 9px 10px; border-radius: 8px; background: var(--panel-2);
-  color: var(--muted); font-size: 11.5px; line-height: 1.45;
-}
+.report-form > * { flex-shrink: 0; }
 #bug-report-error { min-height: 18px; color: #e5484d; font-size: 12px; }
+#bug-report-error:empty { display: none; }
 .report-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .report-items:empty { display: none; }
-.report-attach-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.report-attach-row .attach-picker { height: auto; }
-.report-attach-row .attach-menu { bottom: auto; top: calc(100% + 6px); }
-#bug-report-add { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12px; }
 #bug-report-add.on { color: var(--accent); border-color: var(--accent); }
-.report-attach-hint { min-width: 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.report-source span { min-width: 44px; padding: 6px 8px; }
 .report-row { margin-top: 0; }
 .report-form.dragover { outline: 2px dashed var(--accent); outline-offset: -8px; }
 .bug-report-toast {
@@ -1665,7 +1652,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .input-history-item small { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .input-history-empty { padding: 18px 12px; color: var(--muted); text-align: center; font-size: 12px; }
 .attach-picker { position: relative; flex: none; height: var(--composer-control-height); }
-#cadd {
+#cadd, #bug-report-add {
   display: inline-flex; align-items: center; justify-content: center;
   width: var(--composer-control-height); height: var(--composer-control-height); padding: 0;
 }
@@ -1719,14 +1706,14 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   font: inherit; font-size: 12px; line-height: 1.45;
 }
 #composer.dragover { box-shadow: inset 0 0 0 2px var(--accent); }
-#cinput {
+#cinput, #bug-report-description {
   display: block; width: 100%; min-width: 0; resize: none; overflow-y: hidden;
   min-height: var(--composer-control-height);
   padding: 7px 11px; border: 1px solid var(--border); border-radius: 9px;
   background: var(--panel-2); color: var(--text); outline: none;
   font: inherit; line-height: 1.5;
 }
-#cinput:focus { border-color: var(--accent); }
+#cinput:focus, #bug-report-description:focus { border-color: var(--accent); }
 .cbtns { display: flex; gap: 6px; flex: none; height: var(--composer-control-height); }
 .cbtns .btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1892,7 +1879,8 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   }
   .mobile-back:hover { background: var(--hover); }
   .dtitle h2, .dtitle h2.has-session-views {
-    display: flex; align-items: center; gap: 6px; overflow: hidden;
+    /* 运行点伸出图标上沿；文字由内部 span / switch 单独省略。 */
+    display: flex; align-items: center; gap: 6px; overflow: visible;
     margin: 0; font-size: 14.5px; line-height: 1.35;
     overflow-wrap: normal; text-overflow: ellipsis; white-space: nowrap;
   }
@@ -1934,7 +1922,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   #cadd { min-width: var(--composer-control-height); }
   .attach-menu { width: 156px; }
   .draft-card { max-width: 100%; }
-  #cinput { padding: 7px 9px; }
+  #cinput, #bug-report-description { padding: 7px 9px; }
   .cbtns { gap: 4px; }
   .cbtns .btn { padding-inline: 9px; }
 
@@ -1977,3 +1965,11 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 @media (max-width: 360px) {
   header .chip { width: 28px; justify-content: center; padding-inline: 5px; }
 }
+
+/* Saved input uses the same compact disclosure in reports and conversations. */
+.draft-saved { width:100%; color:var(--muted); font-size:12px; }
+.draft-saved summary { cursor:pointer; }
+.draft-saved-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
+.draft-saved-row > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.draft-saved-row .btn { flex-shrink:0; padding:3px 6px; font-size:11px; }
+.draft-save-error { width:100%; color:var(--danger); font-size:12px; }

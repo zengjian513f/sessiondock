@@ -265,7 +265,11 @@ class SourceArchiveTests(unittest.TestCase):
             head = git("rev-parse", "HEAD")
             (root / "source.rs").write_text("staged version")
             git("add", "source.rs")
+            (root / "new.rs").write_text("new staged source")
+            git("add", "new.rs")
+            staged_diff = git("diff", "--cached", "--numstat")
             index = (root / ".git/index").read_bytes()
+            (root / "new.rs").write_text("new working source")
             (root / "source.rs").write_text("working version")
             (root / "deleted.rs").unlink()
             (root / "runtime.env").write_text("untracked fixture configuration")
@@ -277,12 +281,13 @@ class SourceArchiveTests(unittest.TestCase):
                 self.assertEqual(archive.extractfile("source.rs").read(), b"working version")
                 self.assertNotIn("deleted.rs", archive.getnames())
                 self.assertNotIn("runtime.env", archive.getnames())
+                self.assertEqual(archive.extractfile("new.rs").read(), b"new working source")
             with tarfile.open(root / "head.tar") as archive:
                 self.assertEqual(archive.extractfile("source.rs").read(), b"baseline")
                 self.assertIn("deleted.rs", archive.getnames())
             self.assertEqual((root / ".git/index").read_bytes(), index)
             self.assertEqual(git("rev-parse", "HEAD"), head)
-            self.assertEqual(git("diff", "--cached", "--numstat"), "1\t1\tsource.rs")
+            self.assertEqual(git("diff", "--cached", "--numstat"), staged_diff)
 
 
 if __name__ == "__main__":
