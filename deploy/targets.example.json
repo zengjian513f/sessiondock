@@ -1,0 +1,65 @@
+{
+  "_comment": "Copy to deploy/targets.local.json (gitignored) and fill in real hosts. Never commit addresses.",
+  "build": {
+    "packages": ["sessiondock", "sessiondock-hub"],
+    "ptyhost_package": "ptyhost",
+    "cargo": "~/.cargo/bin/cargo"
+  },
+  "targets": [
+    {
+      "name": "build-host",
+      "kind": "linux-node",
+      "ssh": null,
+      "prefix": "/srv/sessiondock",
+      "health_url": "http://127.0.0.1:8741/api/meta",
+      "service": {"unit": "sessiondock.service", "scope": "user"},
+      "binaries": ["sessiondock"]
+    },
+    {
+      "name": "linux-node-a",
+      "kind": "linux-node",
+      "ssh": "user@<NODE_WG_IP>",
+      "ssh_port": 22,
+      "prefix": "/srv/sessiondock",
+      "health_url": "http://127.0.0.1:8741/api/meta",
+      "service": {"unit": "sessiondock.service", "scope": "user"},
+      "binaries": ["sessiondock"]
+    },
+    {
+      "name": "hub",
+      "kind": "hub",
+      "ssh": "user@<HUB_HOST>",
+      "prefix": "/home/example/sessiondock",
+      "health_url": "http://127.0.0.1:8742/api/meta",
+      "service": {"unit": "sessiondock-hub.service", "scope": "user"},
+      "binaries": ["sessiondock-hub"]
+    },
+    {
+      "name": "macos-node",
+      "kind": "macos-node",
+      "ssh": "user@<NODE_WG_IP>",
+      "ssh_port": 22,
+      "prefix": "/Users/example/sessiondock",
+      "health_url": "http://127.0.0.1:8741/api/meta",
+      "service": {"launchd_label": "cn.example.sessiondock", "gui_uid": 501},
+      "binaries": ["sessiondock"],
+      "build_on_target": true,
+      "extra": {"source_dir": "/Users/example/sessiondock-src", "cargo": "/Users/example/.cargo/bin/cargo"}
+    },
+    {
+      "name": "windows-node",
+      "kind": "windows-node",
+      "ssh": "user@<NODE_WG_IP>",
+      "ssh_port": 22,
+      "prefix": "C:\\Example\\sessiondock",
+      "health_url": "http://127.0.0.1:8741/api/meta",
+      "service": {"restart_cmd": "C:\\Example\\sessiondock\\restart-session1.cmd"},
+      "binaries": ["sessiondock"],
+      "build_on_target": true,
+      "extra": {
+        "source_dir": "C:\\Example\\sessiondock-src",
+        "toolchain_bin": "C:\\Example\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin"
+      }
+    }
+  ]
+}
