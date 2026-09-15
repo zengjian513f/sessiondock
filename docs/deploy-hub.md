@@ -88,12 +88,24 @@ location <HUB_PATH>/ {
     client_max_body_size 512m;                        # ATTACHMENT_MAX_BYTES
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
-    add_header Cache-Control "no-store" always;
+    # 不要再 add_header Cache-Control no-store：Hub 自己给页面/API 发 no-store，
+    # 给 ?v=<build> 的静态资源发 immutable，其余静态资源发 no-cache+ETag。
+    gzip on;                                          # 全局 gzip 默认只压 text/html
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types application/javascript text/javascript text/css application/json
+               application/manifest+json image/svg+xml font/ttf font/otf;
 }
 ```
 
 - WebSocket 需要透传 `Upgrade` 和 `Connection`。关闭代理缓冲，保证 SSE
   和 NDJSON 逐行到达浏览器。
+- 缓存与压缩由 Hub 自己决定，nginx 只补 gzip：页面与 API `no-store`；带
+  `?v=<build>` 的脚本、样式、字体 `public, max-age=31536000, immutable`（新 build
+  换 URL，不需要 no-store）；其余静态资源 `no-cache` + ETag。nginx gzip 会把
+  ETag 降为弱标记 `W/"…"`，Hub 的 `If-None-Match` 接受弱匹配。`gzip_types`
+  不列 `text/event-stream`，SSE 不受影响。首屏未压缩约 3 MB，压缩后约 1 MB，
+  再次访问只剩页面与 API。
 - `client_max_body_size` 覆盖附件上限；读写超时给长连接（终端、SSE）留足。
 - 反代把 Host 原样传给 Hub（Hub 的同源检查按 Host 核对 Origin）；Hub 只 loopback，不直接对外。
 
