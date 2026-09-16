@@ -1324,19 +1324,103 @@ test('restoring empty and legacy nullable drafts keeps defaults and valid input'
 });
 
 
-test('reading a cleared draft removes old submission markers and keeps a concurrent edit CAS baseline', async () => {
+test('reading a cleared draft removes old submission markers, merges early keystrokes and keeps a saved page baseline', async () => {
   const draft={text:'old report',attachments:[],quotes:[],requestId:'sent',report_prompt:'old task',revision:1,editVersion:0,savedVersion:0};
-  const context=vm.createContext({composerDraftOwner:uid=>uid,composerHydrations:new Map(),
+  const context=vm.createContext({composerDraftOwner:uid=>uid,composerHydrations:new Map(),composerPendingSaves:new Map(),
     composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,importLegacyComposer:async()=>null,
     readServerComposerDraft:async()=>({revision:2,value:{text:'',attachments:[],quotes:[]}}),
     newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    composerDraftRecord:(d,uid)=>({text:d.text,attachments:d.attachments,quotes:d.quotes,uid}),
     refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
-  for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord']) loadFunction(context,name,read('term.js'));
+  for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord','mergeEarlyComposerEdit','queueComposerSave']) loadFunction(context,name,read('term.js'));
   const hydrate=loadFunction(context,'hydrateComposerDraft',read('term.js'));
   await hydrate('uid');assert.equal(draft.text,'');assert.equal(draft.requestId,undefined);assert.equal(draft.report_prompt,undefined);
-  Object.assign(draft,{revision:2,editVersion:0});context.composerHydrations.clear();
-  context.readServerComposerDraft=async()=>{draft.editVersion=1;draft.text='concurrent edit';return {revision:3,value:{text:'other page',attachments:[],quotes:[]}}};
-  await hydrate('uid');assert.equal(draft.text,'concurrent edit');assert.equal(draft.revision,2);
+  assert.equal(draft.revision,2);
+  // Typing before the first read returns: a never-saved page must adopt the
+  // server revision or every later save is refused; the server text comes
+  // first, the early keystrokes follow, and the merge is queued for saving.
+  Object.assign(draft,{revision:0,editVersion:0,savedVersion:0});context.composerHydrations.clear();
+  context.readServerComposerDraft=async()=>{draft.editVersion=1;draft.text='concurrent edit';
+    return {revision:3,value:{text:'other page',attachments:[{id:'srv',number:1,file:{name:'s.png',size:1}}],quotes:[]}}};
+  await hydrate('uid');
+  assert.equal(draft.text,'other page\nconcurrent edit');assert.equal(draft.revision,3);
+  assert.equal(draft.attachments[0].id,'srv');assert.equal(draft.editVersion,2);
+  assert.equal(context.composerPendingSaves.get(draft).value.text,'other page\nconcurrent edit');
+  // A page that has saved keeps its CAS baseline; the save path rebases.
+  Object.assign(draft,{revision:3,editVersion:2,savedVersion:2});context.composerHydrations.clear();
+  context.readServerComposerDraft=async()=>({revision:5,value:{text:'newer elsewhere',attachments:[],quotes:[]}});
+  await hydrate('uid');assert.equal(draft.revision,3);assert.equal(draft.text,'other page\nconcurrent edit');
+});
+
+test('a refused save rebases onto the server revision and the editing page wins', async () => {
+  const draft={text:'phone typed',attachments:[],quotes:[],revision:4,editVersion:0,savedVersion:0,session:{uid:'uid'}};
+  const posts=[];
+  const context=vm.createContext({composerDraftOwner:uid=>uid,composerDrafts:new Map([['uid',draft]]),
+    composerPendingSaves:new Map(),composerSaving:new Set(),composerSaveQueues:new Map(),composerDraftWrites:Promise.resolve(),
+    conversationSendEnabled:()=>true,hydrateComposerDraft:async()=>{},refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{},
+    readServerComposerDraft:async()=>({revision:7,value:{text:'laptop text',attachments:[],quotes:[]}}),
+    setTimeout:(fn)=>fn(),Promise,
+    post:async(url,body)=>{posts.push(body);return body.revision===7?{ok:true,draft:{revision:8,value:body.value}}:{error:'另一页面已更新草稿',code:'draft_revision'};},
+    composerDraftRecord:(d,uid)=>({text:d.text,attachments:d.attachments,quotes:d.quotes,session:{...d.session,uid}})});
+  for (const name of ['queueComposerSave']) loadFunction(context,name,read('term.js'));
+  const persist=loadFunction(context,'persistComposerDraft',read('term.js'));
+  assert.equal(await persist('uid'),true);
+  assert.deepEqual(posts.map(p=>p.revision),[4,7]);
+  assert.equal(posts[1].value.text,'phone typed');
+  assert.equal(draft.revision,8);assert.equal(draft.storageError,'');assert.equal(draft.savedVersion,draft.editVersion);
+});
+
+test('an idle page follows a newer server draft and an editing page does not', async () => {
+  const file={bytes:'ram'};
+  const draft={text:'',attachments:[{id:'a',number:1,file,preview:'blob:a',status:'uploading',uploaded:null}],quotes:[],
+    revision:2,editVersion:3,savedVersion:3};
+  const refreshed=[];
+  let row={revision:5,value:{text:'typed on the phone',attachments:[{id:'a',number:1,kind:'image',file:{name:'a.png',size:3},uploaded:{upload_id:'a-up'}},{id:'b',number:2,file:{name:'b.txt',size:1}}],quotes:[]}};
+  const context=vm.createContext({composerDraftOwner:uid=>uid,composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,
+    composerSending:false,composerSaving:new Set(),composerPendingSaves:new Map(),performance:{now:()=>5000},
+    readServerComposerDraft:async()=>row,refreshComposerDraft:uid=>refreshed.push(uid),syncComposerUnloadProtection:()=>{},
+    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    URL:{revokeObjectURL:()=>{}}});
+  for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord','adoptServerDraft']) loadFunction(context,name,read('term.js'));
+  vm.runInContext('let composerFollowBusy=false, composerFollowedAt=0;',context);
+  const follow=loadFunction(context,'followServerDraft',read('term.js'));
+  assert.equal(await follow('uid',2),false); // Nothing newer reported.
+  assert.equal(await follow('uid',5),true);
+  assert.equal(draft.text,'typed on the phone');assert.equal(draft.revision,5);
+  const kept=draft.attachments.find(a=>a.id==='a');
+  assert.equal(kept.file,file);assert.equal(kept.preview,'blob:a');assert.equal(kept.status,'uploading');
+  assert.equal(kept.uploaded.upload_id,'a-up');assert.equal(draft.attachments.length,2);
+  assert.equal(draft.savedVersion,3);assert.deepEqual(refreshed,['uid']);
+  // Unsaved local edits are never overwritten.
+  draft.editVersion=4;row={revision:9,value:{text:'even newer',attachments:[],quotes:[]}};
+  assert.equal(await follow('uid',9),false);assert.equal(draft.text,'typed on the phone');
+});
+
+test('a new attachment is staged on add, two at a time, and a failure keeps the File for retry', async () => {
+  const draft={text:'',attachments:[],quotes:[],revision:1,editVersion:0,savedVersion:0};
+  const running=[];let active=0,peak=0;
+  const context=vm.createContext({composerDraftOwner:uid=>uid,composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,
+    Blob,renderComposerItems:()=>{},Promise,
+    uploadComposerAttachment:async(attachment)=>{active++;peak=Math.max(peak,active);
+      await new Promise(resolve=>running.push(resolve));active--;
+      if (attachment.id==='bad') {attachment.status='failed';throw new Error('upload unavailable');}
+      attachment.status='ready';attachment.uploaded={upload_id:attachment.id+'-up',uid:'uid'};return attachment.uploaded;}});
+  vm.runInContext('const COMPOSER_UPLOAD_LANES=2; const composerUploadLanes=new Map();',context);
+  for (const name of ['pumpComposerUploads','stageComposerAttachment']) loadFunction(context,name,read('term.js'));
+  const make=id=>({id,file:new Blob(['x']),status:'',uploaded:null});
+  draft.attachments.push(make('one'),make('two'),make('bad'));
+  const staged=draft.attachments.map(a=>context.stageComposerAttachment(a,'uid'));
+  await new Promise(r=>setImmediate(r));
+  assert.equal(peak,2);assert.equal(draft.attachments[2].status,'queued');
+  running.shift()();await new Promise(r=>setImmediate(r));
+  assert.equal(draft.attachments[0].uploaded.upload_id,'one-up');assert.equal(running.length,2);
+  running.shift()();running.shift()();
+  const results=await Promise.all(staged);
+  assert.equal(results[1].upload_id,'two-up');assert.equal(results[2],null);
+  assert.equal(draft.attachments[2].status,'failed');assert.ok(draft.attachments[2].file instanceof Blob);
+  assert.equal(draft.attachments[2].staging,undefined);
+  // Already staged bytes are not uploaded again.
+  assert.equal(await context.stageComposerAttachment(draft.attachments[0],'uid'),draft.attachments[0].uploaded);
 });
 
 test('a server-owned report SEND clears a clean viewer without overwriting local edits', async () => {
@@ -1348,6 +1432,7 @@ test('a server-owned report SEND clears a clean viewer without overwriting local
     priorComposerSubmission:async ()=>({state:'sent',draft:{revision:2,value:{text:'',attachments:[],quotes:[]}}}),
     URL:{revokeObjectURL:url=>revoked.push(url)},refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
   for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord']) loadFunction(context,name,read('term.js'));
+  loadFunction(context,'adoptServerDraft',read('term.js'));
   const reconcile=loadFunction(context,'reconcileComposerSubmission',read('term.js'));
   await reconcile('uid');
   assert.equal(draft.text,'');assert.equal(draft.attachments.length,0);assert.equal(draft.requestId,undefined);

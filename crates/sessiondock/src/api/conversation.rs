@@ -191,10 +191,29 @@ pub async fn check(
     }
     let service = enabled(&s)?;
     let page = page_lease(q.lease.as_ref());
-    service.check(&q.uid, page.as_ref()).await.map_err(error)?;
+    let draft_revision = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"ok":true})),
+        Json(json!({"ok":true,"draft_revision":draft_revision})),
+    )
+        .into_response())
+}
+#[derive(Deserialize)]
+pub struct Discard {
+    uid: String,
+    id: String,
+}
+/// Forgets a staged attachment the editor removed. A draft or unfinished
+/// submission that still names the upload refuses, so pages save first.
+pub async fn discard(
+    State(s): State<AppState>,
+    Json(q): Json<Discard>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&s)?;
+    let removed = service.discard_upload(&q.uid, &q.id).await.map_err(error)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"ok":true,"removed":removed})),
     )
         .into_response())
 }
@@ -431,11 +450,29 @@ pub async fn import(
 }
 pub async fn drafts(State(s): State<AppState>) -> Result<Response, ApiError> {
     let service = enabled(&s)?;
+    // Older drafts were saved without `session.started`; the ledger record's
+    // creation time keeps their sidebar row at one stable time.
+    let ledger = service
+        .lifecycle
+        .list(0, usize::MAX)
+        .await
+        .unwrap_or_default();
     let records = service
         .store
         .drafts()
         .into_iter()
-        .map(|(_, d)| json!({"uid":d.value["session"]["uid"],"draft":d}))
+        .map(|(_, mut d)| {
+            if !d.value["session"]["started"].is_number()
+                && let Some(record_id) = d.value["session"]["record_id"].as_str()
+                && let Some(created) = ledger
+                    .iter()
+                    .find(|record| record.record_id() == record_id)
+                    .and_then(|record| record.created_at())
+            {
+                d.value["session"]["started"] = json!(created);
+            }
+            json!({"uid":d.value["session"]["uid"],"draft":d})
+        })
         .collect::<Vec<_>>();
     Ok((
         [(header::CACHE_CONTROL, "no-store")],

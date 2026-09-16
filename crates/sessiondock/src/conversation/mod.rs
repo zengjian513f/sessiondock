@@ -58,6 +58,7 @@ pub struct Conversations {
     locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
 impl Conversations {
+    #[allow(clippy::too_many_arguments)] // Inject the independently owned services once at startup.
     pub fn new(
         store: Arc<Store>,
         reader: Reader,
@@ -194,8 +195,36 @@ impl Conversations {
                 })
             })
             .cloned();
-        let native_key = self.store.canonical(bound_uid);
-        let key = if let Some(record) = &record {
+        // Sharing a TUI after /new is not sharing a draft. Only the existing
+        // fork relationship may carry the ancestor's conversation identity.
+        let shares_draft = if bound_uid == native.uid {
+            true
+        } else {
+            let document = self
+                .reader
+                .run(|s| s.list_recent())
+                .await
+                .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
+            let rows = crate::runtime::procscan::SessionRow::from_list(&document);
+            let by_sid = rows
+                .iter()
+                .filter(|r| r.source == "codex")
+                .map(|r| (r.sid.as_str(), r))
+                .collect();
+            rows.iter()
+                .find(|r| r.uid == native.uid)
+                .is_some_and(|row| {
+                    let ancestors = crate::runtime::procscan::codex_ancestor_sids(row, &by_sid);
+                    rows.iter()
+                        .any(|r| r.uid == bound_uid && ancestors.contains(&r.sid))
+                })
+        };
+        let native_key = self
+            .store
+            .canonical(if shares_draft { bound_uid } else { &native.uid });
+        let key = if !shares_draft {
+            native_key
+        } else if let Some(record) = &record {
             let launch_key = format!("launch:{}", record.record_id());
             let launch_canonical = self.store.canonical(&launch_key);
             if native_key == bound_uid && launch_canonical != bound_uid {
@@ -382,14 +411,27 @@ impl Conversations {
         }
         Ok(response)
     }
-    pub async fn check(&self, uid: &str, page: Option<&PageLease>) -> Result<(), Failure> {
+    /// Confirms the CLI accepts a SEND and reports the current draft revision,
+    /// so a polling page can notice edits saved from another device.
+    pub async fn check(&self, uid: &str, page: Option<&PageLease>) -> Result<u64, Failure> {
         let identity = self.identity(uid).await?;
         let lock = self.lock(&identity.key);
         let _guard = lock.lock().await;
         let lease = self.lease(&identity, page).await?;
         let result = self.ensure_sendable(&identity, &lease).await;
         self.driver.release(lease).await;
-        result
+        result.map(|()| self.store.draft(&identity.key).revision)
+    }
+    /// Drops staged bytes the editor removed before SEND published them.
+    pub async fn discard_upload(&self, uid: &str, id: &str) -> Result<bool, Failure> {
+        let identity = self.identity(uid).await?;
+        let lock = self.upload_lock(&identity.key, id);
+        let _guard = lock.lock().await;
+        let removed = self.store.discard_upload(&identity.key, id)?;
+        if removed {
+            let _ = tokio::fs::remove_file(self.upload_path(&identity.key, id)).await;
+        }
+        Ok(removed)
     }
     pub fn upload_path(&self, key: &str, id: &str) -> PathBuf {
         use sha2::{Digest, Sha256};
@@ -495,13 +537,11 @@ impl Conversations {
             .as_ref()
             .err()
             .is_some_and(|e| e.code == "cli_starting")
+            && let (Some(reports), Some(record)) = (&self.reports, &identity.record)
+            && let Err(error) = reports.conversation_status(record.record_id(), &result)
         {
-            if let (Some(reports), Some(record)) = (&self.reports, &identity.record) {
-                if let Err(error) = reports.conversation_status(record.record_id(), &result) {
-                    // SEND already succeeded: metadata failure cannot authorize another send.
-                    eprintln!("conversation report status update failed: {error}");
-                }
-            }
+            // SEND already succeeded: metadata failure cannot authorize another send.
+            eprintln!("conversation report status update failed: {error}");
         }
         self.driver.release(lease).await;
         result
@@ -634,6 +674,11 @@ pub fn submission_result(row: &store::Submission) -> Result<Value, Failure> {
         ))
     }
 }
+/// A choice menu is on screen: a numbered list (`❯ 1. Yes`) or, since Claude
+/// Code 2.1 (workspace trust), an unnumbered list whose cursor line has an
+/// indented sibling option, both closed by an `Enter to confirm/select/continue`
+/// footer with nothing below it. The trust dialog defaults to "No, exit", so an
+/// Enter delivered through SEND terminates the CLI (BUG-20260916-070610-b7249b).
 pub fn screen_question(capture: &ScreenCapture) -> bool {
     let text = crate::delivery::driver::strip_ansi(&capture.text);
     if crate::bridge::codex::approval_prompt(&text).is_some() {
@@ -646,10 +691,6 @@ pub fn screen_question(capture: &ScreenCapture) -> bool {
     let start = cursor.saturating_sub(12);
     let end = (cursor + 8).min(lines.len());
     let active = lines.get(start..end).unwrap_or(&[]).join("\n");
-    let selected = active.lines().any(|line| {
-        let line = line.trim_start();
-        matches!(line.chars().next(), Some('❯' | '›' | '»' | '>')) && MENU.is_match(line)
-    });
     let low = active.to_lowercase();
     let footer = low
         .lines()
@@ -663,13 +704,65 @@ pub fn screen_question(capture: &ScreenCapture) -> bool {
             .then_some(index)
         })
         .last();
-    let tail = footer.is_some_and(|index| {
-        active
-            .lines()
-            .skip(index + 1)
-            .all(|line| line.trim().is_empty())
+    let Some(footer) = footer else {
+        return false;
+    };
+    if !active
+        .lines()
+        .skip(footer + 1)
+        .all(|line| line.trim().is_empty())
+    {
+        return false;
+    }
+    let selected = active.lines().any(|line| {
+        let line = line.trim_start();
+        matches!(line.chars().next(), Some('❯' | '›' | '»' | '>')) && MENU.is_match(line)
     });
-    selected && tail && MENU.find_iter(&active).count() >= 2
+    if selected && MENU.find_iter(&active).count() >= 2 {
+        return true;
+    }
+    unnumbered_menu(&active.lines().take(footer).collect::<Vec<_>>())
+}
+/// The block of non-blank lines right above the footer holds exactly one
+/// cursor line (`❯ No, exit`) and at least one option indented to the same text
+/// column (`  Yes, I trust this folder`). `>` is excluded: it is the Claude
+/// composer prompt.
+fn unnumbered_menu(above_footer: &[&str]) -> bool {
+    const GLYPHS: [char; 3] = ['❯', '›', '»'];
+    let block: Vec<&str> = above_footer
+        .iter()
+        .rev()
+        .skip_while(|line| line.trim().is_empty())
+        .take_while(|line| !line.trim().is_empty())
+        .copied()
+        .collect();
+    let indent_of = |line: &str| line.chars().take_while(|c| c.is_whitespace()).count();
+    let mut cursor_column = None;
+    let mut cursors = 0;
+    for line in &block {
+        let indent = indent_of(line);
+        let mut rest = line.trim_start().chars();
+        if !rest.next().is_some_and(|glyph| GLYPHS.contains(&glyph)) {
+            continue;
+        }
+        let rest = rest.as_str();
+        let label = rest.trim_start_matches(' ');
+        let spaces = rest.len() - label.len();
+        if spaces >= 1 && !label.is_empty() {
+            cursors += 1;
+            cursor_column = Some(indent + 1 + spaces);
+        }
+    }
+    let Some(column) = cursor_column else {
+        return false;
+    };
+    cursors == 1
+        && block.iter().any(|line| {
+            indent_of(line) == column
+                && !line
+                    .trim_start()
+                    .starts_with(|c| GLYPHS.contains(&c))
+        })
 }
 fn history_question(view: &Value) -> bool {
     if view["activity"]["state"] != "waiting" {
@@ -785,6 +878,38 @@ mod tests {
         assert!(!screen_question(&capture(
             "Working · esc to interrupt\n›",
             1
+        )));
+    }
+    /// Claude Code 2.1.273 workspace trust: unnumbered options, "No, exit"
+    /// selected by default, cursor on the selected line.
+    #[test]
+    fn unnumbered_trust_dialog_blocks_send() {
+        let dialog = "\n────────\n Accessing workspace:\n\n /srv/work\n\n Quick safety check: Is this a project you created or one you trust?\n project, or work from your team). If not, take a moment to review what's in this folder first.\n\n Claude Code'll be able to read, edit, and execute files here.\n\n Security guide\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel\n\n\n\n";
+        assert!(screen_question(&capture(dialog, 13)));
+        // Codex-style cursor glyph and a wider indent behave the same.
+        assert!(screen_question(&capture(
+            "Update available\n › Update now\n   Skip\n Enter to select · Esc to cancel",
+            1
+        )));
+        // A composer with a wrapped line above an unrelated footer is not a menu.
+        assert!(!screen_question(&capture(
+            "❯ first line of a prompt\n  continued here\n? for shortcuts",
+            0
+        )));
+        // The composer prompt `>` with an indented continuation is never a menu.
+        assert!(!screen_question(&capture(
+            "> draft\n  more\nPress Enter to continue",
+            0
+        )));
+        // Two cursor lines (old dialog plus new one) do not count as one menu.
+        assert!(!screen_question(&capture(
+            " ❯ No, exit\n ❯ Yes\n Enter to confirm",
+            0
+        )));
+        // The cursor line alone, without a sibling option, is not a menu.
+        assert!(!screen_question(&capture(
+            " ❯ No, exit\n\n Enter to confirm",
+            0
         )));
     }
     #[test]

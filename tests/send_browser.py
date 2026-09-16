@@ -328,26 +328,53 @@ def main():
                     expect(page.locator('#cinput')).to_have_value('')
                     assert len(sends)==count # Lookup only: no duplicate SEND.
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
-                    # Selection saves metadata, with no upload or published agent file.
+                    # Selection stages the bytes at once in private staging; no agent file yet.
+                    staging=root/'state/conversations/conversation-uploads'
                     uploads=[]
                     context.on('request',lambda request:uploads.append(request.url) if '/conversation/attachment?' in request.url else None)
                     page.locator('#cadd').click()
                     with page.expect_file_chooser() as chooser:page.locator('#attach-menu [data-attach=file]').click()
-                    chooser.value.set_files([{'name':'payload.txt','mimeType':'text/plain','buffer':b'private bytes'}])
+                    with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/attachment') as staged:
+                        chooser.value.set_files([{'name':'payload.txt','mimeType':'text/plain','buffer':b'private bytes'}])
+                    assert staged.value.status==200,staged.value.text()
+                    page.wait_for_function("composerDraft().attachments[0]?.uploaded?.upload_id && !composerDraft().attachments[0].staging")
                     page.evaluate('async () => await composerDraftWrites')
-                    assert not uploads and not (root/'work/claude-area/sessiondock_attachments').exists()
-                    # A failed upload keeps the original File and text; no SEND.
+                    assert len(uploads)==1 and not (root/'work/claude-area/sessiondock_attachments').exists()
+                    assert len(list(staging.iterdir()))==1
+                    # The staged reference survives a reload: the File is gone, SEND still works.
+                    page.reload(wait_until='networkidle')
+                    # The declared Claude identity now owns the sidebar row; its draft is the same record.
+                    page.locator(f'#side .item[data-uid="{claude_uid(root,receipt["declared_sid"])}"]').first.click()
+                    page.wait_for_function("composerUid && !composerDraft().loading && takenOver(composerUid)")
+                    expect(page.locator('#cinput')).to_have_value('draft survives refresh')
+                    assert page.evaluate("composerDraft().attachments[0].uploaded.upload_id") and not page.evaluate('composerDraft().attachments[0].file instanceof File')
+                    # A failed staging keeps the File on the card with a retry; SEND retries too.
                     def unavailable(route):route.fulfill(status=503,content_type='application/json',body='{"error":"upload unavailable"}')
                     page.route('**/api/session/conversation/attachment?*',unavailable)
+                    page.locator('#cadd').click()
+                    with page.expect_file_chooser() as chooser:page.locator('#attach-menu [data-attach=file]').click()
+                    chooser.value.set_files([{'name':'second.txt','mimeType':'text/plain','buffer':b'second bytes'}])
+                    expect(page.locator('#compose-items .draft-card.failed')).to_contain_text('upload unavailable')
+                    expect(page.locator('#compose-items .draft-card.failed .draft-retry')).to_be_visible()
                     count=len(sends);page.locator('#csend').click()
                     page.wait_for_function('!composerSending')
-                    assert len(sends)==count and page.evaluate('composerDraft().attachments[0].file instanceof File')
+                    assert len(sends)==count and page.evaluate('composerDraft().attachments[1].file instanceof File')
                     expect(page.locator('#cinput')).to_have_value('draft survives refresh')
                     page.unroute('**/api/session/conversation/attachment?*',unavailable)
+                    page.locator('#compose-items .draft-card.failed .draft-retry').click()
+                    page.wait_for_function("composerDraft().attachments.length===2 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
+                    page.evaluate('async () => await composerDraftWrites')
+                    assert len(list(staging.iterdir()))==2
+                    # Removing a staged attachment releases its private bytes once the draft is saved.
+                    with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/attachment/discard') as discarded:
+                        page.locator('#compose-items .draft-card').nth(1).locator('.draft-remove').click()
+                    assert discarded.value.status==200 and discarded.value.json()['removed'] is True,discarded.value.text()
+                    assert len(list(staging.iterdir()))==1
                     body=send('attachment send')
                     assert body['text']=='attachment send' and body['attachments'][0]['upload_id']
                     published=list((root/'work/claude-area/sessiondock_attachments').glob('*/payload.txt'))
                     assert len(published)==1 and published[0].read_bytes()==b'private bytes'
+                    assert not list(staging.iterdir()) # Published bytes leave staging.
                     # The same upload ID cannot overwrite another session's staging bytes.
                     for owner,content in [('report:a',b'a'),('report:b',b'b')]:
                         response=context.request.post(base+'/api/session/conversation/attachment?uid='+owner+'&id=same&name=x',data=content,headers={'Content-Type':'text/plain'})
@@ -361,7 +388,7 @@ def main():
                     time.sleep(.3)
                     assert not list((root/'state/conversations/conversation-uploads').glob('*.upload'))
                     # A startup choice disables the chat sender, and backend rejects bypasses.
-                    (root/'gate').write_text('Do you trust this directory?\n❯ 1. Yes\n  2. No\nPress Enter to confirm')
+                    (root/'gate').write_text(' Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel')
                     gated=create_claude(page,base,root/'work',open_terminal=False)
                     gated_uid='tmux:'+gated['name']
                     page.wait_for_function('composerDraft()?.cliQuestion === true',timeout=15000)

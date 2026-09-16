@@ -524,6 +524,43 @@ pub struct RuntimeSnapshot {
 }
 
 impl RuntimeSnapshot {
+    /// A Codex TUI can switch to an unrelated thread without changing its
+    /// process or the host's immutable binding. Resolve its open rollout to
+    /// the unique guarded host; argv alone also describes lock-blocked resumes.
+    pub fn codex_process_host(
+        &self,
+        scan: &procscan::Scan,
+        sessions: &[procscan::SessionRow],
+        uid: &str,
+    ) -> Option<&ManagedHost> {
+        let target = sessions
+            .iter()
+            .find(|row| row.uid == uid && row.source == "codex")?;
+        let pids: Vec<_> = scan
+            .session_path_pids(target)
+            .into_iter()
+            .filter(|pid| *pid > 0)
+            .collect();
+        if pids.is_empty() {
+            return None;
+        }
+        let mut matches = self.hosts.iter().filter(|host| {
+            host.bound_target().is_some_and(|bound| {
+                bound.source().as_str() == "codex"
+                    && pids.iter().any(|pid| {
+                        *pid == i64::from(host.summary.pid)
+                            || (!scan.tree.is_cli_process(host.summary.pid)
+                                && scan.tree.hosted(
+                                    &[*pid],
+                                    &std::collections::BTreeSet::from([host.summary.pid]),
+                                ))
+                    })
+            })
+        });
+        let host = matches.next()?;
+        matches.next().is_none().then_some(host)
+    }
+
     pub fn running_uids(&self) -> Vec<&str> {
         self.sessions
             .iter()

@@ -50,10 +50,13 @@ The target is resolved by `ManagedResolver`: the unique guard-capable managed
 host whose **verified native association** names the UID (runtime catalog),
 authorized through the lifecycle binding when it originates from a launch
 receipt. Duplicate, unmatched, exited or unauthorized instances are
-`terminal_unlinked` (409). A Codex rollback branch (`Esc Esc`) has no binding
-of its own: when no host names its UID, the resolver takes the host bound to
+`terminal_unlinked` (409). For Codex, the unique guarded host whose CLI holds
+the exact rollout file takes precedence over a declared UID match, including a
+second resume blocked on that file's writer lock. This also supports unrelated
+thread switches without changing the host's immutable binding. A Codex rollback
+branch (`Esc Esc`) has no binding of its own: as a fallback the resolver takes the host bound to
 one of its `forked_from_id` ancestors whose pane runs the branch's process
-(`RuntimeSnapshot::fork_host`, the same rule as takeover's `followed_fork`;
+(`RuntimeSnapshot::fork_host`, the same rule as takeover's `reused_process`;
 see [liveness](liveness.md)). Without a process scanner the branch stays
 `terminal_unlinked`; the fork graph alone never picks a host.
 

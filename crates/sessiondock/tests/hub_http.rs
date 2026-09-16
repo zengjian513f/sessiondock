@@ -546,10 +546,15 @@ async fn resolve_routes_writes_and_rejects_mixed_targets() {
     let (status, _) = hub.get(&format!("/api/nodes/{NID_C}/api/live")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // `DELETE /api/session/<global>` names its machine through the path; the
-    // fixture has no DELETE handler, so its 501 HTML page is streamed back.
+    // fixture has no DELETE handler. Its HTML error is converted to a JSON
+    // upstream failure, like other non-JSON responses to write operations.
     let (status, body) = hub.call("DELETE", &format!("/api/session/{a}"), None).await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "{body}");
-    assert!(body["raw"].as_str().unwrap().contains("DELETE"), "{body}");
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("写操作可能已执行"),
+        "{body}"
+    );
+    assert!(body.get("raw").is_none(), "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

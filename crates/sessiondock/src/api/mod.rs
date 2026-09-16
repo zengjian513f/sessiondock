@@ -83,6 +83,10 @@ pub fn router() -> Router<AppState> {
             post(conversation::upload).layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .route(
+            "/session/conversation/attachment/discard",
+            post(conversation::discard),
+        )
+        .route(
             "/session/conversation/import",
             post(conversation::import).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/session/conversation/import"),

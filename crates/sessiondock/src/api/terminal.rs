@@ -652,6 +652,29 @@ pub async fn list(
         response["hosts"] = json!(service.hosts().await?);
         if let Some(runtime) = &state.runtime {
             let observed = super::runtime::shared(&state, runtime, force).await?;
+            // Display the thread currently open in a Codex TUI separately from
+            // its immutable protocol binding. Never rewrite the guard identity.
+            let mut current = std::collections::BTreeMap::<String, Vec<String>>::new();
+            if let Some(scanner) = &state.proc_scan
+                && let Ok(scan) = scanner.snapshot(force).await
+            {
+                let document = state
+                    .reader
+                    .run_wait(&state.shutdown, |store| store.list_recent())
+                    .await?;
+                let rows = crate::runtime::procscan::SessionRow::from_list(&document);
+                for row in &rows {
+                    if let Some(host) = observed
+                        .snapshot
+                        .codex_process_host(&scan.scan, &rows, &row.uid)
+                    {
+                        current
+                            .entry(host.summary.name.clone())
+                            .or_default()
+                            .push(row.uid.clone());
+                    }
+                }
+            }
             let sessions: Vec<Value> = observed
                 .snapshot
                 .hosts
@@ -664,6 +687,11 @@ pub async fn list(
                     row["source"] = json!(target.source().as_str());
                     row["instance_id"] = json!(target.instance_id());
                     row["origin_launch_id"] = json!(target.origin_launch_id());
+                    if let Some(uids) = current.get(&host.summary.name)
+                        && let [uid] = uids.as_slice()
+                    {
+                        row["current_uid"] = json!(uid);
+                    }
                     Some(row)
                 })
                 .collect();

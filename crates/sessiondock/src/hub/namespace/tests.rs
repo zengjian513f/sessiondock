@@ -132,12 +132,13 @@ fn live_keys_are_always_present_and_scoped() {
 #[test]
 fn terminal_names_and_trash_ids_are_scoped_only_where_python_scopes_them() {
     let out = public_payload(
-        json!({"sessions": [{"name": "term", "uid": "claude:x"}], "pending": [{"name": ""}]}),
+        json!({"sessions": [{"name": "term", "uid": "claude:x", "current_uid": "codex:y"}], "pending": [{"name": ""}]}),
         &node(),
         "/api/term/list",
     );
     assert_eq!(out["sessions"][0]["name"], format!("{NID}~term"));
     assert_eq!(out["sessions"][0]["uid"], format!("claude:{NID}~x"));
+    assert_eq!(out["sessions"][0]["current_uid"], format!("codex:{NID}~y"));
     assert_eq!(out["pending"][0]["name"], "");
     assert_eq!(out["pending"][0]["node_id"], NID);
     let out = public_payload(

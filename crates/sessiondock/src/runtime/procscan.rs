@@ -652,7 +652,7 @@ pub struct ActiveProcesses {
 impl Scan {
     /// Holders of the session file and of any
     /// JSONL under a Grok session directory (`events.jsonl` for `grok -p`).
-    fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
+    pub(crate) fn session_path_pids(&self, session: &SessionRow) -> BTreeSet<i64> {
         let mut found = BTreeSet::new();
         if session.path.is_empty() {
             return found;

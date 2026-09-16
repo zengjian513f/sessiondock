@@ -130,6 +130,12 @@ chunk, 512 MiB per conversation or bug-report attachment and 100,000 keep-name a
 optional hashes and declared sizes are validated; duplicated acknowledged chunks
 are idempotent, conflicting chunks fail without rewriting accepted bytes.
 
+Conversation composer attachments are staged in private conversation storage as
+soon as they are selected (`POST /api/session/conversation/attachment`) and
+published into the session cwd by SEND; `POST
+/api/session/conversation/attachment/discard` releases staged bytes the editor
+removed. The older direct path below publishes at once:
+
 Conversation attachments use `POST /api/session/attachment?uid=...&name=...`
 with the raw file body (including files whose MIME type is `application/json`).
 The server resolves the selected native session's cwd and saves files under

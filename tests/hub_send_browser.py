@@ -23,7 +23,14 @@ from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from hub_http_suite import Hub, free_port, scoped
 from send_browser import (FAKE_CLI, SETTINGS, initialize, create_claude, claude_uid,
-                          xterm_includes, send_from_composer, wait_history)
+                          xterm_includes, wait_history)
+
+
+def send_from_composer(page, text):
+    page.locator("#cinput").fill(text)
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/conversation/send", timeout=20000) as sent:
+        page.locator("#csend").click()
+    return sent.value
 
 
 def cleanup_hosts(root):
@@ -82,7 +89,7 @@ def check_browser(browser, root, config):
                          delivery_dir=root / "delivery", extra_env=node_env) as (local, _):
         context = browser.new_context(service_workers="block")
         page = context.new_page()
-        page.goto(local, wait_until="networkidle")
+        page.goto(local, wait_until="domcontentloaded")
         receipt = create_claude(page, local, root / "work")
         page.locator("#termpane .xterm-helper-textarea").press_sequentially("hub fixture seed")
         page.locator("#termpane .xterm-helper-textarea").press("Enter")
@@ -100,7 +107,7 @@ def check_browser(browser, root, config):
         deadline = time.monotonic() + 20
         while True:
             released = context.request.post(
-                local + "/api/session/draft-status",
+                local + "/api/session/conversation/check",
                 data={"uid": uid, "name": name, "_build": node_build},
             )
             if released.status == 200:
@@ -131,11 +138,12 @@ def check_browser(browser, root, config):
                 p._sessiondock_dialogs = []
                 p._sessiondock_responses = []
                 p.on("pageerror", lambda error: errors.append(str(error)))
-                p.on("dialog", lambda dialog: (p._sessiondock_dialogs.append(dialog.message), dialog.dismiss()))
+                p.on("dialog", lambda dialog: (p._sessiondock_dialogs.append(dialog.message),
+                     dialog.accept() if dialog.type == "beforeunload" else dialog.dismiss()))
                 p.on("response", lambda response: p._sessiondock_responses.append(
                     (response.status, urlsplit(response.url).path))
                     if "/api/" in response.url else None)
-                p.goto(base, wait_until="networkidle")
+                p.goto(base, wait_until="domcontentloaded")
                 select(p)
                 return ctx, p
 
@@ -152,12 +160,14 @@ def check_browser(browser, root, config):
 
             # A node's marker is minted after auth, never from browser headers.
             bodies = {
-                "/api/session/send": {"uid": "claude:missing", "text": "", "request_id": "gate-test"},
-                "/api/session/outbox/retry": {"uid": "claude:missing", "id": "missing"},
+                "/api/session/conversation/send": {"uid": "claude:missing", "text": "", "request_id": "gate-test"},
                 "/api/term/send": {"name": "missing", "data": "probe", "page": "test", "token": "0" * 64,
                                    "instance_id": "missing"},
             }
             auth = {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": node.token}
+            retired = ctx.request.post(local + "/api/session/outbox/retry",
+                                       data={"uid": uid, "id": "missing", "_build": build})
+            assert retired.status == 501 and retired.json()["code"] == "delivery_send_disabled"
             for path, body in bodies.items():
                 body = {**body, "_build": build}
                 response = ctx.request.post(local + path, data=body)
@@ -188,8 +198,10 @@ def check_browser(browser, root, config):
                 raise
             assert response.status == 200, response.text()
             wait_history(page, "OK: desktop hub send")
+            expect(page.locator("#cinput")).to_have_value("")
             assert not page.evaluate("staleBuildShown")
-            page.reload(wait_until="networkidle")
+            # A live conversation keeps SSE/polling requests open after reload.
+            page.reload(wait_until="domcontentloaded")
             select(page)
             response = send_from_composer(page, "after refresh hub send")
             assert response.status == 200, response.text()
@@ -224,7 +236,7 @@ def check_browser(browser, root, config):
 
             mobile, page = open_page(390)
             page.locator("#cinput").fill("mobile hub send")
-            with page.expect_response(lambda response: response.url.endswith("/api/session/send"), timeout=20000) as sent:
+            with page.expect_response(lambda response: response.url.endswith("/api/session/conversation/send"), timeout=20000) as sent:
                 page.locator("#csend").click()
             response = sent.value
             assert response.status == 200, response.text()

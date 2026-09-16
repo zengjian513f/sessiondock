@@ -17,7 +17,7 @@ use super::identity::is_node_id;
 use super::registry::Node;
 
 /// Keys whose string value is a scoped session reference.
-const REFERENCE_KEYS: [&str; 4] = ["uid", "from_uid", "to_uid", "continued_in"];
+const REFERENCE_KEYS: [&str; 5] = ["uid", "from_uid", "to_uid", "continued_in", "current_uid"];
 /// Subtrees copied verbatim: message payloads, tool input, file contents and
 /// resolved paths may legitimately contain a key called `uid` or `src`.
 const OPAQUE_KEYS: [&str; 8] = [

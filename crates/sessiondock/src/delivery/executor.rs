@@ -150,13 +150,12 @@ impl TargetResolver for ManagedResolver {
                 .iter()
                 .filter_map(|host| host.bound_target())
                 .filter(|target| target.uid() == uid);
-            let target = match matches.next() {
-                Some(_) if matches.next().is_some() => return Err(unlinked()),
-                Some(target) => target,
-                None => self
-                    .fork_target(&observed, uid)
-                    .await
-                    .ok_or_else(unlinked)?,
+            let process_target = self.process_target(&observed, uid).await;
+            let target = match (process_target, matches.next()) {
+                (Some(target), _) => target,
+                (None, Some(_)) if matches.next().is_some() => return Err(unlinked()),
+                (None, Some(target)) => target,
+                (None, None) => return Err(unlinked()),
             };
             if target.origin_launch_id().is_some() {
                 let lifecycle = self.lifecycle.as_ref().ok_or_else(unlinked)?;
@@ -178,19 +177,23 @@ impl TargetResolver for ManagedResolver {
 }
 
 impl ManagedResolver {
-    /// The ancestor-bound host of a Codex rollback branch, by the shared
-    /// `fork_host` rule over the current list and a TTL-shared process scan.
-    async fn fork_target<'a>(
+    /// Prefer the TUI actually holding the rollout after /new or a fork to
+    /// a second resume that declares this SID but is waiting for its lock.
+    async fn process_target<'a>(
         &self,
         observed: &'a crate::runtime::RuntimeSnapshot,
         uid: &str,
     ) -> Option<&'a ptyhost_client::BoundTarget> {
+        if !uid.starts_with("codex:") {
+            return None;
+        }
         let scanner = self.proc_scan.as_ref()?;
         let document = self.reader.run(|store| store.list_recent()).await.ok()?;
         let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
-        let scan = scanner.snapshot(false).await.ok()?;
+        let scan = scanner.snapshot(true).await.ok()?;
         observed
-            .fork_host(&scan.scan, &sessions, uid)?
+            .codex_process_host(&scan.scan, &sessions, uid)
+            .or_else(|| observed.fork_host(&scan.scan, &sessions, uid))?
             .bound_target()
     }
 }
