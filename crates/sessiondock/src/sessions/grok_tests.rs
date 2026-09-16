@@ -171,7 +171,7 @@ fn fallback_uses_correct_file_mtime_never_native_record_timestamps() {
             timestamp(seconds * 1_000_000_000)
         );
         assert_eq!(result["meta"]["updated"], result["meta"]["created"]);
-        assert_eq!(result["meta"]["title"], "session-");
+        assert_eq!(result["meta"]["title"], "新建 Grok 会话");
     }
 }
 

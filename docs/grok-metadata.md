@@ -9,7 +9,7 @@ visible. No CLI is launched and no native files are created by the reader.
 | Metadata | Selection |
 | --- | --- |
 | `sid` | `info.id`, otherwise session directory name |
-| `title` | `generated_title`, otherwise `session_summary`, otherwise first eight directory-name characters; collapse whitespace, truncate after 110 Unicode characters and append `…` when needed |
+| `title` | `generated_title`, otherwise `session_summary`, otherwise `新建 Grok 会话` (the pending-session label). Python still falls back to the first eight directory-name characters (DELTA). Collapse whitespace, truncate after 110 Unicode characters and append `…` when needed |
 | `cwd` | `info.cwd`, otherwise percent-decode the parent directory name as UTF-8 with replacement; `+` stays literal |
 | `created` | Normalize `created_at`, otherwise fallback file mtime |
 | `updated` | Normalize the first truthy value of `last_active_at` / `updated_at`, otherwise fallback file mtime |
@@ -23,6 +23,19 @@ First and last transcript-message timestamps never replace summary metadata.
 A nonempty whitespace-only generated title is selected before whitespace
 collapse, yielding an empty displayed title.
 The decoded cwd is display metadata; it grants no filesystem access.
+
+## The session preamble
+
+Grok CLI writes the instructions as the first `chat_history.jsonl` record:
+`{"type":"system","content":"You are Grok …"}`. Real sessions use `type:
+system` only for that preamble (always offset 0, no `synthetic_reason`).
+The projection skips it, same as `synthetic_reason` users and
+`timeline_protocol` envelopes; it is not a conversation turn and does not
+count toward the message total. Python still emits the record as role
+`system` (DELTA). Unit case:
+`sessions::providers::tests::grok_system_preamble_is_not_a_conversation_message`;
+`tests/advanced_parity.py` keeps a synthetic `Grok system notice` in the
+fixture and asserts it is absent from the Rust view.
 
 ## The `user_query` envelope
 
@@ -92,7 +105,8 @@ paid CLIs, production hosts, or active sessions.
 Rust tests cover optional chat stamps, stable directory UID, metadata/cursor
 separation, frozen search snapshots, independent mtime fallbacks, bounded
 discovery, the whole-directory size, malformed/oversized summaries,
-permissions and symlinks. Grok `run_terminal_command` results start with an
+permissions and symlinks, hiding the `type: system` preamble, and the
+untitled `新建 Grok 会话` fallback. Grok `run_terminal_command` results start with an
 `exit: N` header (one space before the number);
 it is not an exit code, so such results carry `exit_code: null` and
 `error: false`. The

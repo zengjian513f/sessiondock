@@ -992,7 +992,7 @@ fn grok_rows_come_from_summary_json_with_python_fallbacks() {
     };
     let summary = summarize(&input);
     assert_eq!(summary.sid, "grok-session-one");
-    assert_eq!(summary.title, "grok-ses");
+    assert_eq!(summary.title, "新建 Grok 会话");
     assert_eq!(summary.cwd, "/synthetic/中文");
     assert_eq!(
         summary.created, "2026-09-10T00:26:40.000Z",
@@ -1011,7 +1011,7 @@ fn grok_invalid_summary_is_unsupported_but_still_a_row() {
         summary.unsupported.as_deref(),
         Some("Grok summary.json 不是完整有效的 JSON")
     );
-    assert_eq!(summary.title, "grok-ses");
+    assert_eq!(summary.title, "新建 Grok 会话");
     let summary = summarize_bytes("grok", grok_path(), b"", Some(br#"{"info": []}"#));
     assert_eq!(
         summary.unsupported.as_deref(),

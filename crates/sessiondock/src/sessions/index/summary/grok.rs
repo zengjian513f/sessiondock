@@ -60,7 +60,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let sid = text_if_truthy(&base["id"]).unwrap_or_else(|| directory.clone());
     let title = text_if_truthy(&info["generated_title"])
         .or_else(|| text_if_truthy(&info["session_summary"]))
-        .unwrap_or_else(|| directory.chars().take(8).collect());
+        .unwrap_or_else(|| crate::sessions::providers::grok_untitled_title().to_owned());
     let cwd = text_if_truthy(&base["cwd"]).unwrap_or_else(|| unquote(&project));
     // Chat mtime, or the summary's when the chat does not exist yet.
     let fallback_mtime = input

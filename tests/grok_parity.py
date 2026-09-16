@@ -36,6 +36,13 @@ INFLIGHT_ROWS = [
      "prompt_index": 10},
     {"type": "user", "content": "The user was away:\n<user_query>\n保留原样\n</user_query>", "prompt_index": 11},
 ]
+UNTITLED_TITLE = "新建 Grok 会话"
+PREAMBLE = (
+    "You are Grok 4.6 released by xAI. You are an interactive CLI tool that helps users "
+    "with software engineering tasks. Your main goal is to complete the user's request, "
+    "denoted within the <user_query> tag.\n<work_policy>\nKeep every explicit requirement."
+)
+
 INFLIGHT_TEXTS = [
     "不要显示任何续写状况。显示最新那个会话就行。",
     "如果有多个提交，amend合并。",
@@ -73,6 +80,10 @@ def build(root):
         # inside ordinary text is not an envelope.
         "inflight": ({"generated_title": "In-flight envelopes"},
                      b"".join(encoded(row) for row in INFLIGHT_ROWS)),
+        "untitled": ({"info": {"id": "untitled-id", "cwd": "/synthetic/untitled"}},
+                     encoded({"type": "system", "content": PREAMBLE})
+                     + encoded({"type": "user", "content": "<user_query>\nhello from untitled\n</user_query>",
+                                "prompt_index": 1})),
     }
     for name, (summary, chat) in cases.items():
         path = root / "grok/%2Fsynthetic%2F%E4%B8%AD%E6%96%87+project" / name
@@ -116,12 +127,20 @@ def parity(corpus, cases, base, opener, python_source):
         assert meta["size"] == size and "size_scope" not in meta, (meta["size"], size)
         if not chat.exists() or not chat.stat().st_size:
             assert batch["messages"] == [] and batch["end"] == batch["start"] == 0
+        if name in ("fallback", "numeric", "updated", "untitled"):
+            assert meta["title"] == UNTITLED_TITLE, (name, meta["title"])
+        if name == "untitled":
+            texts = [message["text"] for message in batch["messages"]]
+            assert texts == ["hello from untitled"], texts
+            assert all("You are Grok" not in (message.get("text") or "") for message in batch["messages"])
         if adapter:
             expected = adapter.session_meta(path)
             for field in ("uid", "source", "sid", "title", "cwd", "created", "updated", "path", "model", "branch"):
                 old, new = expected.get(field), meta.get(field)
                 if field in ("created", "updated"):
                     old, new = normalized({"ts": old}).get("ts"), normalized({"ts": new}).get("ts")
+                if field == "title" and new == UNTITLED_TITLE and old == path.name[:8]:
+                    continue  # documented DELTA: untitled fallback is 新建 Grok 会话, not UUID[:8]
                 assert old == new, (name, field, old, new)
             expected_messages, end = adapter.read(str(path))
             assert end == batch["end"]
@@ -131,7 +150,8 @@ def parity(corpus, cases, base, opener, python_source):
                 # Rust preserves it. Metadata timestamps above are compared.
                 fields.pop("ts", None)
                 return fields
-            assert [body(message) for message in expected_messages] == [body(message) for message in batch["messages"]]
+            python_messages = [message for message in expected_messages if message.get("role") != "system"]
+            assert [body(message) for message in python_messages] == [body(message) for message in batch["messages"]]
             assert expected["size"] == size, (name, expected["size"], size)
         if name == "inflight":
             texts = [message["text"] for message in batch["messages"] if message.get("role") == "user"]
@@ -195,6 +215,13 @@ def browser_check(corpus, cases, base):
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
+            untitled = corpus.paths["untitled"]
+            untitled_item = page.locator(f'#side .item[data-uid="{uid(untitled)}"]')
+            untitled_item.click()
+            expect(untitled_item.locator(".t")).to_have_text(UNTITLED_TITLE)
+            expect(page.locator(".dtitle h2")).to_contain_text(UNTITLED_TITLE)
+            expect(page.locator("#msgs")).to_contain_text("hello from untitled")
+            expect(page.locator("#msgs")).not_to_contain_text("You are Grok")
             item = page.locator(f'#side .item[data-uid="{uid(path)}"]')
             item.click()
             expect(page.locator(".dtitle h2")).to_contain_text("Grok browser initial")
