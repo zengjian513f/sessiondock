@@ -32,7 +32,7 @@ const S = {sel: 'claude:fixture', agent: null, queued: new Map(),
   outboxVersions: new Map(), retiredOutboxEpochs: new Set(), dismissedOutboxIds: new Map()};
 const cache = new Map();
 const viewKey = uid => uid;
-const SessionDockCapabilities = {allows: name => name === 'outbox'};
+const SessionDockCapabilities = {config: {conversation_send: false}, allows: name => name === 'outbox'};
 const sessiondockCli = uid => ({source: uid.split(':')[0], name: 'Claude',
   queuedMessageLabel: item => item.state === 'ambiguous' ? '状态待核对' : item.state});
 const store = {set: (key, value) => localStorage.setItem('sessiondock.' + key, JSON.stringify(value))};

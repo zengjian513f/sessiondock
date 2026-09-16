@@ -6,6 +6,27 @@
 `/api/meta`）形状不变，所以旧备份和新备份长得一样。不要把真实地址写进任何被跟踪的文件；
 真实清单只在未跟踪的 `deploy/targets.local.json`。
 
+## 从任意构建机执行
+
+当前工作区所在机器就是构建机；它与任何目标节点都没有默认对应关系。
+先运行 `hostname`，检查本机工具链和 `deploy/targets.local.json`。
+可迁移的清单应为每个固定目标填写明确的 SSH 别名（包括当前机器自身），
+`build.cargo` 使用 `~/.cargo/bin/cargo` 或当前机器实际可用的路径。
+使用当前机器上已安装测试依赖的 Python 运行部署命令；测试门及其子套件
+沿用该解释器，不切换回系统 `python3`。执行前用同一个解释器检查
+`python3 -c 'import playwright.sync_api'`，并按 [验证前提](validation.md#prerequisites)
+准备 Chromium。不要把某台机器的虚拟环境路径写进共享清单。
+`ssh: null` 只表示执行命令的本机，绝不表示“名称指定的机器”；复制工作区时
+必须重新检查，通常应改成该目标的 SSH 别名。SSH 端口来自别名配置或
+`ssh_port`，不能根据构建机或目标名称推断。
+
+Linux 节点及 Hub 可在 `extra.expected_hostname` 填写目标 `hostname` 的完整输出。
+部署 probe 会核对实际主机名，不一致则跳过该目标并使整轮失败，上传和重启均不会执行。
+先用 `python3 deploy/fleet_status.py` 检查连通性、节点标识和现有版本，
+再运行 `python3 deploy/deploy.py deploy --all`。Linux 产物在当前构建机编译一次；
+构建机的架构和 glibc 基线须兼容 Linux 目标，macOS/Windows 仍在目标机原生构建。
+不同构建机的独立 checkout 不共享部署锁，执行前须确认没有另一轮部署。
+
 ## 命令
 
 ```sh

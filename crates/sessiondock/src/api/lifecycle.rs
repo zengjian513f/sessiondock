@@ -508,10 +508,8 @@ struct ExternalProcesses {
     raw: bool,
     hosted: bool,
     tmux: bool,
-    /// A running lifecycle host whose Codex process moved from its declared
-    /// parent session into this exact fork. The durable host identity stays
-    /// unchanged; takeover can reuse its launch lease instead of starting a
-    /// competing `codex resume`.
+    /// A running lifecycle host whose Codex process owns this thread, even
+    /// after /new or a fork. Its immutable guard stays unchanged.
     managed_fork: Option<(String, String)>,
 }
 
@@ -579,7 +577,11 @@ async fn external_processes(state: &AppState, uid: &str) -> Result<ExternalProce
     let tmux = scan.scan.tree.in_tmux(&pids);
     let managed_fork = observed
         .as_ref()
-        .and_then(|snapshot| snapshot.fork_host(&scan.scan, &sessions, uid))
+        .and_then(|snapshot| {
+            snapshot
+                .codex_process_host(&scan.scan, &sessions, uid)
+                .or_else(|| snapshot.fork_host(&scan.scan, &sessions, uid))
+        })
         .and_then(|host| {
             let bound = host.bound_target()?;
             Some((host.summary.name.clone(), bound.instance_id().to_owned()))
@@ -714,7 +716,7 @@ pub async fn takeover(
         {
             let mut value = project(record);
             value["action"] = json!("reused");
-            value["followed_fork"] = json!(true);
+            value["reused_process"] = json!(true);
             return response(value, permit).await;
         }
     }

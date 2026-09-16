@@ -358,17 +358,16 @@ impl Store {
                 .ok_or_else(|| Failure::new(404, "submission_missing", "提交不存在"))?;
             row.phase = phase.into();
             row.result = result;
-            if phase == "sent" {
-                if let Some(draft) = doc.drafts.get_mut(key) {
-                    if let Some(value) = completed_editor_value(&doc.requests, key, &draft.value) {
-                        draft.value = value;
-                        draft.revision += 1;
-                    } else if revision == Some(draft.revision) {
-                        draft.revision += 1;
-                        let session = draft.value["session"].clone();
-                        draft.value =
-                            json!({"text":"","attachments":[],"quotes":[],"session":session});
-                    }
+            if phase == "sent"
+                && let Some(draft) = doc.drafts.get_mut(key)
+            {
+                if let Some(value) = completed_editor_value(&doc.requests, key, &draft.value) {
+                    draft.value = value;
+                    draft.revision += 1;
+                } else if revision == Some(draft.revision) {
+                    draft.revision += 1;
+                    let session = draft.value["session"].clone();
+                    draft.value = json!({"text":"","attachments":[],"quotes":[],"session":session});
                 }
             }
             Ok(())
@@ -413,10 +412,10 @@ impl Store {
             if !copies.is_array() {
                 *copies = json!([copies.clone()]);
             }
-            if let Some(items) = copies.as_array_mut() {
-                if !items.contains(&value) {
-                    items.push(value.clone());
-                }
+            if let Some(items) = copies.as_array_mut()
+                && !items.contains(&value)
+            {
+                items.push(value.clone());
             }
             // Restore only an empty server draft, never concatenate messages
             // from another page or restore the old sent-message archive.
@@ -450,8 +449,8 @@ impl Store {
                     .and_then(Value::as_array_mut),
             ) {
                 for item in items {
-                    if !item["uploaded"]["upload_id"].is_string() {
-                        if let Some(source) =
+                    if !item["uploaded"]["upload_id"].is_string()
+                        && let Some(source) =
                             snapshot["attachments"].as_array().and_then(|sources| {
                                 sources.iter().find(|source| {
                                     source["id"] == item["id"]
@@ -459,53 +458,57 @@ impl Store {
                                         && source["uploaded"]["upload_id"].is_string()
                                 })
                             })
-                        {
-                            item["uploaded"] = source["uploaded"].clone();
-                            old.revision += 1;
-                        }
+                    {
+                        item["uploaded"] = source["uploaded"].clone();
+                        old.revision += 1;
                     }
                 }
             }
             Ok(())
         })
     }
+    /// A staged upload still named by its draft, legacy evidence or an
+    /// unfinished submission must survive cleanup and explicit discards.
+    fn upload_referenced(doc: &Document, upload: &Upload) -> bool {
+        doc.drafts.get(&upload.key).is_some_and(|draft| {
+            draft.value["attachments"].as_array().is_some_and(|items| {
+                items
+                    .iter()
+                    .any(|a| a["uploaded"]["upload_id"] == upload.id)
+            })
+        }) || doc
+            .legacy
+            .get(&upload.key)
+            .and_then(Value::as_array)
+            .is_some_and(|copies| {
+                copies.iter().any(|copy| {
+                    let attachments = copy["attachments"].as_array().into_iter().flatten();
+                    let saved = copy["saved"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|row| row["attachments"].as_array().into_iter().flatten());
+                    attachments
+                        .chain(saved)
+                        .any(|item| item["uploaded"]["upload_id"] == upload.id)
+                })
+            })
+            || doc.requests.values().any(|request| {
+                request.key == upload.key
+                    && request.phase != "sent"
+                    && request.attachments.contains(&upload.id)
+            })
+    }
     pub fn retire_unreferenced_uploads(&self, cutoff: u64) -> Result<Vec<Upload>> {
         self.update(|doc| {
-            let referenced =
-                |upload: &Upload| {
-                    doc.drafts.get(&upload.key).is_some_and(|draft| {
-                        draft.value["attachments"].as_array().is_some_and(|items| {
-                            items
-                                .iter()
-                                .any(|a| a["uploaded"]["upload_id"] == upload.id)
-                        })
-                    }) || doc
-                        .legacy
-                        .get(&upload.key)
-                        .and_then(Value::as_array)
-                        .is_some_and(|copies| {
-                            copies.iter().any(|copy| {
-                                let attachments =
-                                    copy["attachments"].as_array().into_iter().flatten();
-                                let saved =
-                                    copy["saved"].as_array().into_iter().flatten().flat_map(
-                                        |row| row["attachments"].as_array().into_iter().flatten(),
-                                    );
-                                attachments
-                                    .chain(saved)
-                                    .any(|item| item["uploaded"]["upload_id"] == upload.id)
-                            })
-                        })
-                        || doc.requests.values().any(|request| {
-                            request.key == upload.key
-                                && request.phase != "sent"
-                                && request.attachments.contains(&upload.id)
-                        })
-                };
             let retired: Vec<_> = doc
                 .uploads
                 .values()
-                .filter(|u| u.published.is_none() && u.created_at < cutoff && !referenced(u))
+                .filter(|u| {
+                    u.published.is_none()
+                        && u.created_at < cutoff
+                        && !Self::upload_referenced(doc, u)
+                })
                 .cloned()
                 .collect();
             for upload in &retired {
@@ -513,6 +516,33 @@ impl Store {
                     .remove(&Self::request_key(&upload.key, &upload.id));
             }
             Ok(retired)
+        })
+    }
+    /// Forget a staged upload the editor removed. Published bytes belong to
+    /// the session directory, and a draft or unfinished submission that still
+    /// names the upload keeps it: the caller must save the draft first.
+    pub fn discard_upload(&self, key: &str, id: &str) -> Result<bool> {
+        self.update(|doc| {
+            let name = Self::request_key(key, id);
+            let Some(upload) = doc.uploads.get(&name) else {
+                return Ok(false);
+            };
+            if upload.published.is_some() {
+                return Err(Failure::new(
+                    409,
+                    "attachment_published",
+                    "附件已发布到会话目录，不能丢弃",
+                ));
+            }
+            if Self::upload_referenced(doc, upload) {
+                return Err(Failure::new(
+                    409,
+                    "attachment_referenced",
+                    "草稿或未完成的发送仍引用该附件",
+                ));
+            }
+            doc.uploads.remove(&name);
+            Ok(true)
         })
     }
     pub fn legacy(&self, key: &str) -> Value {
@@ -777,6 +807,107 @@ mod upload_tests {
                 .sha256,
             "a"
         );
+    }
+    #[test]
+    fn discard_forgets_only_free_staged_uploads() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        let upload = |id: &str, published: Option<Value>| Upload {
+            key: "a".into(),
+            id: id.into(),
+            name: "x".into(),
+            mime: "text/plain".into(),
+            size: 1,
+            published,
+            sha256: id.into(),
+            created_at: 0,
+        };
+        for id in ["free", "drafted", "sending"] {
+            store.note_upload(upload(id, None)).unwrap();
+        }
+        store
+            .note_upload(upload("published", Some(json!({"path":"/p"}))))
+            .unwrap();
+        store
+            .save(
+                "a",
+                0,
+                json!({"text":"","attachments":[{"id":"d","uploaded":{"upload_id":"drafted"}}],"quotes":[]}),
+            )
+            .unwrap();
+        store
+            .begin(
+                "a",
+                "req",
+                json!({"text":"","attachments":[{"upload_id":"sending"}],"quotes":[]}),
+            )
+            .unwrap();
+        assert!(store.discard_upload("a", "free").unwrap());
+        assert!(!store.discard_upload("a", "free").unwrap());
+        assert!(!store.discard_upload("other", "drafted").unwrap());
+        assert_eq!(
+            store.discard_upload("a", "drafted").unwrap_err().code,
+            "attachment_referenced"
+        );
+        assert_eq!(
+            store.discard_upload("a", "sending").unwrap_err().code,
+            "attachment_referenced"
+        );
+        assert_eq!(
+            store.discard_upload("a", "published").unwrap_err().code,
+            "attachment_published"
+        );
+        // Saving the draft without the attachment releases it.
+        let current = store.draft("a");
+        store
+            .save(
+                "a",
+                current.revision,
+                json!({"text":"","attachments":[],"quotes":[]}),
+            )
+            .unwrap();
+        assert!(store.discard_upload("a", "drafted").unwrap());
+        let reopened = Store::open(temp.path()).unwrap();
+        assert!(reopened.upload("a", "free").is_err());
+        assert!(reopened.upload("a", "drafted").is_err());
+        assert!(reopened.upload("a", "sending").is_ok());
+        assert!(reopened.upload("a", "published").is_ok());
+    }
+    #[test]
+    fn uploads_follow_the_canonical_draft_key_across_a_link() {
+        // The HTTP layer keys drafts and staged uploads by the same resolved
+        // identity, so an upload staged before a pending launch is bound to
+        // its native session stays reachable through the alias afterwards.
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        let launch = "launch:record";
+        store
+            .save(
+                store.canonical(launch).as_str(),
+                0,
+                json!({"text":"typed early"}),
+            )
+            .unwrap();
+        store
+            .note_upload(Upload {
+                key: store.canonical(launch),
+                id: "early".into(),
+                name: "x".into(),
+                mime: "text/plain".into(),
+                size: 1,
+                published: None,
+                sha256: "early".into(),
+                created_at: 0,
+            })
+            .unwrap();
+        // The native UID had no draft of its own: it becomes an alias of the
+        // launch key, exactly as `Conversations::identity` links it.
+        store.link("claude:native", launch).unwrap();
+        let key = store.canonical("claude:native");
+        assert_eq!(key, launch);
+        assert_eq!(store.draft(&key).value["text"], "typed early");
+        assert_eq!(store.upload(&key, "early").unwrap().id, "early");
+        assert_eq!(store.canonical(launch), launch);
     }
     #[test]
     fn cleanup_retains_drafts_unknown_writes_and_published_metadata() {

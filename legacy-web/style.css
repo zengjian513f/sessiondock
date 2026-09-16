@@ -1699,6 +1699,12 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   color: var(--muted); font: 17px/1 sans-serif; cursor: pointer;
 }
 .draft-remove:hover { background: var(--hover); color: var(--text); }
+.draft-retry {
+  display: inline-block; margin-top: 3px; padding: 1px 7px; border: 1px solid #e5484d;
+  border-radius: 5px; background: transparent; color: #e5484d; font-size: 10.5px; cursor: pointer;
+}
+.draft-retry:hover { background: var(--hover); }
+.draft-retry:disabled { opacity: .5; cursor: default; }
 .draft-quote { align-items: flex-start; width: min(520px, 100%); max-width: 100%; padding: 7px 30px 7px 9px; }
 .draft-quote > span { flex: none; color: var(--muted); font-size: 18px; line-height: 1.3; }
 .draft-quote textarea {

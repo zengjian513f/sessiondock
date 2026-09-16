@@ -69,6 +69,7 @@ impl WorkerContext {
 
 /// The pending instance is running and the injection task
 /// is started; the returned object is the route's `worker`.
+#[allow(clippy::too_many_arguments)] // Explicit launch and revision guards at the route boundary.
 pub async fn launch(
     ctx: &WorkerContext,
     report: &Report,

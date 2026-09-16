@@ -39,7 +39,7 @@ BASE = {
 }
 # Present in current lib.rs / state.rs; older binaries omit them.
 OPTIONAL = {"timeline_pin": "metadata", "terminal_input": "terminal", "files_write": None, "trash": None,
-            "session_stop": "terminal_create", "bug_report": None}
+            "session_stop": "terminal_create", "bug_report": None, "conversation_send": None}
 
 
 def fail(area, why, body=""):

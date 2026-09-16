@@ -16,6 +16,7 @@ linked from [the documentation index](README.md).
 | Terminal transport | POST `/api/term/claim`, `/api/term/send`, `/api/term/scroll`; WS `/api/term/attach` | capability-gated |
 | Delivery | POST `/api/session/send`, `/api/session/draft-status`, `/api/session/outbox/retry`, `/api/session/outbox/discard` | capability-gated |
 | Files and media | POST `/api/session/resolve-files`, `/api/session/attachment`, `/api/session/files/action`, `/api/session/files/upload`; GET `/api/session/file`, `/api/session/files`, `/api/media/{token}` | capability-gated |
+| Conversation drafts | GET/POST `/api/session/conversation`; POST `/api/session/conversation/{send,check,restart,attachment,attachment/discard,import}`; GET `/api/session/conversation/drafts` | capability-gated |
 | Trash | DELETE `/api/session/{uid}`; POST `/api/sessions/delete`, `/api/trash/restore`, `/api/trash/purge`; GET `/api/trash` | capability-gated |
 | Diagnostics | POST `/api/audit/browser`, `/api/bug-report`; `debug_run` filtering | capability-gated |
 | Hub | node registry and display settings; authenticated node proxy; HTTP/SSE/NDJSON/WS forwarding; UID/reference namespace conversion | hub mode |

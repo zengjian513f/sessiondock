@@ -367,7 +367,7 @@ async function fetchTermList() {
   const requestSeq = ++termListRequestSeq;
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
-    ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}` : '')),
+    ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}\t${x.current_uid || ''}` : '')),
     ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}` : '')),
   ].join('\n');
   const before = fingerprint();
@@ -505,6 +505,8 @@ function sessionTermMeta(uid) {
  *  控制台。 */
 function termBindingServes(boundUid, uid) {
   if (!boundUid || !uid) return false;
+  const current = (T.list || []).filter(row => row.uid === boundUid && row.current_uid);
+  if (current.length === 1) return current[0].current_uid === uid;
   if (boundUid === uid) return true;
   if (typeof forkAncestors !== 'function') return false;
   const session = sessionTermMeta(uid);
@@ -520,6 +522,18 @@ function termBindingServes(boundUid, uid) {
 function linkedTermSession(uid, { followReplacement = false } = {}) {
   const panes = [...(T.list || []), ...(T.pending || [])];
   if (SessionDockCapabilities.config.backend === 'rust') {
+    const current = panes.filter(pane => pane.instance_id && pane.current_uid === uid);
+    if (current.length === 1) return {name: current[0].name, uid};
+    if (current.length > 1) return null;
+    const moved = panes.filter(pane => pane.instance_id && pane.uid === uid
+      && pane.current_uid && pane.current_uid !== uid);
+    // Only a proven fork may carry the old draft along; /new is unrelated.
+    if (moved.length) {
+      const next = moved.length === 1 ? sessionTermMeta(moved[0].current_uid) : null;
+      return followReplacement && next && typeof forkAncestors === 'function'
+        && forkAncestors(next).some(({row}) => row?.uid === uid)
+        ? {name: moved[0].name, uid: moved[0].current_uid} : null;
+    }
     const exactFor = target => panes.filter(pane => pane.instance_id && (pane.uid === target
       || (pane.record_id && pane.launch_id && !pane.stale && pendingUid(pane.name) === target)));
     const leafOf = target => (typeof forkLeafUid === 'function' ? forkLeafUid(target) : target);
@@ -868,10 +882,12 @@ function renderBugReportItems() {
   renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
     disabled: bugReportSending,
     onInsert: number => insertComposerReference(number, $('#bug-report-description')),
+    onRetry: attachment => stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID,
+      {node: bugReportNode(), render: renderBugReportItems}),
     onRemove: id => {
       if (bugReportSending) return;
-      removeDraftAttachment(bugReportDraftObject(), id);
-      persistComposerDraft(BUG_REPORT_DRAFT_UID);
+      const removed = removeDraftAttachment(bugReportDraftObject(), id);
+      discardStagedAttachment(removed, persistComposerDraft(BUG_REPORT_DRAFT_UID));
       renderBugReportItems();
     },
   });
@@ -881,19 +897,28 @@ function renderBugReportItems() {
 }
 
 function addBugReportFiles(files) {
-  addDraftFiles(bugReportDraftObject(), files);
+  const draft = bugReportDraftObject();
+  const before = new Set(draft.attachments);
+  addDraftFiles(draft, files);
   persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  for (const attachment of draft.attachments) {
+    if (!before.has(attachment)) {
+      stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID, {node: bugReportNode(), render: renderBugReportItems});
+    }
+  }
   renderBugReportItems();
 }
 
 function clearBugReportDraft() {
-  for (const attachment of bugReportDraftObject().attachments) {
+  const draft=bugReportDraftObject(), dropped=draft.attachments;
+  for (const attachment of dropped) {
     if (attachment.preview) URL.revokeObjectURL(attachment.preview);
+    if (attachment.cancelUpload) attachment.cancelUpload();
   }
-  const draft=bugReportDraftObject();
   draft.text='';draft.attachments=[];draft.quotes=[];draft.nextAttachmentNumber=1;
   delete draft.requestId;delete draft.requestText;
-  persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  const saved=persistComposerDraft(BUG_REPORT_DRAFT_UID);
+  for (const attachment of dropped) discardStagedAttachment(attachment, saved);
   renderBugReportItems();
 }
 
@@ -1117,6 +1142,7 @@ $('#bug-report-form').onsubmit = async event => {
     let attachmentId = null;
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
+      if (attachments[i].staging) await attachments[i].staging;
       const result = await uploadComposerAttachment(
         attachments[i], BUG_REPORT_DRAFT_UID, attachmentId, { node, render: renderBugReportItems });
       attachmentId ||= result.attachment_id;
@@ -1492,7 +1518,7 @@ function showNewSessionStage(info) {
   // create 返回后 term/list 可能还没拉完；先把服务端刚确认的新 tmux 放进本地
   // pending，详情页的终端切换、输入框和附件可以立即使用。
   const added = !T.pending.some(x => x.name === info.name);
-  if (added) T.pending.push({ ...info, started: Date.now() / 1000 });
+  if (added) T.pending.push({ ...info, started: pendingStartedAt(info) });
   cancelSearch(true);
   S.sel = pendingUid(info.name);
   rememberComposerSession(composerDraft(S.sel), info);
@@ -3278,8 +3304,11 @@ function hydrateComposerDraft(uid) {
     try {
       const legacy = await importLegacyComposer(uid);
       const row = await readServerComposerDraft(uid);
-      // An edit based on an older snapshot must keep its CAS revision.
-      if (!draft.editVersion) draft.revision = row.revision;
+      // A page that has never saved adopts the server revision even when
+      // typing began before this read returned; keeping revision 0 would get
+      // every later save refused. A page that has saved keeps its CAS
+      // baseline, and the save path rebases on a conflict.
+      if (!draft.savedVersion) draft.revision = row.revision;
       if (uid.startsWith('report:') && row.value?.session?.kind==='bug-report'
           && row.value.session.uid && !row.value.session.uid.startsWith('report:')) {
         draft.handedOffSession=row.value.session;return;
@@ -3300,6 +3329,8 @@ function hydrateComposerDraft(uid) {
             if (item.kind === 'image') item.preview = URL.createObjectURL(item.file);
           }
         }));
+      } else if (draft.editVersion && !draft.savedVersion && row.value && !row.value.removed) {
+        mergeEarlyComposerEdit(draft, restoreComposerDraftRecord(row.value), uid);
       }
       draft.storageError = '';
     } catch (error) {
@@ -3313,6 +3344,68 @@ function hydrateComposerDraft(uid) {
   composerHydrations.set(uid, task);
   return task;
 }
+/** Keystrokes landed before the first server read returned. The server text,
+ *  attachments and quotes come first, the early input follows, and the merge
+ *  replaces the queued save so the server never loses either side. */
+function mergeEarlyComposerEdit(draft, server, uid) {
+  if (server.text && !draft.text.startsWith(server.text)) {
+    draft.text = server.text + (draft.text ? '\n' + draft.text : '');
+  }
+  draft.attachments = [...server.attachments,
+    ...draft.attachments.filter(a => !server.attachments.some(b => b.id === a.id))];
+  draft.quotes = [...server.quotes, ...draft.quotes.filter(q => !server.quotes.some(s => s.id === q.id))];
+  draft.nextAttachmentNumber = Math.max(draft.nextAttachmentNumber || 1, server.nextAttachmentNumber || 1);
+  if (!draft.session && server.session) draft.session = server.session;
+  ensureComposerAttachmentNumbers(draft);
+  queueComposerSave(draft, uid);
+}
+/** Replace the editor with a newer server row. Attachment objects this page
+ *  already holds stay the same objects, so their File bytes, previews and
+ *  in-flight uploads survive; only their server-side fields are refreshed. */
+function adoptServerDraft(draft, row) {
+  const next = restoreComposerDraftRecord(row.value);
+  next.attachments = next.attachments.map(a => {
+    const local = draft.attachments.find(b => a.id === b.id);
+    if (!local) return a;
+    local.number = a.number;
+    if (a.kind) local.kind = a.kind;
+    if (!local.uploaded?.upload_id && a.uploaded) local.uploaded = a.uploaded;
+    return local;
+  });
+  for (const a of draft.attachments) if (a.preview && !next.attachments.some(b => a.id === b.id)) URL.revokeObjectURL(a.preview);
+  for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
+  Object.assign(draft, next, {revision: row.revision, editVersion: draft.editVersion,
+    savedVersion: draft.editVersion, storageError: ''});
+  return draft;
+}
+let composerFollowBusy = false, composerFollowedAt = 0;
+/** An idle page follows a newer server draft: the device that is typing wins
+ *  and the others catch up. Nothing is adopted over unsaved local edits.
+ *  `revision` is the server revision a poll reported; null forces a read,
+ *  throttled to once a second. */
+async function followServerDraft(uid, revision = null) {
+  const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
+  if (!draft || !conversationSendEnabled() || draft.loading || draft.loadFailed || draft.handedOffSession
+      || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
+      || draft.editVersion !== draft.savedVersion) return false;
+  if (revision !== null && revision <= draft.revision) return false;
+  if (revision === null && performance.now() - composerFollowedAt < 1000) return false;
+  composerFollowBusy = true;
+  const version = draft.editVersion;
+  try {
+    const row = await readServerComposerDraft(uid);
+    composerFollowedAt = performance.now();
+    if (!row || row.revision <= draft.revision || draft.editVersion !== version
+        || composerSaving.has(draft) || composerSending) return false;
+    adoptServerDraft(draft, row);
+    refreshComposerDraft(owner); syncComposerUnloadProtection();
+    return true;
+  } catch {
+    return false; // The next poll, focus or switch reads again.
+  } finally {
+    composerFollowBusy = false;
+  }
+}
 function refreshComposerDraft(uid) {
   if (composerUid === uid) {
     const ta = $('#cinput'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
@@ -3325,13 +3418,16 @@ function refreshComposerDraft(uid) {
 }
 const composerPendingSaves=new Map();
 const composerSaving=new Set();
+function queueComposerSave(draft, uid) {
+  composerPendingSaves.set(draft,{uid,version:++draft.editVersion,value:composerDraftRecord(draft,uid)});
+  syncComposerUnloadProtection();
+}
 function persistComposerDraft(uid = composerUid) {
   uid = composerDraftOwner(uid);
   const draft = composerDrafts.get(uid);
   if (!draft) return Promise.resolve(false);
   if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return Promise.resolve(false);
-  composerPendingSaves.set(draft,{uid,version:++draft.editVersion,value:composerDraftRecord(draft,uid)});
-  syncComposerUnloadProtection();
+  queueComposerSave(draft, uid);
   if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
   composerSaving.add(draft);
   const task=(async () => {
@@ -3341,7 +3437,14 @@ function persistComposerDraft(uid = composerUid) {
       if (!conversationSendEnabled() || draft.loadFailed) throw new Error(draft.storageError || '草稿保存未启用');
       while (composerPendingSaves.has(draft)) {
         const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
-        const data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        let data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        for (let attempt=0;data.code==='draft_revision' && attempt<2;attempt++) {
+          // Another page saved first. This page is the one still editing, so
+          // its input wins: rebase onto the server revision and save again.
+          const row=await readServerComposerDraft(pending.uid);
+          if (row.revision>draft.revision) draft.revision=row.revision;
+          data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        }
         if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
         if (data.error) throw new Error(data.error);
         draft.revision=data.draft.revision;draft.savedVersion=pending.version;draft.storageError='';
@@ -3363,7 +3466,7 @@ let composerUnloadProtected = false;
 function syncComposerUnloadProtection() {
   const pending = [...composerDrafts.values()].some(draft => draft.storageError
     || draft.editVersion > draft.savedVersion
-    || draft.attachments.some(item => !item.uploaded?.upload_id));
+    || draft.attachments.some(item => !item.uploaded?.upload_id && item.file instanceof Blob));
   if (pending === composerUnloadProtected) return;
   composerUnloadProtected = pending;
   if (pending) window.addEventListener('beforeunload', composerUnloadWarning);
@@ -3406,10 +3509,25 @@ function deleteComposerDraftStorage(uid) {
   else localStorage.removeItem(STORAGE_PREFIX + 'composerDraftUids');
 }
 
+/** Epoch seconds a pending row started: the receipt's `started`, else the
+ *  row's own `created`, else `fallback`. A re-render must never invent a new
+ *  one, or the row keeps changing its sidebar position. */
+function pendingStartedAt(info, fallback = Date.now() / 1000) {
+  const started = Number(info?.started);
+  if (Number.isFinite(started) && started > 0) return started;
+  const created = Date.parse(info?.created || '');
+  return Number.isFinite(created) ? created / 1000 : fallback;
+}
+
 function rememberComposerSession(draft, info) {
+  const previous = draft.session?.name === info.name ? Number(draft.session.started) : 0;
   draft.session = Object.fromEntries(['uid', 'name', 'source', 'cwd', 'node_id', 'node_name',
     'record_id', 'launch_id', 'instance_id', 'title', 'kind', 'report_id']
     .filter(key => info[key] != null).map(key => [key, info[key]]));
+  // Once term/list drops the exited instance, the draft-retained sidebar row is
+  // sorted by this stamp; keep the first one recorded for the same instance.
+  const started = previous > 0 ? previous : pendingStartedAt(info, 0);
+  if (started > 0) draft.session.started = started;
 }
 
 function syncComposerDraftBindings() {
@@ -3649,6 +3767,7 @@ function switchComposerDraft(uid) {
   ta.value = draft?.text || '';
   renderComposerItems();
   autoGrow(ta);
+  if (uid) followServerDraft(uid); // Already hydrated: pick up edits saved elsewhere.
 }
 
 function renderComposer() {
@@ -3822,7 +3941,7 @@ function closeAttachMenu() {
 }
 
 // 附件卡片同时服务对话输入框和缺陷报告框：两者的草稿结构、编号与上传流程一致。
-function renderAttachmentCards(box, attachments, { onInsert, onRemove, disabled = false }) {
+function renderAttachmentCards(box, attachments, { onInsert, onRemove, onRetry = null, disabled = false }) {
   box.replaceChildren();
   for (const attachment of attachments) {
     const card = el('div', `draft-card ${attachment.status || ''}`);
@@ -3849,9 +3968,17 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, disabled 
       : ({ image: '图片', video: '视频', audio: '音频' }[attachment.kind]);
     const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file.size)}`;
     meta.textContent = attachment.status === 'uploading' ? `${summary} · ${attachment.progress || 0}%`
-      : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
-        : summary;
+      : attachment.status === 'queued' ? `${summary} · 等待上传`
+        : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
+          : summary;
     info.append(name, meta);
+    if (attachment.status === 'failed' && onRetry && attachment.file instanceof Blob) {
+      const retry = el('button', 'draft-retry', '重试');
+      retry.type = 'button'; retry.title = '重新上传';
+      retry.disabled = disabled;
+      retry.onclick = e => { e.stopPropagation(); onRetry(attachment); };
+      info.appendChild(retry);
+    }
     const remove = el('button', 'draft-remove', '×');
     remove.type = 'button';
     remove.title = remove.ariaLabel = attachment.cancelUpload ? '取消上传' : '移除附件';
@@ -3868,7 +3995,8 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, disabled 
 
 function syncComposerSendState() {
   const draft=composerDrafts.get(composerUid);
-  $('#csend').disabled=composerSending || !!draft?.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
+  $('#csend').disabled=(typeof staleBuildShown !== 'undefined' && staleBuildShown)
+    || composerSending || !!draft?.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
 }
 
 async function reconcileComposerSubmission(uid) {
@@ -3879,16 +4007,9 @@ async function reconcileComposerSubmission(uid) {
   const result=await priorComposerSubmission(uid,id);
   if (result?.state!=='sent' || !result.draft || result.draft.revision<draft.revision
       || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
-  const next=restoreComposerDraftRecord(result.draft.value);
   // A later attachment may be saved as metadata while its bytes still live in
   // this page. A receipt refresh must preserve that File and its preview.
-  for (const a of next.attachments) {
-    const local=draft.attachments.find(b=>a.id===b.id);
-    if (local) {a.file=local.file;a.preview=local.preview;a.status=local.status;}
-  }
-  for (const a of draft.attachments) if (a.preview && !next.attachments.some(b=>a.id===b.id)) URL.revokeObjectURL(a.preview);
-  for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
-  Object.assign(draft,next,{revision:result.draft.revision,editVersion:version,savedVersion:version,storageError:''});
+  adoptServerDraft(draft,result.draft);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
 let composerQuestionProbeBusy=false;
@@ -3905,6 +4026,7 @@ setInterval(async () => {
       const question=data.code==='cli_question';
       if (draft.cliQuestion!==question) {draft.cliQuestion=question;if (composerUid===uid) renderComposerItems();}
     }
+    if (Number.isInteger(data.draft_revision)) await followServerDraft(uid,data.draft_revision);
   } catch { /* The SEND endpoint independently checks the current question. */ }
   finally {
     try {await reconcileComposerSubmission(uid);} catch { /* A missing/in-progress receipt keeps the editor intact. */ }
@@ -3921,6 +4043,7 @@ function renderComposerItems() {
   }
   renderAttachmentCards(box, draft.attachments, {
     disabled: composerSending,
+    onRetry: attachment => stageComposerAttachment(attachment, composerUid),
     onInsert: insertComposerReference,
     onRemove: removeComposerAttachment,
   });
@@ -3964,15 +4087,21 @@ function renderComposerItems() {
   renderSavedComposerInputs(box, draft, composerUid);
   if (draft.cliQuestion) box.append(el('div','draft-save-error','CLI 等待选择，请切换终端回答'));
   $('#cinput').disabled = !!draft.loading;
-  $('#cadd').disabled = composerSending || !!draft.loading;
-  $('#csend').disabled = composerSending || !!draft.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
+  $('#cadd').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
+    || composerSending || !!draft.loading;
+  $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
+    || composerSending || !!draft.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
 }
 
 function addComposerFiles(files) {
   const draft = composerDraft();
   if (!draft) return;
+  const before = new Set(draft.attachments);
   addDraftFiles(draft, files);
   persistComposerDraft();
+  for (const attachment of draft.attachments) {
+    if (!before.has(attachment)) stageComposerAttachment(attachment, composerUid);
+  }
   renderComposerItems();
 }
 
@@ -4070,16 +4199,17 @@ function insertComposerReference(number, ta = $('#cinput')) {
 
 function removeDraftAttachment(draft, id) {
   const at = draft.attachments.findIndex(x => x.id === id);
-  if (at < 0) return false;
+  if (at < 0) return null;
   const [removed] = draft.attachments.splice(at, 1);
   if (removed.preview) URL.revokeObjectURL(removed.preview);
-  return true;
+  if (removed.cancelUpload) removed.cancelUpload();
+  return removed;
 }
 
 function removeComposerAttachment(id, draft = composerDraft()) {
   if (!draft || composerSending) return;
-  removeDraftAttachment(draft, id);
-  persistComposerDraft();
+  const removed = removeDraftAttachment(draft, id);
+  discardStagedAttachment(removed, persistComposerDraft());
   renderComposerItems();
 }
 
@@ -4178,6 +4308,50 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
   } finally {delete attachment.cancelUpload;}
 }
 
+const COMPOSER_UPLOAD_LANES = 2;
+const composerUploadLanes = new Map();
+/** Stage a new attachment's bytes right away, so a refresh or another device
+ *  can still send it; publication into the session cwd waits for SEND. At most
+ *  two uploads run per draft. A failed card keeps the File and offers a retry;
+ *  SEND retries it too. */
+function stageComposerAttachment(attachment, uid, options = {}) {
+  const draft = composerDrafts.get(composerDraftOwner(uid));
+  if (!draft || !conversationSendEnabled()) return Promise.resolve(null);
+  if (attachment.staging) return attachment.staging;
+  if (attachment.uploaded?.upload_id || !(attachment.file instanceof Blob)) return Promise.resolve(attachment.uploaded);
+  const lane = composerUploadLanes.get(draft) || composerUploadLanes.set(draft, {queue: [], active: 0}).get(draft);
+  const render = options.render || renderComposerItems;
+  attachment.status = 'queued'; attachment.error = ''; render();
+  attachment.staging = new Promise(resolve => lane.queue.push(async () => {
+    try {
+      if (!draft.attachments.includes(attachment)) { attachment.status = ''; resolve(null); return; }
+      resolve(await uploadComposerAttachment(attachment, uid, null, options));
+    } catch {
+      resolve(null); // The failed card keeps the File; retry or SEND uploads again.
+    } finally {
+      delete attachment.staging;
+    }
+  }));
+  pumpComposerUploads(lane);
+  return attachment.staging;
+}
+function pumpComposerUploads(lane) {
+  while (lane.active < COMPOSER_UPLOAD_LANES && lane.queue.length) {
+    lane.active++;
+    lane.queue.shift()().finally(() => { lane.active--; pumpComposerUploads(lane); });
+  }
+}
+/** Staged bytes of a removed attachment are released once the draft without
+ *  it is saved; the server refuses while a draft or submission still names
+ *  them, and the 24 h sweep covers a failed call. */
+function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
+  const id = attachment?.uploaded?.upload_id, uid = attachment?.uploaded?.uid;
+  if (!id || !uid || !conversationSendEnabled()) return;
+  Promise.resolve(saved)
+    .then(ok => ok && post('api/session/conversation/attachment/discard', {uid, id}))
+    .catch(() => {});
+}
+
 function composerAttachmentIdentity(uid) {
   const identity = {uid};
   if (SessionDockCapabilities.config.backend !== 'rust' || !String(uid).startsWith('tmux:')) {
@@ -4214,6 +4388,9 @@ async function submitComposer() {
       if (sent) {
         ta.value = '';
         draft.text = '';
+        // The typed text was saved while typing; clear the server copy too, or
+        // the exited console would come back as a "retained draft" row.
+        persistComposerDraft(uid);
       }
     } catch (error) {
       alert('发送失败，输入保留：' + (error.message || error));
@@ -4247,6 +4424,7 @@ async function submitComposer() {
     const uploaded = [];
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
+      if (attachments[i].staging) await attachments[i].staging; // Staged on add; only a failure uploads here.
       uploaded.push({...await uploadComposerAttachment(attachments[i], uid), number:attachments[i].number});
     }
     const requestText = JSON.stringify({text, attachments:uploaded.map(a => ({upload_id:a.upload_id,number:a.number})), quotes});
@@ -4622,8 +4800,9 @@ function foregroundTerm(force = false) {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) backgroundTerm();
-  else foregroundTerm();
+  else { foregroundTerm(); if (composerUid) followServerDraft(composerUid); }
 });
+addEventListener('focus', () => { if (composerUid) followServerDraft(composerUid); });
 addEventListener('pagehide', backgroundTerm);
 addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));

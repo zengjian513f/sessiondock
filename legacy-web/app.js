@@ -2248,6 +2248,16 @@ function showSessionCount() {
 
 const pendingUid = name => `tmux:${name}`;
 
+// A draft saved before `session.started` existed has no start time. Pin the
+// moment this page first listed it so the row does not move on every render.
+const pendingDraftFirstSeen = new Map();
+function pendingDraftStartedAt(uid, session) {
+  const started = Number(session?.started);
+  if (Number.isFinite(started) && started > 0) return started;
+  if (!pendingDraftFirstSeen.has(uid)) pendingDraftFirstSeen.set(uid, Date.now() / 1000);
+  return pendingDraftFirstSeen.get(uid);
+}
+
 /** SessionDock启动、但还没有对话文件的 tmux，也是一条可重新进入的临时会话。 */
 function pendingTmuxSessions() {
   if (typeof T === 'undefined' || !Array.isArray(T.pending)) return [];
@@ -2260,7 +2270,7 @@ function pendingTmuxSessions() {
       if (!uid.startsWith('tmux:') || !draft.session || names.has(draft.session.name)
           || (!draft.text && !draft.attachments.length && !draft.quotes.length)) continue;
       pending.push({ ...draft.session, stale: true, running: false, state: 'exited',
-        unavailable_reason: '会话草稿已保留' });
+        started: pendingDraftStartedAt(uid, draft.session), unavailable_reason: '会话草稿已保留' });
     }
   }
   return pending.flatMap(t => {
@@ -2278,8 +2288,8 @@ function pendingTmuxSessions() {
         native_binding:t.native_binding,binding:t.binding} : {}),
       title: t.title || `新建 ${SOURCES[source].name} 会话`,
       kind: t.kind || '', report_id: t.report_id || '', cwd: t.cwd || '(未知)',
-      created: new Date((t.started || Date.now() / 1000) * 1000).toISOString(),
-      updated: new Date((t.started || Date.now() / 1000) * 1000).toISOString(),
+      created: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
+      updated: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
       size: 0,
     }];
   });

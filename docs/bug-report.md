@@ -108,11 +108,14 @@ uses a provisional `report:<id>` identity until its processing launch is bound t
 that same draft; the server owns the first SEND. No browser submission archive or
 native-confirmation outbox is created.
 
-Selecting/pasting a file saves metadata only. File bytes remain in browser RAM
-until explicit Send, then stream into private server staging. An unuploaded file
-needs reselection after refresh; leaving with unuploaded bytes or an unfinished
-save warns. Upload/SEND errors retain the current draft. Concurrent edits use CAS;
-a successful SEND clears only the submitted revision.
+Selecting/pasting a file saves metadata and streams the bytes into private
+server staging right away, on the machine chosen in the dialog; choosing another
+machine at Send re-uploads there. A failed staging keeps the File on its card
+with a retry, and Send retries it too. Only a file whose staging never finished
+needs reselection after refresh; leaving with such bytes or an unfinished save
+warns. Removing a staged file discards its private bytes once the draft is
+saved. Upload/SEND errors retain the current draft. Concurrent edits use CAS
+with rebase on conflict; a successful SEND clears only the submitted revision.
 
 The report body adds `{draft_uid, draft_revision, request_id}` and attachment
 `{upload_id, number}` references. A stable report request ID freezes diagnostics

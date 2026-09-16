@@ -147,7 +147,7 @@ def main():
             if not (isinstance(cursor, str) and len(cursor) == 32 and (partial.get("omitted") or 0) > 0):
                 fail("cursor", partial, raw)
             payload, raw = call(opener, base, "GET", box)
-            epoch = (payload.get("outbox_version") or {}).get("epoch")
+            epoch = (payload.get("legacy_delivery", payload).get("outbox_version") or {}).get("epoch")
             if not isinstance(epoch, str) or not epoch:
                 fail("epoch", payload, raw)
             if host_ok:
@@ -166,7 +166,7 @@ def main():
                 fail("page 404", gone.get("code"), raw)
             passed("history page cursor 404 after restart")
             payload, raw = call(opener, base, "GET", box)
-            new_epoch = (payload.get("outbox_version") or {}).get("epoch")
+            new_epoch = (payload.get("legacy_delivery", payload).get("outbox_version") or {}).get("epoch")
             if not isinstance(new_epoch, str) or new_epoch == epoch:
                 fail("epoch restart", payload, raw)
             passed("delivery outbox epoch changed after restart")

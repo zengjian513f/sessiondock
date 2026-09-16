@@ -275,6 +275,65 @@ fn runtime(directory: &TempDir) -> ManagedRuntime {
     .unwrap()
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn codex_new_thread_reuses_open_rollout_host_without_fork_metadata() {
+    let directory = tempfile::tempdir().unwrap();
+    let peer = host_with_guard(&directory, "one", json!({"source":"codex","sid":"complete-native-session-one","instance_id":"synthetic-instance-0001"}), false, true).await;
+    let snapshot = runtime(&directory)
+        .observe(&NativeCatalog::from_rows(&rows()))
+        .await
+        .unwrap();
+    peer.await.unwrap();
+    let host_pid = snapshot.hosts[0].summary.pid;
+    let session = procscan::SessionRow {
+        uid: "codex:new-thread".into(),
+        source: "codex".into(),
+        sid: "new-thread".into(),
+        path: "/home/x/.codex/sessions/new.jsonl".into(),
+        cwd: None,
+        created: String::new(),
+        forked_from_id: String::new(),
+        continued_in: None,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("proc"));
+    proc.add(host_pid, "codex", 1, "codex", &[], &[(3, &session.path)]);
+    let scan = proc.scan();
+    let sessions = [session.clone()];
+    let found = snapshot
+        .codex_process_host(&scan, &sessions, &session.uid)
+        .unwrap();
+    assert_eq!(found.summary.name, "one");
+    assert_eq!(
+        found.bound_target().unwrap().sid(),
+        "complete-native-session-one"
+    );
+    // A helper or nested CLI holding history is not the interactive owner.
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("nested"));
+    proc.add(host_pid, "codex", 1, "codex", &[], &[]);
+    proc.add(
+        500,
+        "codex",
+        host_pid,
+        "codex exec",
+        &[],
+        &[(3, &session.path)],
+    );
+    assert!(
+        snapshot
+            .codex_process_host(&proc.scan(), &sessions, &session.uid)
+            .is_none()
+    );
+    let proc = procscan::tests::FakeProc::new(&temp.path().join("outside"));
+    proc.add(600, "codex", 1, "codex", &[], &[(3, &session.path)]);
+    assert!(
+        snapshot
+            .codex_process_host(&proc.scan(), &sessions, &session.uid)
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn only_info_confirms_running_or_exited_and_global_view_stays_partial() {
     let directory = tempfile::tempdir().unwrap();
