@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Exited pending receipts can be discarded and leave /api/term/list.pending."""
+"""Exited pending receipts can be discarded and leave /api/term/list.pending
+together with the input the conversation service retained for them."""
 from __future__ import annotations
 import argparse, json, os, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -72,6 +73,19 @@ def flow(opener, base, work):
         fail("pending state/label", row, raw)
     ok(f"GET /api/term/list pending state={row.get('state')!r} label={label!r}")
 
+    # Input retained for the exited receipt is advertised by conversation/drafts
+    # (the sidebar rebuilds a pending row from it) until the receipt is discarded.
+    pending_uid = "tmux:" + rec["name"]
+    saved, raw = call(opener, base, "POST", "/api/session/conversation",
+                      {"uid": pending_uid, "revision": 0,
+                       "value": {"text": "rclone config", "attachments": [], "quotes": []}})
+    if not saved.get("ok") or saved.get("draft", {}).get("value", {}).get("text") != "rclone config":
+        fail("draft save on exited receipt", saved, raw)
+    drafts, raw = call(opener, base, "GET", "/api/session/conversation/drafts")
+    if [row for row in drafts.get("drafts") or [] if row.get("uid") == pending_uid] == []:
+        fail("drafts before discard", drafts, raw)
+    ok("GET /api/session/conversation/drafts lists the exited receipt's input")
+
     call(opener, base, "POST", "/api/term/discard",
          {"record_id": rec["record_id"], "instance_id": rec["instance_id"]})
     ok("POST /api/term/discard 200")
@@ -80,6 +94,11 @@ def flow(opener, base, work):
     if pending_row(listed, rec) is not None:
         fail("list after discard", listed.get("pending"), raw)
     ok("GET /api/term/list pending no longer contains receipt")
+
+    drafts, raw = call(opener, base, "GET", "/api/session/conversation/drafts")
+    if [row for row in drafts.get("drafts") or [] if row.get("uid") == pending_uid]:
+        fail("drafts after discard", drafts, raw)
+    ok("GET /api/session/conversation/drafts no longer lists the discarded receipt")
 
     st, raw = call(opener, base, "GET", qstat(rec))
     flags = {k: st.get(k) for k in ("discarded", "state", "discardable", "finished_at") if k in st}
@@ -119,7 +138,7 @@ def main():
         return
     with tempfile.TemporaryDirectory(prefix="sessiondock-pending-discard-") as tmp:
         root = Path(tmp)
-        for name in ("host", "work", "work/claude-area", "ledger", "bin", "claude", "codex", "grok"):
+        for name in ("host", "work", "work/claude-area", "ledger", "bin", "claude", "codex", "grok", "state"):
             (root / name).mkdir(mode=0o700, parents=True, exist_ok=True)
             (root / name).chmod(0o700)
         corpus, fake = Corpus(root), root / "bin" / "fake-claude"
@@ -143,7 +162,9 @@ def main():
                               cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         if init.returncode:
             fail("initialize-lifecycle", init.stderr.decode() or init.stdout.decode())
-        with isolated_server(corpus, args.binary, host_dir=root / "host",
+        # state_dir enables the conversation service, whose retained drafts
+        # must follow the receipt's discard.
+        with isolated_server(corpus, args.binary, state_dir=root / "state", host_dir=root / "host",
                              lifecycle_dir=root / "ledger", launcher_config=cfg) as (base, opener):
             flow(opener, base, str(root / "work"))
     print(f"pending_discard_suite: {CHECKS} checks passed", flush=True)

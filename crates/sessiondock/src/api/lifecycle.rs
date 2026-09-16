@@ -921,6 +921,9 @@ pub async fn cancel(
 /// (Exited/Failed) or durably cancelled receipt leaves the sidebar's pending
 /// list. The receipt itself stays queryable through `term/new-status`; a
 /// receipt whose instance may still run is 409 and must be stopped first.
+/// The input the conversation service retained for the receipt goes with
+/// it (`Store::forget_launch`): otherwise `conversation/drafts` keeps
+/// advertising the deleted session and the sidebar rebuilds its row.
 pub async fn discard(
     State(state): State<AppState>,
     body: Result<Json<CancelRequest>, JsonRejection>,
@@ -943,6 +946,26 @@ pub async fn discard(
             ),
             other => failure(other),
         })?;
+    if let Some(conversations) = &state.conversations {
+        let store = conversations.store.clone();
+        let record_id = record.record_id().to_owned();
+        tokio::task::spawn_blocking(move || store.forget_launch(&record_id))
+            .await
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "conversation_storage",
+                    "草稿清理任务失败",
+                )
+            })?
+            .map_err(|error| {
+                ApiError::new(
+                    StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                    error.code,
+                    error.message,
+                )
+            })?;
+    }
     response(project(&record), permit).await
 }
 
