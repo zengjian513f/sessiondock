@@ -558,6 +558,40 @@ impl Store {
             Ok(())
         })
     }
+    /// The logical draft key of a launch receipt and whether a native UID
+    /// shares it: the receipt's own key, or the earlier receipt a restart
+    /// chained it to; shared once an alias from a native UID (or the key
+    /// itself) is not a `launch:` key.
+    fn launch_draft(doc: &Document, record_id: &str) -> (String, bool) {
+        let launch_key = format!("launch:{record_id}");
+        let key = doc.aliases.get(&launch_key).cloned().unwrap_or(launch_key);
+        let shared = !key.starts_with("launch:")
+            || doc
+                .aliases
+                .iter()
+                .any(|(alias, target)| *target == key && !alias.starts_with("launch:"));
+        (key, shared)
+    }
+    /// Drop the input retained for a receipt the operator discarded, so
+    /// `drafts` stops advertising the deleted session. A draft shared with a
+    /// native UID stays: that session still shows it. Returns whether a draft
+    /// was removed.
+    pub fn forget_launch(&self, record_id: &str) -> Result<bool> {
+        {
+            let doc = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let (key, shared) = Self::launch_draft(&doc, record_id);
+            if shared || !doc.drafts.contains_key(&key) {
+                return Ok(false);
+            }
+        }
+        self.update(|doc| {
+            let (key, shared) = Self::launch_draft(doc, record_id);
+            if shared {
+                return Ok(false);
+            }
+            Ok(doc.drafts.remove(&key).is_some())
+        })
+    }
     pub fn drafts(&self) -> Vec<(String, Draft)> {
         self.state
             .lock()
@@ -829,5 +863,58 @@ mod upload_tests {
         store.link("launch:worker", "a").unwrap();
         assert_eq!(store.canonical("launch:worker"), "a");
         assert!(store.link("launch:worker", "b").is_err());
+    }
+    #[test]
+    fn discarded_launch_forgets_its_draft_but_never_a_native_session_draft() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        let session = |name: &str| json!({"uid":format!("tmux:{name}"),"name":name});
+        // A plain pending receipt: its retained input goes with the discard.
+        store
+            .save(
+                "launch:plain",
+                0,
+                json!({"text":"rclone config","attachments":[],"quotes":[],"session":session("plain")}),
+            )
+            .unwrap();
+        assert_eq!(store.drafts().len(), 1);
+        assert!(store.forget_launch("plain").unwrap());
+        assert!(store.drafts().is_empty());
+        assert_eq!(store.draft("launch:plain").revision, 0);
+        assert!(!store.forget_launch("plain").unwrap());
+        // A restarted receipt chains to the first one; discarding the
+        // restart drops the shared logical draft.
+        store
+            .save(
+                "launch:first",
+                0,
+                json!({"text":"kept across restart","attachments":[],"quotes":[],"session":session("second")}),
+            )
+            .unwrap();
+        store.link("launch:second", "launch:first").unwrap();
+        assert!(store.forget_launch("second").unwrap());
+        assert!(store.drafts().is_empty());
+        // A launch bound to a native UID shares that session's draft, in
+        // either alias direction: the native row still shows it.
+        store
+            .save(
+                "claude:native",
+                0,
+                json!({"text":"native input","attachments":[],"quotes":[],"session":{"uid":"claude:native"}}),
+            )
+            .unwrap();
+        store.link("launch:bound", "claude:native").unwrap();
+        assert!(!store.forget_launch("bound").unwrap());
+        store
+            .save(
+                "launch:origin",
+                0,
+                json!({"text":"origin input","attachments":[],"quotes":[],"session":{"uid":"claude:later"}}),
+            )
+            .unwrap();
+        store.link("claude:later", "launch:origin").unwrap();
+        assert!(!store.forget_launch("origin").unwrap());
+        assert_eq!(store.drafts().len(), 2);
+        assert_eq!(Store::open(temp.path()).unwrap().drafts().len(), 2);
     }
 }
