@@ -273,10 +273,11 @@ cannot regain native control simply because the host remains alive.
 
 `tests/lifecycle_browser.py` builds a temporary corpus and private launcher
 configuration for a fixed free shell. It uses the real legacy create dialog,
-pending xterm keyboard, Web stop/restart, sidebar navigation and mobile stop
-action. It checks same-request replay creates only one shell, conflicting specs
+pending xterm keyboard, Web stop/restart, sidebar navigation and mobile
+discard of an unpersisted launch. It checks same-request replay creates only one shell, conflicting specs
 are rejected, pending status is explicit, no reliable-send composer is enabled,
-cancellation does not reclaim ownership, and native fixture bytes are unchanged.
+cancellation does not reclaim ownership, an unpersisted pending header offers
+delete (discard) rather than stop, and native fixture bytes are unchanged.
 Host/client, store and coordinator tests cover the deeper identity, persistence,
 lost response, shutdown, capacity and crash-recovery boundaries separately.
 
