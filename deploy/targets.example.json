@@ -7,9 +7,10 @@
   },
   "targets": [
     {
-      "name": "build-host",
+      "name": "linux-node-b",
       "kind": "linux-node",
-      "ssh": null,
+      "ssh": "linux-node-b",
+      "extra": {"expected_hostname": "linux-node-b"},
       "prefix": "/srv/sessiondock",
       "health_url": "http://127.0.0.1:8741/api/meta",
       "service": {"unit": "sessiondock.service", "scope": "user"},

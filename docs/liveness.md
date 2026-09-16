@@ -112,7 +112,7 @@ that inherited a pane through `continued_in` (below).
   durable host identity never moves), so the branch has no binding of its
   own. The single host bound to a `codex_ancestor_sids` ancestor of the
   branch **and** whose session root hosts the branch's owned pids is the
-  branch's host: takeover reuses it (`followed_fork`), stop targets it,
+  branch's host: takeover reuses it (`reused_process`), stop targets it,
   `ManagedResolver` delivers through it and the Codex approval probe
   captures it. A branch whose process moved on to a deeper branch, a root
   without ancestors, and a pair of candidate hosts resolve to nothing; the
@@ -123,6 +123,14 @@ that inherited a pane through `continued_in` (below).
   carrying the composer draft and the open console (`followSelectedFork`,
   `linkedTermSession` walking `forkAncestors` under the Rust backend), while
   a parent the user opened deliberately (fork chain, "显示父会话") stays put.
+- **Codex thread switches** (`RuntimeSnapshot::codex_process_host`): a TUI
+  can open an unrelated thread with no `forked_from_id`. An exact open rollout
+  file identifies its CLI process and unique guarded host, ahead of declared
+  UID and fork fallback. A second resume waiting for that rollout's lock must
+  not displace the original TUI. Nested CLI processes do not inherit the outer
+  CLI's host. `/api/term/list` exposes `current_uid` when unambiguous; immutable
+  binding fields still guard every operation. Unrelated threads keep separate
+  drafts and selection, even when they use the same TUI.
 
 Rust has no tmux backend, so a pane the predecessor created in its own
 tmux server is only recognised through the process-tree walk, never

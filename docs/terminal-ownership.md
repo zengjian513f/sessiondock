@@ -17,6 +17,15 @@ leases without stopping the independent ptyhost process.
 
 ## Who holds the terminal (display only)
 
+Codex may switch to an unrelated thread inside the same TUI. The terminal list
+then includes `current_uid`, observed from the main CLI's open rollout under
+the verified host. The original `uid`/instance remains the protocol guard;
+the page uses `current_uid` to locate that pane and does not transfer the old
+conversation's draft. Takeover and delivery use the same process evidence to
+reuse the host, including when no `forked_from_id` connects the threads. The
+hub scopes `current_uid` with the node ID. Helper and nested CLI processes do
+not establish this association.
+
 A browser exposes neither host name nor login, so a takeover prompt can only
 describe the holder by two labels, neither of which is identity:
 

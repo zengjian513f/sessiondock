@@ -183,6 +183,16 @@ class MappingTest(unittest.TestCase):
 
 
 class BaseCommitTest(unittest.TestCase):
+    def test_validation_uses_selected_python(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "plan.json"
+            subprocess.run([sys.executable, str(ROOT / "tests/run_validation.py"),
+                            "--only", "lifecycle_browser", "--list", "--json", str(output)],
+                           cwd=ROOT, check=True, capture_output=True, text=True)
+            plan = json.loads(output.read_text())["plan"]
+            self.assertEqual(len(plan), 1)
+            self.assertEqual(plan[0]["argv"][0], sys.executable)
+
     def test_explicit_and_markers(self) -> None:
         h1, h2 = git("rev-parse", "HEAD~1"), git("rev-parse", "HEAD~2")
         self.assertEqual(tp.resolve_base("HEAD~1", {})[0], h1)

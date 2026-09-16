@@ -227,6 +227,18 @@ class DeployDryRunTest(unittest.TestCase):
         self.assertEqual(rows, {"local": "PLANNED"}, proc.stdout)
         self.assert_prefix_unchanged()
 
+    def test_c_target_hostname_mismatch_never_stages(self) -> None:
+        import socket
+        doc = json.loads(self.targets.read_text())
+        doc['targets'][0]['extra'] = {'expected_hostname': socket.gethostname() + '-wrong'}
+        self.targets.write_text(json.dumps(doc))
+        proc = self.cli(['push', '--targets', 'local', '--targets-file', str(self.targets),
+                         '--stage', str(self.require_stage()), '--web-only'])
+        self.assertEqual(proc.returncode, 1, combined(proc))
+        report = self.latest_report(self.require_stage())
+        self.assertIn('target identity mismatch', report['rows'][0]['detail'])
+        self.assert_prefix_unchanged()
+
     def test_d_unknown_target(self) -> None:
         proc = self.cli(["push", "--dry-run", "--targets", "nope", "--targets-file",
                          str(self.targets), "--web-only"])

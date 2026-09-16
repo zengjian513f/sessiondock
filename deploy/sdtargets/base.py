@@ -41,7 +41,7 @@ SSH_BASE_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
 @dataclass
 class Target:
     """One deployable machine. Fields mirror deploy/targets.example.json."""
-    name: str                       # "lyra", "hub", ...
+    name: str                       # "linux-node-a", "hub", ...
     kind: str                       # key into HANDLERS
     prefix: str                     # runtime directory holding bin/ web/ etc/
     ssh: str | None = None          # "user@host" or None = this machine

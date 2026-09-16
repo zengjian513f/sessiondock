@@ -28,6 +28,119 @@ use tower::ServiceExt;
 
 const CODEX_SID: &str = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5";
 const SETTINGS: &str = "/synthetic/bridge-settings.json";
+
+#[tokio::test]
+async fn switched_codex_thread_reuses_original_host_and_binding() {
+    let Some(host_binary) = ptyhost_binary() else {
+        return;
+    };
+    let fixture = Fixture::new(&host_binary);
+    let new_sid = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    let path = fixture.codex_root.join(format!("rollout-{new_sid}.jsonl"));
+    let original = fs::read_to_string(
+        fixture
+            .codex_root
+            .join(format!("rollout-{CODEX_SID}.jsonl")),
+    )
+    .unwrap();
+    file(
+        &path,
+        original.replace(CODEX_SID, new_sid).as_bytes(),
+        0o600,
+    );
+    let new_uid = sha1_uid(&path);
+    let proc_root = fixture._temp.path().join("proc");
+    directory(&proc_root);
+    let mut config = fixture.config();
+    config.proc_root = proc_root.clone();
+    let state_dir = fixture._temp.path().join("state");
+    directory(&state_dir);
+    config.state_dir = Some(state_dir);
+    let shutdown = CancellationToken::new();
+    let prepared = prepare_app(config, shutdown.clone()).await.unwrap();
+    let router = &prepared.router;
+    let (status, launched) = post(
+        router,
+        "/api/term/create",
+        json!({"source":"codex","cwd":fixture.codex_area}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{launched}");
+    let (status, bound) = post(router, "/api/term/bind", json!({"record_id":launched["record_id"],"instance_id":launched["instance_id"],"uid":fixture.codex_uid,"operator_confirmed":true})).await;
+    assert_eq!(status, StatusCode::OK, "{bound}");
+    let (status, saved) = post(
+        router,
+        "/api/session/conversation",
+        json!({"uid":fixture.codex_uid,"revision":0,"value":{"text":"keep old draft"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let host_record: Value = serde_json::from_slice(
+        &fs::read(
+            fixture
+                .host
+                .join(format!("{}.json", launched["name"].as_str().unwrap())),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let pid = host_record["pid"].as_u64().unwrap();
+    let process = proc_root.join(pid.to_string());
+    directory(&process.join("fd"));
+    file(&process.join("cmdline"), b"codex\0", 0o600);
+    file(
+        &process.join("stat"),
+        format!("{pid} (codex) S 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n").as_bytes(),
+        0o600,
+    );
+    std::os::unix::fs::symlink(&path, process.join("fd/3")).unwrap();
+    let (status, taken) = post(router, "/api/term/takeover", json!({"uid":new_uid})).await;
+    assert_eq!(status, StatusCode::OK, "{taken}");
+    assert_eq!(taken["action"], "reused");
+    assert_eq!(taken["record_id"], launched["record_id"]);
+    assert_eq!(taken["instance_id"], launched["instance_id"]);
+    let (_, list) = get(router, "/api/term/list?force=1").await;
+    let rows = list["sessions"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{list}");
+    assert_eq!(rows[0]["uid"], fixture.codex_uid);
+    assert_eq!(rows[0]["current_uid"], new_uid);
+    assert_eq!(rows[0]["name"], launched["name"]);
+    let (status, draft) = get(router, &format!("/api/session/conversation?uid={new_uid}")).await;
+    assert_eq!(status, StatusCode::OK, "{draft}");
+    assert_ne!(draft["draft"]["value"]["text"], "keep old draft");
+    let (status, saved) = post(
+        router,
+        "/api/session/conversation",
+        json!({"uid":new_uid,"revision":0,"value":{"text":"new thread draft"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let (_, old) = get(
+        router,
+        &format!("/api/session/conversation?uid={}", fixture.codex_uid),
+    )
+    .await;
+    assert_eq!(old["draft"]["value"]["text"], "keep old draft");
+    let (status, claim) = post(router, "/api/term/claim", json!({"name":launched["name"],"uid":fixture.codex_uid,"instance_id":launched["instance_id"],"page":"switch-test"})).await;
+    assert_eq!(status, StatusCode::OK, "{claim}");
+    // Repeated openings still address the original instance, with no resume.
+    let (_, again) = post(
+        router,
+        "/api/term/takeover",
+        json!({"uid":new_uid,"force":true}),
+    )
+    .await;
+    assert_eq!(again["record_id"], launched["record_id"]);
+    post(
+        router,
+        "/api/term/kill",
+        json!({"record_id":launched["record_id"],"instance_id":launched["instance_id"]}),
+    )
+    .await;
+    shutdown.cancel();
+    prepared.lifecycle.unwrap().shutdown().await.unwrap();
+}
+
 const FAKE_CLI: &str = r#"#!/bin/sh
 printf 'FAKE_%s_ARGV' "$SESSIONDOCK_TEST_LABEL"
 for arg in "$@"; do printf ' [%s]' "$arg"; done

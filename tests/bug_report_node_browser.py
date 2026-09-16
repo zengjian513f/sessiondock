@@ -36,18 +36,22 @@ class Boundary:
         self.capture_status = 200
         self.drafts = {}
         self.uploads = []
+        self.discards = []
         self.defer = False
         self.pending = []
 
     def conversation(self, route):
         request=route.request;path=urlsplit(request.url).path
         query=parse_qs(urlsplit(request.url).query)
-        body=request.post_data_json if request.method=='POST' and 'attachment' not in path else {}
+        body=request.post_data_json if request.method=='POST' and ('attachment' not in path or path.endswith('/discard')) else {}
         uid=body.get('uid') or query.get('uid',[''])[0]
         row=self.drafts.setdefault(uid, {'revision':0,'value':None})
         if path.endswith('/attachment'):
             self.uploads.append(uid)
             data={'ok':True,'upload_id':query['id'][0],'name':query['name'][0],'size':len(request.post_data_buffer or b'')}
+        elif path.endswith('/attachment/discard'):
+            self.discards.append((uid,body.get('id')))
+            data={'ok':True,'removed':True}
         elif path.endswith('/drafts'):
             data={'drafts':[]}
         elif path.endswith('/check') or path.endswith('/import'):
@@ -278,8 +282,12 @@ def check_shared_draft_recovery(page, boundary):
     uid=page.evaluate('BUG_REPORT_DRAFT_UID')
     assert boundary.drafts[uid]['value']['text']=='服务端保存 [附件1]'
     assert len(boundary.drafts[uid]['value']['attachments'])==1
-    assert not boundary.uploads, boundary.uploads
-    assert page.evaluate('composerUnloadProtected') # Unuploaded bytes are only in RAM.
+    # Selection stages the bytes on the chosen machine at once; nothing is left only in RAM.
+    page.wait_for_function("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging")
+    wait_drafts(page)
+    assert boundary.uploads==[uid], boundary.uploads
+    assert boundary.drafts[uid]['value']['attachments'][0]['uploaded']['upload_id']
+    assert not page.evaluate('composerUnloadProtected')
     assert not page.evaluate("store.get('composerDraft.'+BUG_REPORT_DRAFT_UID,null)")
     assert not page.evaluate("async () => (await indexedDB.databases()).some(d=>d.name.endsWith('composer-drafts'))")
     page.locator('#bug-report-dialog .modal-close').click()
@@ -289,10 +297,14 @@ def check_shared_draft_recovery(page, boundary):
     page.wait_for_function('!bugReportDraftObject().loading')
     assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
     assert not page.evaluate('bugReportDraftObject().attachments[0].file instanceof Blob')
-    # Removing a missing File needs one click and no confirmation.
+    # Removing a staged attachment needs one click and no confirmation; the
+    # staged bytes are released after the draft without it is saved.
     page.locator('#bug-report-items .draft-remove').click()
     wait_drafts(page)
     assert not boundary.drafts[uid]['value']['attachments']
+    deadline=time.time()+5
+    while not boundary.discards and time.time()<deadline: page.wait_for_timeout(100) # Pumps the route handlers.
+    assert boundary.discards and boundary.discards[0][0]==uid, boundary.discards
     page.select_option('#bug-report-node',NID['b'])
     page.wait_for_function('!bugReportDraftObject().loading')
     assert page.locator('#bug-report-description').input_value()==''
@@ -445,7 +457,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS bug_report_node_browser: server drafts, session/node isolation, no selection upload, no browser message store, one-click removal, scrollable submit, named sources, two-up attachments, picker and capture")
+    print("PASS bug_report_node_browser: server drafts, session/node isolation, staged on selection, no browser message store, one-click removal with discard, scrollable submit, named sources, two-up attachments, picker and capture")
 
 
 if __name__ == "__main__":

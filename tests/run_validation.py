@@ -106,7 +106,7 @@ def suites(binary, python_source):
         if not MAIN_RE.search(text) or SKIP_MARK in text.splitlines()[:40]:
             continue
         rel = str(path.relative_to(ROOT))
-        argv = ["python3", rel]
+        argv = [sys.executable, rel]
         skip = None
         head = text.splitlines()[:40]
         serial = SERIAL_MARK in head
@@ -129,7 +129,7 @@ def suites(binary, python_source):
                       "real": real})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
-                          "argv": ["python3", rel, "--native-binding"],
+                          "argv": [sys.executable, rel, "--native-binding"],
                           "kind": "python", "timeout": 900, "tags": ("python",), "skip": None,
                           "serial": serial, "browser": browser, "real": False})
     return items

@@ -74,6 +74,7 @@ class LinuxNodeHandler(TargetHandler):
         say = "printf '%s\\n'"      # dash's echo interprets backslashes; the meta JSON may hold some
         lines = [
             f"P={p}",
+            f'{say} "hostname=$(hostname)"',
             'if [ -d "$P/bin" ] && [ -d "$P/web" ]; then echo layout=ok; else echo layout=missing; fi',
             f'{say} "active=$({self.systemctl} is-active {q(self.unit)} 2>/dev/null || true)"',
             f'{say} "meta=$(curl -sS --max-time 8 {q(self.t.health_url)} 2>/dev/null || true)"',
@@ -108,6 +109,9 @@ class LinuxNodeHandler(TargetHandler):
             tail = out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"
             return ProbeResult(False, f"unreachable: {tail}"), {}
         facts = self._parse_probe(out)
+        expected = self.t.extra.get("expected_hostname")
+        if expected and facts.get("hostname") != expected:
+            return ProbeResult(False, f"target identity mismatch: expected {expected!r}, got {facts.get('hostname')!r}"), facts
         if facts.get("layout") != "ok":
             return ProbeResult(False, f"prefix layout missing under {self.prefix}"), facts
         meta = None
@@ -135,7 +139,7 @@ class LinuxNodeHandler(TargetHandler):
         self.before = result
         self.web_digest_before = facts.get("webdigest")
         if result.reachable:
-            self.log(f"probe: active={result.active} build={result.build} "
+            self.log(f"probe: hostname={facts.get('hostname')} active={result.active} build={result.build} "
                      f"sha={{{', '.join(f'{k}:{v[:12]}' for k, v in result.binary_sha.items())}}} "
                      f"ptyhost={len(result.ptyhost_pids)} hosts={result.host_records} "
                      f"marker={result.deployed_commit!r} webdigest={self.web_digest_before}")

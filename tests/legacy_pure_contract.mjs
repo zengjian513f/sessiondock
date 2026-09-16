@@ -5,6 +5,22 @@ import vm from 'node:vm';
 
 const app = readFileSync(new URL('../legacy-web/app.js', import.meta.url), 'utf8');
 const nodes = readFileSync(new URL('../legacy-web/nodes.js', import.meta.url), 'utf8');
+
+test('Codex current thread reconnects to the original guarded pane without moving old drafts', () => {
+  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
+  const T = {list: [{name: 'original', uid: 'codex:old', current_uid: 'codex:new', instance_id: 'instance'}], pending: []};
+  const context = ctx({T, S: {sessions: []}, SessionDockCapabilities: {config: {backend: 'rust'}},
+    pendingUid: name => 'tmux:' + name, forkAncestors: () => []});
+  for (const name of ['sessionTermMeta', 'termBindingServes', 'linkedTermSession', 'termRowBinding']) load(context, name, term);
+  assert.equal(context.linkedTermSession('codex:new').name, 'original');
+  assert.equal(context.linkedTermSession('codex:old', {followReplacement: true}), null);
+  assert.equal(context.termBindingServes('codex:old', 'codex:new'), true);
+  assert.equal(context.termBindingServes('codex:old', 'codex:old'), false);
+  assert.equal(context.termRowBinding('original', 'codex:new').uid, 'codex:old');
+  // A previously started, lock-blocked resume must not hide the real owner.
+  T.list.push({name: 'blocked', uid: 'codex:new', instance_id: 'other'});
+  assert.equal(context.linkedTermSession('codex:new').name, 'original');
+});
 function load(context, name, source = app) {
   const fn = new RegExp(`^(?:async )?function ${name}\\(`, 'm').exec(source);
   let code;
@@ -550,4 +566,58 @@ test('OSC 10/11/12/4 reports to the PTY always use the dark terminal palette', (
   assert.equal(st('\x1b]11;rgb:0000/0000/0000'), oscColorReport('11', [0, 0, 0]));
   assert.equal(bel('\x1b]10;rgb:9d9d/a5a5/b0b0'), oscColorReport('10', DARK_TERM_REPORT[10], true));
   assert.match(term, /d = rewriteOscColorReports\(d\);/);
+});
+
+test('a draft-retained pending row keeps one start time instead of sorting by the render clock', () => {
+  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
+  const started = 1_758_000_000;
+  const composerDrafts = new Map();
+  const context = ctx({T: {pending: []}, S: {sessions: []}, composerDrafts,
+    SessionDockCapabilities: {config: {backend: 'rust'}}, SOURCES: {shell: {name: 'SSH'}}});
+  for (const name of ['pendingStartedAt', 'rememberComposerSession']) load(context, name, term);
+  for (const name of ['pendingUid', 'pendingDraftFirstSeen', 'pendingDraftStartedAt', 'pendingTmuxSessions']) load(context, name);
+
+  // The receipt's `started` wins; a sidebar row only has `created`; nothing at all falls back.
+  assert.equal(context.pendingStartedAt({started, created: '2000-01-01T00:00:00.000Z'}), started);
+  assert.equal(context.pendingStartedAt({created: new Date(started * 1000).toISOString()}), started);
+  assert.equal(context.pendingStartedAt({}, 7), 7);
+
+  // Clicking the row again hands rememberComposerSession a row whose `created`
+  // derives from the same start; the first recorded stamp stays.
+  const draft = {text: 'rclone config', attachments: [], quotes: [], session: null};
+  context.rememberComposerSession(draft, {uid: 'tmux:ssh', name: 'ssh', source: 'shell', cwd: '/w',
+    node_id: 'n1', record_id: 'r', instance_id: 'i', started});
+  assert.equal(draft.session.started, started);
+  context.rememberComposerSession(draft, {uid: 'tmux:ssh', name: 'ssh', source: 'shell', cwd: '/w',
+    node_id: 'n1', created: new Date((started + 60) * 1000).toISOString()});
+  assert.equal(draft.session.started, started);
+  context.rememberComposerSession(draft, {uid: 'tmux:other', name: 'other', source: 'shell', cwd: '/w',
+    created: new Date((started + 60) * 1000).toISOString()});
+  assert.equal(draft.session.started, started + 60);
+
+  // term/list has dropped the exited SSH instance: the draft-only row is sorted
+  // by the saved start, identically on every render.
+  draft.session = {uid: 'tmux:ssh', name: 'ssh', source: 'shell', cwd: '/w', node_id: 'n1', started};
+  composerDrafts.set('tmux:ssh', draft);
+  const first = context.pendingTmuxSessions();
+  assert.equal(first.length, 1);
+  assert.equal(first[0].updated, new Date(started * 1000).toISOString());
+  assert.equal(first[0].state, 'exited');
+  assert.deepEqual([first[0].created, first[0].updated], (() => { const r = context.pendingTmuxSessions()[0]; return [r.created, r.updated]; })());
+
+  // A draft saved before `started` existed pins the moment it was first listed.
+  composerDrafts.set('tmux:old', {text: 'x', attachments: [], quotes: [],
+    session: {uid: 'tmux:old', name: 'old', source: 'shell', cwd: '/w'}});
+  const seen = context.pendingTmuxSessions().find(r => r.name === 'old');
+  assert.ok(Math.abs(Date.parse(seen.updated) - Date.now()) < 5000);
+  assert.equal(context.pendingTmuxSessions().find(r => r.name === 'old').updated, seen.updated);
+
+  // A term/list row without `started` (an older node) is pinned the same way,
+  // never re-stamped with the render clock.
+  context.T.pending.push({name: 'nostart', source: 'shell', cwd: '/w', record_id: 'r2', instance_id: 'i2',
+    running: false, state: 'exited', started: null});
+  const row = context.pendingTmuxSessions().find(r => r.name === 'nostart');
+  assert.ok(Math.abs(Date.parse(row.updated) - Date.now()) < 5000);
+  assert.equal(context.pendingTmuxSessions().find(r => r.name === 'nostart').updated, row.updated);
+  assert.equal(context.pendingTmuxSessions().find(r => r.name === 'nostart').created, row.created);
 });
