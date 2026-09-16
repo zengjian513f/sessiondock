@@ -963,7 +963,7 @@ def build_grok(corpus):
     corpus.expected["grok-chat"] = ["Grok question one", "Grok reasoning", "Grok running a command", {"command": "/bin/sh -c 'ls 目录'"},
                                     {"file_path": "docs/说明.md"}, "目录 listing", "Read failed: exit status 3", "orphan output",
                                     "Grok question two", "Grok final answer", "[Image #1] Grok question with an image list",
-                                    "  indented first line\nsecond line", "Grok answer after envelopes", "Grok system notice"]
+                                    "  indented first line\nsecond line", "Grok answer after envelopes"]
     summary_only = base / "grok-summary-only"
     summary_only.mkdir()
     (summary_only / "summary.json").write_text(json.dumps({"info": {"id": "grok-summary-only", "cwd": "/synthetic/advanced"},
@@ -993,6 +993,7 @@ def verify_grok(report, corpus, base, opener, adapters, rows):
     expected = list(corpus.expected["grok-chat"])
     for index, text in enumerate(python_envelopes):
         expected[expected.index(text)] = envelopes[index]
+    assert "Grok system notice" not in shown, shown
     assert shown == expected, shown
     if envelopes[0] != python_envelopes[0]:
         # Raw protocol XML shown as the user's words is a rendering bug, not a policy delta.
@@ -1011,7 +1012,16 @@ def verify_grok(report, corpus, base, opener, adapters, rows):
     assert rows["grok-chat"].get("supported") is True and "migration_warnings" not in rows["grok-chat"]
     assert response["meta"].get("migration_warnings") == ["跳过未知的Grok 记录类型：usage ×2", "跳过未知的Grok 记录类型：checkpoint ×1"], response["meta"].get("migration_warnings")
     if adapters:
-        compare_view(report, "grok grok-chat summary+chat", python_read(adapters, "grok", corpus.paths["grok-chat"]), response, classify=classify_grok, strip_ts=True)
+        python = python_read(adapters, "grok", corpus.paths["grok-chat"])
+        messages, statuses, end = python
+        system = [row for row in messages if row.get("role") == "system"]
+        if system:
+            report.delta(
+                "grok type=system records (CLI preamble) are hidden from the conversation; "
+                f"Python still emits {len(system)} system message(s)"
+            )
+            messages = [row for row in messages if row.get("role") != "system"]
+        compare_view(report, "grok grok-chat summary+chat", (messages, statuses, end), response, classify=classify_grok, strip_ts=True)
         expected = adapters["grok"].session_meta(corpus.paths["grok-chat"])
         for field in ("sid", "title", "cwd", "model", "branch"):
             assert expected.get(field) == rows["grok-chat"].get(field), (field, expected.get(field), rows["grok-chat"].get(field))

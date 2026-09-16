@@ -24,6 +24,10 @@ pub(super) fn validate_grok_summary(summary: &Value) -> Result<(), String> {
     grok::validate(summary)
 }
 
+pub(super) fn grok_untitled_title() -> &'static str {
+    grok::UNTITLED_TITLE
+}
+
 #[cfg(test)]
 pub(super) fn parse(
     source: &str,
@@ -947,7 +951,12 @@ impl Parser<'_> {
                 if kind == "user" {
                     text = strip_grok_user_query(&text);
                 }
-                if !truthy(&record["synthetic_reason"])
+                // Grok CLI writes the session preamble as the first
+                // `type: system` record (no synthetic_reason). Real
+                // histories only use this kind for that preamble; it is
+                // not conversation. Python still emits it (DELTA).
+                if kind != "system"
+                    && !truthy(&record["synthetic_reason"])
                     && !text.trim().is_empty()
                     && !(kind == "user" && timeline_protocol(&text))
                 {
