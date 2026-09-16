@@ -813,6 +813,26 @@ fn output_exit_code_follows_the_python_regex_so_grok_exit_headers_are_not_errors
 }
 
 #[test]
+fn grok_system_preamble_is_not_a_conversation_message() {
+    let records = rows(vec![
+        json!({"type": "system", "content": "You are Grok 4.6 released by xAI. You are an interactive CLI tool that helps users with software engineering tasks.\n<work_policy>\nKeep every explicit requirement."}),
+        json!({"type": "user", "content": "<user_query>\nvisible question\n</user_query>", "prompt_index": 1}),
+        json!({"type": "assistant", "content": "visible answer"}),
+        json!({"type": "system", "content": "Grok system notice"}),
+    ]);
+    let (meta, messages) = project("grok", &records);
+    assert_eq!(
+        visible(&messages),
+        vec![
+            ("user", "visible question"),
+            ("assistant", "visible answer")
+        ]
+    );
+    assert_eq!(messages[0]["turn_id"], "prompt:1");
+    assert_eq!(warnings(&meta), Vec::<String>::new());
+}
+
+#[test]
 fn grok_unknown_record_kinds_are_skipped_with_warnings() {
     let records = rows(vec![
         json!({"type": "user", "content": "question", "prompt_index": 1}),

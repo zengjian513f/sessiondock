@@ -5,6 +5,13 @@ use chrono::Timelike;
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Sidebar title when Grok has not written `generated_title` or
+/// `session_summary`. Matches the pending-session label so a freshly
+/// launched native session does not jump to the first eight characters
+/// of its UUID directory name. Python still uses those eight characters
+/// (DELTA).
+pub(super) const UNTITLED_TITLE: &str = "新建 Grok 会话";
+
 pub(super) fn validate(summary: &Value) -> Result<(), String> {
     if !summary.is_object() {
         return Err("Grok summary.json 必须是 JSON 对象".to_owned());
@@ -125,10 +132,9 @@ pub(super) fn metadata(path: &Path, summary: &Value, fallback: &str) -> Value {
         .unwrap_or_default()
         .to_string_lossy();
     let sid = nonempty(&summary["info"]["id"]).unwrap_or(&directory);
-    let default_title = directory.chars().take(8).collect::<String>();
     let title = nonempty(&summary["generated_title"])
         .or_else(|| nonempty(&summary["session_summary"]))
-        .unwrap_or(&default_title);
+        .unwrap_or(UNTITLED_TITLE);
     let cwd = nonempty(&summary["info"]["cwd"])
         .map(str::to_owned)
         .unwrap_or_else(|| unquote(&project));
@@ -179,7 +185,7 @@ mod tests {
             "2026-09-12T12:00:00.999Z",
         );
         assert_eq!(meta["sid"], "session-abcdefgh");
-        assert_eq!(meta["title"], "session-");
+        assert_eq!(meta["title"], UNTITLED_TITLE);
         assert_eq!(meta["cwd"], "/cwd+name");
         assert_eq!(meta["created"], "2026-09-11T10:00:00.123Z");
         assert_eq!(meta["updated"], "2026-09-12T12:00:00.000Z");
