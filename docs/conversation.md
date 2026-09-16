@@ -23,6 +23,6 @@ CLI 忙碌时直接 SEND，由 CLI 管理后续消息。选择题、trust、更�
 | POST /api/session/conversation/send | `{uid, request_id, text, attachments, quotes, draft_revision, lease}` |
 | POST /api/session/conversation/restart | 已退出、未绑定的实例重新启动，保留逻辑草稿 |
 | POST /api/session/conversation/import | 只读迁移旧版输入证据 |
-| GET /api/session/conversation/drafts | 发现保留输入的会话，包括退出实例 |
+| GET /api/session/conversation/drafts | 发现保留输入的会话，包括退出实例；`term/discard` 删除的回执随之清除草稿，不再列出 |
 
 状态：sent 表示 SEND 已成功；cli_question 拒绝选择题期间发送；draft_revision 表示编辑冲突；send_result_unknown 不授权重发。需要 state、terminal、runtime、lifecycle、files_write 服务，conversation_send 能力明确启用。测试使用私有目录和假 CLI。
