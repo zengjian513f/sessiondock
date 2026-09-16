@@ -491,6 +491,7 @@ async function fetchTermList() {
   if (SessionDockCapabilities.config.backend === 'rust')
     for (const row of T.pending) if (row.declared_sid || row.binding?.state === 'confirmed') resolveNewSession(row);
   restoreTermPane(S.sel, S.agent);
+  if (String(S.sel || '').startsWith('tmux:')) refreshPendingStage(String(S.sel).slice(5));
 }
 
 function sessionTermMeta(uid) {
@@ -1512,7 +1513,7 @@ function showNewSessionStage(info) {
       ${sessionActionsMarkup(`
       <button class="session-menu-action" data-report-bug title="报告当前会话问题"
         aria-label="报告当前会话问题">${uiIcon('bug')}</button>
-      <button class="session-menu-action danger" id="a-session-action" title="停止会话" aria-label="停止会话">${uiIcon('power')}</button>
+      <button class="session-menu-action danger" id="a-session-action"></button>
       `, `
     <div class="dmeta"><span id="mcount-total">0 条消息</span>
       ${info.node_name ? `<span class="meta-node node-badge" data-node-color="${nodeColor(info.node_name)}">${esc(info.node_name)}</span>` : ''}
@@ -1523,7 +1524,7 @@ function showNewSessionStage(info) {
     ? esc(pendingStageMessage(info)) : ''}</div>`;
   $('#detail .mobile-back').onclick = showMobileList;
   bindConsoleButton($('#a-term'), S.sel);
-  $('#a-session-action').onclick = () => stopPendingSession(info, $('#a-session-action'));
+  renderPendingSessionAction(info);
   bindSessionActions($('#detail .dhead'));
   if (typeof auditDetailRendered === 'function') auditDetailRendered('new-session', {name: info.name});
   showMobileDetail();
@@ -1587,10 +1588,29 @@ function notePendingInput(name) {
   setTimeout(() => refreshPendingStage(name), PENDING_RECORD_GRACE_MS + 50);
 }
 
+function pendingSessionRow(name) {
+  return (typeof pendingTmuxSessions === 'function' ? pendingTmuxSessions() : [])
+    .find(row => row.name === name)
+    || T.pending.find(row => row.name === name)
+    || null;
+}
+
+function renderPendingSessionAction(info, button = $('#a-session-action')) {
+  if (!button || S.sel !== pendingUid(info.name)) return;
+  const current = pendingSessionRow(info.name) || info;
+  const label = '删除会话';
+  button.innerHTML = uiIcon('trash');
+  button.title = button.ariaLabel = label;
+  if (typeof labelSessionAction === 'function') labelSessionAction(button);
+  button.onclick = () => deletePendingSession(current, button);
+}
+
 function refreshPendingStage(name) {
-  const current = T.pending.find(row => row.name === name);
+  const current = pendingSessionRow(name);
+  if (!current || S.sel !== pendingUid(name)) return;
   const wait = $('.new-session-wait');
-  if (current && wait && S.sel === pendingUid(name)) wait.textContent = pendingStageMessage(current);
+  if (wait) wait.textContent = pendingStageMessage(current);
+  renderPendingSessionAction(current);
 }
 
 async function stopPendingSession(info, button) {
@@ -1613,6 +1633,16 @@ async function stopPendingSession(info, button) {
     return;
   }
   return deleteSessions([pendingUid(info.name)], button);
+}
+
+async function deletePendingSession(info, button) {
+  if (!confirm('删除这个会话？')) return;
+  if (button) button.disabled = true;
+  try {
+    await discardPendingSession(info);
+    await loadTermList();
+  } catch (error) { alert(error.message || '删除失败，请重试。'); }
+  finally { if (button) button.disabled = false; }
 }
 
 async function discardPendingSession(info) {
@@ -1748,9 +1778,8 @@ async function resolveNewSession(info) {
       paintLive();
       return;
     }
-    const wait = $('.new-session-wait');
-    if (current && wait && S.sel === pendingId)
-      wait.textContent = pendingStageMessage(current);
+    if (current && S.sel === pendingId && typeof refreshPendingStage === 'function')
+      refreshPendingStage(info.name);
     return;
   }
   const pendingId = pendingUid(info.name);
@@ -3368,6 +3397,13 @@ function recoverServerComposerDrafts() {
     if (S.sig && typeof renderSide==='function') renderSide();
   })();
   composerServerRecovery=task;return task;
+}
+
+function deleteComposerDraftStorage(uid) {
+  localStorage.removeItem(STORAGE_PREFIX + 'composerDraft.' + uid);
+  const remaining = store.get('composerDraftUids', []).filter(key => key !== uid);
+  if (remaining.length) store.set('composerDraftUids', remaining);
+  else localStorage.removeItem(STORAGE_PREFIX + 'composerDraftUids');
 }
 
 function rememberComposerSession(draft, info) {

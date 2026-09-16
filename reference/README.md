@@ -24,3 +24,4 @@
   失败关闭的回退中出现。
 
 - Reports and conversations share browser draft persistence and saved-input recovery; new sessions enter conversation mode while their CLI starts on the backend.
+- 未落盘的新建会话顶栏是删除会话（等同丢弃），不是关机停止；已落盘且仍在运行的才是停止。

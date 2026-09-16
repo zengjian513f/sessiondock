@@ -95,10 +95,11 @@ def main(bind_native=False, bare_shell=False):
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
                             # A healthy pending page explains nothing: the terminal
                             # is simply usable, and the only actions are the ordinary
-                            # console toggle and stop.
+                            # console toggle and delete (discard of an unpersisted launch).
                             expect(page.locator(".new-session-wait")).to_have_text("")
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
+                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
                             if bare_shell:
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
                                 assert not receipt.get("declared_sid"), receipt
@@ -216,25 +217,24 @@ def main(bind_native=False, bare_shell=False):
                                 action_page.set_viewport_size({"width":390,"height":844})
                                 action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]').click()
                                 expect(action_page.locator("#a-term")).to_be_visible()
-                                # Normal pending detail action lives in the session
-                                # menu; keyboard access/click must retain its receipt.
+                                # Unpersisted pending detail action is delete/discard.
+                                # The durable receipt stays queryable; the pending row leaves.
                                 action=action_page.locator("#a-session-action")
                                 if not action.is_visible():
                                     action_page.locator("#a-more").click()
+                                expect(action).to_have_attribute("aria-label","删除会话")
                                 before_cancel_claims=len(claims)
-                                with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/kill") as stopped:
+                                with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
                                     action.click()
-                                assert stopped.value.status==200,stopped.value.text()
+                                assert discarded.value.status==200,discarded.value.text()
+                                action_page.wait_for_function("id => !T.pending.some(row=>row.record_id===id)",arg=receipt["record_id"])
+                                expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
+                                final = context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
+                                assert final.status == 200 and not final.json().get("running"), final.text()
                                 if bare_shell:
-                                    action_page.wait_for_function("id => !T.pending.some(row=>row.record_id===id)",arg=receipt["record_id"])
-                                    expect(action_page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(0)
-                                    final = context.request.get(base+"/api/term/new-status",params={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
-                                    assert final.status == 200 and final.json()["state"] == "exited", final.text()
+                                    assert final.json()["state"] == "exited", final.text()
                                     replay = context.request.post(base+"/api/term/create",data=original_request)
                                     assert replay.status == 200 and replay.json()["record_id"] == receipt["record_id"] and not replay.json()["running"], replay.text()
-                                else:
-                                    action_page.wait_for_function("id => T.pending.some(row=>row.record_id===id && row.stale)",arg=receipt["record_id"])
-                                expect(action_page.locator("#a-term")).to_have_attribute("data-unavailable","true")
                                 again=context.request.post(base+"/api/term/kill",data={"record_id":receipt["record_id"],"instance_id":receipt["instance_id"]})
                                 assert again.status==200
                                 page.wait_for_timeout(1200)
@@ -255,6 +255,31 @@ def main(bind_native=False, bare_shell=False):
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(0)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert final.status == 200 and final.json()["state"] == "exited", final.text()
+                                # An exited SSH kept by composer input still offers delete;
+                                # discard drops the draft row that kill alone would leave.
+                                drafted = context.request.post(base+"/api/term/create",data={"source":"shell","cwd":str(root/"work"),"request_id":"shell-draft-exit"})
+                                assert drafted.status == 200 and drafted.json()["running"], drafted.text()
+                                drafted = drafted.json()
+                                page.evaluate("info => openPendingSession(info)",drafted)
+                                expect(page.locator("#composer")).to_be_visible()
+                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                                page.locator("#cinput").fill("ls")
+                                page.wait_for_function("composerDrafts.get(S.sel)?.text === 'ls'")
+                                expect(page.locator("#termpane")).to_be_visible()
+                                page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                                page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
+                                page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
+                                page.wait_for_function("name => T.views.get(name)?.ended",arg=drafted["name"])
+                                page.wait_for_function("async id => { await loadTermList(); return pendingTmuxSessions().some(row => row.record_id === id && !row.running); }",arg=drafted["record_id"])
+                                expect(page.locator(f'#side .item[data-uid="tmux:{drafted["name"]}"]')).to_have_count(1)
+                                action=page.locator("#a-session-action")
+                                if not action.is_visible():
+                                    page.locator("#a-more").click()
+                                expect(action).to_have_attribute("aria-label","删除会话")
+                                with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
+                                    action.click()
+                                assert discarded.value.status==200,discarded.value.text()
+                                expect(page.locator(f'#side .item[data-uid="tmux:{drafted["name"]}"]')).to_have_count(0)
                         assert not errors,errors
                         context.close()
                 assert corpus.paths["fixture"].read_bytes()==native
