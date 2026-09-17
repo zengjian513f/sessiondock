@@ -1,0 +1,11 @@
+[package]
+name = "ptyhost-record"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "ptyhost 会话录制：分段追加日志的帧格式、写入/轮转、读取与回放净化（无外部依赖）"
+
+[dependencies]
+
+[dev-dependencies]
+tempfile = "3"

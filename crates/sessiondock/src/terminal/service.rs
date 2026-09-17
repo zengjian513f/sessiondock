@@ -151,6 +151,8 @@ fn input_error(error: ptyhost_client::Error) -> TerminalError {
 }
 
 pub struct TerminalService {
+    /// The explicit, canonical ptyhost directory (recordings live under it).
+    directory: PathBuf,
     client: HostClient,
     registry: Arc<Registry>,
     limits: BridgeLimits,
@@ -275,7 +277,7 @@ impl TerminalService {
             ));
         }
         let client = HostClient::new(
-            directory,
+            directory.clone(),
             Limits {
                 max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                 // The host wire carries a u32 length and there is no
@@ -287,11 +289,16 @@ impl TerminalService {
         )
         .map_err(host_error)?;
         Ok(Self {
+            directory,
             client,
             registry: Arc::new(Registry::new()?),
             limits,
             gates: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
     }
 
     pub fn limits(&self) -> &BridgeLimits {
