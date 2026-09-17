@@ -25,3 +25,4 @@
 
 - Reports and conversations share browser draft persistence and saved-input recovery; new sessions enter conversation mode while their CLI starts on the backend.
 - 未落盘的新建会话顶栏是删除会话（等同丢弃），不是关机停止；已落盘且仍在运行的才是停止。
+- 已完成回合折叠时，主助手的第一条原生 final（Claude `end_turn`、Codex `final_answer`）就是露在顶层的结论；Stop hook 拒绝收尾后追加的工具调用与短补充、后台 task 短报单独成段规划，不再把长结论折进过程合集只露出末尾几行。

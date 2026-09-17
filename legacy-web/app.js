@@ -2677,11 +2677,12 @@ async function deleteSessions(uids, button = null) {
   const only = uids.length === 1
     ? (sidebarSessions().find(x => x.uid === uids[0])?.title || '') : '';
   const running = recorded.filter(uid => S.live.has(uid)).length;
-  if (!confirm((uids.length === 1
+  // Unpersisted launches discard immediately. Recorded sessions still confirm
+  // because they move into the recycle bin.
+  if (recorded.length && !confirm((uids.length === 1
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
-    + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。` : '')
-    + (pending.length && recorded.length ? '\n' : '')
-    + (recorded.length ? trashLocationNote() : '')
+    + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
+    + trashLocationNote()
     + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
     return null;
   sessionDeleteBusy = true;
@@ -5162,7 +5163,6 @@ const sameNativeTurn = (a, b) => a?.turn_id != null && b?.turn_id != null
 const isTurnAssistant = m => baseMessageRole(m?.role) === 'assistant';
 const isFinalAssistant = m => isTurnAssistant(m)
   && ['final', 'final_answer', 'end_turn'].includes(m?.phase);
-const isTaskTurnBoundary = m => m?.role === 'event' && m?.event_kind === 'task';
 // rename/compact 等不计入消息数的辅助记录可能写在 final 之后；它们继续留在
 // 时间线，但不应让前面的原生最终答复失去“结论”资格。
 const isPassiveTurnTail = m => m?.counted === false;
@@ -5192,18 +5192,17 @@ function turnConclusion(body, { complete = false, interrupted = false } = {}) {
   let meaningfulEnd = body.length;
   while (meaningfulEnd && isPassiveTurnTail(body[meaningfulEnd - 1])) meaningfulEnd--;
   if (!meaningfulEnd) return null;
-  // Claude 的后台 task-notification 是一轮新的原生 user 输入，但在时间线里会
-  // 转成不打扰主线的 task 事件。若它前面已有主助手 final，那条 final 已经结束
-  // 了用户回合；后续监控短报不能反过来把它降成可折叠的“进展”。
-  for (let boundary = 1; boundary < meaningfulEnd; boundary++) {
-    if (!isTaskTurnBoundary(body[boundary])) continue;
-    let end = boundary;
-    while (end && isPassiveTurnTail(body[end - 1])) end--;
-    if (!end || body[end - 1]?.role !== 'assistant'
-        || !isFinalAssistant(body[end - 1])) continue;
-    let start = end - 1;
-    while (start > 0 && isFinalAssistant(body[start - 1])) start--;
-    return {start, end};
+  // 主助手的第一条原生 final 就是它对本轮输入的答复。final 之后同一轮里还会
+  // 出现内容的只有两种情形：Claude 的后台 task-notification（时间线里转成不
+  // 打扰主线的 task 事件，后面跟一条监控短报），以及 Stop hook 拒绝收尾后被
+  // 逼出的工具调用和一条短补充。两者都不能反过来把前面的 final 降成可折叠
+  // 的“进展”——否则真正的结论被折进过程合集，页面只露出末尾几行补充。
+  // final 之后的部分标记 continued，交给调用方作为一段新的过程继续规划。
+  for (let i = 0; i < meaningfulEnd; i++) {
+    if (body[i]?.role !== 'assistant' || !isFinalAssistant(body[i])) continue;
+    let end = i + 1;
+    while (end < meaningfulEnd && isFinalAssistant(body[end])) end++;
+    return {start: i, end, continued: end < meaningfulEnd};
   }
   const last = body[meaningfulEnd - 1];
   if (isFinalAssistant(last)) {
@@ -5256,16 +5255,22 @@ function planTurnSegment(messages, promptEnd,
        ...body.slice(conclusion.end, conclusion.tailStart)]
     : conclusion ? body.slice(0, conclusion.start) : body;
   const processPlan = planMessages(process);
+  const finalBlock = conclusion ? body.slice(conclusion.start, conclusion.end) : [];
+  const rest = conclusion ? body.slice(conclusion.tailStart ?? conclusion.end) : [];
+  // 原生 final 之后被追加的部分（task 监控短报、Stop hook 逼出的工具调用与
+  // 补充说明）自成一段过程：够长就折成第二个合集并露出它自己的收尾，只有
+  // 一两项时平铺。中断轮与 rename/compact 之类的被动尾巴仍按原样平铺。
+  const tail = conclusion?.continued
+    ? planTurnSegment(rest, 0, {complete, foldable, openTail})
+    : planMessages(rest);
   // 一项换成一项不会节省空间，还会徒增一次点击。
   const processSize = visiblePlanSize(processPlan);
   // 中断轮已经要保留末次状态；即便只剩一个工具单元，也应进过程合集，
   // 否则恰好较短的中断轮会再次把工具卡散在对话主线里。
   if (!processSize || (processSize < 2 && !conclusion?.interrupted)) {
-    return planMessages(messages);
+    if (!conclusion?.continued) return planMessages(messages);
+    return [...planMessages(messages.slice(0, promptEnd + conclusion.end)), ...tail];
   }
-  const finalBlock = conclusion ? body.slice(conclusion.start, conclusion.end) : [];
-  const passiveTail = conclusion
-    ? body.slice(conclusion.tailStart ?? conclusion.end) : [];
   return [
     ...prompts.map((m, i) => ({m, sealedTurnHead: i === 0})),
     {turn: {items: process, plan: processPlan,
@@ -5274,7 +5279,7 @@ function planTurnSegment(messages, promptEnd,
             interrupted: !!conclusion?.interrupted},
      open: !S.compactTurns},
     ...planMessages(finalBlock),
-    ...planMessages(passiveTail),
+    ...tail,
   ];
 }
 
