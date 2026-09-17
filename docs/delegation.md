@@ -85,6 +85,7 @@ of the verification commands.
 
 | 日期 | 任务 | 结果 |
 | --- | --- | --- |
+| 2026-09-18 | 终端录制（wp-record）9 本任务书：`ptyhost-record` 的 format / sanitize / store / reader 四个模块、`legacy-web/records.{html,js,css}` 回放页、`crates/ptyhost/tests/host_record.rs`、`tests/term_records_http_suite.py`、`tests/terminal_records_browser.py`、`docs/terminal-records.md` | grok-4.6 headless 产出，人工审阅。9/9 rc=0，单任务 420–900 s，最多 3 路并行；人工修正：records.css 删去抄自 files.css 的无关选择器、records.js 的节点前缀改写以免路由台账误判、ptyhost-record 按 clippy 清理 5 处风格提示；grok 自行纠正了 sanitize 任务书里一处期望值笔误（普通字节 `b` 应保留）。ptyhost 录制接线、sessiondock 路由/流式回放、主页面入口由主审实现。 |
 | 2026-09-12 | `tests/run_validation.py` 串行验证运行器 | 约 6 分钟，233 行，一次通过，人工审阅未改动；`--list` 解析 35 套 |
 | 2026-09-12 | 第三～五波共 48 个任务（探针、走查套件、生成式参考文档、模块文档、HTTP 合同套件、替换辅助工具）| 全部 rc=0；每波审阅后分别提交（`ad853b6`、`20ded2c`、`5adf7a3`、`1d1abcd`）；仅两处人工修正（能力键比对读 lib.rs、`route_ledger` 识别 delete 路由）。载荷最高时 10 路并行，单任务 165–748 秒 |
 | 2026-09-12 | q80 `tests/send_http_suite.py`（第三十一/三十二批四条发送路由的 HTTP 合同，两家假 CLI，10 场景）| 1219 s 后 **max turns**（rc=1）：文件已写到 260 行、前 3 场景通过；人工收尾两处——假 Claude CLI 在 `--resume` 时改为从文件末尾记录续 `parentUuid`（否则第二个根不在活动时间线上、永不确认），以及 retry 对已确认行按实际契约期望 404 并补 `_build`；之后 10/10 通过。教训：10 个场景 + 两家 CLI 超出 60 轮预算，应拆成两本 |
