@@ -16,6 +16,7 @@ mod media;
 mod metadata;
 pub(crate) mod node_auth;
 mod read;
+mod records;
 pub(crate) mod runtime;
 mod search;
 mod terminal;
@@ -224,6 +225,9 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         .route("/term/attach", get(terminal::attach))
+        // Session recordings: list, and a read-only replay WebSocket (no lease).
+        .route("/term/records", get(records::list))
+        .route("/term/records/attach", get(records::attach))
         // The host applies its decoded-input protocol limit after JSON parsing.
         .route(
             "/term/send",

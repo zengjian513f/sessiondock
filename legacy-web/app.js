@@ -4605,7 +4605,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   3. 机器名从平铺收进下拉（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、重新扫描、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'reload', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'reload', 'records', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -7770,6 +7770,19 @@ async function purgeAllTrash() {
 }
 
 $('#trash').onclick = openTrash;
+// 终端录制页只在后端声明 terminal_records 时可达；中央站带上第一台选中的机器。
+if (SessionDockCapabilities.config.terminal_records === true) {
+  const records = $('#records');
+  records.hidden = false;
+  records.onclick = () => {
+    const url = new URL('records.html', APP_BASE);
+    if (HUB_MODE) {
+      const node = selectedNodeIds()[0];
+      if (node) url.searchParams.set('node', node);
+    }
+    window.open(url.href, '_blank', 'noopener');
+  };
+}
 $('#trash-reload').onclick = () => loadTrash();
 $('#trash-purge-all').onclick = purgeAllTrash;
 $('#trash-close').onclick = $('#trash-done').onclick = () => $('#trash-dialog').close();

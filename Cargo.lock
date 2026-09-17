@@ -862,6 +862,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "portable-pty",
+ "ptyhost-record",
  "serde_json",
  "vt100",
 ]
@@ -876,6 +877,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+]
+
+[[package]]
+name = "ptyhost-record"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]
@@ -1120,6 +1128,7 @@ dependencies = [
  "mime_guess",
  "native-tls",
  "ptyhost-client",
+ "ptyhost-record",
  "regex",
  "regex-syntax",
  "rustix",

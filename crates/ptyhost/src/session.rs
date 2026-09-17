@@ -20,6 +20,7 @@ use crate::output::{Client, DRAIN_TIMEOUT};
 use crate::protocol::{
     FRAME_DATA, FRAME_EXIT, FRAME_RESIZE, key_bytes, pack_frame, read_frames, recv_json, send_json,
 };
+use crate::record::{RecordConfig, Recorder};
 use crate::screen::Screen;
 use crate::transport::{Listener, Stream};
 
@@ -192,6 +193,8 @@ pub struct Session {
     boot_id: Option<String>,
     token: String,
     history: usize,
+    /// 录制器；打开失败或写盘失败后为 None / 内部 failed，会话照常运行。
+    record: Mutex<Option<Recorder>>,
     size: Mutex<(u16, u16)>,
     screen: Mutex<Screen>,
     backlog: Mutex<Backlog>,
@@ -276,6 +279,7 @@ impl Session {
         meta: Value,
         directory: PathBuf,
         history: usize,
+        record: Option<RecordConfig>,
     ) -> std::io::Result<Arc<Self>> {
         if argv.is_empty() {
             return Err(std::io::Error::new(
@@ -337,6 +341,25 @@ impl Session {
         } else {
             String::new()
         };
+        let recorder = record.and_then(|config| {
+            match Recorder::open(
+                &directory,
+                &name,
+                crate::record::now_unix_ms(),
+                &argv,
+                cwd.as_deref(),
+                &meta,
+                cols.max(1),
+                rows.max(1),
+                config,
+            ) {
+                Ok(recorder) => Some(recorder),
+                Err(error) => {
+                    eprintln!("ptyhost: 无法打开录制目录，本会话不录制: {error}");
+                    None
+                }
+            }
+        });
         let session = Arc::new(Self {
             name: Mutex::new(name),
             argv,
@@ -348,6 +371,7 @@ impl Session {
             boot_id: current_boot_id(),
             token,
             history,
+            record: Mutex::new(recorder),
             size: Mutex::new((cols.max(1), rows.max(1))),
             screen: Mutex::new(Screen::new(cols.max(1), rows.max(1), history)),
             backlog: Mutex::new(Backlog::default()),
@@ -452,6 +476,9 @@ impl Session {
             "backend": "ptyhost",
         });
         let map = info.as_object_mut().unwrap();
+        if let Some(recorder) = lock(&self.record).as_ref() {
+            map.insert("record".into(), recorder.info());
+        }
         if let Some(boot_id) = &self.boot_id {
             map.insert("boot_id".into(), json!(boot_id));
         }
@@ -568,6 +595,17 @@ impl Session {
                 backlog.inflight = Some(piece.clone());
                 piece
             };
+            // 录制锁跨越"喂模型 + 写帧"：finish 等 pending 归零后再取这把锁写 Exit，
+            // 于是 Exit 一定排在最后一段输出之后。checkpoint 必须取喂入之前的画面，
+            // 否则这段字节会既在快照里又被回放一遍。
+            let mut record = lock(&self.record);
+            if let Some(recorder) = record.as_mut() {
+                if recorder.needs_checkpoint() {
+                    let state = lock(&self.screen).replay_bytes(self.history);
+                    let (cols, rows) = *lock(&self.size);
+                    recorder.checkpoint(cols, rows, state);
+                }
+            }
             let answer = apply_screen_piece(
                 &self.screen,
                 &self.backlog,
@@ -575,6 +613,15 @@ impl Session {
                 #[cfg(test)]
                 || {},
             );
+            if let Some(recorder) = record.as_mut() {
+                match &piece {
+                    Piece::Data(bytes) => recorder.output(bytes),
+                    Piece::Resize { cols, rows } => recorder.resize(*cols, *rows),
+                    _ => {}
+                }
+                recorder.maybe_sync();
+            }
+            drop(record);
             self.backlog_cv.notify_all();
             if let Some(answer) = answer {
                 self.write_pty(&answer);
@@ -644,6 +691,9 @@ impl Session {
         let mut exit = json!({"code": code, "output_complete": reason.is_none()});
         if let Some(reason) = reason {
             exit["reason"] = json!(reason);
+        }
+        if let Some(recorder) = lock(&self.record).as_mut() {
+            recorder.exit(&exit);
         }
         let frame: Arc<[u8]> = pack_frame(FRAME_EXIT, exit.to_string().as_bytes()).into();
         let deadline = Instant::now() + DRAIN_TIMEOUT;
@@ -894,6 +944,14 @@ impl Session {
         }
         lock(&self.screen).resize(cols, rows);
         {
+            // 录制按队列顺序记尺寸变化；模型本身已在上面即时改过。
+            let mut backlog = lock(&self.backlog);
+            if !self.finishing.load(Ordering::Acquire) {
+                backlog.queue.push_back(Piece::Resize { cols, rows });
+                self.backlog_cv.notify_all();
+            }
+        }
+        {
             let master = lock(&self.master);
             let _ = master.resize(PtySize {
                 rows,
@@ -925,6 +983,9 @@ impl Session {
             *lock(&self.listener) = Some(Arc::new(fresh));
         }
         *lock(&self.name) = new.to_string();
+        if let Some(recorder) = lock(&self.record).as_mut() {
+            recorder.rename(new);
+        }
         self.write_info();
         #[cfg(unix)]
         {

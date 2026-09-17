@@ -13,6 +13,7 @@ path = "src/main.rs"
 portable-pty = "0.9"
 serde_json = "1"
 vt100 = "0.16"
+ptyhost-record = { path = "../ptyhost-record" }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
