@@ -1300,10 +1300,58 @@ test('SSH conversation shows a simple composer without leaving the PTY', () => {
     switchComposerDraft: uid => drafts.push(uid), syncComposerMode: () => {},
   });
   loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
+  loadFunction(context, 'sessionComposerEnded', read('term.js'));
   loadFunction(context, 'renderComposer', read('term.js'));
   context.renderComposer();
   assert.equal(box.classList.hidden, false);
   assert.deepEqual(drafts, ['tmux:ssh']);
+});
+
+
+test('an ended pending session hides the composer', () => {
+  const box = {classList: {hidden: false, toggle(name, on) { if (name === 'hidden') this.hidden = on; }}};
+  const right = {classList: {toggle() {}}};
+  const drafts = [];
+  const paint = (sel, pending, extra = {}) => {
+    drafts.length = 0;
+    box.classList.hidden = false;
+    const context = contextWithCapabilities({...disabled, conversation_send: true}, {
+      S: {sel}, T: {pending, list: [], ended: extra.ended || new Map(), views: extra.views || new Map()},
+      conversationSendEnabled: () => true, sessionTerminalEnabled: () => true,
+      takenOver: () => extra.takenOver ?? (String(sel).startsWith('tmux:') ? String(sel).slice(5) : null),
+      pendingUid: name => `tmux:${name}`,
+      ...(extra.pendingTmuxSessions ? {pendingTmuxSessions: extra.pendingTmuxSessions} : {}),
+      $: key => key === '#composer' ? box : key === '#right' ? right : null,
+      switchComposerDraft: uid => drafts.push(uid), syncComposerMode: () => {},
+    });
+    loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
+    loadFunction(context, 'sessionComposerEnded', read('term.js'));
+    loadFunction(context, 'renderComposer', read('term.js'));
+    context.renderComposer();
+    return {hidden: box.classList.hidden, drafts: [...drafts]};
+  };
+
+  assert.equal(paint('tmux:ssh', [{name: 'ssh', source: 'shell', state: 'running'}]).hidden, false);
+
+  let result = paint('tmux:ssh', [{name: 'ssh', source: 'shell', state: 'exited', running: false}]);
+  assert.equal(result.hidden, true);
+  assert.deepEqual(result.drafts, [null]);
+
+  result = paint('tmux:claude', [{name: 'claude', source: 'claude', state: 'exited', running: false}],
+    {takenOver: null});
+  assert.equal(result.hidden, true);
+
+  result = paint('tmux:codex', [{name: 'codex', source: 'codex', state: 'failed'}], {takenOver: null});
+  assert.equal(result.hidden, true);
+
+  result = paint('tmux:kept', [], {takenOver: null, pendingTmuxSessions: () => [
+    {name: 'kept', source: 'claude', uid: 'tmux:kept', state: 'exited', stale: true}]});
+  assert.equal(result.hidden, true);
+
+  result = paint('tmux:live', [{name: 'live', source: 'claude', state: 'running'}], {
+    takenOver: 'live', ended: new Map([['tmux:live', {instanceId: 'i', reason: 'exited'}]]),
+  });
+  assert.equal(result.hidden, true);
 });
 
 

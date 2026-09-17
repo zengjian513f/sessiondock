@@ -1662,7 +1662,6 @@ async function stopPendingSession(info, button) {
 }
 
 async function deletePendingSession(info, button) {
-  if (!confirm('删除这个会话？')) return;
   if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
@@ -3770,16 +3769,37 @@ function switchComposerDraft(uid) {
   if (uid) followServerDraft(uid); // Already hydrated: pick up edits saved elsewhere.
 }
 
+/** Persisted agents already drop the composer once the pane leaves the list.
+ *  Unpersisted launches keep a `tmux:` uid after exit, so hide it explicitly. */
+function sessionComposerEnded(uid = S.sel) {
+  if (!uid) return false;
+  if (typeof T !== 'undefined' && T.ended?.has(uid)) return true;
+  const name = String(uid).startsWith('tmux:')
+    ? String(uid).slice(5)
+    : (typeof takenOver === 'function' ? takenOver(uid) : null);
+  const view = name && typeof T !== 'undefined' ? T.views?.get(name) : null;
+  if (view?.ended || view?.retired) return true;
+  const rows = typeof T === 'undefined' ? [] : [
+    ...(typeof pendingTmuxSessions === 'function' ? pendingTmuxSessions() : []),
+    ...(T.pending || []),
+  ];
+  const row = rows.find(item => item.uid === uid
+    || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
+  return !!row && (row.state === 'exited' || row.state === 'failed' || row.stale);
+}
+
 function renderComposer() {
   const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
   const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox') || shell;
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');
+  const show = !sessionComposerEnded(S.sel) && !!(name || pending);
   const box = $('#composer');
-  box.classList.toggle('hidden', !name && !pending);
+  box.classList.toggle('hidden', !show);
   $('#right')?.classList.toggle('shell-session', !!shell);
-  switchComposerDraft(name || pending ? S.sel : null);
-  if (name || pending) syncComposerMode();
+  switchComposerDraft(show ? S.sel : null);
+  if (show) syncComposerMode();
+  if (shell && typeof layoutTermPane === 'function') layoutTermPane();
 }
 
 function autoGrow(ta) {

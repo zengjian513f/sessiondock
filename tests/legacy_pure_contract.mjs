@@ -621,3 +621,44 @@ test('a draft-retained pending row keeps one start time instead of sorting by th
   assert.equal(context.pendingTmuxSessions().find(r => r.name === 'nostart').updated, row.updated);
   assert.equal(context.pendingTmuxSessions().find(r => r.name === 'nostart').created, row.created);
 });
+
+test('a turn keeps its first native final as the conclusion when a Stop hook or task report appends work after it', () => {
+  const context = ctx({S: {compactTurns: true}});
+  for (const name of ['TOOL_ROLES', 'TURN_START_ROLES', 'GROUP_MIN', 'isGroupableTool', 'pairTools',
+    'planMessages', 'baseMessageRole', 'isTurnStart', 'sameNativeTurn', 'isTurnAssistant',
+    'isFinalAssistant', 'isPassiveTurnTail', 'turnConclusion', 'visiblePlanSize', 'turnKey',
+    'planTurnSegment', 'planTurn', 'planTurns']) load(context, name);
+  const t = (role, text, extra = {}) => ({role, text, turn_id: 't1', ...extra});
+  const tool = (id, text) => [t('tool', `$ ${text}`, {call_id: id}), t('tool_result', text, {call_id: id})];
+  const shape = plan => plan.map(item => item.turn
+    ? `turn[${item.turn.items.length}${item.turn.hasConclusion ? ',conclusion' : ''}]`
+    : item.g ? `group[${item.g.length}]` : `${item.m.role}:${item.m.text}`);
+  const work = [t('assistant', '我先读文档', {phase: 'progress'}), ...tool('c1', 'cat a'), ...tool('c2', 'cat b')];
+  const review = t('assistant', '复核完成。核心发现…', {phase: 'final'});
+  const follow = t('assistant', 'agenthub 是常驻服务，已标记 WATCHDOG_EXEMPT', {phase: 'final'});
+  const next = {role: 'user', text: '好的，写一个安排文档', turn_id: 't2'};
+
+  // 报告场景：长结论 → Stop hook 拒绝收尾 → 一次 echo → 短补充。结论必须留在顶层。
+  same(shape(context.planTurns([t('user', '重排优先级'), ...work, review, ...tool('c3', 'echo WATCHDOG_EXEMPT'), follow, next])),
+    ['user:重排优先级', 'turn[5,conclusion]', 'assistant:复核完成。核心发现…',
+     'tool:$ echo WATCHDOG_EXEMPT', 'assistant:agenthub 是常驻服务，已标记 WATCHDOG_EXEMPT', 'user:好的，写一个安排文档']);
+  // hook 之后的追加工作够长时自成第二个过程合集，并露出自己的收尾。
+  same(shape(context.planTurns([t('user', '重排优先级'), ...work, review,
+    t('assistant', '补挂看门狗', {phase: 'progress'}), ...tool('c3', 'echo a'), ...tool('c4', 'echo b'), follow, next])),
+    ['user:重排优先级', 'turn[5,conclusion]', 'assistant:复核完成。核心发现…', 'turn[5,conclusion]',
+     'assistant:agenthub 是常驻服务，已标记 WATCHDOG_EXEMPT', 'user:好的，写一个安排文档']);
+  // 追加工作仍在进行的活动尾段照旧完整铺开，不猜结论。
+  same(shape(context.planTurns([t('user', '重排优先级'), ...work, review, ...tool('c3', 'echo a'), ...tool('c4', 'echo b')],
+    {tailComplete: false, openTail: true})),
+    ['user:重排优先级', 'turn[5,conclusion]', 'assistant:复核完成。核心发现…', 'group[2]']);
+  // 后台 task 短报仍按老规则：主 final 是结论，task 事件与短报平铺在后。
+  same(shape(context.planTurns([t('user', '重排优先级'), ...work, review,
+    t('event', 'task done', {event_kind: 'task'}), t('assistant', '后台任务完成', {phase: 'final'}), next])),
+    ['user:重排优先级', 'turn[5,conclusion]', 'assistant:复核完成。核心发现…', 'event:task done', 'assistant:后台任务完成', 'user:好的，写一个安排文档']);
+  // 过程太短的轮次整体平铺，追加段仍单独规划。
+  same(shape(context.planTurns([t('user', '问'), t('assistant', '答', {phase: 'final'}), ...tool('c3', 'echo a'), follow, next])),
+    ['user:问', 'assistant:答', 'tool:$ echo a', 'assistant:agenthub 是常驻服务，已标记 WATCHDOG_EXEMPT', 'user:好的，写一个安排文档']);
+  // 只有一条 final 的普通轮次不受影响。
+  same(shape(context.planTurns([t('user', '重排优先级'), ...work, review, next])),
+    ['user:重排优先级', 'turn[5,conclusion]', 'assistant:复核完成。核心发现…', 'user:好的，写一个安排文档']);
+});
