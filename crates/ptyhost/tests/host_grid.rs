@@ -460,6 +460,10 @@ fn alt_screen_title_and_exit() {
     });
 
     host.send_text("EXIT\r");
+    // 退出前的最后一段输出必须先以增量送达，再收到退出帧（finish 会强制 flush）。
+    wait_message(&mut grid, Instant::now() + DEADLINE, |msg| {
+        msg["t"] == "diff" && msg.to_string().contains("FINAL_MARKER")
+    });
     let exit = grid.next_exit();
     assert_eq!(exit["code"], 7, "exit frame: {exit}");
 }
