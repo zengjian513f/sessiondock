@@ -2,13 +2,19 @@
 (() => {
   const $ = id => document.getElementById(id);
   const base = new URL('.', location.href);
-  const node = new URLSearchParams(location.search).get('node');
-  const embedded = new URLSearchParams(location.search).get('embedded') === '1' || window.self !== window.top;
+  const params = new URLSearchParams(location.search);
+  const node = params.get('node');
+  const embedded = params.get('embedded') === '1' || window.self !== window.top;
+  // 中央站：`nodes=a,b,c` 是所有勾选的机器，列表按机器聚合；单机页面 nodes = [null]。
   // Hub pages reach a node through /api/nodes/{nid}/api/{*path}.
-  const prefix = node ? ['api', 'nodes', encodeURIComponent(node), 'api', ''].join('/') : 'api/';
+  const nodes = (params.get('nodes') || '').split(',').filter(Boolean);
+  if (!nodes.length) nodes.push(node || null);
+  const nodeNames = new Map();
+  const prefixFor = nid => (nid ? ['api', 'nodes', encodeURIComponent(nid), 'api', ''].join('/') : 'api/');
+  const prefix = prefixFor(nodes[0]);
   const fitKey = SessionDockCapabilities.namespace + 'records-fit';
   const GAP_NOTE = '（录制有缺口，已从下一个快照继续）';
-  const state = {id: '', status: '', live: false, ended: false, gaps: 0, bytes: 0};
+  const state = {id: '', key: '', node: '', status: '', live: false, ended: false, gaps: 0, bytes: 0};
 
   let records = [];
   let term = null, fitAddon = null, socket = null;
@@ -33,13 +39,13 @@
   $('xterm').classList.toggle('fit', fitOn);
   $('empty').hidden = false;
 
-  function apiURL(path, query) {
-    const url = new URL(prefix + path, base);
+  function apiURL(path, query, nid = nodes[0]) {
+    const url = new URL(prefixFor(nid) + path, base);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     return url;
   }
-  function attachURL(id) {
-    const url = apiURL('term/records/attach', {id});
+  function attachURL(id, nid) {
+    const url = apiURL('term/records/attach', {id}, nid);
     url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.href;
   }
@@ -77,17 +83,22 @@
     const liveOnly = $('live-only').checked;
     return records.filter(row => !liveOnly || row.live);
   }
-  function syncURL(id) {
+  function syncURL(id, nid) {
     const url = new URL(location.href);
     if (id) url.searchParams.set('id', id);
     else url.searchParams.delete('id');
+    if (nid) url.searchParams.set('node', nid);
     history.replaceState(history.state, '', url);
+  }
+  function rowOf(id, nid) {
+    return records.find(row => row.id === id && (row.node || null) === (nid || null))
+      || records.find(row => row.id === id) || null;
   }
   function highlight() {
     const list = $('records');
     let active = null;
     for (const item of list.children) {
-      const on = item.dataset.id === state.id;
+      const on = item.dataset.id === state.id && (item.dataset.node || '') === (state.node || '');
       item.setAttribute('aria-selected', String(on));
       if (on) active = item;
     }
@@ -103,8 +114,12 @@
       item.dataset.id = row.id;
       item.id = 'rec-' + row.id;
       item.setAttribute('aria-selected', 'false');
+      item.dataset.node = row.node || '';
       const heading = element('div', undefined, 'heading');
       heading.append(element('span', row.name || row.id, 'name'));
+      if (nodes.length > 1 || nodes[0]) {
+        heading.append(element('span', nodeNames.get(row.node) || (row.node || '').slice(0, 8), 'badge node'));
+      }
       heading.append(element('span', row.live ? '进行中' : '已结束', 'badge ' + (row.live ? 'live' : 'ended')));
       item.append(heading);
       const created = row.created_ms ? new Date(row.created_ms).toLocaleString() : '';
@@ -116,7 +131,7 @@
       const gridLink = element('a', '网格回放', 'grid-link');
       const gridUrl = new URL('grid.html', base);
       gridUrl.searchParams.set('record', row.id);
-      if (node) gridUrl.searchParams.set('node', node);
+      if (row.node) gridUrl.searchParams.set('node', row.node);
       if (embedded) gridUrl.searchParams.set('embedded', '1');
       gridLink.href = gridUrl.href;
       // 嵌在应用内对话框时在本框架内导航（新标签在 PWA 里看不到）；网格页有"返回"。
@@ -132,12 +147,26 @@
     if (loading) return;
     loading = true;
     try {
-      const response = await fetch(apiURL('term/records'), {cache: 'no-store'});
-      if (!(response.headers.get('Content-Type') || '').includes('application/json'))
-        throw new Error('无法读取响应，请确认登录状态后刷新');
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || `请求失败（${response.status}）`);
-      records = Array.isArray(result.records) ? result.records : [];
+      if (nodes[0] && !nodeNames.size) {
+        try {
+          const meta = await (await fetch(new URL('api/nodes', base))).json();
+          for (const row of meta.machines || meta.nodes || []) if (row?.id) nodeNames.set(row.id, row.name || row.id);
+          $('machine').textContent = nodes.map(nid => nodeNames.get(nid) || nid).join(' · ');
+        } catch { /* 机器名只是装饰 */ }
+      }
+      // 每台机器各自请求；一台失败不影响其它机器，错误合并到状态栏。
+      const settled = await Promise.allSettled(nodes.map(async nid => {
+        const response = await fetch(apiURL('term/records', null, nid), {cache: 'no-store'});
+        if (!(response.headers.get('Content-Type') || '').includes('application/json'))
+          throw new Error('无法读取响应，请确认登录状态后刷新');
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `请求失败（${response.status}）`);
+        return (Array.isArray(result.records) ? result.records : []).map(row => ({...row, node: nid}));
+      }));
+      const failures = settled.filter(item => item.status === 'rejected').map(item => item.reason?.message || '失败');
+      if (failures.length === nodes.length) throw new Error(failures[0]);
+      records = settled.flatMap(item => item.status === 'fulfilled' ? item.value : [])
+        .sort((a, b) => (b.created_ms || 0) - (a.created_ms || 0));
       renderList();
       if (!state.id && !$('status').textContent) setStatus(records.length ? '' : '没有录制');
     } catch (error) {
@@ -260,7 +289,7 @@
   function connect(id) {
     closeSocket();
     const gen = generation;
-    const ws = new WebSocket(attachURL(id));
+    const ws = new WebSocket(attachURL(id, state.node || null));
     ws.binaryType = 'arraybuffer';
     socket = ws;
     ws.addEventListener('message', event => {
@@ -279,10 +308,13 @@
       scheduleReconnect(id, event);
     });
   }
-  function openRecord(id) {
+  function openRecord(id, nid = rowOf(id)?.node || nodes[0]) {
     if (!id) return;
-    const switching = state.id !== id;
+    const key = (nid || '') + '/' + id;
+    const switching = state.key !== key;
     state.id = id;
+    state.key = key;
+    state.node = nid || '';
     if (switching) {
       state.status = '';
       state.live = false;
@@ -297,7 +329,7 @@
       createTerm();
     }
     $('empty').hidden = true;
-    syncURL(id);
+    syncURL(id, nid);
     highlight();
     if (!switching && socket && socket.readyState <= WebSocket.OPEN) return;
     connect(id);
@@ -305,7 +337,7 @@
 
   $('records').addEventListener('click', event => {
     const item = event.target.closest('[role=option]');
-    if (item) openRecord(item.dataset.id);
+    if (item) openRecord(item.dataset.id, item.dataset.node || null);
   });
   $('records').addEventListener('keydown', event => {
     const items = [...$('records').children];
@@ -314,7 +346,7 @@
     const go = index => {
       event.preventDefault();
       const next = items[Math.max(0, Math.min(items.length - 1, index))];
-      if (next) openRecord(next.dataset.id);
+      if (next) openRecord(next.dataset.id, next.dataset.node || null);
     };
     if (event.key === 'ArrowDown') go(current < 0 ? 0 : current + 1);
     else if (event.key === 'ArrowUp') go(current < 0 ? 0 : current - 1);
@@ -351,5 +383,5 @@
   }, 5000);
 
   const wanted = new URLSearchParams(location.search).get('id');
-  loadList().then(() => { if (wanted) openRecord(wanted); });
+  loadList().then(() => { if (wanted) openRecord(wanted, node || null); });
 })();
