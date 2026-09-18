@@ -215,6 +215,10 @@ pub struct Session {
     grid_clients: Mutex<Vec<Arc<Client>>>,
     /// 刚 attach、还没拿到首个快照的网格客户端。
     grid_pending: Mutex<Vec<Arc<Client>>>,
+    /// finish 请求屏幕线程立刻 flush 网格增量，并等它完成（计数递增）。
+    grid_flush_request: AtomicBool,
+    grid_flush_done: Mutex<u64>,
+    grid_flush_cv: Condvar,
     next_client: AtomicU64,
     attachment_slots: AtomicUsize,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -394,6 +398,9 @@ impl Session {
             clients: Mutex::new(Vec::new()),
             grid_clients: Mutex::new(Vec::new()),
             grid_pending: Mutex::new(Vec::new()),
+            grid_flush_request: AtomicBool::new(false),
+            grid_flush_done: Mutex::new(0),
+            grid_flush_cv: Condvar::new(),
             next_client: AtomicU64::new(1),
             attachment_slots: AtomicUsize::new(0),
             writer: Mutex::new(writer),
@@ -616,8 +623,11 @@ impl Session {
                         }
                         wait = wait.min(left);
                     }
-                    // 网格：有新客户端等快照，或增量到期，都要在没有新字节时醒来。
-                    if !lock(&self.grid_pending).is_empty() || sync.policy.due(now, true) {
+                    // 网格：有新客户端等快照、增量到期或 finish 要求立刻 flush，都要在没有新字节时醒来。
+                    if !lock(&self.grid_pending).is_empty()
+                        || sync.policy.due(now, true)
+                        || self.grid_flush_request.load(Ordering::Acquire)
+                    {
                         woke_for_grid = true;
                         break;
                     }
@@ -700,6 +710,13 @@ impl Session {
 
     /// 到期（静默 1 ms / 上限 8 ms）或有新客户端等着时 flush；同步输出进行中不发。
     fn maybe_grid_flush(&self, sync: &mut GridSync) {
+        if self.grid_flush_request.swap(false, Ordering::AcqRel) {
+            // 退出前的最后一帧：不等静默，立刻发。
+            self.grid_flush(sync);
+            *lock(&self.grid_flush_done) += 1;
+            self.grid_flush_cv.notify_all();
+            return;
+        }
         let pending = !lock(&self.grid_pending).is_empty();
         if !pending && !sync.policy.dirty() {
             return;
@@ -753,6 +770,25 @@ impl Session {
         // Drain the model for bytes already published; exited stays false while
         // it works. A timeout/read error cannot claim a complete PTY output tail.
         self.wait_applied(SCREEN_SYNC_TIMEOUT);
+        // 网格客户端还差最后一帧增量：让屏幕线程立刻 flush，再发 Exit。
+        if self.has_grid_audience() {
+            let target = *lock(&self.grid_flush_done) + 1;
+            self.grid_flush_request.store(true, Ordering::Release);
+            self.backlog_cv.notify_all();
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let mut done = lock(&self.grid_flush_done);
+            while *done < target {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                let (guard, _) = self
+                    .grid_flush_cv
+                    .wait_timeout(done, left)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                done = guard;
+            }
+        }
 
         let code = {
             let mut child = lock(&self.child);
