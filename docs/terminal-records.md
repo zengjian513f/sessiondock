@@ -14,7 +14,9 @@ There is no separate index page: the session list is the index. A
 managed session (`/api/term/list` session and pending rows) carries
 `recording: {id, live, bytes, ended_ms, created_ms}` when a recording of
 its host name exists, and an exited shell session stays listed as long
-as that recording exists. Opening the console of an exited session
+as that recording exists. A running shell session offers 停止 (host
+stop, the row stays with its recording) and an exited one offers 删除
+(discard), like an agent session. Opening the console of an exited session
 replays the recording read-only in the console pane itself
 (`term.js` `attachRecordingReplay`: no claim, no input; the byte stream
 into xterm.js, or `mode=grid` into the grid view when the renderer

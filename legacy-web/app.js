@@ -2787,10 +2787,12 @@ function openItemMenu(uid, x, y) {
   const row = sidebarSessions().find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
   const running = sessionStoppable(uid);
-  menu.querySelector('[data-act="stop"]').hidden = parent || row?.pending || !running;
+  // 运行中的 SSH 会话和代理会话一样先"停止"，结束后才"删除"。
+  const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
+  menu.querySelector('[data-act="stop"]').hidden = parent || (row?.pending ? !shellRunning : !running);
   menu.querySelector('[data-act="hide"]').hidden = !parent;
-  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running);
-  menu.querySelector('[data-act="delete"]').textContent = row?.pending ? '丢弃会话' : '删除会话';
+  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running) || shellRunning;
+  menu.querySelector('[data-act="delete"]').textContent = row?.pending && row?.source !== 'shell' ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
@@ -2940,7 +2942,8 @@ $('#item-menu').onclick = async e => {
     return;
   }
   if (button.dataset.act === 'stop') {
-    const row = S.sessions.find(x => x.uid === uid);
+    const row = S.sessions.find(x => x.uid === uid) || sidebarSessions().find(x => x.uid === uid);
+    if (row?.pending) { if (typeof stopPendingSession === 'function') await stopPendingSession(row); return; }
     if (row) await stopSession(row);
     return;
   }
