@@ -363,6 +363,13 @@
     </div>
   </div>
 </dialog>
+<dialog id="records-dialog" class="app-dialog records-dialog" aria-labelledby="records-title">
+  <div class="modal-head">
+    <div><h2 id="records-title">终端录制</h2><p>应用内查看会话的落盘历史；关闭即断开回放连接</p></div>
+    <button type="button" class="modal-close" id="records-close" title="关闭" aria-label="关闭">×</button>
+  </div>
+  <iframe id="records-frame" title="终端录制" src="about:blank"></iframe>
+</dialog>
 <dialog id="settings-dialog" class="app-dialog" aria-labelledby="settings-title">
   <form method="dialog" class="settings-form">
     <div class="modal-head">

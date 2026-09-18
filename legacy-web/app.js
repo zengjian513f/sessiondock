@@ -7774,14 +7774,23 @@ $('#trash').onclick = openTrash;
 if (SessionDockCapabilities.config.terminal_records === true) {
   const records = $('#records');
   records.hidden = false;
+  // 安装为 PWA 后 window.open 会开到应用外面，用户看不到：一律在应用内的
+  // 对话框里用 iframe 打开；关闭时卸载 iframe，让回放 WebSocket 随之断开。
+  const dialog = $('#records-dialog'), frame = $('#records-frame');
   records.onclick = () => {
     const url = new URL('records.html', APP_BASE);
+    url.searchParams.set('embedded', '1');
     if (HUB_MODE) {
       const node = selectedNodeIds()[0];
       if (node) url.searchParams.set('node', node);
     }
-    window.open(url.href, '_blank', 'noopener');
+    frame.src = url.href;
+    dialog.showModal();
   };
+  const closeRecords = () => { if (dialog.open) dialog.close(); };
+  $('#records-close').onclick = closeRecords;
+  dialog.addEventListener('close', () => { frame.src = 'about:blank'; });
+  dialog.addEventListener('click', e => { if (e.target === dialog) closeRecords(); });
 }
 $('#trash-reload').onclick = () => loadTrash();
 $('#trash-purge-all').onclick = purgeAllTrash;
