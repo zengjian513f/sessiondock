@@ -734,6 +734,9 @@ pub async fn list(
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| home.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Which host names accept grid attachments; pending rows get it too so the
+    // console picks a renderer the host understands.
+    let mut grid_hosts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"backend":"ptyhost","backends":[],"sessions":[],"pending":[],"hosts":[]});
@@ -764,6 +767,14 @@ pub async fn list(
                     }
                 }
             }
+            grid_hosts.extend(
+                observed
+                    .snapshot
+                    .hosts
+                    .iter()
+                    .filter(|host| host.summary.grid)
+                    .map(|host| host.summary.name.clone()),
+            );
             let sessions: Vec<Value> = observed
                 .snapshot
                 .hosts
@@ -809,6 +820,7 @@ pub async fn list(
                 .filter(|record| pending_listed(record, now))
                 .map(|record| {
                     let mut row = super::lifecycle::project(record);
+                    row["grid"] = json!(grid_hosts.contains(record.host_name()));
                     if let Some(extra) = state
                         .bug_report
                         .as_ref()

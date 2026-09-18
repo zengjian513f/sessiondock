@@ -18,6 +18,9 @@ pub struct SessionSummary {
     pub owned: bool,
     pub server: &'static str,
     pub backend: &'static str,
+    /// The host accepts `mode:"grid"` attachments (false for hosts started
+    /// before the grid protocol existed).
+    pub grid: bool,
 }
 
 /// What an attachment streams back: raw pty bytes (xterm.js) or grid JSON lines.
@@ -195,6 +198,8 @@ pub(crate) struct HostRecord {
     pub sock: Option<String>,
     pub port: Option<u16>,
     pub token: Option<String>,
+    #[serde(default)]
+    pub grid: bool,
     #[serde(default, deserialize_with = "crate::association::deserialize_metadata")]
     pub meta: crate::association::Metadata,
 }
@@ -234,6 +239,7 @@ impl HostRecord {
             owned: true,
             server: "ptyhost",
             backend: "ptyhost",
+            grid: self.grid,
         })
     }
 }
