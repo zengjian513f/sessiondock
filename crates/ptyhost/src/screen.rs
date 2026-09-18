@@ -1,26 +1,140 @@
-//! vt100 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。
+//! alacritty_terminal 之上的薄封装，提供与 Python 参考实现同语义的截屏 / 光标 / 回放。
 //!
-//! 只服务 capture / cursor 查询和 attach 回放：实时字节由读线程直接转发，
-//! 不经过这里。SGR 的具体字节由 vt100 生成，和参考实现不必逐字节相同；
-//! 调用方（claude_bridge / codex_bridge）都先剥离转义再解析文本与光标。
+//! 只服务 capture / cursor 查询、attach 回放、录制 checkpoint 和服务端网格：
+//! 实时字节由读线程直接转发，不经过这里。
 //!
-//! vt100 内部的 panic 在这里拦下：模型只是画面的副本，坏了可以从头重建，
+//! 模型会自己应答终端查询（DA、DECRQM、XTGETTCAP、颜色查询……），应答字节先攒在
+//! [`Screen::take_responses`] 里，由会话决定写不写回 pty：有 xterm.js 连着时由它答，
+//! 只有网格客户端时由模型答。DSR 仍在读线程被截下、由宿主按模型光标应答。
+//!
+//! 模型内部的 panic 在这里拦下：模型只是画面的副本，坏了可以从头重建，
 //! 但绝不能让宿主里的锁因此失效、把 attach 和 pty 读线程一起拖死。
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+use alacritty_terminal::event::{Event, EventListener};
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::{Config, Term, TermMode};
+use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, Rgb};
+
+/// 模型发出的事件：应答字节攒起来，标题记下来，其余忽略。
+#[derive(Clone, Default)]
+pub struct Responder {
+    inner: Arc<Mutex<ResponderState>>,
+}
+
+#[derive(Default)]
+struct ResponderState {
+    responses: Vec<u8>,
+    title: String,
+}
+
+/// 颜色查询的应答用一套固定的深色盘：浏览器主题不在宿主手里，
+/// 给一个合理值总比让应用等到超时好。
+fn palette(index: usize) -> Rgb {
+    const BASE: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 49, 49),
+        (13, 188, 121),
+        (229, 229, 16),
+        (36, 114, 200),
+        (188, 63, 188),
+        (17, 168, 205),
+        (229, 229, 229),
+        (102, 102, 102),
+        (241, 76, 76),
+        (35, 209, 139),
+        (245, 245, 67),
+        (59, 142, 234),
+        (214, 112, 214),
+        (41, 184, 219),
+        (255, 255, 255),
+    ];
+    let (r, g, b) = match index {
+        0..=15 => BASE[index],
+        16..=231 => {
+            let i = index - 16;
+            let step = |v: usize| if v == 0 { 0 } else { (55 + v * 40) as u8 };
+            (step(i / 36), step((i / 6) % 6), step(i % 6))
+        }
+        232..=255 => {
+            let v = (8 + (index - 232) * 10) as u8;
+            (v, v, v)
+        }
+        257 => (0, 0, 0),
+        _ => (229, 229, 229),
+    };
+    Rgb { r, g, b }
+}
+
+impl EventListener for Responder {
+    fn send_event(&self, event: Event) {
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        match event {
+            Event::PtyWrite(text) => state.responses.extend_from_slice(text.as_bytes()),
+            Event::ColorRequest(index, format) => state
+                .responses
+                .extend_from_slice(format(palette(index)).as_bytes()),
+            Event::Title(title) => state.title = title,
+            Event::ResetTitle => state.title.clear(),
+            _ => {}
+        }
+    }
+}
+
+struct Size {
+    cols: usize,
+    rows: usize,
+}
+
+impl Dimensions for Size {
+    fn total_lines(&self) -> usize {
+        self.rows
+    }
+    fn screen_lines(&self) -> usize {
+        self.rows
+    }
+    fn columns(&self) -> usize {
+        self.cols
+    }
+}
 
 pub struct Screen {
-    parser: vt100::Parser,
+    term: Term<Responder>,
+    parser: Processor,
+    responder: Responder,
     cols: u16,
     rows: u16,
     history: usize,
     resets: u64,
 }
 
+fn new_term(cols: u16, rows: u16, history: usize, responder: Responder) -> Term<Responder> {
+    let config = Config {
+        scrolling_history: history,
+        ..Config::default()
+    };
+    Term::new(
+        config,
+        &Size {
+            cols: cols.max(1) as usize,
+            rows: rows.max(1) as usize,
+        },
+        responder,
+    )
+}
+
 impl Screen {
     pub fn new(cols: u16, rows: u16, history: usize) -> Self {
+        let responder = Responder::default();
         Self {
-            parser: vt100::Parser::new(rows.max(1), cols.max(1), history),
+            term: new_term(cols, rows, history, responder.clone()),
+            parser: Processor::new(),
+            responder,
             cols: cols.max(1),
             rows: rows.max(1),
             history,
@@ -29,23 +143,52 @@ impl Screen {
     }
 
     pub fn feed(&mut self, data: &[u8]) {
-        if catch_unwind(AssertUnwindSafe(|| self.parser.process(data))).is_err() {
+        let ok = catch_unwind(AssertUnwindSafe(|| {
+            self.parser.advance(&mut self.term, data);
+        }))
+        .is_ok();
+        if !ok {
             self.recover();
+            return;
         }
+        self.expire_sync();
+    }
+
+    /// 同步输出（DEC 2026）在 vte 里缓冲；`?2026l` 迟迟不来时到期强制应用。
+    /// 返回是否应用了缓冲内容。
+    pub fn expire_sync(&mut self) -> bool {
+        match self.parser.sync_timeout().sync_timeout() {
+            Some(deadline) if Instant::now() >= deadline => {
+                let ok = catch_unwind(AssertUnwindSafe(|| {
+                    self.parser.stop_sync(&mut self.term);
+                }))
+                .is_ok();
+                if !ok {
+                    self.recover();
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 正在进行的同步输出的到期时刻；没有则 None。
+    pub fn sync_deadline(&self) -> Option<Instant> {
+        self.parser.sync_timeout().sync_timeout()
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let (cols, rows) = (cols.max(1), rows.max(1));
-        if cols < self.cols {
-            self.erase_wide_cells_crossing(cols - 1);
-        }
         self.cols = cols;
         self.rows = rows;
-        if catch_unwind(AssertUnwindSafe(|| {
-            self.parser.screen_mut().set_size(rows, cols)
+        let ok = catch_unwind(AssertUnwindSafe(|| {
+            self.term.resize(Size {
+                cols: cols as usize,
+                rows: rows as usize,
+            });
         }))
-        .is_err()
-        {
+        .is_ok();
+        if !ok {
             self.recover();
         }
     }
@@ -55,216 +198,326 @@ impl Screen {
         self.resets
     }
 
-    /// vt100 截短行时不处理跨越新边界的宽字符：左半留在新的最后一列，右半被截掉。
-    /// 之后擦除或覆盖到那一格，`Row::clear_wide` 会去找早已不存在的右半而越界 panic
-    /// （vt100 0.16.2 `row.rs:89`）。宽字符本来不可能落在最后一列——写到那里会先换行，
-    /// 所以先把这些字符擦成空格，再交给 vt100 截短。只处理当前活动的那张屏；
-    /// 另一张屏若也有同样的残留，切换回去后由 [`Self::recover`] 兜底。
-    fn erase_wide_cells_crossing(&mut self, last: u16) {
-        let screen = self.parser.screen_mut();
-        screen.set_scrollback(0);
-        let rows: Vec<u16> = (0..self.rows)
-            .filter(|&row| screen.cell(row, last).is_some_and(vt100::Cell::is_wide))
-            .collect();
-        if rows.is_empty() {
-            return;
-        }
-        let attrs = screen.attributes_formatted();
-        let mut seq = Vec::new();
-        // DECSC 保存光标位置与原点模式；关掉原点模式后 CUP 才是绝对坐标。
-        seq.extend_from_slice(b"\x1b7\x1b[?6l\x1b[0m");
-        for row in rows {
-            seq.extend_from_slice(format!("\x1b[{};{}H ", row + 1, last + 1).as_bytes());
-        }
-        seq.extend_from_slice(b"\x1b8");
-        seq.extend_from_slice(&attrs);
-        self.feed(&seq);
+    /// 模型攒下的查询应答（DA、DECRQM、颜色查询等），取走后清空。
+    pub fn take_responses(&mut self) -> Vec<u8> {
+        let mut state = self
+            .responder
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut state.responses)
     }
 
-    /// vt100 半途 panic 后模型不可信：用同尺寸的新模型接上当前画面（含备用屏与各项
-    /// 模式），历史不保留，交给 TUI 的下一次整屏重绘纠正。快照本身也可能撞上同一处
-    /// 损坏，那就只能从空屏开始。
+    pub fn title(&self) -> String {
+        self.responder
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .title
+            .clone()
+    }
+
+    /// 模型内部越界：丢掉旧模型，从空白重建。历史与画面都不可恢复。
     fn recover(&mut self) {
         let (cols, rows, history) = (self.cols, self.rows, self.history);
-        let snapshot = catch_unwind(AssertUnwindSafe(|| {
-            self.parser.screen_mut().set_scrollback(0);
-            snapshot_without_broken_cells(self.parser.screen())
-        }));
-        self.parser = vt100::Parser::new(rows, cols, history);
-        let restored = match snapshot {
-            Ok(bytes) => catch_unwind(AssertUnwindSafe(|| self.parser.process(&bytes))).is_ok(),
-            Err(_) => false,
-        };
-        if !restored {
-            self.parser = vt100::Parser::new(rows, cols, history);
-        }
+        self.term = new_term(cols, rows, history, self.responder.clone());
+        self.parser = Processor::new();
         self.resets += 1;
         eprintln!(
-            "screen model reset #{} ({}x{}, {})",
-            self.resets,
-            cols,
-            rows,
-            if restored {
-                "current screen kept"
-            } else {
-                "blank"
-            }
+            "screen model reset #{} ({}x{}, blank)",
+            self.resets, cols, rows
         );
     }
 
+    pub fn term(&self) -> &Term<Responder> {
+        &self.term
+    }
+
+    /// (x, y)：列在前，行在后，均 0 起算。
     pub fn cursor(&self) -> (u16, u16) {
-        let (row, col) = self.parser.screen().cursor_position();
-        (col, row)
+        let point = self.term.grid().cursor.point;
+        (point.column.0 as u16, point.line.0.max(0) as u16)
     }
 
     pub fn cursor_visible(&self) -> bool {
-        !self.parser.screen().hide_cursor()
+        self.term.mode().contains(TermMode::SHOW_CURSOR)
     }
 
     pub fn alt(&self) -> bool {
-        self.parser.screen().alternate_screen()
+        self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 
     pub fn app_cursor(&self) -> bool {
-        self.parser.screen().application_cursor()
+        self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
     pub fn bracketed_paste(&self) -> bool {
-        self.parser.screen().bracketed_paste()
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
+    /// 历史行数（主屏已滚出视口的行）。
+    pub fn history_len(&self) -> usize {
+        self.term.grid().history_size()
+    }
+
+    /// 绝对行号 → 网格行：历史为 0..history，可见屏接在后面。
+    pub fn line_at(&self, abs: usize) -> Line {
+        Line(abs as i32 - self.history_len() as i32)
     }
 
     /// 当前可见屏的各行；join 为真时把软换行合并成逻辑行。
-    pub fn screen_lines(&mut self, styled: bool, join: bool) -> Vec<String> {
-        self.parser.screen_mut().set_scrollback(0);
-        let rows = self.collect_visible(styled);
+    pub fn screen_lines(&self, styled: bool, join: bool) -> Vec<String> {
+        let rows = (0..self.rows as i32)
+            .map(|row| self.row_text(Line(row), styled))
+            .collect();
         finish(rows, join)
     }
 
-    /// vt100 不公开历史长度；set_scrollback 会被 clamp 到真实长度，借此探测。
-    fn scrollback_len(&mut self) -> usize {
-        let screen = self.parser.screen_mut();
-        let keep = screen.scrollback();
-        screen.set_scrollback(usize::MAX);
-        let available = screen.scrollback();
-        screen.set_scrollback(keep);
-        available
-    }
-
-    /// 按绝对行号取一段行。绝对编号：历史为 0..available，可见屏接在后面。
-    ///
-    /// `set_scrollback(off)` 让可见窗口覆盖绝对行 `[available-off, available-off+rows)`，
-    /// 一次只能看到一屏，所以要按窗口翻页。推进必须用绝对行号，用"已取条数"会
-    /// 在 limit 不是整屏倍数时重复取行。
-    fn collect_range(
-        &mut self,
-        from_abs: usize,
-        end_abs: usize,
-        styled: bool,
-    ) -> Vec<(String, bool)> {
-        let available = self.scrollback_len();
-        let mut out: Vec<(String, bool)> = Vec::new();
-        let mut next = from_abs.min(end_abs);
-        while next < end_abs {
-            let window_start = next.min(available);
-            self.parser
-                .screen_mut()
-                .set_scrollback(available - window_start);
-            let window = self.collect_visible(styled);
-            let skip = next - window_start;
-            if skip >= window.len() {
-                break; // 窗口无法再前进，避免空转
-            }
-            for row in window.into_iter().skip(skip) {
-                out.push(row);
-                next += 1;
-                if next >= end_abs {
-                    break;
-                }
-            }
-        }
-        self.parser.screen_mut().set_scrollback(0);
-        out
-    }
-
     /// 历史最后 limit 行加上可见屏，对应 capture-pane -S -limit。
-    pub fn scrollback_lines(&mut self, limit: usize, styled: bool, join: bool) -> Vec<String> {
-        let available = self.scrollback_len();
-        let rows = usize::from(self.rows).max(1);
+    pub fn scrollback_lines(&self, limit: usize, styled: bool, join: bool) -> Vec<String> {
+        let available = self.history_len();
         let from = available - limit.min(available);
-        let collected = self.collect_range(from, available + rows, styled);
-        finish(collected, join)
+        let end = available + usize::from(self.rows);
+        let rows = (from..end)
+            .map(|abs| self.row_text(self.line_at(abs), styled))
+            .collect();
+        finish(rows, join)
     }
 
-    /// attach 回放：历史文本 + 完整终端状态（含模式与光标）。
-    pub fn replay_bytes(&mut self, history: usize) -> Vec<u8> {
-        let available = self.scrollback_len();
+    /// attach 回放 / 录制 checkpoint：历史文本 + 完整终端状态（含模式与光标）。
+    pub fn replay_bytes(&self, history: usize) -> Vec<u8> {
+        let available = self.history_len();
         let from = available - history.min(available);
         let mut out = Vec::new();
         if from < available {
-            // 只取历史部分；可见屏由 state_formatted 负责，避免重复一屏。
-            for line in finish(self.collect_range(from, available, true), true) {
+            let rows = (from..available)
+                .map(|abs| self.row_text(self.line_at(abs), true))
+                .collect();
+            for line in finish(rows, true) {
                 out.extend_from_slice(line.as_bytes());
                 out.extend_from_slice(b"\r\n");
             }
             out.extend_from_slice(b"\x1b[0m");
         }
-        // state_formatted 同时带回屏幕内容、属性、光标与各项模式，
-        // 比自己拼重绘序列更完整（备用屏、DECCKM、bracketed paste 都在内）。
-        out.extend_from_slice(&self.parser.screen().state_formatted());
+        out.extend_from_slice(&self.state_bytes());
         out
     }
 
-    fn collect_visible(&self, styled: bool) -> Vec<(String, bool)> {
-        let screen = self.parser.screen();
-        let wrapped: Vec<bool> = (0..self.rows).map(|i| screen.row_wrapped(i)).collect();
-        if styled {
-            screen
-                .rows_formatted(0, self.cols)
-                .enumerate()
-                .map(|(i, raw)| (String::from_utf8_lossy(&raw).into_owned(), wrapped[i]))
-                .collect()
-        } else {
-            screen
-                .rows(0, self.cols)
-                .enumerate()
-                .map(|(i, text)| (text, wrapped[i]))
-                .collect()
+    /// 一行的文本（styled 时带 SGR）与软换行标记。行尾默认属性的空格裁掉。
+    fn row_text(&self, line: Line, styled: bool) -> (String, bool) {
+        let grid = self.term.grid();
+        let cols = grid.columns();
+        let row = &grid[line];
+        let wrapped = row[Column(cols.saturating_sub(1))]
+            .flags
+            .contains(Flags::WRAPLINE);
+        let mut text = String::new();
+        let mut pen = Pen::default();
+        // 只在遇到非空格子时才把之前攒下的空白写出去，实现行尾裁剪。
+        let mut pending_blank = String::new();
+        for col in 0..cols {
+            let cell = &row[Column(col)];
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+            let attrs = Pen::of(cell);
+            let blank = cell.c == ' ' && cell.zerowidth().is_none() && attrs == Pen::default();
+            if blank {
+                pending_blank.push(' ');
+                continue;
+            }
+            if !pending_blank.is_empty() {
+                if styled && pen != Pen::default() {
+                    text.push_str("\x1b[0m");
+                    pen = Pen::default();
+                }
+                text.push_str(&pending_blank);
+                pending_blank.clear();
+            }
+            if styled && attrs != pen {
+                text.push_str(&attrs.sgr());
+                pen = attrs;
+            }
+            push_cell_text(&mut text, cell);
         }
+        if styled && pen != Pen::default() {
+            text.push_str("\x1b[0m");
+        }
+        (text, wrapped)
+    }
+
+    /// 逐行重画当前屏（绝对定位），再恢复光标、笔属性、各项模式。
+    /// 软换行标记随之丢失，只影响客户端 resize 时对可见屏的重新折行。
+    fn state_bytes(&self) -> Vec<u8> {
+        let mode = self.term.mode();
+        let mut out = Vec::new();
+        if mode.contains(TermMode::ALT_SCREEN) {
+            out.extend_from_slice(b"\x1b[?1049h");
+        }
+        out.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
+        for row in 0..self.rows as i32 {
+            let (text, _) = self.row_text(Line(row), true);
+            if text.is_empty() {
+                continue;
+            }
+            out.extend_from_slice(format!("\x1b[{};1H", row + 1).as_bytes());
+            out.extend_from_slice(text.as_bytes());
+        }
+        let (x, y) = self.cursor();
+        out.extend_from_slice(format!("\x1b[0m\x1b[{};{}H", y + 1, x + 1).as_bytes());
+        let pen = Pen::of(&self.term.grid().cursor.template);
+        if pen != Pen::default() {
+            out.extend_from_slice(pen.sgr().as_bytes());
+        }
+        fn flag<'a>(on: bool, set: &'a [u8], reset: &'a [u8]) -> &'a [u8] {
+            if on { set } else { reset }
+        }
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::APP_CURSOR),
+            b"\x1b[?1h",
+            b"\x1b[?1l",
+        ));
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::APP_KEYPAD),
+            b"\x1b=",
+            b"\x1b>",
+        ));
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::BRACKETED_PASTE),
+            b"\x1b[?2004h",
+            b"\x1b[?2004l",
+        ));
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::FOCUS_IN_OUT),
+            b"\x1b[?1004h",
+            b"\x1b[?1004l",
+        ));
+        out.extend_from_slice(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l");
+        if mode.contains(TermMode::MOUSE_MOTION) {
+            out.extend_from_slice(b"\x1b[?1003h");
+        } else if mode.contains(TermMode::MOUSE_DRAG) {
+            out.extend_from_slice(b"\x1b[?1002h");
+        } else if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            out.extend_from_slice(b"\x1b[?1000h");
+        }
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::SGR_MOUSE),
+            b"\x1b[?1006h",
+            b"\x1b[?1006l",
+        ));
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::UTF8_MOUSE),
+            b"\x1b[?1005h",
+            b"\x1b[?1005l",
+        ));
+        out.extend_from_slice(flag(
+            mode.contains(TermMode::SHOW_CURSOR),
+            b"\x1b[?25h",
+            b"\x1b[?25l",
+        ));
+        out
     }
 }
 
-/// 逐行重画当前屏，每行绝对定位。行尾残缺的宽字符（panic 的源头）不带上，
-/// 否则新模型会把它折到下一行、把整屏错开一行。`state_formatted` 靠 vt100 自己的
-/// 换行推断串行，在这种损坏上做不到这一点。软换行标记随之丢失，只影响历史合并的
-/// 逻辑行边界。
-fn snapshot_without_broken_cells(screen: &vt100::Screen) -> Vec<u8> {
-    let (_, cols) = screen.size();
-    let last = cols.saturating_sub(1);
-    let mut out = Vec::new();
-    if screen.alternate_screen() {
-        out.extend_from_slice(b"\x1b[?1049h");
+/// 把一个格子的字符（含零宽附加字符）追加到文本。
+pub fn push_cell_text(text: &mut String, cell: &Cell) {
+    text.push(cell.c);
+    if let Some(extra) = cell.zerowidth() {
+        text.extend(extra.iter());
     }
-    out.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
-    let whole_rows = screen.rows_formatted(0, cols);
-    let cut_rows = screen.rows_formatted(0, last);
-    for (row, (whole, cut)) in whole_rows.zip(cut_rows).enumerate() {
-        let broken = cols > 1
-            && screen
-                .cell(row as u16, last)
-                .is_some_and(vt100::Cell::is_wide);
-        out.extend_from_slice(format!("\x1b[{};1H\x1b[0m", row + 1).as_bytes());
-        out.extend_from_slice(if broken { &cut } else { &whole });
+}
+
+/// 一组 SGR 属性；用于比较相邻格子并生成最短的转义序列。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Pen {
+    pub fg: Option<Color>,
+    pub bg: Option<Color>,
+    pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
+    pub strikeout: bool,
+    pub hidden: bool,
+}
+
+/// 颜色是否就是终端默认色。
+fn is_default(color: Color, foreground: bool) -> bool {
+    match color {
+        Color::Named(NamedColor::Foreground) => foreground,
+        Color::Named(NamedColor::Background) => !foreground,
+        _ => false,
     }
-    let (row, col) = screen.cursor_position();
-    out.extend_from_slice(format!("\x1b[0m\x1b[{};{}H", row + 1, col + 1).as_bytes());
-    out.extend_from_slice(&screen.attributes_formatted());
-    out.extend_from_slice(&screen.input_mode_formatted());
-    out.extend_from_slice(if screen.hide_cursor() {
-        b"\x1b[?25l"
-    } else {
-        b"\x1b[?25h"
-    });
-    out
+}
+
+impl Pen {
+    pub fn of(cell: &Cell) -> Self {
+        let flags = cell.flags;
+        Self {
+            fg: (!is_default(cell.fg, true)).then_some(cell.fg),
+            bg: (!is_default(cell.bg, false)).then_some(cell.bg),
+            bold: flags.contains(Flags::BOLD),
+            dim: flags.contains(Flags::DIM),
+            italic: flags.contains(Flags::ITALIC),
+            underline: flags.intersects(Flags::ALL_UNDERLINES),
+            inverse: flags.contains(Flags::INVERSE),
+            strikeout: flags.contains(Flags::STRIKEOUT),
+            hidden: flags.contains(Flags::HIDDEN),
+        }
+    }
+
+    /// 从默认状态出发设置这组属性的 SGR（先 `0` 复位再逐项设置）。
+    pub fn sgr(&self) -> String {
+        let mut params: Vec<String> = vec!["0".into()];
+        if self.bold {
+            params.push("1".into());
+        }
+        if self.dim {
+            params.push("2".into());
+        }
+        if self.italic {
+            params.push("3".into());
+        }
+        if self.underline {
+            params.push("4".into());
+        }
+        if self.inverse {
+            params.push("7".into());
+        }
+        if self.hidden {
+            params.push("8".into());
+        }
+        if self.strikeout {
+            params.push("9".into());
+        }
+        if let Some(fg) = self.fg {
+            params.push(color_sgr(fg, true));
+        }
+        if let Some(bg) = self.bg {
+            params.push(color_sgr(bg, false));
+        }
+        format!("\x1b[{}m", params.join(";"))
+    }
+}
+
+fn color_sgr(color: Color, foreground: bool) -> String {
+    let base = if foreground { 30 } else { 40 };
+    match color {
+        Color::Named(named) => {
+            let index = named as usize;
+            if index < 8 {
+                (base + index).to_string()
+            } else if index < 16 {
+                (base + 60 + index - 8).to_string()
+            } else if foreground {
+                "39".into()
+            } else {
+                "49".into()
+            }
+        }
+        Color::Indexed(index) => format!("{};5;{index}", base + 8),
+        Color::Spec(rgb) => format!("{};2;{};{};{}", base + 8, rgb.r, rgb.g, rgb.b),
+    }
 }
 
 /// 软换行合并：与参考实现一致，wrapped 行与下一行拼成同一条逻辑行。
@@ -300,6 +553,26 @@ mod tests {
 
     fn plain(screen: &mut Screen) -> Vec<String> {
         screen.screen_lines(false, false)
+    }
+
+    fn strip_ansi(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\x1b' {
+                if chars.peek() == Some(&'[') {
+                    chars.next();
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+            out.push(c);
+        }
+        out
     }
 
     #[test]
@@ -392,215 +665,61 @@ mod tests {
             .map(|r| r.trim_end().to_string())
             .filter(|r| !r.is_empty())
             .collect();
-        // 历史要按顺序完整取回，不能因为按窗口分页而漏行或重复
         let expected: Vec<String> = (1..=20).map(|i| format!("line-{i}")).collect();
-        assert_eq!(rows, expected, "历史行不连续: {rows:?}");
+        assert_eq!(rows, expected);
+        assert_eq!(screen.history_len(), 18);
     }
 
     #[test]
-    fn a_limit_keeps_only_the_tail_of_the_history() {
-        let mut screen = Screen::new(20, 3, 100);
-        for i in 1..=20 {
-            screen.feed(format!("line-{i}\r\n").as_bytes());
-        }
-        let rows: Vec<String> = screen
-            .scrollback_lines(5, false, false)
-            .iter()
-            .map(|r| r.trim_end().to_string())
-            .filter(|r| !r.is_empty())
-            .collect();
-        // 历史按 limit 截尾后必须连续且不重复，末尾仍是最新一行
-        assert_eq!(rows.last().map(String::as_str), Some("line-20"), "{rows:?}");
-        let mut seen = std::collections::HashSet::new();
-        assert!(
-            rows.iter().all(|r| seen.insert(r.clone())),
-            "历史重复: {rows:?}"
-        );
-        let numbers: Vec<usize> = rows
-            .iter()
-            .map(|r| r.trim_start_matches("line-").parse().unwrap())
-            .collect();
-        assert!(
-            numbers.windows(2).all(|w| w[1] == w[0] + 1),
-            "历史不连续: {numbers:?}"
-        );
-    }
-
-    #[test]
-    fn replay_carries_history_then_current_state() {
-        let mut screen = Screen::new(20, 3, 100);
-        for i in 1..=10 {
-            screen.feed(format!("line-{i}\r\n").as_bytes());
-        }
+    fn replay_reconstructs_history_screen_cursor_and_modes() {
+        let mut screen = Screen::new(10, 3, 100);
+        screen.feed(b"one\r\ntwo\r\nthree\r\nfour\x1b[?2004h\x1b[?25l");
         let replay = String::from_utf8_lossy(&screen.replay_bytes(100)).into_owned();
-        let stripped = strip_ansi(&replay);
-        assert!(stripped.contains("line-1"), "回放缺少历史");
-        assert!(stripped.contains("line-10"), "回放缺少当前画面");
+        assert!(replay.starts_with("one\r\n"), "{replay:?}");
+        assert!(replay.contains("\x1b[H\x1b[2J"));
+        assert!(replay.contains("four"));
+        assert!(replay.contains("\x1b[?2004h"));
+        assert!(replay.contains("\x1b[?25l"));
         assert!(
-            stripped.find("line-1").unwrap() < stripped.find("line-10").unwrap(),
-            "回放顺序颠倒"
+            replay.contains("\x1b[3;5H"),
+            "光标应在第 3 行第 5 列: {replay:?}"
         );
+        let mut again = Screen::new(10, 3, 100);
+        again.feed(&screen.replay_bytes(100));
+        assert_eq!(plain(&mut again), plain(&mut screen));
+        assert_eq!(again.cursor(), screen.cursor());
+        assert!(again.bracketed_paste());
+        assert!(!again.cursor_visible());
     }
 
     #[test]
-    fn narrowing_across_a_wide_char_keeps_the_model_alive() {
-        // 12 列里 "abcdefghi你"：'你' 占第 10、11 列。截到 10 列后第 10 列只剩左半，
-        // 再在那一行擦到行尾曾让 vt100 越界 panic，宿主从此连不上。
-        let mut screen = Screen::new(12, 3, 0);
-        screen.feed("abcdefghi你\r\nsecond".as_bytes());
-        screen.feed(b"\x1b[1;31m"); // 当前属性要在擦除后原样保留
-        screen.resize(10, 3);
-        screen.feed(b"\x1b[1;10H\x1b[K");
-        let rows: Vec<String> = plain(&mut screen)
-            .iter()
-            .map(|r| r.trim_end().to_string())
-            .collect();
-        assert_eq!(rows, vec!["abcdefghi", "second", ""]);
-        assert_eq!(screen.resets(), 0, "预处理后不应再走重建");
-        assert_eq!(screen.cursor(), (9, 0));
-        screen.feed(b"X");
-        let styled = screen.screen_lines(true, false).remove(0);
-        assert_eq!(strip_ansi(&styled).trim_end(), "abcdefghiX");
-        assert!(styled.contains("31"), "属性丢失: {styled:?}");
+    fn the_model_answers_queries_and_records_the_title() {
+        let mut screen = Screen::new(10, 3, 0);
+        screen.feed(b"\x1b[c\x1b]2;hello\x07");
+        let answer = screen.take_responses();
+        assert!(answer.starts_with(b"\x1b[?"), "DA1 应答: {answer:?}");
+        assert!(screen.take_responses().is_empty());
+        assert_eq!(screen.title(), "hello");
     }
 
     #[test]
-    fn narrowing_restores_cursor_and_origin_mode() {
-        let mut screen = Screen::new(12, 4, 0);
-        screen.feed("abcdefghi你\r\n".as_bytes());
-        screen.feed(b"\x1b[2;4r\x1b[?6h\x1b[2;3H"); // 滚动区 2..4 + 原点模式，光标在区内第 2 行第 3 列
-        assert_eq!(screen.cursor(), (2, 2));
-        screen.resize(10, 4);
-        assert_eq!(screen.cursor(), (2, 2), "清理宽字符不能移动应用的光标");
-        screen.feed(b"\x1b[1;1H"); // 原点模式下 CUP 仍相对滚动区
-        assert_eq!(screen.cursor(), (0, 1), "原点模式被清理过程改掉了");
+    fn synchronized_output_is_held_until_the_end_marker() {
+        let mut screen = Screen::new(10, 3, 0);
+        screen.feed(b"\x1b[?2026hHELLO");
+        assert!(screen.sync_deadline().is_some());
+        assert!(plain(&mut screen)[0].trim().is_empty());
+        screen.feed(b"\x1b[?2026l");
+        assert!(screen.sync_deadline().is_none());
+        assert_eq!(plain(&mut screen)[0].trim_end(), "HELLO");
     }
 
     #[test]
-    fn a_vt100_panic_rebuilds_the_model_instead_of_poisoning_it() {
-        let mut screen = Screen::new(12, 3, 0);
-        screen.feed("abcdefghi你\r\n\x1b[32msecond\x1b[?2004h\x1b[?25l".as_bytes());
-        // 绕过预处理，直接制造 vt100 里的残缺宽字符，模拟未知的内部越界。
-        screen.cols = 10;
-        screen.parser.screen_mut().set_size(3, 10);
-        screen.feed(b"\x1b[1;10H\x1b[K");
-        assert_eq!(screen.resets(), 1);
-        assert!(screen.bracketed_paste(), "重建后应保留各项模式");
-        assert!(!screen.cursor_visible(), "重建后应保留光标可见性");
-        assert_eq!(screen.cursor(), (9, 0), "重建后光标应仍在 panic 前的位置");
-        let rows: Vec<String> = plain(&mut screen)
-            .iter()
-            .map(|r| r.trim_end().to_string())
-            .collect();
-        assert_eq!(
-            rows,
-            vec!["abcdefghi", "second", ""],
-            "重建后的画面不能错行"
-        );
-        let styled = screen.screen_lines(true, false).remove(1);
-        assert!(styled.contains("32"), "重建后应保留各行样式: {styled:?}");
-        screen.feed(b"\x1b[3;1Hthird");
-        assert!(plain(&mut screen).iter().any(|r| r.trim_end() == "third"));
-        assert_eq!(screen.resets(), 1, "之后的正常输出不应再触发重建");
-    }
-
-    #[test]
-    fn recovery_keeps_the_alternate_screen() {
-        let mut screen = Screen::new(12, 3, 10);
-        screen.feed(b"main\r\n\x1b[?1049h\x1b[H");
-        screen.feed("alt-line-你".as_bytes());
-        screen.cols = 10;
-        screen.parser.screen_mut().set_size(3, 10);
-        screen.feed(b"\x1b[1;10H\x1b[K");
-        assert_eq!(screen.resets(), 1);
-        assert!(screen.alt(), "重建后应仍在备用屏");
-        assert_eq!(plain(&mut screen)[0].trim_end(), "alt-line-");
-    }
-
-    #[test]
-    fn resize_keeps_the_model_usable() {
-        let mut screen = Screen::new(10, 3, 50);
-        screen.feed(b"a\r\nb\r\nc");
-        screen.resize(20, 5);
-        assert_eq!(screen.screen_lines(false, false).len(), 5);
-        screen.feed(b"\r\nd");
-        assert!(
-            screen
-                .screen_lines(false, false)
-                .iter()
-                .any(|r| r.trim_end() == "d")
-        );
-    }
-
-    /// 与 claude_bridge / codex_bridge 剥离转义的正则等价的最小实现。
-    fn strip_ansi(text: &str) -> String {
-        let mut out = String::new();
-        let mut chars = text.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c != '\x1b' {
-                out.push(c);
-                continue;
-            }
-            match chars.peek() {
-                Some('[') => {
-                    chars.next();
-                    while let Some(&c) = chars.peek() {
-                        chars.next();
-                        if ('@'..='~').contains(&c) {
-                            break;
-                        }
-                    }
-                }
-                Some(']') => {
-                    chars.next();
-                    while let Some(&c) = chars.peek() {
-                        chars.next();
-                        if c == '\x07' {
-                            break;
-                        }
-                    }
-                }
-                _ => {
-                    chars.next();
-                }
-            }
-        }
-        out
-    }
-}
-
-#[cfg(test)]
-mod bench {
-    use super::*;
-
-    /// 不是断言性能的测试，而是把吞吐量打印出来，方便和参考实现对比。
-    #[test]
-    #[ignore]
-    fn throughput() {
-        let mut data = Vec::new();
-        let words = [
-            "hello", "world", "你好", "世界", "def", "return", "错误", "OK",
-        ];
-        for i in 0..120_000usize {
-            let line: String = (0..10)
-                .map(|j| words[(i + j) % words.len()])
-                .collect::<Vec<_>>()
-                .join(" ");
-            data.extend_from_slice(
-                format!("\x1b[2K\x1b[38;5;{}m{line}\x1b[0m\n", i % 255 + 1).as_bytes(),
-            );
-        }
-        let mut screen = Screen::new(200, 50, 10_000);
-        let start = std::time::Instant::now();
-        for chunk in data.chunks(65536) {
-            screen.feed(chunk);
-        }
-        let secs = start.elapsed().as_secs_f64();
-        println!(
-            "vt100 吞吐: {:.1} MB/s ({:.2} MB / {:.2}s)",
-            data.len() as f64 / secs / 1e6,
-            data.len() as f64 / 1e6,
-            secs
-        );
+    fn a_wide_character_at_the_last_column_does_not_break_the_model() {
+        let mut screen = Screen::new(5, 2, 10);
+        screen.feed("abcd你x".as_bytes());
+        screen.resize(3, 2);
+        screen.feed(b"\x1b[2J\x1b[H ok");
+        assert_eq!(screen.resets(), 0);
+        assert!(plain(&mut screen)[0].contains("ok"));
     }
 }

@@ -577,23 +577,44 @@ impl Session {
 
     fn screen_loop(self: Arc<Self>) {
         loop {
+            // 同步输出（DEC 2026）在模型里缓冲，`?2026l` 不来也得到期应用；
+            // 到期时刻先在 backlog 锁外读，锁序是 screen → backlog。
+            let sync_deadline = lock(&self.screen).sync_deadline();
             let piece = {
                 let mut backlog = lock(&self.backlog);
+                let mut expired = false;
                 while backlog.queue.is_empty() {
                     if self.exited.load(Ordering::Relaxed) {
                         return;
                     }
+                    let mut wait = Duration::from_millis(200);
+                    if let Some(deadline) = sync_deadline {
+                        let left = deadline.saturating_duration_since(Instant::now());
+                        if left.is_zero() {
+                            expired = true;
+                            break;
+                        }
+                        wait = wait.min(left);
+                    }
                     let (guard, _) = self
                         .backlog_cv
-                        .wait_timeout(backlog, Duration::from_millis(200))
+                        .wait_timeout(backlog, wait)
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     backlog = guard;
                 }
-                let piece = backlog.queue.pop_front().unwrap();
-                // 出队后仍计入 pending：在途块既不在队列也没进模型，
-                // attach 的回放必须把它算上，否则客户端会丢这一段。
-                backlog.inflight = Some(piece.clone());
-                piece
+                if expired {
+                    None
+                } else {
+                    let piece = backlog.queue.pop_front().unwrap();
+                    // 出队后仍计入 pending：在途块既不在队列也没进模型，
+                    // attach 的回放必须把它算上，否则客户端会丢这一段。
+                    backlog.inflight = Some(piece.clone());
+                    Some(piece)
+                }
+            };
+            let Some(piece) = piece else {
+                lock(&self.screen).expire_sync();
+                continue;
             };
             // 录制锁跨越"喂模型 + 写帧"：finish 等 pending 归零后再取这把锁写 Exit，
             // 于是 Exit 一定排在最后一段输出之后。checkpoint 必须取喂入之前的画面，
@@ -625,6 +646,12 @@ impl Session {
             self.backlog_cv.notify_all();
             if let Some(answer) = answer {
                 self.write_pty(&answer);
+            }
+            // 模型自己应答的查询（DA、DECRQM、颜色……）：有 xterm.js 连着时由它答，
+            // 否则（只有网格客户端或无人连接）由模型答，应用才不会等到超时。
+            let responses = lock(&self.screen).take_responses();
+            if !responses.is_empty() && self.live_clients().is_empty() {
+                self.write_pty(&responses);
             }
         }
     }
@@ -918,7 +945,7 @@ impl Session {
         let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
         let dropped = lock(&self.backlog).dropped;
         let (cols, rows) = *lock(&self.size);
-        let mut screen = lock(&self.screen);
+        let screen = lock(&self.screen);
         let text = if kind == "screen" {
             screen.screen_lines(styled, join)
         } else {

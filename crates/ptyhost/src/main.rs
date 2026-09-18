@@ -13,6 +13,7 @@
 
 mod client;
 mod dsr;
+mod grid;
 mod guard;
 mod output;
 mod protocol;

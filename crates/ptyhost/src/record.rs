@@ -2,7 +2,7 @@
 //! `ptyhost-record` 的分段日志（`<dir>/records/<created_ms>-<host_pid>-<name>/`）。
 //!
 //! 只有屏幕线程和 finish 调用这里；写盘失败不影响会话，只是停止录制并在 stderr
-//! 记一次。checkpoint 取自 vt100 模型（与 attach 回放同构），在每个新分段开头，
+//! 记一次。checkpoint 取自终端模型（与 attach 回放同构），在每个新分段开头，
 //! 因此淘汰最旧分段后，剩余最旧分段仍能独立重建画面。
 
 use std::io;
