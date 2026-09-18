@@ -229,6 +229,15 @@ An unreadable page closes with 1011 `record unreadable`. Shutdown is
 1001; a finished recording is 1000 `record end`. Mark events are
 dropped on this wire.
 
+## Grid replay
+
+`GET /api/term/records/attach?id=…&mode=grid` replays the same recording
+through the terminal model inside the Web service and streams the grid
+protocol instead of sanitized bytes; see
+[server-side terminal grid](terminal-grid.md#recordings-and-the-shared-model).
+No sanitizing is needed on that wire because the model consumes every
+query and its answers are dropped.
+
 ## Sanitizer
 
 Read-only replay feeds recorded bytes to the browser's xterm.js. Query

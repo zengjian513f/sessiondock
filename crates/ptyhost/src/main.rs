@@ -13,12 +13,10 @@
 
 mod client;
 mod dsr;
-mod grid;
 mod guard;
 mod output;
 mod protocol;
 mod record;
-mod screen;
 mod session;
 mod transport;
 

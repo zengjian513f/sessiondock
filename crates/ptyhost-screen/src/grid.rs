@@ -93,11 +93,43 @@ struct Span {
     fg: i64,
     bg: i64,
     flags: u32,
+    /// OSC 8 超链接目标；同一 span 内所有格子相同。
+    link: Option<String>,
+    /// 下划线颜色（SGR 58）；None 表示跟随前景色。
+    ul: Option<i64>,
 }
 
 impl Span {
     fn is_blank(&self) -> bool {
-        self.fg == -1 && self.bg == -1 && self.flags == 0 && self.text.bytes().all(|b| b == b' ')
+        self.fg == -1
+            && self.bg == -1
+            && self.flags == 0
+            && self.link.is_none()
+            && self.ul.is_none()
+            && self.text.bytes().all(|b| b == b' ')
+    }
+
+    fn same_attrs(&self, other: &Self) -> bool {
+        self.fg == other.fg
+            && self.bg == other.bg
+            && self.flags == other.flags
+            && self.link == other.link
+            && self.ul == other.ul
+    }
+
+    fn json(self) -> Value {
+        let mut value = json!([self.text, self.fg, self.bg, self.flags]);
+        if self.link.is_some() || self.ul.is_some() {
+            let mut extra = json!({});
+            if let Some(link) = self.link {
+                extra["link"] = json!(link);
+            }
+            if let Some(ul) = self.ul {
+                extra["ul"] = json!(ul);
+            }
+            value.as_array_mut().unwrap().push(extra);
+        }
+        value
     }
 }
 
@@ -114,36 +146,37 @@ pub fn row_json(term: &Term<Responder>, line: Line) -> String {
         }
         let mut text = String::new();
         push_cell_text(&mut text, cell);
-        let (fg, bg, flags) = (color(cell.fg), color(cell.bg), cell_flags(cell));
+        let span = Span {
+            text,
+            fg: color(cell.fg),
+            bg: color(cell.bg),
+            flags: cell_flags(cell),
+            link: cell.hyperlink().map(|link| link.uri().to_string()),
+            ul: cell.underline_color().map(color),
+        };
         match spans.last_mut() {
-            Some(last) if last.fg == fg && last.bg == bg && last.flags == flags => {
-                last.text.push_str(&text)
-            }
-            _ => spans.push(Span {
-                text,
-                fg,
-                bg,
-                flags,
-            }),
+            Some(last) if last.same_attrs(&span) => last.text.push_str(&span.text),
+            _ => spans.push(span),
         }
     }
     while spans.last().is_some_and(Span::is_blank) {
         spans.pop();
     }
     // 行尾默认属性的空格也裁掉；浏览器按列宽补齐。
-    if let Some(last) = spans.last_mut() {
-        if last.fg == -1 && last.bg == -1 && last.flags == 0 {
-            let trimmed = last.text.trim_end_matches(' ').len();
-            last.text.truncate(trimmed);
-        }
+    if let Some(last) = spans.last_mut().filter(|last| {
+        last.fg == -1
+            && last.bg == -1
+            && last.flags == 0
+            && last.link.is_none()
+            && last.ul.is_none()
+    }) {
+        let trimmed = last.text.trim_end_matches(' ').len();
+        last.text.truncate(trimmed);
     }
     let wrapped = row[Column(cols.saturating_sub(1))]
         .flags
         .contains(Flags::WRAPLINE);
-    let spans: Vec<Value> = spans
-        .into_iter()
-        .map(|span| json!([span.text, span.fg, span.bg, span.flags]))
-        .collect();
+    let spans: Vec<Value> = spans.into_iter().map(Span::json).collect();
     json!({"s": spans, "w": wrapped}).to_string()
 }
 
@@ -371,6 +404,20 @@ mod tests {
         let state = capture(&mut s);
         let row = parse(&state.rows_json[0]);
         assert_eq!(row["s"], json!([["你好", -1, -1, 32], ["x", -1, -1, 0]]));
+    }
+
+    #[test]
+    fn hyperlinks_and_underline_colors_ride_in_the_fifth_element() {
+        let mut s = screen(
+            b"\x1b]8;;https://example.test/a\x1b\\go\x1b]8;;\x1b\\ \x1b[4;58;5;196mu\x1b[0m",
+        );
+        let row = parse(&capture(&mut s).rows_json[0]);
+        assert_eq!(
+            row["s"][0],
+            json!(["go", -1, -1, 0, {"link": "https://example.test/a"}])
+        );
+        assert_eq!(row["s"][1], json!([" ", -1, -1, 0]));
+        assert_eq!(row["s"][2], json!(["u", -1, -1, 8, {"ul": 196}]));
     }
 
     #[test]
