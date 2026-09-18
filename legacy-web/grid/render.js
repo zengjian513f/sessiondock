@@ -397,6 +397,8 @@ export class GridRenderer {
         bg,
         flags,
         bold,
+        link: cell.link || null,
+        ul: cell.ul == null ? null : cell.ul,
       });
       col += span;
     }
@@ -471,10 +473,15 @@ export class GridRenderer {
         // Glyph origin is the cell's left edge (wide cells are not centered).
         ctx.fillText(cell.text, x, y + this.baseline);
       }
-      if (!hidden && (flags & FLAG_UNDERLINE)) {
-        ctx.fillStyle = fg;
+      if (!hidden && ((flags & FLAG_UNDERLINE) || cell.link)) {
+        // 下划线颜色（SGR 58）优先；超链接没有下划线属性时也画一条，便于识别。
+        ctx.fillStyle = cell.ul != null ? resolveColor(cell.ul, theme, true, false) : fg;
         const uy = y + this.baseline + 2;
-        ctx.fillRect(x, uy, cell.width * cw, 1);
+        if (cell.link && !(flags & FLAG_UNDERLINE)) {
+          for (let dx = 0; dx < cell.width * cw; dx += 3) ctx.fillRect(x + dx, uy, 1, 1);
+        } else {
+          ctx.fillRect(x, uy, cell.width * cw, 1);
+        }
       }
       if (!hidden && (flags & FLAG_STRIKE)) {
         ctx.fillStyle = fg;

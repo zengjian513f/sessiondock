@@ -8188,6 +8188,7 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
 
 function openSettings() {
   $('#setting-font').value = store.get('font', 'ubuntu');
+  $('#setting-console-renderer').value = store.get('consoleRenderer', 'xterm');
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
   $('#setting-cache').value = String(cacheLimitMb);
@@ -8201,6 +8202,7 @@ $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
+$('#setting-console-renderer').onchange = e => store.set('consoleRenderer', e.target.value);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
 $('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);
 $('#setting-cache').onchange = e => {

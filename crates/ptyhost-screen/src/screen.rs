@@ -31,6 +31,8 @@ pub struct Responder {
 struct ResponderState {
     responses: Vec<u8>,
     title: String,
+    /// OSC 52 写入的剪贴板文本（已解码），等网格客户端取走。
+    clipboard: Vec<String>,
 }
 
 /// 颜色查询的应答用一套固定的深色盘：浏览器主题不在宿主手里，
@@ -81,6 +83,7 @@ impl EventListener for Responder {
                 .extend_from_slice(format(palette(index)).as_bytes()),
             Event::Title(title) => state.title = title,
             Event::ResetTitle => state.title.clear(),
+            Event::ClipboardStore(_, text) => state.clipboard.push(text),
             _ => {}
         }
     }
@@ -206,6 +209,16 @@ impl Screen {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut state.responses)
+    }
+
+    /// OSC 52 写入的剪贴板内容（按发生顺序），取走后清空。
+    pub fn take_clipboard(&mut self) -> Vec<String> {
+        let mut state = self
+            .responder
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut state.clipboard)
     }
 
     pub fn title(&self) -> String {
@@ -354,13 +367,12 @@ impl Screen {
         if mode.contains(TermMode::ALT_SCREEN) {
             out.extend_from_slice(b"\x1b[?1049h");
         }
-        out.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
+        // 不用 ED 2（`ESC[2J`）：alacritty 会把被清掉的可见行推进回滚区，
+        // 回放就多出空行。逐行定位 + 擦除整行，历史区不受影响。
+        out.extend_from_slice(b"\x1b[0m\x1b[H");
         for row in 0..self.rows as i32 {
             let (text, _) = self.row_text(Line(row), true);
-            if text.is_empty() {
-                continue;
-            }
-            out.extend_from_slice(format!("\x1b[{};1H", row + 1).as_bytes());
+            out.extend_from_slice(format!("\x1b[{};1H\x1b[2K", row + 1).as_bytes());
             out.extend_from_slice(text.as_bytes());
         }
         let (x, y) = self.cursor();
@@ -676,7 +688,8 @@ mod tests {
         screen.feed(b"one\r\ntwo\r\nthree\r\nfour\x1b[?2004h\x1b[?25l");
         let replay = String::from_utf8_lossy(&screen.replay_bytes(100)).into_owned();
         assert!(replay.starts_with("one\r\n"), "{replay:?}");
-        assert!(replay.contains("\x1b[H\x1b[2J"));
+        assert!(replay.contains("\x1b[H"));
+        assert!(replay.contains("\x1b[2K"));
         assert!(replay.contains("four"));
         assert!(replay.contains("\x1b[?2004h"));
         assert!(replay.contains("\x1b[?25l"));
@@ -711,6 +724,21 @@ mod tests {
         screen.feed(b"\x1b[?2026l");
         assert!(screen.sync_deadline().is_none());
         assert_eq!(plain(&mut screen)[0].trim_end(), "HELLO");
+    }
+
+    #[test]
+    fn replaying_an_empty_screen_does_not_shift_later_output() {
+        let empty = Screen::new(10, 3, 100);
+        let mut again = Screen::new(10, 3, 100);
+        again.feed(&empty.replay_bytes(100));
+        again.feed(b"READY\r\n");
+        assert_eq!(
+            again.history_len(),
+            0,
+            "replay must not push rows into history"
+        );
+        assert_eq!(plain(&mut again)[0].trim_end(), "READY");
+        assert_eq!(again.cursor(), (0, 1));
     }
 
     #[test]

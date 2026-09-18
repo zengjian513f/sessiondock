@@ -35,7 +35,7 @@ pub use association::{
 pub use bound::BoundTarget;
 pub use dto::{
     AttachMode, CaptureKind, CaptureReply, ControlOp, ControlReply, CursorReply, ExitReason,
-    HostEvent, SessionSummary, TerminalSize,
+    GridRowsReply, HostEvent, SessionSummary, TerminalSize,
 };
 pub use launch::LaunchTarget;
 pub use native_binding::{NativeBinding, NativeBindingState};
@@ -625,6 +625,9 @@ fn parse_reply(operation: ControlOp, value: Value) -> Result<ControlReply> {
             .map_err(|_| Error::InvalidReply),
         ControlOp::Cursor => serde_json::from_value(value)
             .map(ControlReply::Cursor)
+            .map_err(|_| Error::InvalidReply),
+        ControlOp::GridRows { .. } => serde_json::from_value(value)
+            .map(ControlReply::GridRows)
             .map_err(|_| Error::InvalidReply),
         ControlOp::Paste { .. } => {
             let bracketed = value

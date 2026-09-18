@@ -2164,13 +2164,22 @@ function shouldUseTermWebgl(uid = T.uid) {
   return !String(uid || '').startsWith('tmux:');
 }
 
+/** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。 */
+function consoleRendererIsGrid() {
+  return store.get('consoleRenderer', 'xterm') === 'grid' && typeof globalThis.GridTerm === 'function';
+}
+
 function ensureTerm(name) {
   let view = T.views.get(name);
   if (view) return view;
   const host = el('div', 'xterm-view');
   host.hidden = true;
   $('#xterm').appendChild(host);
-  const term = new Terminal({
+  const grid = consoleRendererIsGrid();
+  const term = grid ? new GridTerm({
+    fontFamily: termFont(), fontSize: termFontSize(), theme: termTheme(),
+    cursorBlink: true, scrollback: 100000,
+  }) : new Terminal({
     allowProposedApi: true,
     fontFamily: termFont(),
     fontSize: termFontSize(), fontWeight: '400', fontWeightBold: '600',
@@ -2178,9 +2187,12 @@ function ensureTerm(name) {
     cursorBlink: true, scrollback: 10000,
     scrollOnUserInput: true, theme: termTheme(),
   });
-  const fit = new FitAddon.FitAddon();
+  // 网格外观层没有 FitAddon：按 #xterm 容器尺寸提议行列，其余流程不变。
+  const fit = grid
+    ? {proposeDimensions: () => term.proposeDimensions($('#xterm').clientWidth, $('#xterm').clientHeight)}
+    : new FitAddon.FitAddon();
   view = {
-    name, host, term, fit, ws: null, connectTimer: null, reconnectTimer: null,
+    name, host, term, fit, grid, ws: null, connectTimer: null, reconnectTimer: null,
     reconnectDelay: 500, scrollPos: 0, ansiTail: '',
     fitFrame: null,
     lastResizeKey: '', lastResizeWs: null,
@@ -2193,8 +2205,8 @@ function ensureTerm(name) {
     codexSideThread: false, sideThreadScanQueued: false,
   };
   T.views.set(name, view);
-  term.loadAddon(fit);
-  if (globalThis.Unicode11Addon?.Unicode11Addon) {
+  if (!grid) term.loadAddon(fit);
+  if (!grid && globalThis.Unicode11Addon?.Unicode11Addon) {
     try {
       view.unicode11 = new Unicode11Addon.Unicode11Addon();
       term.loadAddon(view.unicode11);
@@ -2213,7 +2225,18 @@ function ensureTerm(name) {
   // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
   // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
   // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
-  if (shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
+  if (grid && typeof term.onClipboard === 'function') {
+    // 网格协议把 OSC 52 解码成文本送达；沿用 xterm 路径同一套剪贴板策略。
+    term.onClipboard(text => {
+      const bytes = new TextEncoder().encode(text);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      handleOsc52Clipboard(view, 'c;' + btoa(binary));
+    });
+  }
+  if (!grid && shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
     try {
       const webgl = new WebglAddon.WebglAddon();
       webgl.onContextLoss(() => {
@@ -2321,6 +2344,11 @@ function ensureTerm(name) {
 // （实测 localhost p50 从 ~30 ms 降到 <1 ms，见 tests/bench_term_echo_browser.py）。
 function writeTermOutput(view, chunk) {
   if (!chunk) return;
+  // 网格视图收到的是 JSON 行，没有转义序列，也不需要攒同步帧。
+  if (view.grid) {
+    writeParsedTermOutput(view, chunk);
+    return;
+  }
   // 亮色页面只反射“深底/浅字”的显式颜色；Codex 已是浅色的 diff 保持原样。
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
   chunk = terminalColorChunk(view, chunk);
@@ -2852,7 +2880,8 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   view.auditConnectionId = connectionId;
   wsUrl.search = new URLSearchParams({name, page: TERM_PAGE_ID, token,
                                       connection: connectionId, ...binding,
-                                      cols: String(cols), rows: String(rows)});
+                                      cols: String(cols), rows: String(rows),
+                                      ...(view.grid ? {mode: 'grid'} : {})});
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
   view.ws = ws;

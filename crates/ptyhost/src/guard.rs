@@ -117,6 +117,11 @@ fn operation(request: &Value) -> bool {
                     .get("mode")
                     .is_none_or(|mode| matches!(mode.as_str(), Some("bytes" | "grid")))
         }
+        "grid_rows" => {
+            fields(request, &["op", "from", "to"])
+                && request.get("from").is_some_and(Value::is_u64)
+                && request.get("to").is_some_and(Value::is_u64)
+        }
         "capture" => {
             fields(request, &["op", "kind", "styled", "join", "lines"])
                 && request
