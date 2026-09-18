@@ -7783,9 +7783,10 @@ if (HUB_MODE || SessionDockCapabilities.config.terminal_records === true) {
     const url = new URL('records.html', APP_BASE);
     url.searchParams.set('embedded', '1');
     if (HUB_MODE) {
-      const node = selectedNodeIds()[0];
-      if (!node) { alert('请先在顶栏勾选一台机器，再打开终端录制。'); return; }
-      url.searchParams.set('node', node);
+      const ids = selectedNodeIds();
+      if (!ids.length) { alert('请先在顶栏勾选至少一台机器，再打开终端录制。'); return; }
+      url.searchParams.set('node', ids[0]);
+      url.searchParams.set('nodes', ids.join(','));
     }
     frame.src = url.href;
     dialog.showModal();
