@@ -690,12 +690,21 @@ pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 /// discarded by the operator and not finished for longer than
 /// [`PENDING_ARCHIVE_AFTER`]. A finished receipt with no recorded time (an
 /// older ledger) is archived at once.
-fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
+fn pending_listed(
+    record: &crate::lifecycle::model::Record,
+    now: u64,
+    recorded: &std::collections::BTreeMap<String, crate::terminal::records::RecordEntry>,
+) -> bool {
     use crate::lifecycle::model::State;
     if record.discarded() {
         return false;
     }
     if matches!(record.state(), State::Exited | State::Failed) {
+        // The session list is the index of recordings: an exited shell stays
+        // listed as long as its recording exists (open = read-only replay).
+        if recorded.contains_key(record.host_name()) {
+            return true;
+        }
         if record.spec().source() == crate::lifecycle::model::Source::Shell {
             return false;
         }
@@ -737,6 +746,31 @@ pub async fn list(
     // Which host names accept grid attachments; pending rows get it too so the
     // console picks a renderer the host understands.
     let mut grid_hosts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // Newest recording per host name; rows carry it so the console can replay
+    // an exited session instead of showing an empty pane.
+    let recorded: std::collections::BTreeMap<String, crate::terminal::records::RecordEntry> =
+        match state
+            .terminal
+            .as_ref()
+            .map(|service| service.directory().to_path_buf())
+        {
+            Some(root) => tokio::task::spawn_blocking(move || {
+                let mut map = std::collections::BTreeMap::new();
+                for entry in crate::terminal::records::list(&root).unwrap_or_default() {
+                    map.entry(entry.name.clone()).or_insert(entry);
+                }
+                map
+            })
+            .await
+            .unwrap_or_default(),
+            None => Default::default(),
+        };
+    let recording_json = |name: &str| {
+        recorded.get(name).map(|entry| {
+            json!({"id": entry.id, "live": entry.live, "bytes": entry.bytes,
+                   "ended_ms": entry.ended_ms, "created_ms": entry.created_ms})
+        })
+    };
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"backend":"ptyhost","backends":[],"sessions":[],"pending":[],"hosts":[]});
@@ -767,14 +801,14 @@ pub async fn list(
                     }
                 }
             }
-            grid_hosts.extend(
-                observed
-                    .snapshot
-                    .hosts
-                    .iter()
-                    .filter(|host| host.summary.grid)
-                    .map(|host| host.summary.name.clone()),
-            );
+            // From the host records themselves, not the (up to 500 ms old) shared
+            // observation: a session created a moment ago must not be reported as an
+            // old host for one poll, or its console would start in the wrong renderer.
+            if let Some(service) = &state.terminal
+                && let Ok(hosts) = service.hosts().await
+            {
+                grid_hosts.extend(hosts.into_iter().filter(|h| h.grid).map(|h| h.name));
+            }
             let sessions: Vec<Value> = observed
                 .snapshot
                 .hosts
@@ -787,6 +821,9 @@ pub async fn list(
                     row["source"] = json!(target.source().as_str());
                     row["instance_id"] = json!(target.instance_id());
                     row["origin_launch_id"] = json!(target.origin_launch_id());
+                    if let Some(recording) = recording_json(&host.summary.name) {
+                        row["recording"] = recording;
+                    }
                     if let Some(uids) = current.get(&host.summary.name)
                         && let [uid] = uids.as_slice()
                     {
@@ -817,10 +854,13 @@ pub async fn list(
         response["pending"] = json!(
             records
                 .iter()
-                .filter(|record| pending_listed(record, now))
+                .filter(|record| pending_listed(record, now, &recorded))
                 .map(|record| {
                     let mut row = super::lifecycle::project(record);
                     row["grid"] = json!(grid_hosts.contains(record.host_name()));
+                    if let Some(recording) = recording_json(record.host_name()) {
+                        row["recording"] = recording;
+                    }
                     if let Some(extra) = state
                         .bug_report
                         .as_ref()

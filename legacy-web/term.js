@@ -1716,7 +1716,8 @@ async function openPendingSession(info) {
     || (pending.running && !pending.stale);
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
-  if (pending.source === 'shell' && (running || retained))
+  // 已结束但有录制的 SSH 会话：控制台面板里只读回放它的录制。
+  if (pending.source === 'shell' && (running || retained || pending.recording))
     await openTermPane(pending.name, true, remembered ? null : 'collapsed');
   else if (remembered)
     await openTermPane(pending.name);
@@ -2169,7 +2170,11 @@ function shouldUseTermWebgl(uid = T.uid) {
 function consoleRendererIsGrid(name) {
   if (store.get('consoleRenderer', 'xterm') !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
   const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
-  return row?.grid === true;
+  // 列表里还没有这一行（刚创建的会话）：新宿主一定支持网格，按偏好来。
+  // 已结束但有录制的会话：回放由服务端模型驱动，两种渲染都行，也按偏好来。
+  // `grid` 未知（create 回执刚本地塞进列表、还没经 term/list 补全）同样按偏好；旧宿主服务端总是显式给 false。
+  if (!row || row.grid == null || (row.running === false && row.recording?.id)) return true;
+  return row.grid === true;
 }
 
 function ensureTerm(name) {
@@ -2301,7 +2306,7 @@ function ensureTerm(name) {
     return true;
   });
   term.onData(d => {
-    if (T.name !== name) return;
+    if (T.name !== name || view.replay) return;   // 录制回放只读
     d = applyTermCtrl(d);
     d = rewriteOscColorReports(d);
     if (view.ws?.readyState !== 1) return;
@@ -2813,6 +2818,58 @@ function recordHostExit(view, uid, event) {
   return true;
 }
 
+/** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行，xterm 视图收净化后的字节。 */
+function attachRecordingReplay(view, row, uid) {
+  const name = view.name;
+  view.replay = true;
+  view.revoked = true;               // 绝不能自动 claim 一个已退出的实例
+  view.keepOutput = true;
+  cancelTermReconnect(view);
+  dropTermSocket(view);
+  const url = (HUB_MODE && row.node_id)
+    ? new URL(`api/nodes/${encodeURIComponent(row.node_id)}/api/term/records/attach`, APP_BASE)
+    : new URL(appUrl('api/term/records/attach'));
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.search = new URLSearchParams({id: row.recording.id, mode: view.grid ? 'grid' : 'bytes'});
+  const ws = new WebSocket(url.href);
+  ws.binaryType = 'arraybuffer';
+  view.ws = ws;
+  if (T.name === name) T.ws = ws;
+  const dec = new TextDecoder();
+  view.term.reset();
+  ws.onmessage = e => {
+    if (view.ws !== ws) return;
+    if (typeof e.data === 'string') {
+      let message = null;
+      try { message = JSON.parse(e.data); } catch {}
+      if (!message) return;
+      if (message.t === 'resize' && !view.grid && message.cols && message.rows) view.term.resize(message.cols, message.rows);
+      else if (message.t === 'record' && !view.grid && message.cols && message.rows) view.term.resize(message.cols, message.rows);
+      else if (message.t === 'exit') {
+        const code = message.exit?.code;
+        ConsoleUI.errors.set(uid, `会话已结束（退出码 ${code}），这是它的录制回放，只读。`);
+        renderTakeoverBtn();
+      }
+      return;
+    }
+    writeTermOutput(view, dec.decode(e.data, {stream: true}));
+  };
+  ws.onclose = () => {
+    if (view.ws !== ws) return;
+    view.ws = null;
+    if (T.name === name) T.ws = null;
+    view.ended = true;
+    if (!ConsoleUI.errors.get(uid)) ConsoleUI.errors.set(uid, '录制回放结束（只读）。');
+    renderTakeoverBtn();
+  };
+  ws.onerror = () => {
+    if (view.ws !== ws) return;
+    ConsoleUI.errors.set(uid, '录制回放连接失败。');
+    renderTakeoverBtn();
+  };
+  return true;
+}
+
 function attachTerm(name, auto = false) {
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
@@ -2832,6 +2889,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
     : [...(T.list || []), ...(T.pending || [])]).find(row => row.name === name);
   const uid = row?.uid || T.uid;
   const bound = SessionDockCapabilities.config.backend === 'rust';
+  // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
+  // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
+  if (bound && row && row.running === false && row.recording?.id) return attachRecordingReplay(view, row, uid);
   const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
   if (bound && ((!row?.uid && !launch) || !row.instance_id
       || (view.instanceId && view.instanceId !== row.instance_id))) {
