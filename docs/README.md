@@ -61,6 +61,7 @@ python3 tests/docs_index.py --write
 | [runbook-dev.md](runbook-dev.md) | Local developer runbook | Run SessionDock against synthetic or explicitly authorized data. Native histories remain read-only. | 109 |
 | [security-model.md](security-model.md) | SessionDock trust boundaries | SessionDock serves the existing browser application and follows the backend's accepted inputs. Native histories remain read-only. Optional services are enabled by their concrete runtime configuration; configuration is not used to invent nar | 127 |
 | [session-host.md](session-host.md) | ptyhost 开发说明 | 源码最初由原项目 `host-rs` 导入；当前 SessionDock Web 服务通过 `ptyhost-client` 连接宿主，launcher 负责创建宿主进程。 | 27 |
+| [terminal-grid.md](terminal-grid.md) | Server-side terminal grid | The host keeps one VT emulator (alacritty_terminal behind `Screen`). A grid client receives cells, not escape sequences, and the browser only paints. Byte-console clients still get the raw PTY stream and parse it in xterm.js. Recordings sta | 315 |
 | [terminal-identity.md](terminal-identity.md) | Instance-bound terminal protocol | Browser ownership and host process identity solve different problems. A lease authorizes one page/connection to write; an instance guard prevents that lease from accidentally reaching a new process behind the same terminal name. Neither PID | 119 |
 | [terminal-input.md](terminal-input.md) | Raw terminal input over HTTP | `POST /api/term/send` and `POST /api/term/scroll` give the legacy console the two HTTP input paths it used, under exactly the same authority as the WebSocket input path. This is raw keystroke delivery: success means the host acknowledged th | 112 |
 | [terminal-ownership.md](terminal-ownership.md) | Browser terminal ownership | `terminal::ownership` tracks in-memory browser reservations and bound leases. Host discovery, PTY transport and native identity checks live in the terminal service and ptyhost client. | 136 |
@@ -79,5 +80,5 @@ python3 tests/docs_index.py --write
 
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
-| [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。 这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 113 |
-| [validation.md](validation.md) | Validation suites | One table of every default check in `python3 tests/run_validation.py`, plus the opt-in Python benchmarks the runner skips. Narrative rules stay in `AGENTS.md`. | 245 |
+| [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。 这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 114 |
+| [validation.md](validation.md) | Validation suites | One table of every default check in `python3 tests/run_validation.py`, plus the opt-in Python benchmarks the runner skips. Narrative rules stay in `AGENTS.md`. | 246 |
