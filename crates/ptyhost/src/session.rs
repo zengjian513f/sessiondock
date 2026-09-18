@@ -499,6 +499,8 @@ impl Session {
             "attached": attached,
             "meta": self.meta,
             "backend": "ptyhost",
+            // 新宿主支持网格 attach（`mode":"grid"`）；旧宿主的记录里没有这个键。
+            "grid": true,
         });
         let map = info.as_object_mut().unwrap();
         if let Some(recorder) = lock(&self.record).as_ref() {

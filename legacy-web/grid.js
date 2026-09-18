@@ -407,7 +407,11 @@ async function loadList() {
     }
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `请求失败（${response.status}）`);
-    sessionRows = Array.isArray(result.sessions) ? result.sessions : [];
+    // 启动型会话在 pending 里（带 record_id/launch_id）；只列宿主支持网格的行。
+    const sessions = Array.isArray(result.sessions) ? result.sessions : [];
+    const pending = (Array.isArray(result.pending) ? result.pending : [])
+      .filter(row => row.running && !row.stale && row.name && !sessions.some(s => s.name === row.name));
+    sessionRows = [...sessions, ...pending].filter(row => row.grid !== false);
     fillSelect(sessionRows);
     if (!state.connected && !state.status) setStatus(sessionRows.length ? '' : '没有会话');
     if (wantedName && !autoStarted && !state.connected && rowByName(wantedName)) {

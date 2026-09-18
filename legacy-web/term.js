@@ -2164,9 +2164,12 @@ function shouldUseTermWebgl(uid = T.uid) {
   return !String(uid || '').startsWith('tmux:');
 }
 
-/** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。 */
-function consoleRendererIsGrid() {
-  return store.get('consoleRenderer', 'xterm') === 'grid' && typeof globalThis.GridTerm === 'function';
+/** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。
+ *  只有宿主声明支持网格（term/list 行的 `grid:true`）才用；旧宿主进程自动回退 xterm.js。 */
+function consoleRendererIsGrid(name) {
+  if (store.get('consoleRenderer', 'xterm') !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
+  const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
+  return row?.grid === true;
 }
 
 function ensureTerm(name) {
@@ -2175,7 +2178,7 @@ function ensureTerm(name) {
   const host = el('div', 'xterm-view');
   host.hidden = true;
   $('#xterm').appendChild(host);
-  const grid = consoleRendererIsGrid();
+  const grid = consoleRendererIsGrid(name);
   const term = grid ? new GridTerm({
     fontFamily: termFont(), fontSize: termFontSize(), theme: termTheme(),
     cursorBlink: true, scrollback: 100000,
