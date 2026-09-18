@@ -12,8 +12,8 @@ path = "src/main.rs"
 [dependencies]
 portable-pty = "0.9"
 serde_json = "1"
-vt100 = "0.16"
 ptyhost-record = { path = "../ptyhost-record" }
+alacritty_terminal = { version = "0.26.0", default-features = false }
 
 [target."cfg(unix)".dependencies]
 libc = "0.2"
