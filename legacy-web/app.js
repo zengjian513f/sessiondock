@@ -4638,8 +4638,9 @@ function layoutHeader() {
     button.setAttribute('role', 'menuitem');
     menu.prepend(button);
   };
+  // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
   const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
-    .filter(button => button && button.parentElement !== menu);
+    .filter(button => button && !button.hidden && button.parentElement !== menu);
   if (MOBILE.matches && canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
     header.classList.add(HEADER_FOLD_NODES);
     if (typeof closeNodePick === 'function') closeNodePick();
@@ -7771,7 +7772,8 @@ async function purgeAllTrash() {
 
 $('#trash').onclick = openTrash;
 // 终端录制页只在后端声明 terminal_records 时可达；中央站带上第一台选中的机器。
-if (SessionDockCapabilities.config.terminal_records === true) {
+// 节点页按能力显示；中央站页面总是显示，内容取第一台勾选的机器（经 /api/nodes/<nid>/api/ 代理）。
+if (HUB_MODE || SessionDockCapabilities.config.terminal_records === true) {
   const records = $('#records');
   records.hidden = false;
   // 安装为 PWA 后 window.open 会开到应用外面，用户看不到：一律在应用内的
@@ -7782,7 +7784,8 @@ if (SessionDockCapabilities.config.terminal_records === true) {
     url.searchParams.set('embedded', '1');
     if (HUB_MODE) {
       const node = selectedNodeIds()[0];
-      if (node) url.searchParams.set('node', node);
+      if (!node) { alert('请先在顶栏勾选一台机器，再打开终端录制。'); return; }
+      url.searchParams.set('node', node);
     }
     frame.src = url.href;
     dialog.showModal();

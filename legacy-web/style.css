@@ -294,6 +294,7 @@ body.side-collapsed #side-toggle { color: var(--accent); border-color: color-mix
   box-shadow: 0 10px 28px rgba(16, 24, 40, .18);
 }
 .header-menu[hidden] { display: none; }
+header .header-actions .header-menu .btn[hidden], header .header-actions .btn[hidden] { display: none; }
 /* 选择器比各级 .header-actions .btn 的尺寸规则更具体，折进菜单后不再受方形按钮尺寸约束 */
 header .header-actions .header-menu .btn {
   display: flex; align-items: center; justify-content: flex-start; gap: 10px;
