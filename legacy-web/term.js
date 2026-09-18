@@ -2027,6 +2027,7 @@ function activateTermView(view) {
   T.name = view.name;
   syncTermAliases(view);
   setScrollPos(view.scrollPos);
+  renderTimeline(view);
 }
 
 /** 只有显式打开终端的动作才能请求焦点；异步连接期间若用户已经点到别处，
@@ -2473,6 +2474,13 @@ function repaintTermView(view) {
 
 function performTermFit(view, forceSync = false) {
   if (!termPaneRenderable(view)) return;
+  // 录制回放按录制时的尺寸呈现，不随面板大小重排（服务端也不接受 resize）。
+  if (view.replay) {
+    const size = view.replaySize;
+    if (size && (view.term.cols !== size.cols || view.term.rows !== size.rows)) view.term.resize(size.cols, size.rows);
+    if (forceSync) repaintTermView(view);
+    return;
+  }
   let dimensions;
   try { dimensions = view.fit.proposeDimensions(); } catch { return; }
   if (!dimensions || !Number.isFinite(dimensions.cols) || !Number.isFinite(dimensions.rows)) return;
@@ -2826,6 +2834,95 @@ function recordHostExit(view, uid, event) {
 }
 
 /** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行，xterm 视图收净化后的字节。 */
+/** 录制回放的时间轴：进度条、播放/暂停、倍速、跳到最新。只对当前视图画。 */
+function replayTimeElapsed(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(sec).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderTimeline(view = currentTermViewObject()) {
+  const pane = $('#termpane');
+  const bar = $('#term-timeline');
+  if (!pane || !bar) return;
+  const tl = view?.replay ? view.timeline : null;
+  pane.classList.toggle('replay', !!tl);
+  if (!tl) return;
+  const span = Math.max(0, tl.end - tl.start);
+  const seek = $('#tl-seek');
+  if (!tl.scrubbing) seek.value = span ? String(Math.round((tl.clock - tl.start) / span * 1000)) : '1000';
+  const at = tl.scrubbing ? tl.start + Number(seek.value) / 1000 * span : tl.clock;
+  $('#tl-time').textContent = `${replayTimeElapsed(at - tl.start)} / ${replayTimeElapsed(span)}`;
+  const play = $('#tl-play');
+  play.textContent = tl.playing ? '❚❚' : '▶';
+  play.title = play.ariaLabel = tl.playing ? '暂停' : (tl.atEnd ? '从头播放' : '播放');
+  $('#tl-speed').value = String(tl.speed);
+  $('#tl-live').hidden = !tl.live;
+}
+
+function timelineSend(view, message) {
+  const ws = view?.ws;
+  if (!view?.replay || ws?.readyState !== 1) return false;
+  ws.send(JSON.stringify(message));
+  return true;
+}
+
+function timelineSeekTo(view, unixMs) {
+  const tl = view.timeline;
+  tl.playing = false;
+  tl.clock = unixMs;
+  timelineSend(view, { t: 'seek', unix_ms: Math.round(unixMs) });
+}
+
+function bindTimeline() {
+  const seek = $('#tl-seek');
+  if (!seek) return;
+  let debounce = null;
+  const view = () => { const v = currentTermViewObject(); return v?.replay && v.timeline ? v : null; };
+  const target = v => v.timeline.start + Number(seek.value) / 1000 * Math.max(0, v.timeline.end - v.timeline.start);
+  seek.addEventListener('pointerdown', () => { const v = view(); if (v) v.timeline.scrubbing = true; });
+  seek.addEventListener('input', () => {
+    const v = view();
+    if (!v) return;
+    v.timeline.scrubbing = true;
+    renderTimeline(v);
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { const w = view(); if (w === v) timelineSeekTo(v, target(v)); }, 120);
+  });
+  seek.addEventListener('change', () => {
+    const v = view();
+    if (!v) return;
+    clearTimeout(debounce);
+    v.timeline.scrubbing = false;
+    timelineSeekTo(v, target(v));
+    renderTimeline(v);
+  });
+  $('#tl-play').addEventListener('click', () => {
+    const v = view();
+    if (!v) return;
+    const tl = v.timeline;
+    if (tl.playing) { tl.playing = false; timelineSend(v, { t: 'pause' }); }
+    else { tl.playing = true; tl.atEnd = false; timelineSend(v, { t: 'play', speed: tl.speed }); }
+    renderTimeline(v);
+  });
+  $('#tl-speed').addEventListener('change', e => {
+    const v = view();
+    if (!v) return;
+    v.timeline.speed = Number(e.target.value) || 1;
+    if (v.timeline.playing) timelineSend(v, { t: 'play', speed: v.timeline.speed });
+    renderTimeline(v);
+  });
+  $('#tl-live').addEventListener('click', () => {
+    const v = view();
+    if (!v) return;
+    v.timeline.playing = false;
+    timelineSend(v, { t: 'live' });
+    renderTimeline(v);
+  });
+}
+bindTimeline();
+
 function attachRecordingReplay(view, row, uid) {
   const name = view.name;
   view.replay = true;
@@ -2844,19 +2941,44 @@ function attachRecordingReplay(view, row, uid) {
   if (T.name === name) T.ws = ws;
   const dec = new TextDecoder();
   view.term.reset();
+  view.timeline = { start: 0, end: 0, clock: 0, live: !!row.recording.live, playing: false,
+    speed: view.timeline?.speed || 1, atEnd: false, scrubbing: false };
+  renderTimeline(view);
   ws.onmessage = e => {
     if (view.ws !== ws) return;
     if (typeof e.data === 'string') {
       let message = null;
       try { message = JSON.parse(e.data); } catch {}
       if (!message) return;
-      if (message.t === 'resize' && !view.grid && message.cols && message.rows) view.term.resize(message.cols, message.rows);
-      else if (message.t === 'record' && !view.grid && message.cols && message.rows) view.term.resize(message.cols, message.rows);
-      else if (message.t === 'exit') {
+      const tl = view.timeline;
+      if (message.t === 'timeline') {
+        tl.start = message.start_ms || 0; tl.end = message.end_ms || tl.start; tl.clock = tl.end;
+        tl.live = !!message.live;
+      } else if (message.t === 'clock') {
+        tl.clock = message.unix_ms || tl.clock;
+        if (message.end_ms) tl.end = Math.max(tl.end, message.end_ms);
+      } else if (message.t === 'record') {
+        // 每个 record 帧都是一份完整画面（打开、seek、跨缺口），先清屏再画。
+        if (message.cols && message.rows) {
+          view.replaySize = { cols: message.cols, rows: message.rows };
+          view.term.resize(message.cols, message.rows);
+        }
+        if (!view.grid) view.term.reset();
+        tl.clock = message.unix_ms || tl.clock;
+        tl.atEnd = false;
+      } else if (message.t === 'resize' && !view.grid && message.cols && message.rows) {
+        view.replaySize = { cols: message.cols, rows: message.rows };
+        view.term.resize(message.cols, message.rows);
+      } else if (message.t === 'gap') {
+        if (!view.grid) view.term.reset();
+      } else if (message.t === 'exit') {
         const code = message.exit?.code;
         ConsoleUI.errors.set(uid, `会话已结束（退出码 ${code}），这是它的录制回放，只读。`);
         renderTakeoverBtn();
+      } else if (message.t === 'end') {
+        tl.atEnd = true; tl.playing = false;
       }
+      renderTimeline(view);
       return;
     }
     writeTermOutput(view, dec.decode(e.data, {stream: true}));
@@ -3198,6 +3320,7 @@ function deactivateTermView() {
   T.name = null;
   syncTermAliases();
   setTermCtrl(false);
+  renderTimeline(null);
 }
 
 function disposeTermView(name) {

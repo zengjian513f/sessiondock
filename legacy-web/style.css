@@ -1786,6 +1786,23 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 }
 #termpane.ctrl-locked > #term-ctrl-lock { display: block; }
 .term-keys { display: none; }
+/* 录制回放的时间轴：只在回放视图显示，位于终端下方。 */
+.term-timeline {
+  display: none; flex: none; align-items: center; gap: 8px; padding: 4px 8px;
+  border-top: 1px solid var(--border); background: var(--panel);
+  font: 12px/1.3 var(--terminal-font); color: var(--fg);
+}
+#termpane.replay > .term-timeline { display: flex; position: relative; z-index: 2; }
+/* 回放按录制时的行列数呈现，画面可能比面板高：裁掉溢出，别盖住时间轴。 */
+#termpane.replay > #xterm { overflow: hidden; }
+#termpane.term-collapsed > .term-timeline { display: none; }
+.term-timeline input[type="range"] { flex: 1; min-width: 40px; margin: 0; accent-color: var(--accent); }
+.term-timeline button, .term-timeline select {
+  flex: none; padding: 1px 7px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
+}
+.term-timeline #tl-play { min-width: 30px; }
+.term-timeline #tl-time { flex: none; font-variant-numeric: tabular-nums; white-space: nowrap; }
 body.dragging-v { cursor: row-resize; user-select: none; }
 #xterm {
   --terminal-cursor: #315f9f;

@@ -370,7 +370,7 @@ fn invalid_input(message: &'static str) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_terminal_input", message)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(default)]
 pub struct GridHistoryQuery {
     name: String,
@@ -384,23 +384,6 @@ pub struct GridHistoryQuery {
     to: usize,
     #[allow(dead_code)]
     debug_run: String,
-}
-
-impl Default for GridHistoryQuery {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            page: String::new(),
-            token: String::new(),
-            uid: None,
-            instance_id: None,
-            record_id: None,
-            launch_id: None,
-            from: 0,
-            to: 0,
-            debug_run: String::new(),
-        }
-    }
 }
 
 /// `GET /api/term/grid/history`: grid-protocol scrollback rows `[from, to)`

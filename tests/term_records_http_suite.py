@@ -212,20 +212,30 @@ def attach_ws(base, rec_id, area="websocket"):
             pass
 
 
-def first_text(ws, area):
+def next_text(ws, area):
     ws.sock.settimeout(10)
     try:
         op, payload = ws.recv_app()
     except (socket.timeout, OSError) as err:
         fail(area, str(err))
     if op != 1:
-        fail(area, f"first frame opcode {op}", payload)
+        fail(area, f"expected a text frame, got opcode {op}", payload)
     try:
         msg = json.loads(payload)
     except json.JSONDecodeError:
-        fail(area, "first frame is not JSON", payload)
+        fail(area, "text frame is not JSON", payload)
     ws.texts.append(msg)
     return msg
+
+
+def first_text(ws, area):
+    """The stream opens with `timeline` (bounds) and then the `record` frame."""
+    timeline = next_text(ws, area)
+    if timeline.get("t") != "timeline" or not isinstance(timeline.get("start_ms"), int) \
+            or not isinstance(timeline.get("end_ms"), int) or timeline["end_ms"] < timeline["start_ms"]:
+        fail(area, "timeline frame", json.dumps(timeline).encode())
+    ws.timeline = timeline
+    return next_text(ws, area)
 
 
 def host_send(record, instance, inner, area):
@@ -332,13 +342,16 @@ def run(opener, base, process, record, instance):
                 if t.get("t") == "exit":
                     after = True
                 elif after and t.get("t") == "end" and VIEWER_CURSOR in w.binary:
-                    return w.close_code == 1000
+                    # The socket stays open after `end`: the timeline can still seek.
+                    return True
             return False
 
         if not live.pump(10, ended):
             fail("replay_and_follow",
-                 f"exit/end/close texts={[t.get('t') for t in live.texts]} close={live.close_code}",
+                 f"exit/end texts={[t.get('t') for t in live.texts]} close={live.close_code}",
                  bytes(live.binary[-240:]))
+        if live.close_code is not None:
+            fail("replay_and_follow", f"closed after end code={live.close_code}")
         exit_msg = next(t for t in live.texts if t.get("t") == "exit")
         code = (exit_msg.get("exit") or {}).get("code")
         if code != 0:
@@ -353,8 +366,7 @@ def run(opener, base, process, record, instance):
         def finished(w):
             return (b"RS_SHELL_READY" in w.binary and b"RS_PING_OK" in w.binary
                     and any(t.get("t") == "exit" for t in w.texts)
-                    and any(t.get("t") == "end" for t in w.texts)
-                    and w.close_code == 1000)
+                    and any(t.get("t") == "end" for t in w.texts))
 
         if not replay.pump(10, finished):
             fail("replay_ended",
@@ -363,8 +375,69 @@ def run(opener, base, process, record, instance):
         exit_msg = next(t for t in replay.texts if t.get("t") == "exit")
         if (exit_msg.get("exit") or {}).get("code") != 0:
             fail("replay_ended", "exit.code", json.dumps(exit_msg).encode())
+        if replay.close_code is not None:
+            fail("replay_ended", f"closed after end code={replay.close_code}")
+        clocks = [t for t in replay.texts if t.get("t") == "clock"]
+        if not clocks or not isinstance(clocks[-1].get("unix_ms"), int):
+            fail("replay_ended", "clock frames", json.dumps(replay.texts).encode())
         passed("replay_ended")
-    return 7
+        check_timeline(replay, rec_id)
+    return 8
+
+
+def check_timeline(ws, rec_id):
+    """seek / play / pause on an ended recording: each seek answers with a fresh
+    `record` frame (full state at that moment) and a `clock`; play paces the rest
+    and ends with `end`; a seek to the end shows the final screen."""
+    area = "timeline"
+    start = ws.timeline["start_ms"]
+    end = max(t.get("end_ms", 0) for t in ws.texts if t.get("t") in ("timeline", "clock"))
+    ping_at = None
+    # Seek to the very start: nothing of the session's output is on screen yet.
+    n_texts, n_bin = len(ws.texts), len(ws.binary)
+    ws.send(json.dumps({"t": "seek", "unix_ms": start}), op=1)
+
+    def sought(w):
+        fresh = w.texts[n_texts:]
+        return any(t.get("t") == "record" for t in fresh) and any(t.get("t") == "clock" for t in fresh)
+
+    if not ws.pump(10, sought):
+        fail(area, f"seek(start) texts={[t.get('t') for t in ws.texts[n_texts:]]}")
+    rec = next(t for t in ws.texts[n_texts:] if t.get("t") == "record")
+    clock = next(t for t in ws.texts[n_texts:] if t.get("t") == "clock")
+    if rec.get("live") is not False or rec.get("unix_ms") != clock.get("unix_ms"):
+        fail(area, "seek(start) record/clock", json.dumps([rec, clock]).encode())
+    if clock["unix_ms"] > start + 1000:
+        fail(area, f"seek(start) clock {clock['unix_ms']} far from start {start}")
+    ws.pump(0.5, lambda w: False)
+    if b"RS_PING_OK" in ws.binary[n_bin:]:
+        fail(area, "seek(start) already shows later output", bytes(ws.binary[n_bin:][-240:]))
+    # Play at 16x from there: the output arrives paced, then `end`.
+    n_texts, n_bin = len(ws.texts), len(ws.binary)
+    ws.send(json.dumps({"t": "play", "speed": 16}), op=1)
+    if not ws.pump(20, lambda w: b"RS_PING_OK" in w.binary[n_bin:]
+                   and any(t.get("t") == "end" for t in w.texts[n_texts:])):
+        fail(area, f"play texts={[t.get('t') for t in ws.texts[n_texts:]]}", bytes(ws.binary[n_bin:][-240:]))
+    if any(t.get("t") == "record" for t in ws.texts[n_texts:]):
+        fail(area, "play must not re-send the opening state", json.dumps(ws.texts[n_texts:]).encode())
+    if ws.close_code is not None:
+        fail(area, f"closed after play code={ws.close_code}")
+    # Seek to the end: the screen at that moment already contains the ping output.
+    n_texts, n_bin = len(ws.texts), len(ws.binary)
+    ws.send(json.dumps({"t": "seek", "unix_ms": end + 60_000}), op=1)
+    if not ws.pump(10, lambda w: any(t.get("t") == "record" for t in w.texts[n_texts:])
+                   and any(t.get("t") == "clock" for t in w.texts[n_texts:])
+                   and b"RS_PING_OK" in w.binary[n_bin:]):
+        fail(area, f"seek(end) texts={[t.get('t') for t in ws.texts[n_texts:]]}", bytes(ws.binary[n_bin:][-240:]))
+    clock = next((t for t in ws.texts[n_texts:] if t.get("t") == "clock"), None)
+    if not clock or clock["unix_ms"] > end:
+        fail(area, f"seek(end) clock {clock} beyond end {end}")
+    # Pause is accepted silently; the socket stays usable.
+    ws.send(json.dumps({"t": "pause"}), op=1)
+    ws.pump(0.3, lambda w: False)
+    if ws.close_code is not None:
+        fail(area, f"closed after pause code={ws.close_code}")
+    passed(area)
 
 
 def main():

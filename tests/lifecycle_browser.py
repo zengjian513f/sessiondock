@@ -95,11 +95,14 @@ def main(bind_native=False, bare_shell=False):
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
                             # A healthy pending page explains nothing: the terminal
                             # is simply usable, and the only actions are the ordinary
-                            # console toggle and delete (discard of an unpersisted launch).
+                            # console toggle and one session action: delete (discard of
+                            # an unpersisted agent launch) or, for a running SSH shell,
+                            # stop (like an agent session: 停止 while running, 删除 once
+                            # exited; the exited row stays listed with its recording).
                             expect(page.locator(".new-session-wait")).to_have_text("")
                             expect(page.locator(".new-session-wait")).to_be_hidden()
                             assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
-                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                            expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话" if source == "shell" else "删除会话")
                             if bare_shell:
                                 assert receipt["source"] == "shell" and receipt["launch_kind"] == "fixed", receipt
                                 assert not receipt.get("declared_sid"), receipt
@@ -219,11 +222,23 @@ def main(bind_native=False, bare_shell=False):
                                 expect(action_page.locator("#a-term")).to_be_visible()
                                 # Unpersisted pending detail action is delete/discard.
                                 # The durable receipt stays queryable; the pending row leaves.
+                                # A running SSH shell first offers stop (confirmed, via
+                                # term/kill); the exited row then stays listed with its
+                                # recording and offers delete.
                                 action=action_page.locator("#a-session-action")
                                 if not action.is_visible():
                                     action_page.locator("#a-more").click()
-                                expect(action).to_have_attribute("aria-label","删除会话")
                                 before_cancel_claims=len(claims)
+                                if bare_shell:
+                                    expect(action).to_have_attribute("aria-label","停止会话")
+                                    with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/kill") as killed:
+                                        action.click()
+                                    assert killed.value.status==200,killed.value.text()
+                                    action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)",arg=receipt["record_id"],timeout=15000)
+                                    action=action_page.locator("#a-session-action")
+                                    if not action.is_visible():
+                                        action_page.locator("#a-more").click()
+                                expect(action).to_have_attribute("aria-label","删除会话")
                                 with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as discarded:
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()
@@ -269,7 +284,7 @@ def main(bind_native=False, bare_shell=False):
                                 drafted = drafted.json()
                                 page.evaluate("info => openPendingSession(info)",drafted)
                                 expect(page.locator("#composer")).to_be_visible()
-                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话")
                                 page.locator("#cinput").fill("ls")
                                 page.wait_for_function("composerDrafts.get(S.sel)?.text === 'ls'")
                                 expect(page.locator("#termpane")).to_be_visible()
