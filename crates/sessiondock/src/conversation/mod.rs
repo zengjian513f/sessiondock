@@ -758,10 +758,7 @@ fn unnumbered_menu(above_footer: &[&str]) -> bool {
     };
     cursors == 1
         && block.iter().any(|line| {
-            indent_of(line) == column
-                && !line
-                    .trim_start()
-                    .starts_with(|c| GLYPHS.contains(&c))
+            indent_of(line) == column && !line.trim_start().starts_with(|c| GLYPHS.contains(&c))
         })
 }
 fn history_question(view: &Value) -> bool {
