@@ -10,6 +10,9 @@ const base = new URL('.', location.href);
 const params = new URLSearchParams(location.search);
 const node = params.get('node');
 const wantedName = params.get('name');
+// `?record=<id>`：只读回放一段录制（同一模型、同一渲染器），不 claim、不发输入。
+const wantedRecord = params.get('record');
+const readOnly = !!wantedRecord;
 const prefix = node ? ['api', 'nodes', encodeURIComponent(node), 'api', ''].join('/') : 'api/';
 
 const state = {
@@ -21,6 +24,10 @@ const state = {
   following: true,
   selection: null,
   lastSeq: 0,
+  readOnly,
+  record: wantedRecord || '',
+  live: false,
+  ended: false,
 };
 
 const model = new GridModel();
@@ -44,6 +51,7 @@ let connecting = false;
 let leaving = false;
 let lastCols = 0;
 let lastRows = 0;
+let currentToken = '';
 let viewportTop = 0;
 let following = true;
 let selection = null;
@@ -211,6 +219,17 @@ function selectWord(line, col) {
   setSelection({start: {line, col: start}, end: {line, col: end}});
 }
 
+function linkAt(cell) {
+  const row = model.rowAt(cell.line);
+  if (!row) return null;
+  let used = 0;
+  for (const item of model.cellsOf(row)) {
+    if (cell.col >= used && cell.col < used + item.width) return item.link || null;
+    used += item.width;
+  }
+  return null;
+}
+
 function cellFromEvent(event) {
   const rect = $('grid').getBoundingClientRect();
   return renderer.cellAt(event.clientX - rect.left, event.clientY - rect.top, viewportTop);
@@ -221,6 +240,37 @@ function syncTheme() {
   const family = termFont();
   if (renderer.themeName !== theme) renderer.setTheme(theme);
   if (family && renderer.fontFamily !== family) renderer.setFont(family, renderer.fontSize);
+}
+
+// 滚到回滚区顶部附近且服务端还有更早的历史时，按页拉取并插到最前面。
+let loadingHistory = false;
+async function maybeLoadHistory() {
+  if (loadingHistory || readOnly || !state.connected || !activeRow) return;
+  if (model.historyOlder <= 0 || viewportTop > 40) return;
+  loadingHistory = true;
+  try {
+    const to = model.historyOlder;
+    const from = Math.max(0, to - 500);
+    const url = apiURL('term/grid/history', {
+      name: activeRow.name, page: PAGE_ID, token: currentToken, from, to, ...bindingOf(activeRow),
+    });
+    const response = await fetch(url, {cache: 'no-store'});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `请求失败（${response.status}）`);
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    const added = model.prependHistory(rows);
+    model.historyOlder = Math.max(0, from);
+    // 视口跟着内容一起下移，用户看到的行不跳。
+    viewportTop += added;
+    following = false;
+    stickFollow();
+    scheduleRender();
+  } catch (error) {
+    model.historyOlder = 0; // 出错不再重试，避免刷屏
+    setStatus(error.message || '读取历史失败', true);
+  } finally {
+    loadingHistory = false;
+  }
 }
 
 function paint() {
@@ -272,6 +322,10 @@ function applySize(sendIfOpen) {
   state.cols = cols;
   state.rows = rows;
   $('size').textContent = `${cols}×${rows}`;
+  if (readOnly) {
+    scheduleRender();
+    return {cols: model.cols, rows: model.rows};
+  }
   if (cols === lastCols && rows === lastRows) return {cols, rows};
   lastCols = cols;
   lastRows = rows;
@@ -294,6 +348,7 @@ function scheduleFit() {
 }
 
 function send(str) {
+  if (readOnly) return;
   if (str == null || str === '') return;
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(encoderUtf8.encode(str));
@@ -305,6 +360,7 @@ function sendInput(str) {
 }
 
 function mouseSeq(kind, button, cell, event, wheelDelta) {
+  if (readOnly) return null;
   const col = cell.col;
   const row = cell.line - viewportTop;
   return encoder.mouse(kind, button, col, row, {
@@ -460,6 +516,69 @@ function openSocket(row, token, cols, rows) {
   });
 }
 
+function openRecordSocket(id) {
+  decoder = new LineDecoder();
+  const gen = generation;
+  const url = apiURL('term/records/attach', {id, mode: 'grid'});
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(url.href);
+  ws.binaryType = 'arraybuffer';
+  socket = ws;
+  ws.addEventListener('open', () => {
+    if (gen !== generation || socket !== ws) return;
+    state.connected = true;
+    reconnectDelay = 1000;
+    setStatus('正在回放…');
+  });
+  ws.addEventListener('message', event => {
+    if (gen !== generation || socket !== ws) return;
+    if (typeof event.data === 'string') {
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      if (!message) return;
+      if (message.t === 'record') {
+        state.live = !!message.live;
+        state.ended = !message.live;
+        setStatus(message.live ? '录制进行中 · 实时跟随' : '录制已结束');
+        $('size').textContent = `${message.cols}×${message.rows}`;
+      } else if (message.t === 'gap') {
+        setStatus(state.status + '（录制有缺口，已从下一个快照继续）');
+      } else if (message.t === 'exit') {
+        const exit = message.exit || {};
+        state.live = false;
+        state.ended = true;
+        setStatus(`录制已结束 · 退出码 ${exit.code}${exit.output_complete === false ? ' · 输出不完整' : ''}`);
+      } else if (message.t === 'end') {
+        state.ended = true;
+        setStatus(state.status + ' · 回放完成');
+      }
+      return;
+    }
+    const messages = decoder.push(event.data);
+    if (!messages.length) return;
+    for (const msg of messages) {
+      model.apply(msg);
+      if (msg && msg.t === 'snapshot') $('size').textContent = `${model.cols}×${model.rows}`;
+    }
+    state.lastSeq = model.seq;
+    stickFollow();
+    scheduleRender();
+  });
+  ws.addEventListener('close', event => {
+    if (gen !== generation) return;
+    if (socket === ws) socket = null;
+    state.connected = false;
+    if (leaving || event.code === 1000 || !state.live) return;
+    const delay = reconnectDelay;
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+    setStatus(`连接断开${event.reason ? '：' + event.reason : ''}，${delay / 1000}s 后重试`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = 0;
+      if (!leaving) openRecordSocket(id);
+    }, delay);
+  });
+}
+
 async function connect(force = false, fromReconnect = false) {
   if (connecting) return;
   const row = fromReconnect && activeRow ? activeRow : rowByName($('session').value);
@@ -492,6 +611,7 @@ async function connect(force = false, fromReconnect = false) {
       startListRefresh();
       return;
     }
+    currentToken = result.token;
     openSocket(row, result.token, cols, rows);
   } catch (error) {
     setStatus(error.message || '连接失败', true);
@@ -541,11 +661,11 @@ function setup() {
   $('term').addEventListener('wheel', event => {
     event.preventDefault();
     const modes = model.modes;
-    if (modes.alt && modes.mouse === 'none') {
+    if (!readOnly && modes.alt && modes.mouse === 'none') {
       send(encoder.wheelAsArrows(event.deltaY));
       return;
     }
-    if (modes.mouse !== 'none') {
+    if (!readOnly && modes.mouse !== 'none') {
       const cell = cellFromEvent(event);
       send(mouseSeq('wheel', 0, cell, event, event.deltaY));
       return;
@@ -554,12 +674,22 @@ function setup() {
     viewportTop += event.deltaY < 0 ? -3 : 3;
     stickFollow();
     scheduleRender();
+    if (event.deltaY < 0) maybeLoadHistory();
   }, {passive: false});
 
   $('grid').addEventListener('mousedown', event => {
     keys.focus();
     const cell = cellFromEvent(event);
-    if (model.modes.mouse !== 'none' && !event.shiftKey) {
+    // Ctrl/⌘ + 左键：打开该格子上的 OSC 8 超链接（新标签，noopener）。
+    if (event.button === 0 && (event.ctrlKey || event.metaKey)) {
+      const link = linkAt(cell);
+      if (link) {
+        event.preventDefault();
+        window.open(link, '_blank', 'noopener');
+        return;
+      }
+    }
+    if (!readOnly && model.modes.mouse !== 'none' && !event.shiftKey) {
       event.preventDefault();
       send(mouseSeq('down', event.button, cell, event));
       mouseHeld = {button: event.button};
@@ -582,7 +712,7 @@ function setup() {
 
   addEventListener('mousemove', event => {
     const cell = cellFromEvent(event);
-    if (mouseHeld || model.modes.mouse === 'any_motion') {
+    if (!readOnly && (mouseHeld || model.modes.mouse === 'any_motion')) {
       const button = mouseHeld ? mouseHeld.button : 0;
       if (!lastMouseCell || lastMouseCell.col !== cell.col || lastMouseCell.line !== cell.line) {
         send(mouseSeq('move', button, cell, event));
@@ -648,6 +778,16 @@ function setup() {
   );
 
   applySize(false);
+  if (readOnly) {
+    // 录制回放：隐藏会话选择与抢占，键盘/鼠标只用于滚动与选区。
+    $('session').hidden = true;
+    $('connect').hidden = true;
+    $('paste').hidden = true;
+    state.name = wantedRecord;
+    setStatus('正在连接…');
+    openRecordSocket(wantedRecord);
+    return;
+  }
   startListRefresh();
   loadList();
 }

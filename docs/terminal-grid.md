@@ -82,7 +82,7 @@ reconnect gets a fresh `reset: true` snapshot.
 ### Row
 
 ```text
-{"s":[[text, fg, bg, flags], …], "w": wrapped}
+{"s":[[text, fg, bg, flags] | [text, fg, bg, flags, {"link": url, "ul": color}], …], "w": wrapped}
 ```
 
 `s` is an array of spans. A span is consecutive cells with the same
@@ -137,7 +137,7 @@ a resize (or when the screen thread has no previous grid state) with
 | `reset` | `true`: replace the browser scrollback with `history`. `false`: replace the viewport only; if `cols` changed, the browser reflows its existing scrollback |
 | `cols`, `rows` | viewport size |
 | `grid` | `rows` row objects, index 0 = top of the visible screen |
-| `history` | recent scrollback rows. For `reset: true`, the last `SNAPSHOT_HISTORY_ROWS` (2000) rows, oldest first. For a live resize snapshot, `[]` |
+| `history` | recent scrollback rows. For `reset: true`, the last `SNAPSHOT_HISTORY_ROWS` (2000) rows, oldest first (a recording replay sends all of its history instead). For a live resize snapshot, `[]` |
 | `history_total` | absolute history length in the model (may exceed `history.length`) |
 | `cursor` | `{x, y, visible}` in the viewport, 0-based |
 | `modes` | see below |
@@ -191,7 +191,7 @@ first dirty instant and the last change.
 | DEC 2026 | held in the VTE parser | `ESC[?2026h` buffers in the model; grid flush is skipped while `sync_deadline()` is `Some`. `ESC[?2026l` applies the buffer. If the end marker never arrives, `expire_sync` applies it when the parser timeout fires, then the grid is marked dirty |
 | resize | snapshot | `Piece::Resize` sets `need_snapshot`; live clients get `reset: false` with empty `history` |
 | first snapshot | screen thread | pending clients are not snapshotted under the attach lock. The screen thread captures once and sends that snapshot, then diffs from the same `GridState`, so the stream has no hole |
-| `SNAPSHOT_HISTORY_ROWS` | 2000 | cap on rows copied into a `reset: true` snapshot. Older history is not paged on this wire |
+| `SNAPSHOT_HISTORY_ROWS` | 2000 | cap on rows copied into a `reset: true` snapshot and on one `grid_rows` page. Older history is paged through `GET /api/term/grid/history` |
 
 A pending client with no dirty state flushes immediately. Otherwise the
 1 ms / 8 ms rule applies. The idle wait is at most 200 ms, shortened to
@@ -260,7 +260,7 @@ the byte console.
 
 | Boundary | Limit | Policy |
 | --- | --- | --- |
-| Snapshot history | 2000 rows (`SNAPSHOT_HISTORY_ROWS`) | Older model history is not on this wire; there is no history-page request |
+| Snapshot history | 2000 rows (`SNAPSHOT_HISTORY_ROWS`) | Older rows come from `GET /api/term/grid/history` in pages of at most 2000 (`grid_rows`) |
 | Browser scrollback | 100_000 rows | Drop from the oldest |
 | Scrolled-row flood | none | Every row that left the primary screen between captures is sent in `diff.scrolled` |
 | WebSocket host payload | 32 KiB chunks | Split only; lines are reassembled in the decoder |
@@ -270,10 +270,9 @@ the byte console.
 
 Known gaps:
 
-- No OSC 8 hyperlinks and no underline colour or underline style beyond
-  the single underline bit.
-- No history paging past the 2000 snapshot rows. `history_total` tells
-  the client that more exists; nothing fetches it.
+- Underline *style* (double, curly, dotted, dashed) collapses to the
+  single underline bit; hyperlinks and underline colour travel in the
+  span's fifth element (see below).
 - Alt-screen scrollback is not recorded: `scrolled` is empty while the
   next state is alt, and the browser ignores `scrolled` while it is
   already on alt.
@@ -283,6 +282,66 @@ Known gaps:
   change keeps an empty title until one arrives.
 - The host does not emit a snapshot because of a `seq` gap; only
   reconnect (or a live resize) produces one.
+
+## Fifth span element, clipboard, history paging
+
+A span whose cells carry an OSC 8 hyperlink or an SGR 58 underline colour
+gets a fifth element `{"link": url, "ul": color}` (either key may be
+absent; `ul` uses the same colour encoding as `fg`). The browser model
+keeps `link`/`ul` per cell and preserves them through reflow; the
+renderer draws the underline in `ul` when set and a dotted underline
+under a link that has no underline attribute; Ctrl/⌘+click on a linked
+cell opens it in a new tab (`noopener`).
+
+OSC 52 clipboard writes are consumed by the host model (alacritty
+`ClipboardStore`) and forwarded to grid clients as their own message,
+`{"t":"clipboard","text":"…"}` (decoded text, one message per write),
+sent right after the flush that produced them. Byte clients keep the raw
+sequence and let xterm.js handle it. Clipboard *reads* (OSC 52 `?`) are
+never answered.
+
+`GET /api/term/grid/history?name&page&token[&uid&instance_id|&record_id&launch_id&instance_id]&from&to`
+returns `{"rows":[row…],"from","to","total"}` for absolute history rows
+`[from, to)` (0 = oldest) under the page's own console lease (same
+`ExpectedTarget` rules as `/api/term/send`; a stale token is 409). The
+host op is `grid_rows {from, to}` (guard whitelist: exactly those fields,
+both unsigned); it waits for the model to catch up like `capture`, clamps
+`to` to `total` and to `from + 2000`. The page fetches 500 rows at a time
+when the viewport top is within 40 lines of the oldest loaded row and
+`history_total - loaded > 0`, prepends them and shifts the viewport so
+the visible rows do not move.
+
+## Recordings and the shared model
+
+`ptyhost-screen` is the crate that holds `Screen` (the alacritty_terminal
+wrapper) and `grid` (span extraction, diffing, `FlushPolicy`). ptyhost
+uses it for live sessions; sessiondock uses the same crate to replay a
+recording: `GET /api/term/records/attach?id=…&mode=grid` feeds the
+checkpoint and every later output frame through a fresh `Screen`
+(scrollback 10_000) and streams `snapshot` / `diff` lines; a recorded
+resize becomes a `reset:false` snapshot, a gap checkpoint becomes
+`{"t":"gap"}` plus a `reset:true` snapshot, and the `record` / `exit` /
+`end` text frames are those of the byte replay
+([terminal session recordings](terminal-records.md)). `grid.html?record=<id>`
+opens that stream read-only (no claim, no input, no pty resize);
+`records.html` links to it as "网格回放". The checkpoint serializer
+positions and erases each row (`ESC[r;1H ESC[2K`) instead of `ESC[2J`,
+because alacritty's ED 2 would push the cleared rows into scrollback.
+
+## Main console
+
+The legacy console (`term.js`) can use the grid instead of xterm.js:
+settings → 控制台渲染 → 服务端网格 (`sessiondock.consoleRenderer`,
+default `xterm`, applied when a console view is next created).
+`legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
+object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
+`onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)
+built on the grid modules; `index.html` publishes it as
+`globalThis.GridTerm` from a module script placed before `term.js`.
+`ensureTerm` picks it up, skips the xterm addons, adds `mode=grid` to the
+attach URL and bypasses the SGR rewriting and 2026 hold in
+`writeTermOutput`; everything else (claim, lease, resize, revoke, exit,
+Codex side-thread scan through `buffer.active`) is unchanged.
 
 ## Validation
 

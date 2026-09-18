@@ -370,6 +370,87 @@ fn invalid_input(message: &'static str) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_terminal_input", message)
 }
 
+#[derive(Deserialize)]
+#[serde(default)]
+pub struct GridHistoryQuery {
+    name: String,
+    page: String,
+    token: String,
+    uid: Option<String>,
+    instance_id: Option<String>,
+    record_id: Option<String>,
+    launch_id: Option<String>,
+    from: usize,
+    to: usize,
+    #[allow(dead_code)]
+    debug_run: String,
+}
+
+impl Default for GridHistoryQuery {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            page: String::new(),
+            token: String::new(),
+            uid: None,
+            instance_id: None,
+            record_id: None,
+            launch_id: None,
+            from: 0,
+            to: 0,
+            debug_run: String::new(),
+        }
+    }
+}
+
+/// `GET /api/term/grid/history`: grid-protocol scrollback rows `[from, to)`
+/// (absolute history line numbers, 0 = oldest) for the page's own console
+/// lease. Read-only; the host caps a page at 2000 rows.
+pub async fn grid_history(
+    State(state): State<AppState>,
+    query: Result<Query<GridHistoryQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let service = enabled(&state)?;
+    let Query(query) = query
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid_history", "历史行参数无效"))?;
+    if query.to <= query.from {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_history",
+            "历史行范围无效",
+        ));
+    }
+    let expected = match (
+        &query.uid,
+        &query.instance_id,
+        &query.record_id,
+        &query.launch_id,
+    ) {
+        (None, None, None, None) => ExpectedTarget::Raw,
+        (Some(uid), Some(instance), None, None) => ExpectedTarget::Native { uid, instance },
+        (None, Some(instance), Some(record), Some(launch)) => {
+            if record.len() != 32 || launch.len() != 32 || instance.len() != 32 {
+                return Err(binding_unavailable());
+            }
+            ExpectedTarget::Launch { launch, instance }
+        }
+        _ => return Err(binding_unavailable()),
+    };
+    let reply = service
+        .grid_rows(
+            &query.name,
+            &query.page,
+            &query.token,
+            expected,
+            query.from,
+            query.to,
+        )
+        .await?;
+    Ok(Json(json!({
+        "rows": reply.rows, "from": reply.from, "to": reply.to, "total": reply.total,
+    })))
+}
+
 pub async fn send(
     State(state): State<AppState>,
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,

@@ -14,8 +14,8 @@ use futures_util::{
 };
 use ptyhost_client::{
     AttachMode, AttachReader, AttachWriter, BoundTarget, CaptureKind, CaptureReply, ControlOp,
-    ControlReply, HostClient, HostEvent, LaunchState, LaunchTarget, Limits, SessionSummary,
-    TerminalSize,
+    ControlReply, GridRowsReply, HostClient, HostEvent, LaunchState, LaunchTarget, Limits,
+    SessionSummary, TerminalSize,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, watch};
@@ -536,6 +536,38 @@ impl TerminalService {
     /// health counters, read under the exact lease and per-name gate like an
     /// input. The host first lets the model
     /// catch up with pending output; a nonzero `lag` means it did not.
+    /// Grid history rows `[from, to)` under the page's lease (read-only; the host
+    /// caps a page at 2000 rows).
+    pub async fn grid_rows(
+        &self,
+        name: &str,
+        page: &str,
+        token: &str,
+        expected: ExpectedTarget<'_>,
+        from: usize,
+        to: usize,
+    ) -> Result<GridRowsReply, TerminalError> {
+        ownership::validate_name(name)?;
+        ownership::validate_page(page)?;
+        let reply = self
+            .request_under_lease(
+                name,
+                page,
+                token,
+                expected,
+                ControlOp::GridRows { from, to },
+            )
+            .await?;
+        match reply {
+            ControlReply::GridRows(rows) => Ok(rows),
+            _ => Err(TerminalError::new(
+                503,
+                "terminal_unavailable",
+                "终端 host 未返回历史行",
+            )),
+        }
+    }
+
     pub async fn capture_screen(
         &self,
         name: &str,

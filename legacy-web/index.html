@@ -385,6 +385,13 @@
         <option value="consolas">Consolas / Consola</option>
       </select>
     </label>
+    <label class="setting-row" for="setting-console-renderer">
+      <span><b>控制台渲染</b><small>服务端网格由宿主解析终端、浏览器只画格子；重新打开控制台后生效</small></span>
+      <select id="setting-console-renderer">
+        <option value="xterm">xterm.js（浏览器解析）</option>
+        <option value="grid">服务端网格</option>
+      </select>
+    </label>
     <label class="setting-row" for="setting-theme">
       <span><b>颜色方案</b><small>可跟随操作系统自动切换</small></span>
       <select id="setting-theme">
@@ -435,6 +442,11 @@
 <script defer src="vendor/addon-fit.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/addon-unicode11.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/addon-webgl.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script type="module">
+  // 服务端网格的 xterm 兼容外观层；模块脚本与 defer 脚本按文档顺序执行，term.js 能直接用到。
+  import {GridTerm} from './grid/facade.js?v=__SESSIONDOCK_ASSET_VERSION__';
+  globalThis.GridTerm = GridTerm;
+</script>
 <script defer src="term.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/katex/katex.min.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/katex/auto-render.min.js?v=__SESSIONDOCK_ASSET_VERSION__" onload="refreshFormulae()"></script>

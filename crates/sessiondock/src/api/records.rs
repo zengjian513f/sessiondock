@@ -52,6 +52,9 @@ pub async fn list(State(state): State<AppState>) -> Result<Json<Value>, ApiError
 #[derive(Deserialize)]
 pub struct AttachQuery {
     id: String,
+    /// `grid` replays through the terminal model and streams grid JSON lines.
+    #[serde(default)]
+    mode: String,
 }
 
 /// `GET /api/term/records/attach?id=…` (WebSocket).
@@ -63,6 +66,7 @@ pub async fn attach(
     let root = root(&state)?;
     let Query(query) = query
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid_record", "录制参数无效"))?;
+    let grid = query.mode == "grid";
     let id = query.id;
     let found = {
         let root = root.clone();
@@ -105,5 +109,11 @@ pub async fn attach(
         .write_buffer_size(0)
         .max_write_buffer_size(256 * 1024)
         .on_failed_upgrade(|_| {})
-        .on_upgrade(move |socket| records::stream(dir, entry, socket, shutdown)))
+        .on_upgrade(move |socket| async move {
+            if grid {
+                records::stream_grid(dir, entry, socket, shutdown).await
+            } else {
+                records::stream(dir, entry, socket, shutdown).await
+            }
+        }))
 }

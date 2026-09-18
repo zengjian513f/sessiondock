@@ -992,10 +992,10 @@ dependencies = [
 name = "ptyhost"
 version = "0.1.0"
 dependencies = [
- "alacritty_terminal",
  "libc",
  "portable-pty",
  "ptyhost-record",
+ "ptyhost-screen",
  "serde_json",
 ]
 
@@ -1016,6 +1016,14 @@ name = "ptyhost-record"
 version = "0.1.0"
 dependencies = [
  "tempfile",
+]
+
+[[package]]
+name = "ptyhost-screen"
+version = "0.1.0"
+dependencies = [
+ "alacritty_terminal",
+ "serde_json",
 ]
 
 [[package]]
@@ -1287,6 +1295,7 @@ dependencies = [
  "native-tls",
  "ptyhost-client",
  "ptyhost-record",
+ "ptyhost-screen",
  "regex",
  "regex-syntax",
  "rustix",

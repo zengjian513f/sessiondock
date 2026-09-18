@@ -18,6 +18,12 @@
 //! | → browser | `{"t":"exit","exit":{…}}` | the recorded host exit payload |
 //! | → browser | `{"t":"end"}` | nothing more will come; preceded by the viewer reset bytes |
 //! | browser → | anything | ignored (read-only) except Close |
+//!
+//! With `mode=grid` the same recording is fed through the host's terminal model
+//! (`ptyhost-screen`) inside the Web service, and the browser receives the grid
+//! protocol (`snapshot` / `diff` JSON lines in binary frames, see
+//! `docs/terminal-grid.md`) instead of sanitized bytes. Live and history then share
+//! one emulator. `record`, `exit` and `end` text frames are the same as above.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -28,6 +34,8 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use ptyhost_record::reader::{self, Event, Read, Stamped};
 use ptyhost_record::sanitize::{Sanitizer, VIEWER_RESET};
+use ptyhost_screen::Screen;
+use ptyhost_screen::grid::{self, GridState};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -189,6 +197,24 @@ impl Sender {
         if self
             .sink
             .send(Message::Text(value.to_string().into()))
+            .await
+            .is_err()
+        {
+            self.failed = true;
+        }
+    }
+
+    /// One grid JSON line as a binary frame (no sanitizing: the model consumed the bytes).
+    async fn raw_line(&mut self, line: &str) {
+        if self.failed {
+            return;
+        }
+        let mut payload = Vec::with_capacity(line.len() + 1);
+        payload.extend_from_slice(line.as_bytes());
+        payload.push(b'\n');
+        if self
+            .sink
+            .send(Message::Binary(Bytes::from(payload)))
             .await
             .is_err()
         {
@@ -360,6 +386,221 @@ pub async fn stream(
         }
     }
     sender.finish().await;
+    sender.close(1000, "record end").await;
+}
+
+/// Scrollback rows kept by the replay model; also the snapshot's history budget.
+const GRID_HISTORY: usize = 10000;
+
+/// One recording, replayed through the terminal model, streamed as grid JSON lines.
+struct GridReplay {
+    screen: Screen,
+    last: Option<GridState>,
+    seq: u64,
+}
+
+impl GridReplay {
+    fn new(cols: u16, rows: u16, state: &[u8]) -> Self {
+        let mut screen = Screen::new(cols.max(1), rows.max(1), GRID_HISTORY);
+        screen.feed(state);
+        let _ = screen.take_responses();
+        Self {
+            screen,
+            last: None,
+            seq: 0,
+        }
+    }
+
+    /// Full snapshot (`reset` chooses whether the browser drops its scrollback).
+    fn snapshot(&mut self, reset: bool) -> String {
+        let next = grid::capture(&self.screen);
+        // 录制回放没有分页接口：reset 快照直接带上模型里的全部历史（≤ GRID_HISTORY）。
+        let history = if reset {
+            grid::history_rows(&self.screen, 0, next.history)
+        } else {
+            Vec::new()
+        };
+        self.seq += 1;
+        let line = grid::snapshot_json(&next, &history, next.history, self.seq, reset);
+        self.last = Some(next);
+        line
+    }
+
+    /// Apply one page of recorded events; returns the JSON lines to send, in order.
+    fn apply(&mut self, read: &Read) -> (Vec<String>, bool) {
+        let mut out = Vec::new();
+        let mut exited = false;
+        let mut dirty = false;
+        for Stamped { event, .. } in &read.events {
+            match event {
+                Event::Output(bytes) => {
+                    self.screen.feed(bytes);
+                    let _ = self.screen.take_responses();
+                    dirty = true;
+                }
+                Event::Resize { cols, rows } => {
+                    if dirty {
+                        out.extend(self.diff());
+                        dirty = false;
+                    }
+                    self.screen.resize(*cols, *rows);
+                    out.push(self.snapshot(false));
+                }
+                Event::Checkpoint { cols, rows, state } => {
+                    // Data was lost: rebuild the model from the checkpoint.
+                    *self = Self::new(*cols, *rows, state);
+                    self.seq = 0;
+                    out.push(json!({"t": "gap"}).to_string());
+                    out.push(self.snapshot(true));
+                    dirty = false;
+                }
+                Event::Exit(payload) => {
+                    if dirty {
+                        out.extend(self.diff());
+                        dirty = false;
+                    }
+                    let exit: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
+                    out.push(json!({"t": "exit", "exit": exit}).to_string());
+                    exited = true;
+                }
+                Event::Mark(_) => {}
+            }
+        }
+        if dirty {
+            // The end of a page is a frame boundary; finish any held synchronized update.
+            self.screen.expire_sync();
+            out.extend(self.diff());
+        }
+        (out, exited)
+    }
+
+    fn diff(&mut self) -> Option<String> {
+        let next = grid::capture(&self.screen);
+        let prev = self.last.take()?;
+        let scrolled = if !next.alt && next.history > prev.history {
+            grid::history_rows(&self.screen, prev.history, next.history)
+        } else {
+            Vec::new()
+        };
+        let title = self.screen.title();
+        let line = grid::diff_json(&prev, &next, &scrolled, Some(title.as_str()), self.seq + 1);
+        self.last = Some(next);
+        if line.is_some() {
+            self.seq += 1;
+        }
+        line
+    }
+}
+
+/// Grid-mode counterpart of [`stream`]: the recording is replayed through the
+/// terminal model and the browser receives grid JSON lines.
+pub async fn stream_grid(
+    dir: PathBuf,
+    entry: RecordEntry,
+    socket: WebSocket,
+    shutdown: CancellationToken,
+) {
+    let (sink, mut incoming) = socket.split();
+    let mut sender = Sender {
+        sink,
+        sanitizer: Sanitizer::new(),
+        failed: false,
+    };
+    let first = {
+        let dir = dir.clone();
+        tokio::task::spawn_blocking(move || reader::replay(&dir, PAGE_BYTES)).await
+    };
+    let (checkpoint, read) = match first {
+        Ok(Ok(Some(pair))) => pair,
+        Ok(Ok(None)) => {
+            sender.close(1011, "record has no checkpoint").await;
+            return;
+        }
+        _ => {
+            sender.close(1011, "record unreadable").await;
+            return;
+        }
+    };
+    sender
+        .text(json!({
+            "t": "record", "cols": checkpoint.cols, "rows": checkpoint.rows,
+            "unix_ms": checkpoint.unix_ms, "live": entry.live, "id": entry.id, "mode": "grid",
+        }))
+        .await;
+    // The model is CPU work; it lives in blocking tasks and is handed back each page.
+    let mut replay = Some(
+        tokio::task::spawn_blocking(move || {
+            let mut replay = GridReplay::new(checkpoint.cols, checkpoint.rows, &checkpoint.state);
+            let first = replay.snapshot(true);
+            let (mut lines, exited) = replay.apply(&read);
+            lines.insert(0, first);
+            (replay, lines, exited, read)
+        })
+        .await,
+    );
+    let mut next;
+    let mut exited;
+    let mut live = entry.live;
+    let host_pid = entry.host_pid;
+    let mut model = match replay.take() {
+        Some(Ok((model, lines, was_exited, read))) => {
+            for line in lines {
+                sender.raw_line(&line).await;
+            }
+            exited = was_exited;
+            next = read;
+            model
+        }
+        _ => {
+            sender.close(1011, "record unreadable").await;
+            return;
+        }
+    };
+    loop {
+        if sender.failed {
+            return;
+        }
+        if exited || (next.at_end && !live) {
+            break;
+        }
+        if next.at_end {
+            tokio::select! {
+                biased;
+                _ = shutdown.cancelled() => { sender.close(1001, "shutdown").await; return; }
+                message = incoming.next() => {
+                    if matches!(message, None | Some(Err(_)) | Some(Ok(Message::Close(_)))) {
+                        return;
+                    }
+                    continue;
+                }
+                _ = tokio::time::sleep(FOLLOW_INTERVAL) => {}
+            }
+            live = host_alive(host_pid);
+        }
+        let from = next.next;
+        let dir_clone = dir.clone();
+        let page = tokio::task::spawn_blocking(move || {
+            let read = reader::read_from(&dir_clone, from, PAGE_BYTES)?;
+            let (lines, exited) = model.apply(&read);
+            Ok::<_, io::Error>((model, lines, exited, read))
+        })
+        .await;
+        match page {
+            Ok(Ok((returned, lines, was_exited, read))) => {
+                model = returned;
+                for line in lines {
+                    sender.raw_line(&line).await;
+                }
+                exited = was_exited;
+                next = read;
+            }
+            _ => {
+                sender.close(1011, "record unreadable").await;
+                return;
+            }
+        }
+    }
+    sender.text(json!({"t": "end"})).await;
     sender.close(1000, "record end").await;
 }
 

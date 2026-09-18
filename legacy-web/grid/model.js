@@ -24,7 +24,23 @@ function blankCell() {
 
 function isBlankCell(cell) {
   return cell && cell.text === ' ' && cell.fg === -1 && cell.bg === -1
-    && (cell.flags | 0) === 0 && cell.width === 1;
+    && (cell.flags | 0) === 0 && cell.width === 1 && !cell.link && cell.ul == null;
+}
+
+// 可选的第 5 个元素：{link: 超链接 URL, ul: 下划线颜色}；缺省为 null。
+function extraOf(span) {
+  const extra = span && span[4];
+  if (!extra || typeof extra !== 'object') return null;
+  const link = typeof extra.link === 'string' && extra.link ? extra.link : null;
+  const ul = typeof extra.ul === 'number' ? extra.ul : null;
+  return link || ul != null ? {link, ul} : null;
+}
+
+function sameExtra(cell, span) {
+  const extra = span[4] || null;
+  const link = extra && extra.link ? extra.link : null;
+  const ul = extra && typeof extra.ul === 'number' ? extra.ul : null;
+  return (cell.link || null) === link && (cell.ul == null ? null : cell.ul) === ul;
 }
 
 function trimTrailingBlanks(cells) {
@@ -38,10 +54,18 @@ function spansFromCells(cells) {
   const spans = [];
   for (const cell of cells) {
     const last = spans[spans.length - 1];
-    if (last && last[1] === cell.fg && last[2] === cell.bg && last[3] === cell.flags) {
+    if (last && last[1] === cell.fg && last[2] === cell.bg && last[3] === cell.flags
+        && sameExtra(cell, last)) {
       last[0] += cell.text;
     } else {
-      spans.push([cell.text, cell.fg, cell.bg, cell.flags]);
+      const span = [cell.text, cell.fg, cell.bg, cell.flags];
+      if (cell.link || cell.ul != null) {
+        const extra = {};
+        if (cell.link) extra.link = cell.link;
+        if (cell.ul != null) extra.ul = cell.ul;
+        span.push(extra);
+      }
+      spans.push(span);
     }
   }
   return spans;
@@ -61,6 +85,8 @@ export class GridModel {
     this.cursor = {x: 0, y: 0, visible: true};
     this.modes = {...DEFAULT_MODES};
     this.title = '';
+    /// 服务端仍持有、尚未下发的更早历史行数（分页时递减）。
+    this.historyOlder = 0;
     this.seq = 0;
     this.lostMessages = 0;
     this.version = 0;
@@ -81,6 +107,21 @@ export class GridModel {
 
   lineCount() {
     return this.scrollback.length + this.rows;
+  }
+
+  /// 把更早的历史行插到回滚区最前面（按需分页）；返回实际插入的行数。
+  prependHistory(rawRows) {
+    if (!Array.isArray(rawRows) || !rawRows.length) return 0;
+    this.version++;
+    const rows = rawRows.map(raw => this._row(raw));
+    this.scrollback.unshift(...rows);
+    // 插入后若超限，从最旧一端裁掉，返回值只算真正留下的。
+    const extra = this.scrollback.length - this.scrollbackLimit;
+    if (extra > 0) {
+      this.scrollback.splice(0, extra);
+      return Math.max(0, rows.length - extra);
+    }
+    return rows.length;
   }
 
   rowAt(i) {
@@ -161,6 +202,9 @@ export class GridModel {
     if (msg.reset) {
       this.scrollback = Array.isArray(msg.history) ? msg.history.map(raw => this._row(raw)) : [];
       this._capScrollback();
+      // 服务端还留着多少更早的历史：history_total - 快照随附的行数。
+      const total = typeof msg.history_total === 'number' ? msg.history_total : this.scrollback.length;
+      this.historyOlder = Math.max(0, total - this.scrollback.length);
     } else if (this.cols > 0 && cols !== this.cols) {
       this._rebuildScrollback(cols);
     }
@@ -238,6 +282,7 @@ export class GridModel {
       const fg = span && span[1] != null ? span[1] : -1;
       const bg = span && span[2] != null ? span[2] : -1;
       const flags = span && span[3] != null ? span[3] | 0 : 0;
+      const extra = extraOf(span);
       const width = flags & FLAG_WIDE ? 2 : 1;
       for (const g of segmentText(text)) {
         if (used + width > cols) {
@@ -247,7 +292,12 @@ export class GridModel {
           }
           return cells;
         }
-        cells.push({text: g, fg, bg, flags, width});
+        const cell = {text: g, fg, bg, flags, width};
+        if (extra) {
+          if (extra.link) cell.link = extra.link;
+          if (extra.ul != null) cell.ul = extra.ul;
+        }
+        cells.push(cell);
         used += width;
         if (used >= cols) return cells;
       }

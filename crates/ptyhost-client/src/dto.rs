@@ -95,6 +95,11 @@ pub enum ControlOp {
         lines: usize,
     },
     Cursor,
+    /// Grid history rows `[from, to)` (absolute, 0 = oldest); the host caps a page at 2000.
+    GridRows {
+        from: usize,
+        to: usize,
+    },
     Rename {
         to: String,
     },
@@ -116,6 +121,15 @@ pub struct CaptureReply {
     pub resets: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GridRowsReply {
+    pub rows: Vec<serde_json::Value>,
+    pub from: usize,
+    pub to: usize,
+    pub total: usize,
+    pub lag: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct CursorReply {
     pub x: u16,
@@ -127,13 +141,14 @@ pub struct CursorReply {
     pub resets: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ControlReply {
     Ack,
     Info { info: SessionSummary, exited: bool },
     Paste { bracketed: bool },
     Capture(CaptureReply),
     Cursor(CursorReply),
+    GridRows(GridRowsReply),
     Renamed { name: String },
 }
 

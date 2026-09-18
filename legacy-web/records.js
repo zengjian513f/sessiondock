@@ -109,6 +109,16 @@
       const dim = `${row.cols || 0}×${row.rows || 0}`;
       item.append(element('div', [created, size, dim].filter(Boolean).join(' · '), 'meta'));
       if (row.cwd) item.append(element('div', row.cwd, 'cwd'));
+      // 同一模型的网格回放：新页面打开，不影响这里的 xterm 回放。
+      const gridLink = element('a', '网格回放', 'grid-link');
+      const gridUrl = new URL('grid.html', base);
+      gridUrl.searchParams.set('record', row.id);
+      if (node) gridUrl.searchParams.set('node', node);
+      gridLink.href = gridUrl.href;
+      gridLink.target = '_blank';
+      gridLink.rel = 'noopener';
+      gridLink.addEventListener('click', event => event.stopPropagation());
+      item.append(gridLink);
       list.append(item);
     }
     highlight();

@@ -31,6 +31,7 @@ subtle = "2"
 futures-util = { version = "0.3", features = ["sink"] }
 ptyhost-client = { path = "../ptyhost-client" }
 ptyhost-record = { path = "../ptyhost-record" }
+ptyhost-screen = { path = "../ptyhost-screen" }
 cap-std = "4"
 cap-fs-ext = "4"
 # Glibc arena cap and trim so evicted views really leave RSS.

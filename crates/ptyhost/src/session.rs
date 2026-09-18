@@ -15,15 +15,15 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use serde_json::{Value, json};
 
 use crate::dsr::{self, Piece};
-use crate::grid;
 use crate::guard;
 use crate::output::{Client, DRAIN_TIMEOUT};
 use crate::protocol::{
     FRAME_DATA, FRAME_EXIT, FRAME_RESIZE, key_bytes, pack_frame, read_frames, recv_json, send_json,
 };
 use crate::record::{RecordConfig, Recorder};
-use crate::screen::Screen;
 use crate::transport::{Listener, Stream};
+use ptyhost_screen::Screen;
+use ptyhost_screen::grid;
 
 pub const BACKLOG_LIMIT: usize = 32 << 20;
 pub const SCREEN_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
@@ -972,6 +972,24 @@ impl Session {
                 Ok(json!({"ok": true}))
             }
             "capture" => self.capture(req),
+            "grid_rows" => {
+                // 网格历史分页：绝对历史行 [from, to)，0 = 最旧；一次最多 2000 行。
+                let from = req.get("from").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let to = req.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
+                let screen = lock(&self.screen);
+                let total = screen.history_len();
+                let to = to
+                    .min(total)
+                    .min(from.saturating_add(grid::SNAPSHOT_HISTORY_ROWS));
+                let rows: Vec<Value> = grid::history_rows(&screen, from, to)
+                    .iter()
+                    .map(|row| serde_json::from_str(row).unwrap_or(Value::Null))
+                    .collect();
+                Ok(json!({
+                    "ok": true, "rows": rows, "from": from, "to": to, "total": total, "lag": lag
+                }))
+            }
             "cursor" => {
                 let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
                 let dropped = lock(&self.backlog).dropped;
@@ -1248,6 +1266,8 @@ impl Session {
             };
             (next, scrolled, history, screen.title())
         };
+        // OSC 52：xterm.js 客户端自己处理该序列；网格客户端收到解码后的文本。
+        let clipboard = lock(&self.screen).take_clipboard();
         let title_changed = state.last_title.as_deref() != Some(title.as_str());
         if !live.is_empty() {
             if state.need_snapshot || state.last.is_none() {
@@ -1268,6 +1288,13 @@ impl Session {
             let line = grid::snapshot_json(&next, &history, next.history, state.seq, true);
             Self::send_grid(&pending, &line);
             lock(&self.grid_clients).extend(pending);
+        }
+        if !clipboard.is_empty() {
+            let all = self.live_grid_clients();
+            for text in clipboard {
+                let line = json!({"t": "clipboard", "text": text}).to_string();
+                Self::send_grid(&all, &line);
+            }
         }
         state.last = Some(next);
         state.last_title = Some(title);

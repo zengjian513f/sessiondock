@@ -225,6 +225,8 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         .route("/term/attach", get(terminal::attach))
+        // Grid-protocol scrollback paging under the page's own lease.
+        .route("/term/grid/history", get(terminal::grid_history))
         // Session recordings: list, and a read-only replay WebSocket (no lease).
         .route("/term/records", get(records::list))
         .route("/term/records/attach", get(records::attach))
