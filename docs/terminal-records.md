@@ -69,8 +69,9 @@ unbuffered: one `write_all` per append, no writer thread. Opening a
 directory treats every existing segment as closed; `begin_segment` must
 run before `append`.
 
-The first frame of every segment is a checkpoint taken from the vt100
-model **before** the next queued piece is applied. Otherwise that piece
+The first frame of every segment is a checkpoint taken from the host's
+terminal model (alacritty_terminal) **before** the next queued piece is
+applied. Otherwise that piece
 would appear both inside the snapshot and as a later output frame. The
 checkpoint's `at_ms` is 0; the segment's `base_unix_ms` is the wall
 clock at rotation.
@@ -297,12 +298,14 @@ process.
 ## Known limitations
 
 The model may resize before queued bytes are applied, so a resize can
-land a few bytes early in the record: `resize` updates vt100 immediately
-and only then enqueues the Resize piece.
+land a few bytes early in the record: `resize` updates the model
+immediately and only then enqueues the Resize piece.
 
-vt100 (checkpoint `state`, the same reconstruction attach uses) and the
-viewer's xterm.js can disagree about that snapshot. Later output frames
-are the raw PTY tail and are not affected.
+The checkpoint `state` is the host model's own re-rendering of its
+screen (alacritty_terminal cells serialized back to escape sequences,
+the same reconstruction attach uses); the viewer's xterm.js can disagree
+with it in edge cases (soft-wrap flags are not preserved). Later output
+frames are the raw PTY tail and are not affected.
 
 There is no compression. Segment `flags` is 0.
 
