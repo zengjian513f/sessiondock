@@ -185,6 +185,8 @@ pub struct AttachQuery {
     /// URL by the frontend; accepted and ignored here.
     #[allow(dead_code)]
     debug_run: String,
+    /// `grid` streams the server-side grid protocol instead of raw bytes.
+    mode: String,
 }
 
 impl Default for AttachQuery {
@@ -201,6 +203,7 @@ impl Default for AttachQuery {
             record_id: None,
             launch_id: None,
             debug_run: String::new(),
+            mode: String::new(),
         }
     }
 }
@@ -305,6 +308,11 @@ pub async fn attach(
     // WebSocket frames up to 8 MiB are accepted. HTTP send/paste keeps the
     // ptyhost guarded-operation 1 MiB ceiling.
     let max_input = service.limits().max_host_frame_bytes;
+    let mode = if query.mode == "grid" {
+        crate::terminal::AttachMode::Grid
+    } else {
+        crate::terminal::AttachMode::Bytes
+    };
     Ok(ws
         .read_buffer_size(16 * 1024)
         .write_buffer_size(0)
@@ -314,7 +322,7 @@ pub async fn attach(
         // Upgrade failures drop the callback's PreparedAttachment guard; do not
         // log the rejection, request URI, token, or peer's arbitrary text.
         .on_failed_upgrade(|_| {})
-        .on_upgrade(move |socket| prepared.run(socket, size, state.shutdown)))
+        .on_upgrade(move |socket| prepared.with_mode(mode).run(socket, size, state.shutdown)))
 }
 
 fn binding_unavailable() -> ApiError {
