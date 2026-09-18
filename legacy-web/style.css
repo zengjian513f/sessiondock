@@ -344,11 +344,6 @@ header.header-fold-nodes #node-chips button + button { border-left: 0; border-to
   background: var(--panel); color: var(--text); box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
 }
 #new-session-dialog::backdrop, .app-dialog::backdrop { background: rgba(10, 14, 22, .48); backdrop-filter: blur(2px); }
-/* 录制页作为应用内子页面嵌在对话框里：PWA 独立窗口开不了新标签。 */
-.records-dialog { width: min(100vw - 24px, 1500px); height: calc(100dvh - 24px); max-height: none; flex-direction: column; }
-.records-dialog[open] { display: flex; }
-.records-dialog .modal-head { flex-shrink: 0; padding: 14px 14px 0; }
-#records-frame { flex: 1; min-height: 0; margin: 10px 14px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 #new-session-form { display: flex; flex-direction: column; gap: 8px; padding: 14px; overflow-y: auto; }
 .settings-form, .report-form { display: flex; flex-direction: column; gap: 8px; padding: 17px; }
 .settings-form, .report-form {

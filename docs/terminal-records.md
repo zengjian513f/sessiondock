@@ -10,10 +10,17 @@ complete historical byte log ([host attachment output](host-output.md)) —
 and nothing here is a transcript: input is not recorded, and native JSONL
 is not involved.
 
-The browser page is `records.html`; the main page's 终端录制 button opens
-it inside an in-app dialog (`?embedded=1`, an iframe) because an installed
-PWA cannot show a new tab. Listing and replay take no ownership
-lease, send no input, and do not talk to the host process
+There is no separate index page: the session list is the index. A
+managed session (`/api/term/list` session and pending rows) carries
+`recording: {id, live, bytes, ended_ms, created_ms}` when a recording of
+its host name exists, and an exited shell session stays listed as long
+as that recording exists. Opening the console of an exited session
+replays the recording read-only in the console pane itself
+(`term.js` `attachRecordingReplay`: no claim, no input; the byte stream
+into xterm.js, or `mode=grid` into the grid view when the renderer
+setting is the server grid). `records.html` and `grid.html?record=` remain
+as unlinked engineering pages used by the suites. Listing and replay take
+no ownership lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
 [raw terminal input](terminal-input.md)). The files under the configured
 ptyhost directory are the only source.

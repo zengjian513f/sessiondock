@@ -323,8 +323,9 @@ resize becomes a `reset:false` snapshot, a gap checkpoint becomes
 `{"t":"gap"}` plus a `reset:true` snapshot, and the `record` / `exit` /
 `end` text frames are those of the byte replay
 ([terminal session recordings](terminal-records.md)). `grid.html?record=<id>`
-opens that stream read-only (no claim, no input, no pty resize);
-`records.html` links to it as "网格回放". The checkpoint serializer
+opens that stream read-only (no claim, no input, no pty resize); the
+main console uses the same stream to replay an exited session in place
+(see [recordings](terminal-records.md)). The checkpoint serializer
 positions and erases each row (`ESC[r;1H ESC[2K`) instead of `ESC[2J`,
 because alacritty's ED 2 would push the cleared rows into scrollback.
 

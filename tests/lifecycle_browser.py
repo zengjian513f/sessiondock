@@ -251,10 +251,17 @@ def main(bind_native=False, bare_shell=False):
                                 page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
                                 page.wait_for_function("name => T.views.get(name)?.ended",arg=natural["name"])
-                                page.wait_for_function("async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }",arg=natural["record_id"])
-                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(0)
+                                # The session list is the index of recordings: a naturally
+                                # exited SSH stays listed (not running, with its recording)
+                                # until discarded; opening it replays the recording read-only.
+                                page.wait_for_function("async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }",arg=natural["record_id"])
+                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert final.status == 200 and final.json()["state"] == "exited", final.text()
+                                gone = context.request.post(base+"/api/term/discard",data={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
+                                assert gone.status == 200, gone.text()
+                                page.wait_for_function("async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }",arg=natural["record_id"])
+                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(0)
                                 # An exited SSH kept by composer input still offers delete;
                                 # discard drops the draft row that kill alone would leave.
                                 drafted = context.request.post(base+"/api/term/create",data={"source":"shell","cwd":str(root/"work"),"request_id":"shell-draft-exit"})

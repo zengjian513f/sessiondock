@@ -2285,7 +2285,7 @@ function pendingTmuxSessions() {
       uid: pendingUid(t.name), pending: true, name: t.name, tmuxName: t.name, source,
       ...(SessionDockCapabilities.config.backend === 'rust' ? {record_id:t.record_id,launch_id:t.launch_id,
         instance_id:t.instance_id,running:t.running,state:t.state,unavailable_reason:t.unavailable_reason,
-        native_binding:t.native_binding,binding:t.binding} : {}),
+        native_binding:t.native_binding,binding:t.binding,recording:t.recording,grid:t.grid} : {}),
       title: t.title || `新建 ${SOURCES[source].name} 会话`,
       kind: t.kind || '', report_id: t.report_id || '', cwd: t.cwd || '(未知)',
       created: new Date(pendingDraftStartedAt(pendingUid(t.name), t) * 1000).toISOString(),
@@ -4605,7 +4605,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   3. 机器名从平铺收进下拉（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、重新扫描、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'reload', 'records', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'reload', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -7771,31 +7771,6 @@ async function purgeAllTrash() {
 }
 
 $('#trash').onclick = openTrash;
-// 终端录制页只在后端声明 terminal_records 时可达；中央站带上第一台选中的机器。
-// 节点页按能力显示；中央站页面总是显示，内容取第一台勾选的机器（经 /api/nodes/<nid>/api/ 代理）。
-if (HUB_MODE || SessionDockCapabilities.config.terminal_records === true) {
-  const records = $('#records');
-  records.hidden = false;
-  // 安装为 PWA 后 window.open 会开到应用外面，用户看不到：一律在应用内的
-  // 对话框里用 iframe 打开；关闭时卸载 iframe，让回放 WebSocket 随之断开。
-  const dialog = $('#records-dialog'), frame = $('#records-frame');
-  records.onclick = () => {
-    const url = new URL('records.html', APP_BASE);
-    url.searchParams.set('embedded', '1');
-    if (HUB_MODE) {
-      const ids = selectedNodeIds();
-      if (!ids.length) { alert('请先在顶栏勾选至少一台机器，再打开终端录制。'); return; }
-      url.searchParams.set('node', ids[0]);
-      url.searchParams.set('nodes', ids.join(','));
-    }
-    frame.src = url.href;
-    dialog.showModal();
-  };
-  const closeRecords = () => { if (dialog.open) dialog.close(); };
-  $('#records-close').onclick = closeRecords;
-  dialog.addEventListener('close', () => { frame.src = 'about:blank'; });
-  dialog.addEventListener('click', e => { if (e.target === dialog) closeRecords(); });
-}
 $('#trash-reload').onclick = () => loadTrash();
 $('#trash-purge-all').onclick = purgeAllTrash;
 $('#trash-close').onclick = $('#trash-done').onclick = () => $('#trash-dialog').close();
