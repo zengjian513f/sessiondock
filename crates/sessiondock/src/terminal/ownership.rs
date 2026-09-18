@@ -889,6 +889,7 @@ mod tests {
         };
         let observation = HostObservation {
             summary: SessionSummary {
+                grid: false,
                 name: "term".into(),
                 created: 1,
                 attached: false,

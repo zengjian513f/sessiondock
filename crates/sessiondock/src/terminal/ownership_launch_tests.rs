@@ -11,6 +11,7 @@ const UID: &str = "codex:synthetic-native-uid";
 fn observation(launch: &str, instance: &str) -> HostObservation {
     HostObservation {
         summary: SessionSummary {
+            grid: false,
             name: "terminal".into(),
             created: 1,
             attached: false,

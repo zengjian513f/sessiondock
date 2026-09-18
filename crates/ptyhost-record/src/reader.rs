@@ -533,7 +533,7 @@ fn has_emitable_rest(iter: &mut FrameIter<'_>) -> bool {
 }
 
 /// checkpoint 帧之后的位置，供 [`replay`] 从下一条事件开始读。
-fn position_after_checkpoint(dir: &Path, checkpoint: &Replay) -> io::Result<Position> {
+pub fn position_after_checkpoint(dir: &Path, checkpoint: &Replay) -> io::Result<Position> {
     let path = dir.join(segment_file_name(checkpoint.position.segment));
     let Some((_, bytes)) = load_segment(&path)? else {
         return Ok(checkpoint.position);
@@ -551,6 +551,67 @@ fn position_after_checkpoint(dir: &Path, checkpoint: &Replay) -> io::Result<Posi
         }),
         None => Ok(checkpoint.position),
     }
+}
+
+/// 不晚于 `unix_ms` 的最近一个有效 checkpoint（用于按时间 seek）。
+/// 只看 `base_unix_ms <= unix_ms` 的分段，从新到旧；段内取最后一个
+/// `base + at_ms <= unix_ms` 的 checkpoint。没有则 None。
+pub fn checkpoint_before(dir: &Path, unix_ms: u64) -> io::Result<Option<Replay>> {
+    let segments = list_segments(dir)?;
+    for info in segments.iter().rev() {
+        if info.header.base_unix_ms > unix_ms {
+            continue;
+        }
+        let Some((header, bytes)) = load_segment(&info.path)? else {
+            continue;
+        };
+        let body = &bytes[SEGMENT_HEADER_LEN..];
+        let mut iter = FrameIter::new(body);
+        let mut last: Option<Replay> = None;
+        loop {
+            let offset = iter.offset() as u64;
+            let Some(timed) = iter.next() else {
+                break;
+            };
+            let at = header.base_unix_ms.saturating_add(u64::from(timed.at_ms));
+            if at > unix_ms {
+                break;
+            }
+            if let Frame::Checkpoint { cols, rows, state } = timed.frame {
+                last = Some(Replay {
+                    position: Position {
+                        segment: info.index,
+                        offset,
+                    },
+                    unix_ms: at,
+                    cols,
+                    rows,
+                    state,
+                });
+            }
+        }
+        if last.is_some() {
+            return Ok(last);
+        }
+    }
+    Ok(None)
+}
+
+/// 录制的时间范围：最旧分段的 `base_unix_ms` 到最新有效帧的时间。没有分段时 None。
+pub fn bounds(dir: &Path) -> io::Result<Option<(u64, u64)>> {
+    let segments = list_segments(dir)?;
+    let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
+        return Ok(None);
+    };
+    let start = first.header.base_unix_ms;
+    let mut end = last.header.base_unix_ms;
+    if let Some((header, bytes)) = load_segment(&last.path)? {
+        let body = &bytes[SEGMENT_HEADER_LEN..];
+        for timed in FrameIter::new(body) {
+            end = end.max(header.base_unix_ms.saturating_add(u64::from(timed.at_ms)));
+        }
+    }
+    Ok(Some((start, end.max(start))))
 }
 
 #[cfg(test)]
@@ -1221,5 +1282,56 @@ mod tests {
         assert_eq!(read.events[2].event, Event::Exit("{\"code\":0}".to_owned()));
         assert!(read.at_end);
         assert!(!read.gap);
+    }
+
+    #[test]
+    fn checkpoint_before_and_bounds_follow_timestamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let cp = |c: u16| Frame::Checkpoint {
+            cols: c,
+            rows: 1,
+            state: Vec::new(),
+        };
+        // segment 1: base 1000; checkpoint@0, output@50, checkpoint@100, output@200
+        write_segment(
+            dir.path(),
+            1,
+            1000,
+            &[
+                (0, cp(1)),
+                (50, Frame::Output(b"a".to_vec())),
+                (100, cp(2)),
+                (200, Frame::Output(b"b".to_vec())),
+            ],
+        );
+        // segment 2: base 5000; checkpoint@0, output@10
+        write_segment(
+            dir.path(),
+            2,
+            5000,
+            &[(0, cp(3)), (10, Frame::Output(b"c".to_vec()))],
+        );
+        assert!(checkpoint_before(dir.path(), 999).unwrap().is_none());
+        assert_eq!(
+            checkpoint_before(dir.path(), 1000).unwrap().unwrap().cols,
+            1
+        );
+        assert_eq!(
+            checkpoint_before(dir.path(), 1099).unwrap().unwrap().cols,
+            1
+        );
+        assert_eq!(
+            checkpoint_before(dir.path(), 1100).unwrap().unwrap().cols,
+            2
+        );
+        assert_eq!(
+            checkpoint_before(dir.path(), 4999).unwrap().unwrap().cols,
+            2
+        );
+        assert_eq!(
+            checkpoint_before(dir.path(), 5000).unwrap().unwrap().cols,
+            3
+        );
+        assert_eq!(bounds(dir.path()).unwrap(), Some((1000, 5010)));
     }
 }
