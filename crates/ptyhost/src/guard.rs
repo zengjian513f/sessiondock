@@ -107,12 +107,15 @@ fn operation(request: &Value) -> bool {
                 if op == "resize" {
                     &["op", "cols", "rows"]
                 } else {
-                    &["op", "cols", "rows", "replay"]
+                    &["op", "cols", "rows", "replay", "mode"]
                 },
             ) && dimension(request, "cols")
                 .zip(dimension(request, "rows"))
                 .is_some()
                 && optional_bool(request, "replay")
+                && request
+                    .get("mode")
+                    .is_none_or(|mode| matches!(mode.as_str(), Some("bytes" | "grid")))
         }
         "capture" => {
             fields(request, &["op", "kind", "styled", "join", "lines"])

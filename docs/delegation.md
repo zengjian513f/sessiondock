@@ -85,6 +85,7 @@ of the verification commands.
 
 | 日期 | 任务 | 结果 |
 | --- | --- | --- |
+| 2026-09-18 | 服务端网格（wp-record）8 本任务书：`legacy-web/grid/{wire,model,render,input}.js` 四个 ES 模块与两份 node 合同测试、`legacy-web/grid.{html,js,css}` 页面、`crates/ptyhost/tests/host_grid.rs`、`tests/terminal_grid_browser.py`、`docs/terminal-grid.md` | grok-4.6 headless 产出，人工审阅。8/8 rc=0，单任务 450–1531 s（浏览器套件因滚动区行数期望反复调试最久）；人工审阅未改动模块与页面代码；协议、宿主接线、ptyhost-client `AttachMode`、sessiondock 透传、alacritty_terminal 模型切换由主审实现。 |
 | 2026-09-18 | 终端录制（wp-record）9 本任务书：`ptyhost-record` 的 format / sanitize / store / reader 四个模块、`legacy-web/records.{html,js,css}` 回放页、`crates/ptyhost/tests/host_record.rs`、`tests/term_records_http_suite.py`、`tests/terminal_records_browser.py`、`docs/terminal-records.md` | grok-4.6 headless 产出，人工审阅。9/9 rc=0，单任务 420–900 s，最多 3 路并行；人工修正：records.css 删去抄自 files.css 的无关选择器、records.js 的节点前缀改写以免路由台账误判、ptyhost-record 按 clippy 清理 5 处风格提示；grok 自行纠正了 sanitize 任务书里一处期望值笔误（普通字节 `b` 应保留）。ptyhost 录制接线、sessiondock 路由/流式回放、主页面入口由主审实现。 |
 | 2026-09-12 | `tests/run_validation.py` 串行验证运行器 | 约 6 分钟，233 行，一次通过，人工审阅未改动；`--list` 解析 35 套 |
 | 2026-09-12 | 第三～五波共 48 个任务（探针、走查套件、生成式参考文档、模块文档、HTTP 合同套件、替换辅助工具）| 全部 rc=0；每波审阅后分别提交（`ad853b6`、`20ded2c`、`5adf7a3`、`1d1abcd`）；仅两处人工修正（能力键比对读 lib.rs、`route_ledger` 识别 delete 路由）。载荷最高时 10 路并行，单任务 165–748 秒 |
