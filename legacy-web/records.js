@@ -3,6 +3,7 @@
   const $ = id => document.getElementById(id);
   const base = new URL('.', location.href);
   const node = new URLSearchParams(location.search).get('node');
+  const embedded = new URLSearchParams(location.search).get('embedded') === '1' || window.self !== window.top;
   // Hub pages reach a node through /api/nodes/{nid}/api/{*path}.
   const prefix = node ? ['api', 'nodes', encodeURIComponent(node), 'api', ''].join('/') : 'api/';
   const fitKey = SessionDockCapabilities.namespace + 'records-fit';
@@ -18,6 +19,8 @@
   globalThis.__records = {term: () => term, socket: () => socket, state};
 
   $('machine').textContent = node || location.hostname;
+  // 嵌在主页面对话框里时外层已有标题栏，省掉自己的。
+  if (embedded) document.body.classList.add('embedded');
 
   if (SessionDockCapabilities.config.terminal_records === false
       || SessionDockCapabilities.config.terminal === false) {
@@ -114,8 +117,10 @@
       const gridUrl = new URL('grid.html', base);
       gridUrl.searchParams.set('record', row.id);
       if (node) gridUrl.searchParams.set('node', node);
+      if (embedded) gridUrl.searchParams.set('embedded', '1');
       gridLink.href = gridUrl.href;
-      gridLink.target = '_blank';
+      // 嵌在应用内对话框时在本框架内导航（新标签在 PWA 里看不到）；网格页有"返回"。
+      gridLink.target = embedded ? '_self' : '_blank';
       gridLink.rel = 'noopener';
       gridLink.addEventListener('click', event => event.stopPropagation());
       item.append(gridLink);

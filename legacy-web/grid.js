@@ -784,6 +784,15 @@ function setup() {
   applySize(false);
   if (readOnly) {
     // 录制回放：隐藏会话选择与抢占，键盘/鼠标只用于滚动与选区。
+    // 从应用内的录制列表进来时给一个"返回"，PWA 里没有标签页可切。
+    const embedded = params.get('embedded') === '1' || window.self !== window.top;
+    if (embedded) {
+      $('back').hidden = false;
+      $('back').addEventListener('click', () => {
+        if (history.length > 1) history.back();
+        else location.href = new URL('records.html?embedded=1' + (node ? '&node=' + encodeURIComponent(node) : ''), base).href;
+      });
+    }
     $('session').hidden = true;
     $('connect').hidden = true;
     $('paste').hidden = true;

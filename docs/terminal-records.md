@@ -10,7 +10,9 @@ complete historical byte log ([host attachment output](host-output.md)) —
 and nothing here is a transcript: input is not recorded, and native JSONL
 is not involved.
 
-The browser page is `records.html`. Listing and replay take no ownership
+The browser page is `records.html`; the main page's 终端录制 button opens
+it inside an in-app dialog (`?embedded=1`, an iframe) because an installed
+PWA cannot show a new tab. Listing and replay take no ownership
 lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
 [raw terminal input](terminal-input.md)). The files under the configured
