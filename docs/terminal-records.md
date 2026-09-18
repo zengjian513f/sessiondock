@@ -20,7 +20,11 @@ stop, the row stays with its recording) and an exited one offers 删除
 replays the recording read-only in the console pane itself
 (`term.js` `attachRecordingReplay`: no claim, no input; the byte stream
 into xterm.js, or `mode=grid` into the grid view when the renderer
-setting is the server grid). `records.html` and `grid.html?record=` remain
+setting is the server grid). A replay shows a timeline under the terminal
+(`#term-timeline`: slider, play/pause, speed 1–16×, and 最新 while the
+recording is live): a full-screen program's history is a sequence of
+screens, not scrollback, so the slider seeks to any instant and play
+replays the recorded pacing. `records.html` and `grid.html?record=` remain
 as unlinked engineering pages used by the suites. Listing and replay take
 no ownership lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
@@ -222,23 +226,46 @@ route is 501 `terminal_disabled`. An unreadable directory is 503
 non-upgrade GET is 400 `websocket_required`. Replay needs no lease
 ([route ledger](route-ledger.md)).
 
-All text frames are JSON with a `t` field. Browser-to-server payloads
-are ignored (read-only) except Close.
+All text frames are JSON with a `t` field. The browser controls only the
+timeline (seek / play / pause / live); it never reaches the host.
 
 | Direction | Frame | Meaning |
 | --- | --- | --- |
-| → browser | `{"t":"record","cols","rows","unix_ms","live","id"}` | first frame; size of the checkpoint |
-| → browser | binary | sanitized terminal bytes (checkpoint state, then output) |
+| → browser | `{"t":"timeline","start_ms","end_ms","live"}` | first frame; bounds of the recording (first segment base, last frame time) |
+| → browser | `{"t":"record","cols","rows","unix_ms","live","id"}` | a full state follows: on open, after every `seek` / `live`, and after a gap; reset the terminal |
+| → browser | binary | sanitized terminal bytes (checkpoint or seek state, then output) |
 | → browser | `{"t":"resize","cols","rows"}` | apply before the following bytes |
 | → browser | `{"t":"gap"}` | data was lost; a fresh resize + checkpoint follows, reset the terminal |
+| → browser | `{"t":"clock","unix_ms","end_ms"}` | playback position after each batch (and the grown `end_ms` while live) |
 | → browser | `{"t":"exit","exit":{…}}` | the recorded host exit payload |
-| → browser | `{"t":"end"}` | nothing more will come; preceded by the viewer reset bytes |
-| browser → | anything | ignored (read-only) except Close |
+| → browser | `{"t":"end"}` | the tail of the recording was reached; preceded by the viewer reset bytes; the socket stays open for seeking |
+| browser → | `{"t":"seek","unix_ms"}` | rebuild the screen as of that instant (clamped to the bounds) and pause there |
+| browser → | `{"t":"play","speed"}` | play from the current position with the recorded gaps divided by `speed` (default 1); at the end, restart from the start |
+| browser → | `{"t":"pause"}` | stop paced playback |
+| browser → | `{"t":"live"}` | jump to the latest checkpoint and follow the tail again (fast mode) |
+| browser → | anything else | ignored |
+
+Playback has three modes. *Fast* (on open and after `live`): every page
+is applied as fast as it reads, then the tail is followed every 150 ms
+while the host is alive; when the tail is reached and the host is gone,
+`end` is sent and the mode becomes *paused*. *Paused* (after `seek`,
+`pause` or `end`): nothing is sent until the next control. *Playing*
+(after `play`): events are applied in batches of at most 20 ms of
+recorded time, each batch waiting the recorded gap (capped at 2 s)
+divided by `speed`; a live recording that is caught up switches back to
+fast mode.
+
+A `seek` finds the newest checkpoint at or before the instant
+(`reader::checkpoint_before`), runs the terminal model silently over the
+events up to it, and sends `record` plus that screen: on the grid wire a
+`reset:true` snapshot, on the byte wire the model's re-rendered state
+(`Screen::replay_bytes`), so a byte viewer sees exactly what the grid
+viewer would. Seeking inside a segment is therefore bounded by one
+segment (≤ 8 MiB) of model work.
 
 A directory with no checkpoint closes with 1011 `record has no checkpoint`.
 An unreadable page closes with 1011 `record unreadable`. Shutdown is
-1001; a finished recording is 1000 `record end`. Mark events are
-dropped on this wire.
+1001. Mark events are dropped on this wire.
 
 ## Grid replay
 
@@ -339,9 +366,18 @@ leading checkpoint.
 
 `python3 tests/term_records_http_suite.py --binary target/release/sessiondock`
 is the HTTP/WebSocket contract (no Chromium): 501 when the terminal
-transport is off, bad ids, upgrade required, live follow, resize, ignored
-inbound frames, exit/end/close 1000, and replay of an ended recording.
-Needs POSIX, a built `sessiondock`, and a built `ptyhost`.
+transport is off, bad ids, upgrade required, `timeline` then `record`,
+live follow, resize, ignored inbound frames, exit/end with the socket
+kept open, replay of an ended recording, and the timeline (seek to the
+start shows nothing later, play at 16x reaches the end, seek to the end
+shows the final screen, pause accepted). Needs POSIX, a built
+`sessiondock`, and a built `ptyhost`.
+
+`python3 tests/terminal_timeline_browser.py` is the console timeline
+acceptance for both console renderers (Playwright Chromium, temporary
+fixtures): an exited SSH row opens its recording read-only with the
+timeline shown, seek to the start, play at 16x to the end, seek to the
+end, keyboard ignored, timeline hidden again when the pane closes.
 
 `python3 tests/terminal_records_browser.py` is the legacy `records.html`
 acceptance (Playwright Chromium, temporary fixtures): list, live follow,

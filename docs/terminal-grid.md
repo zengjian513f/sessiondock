@@ -320,8 +320,11 @@ recording: `GET /api/term/records/attach?id=…&mode=grid` feeds the
 checkpoint and every later output frame through a fresh `Screen`
 (scrollback 10_000) and streams `snapshot` / `diff` lines; a recorded
 resize becomes a `reset:false` snapshot, a gap checkpoint becomes
-`{"t":"gap"}` plus a `reset:true` snapshot, and the `record` / `exit` /
-`end` text frames are those of the byte replay
+`{"t":"gap"}` plus a `reset:true` snapshot, a timeline `seek` answers with
+a `record` frame and a `reset:true` snapshot of the model as of that
+instant, and the `timeline` / `record` / `clock` / `exit` / `end` text
+frames and the `seek` / `play` / `pause` / `live` controls are those of
+the byte replay
 ([terminal session recordings](terminal-records.md)). `grid.html?record=<id>`
 opens that stream read-only (no claim, no input, no pty resize); the
 main console uses the same stream to replay an exited session in place
