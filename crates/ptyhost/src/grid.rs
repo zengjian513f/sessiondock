@@ -8,14 +8,13 @@
 //!
 //! 只有屏幕线程调用这里（它是唯一喂模型的线程）。
 
-// 会话侧的网格客户端接线尚未落地；接上后去掉这一行。
-#![allow(dead_code)]
-
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::Color;
+use std::time::{Duration, Instant};
+
 use serde_json::{Value, json};
 
 use crate::screen::{Responder, Screen, push_cell_text};
@@ -219,16 +218,20 @@ fn raw_rows(rows: &[String]) -> Vec<Value> {
         .collect()
 }
 
-/// 完整快照：可见行、光标、模式，以及最近的历史行。
+/// 完整快照：可见行、光标、模式，以及最近的历史行。`reset` 为真表示新模型
+/// （首次 attach / 重连），浏览器要用 `history` 替换自己的回滚区；为假（resize 后）
+/// 只换视口。
 pub fn snapshot_json(
     state: &GridState,
     history: &[String],
     history_total: usize,
     seq: u64,
+    reset: bool,
 ) -> String {
     let mut value = json!({
         "t": "snapshot",
         "seq": seq,
+        "reset": reset,
         "cols": state.cols,
         "rows": state.rows,
         "grid": raw_rows(&state.rows_json),
@@ -245,6 +248,7 @@ pub fn diff_json(
     prev: &GridState,
     next: &GridState,
     scrolled: &[String],
+    title: Option<&str>,
     seq: u64,
 ) -> Option<String> {
     let mut rows: Vec<Value> = Vec::new();
@@ -258,7 +262,12 @@ pub fn diff_json(
     }
     let cursor_changed = prev.cursor != next.cursor;
     let modes_changed = prev.modes != next.modes;
-    if rows.is_empty() && scrolled.is_empty() && !cursor_changed && !modes_changed {
+    if rows.is_empty()
+        && scrolled.is_empty()
+        && !cursor_changed
+        && !modes_changed
+        && title.is_none()
+    {
         return None;
     }
     let mut value = json!({"t": "diff", "seq": seq});
@@ -274,7 +283,53 @@ pub fn diff_json(
     if modes_changed {
         value["modes"] = serde_json::from_str(&next.modes).unwrap_or(Value::Null);
     }
+    if let Some(title) = title {
+        value["title"] = json!(title);
+    }
     Some(value.to_string())
+}
+
+/// 静默阈值：最后一个字节之后这么久没有新输出就发。
+pub const QUIET: Duration = Duration::from_millis(1);
+/// 延迟上限：持续输出时至少每隔这么久发一次。
+pub const CAP: Duration = Duration::from_millis(8);
+
+/// 增量发送时机：不按固定定时器，而是"队列排空后静默 1 ms，或距首个未发变化 8 ms"。
+#[derive(Default)]
+pub struct FlushPolicy {
+    first_dirty: Option<Instant>,
+    last_change: Option<Instant>,
+}
+
+impl FlushPolicy {
+    pub fn note(&mut self, now: Instant) {
+        self.first_dirty.get_or_insert(now);
+        self.last_change = Some(now);
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.first_dirty.is_some()
+    }
+
+    pub fn reset(&mut self) {
+        self.first_dirty = None;
+        self.last_change = None;
+    }
+
+    pub fn due(&self, now: Instant, queue_empty: bool) -> bool {
+        let (Some(first), Some(last)) = (self.first_dirty, self.last_change) else {
+            return false;
+        };
+        now.duration_since(first) >= CAP || (queue_empty && now.duration_since(last) >= QUIET)
+    }
+
+    /// 距下一次可能到期还要等多久；不脏时 None。
+    pub fn wait(&self, now: Instant) -> Option<Duration> {
+        let (first, last) = (self.first_dirty?, self.last_change?);
+        let cap = CAP.saturating_sub(now.duration_since(first));
+        let quiet = QUIET.saturating_sub(now.duration_since(last));
+        Some(cap.min(quiet))
+    }
 }
 
 #[cfg(test)]
@@ -337,13 +392,13 @@ mod tests {
         assert_eq!(parse(&scrolled[0])["s"], json!([["one", -1, -1, 0]]));
         assert_eq!(parse(&scrolled[1])["s"], json!([["two", -1, -1, 0]]));
         let diff: Value =
-            serde_json::from_str(&diff_json(&prev, &next, &scrolled, 7).unwrap()).unwrap();
+            serde_json::from_str(&diff_json(&prev, &next, &scrolled, None, 7).unwrap()).unwrap();
         assert_eq!(diff["t"], "diff");
         assert_eq!(diff["seq"], 7);
         assert_eq!(diff["scrolled"].as_array().unwrap().len(), 2);
         assert_eq!(diff["rows"].as_array().unwrap().len(), 2);
         assert_eq!(diff["cursor"]["y"], 2);
-        assert!(diff_json(&next, &next, &[], 8).is_none());
+        assert!(diff_json(&next, &next, &[], None, 8).is_none());
     }
 
     #[test]
@@ -353,10 +408,28 @@ mod tests {
         assert!(state.alt);
         let history = history_rows(&mut s, 0, state.history);
         let snap: Value =
-            serde_json::from_str(&snapshot_json(&state, &history, state.history, 1)).unwrap();
+            serde_json::from_str(&snapshot_json(&state, &history, state.history, 1, true)).unwrap();
         assert_eq!(snap["history"].as_array().unwrap().len(), state.history);
         assert_eq!(snap["modes"]["alt"], true);
         assert_eq!(snap["modes"]["bracketed_paste"], true);
         assert_eq!(snap["grid"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn flush_policy_waits_for_quiet_and_caps_latency() {
+        let t0 = Instant::now();
+        let mut policy = FlushPolicy::default();
+        assert!(!policy.due(t0, true));
+        assert!(policy.wait(t0).is_none());
+        policy.note(t0);
+        assert!(!policy.due(t0, true));
+        assert!(policy.due(t0 + QUIET, true));
+        assert!(!policy.due(t0 + QUIET, false));
+        policy.note(t0 + Duration::from_millis(3));
+        assert!(!policy.due(t0 + Duration::from_millis(3), true));
+        assert!(policy.due(t0 + CAP, false));
+        assert_eq!(policy.wait(t0 + Duration::from_millis(3)), Some(QUIET));
+        policy.reset();
+        assert!(!policy.dirty());
     }
 }

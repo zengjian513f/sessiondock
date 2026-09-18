@@ -25,6 +25,7 @@ pub mod records;
 mod service;
 
 pub use ownership::{Claimant, ExpectedTarget};
+pub use ptyhost_client::AttachMode;
 pub use service::{
     BridgeLimits, InputPayload, InputReceipt, MAX_PASTE_BYTES, PreparedAttachment, TerminalError,
     TerminalService, UnleasedTarget, terminal_size,

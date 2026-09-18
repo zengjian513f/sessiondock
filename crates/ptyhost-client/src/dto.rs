@@ -20,6 +20,23 @@ pub struct SessionSummary {
     pub backend: &'static str,
 }
 
+/// What an attachment streams back: raw pty bytes (xterm.js) or grid JSON lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AttachMode {
+    #[default]
+    Bytes,
+    Grid,
+}
+
+impl AttachMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bytes => "bytes",
+            Self::Grid => "grid",
+        }
+    }
+}
+
 /// Nonzero PTY dimensions. Browser hidden-view/minimum-size policy belongs above this crate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct TerminalSize {

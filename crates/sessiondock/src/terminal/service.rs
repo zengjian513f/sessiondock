@@ -13,8 +13,9 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use ptyhost_client::{
-    AttachReader, AttachWriter, BoundTarget, CaptureKind, CaptureReply, ControlOp, ControlReply,
-    HostClient, HostEvent, LaunchState, LaunchTarget, Limits, SessionSummary, TerminalSize,
+    AttachMode, AttachReader, AttachWriter, BoundTarget, CaptureKind, CaptureReply, ControlOp,
+    ControlReply, HostClient, HostEvent, LaunchState, LaunchTarget, Limits, SessionSummary,
+    TerminalSize,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, watch};
@@ -666,6 +667,7 @@ impl TerminalService {
                 bound,
                 gate,
             },
+            mode: AttachMode::Bytes,
         })
     }
 }
@@ -687,6 +689,15 @@ impl Drop for LeaseGuard {
 pub struct PreparedAttachment {
     service: Arc<TerminalService>,
     guard: LeaseGuard,
+    /// Byte stream for xterm.js, or grid JSON lines for the server-grid page.
+    mode: AttachMode,
+}
+
+impl PreparedAttachment {
+    pub fn with_mode(mut self, mode: AttachMode) -> Self {
+        self.mode = mode;
+        self
+    }
 }
 
 impl PreparedAttachment {
@@ -736,10 +747,16 @@ impl PreparedAttachment {
         current(&self.guard)?;
         let attachment = match self.guard.bound.lease_target() {
             LeaseTarget::Native(target) => {
-                self.service.client.attach_bound(target, size, true).await
+                self.service
+                    .client
+                    .attach_bound_mode(target, size, true, self.mode)
+                    .await
             }
             LeaseTarget::Launch(target) => {
-                self.service.client.attach_launch(target, size, true).await
+                self.service
+                    .client
+                    .attach_launch_mode(target, size, true, self.mode)
+                    .await
             }
             LeaseTarget::Raw => {
                 // A previously raw reservation cannot attach a newly replaced
@@ -758,7 +775,7 @@ impl PreparedAttachment {
                 }
                 self.service
                     .client
-                    .attach(self.guard.bound.name(), size, true)
+                    .attach_mode(self.guard.bound.name(), size, true, self.mode)
                     .await
             }
         };
