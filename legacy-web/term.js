@@ -1621,14 +1621,21 @@ function pendingSessionRow(name) {
     || null;
 }
 
+/** SSH 会话和代理会话同一套结构：运行中是"停止"（宿主 HUP，行保留、录制可回放），
+ *  结束后是"删除"（discard）。其它待定行沿用"删除"（先停再丢弃）。 */
+function pendingShellRunning(row) {
+  return row?.source === 'shell' && row.running === true && !row.stale;
+}
+
 function renderPendingSessionAction(info, button = $('#a-session-action')) {
   if (!button || S.sel !== pendingUid(info.name)) return;
   const current = pendingSessionRow(info.name) || info;
-  const label = '删除会话';
-  button.innerHTML = uiIcon('trash');
+  const stop = pendingShellRunning(current);
+  const label = stop ? '停止会话' : '删除会话';
+  button.innerHTML = uiIcon(stop ? 'power' : 'trash');
   button.title = button.ariaLabel = label;
   if (typeof labelSessionAction === 'function') labelSessionAction(button);
-  button.onclick = () => deletePendingSession(current, button);
+  button.onclick = () => stop ? stopPendingSession(current, button) : deletePendingSession(current, button);
 }
 
 function refreshPendingStage(name) {
