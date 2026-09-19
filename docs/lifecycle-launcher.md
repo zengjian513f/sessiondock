@@ -27,9 +27,13 @@ and an exited shell has no resume operation. Shell-managed history files still
 follow the selected machine's shell configuration.
 
 The host and CLI executable paths must be usable absolute executable files, and
-the host directory must be usable by `ptyhost`. The launcher rechecks the exact
-configured executable and host resources before spawning so it does not launch
-a file replaced after configuration was loaded. Executable symlinks are resolved.
+the host directory must be usable by `ptyhost`. Executable symlinks are
+resolved. The launcher checks them when the configuration loads and again
+before every spawn, as they are at that moment: a CLI that updated itself since
+the service started (the Windows Claude installer overwrites `claude.exe` in
+place; the Unix installer re-targets `~/.local/bin/claude`) launches its
+current file without a service restart. Only a path that no longer names an
+ordinary executable file is refused (`invalid_launch`).
 
 Profiles provide fixed `args`, optional legacy `new_args` and `resume_args`,
 `env`, and `env_remove`. Configured argument templates remain compatible, but

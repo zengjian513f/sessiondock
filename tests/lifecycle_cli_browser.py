@@ -6,8 +6,11 @@ mobile) and its pending console must show the fake CLI's echoed argv with the
 server-generated `--session-id`; typing one line makes the fake CLI write a
 synthetic native record, after which the page follows the runtime association.
 An existing synthetic Codex session is resumed through the existing console
-button (`/api/term/takeover`), whose fake CLI echoes `resume <sid>`. No model
-binary, native CLI home or production host is touched.
+button (`/api/term/takeover`), whose fake CLI echoes `resume <sid>`. Before the
+second creation the configured Claude executable is rewritten in place, the way
+the Windows Claude installer overwrites `claude.exe` while the service runs;
+creation must keep working and launch the rewritten file. No model binary,
+native CLI home or production host is touched.
 """
 import hashlib
 import json
@@ -108,7 +111,7 @@ def xterm_includes(page, text):
         raise
 
 
-def create_claude(page, context, base, work, expect_completion, full_argv=True):
+def create_claude(page, context, base, work, expect_completion, full_argv=True, wrapper="loaded"):
     # Narrow layouts fold the button into the header "more" menu.
     if not page.locator("#new-session").is_visible():
         page.locator("#header-more-btn").click()
@@ -157,7 +160,7 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True):
         # The narrow mobile xterm clips wide rows; the identity rows fit.
         xterm_includes(page, f"A2 [--session-id]\nA3 [{receipt['declared_sid']}]\nFAKE_CLAUDE_ARGV_END 4")
     xterm_includes(page, "FAKE_CLAUDE_SID_ENV []")
-    xterm_includes(page, "SERVICE_WRAPPER [loaded]")
+    xterm_includes(page, f"SERVICE_WRAPPER [{wrapper}]")
     xterm_includes(page, "SERVICE_PATH [/usr/bin:/bin]")
     expect(page.locator(".new-session-wait")).to_have_text("")
     return receipt
@@ -304,11 +307,20 @@ def main():
                     assert not errors, errors
                     context.close()
 
+                    # ---- The configured executable is overwritten in place while the
+                    # service runs (different length and mtime, same path), like a CLI
+                    # self-update on Windows; the next creation launches the new file.
+                    (root / "bin/cli-wrapper").write_text(
+                        '#!/bin/sh\nexport SESSIONDOCK_TEST_WRAPPER=updated\n'
+                        '# rewritten in place after the service started\nexec "$@"\n')
+                    (root / "bin/cli-wrapper").chmod(0o700)
+
                     # ---- Mobile: create another Claude session; the resumed Codex console
                     # is already linked, so its button toggles without a new takeover.
                     mobile = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block")
                     page = watch(mobile)
-                    second = create_claude(page, mobile, base, root / "work", expect_completion=False, full_argv=False)
+                    second = create_claude(page, mobile, base, root / "work", expect_completion=False, full_argv=False,
+                                           wrapper="updated")
                     assert second["declared_sid"] != receipt["declared_sid"]
                     bounds = page.locator("#termpane").bounding_box()
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds

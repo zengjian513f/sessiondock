@@ -179,11 +179,7 @@ fn add_shell(config: &mut Config) {
     #[cfg(unix)]
     let executable = std::env::var_os("SHELL")
         .map(PathBuf::from)
-        .filter(|path| {
-            resolved_executable(path)
-                .and_then(|path| CheckedFile::open(&path))
-                .is_ok()
-        })
+        .filter(|path| current_executable(path).is_ok())
         .unwrap_or_else(|| PathBuf::from("/bin/sh"));
     #[cfg(windows)]
     let executable = std::env::var_os("COMSPEC")
@@ -213,20 +209,11 @@ fn add_shell(config: &mut Config) {
     });
 }
 
-struct CheckedAdapter {
-    config: Adapter,
-    executable: CheckedFile,
-}
-struct CheckedProfile {
-    config: CliProfile,
-    executable: CheckedFile,
-}
-
 pub struct Launcher {
-    host_binary: CheckedFile,
+    host_binary: PathBuf,
     host_directory: CheckedDirectory,
-    adapters: BTreeMap<String, CheckedAdapter>,
-    profiles: BTreeMap<String, CheckedProfile>,
+    adapters: BTreeMap<String, Adapter>,
+    profiles: BTreeMap<String, CliProfile>,
     entries: Vec<Entry>,
 }
 
@@ -237,23 +224,22 @@ impl Launcher {
             return Err(Error::UnsafePath);
         }
         let entries = entries(&config);
-        // Executables may be symlinks (npm/volta shims, WinGet links, `which`
-        // results): resolve them, then apply the
-        // no-follow identity checks to the real file.
-        let host_binary = CheckedFile::open(&resolved_executable(&config.host_binary)?)?;
+        // A configuration whose executables are unusable fails here, before
+        // any receipt exists; every launch checks them again.
+        current_executable(&config.host_binary)?;
         let host_directory = CheckedDirectory::open(&config.host_dir)?;
         let mut adapters = BTreeMap::new();
-        for config in config.adapters {
-            let executable = CheckedFile::open(&resolved_executable(&config.executable)?)?;
-            adapters.insert(config.id.clone(), CheckedAdapter { config, executable });
+        for adapter in config.adapters {
+            current_executable(&adapter.executable)?;
+            adapters.insert(adapter.id.clone(), adapter);
         }
         let mut profiles = BTreeMap::new();
-        for config in config.profiles {
-            let executable = CheckedFile::open(&resolved_executable(&config.executable)?)?;
-            profiles.insert(config.id.clone(), CheckedProfile { config, executable });
+        for profile in config.profiles {
+            current_executable(&profile.executable)?;
+            profiles.insert(profile.id.clone(), profile);
         }
         Ok(Self {
-            host_binary,
+            host_binary: config.host_binary,
             host_directory,
             adapters,
             profiles,
@@ -269,22 +255,23 @@ impl Launcher {
     }
 
     /// Synchronous filesystem checks; async callers run this in bounded blocking
-    /// work. Constructor snapshots alone cannot authorize a later changed path.
+    /// work. Constructor snapshots alone cannot authorize a later changed path:
+    /// the executables and directories are checked as they are now.
     pub fn validate_spec(&self, spec: &LaunchSpec) -> Result<(), Error> {
         spec.validate().map_err(|_| Error::InvalidSpec)?;
         let (source, executable, kind_allowed) =
             if let Some(adapter) = self.adapters.get(spec.adapter_id()) {
                 (
-                    adapter.config.source,
+                    adapter.source,
                     &adapter.executable,
                     *spec.launch() == Launch::Fixed,
                 )
             } else if let Some(profile) = self.profiles.get(spec.adapter_id()) {
                 (
-                    profile.config.source,
+                    profile.source,
                     &profile.executable,
                     match spec.launch() {
-                        Launch::Fixed => profile.config.source == Source::Shell,
+                        Launch::Fixed => profile.source == Source::Shell,
                         Launch::NewPending | Launch::NewAssigned => true,
                         Launch::Resume { .. } => true,
                     },
@@ -298,41 +285,43 @@ impl Launcher {
         if !kind_allowed {
             return Err(Error::InvalidSpec);
         }
-        self.host_binary.verify()?;
+        current_executable(&self.host_binary)?;
         self.host_directory.verify()?;
-        executable.verify()?;
+        current_executable(executable)?;
         CheckedDirectory::open(spec.cwd())?.verify()?;
         Ok(())
     }
 
     /// The exact child argv (executable first) for a receipt, with the only
     /// substitutions being whole-argument `{session_id}` / `{sid}` from the
-    /// receipt's validated identity. No shell, quoting or joining step.
+    /// receipt's validated identity. No shell, quoting or joining step. The
+    /// executable is the file currently behind the configured path.
     pub fn argv(&self, record: &Record) -> Result<Vec<OsString>, Error> {
         let spec = record.spec();
         if let Some(adapter) = self.adapters.get(spec.adapter_id()) {
             if *spec.launch() != Launch::Fixed {
                 return Err(Error::InvalidSpec);
             }
-            let mut argv = vec![adapter.executable.path.as_os_str().to_owned()];
-            argv.extend(adapter.config.args.iter().map(OsString::from));
+            let mut argv = vec![current_executable(&adapter.executable)?.into_os_string()];
+            argv.extend(adapter.args.iter().map(OsString::from));
             return Ok(argv);
         }
         let profile = self
             .profiles
             .get(spec.adapter_id())
             .ok_or(Error::AdapterUnavailable)?;
+        let executable = current_executable(&profile.executable)?.into_os_string();
         if spec.source() == Source::Shell && *spec.launch() == Launch::Fixed {
-            let mut argv = vec![profile.executable.path.as_os_str().to_owned()];
-            argv.extend(profile.config.args.iter().map(OsString::from));
+            let mut argv = vec![executable];
+            argv.extend(profile.args.iter().map(OsString::from));
             return Ok(argv);
         }
         let (configured, defaults, placeholder, value): (&[String], &[&str], &str, Option<&str>) =
             match spec.launch() {
                 Launch::Fixed => return Err(Error::InvalidSpec),
-                Launch::NewPending => (&profile.config.new_args, &[], SESSION_ID_PLACEHOLDER, None),
+                Launch::NewPending => (&profile.new_args, &[], SESSION_ID_PLACEHOLDER, None),
                 Launch::NewAssigned => (
-                    &profile.config.new_args,
+                    &profile.new_args,
                     &["--session-id", SESSION_ID_PLACEHOLDER],
                     SESSION_ID_PLACEHOLDER,
                     Some(record.session_id().ok_or(Error::InvalidSpec)?),
@@ -343,19 +332,14 @@ impl Launcher {
                         Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
                         Source::Shell => return Err(Error::InvalidSpec),
                     };
-                    (
-                        &profile.config.resume_args,
-                        defaults,
-                        SID_PLACEHOLDER,
-                        Some(sid),
-                    )
+                    (&profile.resume_args, defaults, SID_PLACEHOLDER, Some(sid))
                 }
             };
         if value.is_some_and(|value| !model::native_sid(value)) {
             return Err(Error::InvalidSpec);
         }
-        let mut argv = vec![profile.executable.path.as_os_str().to_owned()];
-        argv.extend(profile.config.args.iter().map(OsString::from));
+        let mut argv = vec![executable];
+        argv.extend(profile.args.iter().map(OsString::from));
         let has_placeholder = configured.iter().any(|arg| arg == placeholder);
         for arg in configured.iter().map(String::as_str).chain(
             (!has_placeholder)
@@ -481,7 +465,11 @@ impl Launcher {
             Ok(argv) => argv,
             Err(error) => return Err(LaunchFailure { authority, error }),
         };
-        match spawn_detached(self.command(record, &argv)) {
+        let host_binary = match current_executable(&self.host_binary) {
+            Ok(host_binary) => host_binary,
+            Err(error) => return Err(LaunchFailure { authority, error }),
+        };
+        match spawn_detached(self.command(&host_binary, record, &argv)) {
             Ok(child) => Ok(Started { authority, child }),
             Err(error) => Err(LaunchFailure {
                 authority,
@@ -494,16 +482,16 @@ impl Launcher {
     /// with explicit profile overrides and stale session identities removed,
     /// authorized cwd, null stdio, the host arguments, then the CLI argv.
     /// Only how the child is detached from this process differs per platform.
-    fn command(&self, record: &Record, argv: &[OsString]) -> Command {
+    fn command(&self, host_binary: &Path, record: &Record, argv: &[OsString]) -> Command {
         let metadata = Self::metadata(record);
-        let mut command = Command::new(&self.host_binary.path);
+        let mut command = Command::new(host_binary);
         if let Some(adapter) = self.adapters.get(record.spec().adapter_id()) {
-            command.envs(&adapter.config.env);
+            command.envs(&adapter.env);
         } else if let Some(profile) = self.profiles.get(record.spec().adapter_id()) {
-            for name in &profile.config.env_remove {
+            for name in &profile.env_remove {
                 command.env_remove(name);
             }
-            command.envs(&profile.config.env);
+            command.envs(&profile.env);
         }
         for name in DENIED_ENV {
             command.env_remove(name);
@@ -645,6 +633,18 @@ fn identity(metadata: &Metadata) -> (u64, u64) {
 fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
     model::plain_canonical(path).ok_or(Error::UnsafePath)
 }
+/// The ordinary executable file currently behind a configured path. Executables
+/// may be symlinks (npm/volta shims, WinGet links, `which` results): the alias
+/// is resolved first, then the no-follow checks apply to the real file. This
+/// runs when the configuration loads and again before every spawn, so a CLI
+/// that updated itself since the service started (Windows rewrites `claude.exe`
+/// in place, Unix re-targets `~/.local/bin/claude`) launches its current file;
+/// only a path that no longer names a usable executable is refused.
+fn current_executable(configured: &Path) -> Result<PathBuf, Error> {
+    let resolved = resolved_executable(configured)?;
+    check_executable(&resolved)?;
+    Ok(resolved)
+}
 
 fn ordinary(metadata: &Metadata, directory: bool) -> Result<(), Error> {
     #[cfg(windows)]
@@ -754,71 +754,41 @@ fn stamp(metadata: &Metadata) -> Stamp {
         ),
     }
 }
-struct CheckedFile {
-    path: PathBuf,
-    parent: CheckedDirectory,
-    name: OsString,
-    file: cap_std::fs::File,
-    stamp: Stamp,
+/// The resolved executable must be an ordinary executable file reached through
+/// ordinary directories: the directory entry and the file opened without
+/// following a final symlink must be the same file.
+fn check_executable(path: &Path) -> Result<(), Error> {
+    path_text(path)?;
+    let name = path.file_name().ok_or(Error::UnsafePath)?;
+    let parent = CheckedDirectory::open(path.parent().ok_or(Error::UnsafePath)?)?;
+    let before = parent
+        .directory
+        .symlink_metadata(name)
+        .map_err(|_| Error::UnsafePath)?;
+    executable_metadata(&before)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No).nonblock(true);
+    let file = parent
+        .directory
+        .open_with(name, &options)
+        .map_err(|_| Error::UnsafePath)?;
+    let after = file.metadata().map_err(|_| Error::UnsafePath)?;
+    executable_metadata(&after)?;
+    if stamp(&before) != stamp(&after) {
+        return Err(Error::Changed);
+    }
+    Ok(())
 }
-impl CheckedFile {
-    fn open(path: &Path) -> Result<Self, Error> {
-        path_text(path)?;
-        let name = path.file_name().ok_or(Error::UnsafePath)?.to_owned();
-        let parent = CheckedDirectory::open(path.parent().ok_or(Error::UnsafePath)?)?;
-        let before = parent
-            .directory
-            .symlink_metadata(&name)
-            .map_err(|_| Error::UnsafePath)?;
-        Self::check(&before)?;
-        let mut options = OpenOptions::new();
-        options.read(true).follow(FollowSymlinks::No).nonblock(true);
-        let file = parent
-            .directory
-            .open_with(&name, &options)
-            .map_err(|_| Error::UnsafePath)?;
-        let after = file.metadata().map_err(|_| Error::UnsafePath)?;
-        Self::check(&after)?;
-        if stamp(&before) != stamp(&after) {
-            return Err(Error::Changed);
+fn executable_metadata(metadata: &Metadata) -> Result<(), Error> {
+    ordinary(metadata, false)?;
+    #[cfg(unix)]
+    {
+        let mode = cap_std::fs::MetadataExt::mode(metadata);
+        if mode & 0o111 == 0 {
+            return Err(Error::UnsafePermissions);
         }
-        let result = Self {
-            path: path.to_owned(),
-            parent,
-            name,
-            file,
-            stamp: stamp(&after),
-        };
-        result.verify()?;
-        Ok(result)
     }
-    fn check(metadata: &Metadata) -> Result<(), Error> {
-        ordinary(metadata, false)?;
-        #[cfg(unix)]
-        {
-            let mode = cap_std::fs::MetadataExt::mode(metadata);
-            if mode & 0o111 == 0 {
-                return Err(Error::UnsafePermissions);
-            }
-        }
-        Ok(())
-    }
-    fn verify(&self) -> Result<(), Error> {
-        self.parent.verify()?;
-        for metadata in [
-            self.file.metadata().map_err(|_| Error::Changed)?,
-            self.parent
-                .directory
-                .symlink_metadata(&self.name)
-                .map_err(|_| Error::Changed)?,
-        ] {
-            Self::check(&metadata)?;
-            if stamp(&metadata) != self.stamp {
-                return Err(Error::Changed);
-            }
-        }
-        Ok(())
-    }
+    Ok(())
 }
 
 #[cfg(test)]
