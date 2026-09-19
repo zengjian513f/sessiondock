@@ -3,8 +3,9 @@
 
 Machine filter chips, per-machine nesting under the hub namespace (identical native ids on
 different machines never cross-nest), NDJSON search with visible progress and a per-machine
-failure, a session opened through the proxy with media and SSE, the settings page (untick,
-tick back, drag to reorder, keyboard reorder) and the `sessiondock.hub.<path>.` storage prefix.
+failure (chip color + title, no layout-shifting banner), a session opened through the proxy
+with media and SSE, the settings page (untick, tick back, drag to reorder, keyboard reorder)
+and the `sessiondock.hub.<path>.` storage prefix.
 Fake nodes only (`tests/hub_fake_node.py`); no CLI, no session root.
 """
 from __future__ import annotations
@@ -136,10 +137,22 @@ def check_page(page, nodes, hub):
     seq = page.locator("#stat").get_attribute("data-seq")
     page.locator("#q").press("Enter")
     page.wait_for_function("(seq) => document.querySelector('#stat').dataset.seq !== seq", arg=seq)
-    assert "NodeB 全文搜索失败" in page.locator("#node-notice").inner_text()
+    assert page.locator("#node-notice").is_hidden()
     assert page.evaluate('Nodes.list.find(n => n.name === "NodeB").online')
+    chip = page.locator(f'#node-chips button[data-node="{NID["b"]}"]')
+    page.wait_for_function("""nid => {
+      const b = document.querySelector(`#node-chips button[data-node="${nid}"]`);
+      return b?.classList.contains('node-issue') && (b.title || '').includes('全文搜索失败');
+    }""", arg=NID["b"])
+    chip.hover()
+    assert "全文搜索失败" in (chip.get_attribute("title") or "")
     b.pop("search_error")
     page.evaluate("cancelSearch(true)")
+    page.wait_for_function("""nid => {
+      const b = document.querySelector(`#node-chips button[data-node="${nid}"]`);
+      return b && !b.classList.contains('node-issue');
+    }""", arg=NID["b"])
+    check_node_chip_issue(page)
     # Open the same native id on two machines through the proxy: media and SSE.
     for node, char in ((a, "a"), (b, "b")):
         uid = scoped(NID[char], "claude:same-file-hash")
@@ -151,6 +164,40 @@ def check_page(page, nodes, hub):
         assert page.evaluate("S.sel") == uid
         assert node.name in page.locator("#detail .dhead").inner_text()
     page.evaluate("closeWatch()")
+
+
+def check_node_chip_issue(page):
+    """Live/term failures gray the machine chip and put the reason in title; #node-notice stays off."""
+    result = page.evaluate("""async () => {
+      const notice = document.querySelector('#node-notice');
+      const nid = Nodes.list.find(n => n.name === 'NodeB').id;
+      const chip = document.querySelector(`#node-chips button[data-node="${nid}"]`);
+      const fail = {nodes: Nodes.list, errors: [{node_id: nid, name: 'NodeB', error: 'timeout'}]};
+      const ok = {nodes: Nodes.list, errors: []};
+      applyNodeState(fail, 'live');
+      applyNodeState(fail, 'term');
+      const shown = {
+        noticeHidden: notice.hidden, noticeText: notice.textContent,
+        issue: chip.classList.contains('node-issue'), title: chip.title,
+      };
+      applyNodeState(ok, 'live');
+      applyNodeState(ok, 'term');
+      const recovered = {noticeHidden: notice.hidden, issue: chip.classList.contains('node-issue')};
+      await Promise.resolve();
+      return {shown, recovered, title: chip.title};
+    }""")
+    shown, recovered = result["shown"], result["recovered"]
+    assert shown["noticeHidden"] and not shown["noticeText"], shown
+    assert shown["issue"], shown
+    assert "运行状态" in shown["title"] and "终端列表" in shown["title"], shown
+    assert recovered["noticeHidden"], recovered
+    assert not recovered["issue"], recovered
+    chip = page.locator(f'#node-chips button[data-node="{NID["b"]}"]')
+    page.wait_for_function("""nid => document.querySelector(
+      `#node-chips button[data-node="${nid}"]`)?.title ===
+      '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
+    chip.hover()
+    assert chip.get_attribute("title") == "点击选择或取消；右键或长按只选这台机器"
 
 
 def check_nesting(page, injector):
@@ -285,7 +332,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_browser: hub page over three fake nodes (filter, nesting, NDJSON search, proxy session, settings)")
+    print("PASS hub_browser: hub page over three fake nodes (filter, nesting, NDJSON search, chip issue tip, proxy session, settings)")
 
 
 if __name__ == "__main__":

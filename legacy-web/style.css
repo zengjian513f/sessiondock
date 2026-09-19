@@ -203,32 +203,38 @@ header {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--node-color, var(--muted)) 25%, transparent);
 }
 #node-chips { --node-mark: inset 0 -3px; }
-#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline) {
+#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline):not(.node-issue) {
   box-shadow: var(--node-mark) var(--node-color);
 }
-#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline).on {
+#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline):not(.node-issue).on {
   color: var(--node-color); font-weight: 600;
   background: color-mix(in srgb, var(--node-color) 16%, var(--panel-2));
 }
-#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline).on:hover {
+#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline):not(.node-issue).on:hover {
   background: color-mix(in srgb, var(--node-color) 24%, var(--panel-2));
 }
-#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline):not(.on) {
+#node-chips button[data-node-color]:not([data-node-color=""]):not(.node-offline):not(.node-issue):not(.on) {
   box-shadow: var(--node-mark) color-mix(in srgb, var(--node-color) 25%, transparent);
 }
 #node-chips button[data-node-color]:not([data-node-color=""]).on b { color: inherit; }
-#node-chips button.node-offline {
+#node-chips button.node-offline,
+#node-chips button.node-issue {
   --node-color: light-dark(#737373, #a3a3a3);
   color: light-dark(#b0b0b0, var(--muted));
-  background: transparent; cursor: not-allowed; filter: grayscale(1);
+  filter: grayscale(1);
   box-shadow: var(--node-mark) color-mix(in srgb, var(--node-color) 25%, transparent);
 }
-#node-chips button.node-offline.on {
+#node-chips button.node-offline {
+  background: transparent; cursor: not-allowed;
+}
+#node-chips button.node-offline.on,
+#node-chips button.node-issue {
   color: light-dark(#b0b0b0, #a3a3a3); font-weight: 600;
   background: color-mix(in srgb, var(--node-color) 16%, var(--panel-2));
   box-shadow: var(--node-mark) var(--node-color);
 }
-#node-chips button.node-offline b { color: inherit; }
+#node-chips button.node-offline b,
+#node-chips button.node-issue b { color: inherit; }
 .chip.off .ico { opacity: .45; }
 #session-scope button { width: 48px; padding-inline: 7px; font-variant-numeric: tabular-nums; }
 #session-scope b { font-size: 12px; font-weight: 500; color: var(--text); }
@@ -321,6 +327,9 @@ header.header-fold-nodes .node-pick {
 header.header-fold-nodes .node-pick > .node-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 header.header-fold-nodes .node-pick > .node-pick-label[data-node-color]:not([data-node-color=""]) { color: var(--node-color); font-weight: 600; }
 header.header-fold-nodes .node-pick > .node-pick-label.node-none { color: var(--muted); }
+header.header-fold-nodes .node-pick.node-issue > .node-pick-label {
+  color: light-dark(#737373, #a3a3a3); filter: grayscale(1);
+}
 header.header-fold-nodes .node-pick > i { flex: none; color: var(--muted); font-style: normal; font-size: 13px; line-height: 1; margin-top: -3px; }
 header.header-fold-nodes .node-pick[aria-expanded="true"] { background: var(--hover); }
 /* 下拉列表挂在 header 下，不受 .header-filters 横向滚动裁切；left 由脚本按钮位置写入 */
@@ -1894,6 +1903,9 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   .node-pick > .node-pick-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .node-pick > .node-pick-label[data-node-color]:not([data-node-color=""]) { color: var(--node-color); font-weight: 600; }
   .node-pick > .node-pick-label.node-none { color: var(--muted); }
+  .node-pick.node-issue > .node-pick-label {
+    color: light-dark(#737373, #a3a3a3); filter: grayscale(1);
+  }
   .node-pick > i { flex: none; color: var(--muted); font-style: normal; font-size: 13px; line-height: 1; margin-top: -3px; }
   #node-chips {
     --node-mark: inset 3px 0;
