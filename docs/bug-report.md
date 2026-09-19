@@ -182,9 +182,11 @@ available to legacy callers; it is not the new browser upload path.
 `worker_prompt` is rewritten for this repository: read the bundle, locate the
 first event that diverges across layers, keep the user's working-tree changes,
 make the minimal complete fix, run only the validation proportionate to the
-change, and **never push, deploy, restart a deployed service or touch
-production directories** — explain in the session instead. Push /
-Hub-sync steps are gone. The header names the machine the problem was seen
+change, then commit only the fix's own files (other sessions' uncommitted
+changes stay untouched, no `git add -A`), and **never push, deploy, restart a
+deployed service or touch production directories** — a fix that did not
+validate or cannot be isolated is explained in the session instead of being
+committed. Push / Hub-sync steps are gone. The header names the machine the problem was seen
 on (`问题机器：Lyra（主机 lyra）`); a worker on another machine is told that
 the bundle's session row, ledger, terminal frame and audit rows were fetched
 from that machine and that the session's native files are not local, and a
