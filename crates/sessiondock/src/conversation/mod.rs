@@ -1,7 +1,8 @@
 //! One conversation send path: drafts are server-owned, successful SEND belongs to the CLI.
+mod input;
+pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
 use crate::{
-    bridge::LivePrompts,
     delivery::{
         driver::{HostTerminalDriver, LeaseHandle, PageLease, ScreenCapture, TerminalDriver},
         executor::{Failure, ManagedResolver, TargetResolver},
@@ -53,7 +54,6 @@ pub struct Conversations {
     pub resolver: Arc<ManagedResolver>,
     pub driver: Arc<HostTerminalDriver>,
     pub writer: Arc<WriteService>,
-    pub prompts: Arc<LivePrompts>,
     reports: Option<Arc<crate::bug_report::BugReportService>>,
     locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
 }
@@ -66,7 +66,6 @@ impl Conversations {
         resolver: Arc<ManagedResolver>,
         driver: Arc<HostTerminalDriver>,
         writer: Arc<WriteService>,
-        prompts: Arc<LivePrompts>,
         reports: Option<Arc<crate::bug_report::BugReportService>>,
     ) -> Self {
         Self {
@@ -76,7 +75,6 @@ impl Conversations {
             resolver,
             driver,
             writer,
-            prompts,
             reports,
             locks: Mutex::new(HashMap::new()),
         }
@@ -297,42 +295,12 @@ impl Conversations {
         identity: &Identity,
         lease: &LeaseHandle,
     ) -> Result<(), Failure> {
-        let capture = self.driver.capture(lease).await.map_err(driver_error)?;
-        if crate::delivery::driver::strip_ansi(&capture.text)
-            .trim()
-            .is_empty()
-        {
-            return Err(Failure::new(
-                409,
-                "cli_starting",
-                "CLI 正在启动，输入已保留",
-            ));
-        }
-        if screen_question(&capture) {
-            return Err(question());
-        }
-        if !identity.uid.starts_with("tmux:") {
-            let uid = identity.uid.clone();
-            let view = self
-                .reader
-                .run(move |s| s.messages(&uid, &Default::default()))
-                .await
-                .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
-            if identity.source == "claude"
-                && !identity.sid.is_empty()
-                && !self
-                    .prompts
-                    .claude_prompt(&identity.sid, &view["messages"])
-                    .is_null()
-            {
-                return Err(question());
-            }
-            if identity.source == "codex" && history_question(&view) {
-                return Err(question());
-            }
-        }
-        Ok(())
+        input::wait_for_composer(&identity.source, || async {
+            self.driver.capture(lease).await.map_err(driver_error)
+        })
+        .await
     }
+
     pub async fn restart(&self, uid: &str, request_id: &str) -> Result<Value, Failure> {
         if request_id.is_empty() {
             return Err(Failure::new(400, "request_id", "缺少启动请求 ID"));
@@ -413,14 +381,23 @@ impl Conversations {
     }
     /// Confirms the CLI accepts a SEND and reports the current draft revision,
     /// so a polling page can notice edits saved from another device.
-    pub async fn check(&self, uid: &str, page: Option<&PageLease>) -> Result<u64, Failure> {
+    pub async fn check(
+        &self,
+        uid: &str,
+        page: Option<&PageLease>,
+    ) -> Result<(u64, InputStatus), Failure> {
         let identity = self.identity(uid).await?;
         let lock = self.lock(&identity.key);
         let _guard = lock.lock().await;
         let lease = self.lease(&identity, page).await?;
-        let result = self.ensure_sendable(&identity, &lease).await;
+        let result = self
+            .driver
+            .capture(&lease)
+            .await
+            .map_err(driver_error)
+            .map(|capture| input::classify(&identity.source, &capture));
         self.driver.release(lease).await;
-        result.map(|()| self.store.draft(&identity.key).revision)
+        result.map(|status| (self.store.draft(&identity.key).revision, status))
     }
     /// Drops staged bytes the editor removed before SEND published them.
     pub async fn discard_upload(&self, uid: &str, id: &str) -> Result<bool, Failure> {
@@ -536,7 +513,7 @@ impl Conversations {
         if !result
             .as_ref()
             .err()
-            .is_some_and(|e| e.code == "cli_starting")
+            .is_some_and(|e| transient_input_error(e.code) || e.code == "cli_not_ready")
             && let (Some(reports), Some(record)) = (&self.reports, &identity.record)
             && let Err(error) = reports.conversation_status(record.record_id(), &result)
         {
@@ -598,12 +575,21 @@ impl Conversations {
             return submission_result(&old);
         }
         let write = async {
+            let before_paste = self.driver.capture(lease).await.map_err(driver_error)?;
+            input::classify(&identity.source, &before_paste).result()?;
             self.driver
                 .paste(lease, &prompt)
                 .await
                 .map_err(driver_error)?;
-            tokio::time::sleep(Duration::from_millis(600)).await;
-            self.ensure_sendable(identity, lease).await?;
+            if matches!(identity.source.as_str(), "claude" | "codex") {
+                input::wait_for_pasted_editor(&identity.source, &prompt, &before_paste, || async {
+                    self.driver.capture(lease).await.map_err(driver_error)
+                })
+                .await?;
+            } else {
+                tokio::time::sleep(Duration::from_millis(600)).await;
+                self.ensure_sendable(identity, lease).await?;
+            }
             self.driver
                 .keys(lease, &["Enter"])
                 .await
@@ -647,13 +633,6 @@ pub fn page_lease(value: Option<&Value>) -> Option<PageLease> {
 fn driver_error(e: crate::delivery::driver::DriverError) -> Failure {
     Failure::new(e.status, e.code, e.message)
 }
-fn question() -> Failure {
-    Failure::new(
-        409,
-        "cli_question",
-        "CLI 正在等待选择题回答，请先回答；消息未发送，输入保留",
-    )
-}
 pub fn submission_result(row: &store::Submission) -> Result<Value, Failure> {
     if row.phase == "sent" {
         Ok(row.result.clone())
@@ -679,6 +658,8 @@ pub fn submission_result(row: &store::Submission) -> Result<Value, Failure> {
 /// indented sibling option, both closed by an `Enter to confirm/select/continue`
 /// footer with nothing below it. The trust dialog defaults to "No, exit", so an
 /// Enter delivered through SEND terminates the CLI (BUG-20260916-070610-b7249b).
+/// The capture is styled: `strip_ansi` must give blank cells back as spaces or
+/// the column checks below see `❯No,exit` (BUG-20260917-012213-bfffee).
 pub fn screen_question(capture: &ScreenCapture) -> bool {
     let text = crate::delivery::driver::strip_ansi(&capture.text);
     if crate::bridge::codex::approval_prompt(&text).is_some() {
@@ -758,27 +739,8 @@ fn unnumbered_menu(above_footer: &[&str]) -> bool {
     };
     cursors == 1
         && block.iter().any(|line| {
-            indent_of(line) == column
-                && !line
-                    .trim_start()
-                    .starts_with(|c| GLYPHS.contains(&c))
+            indent_of(line) == column && !line.trim_start().starts_with(|c| GLYPHS.contains(&c))
         })
-}
-fn history_question(view: &Value) -> bool {
-    if view["activity"]["state"] != "waiting" {
-        return false;
-    }
-    let Some(messages) = view["messages"].as_array() else {
-        return false;
-    };
-    messages.iter().rev().any(|message| {
-        message["role"] == "question"
-            && message["call_id"].is_string()
-            && !messages.iter().any(|answer| {
-                (answer["role"] == "answer" || answer["role"] == "tool_result")
-                    && answer["call_id"] == message["call_id"]
-            })
-    })
 }
 pub fn build_prompt(text: &str, attachments: &[Value], quotes: &[Value]) -> String {
     let mut prompt = text.to_owned();
@@ -912,16 +874,42 @@ mod tests {
             0
         )));
     }
+    /// The dialog as the delivery driver really receives it: ptyhost's styled
+    /// capture of Claude Code 2.1.274 on a 120x36 screen, blank cells encoded
+    /// as cursor-forward moves, cursor on the `❯` row, 19 empty rows below the
+    /// footer. This frame passed `check` and let SEND press Enter on "No, exit"
+    /// (BUG-20260917-012213-bfffee).
     #[test]
-    fn native_question_requires_waiting_and_no_answer() {
-        let mut view =
-            json!({"activity":{"state":"waiting"},"messages":[{"role":"question","call_id":"q"}]});
-        assert!(history_question(&view));
-        view["messages"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"role":"answer","call_id":"q"}));
-        assert!(!history_question(&view));
+    fn styled_trust_dialog_from_ptyhost_blocks_send() {
+        let mut rows = vec![
+            String::new(),
+            "─".repeat(120),
+            "\x1b[CAccessing\x1b[Cworkspace:".into(),
+            String::new(),
+            "\x1b[C/srv/work".into(),
+            String::new(),
+            "\x1b[CQuick\x1b[Csafety\x1b[Ccheck:\x1b[CIs\x1b[Cthis\x1b[Ca\x1b[Cproject\x1b[Cyou\x1b[Ccreated\x1b[Cor\x1b[Cone\x1b[Cyou\x1b[Ctrust?".into(),
+            "\x1b[Cproject,\x1b[Cor\x1b[Cwork\x1b[Cfrom\x1b[Cyour\x1b[Cteam).".into(),
+            String::new(),
+            "\x1b[CClaude\x1b[CCode'll\x1b[Cbe\x1b[Cable\x1b[Cto\x1b[Cread,\x1b[Cedit,\x1b[Cand\x1b[Cexecute\x1b[Cfiles\x1b[Chere.".into(),
+            String::new(),
+            "\x1b[CSecurity\x1b[Cguide".into(),
+            String::new(),
+            "\x1b[C\x1b[38;2;177;185;249m❯\x1b[CNo,\x1b[Cexit".into(),
+            "\x1b[3CYes,\x1b[CI\x1b[Ctrust\x1b[Cthis\x1b[Cfolder".into(),
+            String::new(),
+            "\x1b[C\x1b[38;2;153;153;153mEnter\x1b[Cto\x1b[Cconfirm\x1b[C·\x1b[CEsc\x1b[Cto\x1b[Ccancel".into(),
+        ];
+        rows.resize(36, String::new());
+        let screen = rows.join("\n");
+        let mut frame = capture(&screen, 13);
+        frame.cursor = (1, 13);
+        assert!(screen_question(&frame));
+        // A numbered menu rendered the same way is still a menu.
+        assert!(screen_question(&capture(
+            "Do\x1b[Cyou\x1b[Ctrust\x1b[Cthis\x1b[Cdirectory?\n❯\x1b[C1.\x1b[CYes\n\x1b[2C2.\x1b[CNo\nPress\x1b[CEnter\x1b[Cto\x1b[Cconfirm",
+            1
+        )));
     }
     #[test]
     fn prompt_uses_destination_paths_and_keeps_user_newlines() {

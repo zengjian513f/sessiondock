@@ -124,22 +124,30 @@ class Fake:
     def render(self, working=False):
         lines = ["FAKE_CODEX_TUI sid=[%s]" % self.sid]
         for text in self.transcript[-4:]:
-            lines.append("> " + text)
+            parts = text.split("\n")
+            lines.append("> " + parts[0])
+            lines.extend("  " + part for part in parts[1:])
         lines.append("")
         if working:
             lines.append("• Working (1s • esc to interrupt)")
         lines.append(self.particles())
         prompt_row = len(lines) + 1
         if self.buffer:
-            lines.append("› " + self.buffer)
+            # A long paste must not scroll › or the model footer off the 36-row
+            # PTY; inspect_codex needs both on the captured screen.
+            shown = self.buffer if len(self.buffer) <= 72 else self.buffer[-72:]
+            parts = shown.split("\n")
+            lines.append("› " + parts[0])
+            lines.extend("  " + part for part in parts[1:])
         else:
+            parts = [""]
             lines.append("› " + DIM + PLACEHOLDER + RESET + "   " + GREY + "⠁⠂" + RESET)
         lines.append(self.particles())
         lines.append("")
         lines.append("%s low · %s" % (self.options["model"], os.getcwd()))
         self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
-        column = 3 + len(self.buffer)
-        self.write("\x1b[%d;%dH" % (prompt_row, column))
+        column = 3 + len(parts[-1])
+        self.write("\x1b[%d;%dH" % (prompt_row + len(parts) - 1, column))
 
     def stamp(self):
         return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % int((time.time() % 1) * 1000)

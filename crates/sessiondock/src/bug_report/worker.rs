@@ -212,8 +212,13 @@ pub async fn launch(
             {
                 Ok(value) => break Ok(value),
                 Err(error)
-                    if error.code == "cli_starting" && tokio::time::Instant::now() < deadline =>
+                    if (crate::conversation::transient_input_error(error.code)
+                        || error.code == "cli_not_ready")
+                        && tokio::time::Instant::now() < deadline =>
                 {
+                    // A just-launched Codex often paints a banner before the
+                    // composer; that is unknown, not empty-starting. Keep
+                    // polling until READY_TIMEOUT. Known menus stay blocked.
                     tokio::time::sleep(POLL).await;
                 }
                 Err(error) => break Err(error.message),

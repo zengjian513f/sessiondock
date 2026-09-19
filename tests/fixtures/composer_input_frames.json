@@ -1,0 +1,158 @@
+[
+  {
+    "name": "grok_idle",
+    "source": "grok",
+    "text": "  ╭────────────────────────────────────────────╮\n  │ ❯                                          │\n  ╰────────── Grok 4.6 (low) ──────────────────╯",
+    "cursor": [
+      6,
+      1
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "grok_multiline_continuation",
+    "source": "grok",
+    "text": "  ╭────────────────────────────────────────────╮\n  │ ❯ first                                    │\n  │ continued                                  │\n  ╰────────── Grok 4.6 (low) ──────────────────╯",
+    "cursor": [
+      4,
+      2
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "grok_custom_model_label",
+    "source": "grok",
+    "text": "  ╭────────────────────────────────────────────╮\n  │ ❯                                          │\n  ╰────────── custom-model ────────────────────╯",
+    "cursor": [
+      6,
+      1
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "grok_login",
+    "source": "grok",
+    "text": "Approve in your browser to finish signing in.\nMake sure your browser shows this code.\nWaiting for approval...\nctrl+q  quit",
+    "cursor": [
+      0,
+      0
+    ],
+    "lag": 0,
+    "expected": "unknown",
+    "code": "cli_not_ready"
+  },
+  {
+    "name": "unrecognized_nonempty",
+    "source": "grok",
+    "text": "❯ random output",
+    "cursor": [
+      2,
+      0
+    ],
+    "lag": 0,
+    "expected": "unknown",
+    "code": "cli_not_ready"
+  },
+  {
+    "name": "known_composer_positive_lag",
+    "source": "grok",
+    "text": "  ╭────────────────────────────────────────────╮\n  │ ❯                                          │\n  ╰────────── Grok 4.6 (low) ──────────────────╯",
+    "cursor": [
+      6,
+      1
+    ],
+    "lag": 1,
+    "expected": "starting",
+    "code": "cli_catching_up"
+  },
+  {
+    "name": "empty_startup",
+    "source": "grok",
+    "text": "",
+    "cursor": [
+      0,
+      0
+    ],
+    "lag": 0,
+    "expected": "starting",
+    "code": "cli_starting"
+  },
+  {
+    "name": "claude_idle",
+    "source": "claude",
+    "text": "────────────────────\n❯ \n────────────────────",
+    "cursor": [
+      2,
+      1
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "claude_busy",
+    "source": "claude",
+    "text": "────────────────────\n❯ \n────────────────────\nesc to interrupt",
+    "cursor": [
+      2,
+      1
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "codex_idle",
+    "source": "codex",
+    "text": "› \n\ngpt-5.6-luna low · /synthetic/work",
+    "cursor": [
+      2,
+      0
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "codex_busy",
+    "source": "codex",
+    "text": "Working · esc to interrupt\n\n› \n\ngpt-5.6-luna low · /synthetic/work",
+    "cursor": [
+      2,
+      2
+    ],
+    "lag": 0,
+    "expected": "ready",
+    "code": ""
+  },
+  {
+    "name": "claude_pasting",
+    "source": "claude",
+    "text": "────────────────────\n❯ synthetic draft\n────────────────────\nPasting…",
+    "cursor": [
+      17,
+      1
+    ],
+    "lag": 0,
+    "expected": "starting",
+    "code": "cli_pasting"
+  },
+  {
+    "name": "numbered_menu",
+    "source": "claude",
+    "text": "❯ 1. Yes\n  2. No\nEnter to confirm",
+    "cursor": [
+      2,
+      0
+    ],
+    "lag": 0,
+    "expected": "blocked",
+    "code": "cli_question"
+  }
+]

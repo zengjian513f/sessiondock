@@ -191,13 +191,18 @@ pub async fn check(
     }
     let service = enabled(&s)?;
     let page = page_lease(q.lease.as_ref());
-    let draft_revision = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
-    Ok((
-        [(header::CACHE_CONTROL, "no-store")],
-        Json(json!({"ok":true,"draft_revision":draft_revision})),
-    )
-        .into_response())
+    let (draft_revision, input) = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
+    let mut body = json!({"ok":input.ready(), "draft_revision":draft_revision, "input":input});
+    let status = if input.ready() {
+        StatusCode::OK
+    } else {
+        body["code"] = json!(input.code);
+        body["error"] = json!(input.message);
+        StatusCode::CONFLICT
+    };
+    Ok((status, [(header::CACHE_CONTROL, "no-store")], Json(body)).into_response())
 }
+
 #[derive(Deserialize)]
 pub struct Discard {
     uid: String,
@@ -422,6 +427,103 @@ pub async fn upload(State(s): State<AppState>, request: Request) -> Result<Respo
     )
         .into_response())
 }
+/// Names the stream's error type so `Body::from_stream` has one `impl` to pick.
+fn attachment_body(
+    stream: impl futures_util::Stream<Item = std::io::Result<axum::body::Bytes>> + Send + 'static,
+) -> axum::body::Body {
+    axum::body::Body::from_stream(stream)
+}
+#[derive(Deserialize)]
+pub struct Staged {
+    uid: String,
+    id: String,
+}
+/// `<img>` types an editor preview needs; any other staged upload stays opaque
+/// bytes. The stored media type comes from the uploading browser, so nothing
+/// outside this list is echoed back as a renderable document.
+const PREVIEW_MIME: [&str; 6] = [
+    "image/png",
+    "image/jpeg",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/bmp",
+];
+/// Streams a staged attachment back to the editor. A page that read the draft
+/// from the server (a refresh, another device) holds metadata only, so an
+/// image card has no local File for its thumbnail. Published uploads keep no
+/// private copy and answer 404, same as an unknown id.
+pub async fn staged(
+    State(s): State<AppState>,
+    Query(q): Query<Staged>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&s)?;
+    let identity = service.identity(&q.uid).await.map_err(error)?;
+    let upload = service.store.upload(&identity.key, &q.id).map_err(error)?;
+    let missing = || {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "attachment_missing",
+            "附件暂存字节已不在服务端",
+        )
+    };
+    let path = service.upload_path(&identity.key, &q.id);
+    let mut file = tokio::fs::File::open(&path).await.map_err(|_| missing())?;
+    let length = file
+        .metadata()
+        .await
+        .map(|meta| meta.len())
+        .map_err(|_| missing())?;
+    let base = upload
+        .mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let mime = PREVIEW_MIME
+        .into_iter()
+        .find(|candidate| *candidate == base)
+        .unwrap_or("application/octet-stream");
+    let shutdown = s.shutdown.clone();
+    let stream = async_stream::try_stream! {
+        use tokio::io::AsyncReadExt;
+        let mut buffer = vec![0u8; crate::files::STREAM_CHUNK_BYTES];
+        loop {
+            if shutdown.is_cancelled() {
+                Err(std::io::Error::other("attachment transfer cancelled"))?;
+            }
+            let count = file.read(&mut buffer).await?;
+            if count == 0 {
+                break;
+            }
+            yield axum::body::Bytes::copy_from_slice(&buffer[..count]);
+        }
+    };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime)
+        .header(header::CONTENT_LENGTH, length.to_string())
+        .header(
+            header::CONTENT_DISPOSITION,
+            crate::files::disposition(&upload.name, false),
+        )
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+            header::CONTENT_SECURITY_POLICY,
+            "sandbox; default-src 'none'",
+        )
+        .header("Referrer-Policy", "no-referrer")
+        .body(attachment_body(stream))
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "attachment_headers_invalid",
+                "附件响应头无效",
+            )
+        })
+}
 #[derive(Deserialize)]
 pub struct Import {
     uid: String,
@@ -461,7 +563,14 @@ pub async fn drafts(State(s): State<AppState>) -> Result<Response, ApiError> {
         .store
         .drafts()
         .into_iter()
-        .map(|(_, mut d)| {
+        .filter_map(|(_, mut d)| {
+            if let Some(record_id) = d.value["session"]["record_id"].as_str()
+                && ledger
+                    .iter()
+                    .any(|record| record.record_id() == record_id && record.discarded())
+            {
+                return None;
+            }
             if !d.value["session"]["started"].is_number()
                 && let Some(record_id) = d.value["session"]["record_id"].as_str()
                 && let Some(created) = ledger
@@ -471,7 +580,7 @@ pub async fn drafts(State(s): State<AppState>) -> Result<Response, ApiError> {
             {
                 d.value["session"]["started"] = json!(created);
             }
-            json!({"uid":d.value["session"]["uid"],"draft":d})
+            Some(json!({"uid":d.value["session"]["uid"],"draft":d}))
         })
         .collect::<Vec<_>>();
     Ok((

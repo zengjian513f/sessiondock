@@ -24,7 +24,7 @@ pub use boundary::ResolvedTarget;
 pub(crate) use media::ScopedFiles;
 pub use references::clean_ref;
 pub(crate) use references::normalize_media_ref;
-pub(crate) use response::CheckedImage;
+pub(crate) use response::{CheckedImage, disposition};
 pub use response::{CheckedReader, FileBody, FileResponse, ReadOptions};
 pub(crate) use write::move_recycle_entry;
 pub use write::{
