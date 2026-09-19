@@ -558,7 +558,13 @@ impl Conversations {
         let report_prompt = draft.value["report_prompt"]
             .as_str()
             .filter(|_| {
-                draft.value["requestId"] == input.request_id && draft.value["text"] == input.text
+                // A failed initial report leaves this metadata in the draft.
+                // Ordinary follow-ups save their own requestId/text there too;
+                // only the original report submission may use its frozen task.
+                input.request_id.starts_with("report-send:")
+                    && draft.value["requestId"] == input.request_id
+                    && draft.value["report_text"] == input.text
+                    && draft.value["text"] == input.text
             })
             .map(str::to_owned);
         let prompt = execution

@@ -304,6 +304,30 @@ def main():
                     assert external.status==200,external.text()
                     stale_prompt.unlink()
                     expect(page.locator('#cinput')).to_have_value('',timeout=10000)
+                    # Recreate the retained report metadata from a failed initial
+                    # injection, then type a different message and press Enter.
+                    # Assert native CLI bytes, not just the successful HTTP reply.
+                    page.evaluate('''async () => {
+                        const draft=composerDraft();
+                        draft.text='original report description';
+                        draft.report_text=draft.text;
+                        draft.report_prompt='ORIGINAL REPORT TASK\\nMust not replace a follow-up';
+                        draft.requestId='report-send:BUG-SYNTHETIC';
+                        draft.requestText=JSON.stringify({text:draft.text,attachments:[],quotes:[]});
+                        await persistComposerDraft();refreshComposerDraft(composerUid);
+                    }''')
+                    page.locator('#cinput').fill('new follow-up after failed report')
+                    with page.expect_response(lambda r:urlsplit(r.url).path=='/api/session/conversation/send',timeout=20000) as followup:
+                        page.locator('#cinput').press('Enter')
+                    assert followup.value.status==200,followup.value.text()
+                    expect(page.locator('#cinput')).to_have_value('')
+                    deadline=time.monotonic()+10
+                    while True:
+                        users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
+                        if len(users)>=4:break
+                        assert time.monotonic()<deadline,users
+                        time.sleep(.1)
+                    assert users[-1]=='new follow-up after failed report',('follow-up replaced by stale report prompt',users[-1])
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     server=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
                     assert server['value']['text']=='draft survives refresh'
@@ -435,7 +459,7 @@ def main():
                     context.close()
             finally:
                 browser.close()
-    print('PASS send_browser: server drafts/CAS/isolation, busy SEND, deduplication, metadata-only selection, private uploads/publication, interrupted stream, startup choice refusal, no browser outbox')
+    print('PASS send_browser: server drafts/CAS/isolation, busy SEND, deduplication, failed-report follow-up native text, metadata-only selection, private uploads/publication, interrupted stream, startup choice refusal, no browser outbox')
 
 if __name__ == '__main__':
     main()
