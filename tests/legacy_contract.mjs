@@ -389,6 +389,7 @@ test('the pending stage speaks in user terms and stays silent while nothing is w
     PENDING_RECORD_GRACE_MS: 60_000});
   const source=read('term.js');
   context.pendingRecordMissing=loadFunction(context,'pendingRecordMissing',source);
+  loadFunction(context,'pendingPhase',source);
   const message=loadFunction(context,'pendingStageMessage',source);
   assert.equal(message({state:'running',running:true}), '');
   assert.equal(message({state:'running',running:true,declared_sid:'abc'}), '');
@@ -421,10 +422,11 @@ test('bug-report worker rows surface the manifest status and pending rows name t
   assert.equal(worker({kind:'bug-report',worker_status:'submitted'}),'已发送');
   assert.equal(worker({worker_status:'failed'}),'');
   context.workerStatusMessage=worker;
+  loadFunction(context,'pendingPhase',source);
   const message=loadFunction(context,'pendingStageMessage',source);
   assert.equal(message({kind:'bug-report',worker_status:'failed',worker_error:'未注入',declared_sid:'abc'}),'未发送，输入已保留：未注入');
   const label=loadFunction(context,'pendingStateLabel',source);
-  assert.equal(label({record_id:'r',state:'exited'}),'实例已退出');
+  assert.equal(label({record_id:'r',state:'exited'}),'已结束');
   assert.equal(label({record_id:'r',state:'running'}),'等待首条消息');
   assert.equal(label({record_id:'r',state:'running',kind:'bug-report',worker_status:'injecting'}),'正在注入缺陷报告提示词');
 });
@@ -567,6 +569,7 @@ test('Hub pending lifecycle writes retain their explicit machine', async () => {
     HUB_MODE:true,T:{pending:[row]},post:async(path,body)=>{calls.push([path,body]);return {ok:true,running:false};},
     discardAbandonedNewSession:()=>calls.push(['discarded']),confirm:()=>true,
     loadTermList:async()=>{},pendingUid:name=>`tmux:${name}`,S:{sel:''},$:()=>null,alert:assert.fail,
+    pendingTitle:()=>'SSH',
   });
   await loadFunction(context,'stopPendingSession',read('term.js'))(row,null);
   assert.deepEqual(JSON.parse(JSON.stringify(calls.shift())),[
@@ -1222,12 +1225,18 @@ test('SSH terminal receipts show terminal state without native binding messages'
   const context = contextWithCapabilities({...disabled, terminal: true}, {workerStatusMessage: () => '',
     pendingRecordMissing: () => false});
   const source = read('term.js');
+  loadFunction(context, 'pendingPhase', source);
   const label = loadFunction(context, 'pendingStateLabel', source);
   const message = loadFunction(context, 'pendingStageMessage', source);
   assert.equal(label({source: 'shell', record_id: 'r', state: 'running'}), '交互式终端');
-  assert.equal(label({source: 'shell', record_id: 'r', state: 'exited'}), '实例已退出');
+  assert.equal(label({source: 'shell', record_id: 'r', state: 'exited'}), '已结束');
   assert.equal(message({source: 'shell', state: 'running', running: true}), '');
-  assert.equal(message({source: 'shell', state: 'exited', running: false}), '会话已结束。');
+  // The receipt is the session: an exited SSH says whether a recording is left to replay.
+  assert.equal(message({source: 'shell', state: 'exited', running: false, recording: {id: 'r'}}), '会话已结束。');
+  assert.equal(message({source: 'shell', state: 'exited', running: false}), '会话已结束，没有留下录制。');
+  // The exit this page observed itself wins over a list row that still says running.
+  context.T = {ended: new Map([['tmux:pane', {instanceId: 'i'}]])};
+  assert.equal(label({source: 'shell', name: 'pane', instance_id: 'i', record_id: 'r', state: 'running', running: true}), '已结束');
 });
 
 
@@ -1271,13 +1280,13 @@ test('SSH pending sessions open the PTY instead of staying on the conversation s
 
 
 test('SSH host exit keeps the PTY instead of returning to conversation', () => {
-  const closed = [];
+  const closed = [], noted = [];
   const context = contextWithCapabilities(disabled, {
     T: {ended: new Map(), name: 'pane', pending: [{name: 'pane', source: 'shell'}], list: []},
     ConsoleUI: {errors: new Map()}, S: {sel: 'tmux:pane'},
     cancelTermReconnect: () => {}, renderTakeoverBtn: () => {}, rememberTermOpen: () => {},
     closeTermPane: (...args) => closed.push(args), pendingUid: name => `tmux:${name}`,
-    showSessionStopNotice: () => {},
+    showSessionStopNotice: () => {}, notePendingEnded: name => noted.push(name),
   });
   loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
   const exit = loadFunction(context, 'recordHostExit', read('term.js'));
@@ -1285,6 +1294,8 @@ test('SSH host exit keeps the PTY instead of returning to conversation', () => {
   assert.equal(exit(view, 'tmux:pane', {code: 1000, reason: 'host exited'}), true);
   assert.equal(view.keepOutput, true);
   assert.deepEqual(closed, []);
+  // The page re-derives the row's state at once instead of waiting for a list poll.
+  assert.deepEqual(noted, ['pane']);
 });
 
 

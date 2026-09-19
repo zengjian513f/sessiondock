@@ -81,4 +81,4 @@ python3 tests/docs_index.py --write
 | Doc | Title | Summary | Lines |
 | --- | --- | --- | --- |
 | [delegation.md](delegation.md) | 委派本机 grok CLI（grok-4.6）做简单任务 | 用户已授权：在本仓库的开发过程中，可以把**边界清楚、可机械验证、独立成文件**的 任务交给本机 `grok` CLI 以 headless 方式完成（全局调用法：`~/.claude/grok-cli.md`）。 这是委派编码工作，模型自定；grok 产出仍须人工审阅并按批次记账。 不得让 grok 触碰生产服务、原 Python 仓库、凭据或运行数据。 | 115 |
-| [validation.md](validation.md) | Validation suites | One table of every default check in `python3 tests/run_validation.py`, plus the opt-in Python benchmarks the runner skips. Narrative rules stay in `AGENTS.md`. | 247 |
+| [validation.md](validation.md) | Validation suites | One table of every default check in `python3 tests/run_validation.py`, plus the opt-in Python benchmarks the runner skips. Narrative rules stay in `AGENTS.md`. | 248 |
