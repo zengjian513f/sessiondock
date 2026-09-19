@@ -88,7 +88,12 @@ class Fake:
         # Let the terminal compute the cursor position: multiline attachments,
         # wrapping and wide Unicode glyphs make string lengths/row counts wrong.
         # Preserve the actual composer cursor while drawing its bottom rule.
-        body = "\r\n".join(lines) + "\r\n❯ " + self.buffer.replace("\n", "\r\n")
+        # Keep the fake editor inside the PTY viewport for long report prompts.
+        # The input buffer (and the native user record) still holds the full text.
+        visible = self.buffer
+        if len(visible) > 160:
+            visible = "…" + visible[-160:].replace("\n", " ")
+        body = "\r\n".join(lines) + "\r\n❯ " + visible.replace("\n", "\r\n")
         self.write("\x1b[2J\x1b[H" + body + "\x1b7\r\n" + RULE
                    + ("\r\n" + footer if footer else "") + "\x1b8")
 

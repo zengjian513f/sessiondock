@@ -159,6 +159,31 @@ def main():
                 keyboard.press("Enter")
                 xterm_contains(page, "RS_OSC52_OK")
 
+                # A remote color query makes xterm emit an OSC reply through
+                # onData. It must be consumed before either input transport.
+                page.evaluate("""() => {
+                  const view = [...T.views.values()][0];
+                  window.oscReplies = [];
+                  window.oscSocketWrites = [];
+                  view.term.onData(data => {
+                    if (data.startsWith('\\x1b]')) window.oscReplies.push(data);
+                  });
+                  const send = view.ws.send.bind(view.ws);
+                  view.ws.send = data => {
+                    window.oscSocketWrites.push(data);
+                    return send(data);
+                  };
+                }""")
+                before_osc_sends = len(sends)
+                for query in ("\x1b]10;?\x07", "\x1b]11;?\x07", "\x1b]12;?\x07", "\x1b]4;1;?\x07"):
+                    page.evaluate(write_terminal, query)
+                page.wait_for_function("window.oscReplies.length >= 4")
+                replies = page.evaluate("window.oscReplies")
+                assert all(any(reply.startswith(prefix) for reply in replies)
+                           for prefix in ("\x1b]10;", "\x1b]11;", "\x1b]12;", "\x1b]4;1;")), replies
+                assert not page.evaluate("window.oscSocketWrites"), "OSC replies reached the PTY WebSocket"
+                assert len(sends) == before_osc_sends, "OSC replies reached term/send"
+
                 # ---- Desktop: keystrokes while a wheel request is pending go over HTTP.
                 held = []
                 page.route("**/api/term/scroll", lambda route: held.append(route))
