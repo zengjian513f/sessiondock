@@ -1,6 +1,6 @@
 //! Session recycle-bin HTTP routes, using delete protection.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use axum::{
     Json,
@@ -138,7 +138,8 @@ async fn run_delete(
     force: bool,
 ) -> Result<DeleteOutcome, ApiError> {
     let (rows, liveness) = frozen_liveness(state).await?;
-    state
+    let catalog = rows.clone();
+    let outcome = state
         .reader
         .run_wait(&state.shutdown, move |store| {
             let outcome = trash.delete(&rows, &liveness, &uids, force);
@@ -149,7 +150,127 @@ async fn run_delete(
             }
             Ok(outcome)
         })
+        .await?;
+    if !outcome.deleted.is_empty() {
+        retire_deleted_launches(state, &outcome.deleted, &catalog).await;
+    }
+    Ok(outcome)
+}
+
+/// A native session that came from a SessionDock launch leaves its finished
+/// receipt in `term/list.pending` until discarded. Deleting the native files
+/// must drop that receipt and the conversation draft that would rebuild the
+/// pending row; otherwise the operator has to 删除 then 丢弃, and 丢弃 still
+/// keeps a draft aliased to the trashed UID.
+async fn retire_deleted_launches(
+    state: &AppState,
+    deleted: &[crate::trash::Deleted],
+    rows: &[Value],
+) {
+    let Some(lifecycle) = &state.lifecycle else {
+        return;
+    };
+    let deleted_uids: HashSet<String> = deleted.iter().map(|item| item.uid.clone()).collect();
+    let deleted_sids: HashSet<String> = rows
+        .iter()
+        .filter_map(|row| {
+            let uid = row["uid"].as_str()?;
+            deleted_uids
+                .contains(uid)
+                .then(|| row["sid"].as_str().unwrap_or(""))
+                .filter(|sid| !sid.is_empty())
+                .map(str::to_owned)
+        })
+        .collect();
+    let mut extra = Vec::new();
+    if let Some(conversations) = &state.conversations {
+        let store = conversations.store.clone();
+        let uids = deleted_uids.iter().cloned().collect::<Vec<_>>();
+        extra = tokio::task::spawn_blocking(move || {
+            uids.into_iter()
+                .flat_map(|uid| store.launch_records_for(&uid))
+                .collect::<Vec<_>>()
+        })
         .await
+        .unwrap_or_default();
+    }
+    let records = match lifecycle.list(0, usize::MAX).await {
+        Ok(records) => records,
+        Err(_) => return,
+    };
+    for record in records {
+        if record.discarded() || !record.discardable() {
+            continue;
+        }
+        let linked = record
+            .declared_uid()
+            .is_some_and(|uid| deleted_uids.contains(uid))
+            || record
+                .declared_sid()
+                .is_some_and(|sid| deleted_sids.contains(sid))
+            || record
+                .session_id()
+                .is_some_and(|sid| deleted_sids.contains(sid))
+            || record.binding().is_some_and(|binding| {
+                binding.state() == BindingState::Confirmed
+                    && deleted_uids.contains(binding.spec().uid())
+            })
+            || extra.iter().any(|id| id == record.record_id());
+        if !linked {
+            continue;
+        }
+        if lifecycle
+            .discard(
+                record.record_id().to_owned(),
+                record.instance_id().to_owned(),
+            )
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let _ = super::lifecycle::forget_discarded_launch(state, record.record_id()).await;
+    }
+}
+
+/// A Grok/Claude `new_assigned` launch writes a native record before the
+/// first user turn. Discarding that receipt must take the empty native
+/// session with it, or the sidebar rebuilds 「新建 … 会话」 from the files.
+pub(super) async fn trash_new_assigned(state: &AppState, record: &crate::lifecycle::model::Record) {
+    if record.declared_uid().is_some() {
+        return;
+    }
+    let Some(sid) = record.declared_sid() else {
+        return;
+    };
+    let Some(trash) = state.trash.clone() else {
+        return;
+    };
+    let source = crate::bug_report::source_name(record.spec().source());
+    let Ok((rows, liveness)) = frozen_liveness(state).await else {
+        return;
+    };
+    let uids: Vec<String> = rows
+        .iter()
+        .filter_map(|row| {
+            (row["source"].as_str() == Some(source) && row["sid"].as_str() == Some(sid))
+                .then(|| row["uid"].as_str().map(str::to_owned))
+                .flatten()
+        })
+        .collect();
+    if uids.is_empty() {
+        return;
+    }
+    let _ = state
+        .reader
+        .run_wait(&state.shutdown, move |store| {
+            let outcome = trash.delete(&rows, &liveness, &uids, true);
+            if !outcome.deleted.is_empty() {
+                let _ = store.list(true);
+            }
+            Ok(outcome)
+        })
+        .await;
 }
 
 #[derive(Default, Deserialize)]
