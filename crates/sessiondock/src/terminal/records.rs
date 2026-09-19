@@ -106,6 +106,27 @@ pub fn remove_for_host(root: &Path, name: &str) -> io::Result<usize> {
     Ok(removed)
 }
 
+/// Delete every recording left by a non-shell host that is gone. Agent hosts
+/// run with `--no-record` (`Launcher::command`); this removes what hosts
+/// started before that rule wrote, once they have exited. A recording whose
+/// metadata names no source (a host not started by the launcher) is kept.
+/// Returns how many were removed.
+pub fn remove_agent_leftovers(root: &Path) -> io::Result<usize> {
+    let mut removed = 0;
+    for entry in list(root)? {
+        let source = entry.meta.get("source").and_then(Value::as_str);
+        if entry.live || source.is_none_or(|source| source == "shell") {
+            continue;
+        }
+        let Some(dir) = record_dir(root, &entry.id) else {
+            continue;
+        };
+        std::fs::remove_dir_all(&dir)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 /// The recording directory for a validated id, if it exists.
 pub fn record_dir(root: &Path, id: &str) -> Option<PathBuf> {
     if !valid_id(id) {
@@ -1019,7 +1040,50 @@ pub async fn stream_grid(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_id;
+    use super::{RECORDS_SUBDIR, list, remove_agent_leftovers, valid_id};
+
+    #[test]
+    fn agent_leftovers_go_and_shell_recordings_stay() {
+        let root = tempfile::tempdir().unwrap();
+        let records = root.path().join(RECORDS_SUBDIR);
+        let write = |id: &str, meta: serde_json::Value| {
+            let dir = records.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("meta.json"), meta.to_string()).unwrap();
+        };
+        // Exited: `ended_ms` set, host pid 0, on every platform.
+        let exited = |name: &str, source: Option<&str>| {
+            let mut meta = serde_json::json!({"name": name, "host_pid": 0, "created_ms": 1,
+                "ended_ms": 2, "cols": 80, "rows": 24, "argv": [], "meta": {}});
+            if let Some(source) = source {
+                meta["meta"]["source"] = serde_json::json!(source);
+            }
+            meta
+        };
+        write("1-0-shell", exited("shell", Some("shell")));
+        write("2-0-claude", exited("claude", Some("claude")));
+        write("3-0-codex", exited("codex", Some("codex")));
+        write("4-0-manual", exited("manual", None));
+        // Still running (no exit recorded): never touched, whatever its source.
+        let mut live = exited("live", Some("claude"));
+        live["host_pid"] = serde_json::json!(std::process::id());
+        live.as_object_mut().unwrap().remove("ended_ms");
+        write("5-1-live", live);
+        assert_eq!(list(root.path()).unwrap().len(), 5);
+
+        assert_eq!(remove_agent_leftovers(root.path()).unwrap(), 2);
+        let left: Vec<String> = list(root.path())
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(left, ["5-1-live", "4-0-manual", "1-0-shell"]);
+        assert_eq!(remove_agent_leftovers(root.path()).unwrap(), 0);
+        assert_eq!(
+            remove_agent_leftovers(&root.path().join("absent")).unwrap(),
+            0
+        );
+    }
 
     #[test]
     fn ids_are_strict() {

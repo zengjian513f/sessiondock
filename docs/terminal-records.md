@@ -10,6 +10,17 @@ complete historical byte log ([host attachment output](host-output.md)) —
 and nothing here is a transcript: input is not recorded, and native JSONL
 is not involved.
 
+Only shell (SSH) sessions are recorded. An agent session's record is its
+native transcript; its terminal is a redraw stream of that conversation
+with no information of its own, so the launcher starts every non-shell
+host with `--no-record` (`Launcher::command`,
+[lifecycle launcher](lifecycle-launcher.md)) and no `records/` directory
+is ever written for it. An agent row therefore never carries `recording`,
+and its exited console says 实例已退出. At startup the service deletes
+whatever exited non-shell hosts from before this rule left under
+`records/` (`records::remove_agent_leftovers`; a live one, or one whose
+metadata names no source, is kept).
+
 There is no separate index page: the session list is the index, and the
 launch receipt is the SSH session (the recording is its archive, not its
 identity). A managed session (`/api/term/list` session and pending rows)
@@ -159,9 +170,10 @@ ptyhost [--dir DIR] run --name N […]
         [--no-record] [--record-segment-bytes N] [--record-total-bytes N] -- CMD...
 ```
 
-Recording is on by default, using the limits above. `--no-record` skips
-the recorder entirely: no `records/` directory, and the `info` object
-has no `record` key. `--record-segment-bytes` and
+Recording is on by default in the host, using the limits above; the
+launcher passes `--no-record` for every non-shell session (above).
+`--no-record` skips the recorder entirely: no `records/` directory, and
+the `info` object has no `record` key. `--record-segment-bytes` and
 `--record-total-bytes` replace those two fields when recording is still
 enabled (parse failure becomes 0, then the 4096 floor applies). Always
 pass an explicit `--dir`; the imported host's implicit directory is not
@@ -348,7 +360,8 @@ contain keystrokes or paste bodies; those never enter the record.
 
 On Unix the `records/` directory and each session directory are `0700`,
 and each `*.seg` and `meta.json` is `0600`. `--no-record` is per host
-process.
+process; agent sessions always get it, so a CLI's output is never copied
+out of its native transcript onto disk a second time.
 
 ## Known limitations
 

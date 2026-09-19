@@ -672,11 +672,12 @@ pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 /// Whether a receipt still belongs in the sidebar's pending list: not
 /// discarded by the operator and, for an agent launch, not finished for
 /// longer than [`PENDING_ARCHIVE_AFTER`] (an agent session's own record is
-/// its native transcript; the receipt is only the launch). A finished shell
-/// receipt is the SSH session itself, so it stays listed until 删除 exactly
-/// like an agent session's row: with its recording (open = read-only
-/// replay) or without one (open = "no recording"). A finished agent receipt
-/// with no recorded time (an older ledger) is archived at once.
+/// its native transcript; the receipt is only the launch, and its host is
+/// started with `--no-record`). A finished shell receipt is the SSH session
+/// itself, so it stays listed until 删除 exactly like an agent session's
+/// row: with its recording (open = read-only replay) or without one (open =
+/// "no recording"). A finished agent receipt with no recorded time (an
+/// older ledger) is archived at once.
 fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     use crate::lifecycle::model::State;
     if record.discarded() {
@@ -724,8 +725,9 @@ pub async fn list(
     // Which host names accept grid attachments; pending rows get it too so the
     // console picks a renderer the host understands.
     let mut grid_hosts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    // Newest recording per host name; rows carry it so the console can replay
-    // an exited session instead of showing an empty pane.
+    // Newest recording per host name (shell hosts only: agent hosts run with
+    // `--no-record`); rows carry it so the console can replay an exited
+    // session instead of showing an empty pane.
     let recorded: std::collections::BTreeMap<String, crate::terminal::records::RecordEntry> =
         match state
             .terminal
