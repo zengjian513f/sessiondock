@@ -179,7 +179,7 @@ def main():
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
             "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "claude-cli-v1", "source": "claude", "executable": str(wrapper),
-                 "args": ["--settings", SETTINGS, "--reply", "--delay", "2500", "--busy-footer"], "new_args": ["--session-id", "{session_id}"],
+                 "args": ["--settings", SETTINGS, "--reply", "--delay", "2500", "--busy-footer", "--collapse-paste"], "new_args": ["--session-id", "{session_id}"],
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),

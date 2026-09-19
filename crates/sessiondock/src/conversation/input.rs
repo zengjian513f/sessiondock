@@ -166,11 +166,12 @@ where
                 editor_text(&screen).filter(|text| {
                     Some(text) != original.as_ref()
                         && !suffix.is_empty()
-                        && text
-                            .chars()
-                            .filter(|ch| !ch.is_whitespace())
-                            .collect::<String>()
-                            .ends_with(&suffix)
+                        && (driver::paste_placeholder(text)
+                            || text
+                                .chars()
+                                .filter(|ch| !ch.is_whitespace())
+                                .collect::<String>()
+                                .ends_with(&suffix))
                 })
             } else {
                 None
@@ -276,6 +277,26 @@ mod tests {
         let settled =
             format!("{transient}tab to queue message                    100% context left\n");
         assert!(classify("codex", &frame(&settled, (2, 4))).ready());
+    }
+
+    #[tokio::test]
+    async fn collapsed_multiline_paste_is_stable_editor_evidence() {
+        use std::future::ready;
+        let rule = "─".repeat(40);
+        let before = frame(&format!("welcome\n{rule}\n❯ \n{rule}\n"), (2, 2));
+        let pasted = frame(
+            &format!(
+                "welcome\n{rule}\n❯\u{a0}[Pasted\x1b[Ctext\x1b[C#1\x1b[C+3\x1b[Clines]\n{rule}\n"
+            ),
+            (27, 2),
+        );
+        let started = tokio::time::Instant::now();
+        wait_for_pasted_editor("claude", "first\nsecond\nthird\nfourth", &before, || {
+            ready(Ok(pasted.clone()))
+        })
+        .await
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
