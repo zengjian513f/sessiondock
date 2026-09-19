@@ -93,8 +93,10 @@ cargo run --locked -p sessiondock -- --initialize-delivery "$PWD/.runtime/delive
 
 ## 构建与检查
 
+绝不自行跑单元测试；改动用覆盖该功能的 headless 浏览器测试验证（没有就补）。
+全量清扫是 `python3 tests/run_validation.py`。
+
 ```sh
-cargo test --workspace --locked
 cargo build --workspace --release --locked
 node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs tests/media_lazy_contract.mjs
 

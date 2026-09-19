@@ -28,11 +28,9 @@ cd <SD_SOURCE>
 shasum -a 256 target/release/sessiondock target/release/ptyhost
 ```
 
-macOS 部署验证串行执行 Rust 测试，避免多个独立 fixture 同时持有大量目录和
-文件句柄而耗尽进程的句柄预算；所有用例和断言保持不变。
-
-M4 上全量 release 约 40 s。跑测试时 **必须** 把 `TMPDIR` 指到一个真实、短的目录，否则
-`/var/folders/...` 的符号链接会触发 launcher 的 `UnsafePath`，长路径会撞 socket 上限：
+默认部署验证不跑 `cargo test`。若用户明确要求单元测试，必须串行执行并把
+`TMPDIR` 指到一个真实、短的目录，否则 `/var/folders/...` 的符号链接会触发
+launcher 的 `UnsafePath`，长路径会撞 socket 上限：
 
 ```sh
 mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest ~/.cargo/bin/cargo test --workspace --no-fail-fast -- --test-threads=1

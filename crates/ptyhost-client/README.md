@@ -184,7 +184,9 @@ attach connection is separate from terminating its host/CLI process.
 
 ## Tests and remaining work
 
-The default `cargo test -p ptyhost-client` uses temporary directories, fake
+Do not run these crate tests as a default bug/feature gate; only when asked.
+
+`cargo test -p ptyhost-client` uses temporary directories, fake
 TCP/Unix listeners, and synthetic metadata only. No ptyhost binary, shell, paid
 CLI, home-directory session discovery, or production service is started.
 

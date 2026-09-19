@@ -72,9 +72,17 @@
 
 ## Validation
 
-- Rust: `cargo test --workspace --locked`.
-- Legacy: `node --test tests/legacy_contract.mjs`; build the server then run
-  `python3 tests/legacy_browser.py` (Playwright Chromium required, temporary fixtures).
+- After every feature or bug fix, run a headless Chromium suite that actually
+  exercises the changed path the way a user would: click, type, submit, open
+  the affected page. Pick the `*_browser.py` (or `--browser` parity) that
+  covers the surface; if none exists, add or extend one. HTTP, node, and
+  `--test` integration suites may accompany that run — they do not replace it.
+  Playwright Chromium is required; fixtures are temporary. A screenshot of a
+  render is not enough.
+- Never run unit tests on your own; validate the changed surface with the
+  headless browser suite that covers it.
+- Docs-only and deploy-script-only changes use the doc/deploy suites, not a
+  token browser run. Anything the page can show still needs the browser path.
 - Full sweep: `python3 tests/run_validation.py`. Use `--list`, `--dry-run`,
   `--tags` or `--only` to narrow it. See `docs/validation.md` for every suite.
 - Before committing docs, run `python3 tests/check_docs_links.py`.

@@ -114,12 +114,7 @@ earlier Info response do not replace the receiving process's envelope check.
 
 ## Validation
 
-`cargo test -p ptyhost --locked` covers valid pending operations and separate ACKs,
-all required identity fields and their format boundaries, generic errors, extra
-fields, malformed effects, mixed/nested guard refusal, unchanged legacy behavior,
-and no native-guard promotion.
-
-`crates/ptyhost/tests/host_launch_guard.rs` runs fixed free `/bin/sh` fixtures in
+`cargo test -p ptyhost --test host_launch_guard --locked` runs fixed free `/bin/sh` fixtures in
 private temporary `--dir` directories. It exercises real Info/attach/replay/send,
 rename with unchanged metadata, guarded cancellation, rejected side effects,
 missing metadata, and same-name replacement with stale instance or launch IDs.

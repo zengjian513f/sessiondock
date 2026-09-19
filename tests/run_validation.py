@@ -2,7 +2,8 @@
 """Validation runner for the sessiondock workspace.
 
 Replaces ad-hoc shell scripts. Discovers Node contract files and Python
-HTTP/browser suites at runtime after the fixed Rust checks. Never runs
+HTTP/browser suites at runtime after the fixed Rust checks. ``cargo_test``
+is excluded unless ``--include-unit`` or ``--only cargo_test``. Never runs
 paid CLIs or touches production data; the underlying tests use synthetic
 fixtures and loopback listeners only.
 
@@ -48,6 +49,7 @@ SKIP_MARK = "# run_validation: skip"
 SERIAL_MARK = "# run_validation: serial"
 # Rust checks that may run at the same time: each lane owns one cargo build
 # directory (target/debug, target/release, target/<triple>) or none.
+# cargo_test is in the clippy lane when --include-unit / --only cargo_test.
 RUST_LANES = [["cargo_test", "cargo_clippy"], ["cargo_build"], ["cargo_check_windows"], ["cargo_fmt"]]
 
 # name, argv, kind, timeout seconds, tags
@@ -91,7 +93,8 @@ def suites(binary, python_source):
     """Build the declarative SUITES list: rust, then node, then python."""
     items = []
     for name, argv, kind, timeout, tags in RUST:
-        items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags, "skip": None})
+        items.append({"name": name, "argv": argv, "kind": kind, "timeout": timeout, "tags": tags,
+                      "skip": None, "unit": name == "cargo_test"})
 
     contracts = sorted((ROOT / "tests").glob("*_contract.mjs"))
     node_argv = ["node", "--test"] + [str(p.relative_to(ROOT)) for p in contracts]
@@ -216,6 +219,8 @@ def main(argv=None):
                         help="parallel browser (Chromium) suites; kept low to avoid render contention")
     parser.add_argument("--include-real", action="store_true",
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
+    parser.add_argument("--include-unit", action="store_true",
+                        help="also run cargo_test (cargo test --workspace; excluded by default)")
     args = parser.parse_args(argv)
 
     wanted = set(csv(args.tags))
@@ -231,6 +236,9 @@ def main(argv=None):
             continue
         if suite.get("real") and not args.include_real:
             continue
+        if suite.get("unit") and not args.include_unit:
+            if only is None or suite["name"] not in only:
+                continue
         plan.append(suite)
 
     if args.rerun_failed:
