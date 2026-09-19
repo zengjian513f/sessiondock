@@ -2235,9 +2235,19 @@ function shouldUseTermWebgl(uid = T.uid) {
 
 /** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。
  *  只有宿主声明支持网格（term/list 行的 `grid:true`）才用；旧宿主进程自动回退 xterm.js。 */
+/** 这一行所在机器的控制台渲染：hub 按机器（中央注册表的 renderer），单机按本浏览器。默认服务端网格。 */
+function consoleRendererFor(row) {
+  if (HUB_MODE) {
+    const nid = row?.node_id || (typeof newNodeId === 'function' ? newNodeId() : '');
+    const node = [...(Nodes.machines || []), ...(Nodes.list || [])].find(n => n.id === nid);
+    return node?.renderer === 'xterm' ? 'xterm' : 'grid';
+  }
+  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
+}
+
 function consoleRendererIsGrid(name) {
-  if (store.get('consoleRenderer', 'xterm') !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
   const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
+  if (consoleRendererFor(row) !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
   // 列表里还没有这一行（刚创建的会话）：新宿主一定支持网格，按偏好来。
   // 已结束但有录制的会话：回放由服务端模型驱动，两种渲染都行，也按偏好来。
   // `grid` 未知（create 回执刚本地塞进列表、还没经 term/list 补全）同样按偏好；旧宿主服务端总是显式给 false。

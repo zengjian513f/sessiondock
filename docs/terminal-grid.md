@@ -334,9 +334,14 @@ because alacritty's ED 2 would push the cleared rows into scrollback.
 
 ## Main console
 
-The legacy console (`term.js`) can use the grid instead of xterm.js:
-settings → 控制台渲染 → 服务端网格 (`sessiondock.consoleRenderer`,
-default `xterm`, applied when a console view is next created).
+The legacy console (`term.js`) uses the grid by default and can fall back
+to xterm.js per machine: settings → 机器 → 控制台渲染 (`grid`, the default,
+or `xterm`; applied when a console view is next created). On a hub the
+choice is a display attribute of the machine's registry entry
+(`renderer`, [hub](hub.md)) and `term.js` reads it through the row's
+`node_id`; a single instance has no registry, so 本机 keeps it in the
+browser (`sessiondock.consoleRenderer`). A host started before the grid
+protocol existed reports `grid:false` and always gets xterm.js.
 `legacy-web/grid/facade.js` exports `GridTerm`, an xterm.js-compatible
 object (`write` of JSON-line text, `resize`, `buffer.active`, selection,
 `onData`, `onSelectionChange`, `onClipboard`, `proposeDimensions`, …)

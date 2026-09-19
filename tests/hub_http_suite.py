@@ -398,10 +398,19 @@ def run_cases(hub, a, b):
     passed("offline machine: 503 {error,node_offline,node_id,offline_since}, stale rows, inline recheck")
 
     status, body = hub.json("POST", f"/api/nodes/{NIDS['a']}/display", {"name": "机房 A", "color": "teal"})
-    if status != 200 or body["node"] != {"id": NIDS["a"], "name": "机房 A", "color": "teal", "enabled": True}:
+    if status != 200 or body["node"] != {"id": NIDS["a"], "name": "机房 A", "color": "teal", "enabled": True, "renderer": "grid"}:
         fail("display", "rename/recolour", json.dumps(body))
+    # The console renderer is a display attribute too: central, per machine, default grid.
+    status, body = hub.json("POST", f"/api/nodes/{NIDS['a']}/display", {"renderer": "xterm"})
+    _, nodes = hub.json("GET", "/api/nodes")
+    if status != 200 or body["node"]["renderer"] != "xterm" or nodes["nodes"][0]["renderer"] != "xterm" \
+            or nodes["machines"][0]["renderer"] != "xterm" or nodes["machines"][1]["renderer"] != "grid":
+        fail("display", "renderer", json.dumps([body, nodes]))
+    status, body = hub.json("POST", f"/api/nodes/{NIDS['a']}/display", {"renderer": ""})
+    if status != 200 or body["node"]["renderer"] != "grid":
+        fail("display", "renderer reset", json.dumps(body))
     for bad, hint in [({"name": ""}, "不能为空"), ({"color": "#ff0000"}, "机器颜色"), ({"name": "NodeB"}, "已有机器"),
-                      ({"enabled": "yes"}, "enabled")]:
+                      ({"enabled": "yes"}, "enabled"), ({"renderer": "tmux"}, "控制台渲染")]:
         status, body = hub.json("POST", f"/api/nodes/{NIDS['a']}/display", bad)
         if status != 400 or hint not in body["error"]:
             fail("display", f"{bad} → {status} {body}")
