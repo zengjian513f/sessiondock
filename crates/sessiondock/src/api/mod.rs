@@ -81,7 +81,9 @@ pub fn router() -> Router<AppState> {
         .route("/session/conversation/check", post(conversation::check))
         .route(
             "/session/conversation/attachment",
-            post(conversation::upload).layer(axum::extract::DefaultBodyLimit::disable()),
+            post(conversation::upload)
+                .get(conversation::staged)
+                .layer(axum::extract::DefaultBodyLimit::disable()),
         )
         .route(
             "/session/conversation/attachment/discard",
