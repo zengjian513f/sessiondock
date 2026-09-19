@@ -26,7 +26,7 @@ echo WEB_MIRRORED
 :launch
 del /q "%SD%\STOP" 2>nul
 del /q "%SD%\supervisor.lock" 2>nul
-echo ===LAUNCH_IN_SESSION1===
+echo ===LAUNCH_ON_DESKTOP===
 schtasks /delete /tn sd-restart-s1 /f >nul 2>&1
 schtasks /create /tn sd-restart-s1 /tr "explorer.exe %LNK%" /sc once /st 23:59 /it /f >nul
 schtasks /run /tn sd-restart-s1
