@@ -121,6 +121,17 @@ def to_list(page):
         page.wait_for_function('!document.body.classList.contains("mobile-detail")')
 
 
+def open_item_menu(page, uid):
+    page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")
+    page.locator("#item-menu").wait_for(state="visible")
+
+
+def session_depth(page, uid):
+    return page.evaluate(
+        "uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n ? +n.dataset.depth : null; }",
+        uid)
+
+
 def opened(page, uid, agent=None):
     page.wait_for_function("([uid, agent]) => S.sel === uid && S.agent === agent && _es && _esUid === uid",
                            arg=[uid, agent])
@@ -254,6 +265,30 @@ def check_page(page, uid, data, server, width):
     poll(page, server, "S.sessions.length === 5")
     to_list(page)
 
+    # Right-click: detach B from A, restore spawned_by nesting, attach E under A, cancel attach.
+    open_item_menu(page, B)
+    page.locator('#item-menu [data-act="detach"]').click()
+    page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=B)
+    assert session_depth(page, C) == 1
+    open_item_menu(page, B)
+    page.locator('#item-menu [data-act="reattach"]').click()
+    page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 1; }", arg=B)
+    assert session_depth(page, C) == 2
+    open_item_menu(page, E)
+    page.locator('#item-menu [data-act="attach"]').click()
+    page.wait_for_function("S.nestAttach && !document.querySelector('#side-tools').hidden")
+    page.locator("#side-pick-cancel").click()
+    page.wait_for_function("!S.nestAttach")
+    assert session_depth(page, E) == 0
+    open_item_menu(page, E)
+    page.locator('#item-menu [data-act="attach"]').click()
+    page.wait_for_function("S.nestAttach")
+    page.locator(f'#side .item[data-uid="{A}"]').click()
+    page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 1; }", arg=E)
+    open_item_menu(page, E)
+    page.locator('#item-menu [data-act="detach"]').click()
+    page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=E)
+
     # Off again: the flat list as before, no subagent rows.
     page.locator("#nest-toggle").click()
     back = rows()
@@ -304,7 +339,7 @@ def main():
             finally:
                 browser.close()
     print("PASS nest tree browser: tree/order/carets/marks from the backend's spawned_by, active and continued_in, "
-          "hidden continued-in parent, in-place refresh, desktop + 390px", flush=True)
+          "hidden continued-in parent, in-place refresh, detach/restore/attach, desktop + 390px", flush=True)
 
 
 if __name__ == "__main__":
