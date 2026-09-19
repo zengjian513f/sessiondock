@@ -98,6 +98,7 @@ const S = {
   retiredOutboxEpochs: new Set(), // 服务重启后拒收仍在网络中滞留的旧进程快照
   starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
   picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
+  nestAttach: '',     // 附属点选：等待点击父会话的子会话 uid；不持久化
   sig: null,          // 列表对应的磁盘签名
   lastSync: 0,
 };
@@ -1384,6 +1385,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.spawned_by || null,
+    m.nest_parent || null, !!m.nest_independent,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
   entry.meta = meta;
@@ -2454,6 +2456,7 @@ function mergeSessionMetaEvent(entry, session) {
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
     m.title, m.parent_title, m.sid, m.agent_type, !!m.starred, m.spawned_by || null,
+    m.nest_parent || null, !!m.nest_independent,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);
   const before = cache.get(viewKey(S.sel, S.agent));
@@ -2600,6 +2603,7 @@ function syncPickedSessions() {
 function setPicking(on) {
   S.picking = !!on;
   if (!S.picking) pickedSessions.clear();
+  if (S.picking) S.nestAttach = '';
   renderPickBar();
   const side = $('#side'), top = side.scrollTop;
   renderSide();
@@ -2654,9 +2658,20 @@ function pickAllVisible() {
 }
 
 function renderPickBar() {
-  const picked = S.picking ? pickedSessions.size : 0;
-  $('#side-tools').hidden = !S.picking;   // 不在选择模式时整条不占高度
+  const attaching = !!S.nestAttach;
+  $('#side-tools').hidden = !S.picking && !attaching;
   $('#side').classList.toggle('picking', S.picking);
+  $('#side').classList.toggle('attaching', attaching);
+  $('#side-pick-all').hidden = attaching;
+  $('#side-pick-delete').hidden = attaching;
+  if (attaching) {
+    const row = sidebarSessions().find(session => session.uid === S.nestAttach);
+    $('#side-picked').textContent = row
+      ? `点击要附属的会话（当前：${row.title || S.nestAttach}）`
+      : '点击要附属的会话';
+    return;
+  }
+  const picked = S.picking ? pickedSessions.size : 0;
   $('#side-picked').textContent = picked ? `已选 ${picked} 项` : '点会话行勾选';
   const pending = pendingTmuxSessions().filter(s => pickedSessions.has(s.uid)).length;
   const action = pending ? (pending === picked ? '丢弃' : '删除 / 丢弃') : '删除';
@@ -2769,7 +2784,7 @@ async function deletePickedSessions() {
   if (result.failed.length) { renderSide(); renderPickBar(); } else setPicking(false);
 }
 
-$('#side-pick-cancel').onclick = () => setPicking(false);
+$('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPicking(false);
 $('#side-pick-all').onclick = pickAllVisible;
 $('#side-pick-delete').onclick = deletePickedSessions;
 
@@ -2784,11 +2799,20 @@ let suppressItemClick = false;
 function openItemMenu(uid, x, y) {
   const menu = $('#item-menu');
   menuUid = uid;
-  const row = sidebarSessions().find(session => session.uid === uid);
+  const list = sidebarSessions();
+  const row = list.find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
   const running = sessionStoppable(uid);
+  const byKey = new Map(list.map(session => [spawnKey(session.node_id, session.source, session.sid), session]));
+  const nested = !!(row && nestParentOf(row, byKey));
+  const canRestore = !!(row?.spawned_by?.source && row.spawned_by.sid)
+    && (!!row.nest_independent || !!(row.nest_parent?.source && row.nest_parent.sid));
+  const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
   menu.querySelector('[data-act="stop"]').hidden = parent || row?.pending || !running;
   menu.querySelector('[data-act="hide"]').hidden = !parent;
+  menu.querySelector('[data-act="detach"]').hidden = !nestable || !nested;
+  menu.querySelector('[data-act="reattach"]').hidden = !nestable || !canRestore;
+  menu.querySelector('[data-act="attach"]').hidden = !nestable;
   menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running);
   menu.querySelector('[data-act="delete"]').textContent = row?.pending ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
@@ -2888,7 +2912,7 @@ $('#side').addEventListener('click', event => {
 
 $('#side').addEventListener('contextmenu', e => {
   const row = menuTarget(e);
-  if (!row || S.picking) return;      // 选择模式里点选就够了，不再叠一层菜单
+  if (!row || S.picking || S.nestAttach) return;      // 选择/附属点选里点选就够了，不再叠一层菜单
   e.preventDefault();
   openItemMenu(row.dataset.uid, e.clientX, e.clientY);
 });
@@ -2896,7 +2920,7 @@ $('#side').addEventListener('contextmenu', e => {
 $('#side').addEventListener('pointerdown', e => {
   if (e.pointerType === 'mouse') return;             // 鼠标走 contextmenu
   const row = menuTarget(e);
-  if (!row || S.picking) return;
+  if (!row || S.picking || S.nestAttach) return;
   longPress = { timer: 0, x: e.clientX, y: e.clientY };
   longPress.timer = setTimeout(() => {
     longPress.timer = 0;
@@ -2932,6 +2956,18 @@ $('#item-menu').onclick = async e => {
   if (!uid) return;
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
+    return;
+  }
+  if (button.dataset.act === 'detach') {
+    await setSessionNest(uid, {parent_uid: null, independent: true});
+    return;
+  }
+  if (button.dataset.act === 'reattach') {
+    await setSessionNest(uid, {parent_uid: null, independent: false});
+    return;
+  }
+  if (button.dataset.act === 'attach') {
+    setNestAttach(uid);
     return;
   }
   if (button.dataset.act === 'pick') {
@@ -3295,26 +3331,38 @@ for (const host of [$('#node-chips'), $('#chips')]) {
 // 会话由谁发起（spawned_by）是服务端从进程树看出来并记住的；这里只在同机器、
 // 同来源内按原生 sid 解析成列表里的那一行，和 forkAncestors 一个规矩。
 const spawnKey = (nodeId, source, sid) => JSON.stringify([nodeId || '', source, String(sid)]);
-function spawnParentOf(session, byKey) {
-  const parent = session.spawned_by;
-  if (!parent?.source || !parent.sid) return null;
-  const row = byKey.get(spawnKey(session.node_id, parent.source, parent.sid));
+
+/** 左栏实际用的父会话：手动附属优先，独立显示则没有父级，否则用 spawned_by。 */
+function nestSpecParent(session) {
+  if (session.nest_independent) return null;
+  if (session.nest_parent?.source && session.nest_parent.sid) {
+    return {parent: session.nest_parent, explicit: true};
+  }
+  if (session.spawned_by?.source && session.spawned_by.sid) {
+    return {parent: session.spawned_by, explicit: false};
+  }
+  return null;
+}
+
+function nestParentOf(session, byKey) {
+  const spec = nestSpecParent(session);
+  if (!spec) return null;
+  const row = byKey.get(spawnKey(session.node_id, spec.parent.source, spec.parent.sid));
   return row && row !== session ? row : null;
 }
 
-/** 分层模式下的树：每条会话直接发起的会话，以及哪些会话已挂在别人下面。
- *  发起者不在当前列表里（被筛掉、已删除）的会话仍作根显示。 */
-function nestTree(list) {
+function nestEdges(list) {
   const children = new Map(), nested = new Set();
-  if (!S.nest) return {children, nested};
   const byKey = new Map(list.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
   const parentOf = new Map();
   for (const s of list) {
-    const parent = spawnParentOf(s, byKey);
+    const spec = nestSpecParent(s);
+    if (!spec) continue;
+    const parent = nestParentOf(s, byKey);
     if (!parent) continue;
     // compact/continue 会另写一份 JSONL，新进程常继承旧会话的环境变量，
-    // spawned_by 会误把「同一条对话的续写」当成派出去的孩子。
-    if (parent.continued_in === s.uid) continue;
+    // spawned_by 会误把「同一条对话的续写」当成派出去的孩子。手动附属除外。
+    if (!spec.explicit && parent.continued_in === s.uid) continue;
     // 数据出环（A 由 B 发起、B 又由 A 发起）时后处理的那条留作根，树不会吞掉它
     let cur = parent, looped = false;
     for (let i = 0; cur && i < list.length; i++) {
@@ -3328,6 +3376,92 @@ function nestTree(list) {
     nested.add(s.uid);
   }
   return {children, nested};
+}
+
+/** 分层模式下的树：每条会话直接发起的会话，以及哪些会话已挂在别人下面。
+ *  发起者不在当前列表里（被筛掉、已删除）的会话仍作根显示。 */
+function nestTree(list) {
+  if (!S.nest) return {children: new Map(), nested: new Set()};
+  return nestEdges(list);
+}
+
+function nestDescendantUids(uid, list = sidebarSessions()) {
+  const {children} = nestEdges(list);
+  const out = new Set();
+  const walk = id => {
+    for (const child of children.get(id) || []) {
+      if (out.has(child.uid)) continue;
+      out.add(child.uid);
+      walk(child.uid);
+    }
+  };
+  walk(uid);
+  return out;
+}
+
+function applySessionNest(uid, nestParent, independent) {
+  for (const rows of [S.sessions, S.results || []]) {
+    const row = rows.find(session => session.uid === uid);
+    if (!row) continue;
+    if (nestParent) row.nest_parent = nestParent;
+    else delete row.nest_parent;
+    if (independent) row.nest_independent = true;
+    else delete row.nest_independent;
+  }
+}
+
+function setNestAttach(uid) {
+  S.nestAttach = uid || '';
+  if (S.nestAttach && S.picking) {
+    S.picking = false;
+    pickedSessions.clear();
+  }
+  const side = $('#side'), top = side.scrollTop;
+  renderPickBar();
+  renderSide();
+  side.scrollTop = top;
+}
+
+async function setSessionNest(uid, {parent_uid = null, independent = false} = {}) {
+  try {
+    const response = await fetch(appUrl('api/session/nest'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({uid, parent_uid, independent}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    applySessionNest(uid, data.nest_parent || null, !!data.nest_independent);
+    if (!data.nest_independent && !S.nest) {
+      S.nest = true;
+      store.set('nest', true);
+      renderView();
+    }
+    const side = $('#side'), top = side?.scrollTop || 0;
+    renderSide();
+    if (side) side.scrollTop = top;
+    return data;
+  } catch (error) {
+    alert('会话附属关系保存失败: ' + error.message);
+    return null;
+  }
+}
+
+async function pickNestParent(target) {
+  const uid = S.nestAttach;
+  if (!uid || !target?.uid) return;
+  if (target.uid === uid) return;
+  const child = sidebarSessions().find(session => session.uid === uid);
+  if (!child) { setNestAttach(''); return; }
+  if ((child.node_id || '') !== (target.node_id || '')) {
+    alert('只能附属到同一台机器上的会话');
+    return;
+  }
+  if (nestDescendantUids(uid).has(target.uid)) {
+    alert('不能附属到自己的子会话下面');
+    return;
+  }
+  const saved = await setSessionNest(uid, {parent_uid: target.uid, independent: false});
+  if (saved) setNestAttach('');
 }
 
 /** 一条会话连同它的子代理和它发起的会话，按活动时间倒序、还在跑的在前。 */
@@ -3496,7 +3630,8 @@ function agentRow(s, a, depth) {
   it.dataset.depth = depth;
   it.onclick = event => {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
-    if (!S.picking) openSession(s.uid, a.id);
+    if (S.nestAttach || S.picking) return;
+    openSession(s.uid, a.id);
   };
   paintAgentStatus(it);
   return it;
@@ -3526,6 +3661,25 @@ function paintAgentStatus(node) {
   badge.title = badge.ariaLabel = running ? '子代理运行中' : '';
 }
 
+/** Move `.sel` without rebuilding `#side`. Clicking a row used to call
+ *  `renderSide()`, which wipes the list and lets the scrollbar jump even when
+ *  membership is unchanged — worst at the bottom of a long date/nest list. */
+function paintSidebarSelection(uid, agent = null) {
+  const side = $('#side');
+  const row = !side ? null : agent
+    ? side.querySelector(`.item.agent[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  if (!row) {
+    const top = side?.scrollTop || 0;
+    renderSide();
+    if (side) side.scrollTop = top;
+    return false;
+  }
+  side.querySelectorAll('.item.sel').forEach(item => item.classList.remove('sel'));
+  row.classList.add('sel');
+  return true;
+}
+
 function renderSide() {
   if (sidebarTextSelectionProtected()) {
     sidebarRenderDeferred = true;
@@ -3534,6 +3688,7 @@ function renderSide() {
   sidebarRenderDeferred = false;
   renderSessionCounts();
   const side = $('#side');
+  const top = side.scrollTop;
   side.innerHTML = '';
   const list = visible();
   const picked = syncPickedSessions();
@@ -3543,6 +3698,7 @@ function renderSide() {
       ? (S.results ? '没有活动的匹配会话' : '没有活动会话')
       : (S.results ? '没有匹配的会话' : '没有会话');
     side.appendChild(el('div', 'empty', text));
+    side.scrollTop = top;
     return;
   }
   for (const [key, rows] of groupBy(list)) {
@@ -3583,7 +3739,8 @@ function renderSide() {
                               + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
                               + (!s.pending && S.live.has(s.uid) ? ' live' : '')
                               + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
-                              + (pickable && picked.has(s.uid) ? ' picked' : ''),
+                              + (pickable && picked.has(s.uid) ? ' picked' : '')
+                              + (S.nestAttach === s.uid ? ' nest-source' : ''),
         `${nestLeadMarkup(r)}
          ${pickable ? `<input type="checkbox" class="item-pick" tabindex="-1"
            ${picked.has(s.uid) ? 'checked' : ''} aria-label="选中「${esc(s.title)}」">` : ''}
@@ -3602,6 +3759,7 @@ function renderSide() {
       if (s.pending) it.dataset.tmuxName = s.tmuxName;
       it.onclick = event => {
         if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+        if (S.nestAttach) { void pickNestParent(s); return; }
         if (pickable) return toggleSessionPick(s.uid);
         if (S.picking) return;
         s.pending ? openPendingSession(s) : openSession(s.uid);
@@ -3624,6 +3782,7 @@ function renderSide() {
     if (groupBox) paintGroupPick(g);
   }
   fitTimelineDirectories();
+  side.scrollTop = top;
 }
 
 function searchTerms(text) {
@@ -3861,7 +4020,7 @@ async function openSession(uid, agent = null, {exact = false} = {}) {
   clearUnread(uid);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
-  renderSide();
+  paintSidebarSelection(uid, selectedAgent);
 
   const key = viewKey(uid, selectedAgent);
   const hit = cacheGet(key);
@@ -8200,6 +8359,7 @@ $('#setting-cache').onchange = e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!$('#item-menu').hidden) return closeItemMenu();
+  if (S.nestAttach) return setNestAttach('');
   if (S.picking) return setPicking(false);
   $('#q').blur();
 });
