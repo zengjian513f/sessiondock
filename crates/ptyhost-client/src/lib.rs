@@ -34,8 +34,8 @@ pub use association::{
 };
 pub use bound::BoundTarget;
 pub use dto::{
-    CaptureKind, CaptureReply, ControlOp, ControlReply, CursorReply, ExitReason, HostEvent,
-    SessionSummary, TerminalSize,
+    AttachMode, CaptureKind, CaptureReply, ControlOp, ControlReply, CursorReply, ExitReason,
+    GridRowsReply, HostEvent, SessionSummary, TerminalSize,
 };
 pub use launch::LaunchTarget;
 pub use native_binding::{NativeBinding, NativeBindingState};
@@ -341,12 +341,27 @@ impl HostClient {
     }
 
     pub async fn attach(&self, name: &str, size: TerminalSize, replay: bool) -> Result<Attachment> {
+        self.attach_mode(name, size, replay, AttachMode::Bytes)
+            .await
+    }
+
+    /// `attach` with an explicit stream mode (`Grid` streams JSON lines, no byte replay).
+    pub async fn attach_mode(
+        &self,
+        name: &str,
+        size: TerminalSize,
+        replay: bool,
+        mode: AttachMode,
+    ) -> Result<Attachment> {
         validate_name(name)?;
         timeout(self.limits.operation_timeout, async {
             let record = self.read_record(name).await?.ok_or(Error::NotFound)?;
             let mut stream = self.connect(&record).await?;
-            let body = json!({"op": "attach", "token": record.token.as_deref().unwrap_or_default(),
+            let mut body = json!({"op": "attach", "token": record.token.as_deref().unwrap_or_default(),
                               "cols": size.cols(), "rows": size.rows(), "replay": replay});
+            if mode == AttachMode::Grid {
+                body["mode"] = json!("grid");
+            }
             wire::send_json(&mut stream, &body, self.limits.max_line_bytes).await?;
             let mut buffer = Vec::new();
             let reply =
@@ -610,6 +625,9 @@ fn parse_reply(operation: ControlOp, value: Value) -> Result<ControlReply> {
             .map_err(|_| Error::InvalidReply),
         ControlOp::Cursor => serde_json::from_value(value)
             .map(ControlReply::Cursor)
+            .map_err(|_| Error::InvalidReply),
+        ControlOp::GridRows { .. } => serde_json::from_value(value)
+            .map(ControlReply::GridRows)
             .map_err(|_| Error::InvalidReply),
         ControlOp::Paste { .. } => {
             let bracketed = value

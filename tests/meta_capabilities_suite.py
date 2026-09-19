@@ -32,7 +32,7 @@ BASE = {
     "mutations": False, "hub": False,
     "media": True, "media_remote": True, "media_lazy": True, "history_pages": True,
     "media_continuation": True, "history_semantics": "limited_native",
-    "terminal_transport": False, "terminal_create": False, "terminal_pending": False,
+    "terminal_transport": False, "terminal_records": False, "terminal_create": False, "terminal_pending": False,
     "terminal_bind": False, "terminal_takeover": False, "terminal_complete_dir": False,
     "terminal_backend": False, "metadata": False, "files_jobs": False,
     "file_thumbnails": False, "outbox_read": False,
@@ -199,7 +199,7 @@ def main():
             check("audit", opener, base, audit=True)
         host = mkdir(root, "host")
         with running("host-dir", corpus, binary, host_dir=host) as (base, opener):
-            check("host-dir", opener, base, terminal=True, terminal_transport=True,
+            check("host-dir", opener, base, terminal=True, terminal_transport=True, terminal_records=True,
                   terminal_backend=True, terminal_input=True, files_write={"actions":["upload", "cancel", "mkdir", "new-file", "rename", "move"], "conflicts":["error", "keep", "skip"], "delete":"trash", "chunk_bytes":8*1024*1024, "job_bytes":1024**4, "max_items":2000}, files_jobs=True)
         shared = mkdir(root, "shared")
         with running_env("overlap-compatible", binary, corpus, {

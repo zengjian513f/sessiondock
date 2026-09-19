@@ -40,6 +40,7 @@ read helper for `store.get`, `nodesOff` and typography.
 | `live` | `true` where native process discovery is supported | when false the page skips `/api/live` (“运行状态未知”); when true `/api/live` merges managed observations with native process discovery | [liveness.md](liveness.md), [processes.md](processes.md) |
 | `terminal` | true when `SESSIONDOCK_PTYHOST_DIR` opens TerminalService | notice + 3s term-list poll if `live` is false | [terminal-ownership.md](terminal-ownership.md) |
 | `terminal_transport` | same as `terminal` | no `config`/`allows` gate | [terminal-ownership.md](terminal-ownership.md) |
+| `terminal_records` | same as `terminal` | recording list/replay availability; the main console opens replay from the session row's `recording` field | [terminal-records.md](terminal-records.md) |
 | `terminal_backend` | same as `terminal` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_create` | true when lifecycle opens (`SESSIONDOCK_LIFECYCLE_DIR` + launcher) | unhides `#new-session`; notice “受控创建已配置” | [lifecycle-integration.md](lifecycle-integration.md) |
 | `terminal_pending` | same as `terminal_create` | no `config`/`allows` gate | [lifecycle-http.md](lifecycle-http.md) |

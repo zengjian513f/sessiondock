@@ -1152,6 +1152,40 @@ impl Core {
                 })
                 .await;
         }
+        // SSH/shell gets the same graceful stage a session stop gives a CLI:
+        // EOF first (a shell at its prompt exits at once), the guarded stop
+        // only if it is still there after [`GRACEFUL_WAIT`].
+        if record.spec().source() == Source::Shell {
+            let grace = (Instant::now() + GRACEFUL_WAIT).min(deadline);
+            let _ = tokio::time::timeout_at(
+                grace,
+                self.client.request_launch(
+                    &target,
+                    ControlOp::Keys {
+                        keys: vec!["C-d".into()],
+                    },
+                ),
+            )
+            .await;
+            let exited = loop {
+                if self.stop.is_cancelled() || Instant::now() >= grace {
+                    break false;
+                }
+                match self.probe(&record, grace).await {
+                    Observation::Exited => break true,
+                    Observation::Unavailable | Observation::Running => self.pause(grace).await,
+                }
+            };
+            if exited {
+                return self
+                    .work(move |store| {
+                        store
+                            .finish_cancel(authority, Observation::Exited)
+                            .map_err(Error::Store)
+                    })
+                    .await;
+            }
+        }
         // Exactly one kill attempt per durable cancel intent. Even a timeout or
         // missing ACK can follow an applied kill; later requests only observe.
         let _ = tokio::time::timeout_at(

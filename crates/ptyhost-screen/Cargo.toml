@@ -1,0 +1,10 @@
+[package]
+name = "ptyhost-screen"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "终端模型（alacritty_terminal 封装）与服务端网格抽取：宿主实时会话与 Web 服务的录制回放共用同一个模拟器"
+
+[dependencies]
+alacritty_terminal = { version = "0.26.0", default-features = false }
+serde_json = "1"

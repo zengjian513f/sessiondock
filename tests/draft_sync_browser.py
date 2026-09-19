@@ -207,8 +207,10 @@ def main():
                     wait_server_text(context, base, shell_uid, 'quit')
                     a.locator('#csend').click()
                     wait_server_text(context, base, shell_uid, '')
-                    a.wait_for_function('async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }', arg=shell['record_id'], timeout=30000)
-                    expect(a.locator(f'#side .item[data-uid="{shell_uid}"]')).to_have_count(0)
+                    # The session list is the index of recordings: the exited console stays
+                    # listed (not running, with its recording) but leaves no server draft.
+                    a.wait_for_function('async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }', arg=shell['record_id'], timeout=30000)
+                    expect(a.locator(f'#side .item[data-uid="{shell_uid}"]')).to_have_count(1)
                     listed = context.request.get(base + '/api/session/conversation/drafts').json()['drafts']
                     assert not any(row['uid'] == shell_uid for row in listed), listed
                     assert not errors, errors

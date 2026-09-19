@@ -402,20 +402,20 @@ test('unread rows carry only a count; the badge colour comes from the current st
   S.live.add('u2');
   same(badge('u2'), {classes: ['counted', 'visible'], text: '2', title: '2 条新内容，运行中'});
   S.liveTmux.add('u2');
-  same(badge('u2'), {classes: ['counted', 'tmux', 'visible'], text: '2', title: '2 条新内容，tmux 会话运行中'});
+  same(badge('u2'), {classes: ['counted', 'tmux', 'visible'], text: '2', title: '2 条新内容，受管会话运行中'});
   same(badge('none'), {classes: ['idle'], text: '', title: '会话运行中'});   // not visible: neither live nor counted
   S.live.add('none');
   same(badge('none'), {classes: ['visible'], text: '', title: '会话运行中'});
-  same(badge('pending', 'sessiondock-x'), {classes: ['tmux', 'visible'], text: '', title: 'tmux 会话运行中'});
+  same(badge('pending', 'sessiondock-x'), {classes: ['tmux', 'visible'], text: '', title: '受管会话运行中'});
 });
 
-test('liveStatusTitle says unknown without the live capability and tmux/direct with it', () => {
+test('liveStatusTitle says unknown without the live capability and managed/direct with it', () => {
   const rust = fn('liveStatusTitle', {SessionDockCapabilities: {config: {backend: 'rust'}, allows: () => false}});
   assert.equal(rust(false), '运行状态未知，尚未实现进程探测');
   assert.equal(rust(true), '运行状态未知，尚未实现进程探测');
   const python = fn('liveStatusTitle', {SessionDockCapabilities: {config: {}, allows: () => true}});
   assert.equal(python(false), '运行中');
-  assert.equal(python(true), '运行于 tmux');
+  assert.equal(python(true), '运行于受管终端');
 });
 
 test('composer attachment paths follow the destination node, including Windows drives and UNC', () => {

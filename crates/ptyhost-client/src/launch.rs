@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::time::timeout;
 
+use crate::AttachMode;
 use crate::{
     Attachment, ControlOp, ControlReply, Error, HostClient, HostObservation, LaunchIdentity,
     LaunchState, Result, Source, TerminalSize,
@@ -215,6 +216,18 @@ impl HostClient {
         size: TerminalSize,
         replay: bool,
     ) -> Result<Attachment> {
+        self.attach_launch_mode(target, size, replay, AttachMode::Bytes)
+            .await
+    }
+
+    /// `attach_launch` with an explicit stream mode (`Grid` streams JSON lines).
+    pub async fn attach_launch_mode(
+        &self,
+        target: &LaunchTarget,
+        size: TerminalSize,
+        replay: bool,
+        mode: AttachMode,
+    ) -> Result<Attachment> {
         timeout(self.limits.operation_timeout, async {
             let record = self
                 .read_record(target.name())
@@ -224,10 +237,14 @@ impl HostClient {
                 return Err(Error::IdentityChanged);
             }
             let mut stream = self.connect(&record).await?;
-            let body = target.envelope(
-                record.token.as_deref(),
-                json!({"op":"attach","cols":size.cols(),"rows":size.rows(),"replay":replay}),
-            );
+            let body = target.envelope(record.token.as_deref(), {
+                let mut request =
+                    json!({"op":"attach","cols":size.cols(),"rows":size.rows(),"replay":replay});
+                if mode == AttachMode::Grid {
+                    request["mode"] = json!("grid");
+                }
+                request
+            });
             wire::send_json(&mut stream, &body, self.limits.max_line_bytes).await?;
             let mut buffer = Vec::new();
             let reply =

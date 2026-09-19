@@ -19,6 +19,7 @@ fn node(row: &Value) -> Node {
         name: row["name"].as_str().unwrap().to_string(),
         color: None,
         enabled: None,
+        renderer: None,
     }
 }
 

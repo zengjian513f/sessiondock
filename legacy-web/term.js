@@ -383,7 +383,13 @@ async function fetchTermList() {
     T.home = data.home || '';
     T.backend = data.backend || '';
     T.backends = data.backends || [];
+    const hadSelected = String(S.sel || '').startsWith('tmux:')
+      && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
     T.pending = data.pending || [];
+    if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
+        && !T.discarding.has(String(S.sel).slice(5))
+        && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
+      pendingSelectionGone(String(S.sel).slice(5));
     if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
     if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
     if (SessionDockCapabilities.config.backend === 'rust') {
@@ -1603,16 +1609,37 @@ function workerStatusMessage(info) {
   return info.worker_error ? `${text}：${info.worker_error}` : text;
 }
 
+/** 启动型行（SSH 与代理的 receipt）唯一的状态来源。头部按钮、侧栏副标题、
+ *  右键菜单和等待页文案都从这里取值，不各自拿 state/running 推断。
+ *  本页刚观察到的宿主退出（T.ended，按实例）先于服务端落账生效，列表轮询
+ *  回来一份仍写着 running 的旧行也不会把按钮翻回"停止"。 */
+function pendingPhase(row) {
+  if (!row) return 'gone';
+  const ended = typeof T !== 'undefined' && T.ended?.get?.(`tmux:${row.name}`);
+  if (ended && (!row.instance_id || ended.instanceId === row.instance_id)) return 'exited';
+  if (row.state === 'exited') return 'exited';
+  if (row.state === 'failed') return 'failed';
+  if (row.state === 'cancel_requested') return 'stopping';
+  if (row.state === 'uncertain') return 'uncertain';
+  if (row.state === 'prepared' || row.state === 'starting') return 'starting';
+  if (row.running === false || row.stale) return 'stopping';
+  return 'running';
+}
+
 /** Sidebar meta text of a Rust pending row (other rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
   if (SessionDockCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
-  if (s.state === 'exited') return '实例已退出';
-  if (s.state === 'failed') return '启动失败';
-  if (s.state === 'cancel_requested') return '正在停止';
-  if (s.state === 'uncertain') return '运行状态不确定';
-  if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting')
+  if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting'
+      && pendingPhase(s) === 'running')
     return WORKER_STATUS_TEXT[s.worker_status] || s.worker_status;
-  return s.source === 'shell' ? '交互式终端' : '等待首条消息';
+  switch (pendingPhase(s)) {
+    case 'exited': return '已结束';
+    case 'failed': return '启动失败';
+    case 'stopping': return '正在停止';
+    case 'uncertain': return '运行状态不确定';
+    case 'starting': return '正在启动';
+    default: return s.source === 'shell' ? '交互式终端' : '等待首条消息';
+  }
 }
 
 // 等待页只说用户看得懂的事：启动、结束、停止、还没找到记录。关联方法、
@@ -1623,11 +1650,14 @@ const pendingFirstInput = new Map();
 function pendingStageMessage(info) {
   const worker = workerStatusMessage(info);
   if (worker) return worker;
-  if (info.state === 'prepared' || info.state === 'starting') return '正在启动…';
-  if (info.state === 'exited') return '会话已结束。';
-  if (info.state === 'failed') return '启动失败。';
-  if (info.state === 'cancel_requested' || (info.state === 'running' && !info.running)) return '正在停止…';
-  if (info.state === 'uncertain') return '暂时无法确认会话状态。';
+  switch (pendingPhase(info)) {
+    case 'starting': return '正在启动…';
+    case 'exited': return info.source === 'shell' && !info.recording?.id ? '会话已结束，没有留下录制。' : '会话已结束。';
+    case 'failed': return '启动失败。';
+    case 'stopping': return '正在停止…';
+    case 'uncertain': return '暂时无法确认会话状态。';
+    default: break;
+  }
   if (info.binding?.state === 'confirmed') return '正在打开会话…';
   if (info.source !== 'shell' && !info.declared_sid && pendingRecordMissing(info))
     return '会话在运行，但还没找到它的记录，终端可以继续用。';
@@ -1653,27 +1683,62 @@ function pendingSessionRow(name) {
     || null;
 }
 
+/** SSH 会话和代理会话同一套结构：运行中是"停止"（先 Ctrl-D，再宿主停止；行保留、
+ *  录制可回放），结束后是"删除"（discard，录制一并删）。其它待定行沿用"删除"（先停再丢弃）。 */
+function pendingShellRunning(row) {
+  return row?.source === 'shell' && pendingPhase(row) === 'running';
+}
+
+function pendingTitle(info) {
+  return info?.title || `新建 ${SOURCES[info?.source]?.name || ''} 会话`;
+}
+
 function renderPendingSessionAction(info, button = $('#a-session-action')) {
   if (!button || S.sel !== pendingUid(info.name)) return;
-  const current = pendingSessionRow(info.name) || info;
-  const label = '删除会话';
-  button.innerHTML = uiIcon('trash');
+  // 行已不在列表里（别的页面删了、或已归档）：按已结束处理，绝不按旧 receipt 显示"停止"。
+  const current = pendingSessionRow(info.name) || { ...info, running: false, stale: true, state: 'exited' };
+  const stop = pendingShellRunning(current);
+  const label = stop ? '停止会话' : '删除会话';
+  button.innerHTML = uiIcon(stop ? 'power' : 'trash');
   button.title = button.ariaLabel = label;
   if (typeof labelSessionAction === 'function') labelSessionAction(button);
-  button.onclick = () => deletePendingSession(current, button);
+  button.onclick = () => stop ? stopPendingSession(current, button) : deletePendingSession(current, button);
 }
 
 function refreshPendingStage(name) {
+  if (S.sel !== pendingUid(name)) return;
   const current = pendingSessionRow(name);
-  if (!current || S.sel !== pendingUid(name)) return;
+  if (!current) {
+    renderPendingSessionAction({ name, source: 'shell' });
+    return;
+  }
   const wait = $('.new-session-wait');
   if (wait) wait.textContent = pendingStageMessage(current);
   renderPendingSessionAction(current);
 }
 
+/** 本页观察到宿主退出后，页面立刻进入结束态（头部"删除"、副标题"已结束"），
+ *  并强制刷一次列表让服务端落账跟上；不等下一轮轮询。 */
+function notePendingEnded(name) {
+  const row = T.pending.find(row => row.name === name);
+  if (row) { row.running = false; row.stale = true; }
+  refreshPendingStage(name);
+  if (row && typeof renderSide === 'function') renderSide();
+  void loadTermList();
+}
+
+/** 选中的启动型行在两次列表之间从服务端消失（另一个页面删了它）：详情页不能
+ *  留着旧头部。 */
+function pendingSelectionGone(name) {
+  const info = T.pending.find(row => row.name === name) || { name };
+  discardAbandonedNewSession(info);
+  const detail = $('#detail');
+  if (detail && !S.sel) detail.innerHTML = '<div class="empty">该会话已被删除。</div>';
+}
+
 async function stopPendingSession(info, button) {
   if (SessionDockCapabilities.config.backend === 'rust') {
-    if (!confirm('停止这个会话？')) return;
+    if (!confirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
     if (button) button.disabled = true;
     try {
       const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
@@ -1694,6 +1759,8 @@ async function stopPendingSession(info, button) {
 }
 
 async function deletePendingSession(info, button) {
+  if (info.source === 'shell' && SessionDockCapabilities.config.backend === 'rust'
+      && !confirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
   if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
@@ -1749,7 +1816,8 @@ async function openPendingSession(info) {
     || (pending.running && !pending.stale);
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
-  if (pending.source === 'shell' && (running || retained))
+  // 已结束但有录制的 SSH 会话：控制台面板里只读回放它的录制。
+  if (pending.source === 'shell' && (running || retained || pending.recording))
     await openTermPane(pending.name, true, remembered ? null : 'collapsed');
   else if (remembered)
     await openTermPane(pending.name);
@@ -2056,6 +2124,8 @@ function activateTermView(view) {
   T.name = view.name;
   syncTermAliases(view);
   setScrollPos(view.scrollPos);
+  renderTimeline(view);
+  renderTermOutputNotice(view);
 }
 
 /** 只有显式打开终端的动作才能请求焦点；异步连接期间若用户已经点到别处，
@@ -2201,13 +2271,39 @@ function shouldUseTermWebgl(uid = T.uid) {
   return !String(uid || '').startsWith('tmux:');
 }
 
+/** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。
+ *  只有宿主声明支持网格（term/list 行的 `grid:true`）才用；旧宿主进程自动回退 xterm.js。 */
+/** 这一行所在机器的控制台渲染：hub 按机器（中央注册表的 renderer），单机按本浏览器。默认服务端网格。 */
+function consoleRendererFor(row) {
+  if (HUB_MODE) {
+    const nid = row?.node_id || (typeof newNodeId === 'function' ? newNodeId() : '');
+    const node = [...(Nodes.machines || []), ...(Nodes.list || [])].find(n => n.id === nid);
+    return node?.renderer === 'xterm' ? 'xterm' : 'grid';
+  }
+  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
+}
+
+function consoleRendererIsGrid(name) {
+  const row = (T.list || []).find(x => x.name === name) || (T.pending || []).find(x => x.name === name);
+  if (consoleRendererFor(row) !== 'grid' || typeof globalThis.GridTerm !== 'function') return false;
+  // 列表里还没有这一行（刚创建的会话）：新宿主一定支持网格，按偏好来。
+  // 已结束但有录制的会话：回放由服务端模型驱动，两种渲染都行，也按偏好来。
+  // `grid` 未知（create 回执刚本地塞进列表、还没经 term/list 补全）同样按偏好；旧宿主服务端总是显式给 false。
+  if (!row || row.grid == null || (row.running === false && row.recording?.id)) return true;
+  return row.grid === true;
+}
+
 function ensureTerm(name) {
   let view = T.views.get(name);
   if (view) return view;
   const host = el('div', 'xterm-view');
   host.hidden = true;
   $('#xterm').appendChild(host);
-  const term = new Terminal({
+  const grid = consoleRendererIsGrid(name);
+  const term = grid ? new GridTerm({
+    fontFamily: termFont(), fontSize: termFontSize(), theme: termTheme(),
+    cursorBlink: true, scrollback: 100000,
+  }) : new Terminal({
     allowProposedApi: true,
     fontFamily: termFont(),
     fontSize: termFontSize(), fontWeight: '400', fontWeightBold: '600',
@@ -2215,9 +2311,12 @@ function ensureTerm(name) {
     cursorBlink: true, scrollback: 10000,
     scrollOnUserInput: true, theme: termTheme(),
   });
-  const fit = new FitAddon.FitAddon();
+  // 网格外观层没有 FitAddon：按 #xterm 容器尺寸提议行列，其余流程不变。
+  const fit = grid
+    ? {proposeDimensions: () => term.proposeDimensions($('#xterm').clientWidth, $('#xterm').clientHeight)}
+    : new FitAddon.FitAddon();
   view = {
-    name, host, term, fit, ws: null, connectTimer: null, reconnectTimer: null,
+    name, host, term, fit, grid, ws: null, connectTimer: null, reconnectTimer: null,
     reconnectDelay: 500, scrollPos: 0, ansiTail: '',
     fitFrame: null,
     lastResizeKey: '', lastResizeWs: null,
@@ -2230,8 +2329,8 @@ function ensureTerm(name) {
     codexSideThread: false, sideThreadScanQueued: false,
   };
   T.views.set(name, view);
-  term.loadAddon(fit);
-  if (globalThis.Unicode11Addon?.Unicode11Addon) {
+  if (!grid) term.loadAddon(fit);
+  if (!grid && globalThis.Unicode11Addon?.Unicode11Addon) {
     try {
       view.unicode11 = new Unicode11Addon.Unicode11Addon();
       term.loadAddon(view.unicode11);
@@ -2250,7 +2349,18 @@ function ensureTerm(name) {
   // WebGL 初始化是同步的，软件渲染环境可能卡住几十秒。新建/待绑定会话必须
   // 先取得控制权并连上宿主，因此其首个 view 保持 DOM renderer。原生会话仍
   // 使用 WebGL 缓解 Codex DEC ?2026 重画在 Chromium/Wayland 下的中间帧。
-  if (shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
+  if (grid && typeof term.onClipboard === 'function') {
+    // 网格协议把 OSC 52 解码成文本送达；沿用 xterm 路径同一套剪贴板策略。
+    term.onClipboard(text => {
+      const bytes = new TextEncoder().encode(text);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      }
+      handleOsc52Clipboard(view, 'c;' + btoa(binary));
+    });
+  }
+  if (!grid && shouldUseTermWebgl() && globalThis.WebglAddon?.WebglAddon) {
     try {
       const webgl = new WebglAddon.WebglAddon();
       webgl.onContextLoss(() => {
@@ -2312,7 +2422,7 @@ function ensureTerm(name) {
     return true;
   });
   term.onData(d => {
-    if (T.name !== name) return;
+    if (T.name !== name || view.replay) return;   // 录制回放只读
     d = applyTermCtrl(d);
     d = stripOscColorReports(d);
     if (!d) return;
@@ -2359,6 +2469,11 @@ function ensureTerm(name) {
 // （实测 localhost p50 从 ~30 ms 降到 <1 ms，见 tests/bench_term_echo_browser.py）。
 function writeTermOutput(view, chunk) {
   if (!chunk) return;
+  // 网格视图收到的是 JSON 行，没有转义序列，也不需要攒同步帧。
+  if (view.grid) {
+    writeParsedTermOutput(view, chunk);
+    return;
+  }
   // 亮色页面只反射“深底/浅字”的显式颜色；Codex 已是浅色的 diff 保持原样。
   // 暗色页面与默认/ANSI 16 色仍交给 termTheme。xterm 会跨 write 保留 SGR 状态。
   chunk = terminalColorChunk(view, chunk);
@@ -2468,6 +2583,13 @@ function repaintTermView(view) {
 
 function performTermFit(view, forceSync = false) {
   if (!termPaneRenderable(view)) return;
+  // 录制回放按录制时的尺寸呈现，不随面板大小重排（服务端也不接受 resize）。
+  if (view.replay) {
+    const size = view.replaySize;
+    if (size && (view.term.cols !== size.cols || view.term.rows !== size.rows)) view.term.resize(size.cols, size.rows);
+    if (forceSync) repaintTermView(view);
+    return;
+  }
   // 软键盘会把 FitAddon 量到的行数砍掉一截。把这个尺寸发给 PTY 会让 CLI
   // 重排并丢掉编辑区，会话模式 CHECK/SEND 随即 409 cli_not_ready。网页已经
   // 按 visual viewport 让位，这里保持键盘收起时的行列，只把画面钉在提示符。
@@ -2795,6 +2917,15 @@ function handleTermRevoked(view, ip = '', by = '') {
   alert(`终端已被${describeTermTaker(by, ip)}抢占，本页面的终端已关闭。`);
 }
 
+function renderTermOutputNotice(view) {
+  const notice = $('#term-output-notice');
+  if (!notice) return;
+  const text = view?.outputNotice || '';
+  notice.textContent = text;
+  notice.hidden = !text;
+  $('#termpane')?.classList.toggle('output-incomplete', !!text);
+}
+
 function recordHostExit(view, uid, event) {
   if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const incomplete = event.code === 1011 && event.reason.startsWith('host output incomplete');
@@ -2809,10 +2940,16 @@ function recordHostExit(view, uid, event) {
   T.ended.set(uid, {instanceId: view.instanceId, reason});
   if (T.ended.size > 256) T.ended.delete(T.ended.keys().next().value);
   ConsoleUI.errors.set(uid, reason);
+  if (String(uid).startsWith('tmux:')) notePendingEnded(view.name);
   if (incomplete) {
-    // A truncated drain is a diagnostic: keep the pane with the tail and
-    // say inside the xterm why it is incomplete.
-    try { view.term.write(`\r\n${reason}\r\n`); } catch { /* disposed view */ }
+    // GridTerm accepts grid JSON, not terminal text. Keep its host screen
+    // intact and show the diagnostic beside it within the same console pane.
+    if (view.grid) {
+      view.outputNotice = reason;
+      if (T.name === view.name) renderTermOutputNotice(view);
+    } else {
+      try { view.term.write(`\r\n${reason}\r\n`); } catch { /* disposed view */ }
+    }
   } else {
     // AI sessions close the pane and return to the conversation. SSH/shell
     // has no archive, so the retained PTY stays the only surface.
@@ -2824,6 +2961,172 @@ function recordHostExit(view, uid, event) {
         && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
   }
   renderTakeoverBtn();
+  return true;
+}
+
+/** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行，xterm 视图收净化后的字节。 */
+/** 录制回放的时间轴：进度条、播放/暂停、倍速、跳到最新。只对当前视图画。 */
+function replayTimeElapsed(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
+  const mm = String(m).padStart(2, '0'), ss = String(sec).padStart(2, '0');
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderTimeline(view = currentTermViewObject()) {
+  const pane = $('#termpane');
+  const bar = $('#term-timeline');
+  if (!pane || !bar) return;
+  const tl = view?.replay ? view.timeline : null;
+  pane.classList.toggle('replay', !!tl);
+  if (!tl) return;
+  const span = Math.max(0, tl.end - tl.start);
+  const seek = $('#tl-seek');
+  if (!tl.scrubbing) seek.value = span ? String(Math.round((tl.clock - tl.start) / span * 1000)) : '1000';
+  const at = tl.scrubbing ? tl.start + Number(seek.value) / 1000 * span : tl.clock;
+  $('#tl-time').textContent = `${replayTimeElapsed(at - tl.start)} / ${replayTimeElapsed(span)}`;
+  const play = $('#tl-play');
+  play.textContent = tl.playing ? '❚❚' : '▶';
+  play.title = play.ariaLabel = tl.playing ? '暂停' : (tl.atEnd ? '从头播放' : '播放');
+  $('#tl-speed').value = String(tl.speed);
+  $('#tl-live').hidden = !tl.live;
+}
+
+function timelineSend(view, message) {
+  const ws = view?.ws;
+  if (!view?.replay || ws?.readyState !== 1) return false;
+  ws.send(JSON.stringify(message));
+  return true;
+}
+
+function timelineSeekTo(view, unixMs) {
+  const tl = view.timeline;
+  tl.playing = false;
+  tl.clock = unixMs;
+  timelineSend(view, { t: 'seek', unix_ms: Math.round(unixMs) });
+}
+
+function bindTimeline() {
+  const seek = $('#tl-seek');
+  if (!seek) return;
+  let debounce = null;
+  const view = () => { const v = currentTermViewObject(); return v?.replay && v.timeline ? v : null; };
+  const target = v => v.timeline.start + Number(seek.value) / 1000 * Math.max(0, v.timeline.end - v.timeline.start);
+  seek.addEventListener('pointerdown', () => { const v = view(); if (v) v.timeline.scrubbing = true; });
+  seek.addEventListener('input', () => {
+    const v = view();
+    if (!v) return;
+    v.timeline.scrubbing = true;
+    renderTimeline(v);
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { const w = view(); if (w === v) timelineSeekTo(v, target(v)); }, 120);
+  });
+  seek.addEventListener('change', () => {
+    const v = view();
+    if (!v) return;
+    clearTimeout(debounce);
+    v.timeline.scrubbing = false;
+    timelineSeekTo(v, target(v));
+    renderTimeline(v);
+  });
+  $('#tl-play').addEventListener('click', () => {
+    const v = view();
+    if (!v) return;
+    const tl = v.timeline;
+    if (tl.playing) { tl.playing = false; timelineSend(v, { t: 'pause' }); }
+    else { tl.playing = true; tl.atEnd = false; timelineSend(v, { t: 'play', speed: tl.speed }); }
+    renderTimeline(v);
+  });
+  $('#tl-speed').addEventListener('change', e => {
+    const v = view();
+    if (!v) return;
+    v.timeline.speed = Number(e.target.value) || 1;
+    if (v.timeline.playing) timelineSend(v, { t: 'play', speed: v.timeline.speed });
+    renderTimeline(v);
+  });
+  $('#tl-live').addEventListener('click', () => {
+    const v = view();
+    if (!v) return;
+    v.timeline.playing = false;
+    timelineSend(v, { t: 'live' });
+    renderTimeline(v);
+  });
+}
+bindTimeline();
+
+function attachRecordingReplay(view, row, uid) {
+  const name = view.name;
+  view.replay = true;
+  view.revoked = true;               // 绝不能自动 claim 一个已退出的实例
+  view.keepOutput = true;
+  cancelTermReconnect(view);
+  dropTermSocket(view);
+  const url = (HUB_MODE && row.node_id)
+    ? new URL(`api/nodes/${encodeURIComponent(row.node_id)}/api/term/records/attach`, APP_BASE)
+    : new URL(appUrl('api/term/records/attach'));
+  url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.search = new URLSearchParams({id: row.recording.id, mode: view.grid ? 'grid' : 'bytes'});
+  const ws = new WebSocket(url.href);
+  ws.binaryType = 'arraybuffer';
+  view.ws = ws;
+  if (T.name === name) T.ws = ws;
+  const dec = new TextDecoder();
+  view.term.reset();
+  view.timeline = { start: 0, end: 0, clock: 0, live: !!row.recording.live, playing: false,
+    speed: view.timeline?.speed || 1, atEnd: false, scrubbing: false };
+  renderTimeline(view);
+  ws.onmessage = e => {
+    if (view.ws !== ws) return;
+    if (typeof e.data === 'string') {
+      let message = null;
+      try { message = JSON.parse(e.data); } catch {}
+      if (!message) return;
+      const tl = view.timeline;
+      if (message.t === 'timeline') {
+        tl.start = message.start_ms || 0; tl.end = message.end_ms || tl.start; tl.clock = tl.end;
+        tl.live = !!message.live;
+      } else if (message.t === 'clock') {
+        tl.clock = message.unix_ms || tl.clock;
+        if (message.end_ms) tl.end = Math.max(tl.end, message.end_ms);
+      } else if (message.t === 'record') {
+        // 每个 record 帧都是一份完整画面（打开、seek、跨缺口），先清屏再画。
+        if (message.cols && message.rows) {
+          view.replaySize = { cols: message.cols, rows: message.rows };
+          view.term.resize(message.cols, message.rows);
+        }
+        if (!view.grid) view.term.reset();
+        tl.clock = message.unix_ms || tl.clock;
+        tl.atEnd = false;
+      } else if (message.t === 'resize' && !view.grid && message.cols && message.rows) {
+        view.replaySize = { cols: message.cols, rows: message.rows };
+        view.term.resize(message.cols, message.rows);
+      } else if (message.t === 'gap') {
+        if (!view.grid) view.term.reset();
+      } else if (message.t === 'exit') {
+        const code = message.exit?.code;
+        ConsoleUI.errors.set(uid, `会话已结束（退出码 ${code}），这是它的录制回放，只读。`);
+        renderTakeoverBtn();
+      } else if (message.t === 'end') {
+        tl.atEnd = true; tl.playing = false;
+      }
+      renderTimeline(view);
+      return;
+    }
+    writeTermOutput(view, dec.decode(e.data, {stream: true}));
+  };
+  ws.onclose = () => {
+    if (view.ws !== ws) return;
+    view.ws = null;
+    if (T.name === name) T.ws = null;
+    view.ended = true;
+    if (!ConsoleUI.errors.get(uid)) ConsoleUI.errors.set(uid, '录制回放结束（只读）。');
+    renderTakeoverBtn();
+  };
+  ws.onerror = () => {
+    if (view.ws !== ws) return;
+    ConsoleUI.errors.set(uid, '录制回放连接失败。');
+    renderTakeoverBtn();
+  };
   return true;
 }
 
@@ -2846,6 +3149,14 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     : [...(T.list || []), ...(T.pending || [])]).find(row => row.name === name);
   const uid = row?.uid || T.uid;
   const bound = SessionDockCapabilities.config.backend === 'rust';
+  // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
+  // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
+  if (bound && row && row.running === false && row.recording?.id) return attachRecordingReplay(view, row, uid);
+  if (bound && row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
+    ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下录制。' : '实例已退出。');
+    renderTakeoverBtn();
+    return false;
+  }
   const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
   if (bound && ((!row?.uid && !launch) || !row.instance_id
       || (view.instanceId && view.instanceId !== row.instance_id))) {
@@ -2897,7 +3208,8 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   view.auditConnectionId = connectionId;
   wsUrl.search = new URLSearchParams({name, page: TERM_PAGE_ID, token,
                                       connection: connectionId, ...binding,
-                                      cols: String(cols), rows: String(rows)});
+                                      cols: String(cols), rows: String(rows),
+                                      ...(view.grid ? {mode: 'grid'} : {})});
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
   view.ws = ws;
@@ -2983,8 +3295,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       rememberTermOpen(name, false);
       const pending = T.pending.find(row => row.name === name && row.instance_id === view.instanceId);
       const reason = '此启动实例的输入授权已撤销，正在核对取消/退出状态；不会自动重新连接。';
-      if (pending) { pending.stale = true; pending.unavailable_reason = reason; }
+      if (pending) { pending.stale = true; pending.running = false; pending.unavailable_reason = reason; }
       ConsoleUI.errors.set(uid, reason);
+      if (pending) { refreshPendingStage(name); void loadTermList(); }
       // The host-performed stop (`session/stop` escalation, `term/kill`)
       // retires the lease before the exit is observed: AI sessions close the
       // pane like a host exit; SSH/shell keeps the retained PTY.
@@ -3144,6 +3457,8 @@ function deactivateTermView() {
   T.name = null;
   syncTermAliases();
   setTermCtrl(false);
+  renderTimeline(null);
+  renderTermOutputNotice(null);
 }
 
 function disposeTermView(name) {

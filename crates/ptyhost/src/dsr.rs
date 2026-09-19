@@ -19,6 +19,12 @@ pub enum Piece {
     },
     /// `ESC[5n`：报告设备状态，固定回 `ESC[0n`。
     DeviceOk,
+    /// 终端尺寸变化，由 `Session::resize` 按发生顺序插入队列；模型已即时改过尺寸，
+    /// 这里只为录制保序，不再作用于模型。
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
 }
 
 impl Piece {
@@ -129,7 +135,7 @@ impl Scanner {
 /// DSR 应答。CPR 的行列是 1 起算。
 pub fn reply(piece: &Piece, col: u16, row: u16) -> Option<Vec<u8>> {
     match piece {
-        Piece::Data(_) => None,
+        Piece::Data(_) | Piece::Resize { .. } => None,
         Piece::DeviceOk => Some(b"\x1b[0n".to_vec()),
         Piece::CursorReport { dec } => Some(if *dec {
             format!("\x1b[?{};{};1R", row + 1, col + 1).into_bytes()

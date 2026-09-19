@@ -4,7 +4,7 @@
 Build sessiondock and ptyhost first. The test opens only its fixture's slave
 descriptor, never creates descendants, and exercises console controls by normal
 browser clicks and keyboard input. WebSocket instrumentation only observes wire
-events; terminal assertions read the actual imported xterm buffer and DOM.
+events; terminal assertions read the actual xterm/grid buffer and DOM.
 """
 from contextlib import ExitStack
 import json
@@ -59,6 +59,7 @@ XTERM_TEXT = """() => [...T.views.values()].map(view => {
 SNAPSHOT = """uid => ({
   errors: ConsoleUI.errors.get(uid) || '',
   paneVisible: !document.querySelector('#termpane').classList.contains('hidden'),
+  inlineNotice: document.querySelector('#term-output-notice').textContent,
   buttonUnavailable: document.querySelector('#a-term').dataset.unavailable,
   text: [...T.views.values()].map(view => {
     const buffer = view.term?.buffer?.active;
@@ -70,7 +71,7 @@ SNAPSHOT = """uid => ({
 })"""
 
 
-def scenario(root, browser, incomplete):
+def scenario(root, browser, incomplete, renderer):
     for name in ["host", "work", "claude", "codex", "grok"]:
         (root / name).mkdir(mode=0o700)
     corpus = Corpus(root)
@@ -90,6 +91,8 @@ def scenario(root, browser, incomplete):
             slave = cleanup.enter_context(os.fdopen(descriptor, "wb", buffering=0))
         with isolated_server(corpus, BINARY, host_dir=root / "host") as (base, _):
             context = browser.new_context(viewport={"width":1280,"height":900}, service_workers="block")
+            context.add_init_script(
+                "localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(%s))" % json.dumps(renderer))
             cleanup.callback(context.close)
             context.route("**/*", lambda route: route.continue_()
                           if route.request.url.startswith(base + "/") else route.abort())
@@ -114,6 +117,7 @@ def scenario(root, browser, incomplete):
             expect(page.locator("#termpane")).to_be_visible()
             page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
             page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_SHELL_READY')")
+            assert page.evaluate("[...T.views.values()].every(view => view.grid === %s)" % ("true" if renderer == "grid" else "false"))
             assert len(claims) == 1 and claims[0]["uid"] == uid and claims[0]["instance_id"] == instance, claims
             keyboard = page.locator("#termpane .xterm-helper-textarea")
             keyboard.press_sequentially("quit")
@@ -129,6 +133,13 @@ def scenario(root, browser, incomplete):
             # Let normal live polling and the original 500 ms reconnect delay run.
             page.wait_for_timeout(1500)
             observed = page.evaluate(SNAPSHOT, uid)
+            notice = page.locator('#termpane #term-output-notice')
+            if incomplete and renderer == "grid":
+                expect(notice).to_be_visible()
+                expect(notice).to_contain_text("PTY drain timeout")
+                assert notice.evaluate("el => { const r = el.getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el; }")
+            else:
+                expect(notice).to_be_hidden()
             auto_dialogs = list(dialogs)
             automatic_claims = len(claims)
             expect(page.locator("#a-term")).to_be_visible()
@@ -156,7 +167,7 @@ def scenario(root, browser, incomplete):
                 page.wait_for_timeout(100)
                 observed["mobileClickDialogs"] = dialogs[before_click:]
                 observed["claimsAfterMobileClick"] = len(claims)
-            print(json.dumps({"scenario":"incomplete" if incomplete else "normal", **observed}, ensure_ascii=False), flush=True)
+            print(json.dumps({"renderer": renderer, "scenario":"incomplete" if incomplete else "normal", **observed}, ensure_ascii=False), flush=True)
 
             problems = []
             def check(ok, message):
@@ -181,7 +192,8 @@ def scenario(root, browser, incomplete):
                 check(why in close["reason"], "incomplete exit lost the specific wire reason")
                 check(why in observed["errors"], "ConsoleUI.errors lost the incomplete reason")
                 check(observed["paneVisible"] and "RS_DELAYED_FINAL_TAIL" in observed["text"], "delayed tail is no longer visible")
-                check(why in observed["text"], "xterm does not visibly explain incomplete output")
+                check(why in (observed["inlineNotice"] if renderer == "grid" else observed["text"]),
+                      "console does not visibly explain incomplete output")
                 check(any(why in dialog for dialog in observed["clickDialogs"]), "console click hides the specific incomplete reason")
                 check(any(why in dialog for dialog in observed["mobileClickDialogs"]), "mobile console click hides the specific incomplete reason")
             else:
@@ -224,14 +236,15 @@ def main():
             launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
         browser = playwright.chromium.launch(**launch)
         try:
-            for incomplete in [True, False]:
-                root = Path(temporary) / ("incomplete" if incomplete else "normal")
-                root.mkdir(mode=0o700)
-                failures.extend(scenario(root, browser, incomplete))
+            for renderer in ["xterm", "grid"]:
+                for incomplete in [True, False]:
+                    root = Path(temporary) / (renderer + ("-incomplete" if incomplete else "-normal"))
+                    root.mkdir(mode=0o700)
+                    failures.extend(f"{renderer}: {problem}" for problem in scenario(root, browser, incomplete, renderer))
         finally:
             browser.close()
     assert not failures, "; ".join(failures)
-    print("PASS terminal exit browser: complete UID/instance, xterm tail/error, hover/focus/click explanation, no automatic reclaim/input, normal EOF, explicit manual replacement, native fixture unchanged")
+    print("PASS terminal exit browser: xterm and grid, complete UID/instance, retained tail and visible error, hover/focus/click explanation, no automatic reclaim/input, normal EOF, explicit manual replacement, native fixture unchanged")
 
 
 if __name__ == "__main__":
