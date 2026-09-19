@@ -964,11 +964,13 @@ test('file resolution is gated and Python console availability remains unchanged
   const start = 'function consoleUnavailableReason';
   const rustGuard = "  // Rust: an unlinked session can only be resumed through an explicitly\n  // configured resume-capable CLI profile; otherwise no name-based guessing.\n  if (SessionDockCapabilities.config.backend === 'rust' && !linked\n      && !(SessionDockCapabilities.allows('terminal_takeover')\n        && cap?.resume_sources?.[sessionTermMeta(uid)?.source || String(uid).split(':')[0]]))\n    return '该会话没有通过完整 UID 和实例校验的运行中终端；不能按名称猜测关联。';\n";
   assert.ok(read('nodes.js').includes(rustGuard));
-  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // An exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  const replayGuard = "  if (typeof sessionRecordingReplayable === 'function' && sessionRecordingReplayable(uid))\n    return '';\n";
+  const exitGuard = "  if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {\n    // An exited instance leaves the button as \"接管会话\"\n    // whenever the source has a resume-capable CLI profile (the click starts\n    // a fresh `--resume`); only an unresumable source keeps the gray\n    // explanation. The exited xterm is never reclaimed automatically.\n    // A shell recording is the console itself, so it must not go gray.\n    const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];\n    const resumable = !String(uid).startsWith('tmux:') && cap?.enabled\n      && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]\n      && !linkedTermSession(uid, {followReplacement: true});\n    if (!resumable) return T.ended.get(uid).reason;\n  }\n";
+  assert.ok(read('nodes.js').includes(replayGuard));
   assert.ok(read('nodes.js').includes(exitGuard));
-  const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n  }\n";
+  const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) {\n      const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';\n      if (phase !== 'exited' && phase !== 'failed')\n        return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n    }\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
-  const compatible = read('nodes.js').replace(rustGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
+  const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
   // Availability stays compatible; the intentionally changed click handling is
   // exercised by hub_console_availability_browser.py and recorded in reference/README.md.
   const end = 'function bindConsoleButton';
@@ -1408,6 +1410,10 @@ test('SSH pending sessions open the PTY instead of staying on the conversation s
   await open({name:'ssh-kept',source:'shell',running:false,stale:true});
   assert.deepEqual(JSON.parse(JSON.stringify(calls)),
     [['conversation','ssh-kept'],['terminal','ssh-kept','collapsed'],['resolve','ssh-kept']]);
+  calls.length = 0;
+  await open({name:'ssh-rec',source:'shell',running:false,stale:true,recording:{id:'rec'}});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),
+    [['conversation','ssh-rec'],['terminal','ssh-rec','full'],['resolve','ssh-rec']]);
 });
 
 
@@ -1428,6 +1434,35 @@ test('SSH host exit keeps the PTY instead of returning to conversation', () => {
   assert.deepEqual(closed, []);
   // The page re-derives the row's state at once instead of waiting for a list poll.
   assert.deepEqual(noted, ['pane']);
+});
+
+
+test('SSH host exit with a recording starts read-only replay on the same pane', () => {
+  const replayed = [], closed = [];
+  const context = contextWithCapabilities(disabled, {
+    T: {
+      ended: new Map(), name: 'pane', mode: 'collapsed',
+      pending: [{name: 'pane', source: 'shell', recording: {id: 'rec'}}],
+      list: [], openViews: new Map([['pane', {mode: 'collapsed'}]]),
+    },
+    ConsoleUI: {errors: new Map()}, S: {sel: 'tmux:pane'},
+    cancelTermReconnect: () => {}, renderTakeoverBtn: () => {},
+    rememberTermOpen: () => {}, rememberTermLayout: () => {}, layoutTermPane: () => {},
+    attachRecordingReplay: (view, row, uid) => replayed.push([view.name, row.recording.id, uid]),
+    renderTimeline: () => {},
+    closeTermPane: (...args) => closed.push(args),
+    pendingUid: name => `tmux:${name}`,
+    showSessionStopNotice: () => {}, notePendingEnded: () => {},
+  });
+  loadFunction(context, 'sessionIsPtyOnly', read('term.js'));
+  loadFunction(context, 'startShellRecordingReplay', read('term.js'));
+  const exit = loadFunction(context, 'recordHostExit', read('term.js'));
+  const view = {name: 'pane', instanceId: 'instance'};
+  assert.equal(exit(view, 'tmux:pane', {code: 1000, reason: 'host exited'}), true);
+  assert.equal(view.keepOutput, true);
+  assert.equal(context.T.mode, 'full');
+  assert.deepEqual(closed, []);
+  assert.deepEqual(replayed, [['pane', 'rec', 'tmux:pane']]);
 });
 
 
