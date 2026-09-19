@@ -21,10 +21,17 @@ profile overrides this default. Shell launches have `launch_kind: fixed`, no
 native SID/UID, and no resume or native binding. They remain reopenable terminal
 rows without waiting for an AI conversation record. A node with only host
 configuration can offer this terminal without an AI CLI installation.
-Verified exit removes the shell row immediately. Only its lifecycle receipt
-remains on disk; terminal scrollback is bounded and held in the host's memory,
-and an exited shell has no resume operation. Shell-managed history files still
-follow the selected machine's shell configuration.
+An exited shell row stays listed until 删除, replaying its recording read-only
+([terminal records](terminal-records.md)); terminal scrollback itself is
+bounded and held in the host's memory, and an exited shell has no resume
+operation. Shell-managed history files still follow the selected machine's
+shell configuration.
+
+The host command line is `--dir <host dir> run --name <host name> --cwd <cwd>
+--meta <json> [--no-record] -- <argv>`. Only a shell session's host records its
+terminal ([terminal records](terminal-records.md)): every other source gets
+`--no-record`, because an agent session's record is its native transcript and
+the recording would be a second copy of the same output with no reader.
 
 The host and CLI executable paths must be usable absolute executable files, and
 the host directory must be usable by `ptyhost`. Executable symlinks are

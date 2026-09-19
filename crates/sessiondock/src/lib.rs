@@ -220,13 +220,21 @@ pub async fn prepare_app(
 }
 
 fn prepare_terminal(config: &Config) -> io::Result<Option<Arc<terminal::TerminalService>>> {
-    config
+    let service = config
         .ptyhost_dir
         .clone()
         .map(terminal::TerminalService::new)
         .transpose()
-        .map_err(io::Error::other)
-        .map(|service| service.map(Arc::new))
+        .map_err(io::Error::other)?;
+    if let Some(service) = &service {
+        // Agent hosts no longer record; sweep what earlier hosts left behind.
+        match terminal::records::remove_agent_leftovers(service.directory()) {
+            Ok(0) => {}
+            Ok(removed) => eprintln!("sessiondock: removed {removed} agent session recordings"),
+            Err(error) => eprintln!("sessiondock: agent recording sweep failed: {error}"),
+        }
+    }
+    Ok(service.map(Arc::new))
 }
 
 /// build_app's outputs the caller drives: the routers plus the services whose

@@ -506,9 +506,14 @@ impl Launcher {
             .args(["run", "--name", record.host_name(), "--cwd"])
             .arg(record.spec().cwd())
             .arg("--meta")
-            .arg(metadata.to_string())
-            .arg("--")
-            .args(argv);
+            .arg(metadata.to_string());
+        // Only a shell session is recorded: the recording is its archive. An
+        // agent session's record is its native transcript, so its host writes
+        // no `records/` directory (docs/terminal-records.md).
+        if record.spec().source() != Source::Shell {
+            command.arg("--no-record");
+        }
+        command.arg("--").args(argv);
         command
     }
 }

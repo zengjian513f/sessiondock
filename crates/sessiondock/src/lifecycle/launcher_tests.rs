@@ -1050,6 +1050,81 @@ fn existing_tab_named_working_directory_can_be_launched_and_completed() {
 }
 
 #[test]
+fn only_shell_hosts_record_their_terminal() {
+    let fixture = Fixture::new();
+    let root = fixture.directory.path();
+    // The host flags as `launch` assembles them, before the CLI argv.
+    let host_flags = |launcher: &Launcher, record: &Record| -> Vec<String> {
+        let argv = launcher.argv(record).unwrap();
+        let command = launcher.command(&launcher.host_binary, record, &argv);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap().to_owned())
+            .collect();
+        let end = args.iter().position(|arg| arg == "--").unwrap();
+        assert_eq!(args[end + 1..], strings(&argv)[..]);
+        args[..end].to_vec()
+    };
+
+    // A shell session: the recording is its archive, so the host records.
+    let mut json = fixture.json();
+    json["adapters"] = serde_json::json!([]);
+    let config = read_config(&fixture.config_file(json.to_string().as_bytes())).unwrap();
+    let launcher = Launcher::new(config).unwrap();
+    let spec = LaunchSpec::profile_new(Source::Shell, "shell".into(), &fixture.work).unwrap();
+    let mut store = LifecycleStore::initialize(&root.join("ledger")).unwrap();
+    let record = store.create("shell-record-request", &spec).unwrap().record;
+    let flags = host_flags(&launcher, &record);
+    assert!(!flags.iter().any(|flag| flag == "--no-record"), "{flags:?}");
+    assert_eq!(
+        flags[..2],
+        [
+            "--dir".to_string(),
+            root.join("host").to_str().unwrap().to_owned()
+        ]
+    );
+    assert_eq!(
+        flags[2..5],
+        [
+            "run".to_string(),
+            "--name".into(),
+            record.host_name().to_owned()
+        ]
+    );
+
+    // An agent session's record is its native transcript: the host writes none.
+    let launcher = Launcher::new(fixture.profiles()).unwrap();
+    for (source, profile, cwd) in [
+        (
+            Source::Claude,
+            "claude-cli-v1",
+            root.join("work/claude-area"),
+        ),
+        (Source::Codex, "codex-cli-v1", root.join("work/codex-area")),
+        // The legacy fixed-argv adapter is an agent too (Grok here).
+        (Source::Grok, "shell-v1", fixture.work.clone()),
+    ] {
+        let spec = if profile == "shell-v1" {
+            LaunchSpec::new(source, profile.into(), &cwd).unwrap()
+        } else {
+            LaunchSpec::profile_new(source, profile.into(), &cwd).unwrap()
+        };
+        launcher.validate_spec(&spec).unwrap();
+        let ledger = root.join(format!("ledger-{profile}"));
+        let mut store = LifecycleStore::initialize(&ledger).unwrap();
+        let record = store.create("agent-record-request", &spec).unwrap().record;
+        let flags = host_flags(&launcher, &record);
+        assert_eq!(
+            flags.iter().filter(|flag| *flag == "--no-record").count(),
+            1,
+            "{flags:?}"
+        );
+        assert_eq!(flags.last().map(String::as_str), Some("--no-record"));
+        assert_eq!(flags[flags.len() - 3], "--meta");
+    }
+}
+
+#[test]
 fn default_and_explicit_shells_use_fixed_argv_without_native_identity() {
     let fixture = Fixture::new();
     let mut json = fixture.json();
