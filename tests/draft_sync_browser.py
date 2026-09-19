@@ -2,10 +2,12 @@
 """Server drafts across two pages of one person: a second page opens the saved
 text without error, a refused save rebases instead of dying (the typing page
 wins), an idle page follows within the poll both ways, a staged attachment
-added on one page is sent from the other, that SEND empties the first page, and
-a console command sent from the composer clears the server draft. Runs the real
+added on one page is sent from the other, that SEND empties the first page, an
+image staged on one page is previewed on the other from the server's staged
+bytes, and a console command sent from the composer clears the server draft. Runs the real
 legacy composer against the fake Claude CLI plus a synthetic shell.
 """
+import base64
 import json
 import os
 import subprocess
@@ -19,6 +21,12 @@ from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from send_browser import SETTINGS, initialize, create_claude
 from lifecycle_http_suite import SHELL
+
+
+# 1x1 opaque PNG: the smallest real image an <img> will decode.
+PNG = base64.b64decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx'
+    '0gAAAABJRU5ErkJggg==')
 
 
 def draft(context, base, uid):
@@ -154,6 +162,31 @@ def main():
                     a.wait_for_function("document.querySelector('#cinput').value === '' && composerDraft().attachments.length === 0", timeout=6000)
                     assert not a.locator('.draft-save-error').count() and not b.locator('.draft-save-error').count()
 
+                    # 4b. An image staged on A is previewed on B from the
+                    #     server's staged bytes: a card that never held the File
+                    #     still shows a thumbnail instead of a broken image.
+                    a.locator('#cadd').click()
+                    with a.expect_file_chooser() as chooser:
+                        a.locator('#attach-menu [data-attach=image]').click()
+                    with a.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/attachment') as picture:
+                        chooser.value.set_files([{'name': 'shot.png', 'mimeType': 'image/png', 'buffer': PNG}])
+                    assert picture.value.status == 200, picture.value.text()
+                    upload_id = picture.value.json()['upload_id']
+                    a.evaluate('async () => await composerDraftWrites')
+                    b.wait_for_function("composerDraft().attachments.length === 1 && !!composerDraft().attachments[0].uploaded?.upload_id", timeout=6000)
+                    assert not b.evaluate('composerDraft().attachments[0].file instanceof File')
+                    b.wait_for_function("document.querySelector('#compose-items .draft-card .draft-thumb img')?.src.startsWith('blob:') || false", timeout=6000)
+                    served = context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=' + upload_id)
+                    assert served.status == 200 and served.body() == PNG, served.status
+                    assert served.headers['content-type'] == 'image/png', served.headers
+                    assert served.headers['x-content-type-options'] == 'nosniff', served.headers
+                    assert 'sandbox' in served.headers['content-security-policy'], served.headers
+                    # Staged bytes of an unknown id are not served.
+                    assert context.request.get(base + '/api/session/conversation/attachment?uid=' + uid + '&id=absent').status == 404
+                    b.evaluate('removeComposerAttachment(composerDraft().attachments[0].id)')
+                    b.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
+                    a.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
+
                     # 5. A console (SSH/shell) command sent from the composer clears
                     #    the server draft; the exited console leaves no
                     #    "retained draft" row behind.
@@ -183,7 +216,7 @@ def main():
                     context.close()
             finally:
                 browser.close()
-    print('PASS draft_sync_browser: second page reads without error, 409 rebase, idle follow both ways, cross-page staged attachment send, SEND empties the other page, console composer send clears the server draft')
+    print('PASS draft_sync_browser: second page reads without error, 409 rebase, idle follow both ways, cross-page staged attachment send, SEND empties the other page, staged image preview on a page without the File, console composer send clears the server draft')
 
 
 if __name__ == '__main__':

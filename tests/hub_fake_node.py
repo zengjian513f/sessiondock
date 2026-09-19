@@ -160,6 +160,9 @@ class NodeHandler(BaseHTTPRequestHandler):
             return self.watch(q)
         if u.path.startswith("/api/media/"):
             return self._send(200, PNG, "image/png")
+        # Staged conversation attachment bytes an editor preview reads back.
+        if u.path == "/api/session/conversation/attachment":
+            return self._send(200, PNG, "image/png")
         if u.path == "/api/term/attach":
             return self.attach()
         if u.path == "/api/trash":
