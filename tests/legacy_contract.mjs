@@ -146,6 +146,18 @@ test('terminal ownership force retry retains the exact captured binding', async 
   assert.equal(prompts[0], '该终端正由另一页面控制。\n\n是否抢占终端？');
 });
 
+test('composer takeover claims the captured terminal directly without a second prompt', async () => {
+  const calls = [];
+  const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
+    confirm: () => assert.fail('the explicit takeover button already authorizes the claim'),
+    post: async (_path, body) => {calls.push(body);return {token: 'new-lease'};}});
+  const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
+  assert.equal(await claim('name', 'codex:uid',
+    {uid: 'codex:uid', instance_id: 'captured-instance'}, false, true), 'new-lease');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{name: 'name', page: 'page', force: true,
+    uid: 'codex:uid', instance_id: 'captured-instance'}]);
+});
+
 test('an automatic pty restore never asks to take over a held terminal', async () => {
   const calls = [];
   const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
@@ -236,6 +248,44 @@ test('terminal takeover prompts describe the taker only by what is meaningful', 
   assert.equal(describe('', '203.0.113.7'), '另一页面（203.0.113.7）');
   assert.equal(describe('iPhone · Safari', ''), ' iPhone · Safari ');
   assert.equal(describe('iPhone · Safari', '203.0.113.7'), ' iPhone · Safari（203.0.113.7） ');
+});
+
+test('selecting an existing sidebar row does not rebuild the list', () => {
+  let renders = 0;
+  const selected = {classList: {removed: [], remove(value) { this.removed.push(value); }}};
+  const row = {classList: {added: [], add(value) { this.added.push(value); }}};
+  const agent = {classList: {added: [], add(value) { this.added.push(value); }}};
+  const side = {
+    scrollTop: 180,
+    querySelector(selector) {
+      if (selector.includes('data-agent')) return selector.includes('ag1') ? agent : null;
+      if (selector.includes('keep-me')) return row;
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === '.item.sel' ? [selected] : [];
+    },
+  };
+  const context = contextWithCapabilities(disabled, {
+    $: sel => sel === '#side' ? side : null,
+    CSS: {escape: value => encodeURIComponent(value)},
+    renderSide: () => { renders++; side.scrollTop = 0; },
+  });
+  const paint = loadFunction(context, 'paintSidebarSelection');
+  assert.equal(paint('claude:keep-me'), true);
+  assert.equal(renders, 0);
+  assert.equal(side.scrollTop, 180);
+  assert.deepEqual(selected.classList.removed, ['sel']);
+  assert.deepEqual(row.classList.added, ['sel']);
+
+  assert.equal(paint('claude:keep-me', 'ag1'), true);
+  assert.equal(renders, 0);
+  assert.deepEqual(agent.classList.added, ['sel']);
+
+  side.scrollTop = 180;
+  assert.equal(paint('claude:missing'), false);
+  assert.equal(renders, 1);
+  assert.equal(side.scrollTop, 180, 'fallback rebuild keeps the pixel offset');
 });
 
 test('selecting an existing pending terminal does not rebuild the full sidebar', () => {
@@ -623,6 +673,88 @@ test('private attachment uploads keep the exact session UID and stable upload ID
   assert.equal(query.get('id'),'file-id');
   assert.equal(query.get('name'),'新会话附件.txt');
   assert.equal(request.method,'POST');assert.equal(request.body,file);
+});
+
+test('a card restored from the server previews the staged bytes once', async () => {
+  const requests = [];
+  class TestURL extends URL {
+    static createObjectURL() { return 'blob:staged'; }
+    static revokeObjectURL() {}
+  }
+  const restored = {id: 'a1', kind: 'image', preview: '',
+    file: {name: 'shot.png', size: 70}, uploaded: {upload_id: 'a1', name: 'shot.png', size: 70}};
+  const uid = 'tmux:node~host';
+  let renders = 0;
+  const context = contextWithCapabilities(disabled, {
+    URL: TestURL, Blob, COMPOSER_PREVIEW_MAX_BYTES: 32 * 1024 * 1024,
+    appUrl: path => `http://sessiondock.test/${path}`,
+    composerDrafts: new Map([[uid, {attachments: [restored]}]]),
+    composerDraftOwner: value => value,
+    fetch: async url => {
+      requests.push(String(url));
+      return {ok: true, status: 200, blob: async () => new Blob(['png'])};
+    },
+  });
+  const preview = loadFunction(context, 'loadStagedComposerPreview', read('term.js'));
+  preview(restored, uid, () => renders++);
+  for (let tick = 0; tick < 20 && !restored.preview; tick++) await new Promise(done => setTimeout(done, 0));
+  assert.equal(requests.length, 1);
+  const url = new URL(requests[0]);
+  assert.equal(url.pathname, '/api/session/conversation/attachment');
+  assert.equal(url.searchParams.get('uid'), uid);
+  assert.equal(url.searchParams.get('id'), 'a1');
+  assert.equal(restored.preview, 'blob:staged');
+  assert.equal(renders, 1);
+  // The bytes are fetched once per card, and never for one that holds the File.
+  preview(restored, uid, () => renders++);
+  const local = {id: 'a2', kind: 'image', preview: 'blob:local',
+    file: new Blob(['x']), uploaded: {upload_id: 'a2'}};
+  preview(local, uid, () => renders++);
+  const huge = {id: 'a3', kind: 'image', preview: '',
+    file: {name: 'huge.png', size: 64 * 1024 * 1024}, uploaded: {upload_id: 'a3'}};
+  preview(huge, uid, () => renders++);
+  const unstaged = {id: 'a4', kind: 'image', preview: '', file: {name: 'x.png', size: 10}, uploaded: null};
+  preview(unstaged, uid, () => renders++);
+  assert.equal(requests.length, 1);
+  assert.equal(renders, 1);
+});
+
+test('vanished staged bytes stop retrying, a failed read tries again later', async () => {
+  const statuses = [404, 503];
+  const requests = [];
+  class TestURL extends URL {
+    static createObjectURL() { return 'blob:staged'; }
+    static revokeObjectURL() {}
+  }
+  const uid = 'tmux:node~host';
+  const cards = [{id: 'gone', kind: 'image', preview: '', file: {name: 'a.png', size: 9}, uploaded: {upload_id: 'gone'}},
+    {id: 'flaky', kind: 'image', preview: '', file: {name: 'b.png', size: 9}, uploaded: {upload_id: 'flaky'}}];
+  const context = contextWithCapabilities(disabled, {
+    URL: TestURL, Blob, COMPOSER_PREVIEW_MAX_BYTES: 32 * 1024 * 1024,
+    appUrl: path => `http://sessiondock.test/${path}`,
+    composerDrafts: new Map([[uid, {attachments: cards}]]),
+    composerDraftOwner: value => value,
+    fetch: async url => {
+      requests.push(String(url));
+      return {ok: false, status: statuses.shift(), blob: async () => new Blob([])};
+    },
+  });
+  const preview = loadFunction(context, 'loadStagedComposerPreview', read('term.js'));
+  for (const card of cards) {
+    preview(card, uid, () => {});
+    for (let tick = 0; tick < 20 && !card.previewRetryAt; tick++) await new Promise(done => setTimeout(done, 0));
+  }
+  assert.equal(requests.length, 2);
+  assert.equal(cards[0].previewRetryAt, Infinity);
+  assert.ok(cards[1].previewRetryAt > Date.now() && cards[1].previewRetryAt < Date.now() + 120000);
+  // Neither card renders a broken image, and neither hammers the node.
+  for (const card of cards) preview(card, uid, () => {});
+  assert.equal(requests.length, 2);
+  cards[1].previewRetryAt = 0;
+  statuses.push(404);
+  preview(cards[1], uid, () => {});
+  for (let tick = 0; tick < 20 && requests.length < 3; tick++) await new Promise(done => setTimeout(done, 0));
+  assert.equal(requests.length, 3);
 });
 
 test('explicit false gates only the declared capability and namespaces Rust storage', () => {
@@ -1404,6 +1536,7 @@ test('a refused save rebases onto the server revision and the editing page wins'
   const draft={text:'phone typed',attachments:[],quotes:[],revision:4,editVersion:0,savedVersion:0,session:{uid:'uid'}};
   const posts=[];
   const context=vm.createContext({composerDraftOwner:uid=>uid,composerDrafts:new Map([['uid',draft]]),
+    BUG_REPORT_DRAFT_UID:'report:test',composerUid:'uid',renderSavedComposerInputs:()=>{},$:()=>({}),
     composerPendingSaves:new Map(),composerSaving:new Set(),composerSaveQueues:new Map(),composerDraftWrites:Promise.resolve(),
     conversationSendEnabled:()=>true,hydrateComposerDraft:async()=>{},refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{},
     readServerComposerDraft:async()=>({revision:7,value:{text:'laptop text',attachments:[],quotes:[]}}),
