@@ -30,7 +30,7 @@ let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone())
 
 ## 注册表（`registry.rs`）
 
-**文件** `hub-nodes.json`：JSON 数组，元素 `{url, token, id, name, color?, enabled?}`，
+**文件** `hub-nodes.json`：JSON 数组，元素 `{url, token, id, name, color?, enabled?, renderer?}`，
 2 空格缩进，0600，`.tmp` 同目录写入 + `fsync` + `rename`。`enabled` 缺省即启用，
 只有明确 `false` 才停用。启动时校验每个 `url` 和 `id`（32 hex），不合法拒绝启动；
 不存在的文件等于空表。
@@ -53,10 +53,14 @@ WebSocket 后仍在同一 TLS 流上双向转发。HTTP 与 HTTPS 都继续受�
 其他机器同名；颜色同上，空串清除；`enabled=false` 视同不存在（清缓存与健康状态，监控
 不再探它），`enabled=true` 恢复并重新加载磁盘快照、`nudge()`。`reorder(ids)` 必须是
 全部机器（含停用）各一次的排列；`reorder_json` 附带形状检查文案。
-`remove(nid)` 删除条目、缓存、健康状态和快照。
+`remove(nid)` 删除条目、缓存、健康状态和快照。`set_renderer(nid, renderer)`：这台机器的
+控制台渲染，`grid`（或空 = 默认，不落盘）/ `xterm`，其它值 400；设置页的
+`POST /api/nodes/{nid}/display` 接受 `renderer` 与 `name`/`color`/`enabled` 同一请求。
+它是展示属性：存在中央，所有浏览器一致；`term.js` 按行的 `node_id` 取它决定控制台
+用服务端网格还是 xterm.js（旧宿主自动回落 xterm）。
 
 **视图**：`all()`/`get()` 只含启用机器（聚合、监控、代理、uid 解析用）；`find()` 含停用
-（设置页用）；`public()` = 启用机器 `{id,name,color} ∪ health`（无健康记录时
+（设置页用）；`public()` = 启用机器 `{id,name,color,renderer} ∪ health`（无健康记录时
 `online:null`）；`machines()` = 全部机器加 `enabled`，停用者 `online:null`。两者都不含
 `url`/`token`。
 

@@ -447,7 +447,8 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
             id: NID_A.into(),
             name: "NodeA".into(),
             color: String::new(),
-            enabled: None
+            enabled: None,
+            renderer: "grid".into()
         }
     );
     assert_eq!(fake.hits().last().map(String::as_str), Some("/api/meta"));
@@ -502,7 +503,9 @@ async fn register_validates_then_asks_meta_and_keys_by_node_id() {
     let public = registry.public();
     assert_eq!(
         public,
-        vec![json!({"id": NID_A, "name": "Renamed", "color": "teal", "online": null})]
+        vec![
+            json!({"id": NID_A, "name": "Renamed", "color": "teal", "renderer": "grid", "online": null})
+        ]
     );
     assert!(!public[0].to_string().contains("token") && public[0].get("url").is_none());
     let reopened = open(dir.path());
@@ -566,7 +569,8 @@ async fn display_enabled_and_order_follow_python_rules_and_persist() {
             id: NID_A.into(),
             name: "机房 A".into(),
             color: "teal".into(),
-            enabled: Some(true)
+            enabled: Some(true),
+            renderer: "grid".into()
         }
     );
     assert_eq!(
@@ -576,6 +580,35 @@ async fn display_enabled_and_order_follow_python_rules_and_persist() {
             .name,
         "机房 A",
         "one field leaves the other"
+    );
+    assert_eq!(
+        registry.set_renderer(NID_A, "xterm").unwrap().renderer,
+        "xterm"
+    );
+    assert_eq!(registry.find(NID_A).unwrap().renderer(), "xterm");
+    assert_eq!(
+        registry.machines()[0]["renderer"],
+        "xterm",
+        "settings rows carry it"
+    );
+    assert_eq!(
+        registry.public()[0]["renderer"],
+        "xterm",
+        "public rows carry it"
+    );
+    assert!(matches!(
+        registry.set_renderer(NID_A, "tmux"),
+        Err(RegistryError::Invalid(_))
+    ));
+    assert_eq!(
+        registry.set_renderer(NID_A, "").unwrap().renderer,
+        "grid",
+        "empty = default"
+    );
+    assert_eq!(
+        registry.find(NID_A).unwrap().renderer,
+        None,
+        "the default is not stored"
     );
     assert_eq!(
         registry

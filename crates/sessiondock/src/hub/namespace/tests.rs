@@ -12,6 +12,7 @@ fn node() -> Node {
         name: "A".into(),
         color: None,
         enabled: None,
+        renderer: None,
     }
 }
 
