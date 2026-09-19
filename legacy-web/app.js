@@ -576,9 +576,9 @@ const el = (tag, cls, html) => {
 };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidden="true" style="color:${SOURCES[src].color}"><use href="#${SOURCES[src].icon}"/></svg>`;
-// 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=tmux）
+// 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端）
 const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
-  : tmux ? '运行于 tmux' : '运行中';
+  : tmux ? '运行于受管终端' : '运行中';
 const sessionIconMarkup = (src, live, tmux) => `<span class="ico">${icon(src)}<span
   class="item-status${live ? ' visible' : ''}${tmux ? ' tmux' : ''}" id="dlive"
   title="${esc(liveStatusTitle(tmux))}" aria-label="${esc(liveStatusTitle(tmux))}"></span></span>`;
@@ -2055,8 +2055,8 @@ function paintItemStatus(node) {
   badge.classList.toggle('tmux', tmux);
   badge.classList.toggle('idle', !active);
   badge.title = badge.ariaLabel = row.count
-    ? `${row.count} 条新内容，${!active ? '会话已退出' : tmux ? 'tmux 会话运行中' : '运行中'}`
-    : (tmux ? 'tmux 会话运行中' : '会话运行中');
+    ? `${row.count} 条新内容，${!active ? '会话已退出' : tmux ? '受管会话运行中' : '运行中'}`
+    : (tmux ? '受管会话运行中' : '会话运行中');
 }
 
 function addUnread(uid, count) {
@@ -7782,7 +7782,8 @@ $('#trash-dialog').addEventListener('click', e => {
 });
 
 // 终端后端是每台机器的服务端设置，不进 localStorage：换个浏览器看到的必须是同一份。
-// 机器的名称、配色和终端后端都保存在中央服务端；接入和移除机器仍是服务器操作。
+// 机器的名称、配色和控制台渲染都保存在中央服务端；接入和移除机器仍是服务器操作。
+// 非 hub 的单机没有注册表，"本机"的控制台渲染存在这个浏览器里。
 const MACHINE_COLORS = [
   ['', '默认'], ['blue', '蓝'], ['violet', '紫'], ['amber', '琥珀'], ['teal', '青'],
   ['rose', '玫红'], ['lime', '青柠'], ['cyan', '天蓝'], ['fuchsia', '品红'],
@@ -7791,9 +7792,9 @@ const MACHINE_COLORS = [
 function machineTargets() {
   if (typeof T === 'undefined' || !T.listLoaded) return [];
   if (!HUB_MODE) {
-    return T.enabled && (T.backends || []).length
-      ? [{id: '', name: '本机', color: '', online: true, local: true,
-          backends: T.backends, backend: T.backend}] : [];
+    return T.enabled
+      ? [{id: '', name: '本机', color: '', online: true, local: true, enabled: true,
+          renderer: localConsoleRenderer()}] : [];
   }
   // 按注册表顺序列全部机器，停用的原位留着（只剩勾选框能把它接回来），不往后挪
   const machines = Nodes.machines.length ? Nodes.machines : Nodes.list;
@@ -7802,7 +7803,7 @@ function machineTargets() {
     const cap = on ? Nodes.capabilities[node.id] || {} : {};
     return {id: node.id, name: node.name, color: node.color || '',
             online: on ? node.online : null, local: false, enabled: on,
-            backends: cap.backends || [], backend: cap.backend || ''};
+            terminal: !!cap.enabled, renderer: node.renderer === 'xterm' ? 'xterm' : 'grid'};
   });
 }
 
@@ -7970,35 +7971,27 @@ function machineRow(target) {
 
   const fields = document.createElement('div');
   fields.className = 'machine-fields';
-  const backend = document.createElement('select');
-  backend.className = 'machine-backend';
-  backend.setAttribute('aria-label', `${target.name} 的终端后端`);
-  if (!target.backends.length) {
+  const renderer = document.createElement('select');
+  renderer.className = 'machine-renderer';
+  renderer.setAttribute('aria-label', `${target.name} 的控制台渲染`);
+  for (const [value, label] of CONSOLE_RENDERERS) {
     const option = document.createElement('option');
-    option.textContent = target.enabled === false ? '已停用'
-      : target.online === false ? '离线' : '控制台未启用';
-    backend.append(option);
-    backend.disabled = true;
-  } else {
-    for (const item of target.backends) {
-      const option = document.createElement('option');
-      option.value = item.name;
-      option.textContent = item.label + (item.available ? '' : '（不可用）');
-      option.disabled = !item.available && item.name !== target.backend;
-      backend.append(option);
-    }
-    backend.value = target.backend || '';
-    backend.onchange = () => void chooseBackend(target, backend);
+    option.value = value;
+    option.textContent = label;
+    renderer.append(option);
   }
+  renderer.value = target.renderer || 'grid';
+  renderer.disabled = target.enabled === false;
+  renderer.onchange = () => void chooseRenderer(target, renderer);
   // 一行就是全部：说明都进悬停提示，不占高度
-  const blocked = target.backends.filter(b => !b.available);
-  backend.title = target.enabled === false
+  renderer.title = target.enabled === false
     ? '已停用：不显示、不检查，视同不存在；勾选后重新接入'
     : target.online === false
     ? (typeof nodeOfflineReason === 'function'
         ? nodeOfflineReason(Nodes.list.find(n => n.id === target.id) || {}) : '离线')
-    : ['新建会话用的控制台后端', ...blocked.map(b => `${b.label}不可用：${b.unavailable_reason}`)].join('；');
-  fields.append(backend);
+    : '这台机器上会话的控制台怎么画：服务端网格由宿主解析终端、浏览器只画格子；'
+      + 'xterm.js 由浏览器自己解析。部署前启动的旧宿主只能用 xterm.js，会自动回落。重新打开控制台后生效。';
+  fields.append(renderer);
   row.append(fields);
   return row;
 }
@@ -8140,18 +8133,27 @@ async function saveMachine(target, patch, control) {
   }
 }
 
-async function chooseBackend(target, select) {
-  const previous = target.backend;
+const CONSOLE_RENDERERS = [['grid', '服务端网格（默认）'], ['xterm', 'xterm.js（浏览器解析）']];
+function localConsoleRenderer() {
+  return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
+}
+
+async function chooseRenderer(target, select) {
+  const previous = target.renderer;
   if (select.value === previous) return;
+  const label = (CONSOLE_RENDERERS.find(([value]) => value === select.value) || [])[1] || select.value;
+  if (target.local) {
+    store.set('consoleRenderer', select.value);
+    target.renderer = select.value;
+    setMachineNote(`本机：控制台改用 ${label}（保存在此浏览器）；重新打开控制台后生效。`);
+    return;
+  }
   try {
-    const data = await machinePost(
-      (HUB_MODE && target.id ? `api/nodes/${target.id}/` : '') + 'api/term/backend',
-      {backend: select.value}, select);
-    target.backend = data.backend;
-    if (Array.isArray(data.backends)) target.backends = data.backends;
-    const label = (target.backends.find(b => b.name === data.backend) || {}).label || data.backend;
-    setMachineNote(`${target.name}：新建会话改用 ${label}；已在运行的会话不受影响。`);
-    if (typeof loadTermList === 'function') void loadTermList();
+    const data = await machinePost(`api/nodes/${target.id}/display`, {renderer: select.value}, select);
+    target.renderer = data.node?.renderer || select.value;
+    const node = [...Nodes.machines, ...Nodes.list].find(n => n.id === target.id);
+    if (node) node.renderer = target.renderer;
+    setMachineNote(`${target.name}：控制台改用 ${label}；重新打开控制台后生效。`);
   } catch (error) {
     select.value = previous;
     setMachineNote(`${target.name}：切换失败：${error.message || error}`, true);
@@ -8179,7 +8181,6 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
 
 function openSettings() {
   $('#setting-font').value = store.get('font', 'ubuntu');
-  $('#setting-console-renderer').value = store.get('consoleRenderer', 'xterm');
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
   $('#setting-cache').value = String(cacheLimitMb);
@@ -8193,7 +8194,6 @@ $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
-$('#setting-console-renderer').onchange = e => store.set('consoleRenderer', e.target.value);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
 $('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);
 $('#setting-cache').onchange = e => {

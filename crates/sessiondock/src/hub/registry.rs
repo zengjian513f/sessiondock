@@ -70,11 +70,25 @@ pub struct Node {
     /// 注册表里没写 enabled 的机器都算启用；只有设置页明确停用过才是 false。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// 这台机器的控制台渲染：`None`/`grid` = 服务端网格（默认），`xterm` = 浏览器解析。
+    /// 是展示属性，和名称、配色一样存在中央，所有浏览器一致。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renderer: Option<String>,
 }
+
+/// The console renderers a machine can be set to.
+pub const RENDERERS: [&str; 2] = ["grid", "xterm"];
 
 impl Node {
     pub fn enabled(&self) -> bool {
         self.enabled != Some(false)
+    }
+
+    pub fn renderer(&self) -> &str {
+        match self.renderer.as_deref() {
+            Some("xterm") => "xterm",
+            _ => "grid",
+        }
     }
 
     pub fn color(&self) -> &str {
@@ -225,6 +239,7 @@ pub struct NodeRow {
     pub color: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    pub renderer: String,
 }
 
 /// Node health as the monitor last saw it. Serialized keys are merged into
@@ -678,6 +693,7 @@ impl Registry {
             name: name.clone(),
             color: (!color.is_empty()).then_some(color.clone()),
             enabled: None,
+            renderer: None,
         };
         {
             let mut inner = self.lock();
@@ -701,6 +717,7 @@ impl Registry {
             name,
             color,
             enabled: None,
+            renderer: "grid".to_string(),
         })
     }
 
@@ -767,12 +784,40 @@ impl Registry {
                 name: node.name.clone(),
                 color: node.color().to_string(),
                 enabled: Some(node.enabled()),
+                renderer: node.renderer().to_string(),
             }
         };
         if wake {
             self.nudge();
         }
         Ok(row)
+    }
+
+    /// 设置页的“控制台渲染”：`grid`（或空 = 默认）/ `xterm`。
+    pub fn set_renderer(&self, nid: &str, renderer: &str) -> Result<NodeRow, RegistryError> {
+        let mut inner = self.lock();
+        let index = inner
+            .nodes
+            .iter()
+            .position(|node| node.id == nid)
+            .ok_or_else(|| RegistryError::NotFound(nid.to_string()))?;
+        let clean = renderer.trim().to_lowercase();
+        if !clean.is_empty() && !RENDERERS.contains(&clean.as_str()) {
+            return Err(invalid(format!(
+                "控制台渲染只能取 {}",
+                RENDERERS.join("、")
+            )));
+        }
+        inner.nodes[index].renderer = (clean == "xterm").then_some(clean);
+        self.save(&inner)?;
+        let node = &inner.nodes[index];
+        Ok(NodeRow {
+            id: node.id.clone(),
+            name: node.name.clone(),
+            color: node.color().to_string(),
+            enabled: Some(node.enabled()),
+            renderer: node.renderer().to_string(),
+        })
     }
 
     pub fn remove(&self, nid: &str) -> io::Result<()> {
@@ -1114,6 +1159,7 @@ impl Registry {
                 row.insert("id".into(), node.id.clone().into());
                 row.insert("name".into(), node.name.clone().into());
                 row.insert("color".into(), node.color().into());
+                row.insert("renderer".into(), node.renderer().into());
                 merge_health(&mut row, inner.health.get(&node.id));
                 Value::Object(row)
             })
@@ -1132,6 +1178,7 @@ impl Registry {
                 row.insert("id".into(), node.id.clone().into());
                 row.insert("name".into(), node.name.clone().into());
                 row.insert("color".into(), node.color().into());
+                row.insert("renderer".into(), node.renderer().into());
                 row.insert("enabled".into(), node.enabled().into());
                 merge_health(
                     &mut row,

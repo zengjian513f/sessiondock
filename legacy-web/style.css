@@ -418,7 +418,7 @@ header.header-fold-nodes #node-chips button + button { border-left: 0; border-to
 }
 .machine-row input[type="text"]:focus { outline: none; border-color: var(--accent); }
 .machine-row .machine-fields { display: flex; gap: 8px; align-items: center; }
-.machine-row .machine-backend { width: 118px; }
+.machine-row .machine-renderer { width: 168px; }
 .machine-row select {
   padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px;
   background: var(--panel-2); color: var(--text); font: inherit;

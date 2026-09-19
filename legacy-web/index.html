@@ -389,13 +389,6 @@
         <option value="consolas">Consolas / Consola</option>
       </select>
     </label>
-    <label class="setting-row" for="setting-console-renderer">
-      <span><b>控制台渲染</b><small>服务端网格由宿主解析终端、浏览器只画格子；重新打开控制台后生效</small></span>
-      <select id="setting-console-renderer">
-        <option value="xterm">xterm.js（浏览器解析）</option>
-        <option value="grid">服务端网格</option>
-      </select>
-    </label>
     <label class="setting-row" for="setting-theme">
       <span><b>颜色方案</b><small>可跟随操作系统自动切换</small></span>
       <select id="setting-theme">
@@ -413,7 +406,7 @@
     </label>
     <a class="avatar-credits" href="avatars/credits.html" target="_blank" rel="noopener">头像来源与许可</a>
     <label class="setting-row" for="setting-cache">
-      <span><b>历史缓存</b><small>tmux 对话固定驻留，不计入此上限</small></span>
+      <span><b>历史缓存</b><small>打开中的会话固定驻留，不计入此上限</small></span>
       <select id="setting-cache">
         <option value="64">64 MB</option>
         <option value="128">128 MB</option>
