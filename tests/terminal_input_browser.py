@@ -117,6 +117,9 @@ def main():
             browser = playwright.chromium.launch(**launch)
             try:
                 context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                # This suite exercises xterm's OSC parser and byte-input path;
+                # grid protocol input is covered by terminal_grid_browser.
+                context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify('xterm'))")
                 context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
                 errors, dialogs, sends, scrolls = [], [], [], []
 
@@ -135,6 +138,7 @@ def main():
                 capabilities = page.evaluate("SessionDockCapabilities.config")
                 assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
                 open_console(page, uid)
+                assert page.evaluate("[...T.views.values()].every(view => !view.grid)")
                 expect(page.locator("#composer")).to_be_hidden()
 
                 # ---- Remote OSC 52 copy: Claude emits this after a mouse

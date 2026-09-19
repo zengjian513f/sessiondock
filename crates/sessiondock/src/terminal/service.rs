@@ -13,8 +13,9 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
 };
 use ptyhost_client::{
-    AttachReader, AttachWriter, BoundTarget, CaptureKind, CaptureReply, ControlOp, ControlReply,
-    HostClient, HostEvent, LaunchState, LaunchTarget, Limits, SessionSummary, TerminalSize,
+    AttachMode, AttachReader, AttachWriter, BoundTarget, CaptureKind, CaptureReply, ControlOp,
+    ControlReply, GridRowsReply, HostClient, HostEvent, LaunchState, LaunchTarget, Limits,
+    SessionSummary, TerminalSize,
 };
 use serde::Deserialize;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, watch};
@@ -151,6 +152,8 @@ fn input_error(error: ptyhost_client::Error) -> TerminalError {
 }
 
 pub struct TerminalService {
+    /// The explicit, canonical ptyhost directory (recordings live under it).
+    directory: PathBuf,
     client: HostClient,
     registry: Arc<Registry>,
     limits: BridgeLimits,
@@ -275,7 +278,7 @@ impl TerminalService {
             ));
         }
         let client = HostClient::new(
-            directory,
+            directory.clone(),
             Limits {
                 max_line_bytes: 4 * 1024 * 1024, // ptyhost protocol::MAX_LINE; a 1 MiB send plus its guard envelope
                 // The host wire carries a u32 length and there is no
@@ -287,11 +290,16 @@ impl TerminalService {
         )
         .map_err(host_error)?;
         Ok(Self {
+            directory,
             client,
             registry: Arc::new(Registry::new()?),
             limits,
             gates: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
     }
 
     pub fn limits(&self) -> &BridgeLimits {
@@ -528,6 +536,38 @@ impl TerminalService {
     /// health counters, read under the exact lease and per-name gate like an
     /// input. The host first lets the model
     /// catch up with pending output; a nonzero `lag` means it did not.
+    /// Grid history rows `[from, to)` under the page's lease (read-only; the host
+    /// caps a page at 2000 rows).
+    pub async fn grid_rows(
+        &self,
+        name: &str,
+        page: &str,
+        token: &str,
+        expected: ExpectedTarget<'_>,
+        from: usize,
+        to: usize,
+    ) -> Result<GridRowsReply, TerminalError> {
+        ownership::validate_name(name)?;
+        ownership::validate_page(page)?;
+        let reply = self
+            .request_under_lease(
+                name,
+                page,
+                token,
+                expected,
+                ControlOp::GridRows { from, to },
+            )
+            .await?;
+        match reply {
+            ControlReply::GridRows(rows) => Ok(rows),
+            _ => Err(TerminalError::new(
+                503,
+                "terminal_unavailable",
+                "终端 host 未返回历史行",
+            )),
+        }
+    }
+
     pub async fn capture_screen(
         &self,
         name: &str,
@@ -659,6 +699,7 @@ impl TerminalService {
                 bound,
                 gate,
             },
+            mode: AttachMode::Bytes,
         })
     }
 }
@@ -680,6 +721,15 @@ impl Drop for LeaseGuard {
 pub struct PreparedAttachment {
     service: Arc<TerminalService>,
     guard: LeaseGuard,
+    /// Byte stream for xterm.js, or grid JSON lines for the server-grid page.
+    mode: AttachMode,
+}
+
+impl PreparedAttachment {
+    pub fn with_mode(mut self, mode: AttachMode) -> Self {
+        self.mode = mode;
+        self
+    }
 }
 
 impl PreparedAttachment {
@@ -729,10 +779,16 @@ impl PreparedAttachment {
         current(&self.guard)?;
         let attachment = match self.guard.bound.lease_target() {
             LeaseTarget::Native(target) => {
-                self.service.client.attach_bound(target, size, true).await
+                self.service
+                    .client
+                    .attach_bound_mode(target, size, true, self.mode)
+                    .await
             }
             LeaseTarget::Launch(target) => {
-                self.service.client.attach_launch(target, size, true).await
+                self.service
+                    .client
+                    .attach_launch_mode(target, size, true, self.mode)
+                    .await
             }
             LeaseTarget::Raw => {
                 // A previously raw reservation cannot attach a newly replaced
@@ -751,7 +807,7 @@ impl PreparedAttachment {
                 }
                 self.service
                     .client
-                    .attach(self.guard.bound.name(), size, true)
+                    .attach_mode(self.guard.bound.name(), size, true, self.mode)
                     .await
             }
         };

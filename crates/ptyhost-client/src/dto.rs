@@ -18,6 +18,26 @@ pub struct SessionSummary {
     pub owned: bool,
     pub server: &'static str,
     pub backend: &'static str,
+    /// The host accepts `mode:"grid"` attachments (false for hosts started
+    /// before the grid protocol existed).
+    pub grid: bool,
+}
+
+/// What an attachment streams back: raw pty bytes (xterm.js) or grid JSON lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum AttachMode {
+    #[default]
+    Bytes,
+    Grid,
+}
+
+impl AttachMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bytes => "bytes",
+            Self::Grid => "grid",
+        }
+    }
 }
 
 /// Nonzero PTY dimensions. Browser hidden-view/minimum-size policy belongs above this crate.
@@ -78,6 +98,11 @@ pub enum ControlOp {
         lines: usize,
     },
     Cursor,
+    /// Grid history rows `[from, to)` (absolute, 0 = oldest); the host caps a page at 2000.
+    GridRows {
+        from: usize,
+        to: usize,
+    },
     Rename {
         to: String,
     },
@@ -99,6 +124,15 @@ pub struct CaptureReply {
     pub resets: Option<u64>,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct GridRowsReply {
+    pub rows: Vec<serde_json::Value>,
+    pub from: usize,
+    pub to: usize,
+    pub total: usize,
+    pub lag: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct CursorReply {
     pub x: u16,
@@ -110,13 +144,14 @@ pub struct CursorReply {
     pub resets: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ControlReply {
     Ack,
     Info { info: SessionSummary, exited: bool },
     Paste { bracketed: bool },
     Capture(CaptureReply),
     Cursor(CursorReply),
+    GridRows(GridRowsReply),
     Renamed { name: String },
 }
 
@@ -163,6 +198,8 @@ pub(crate) struct HostRecord {
     pub sock: Option<String>,
     pub port: Option<u16>,
     pub token: Option<String>,
+    #[serde(default)]
+    pub grid: bool,
     #[serde(default, deserialize_with = "crate::association::deserialize_metadata")]
     pub meta: crate::association::Metadata,
 }
@@ -202,6 +239,7 @@ impl HostRecord {
             owned: true,
             server: "ptyhost",
             backend: "ptyhost",
+            grid: self.grid,
         })
     }
 }

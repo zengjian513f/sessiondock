@@ -20,8 +20,10 @@ use crate::output::{Client, DRAIN_TIMEOUT};
 use crate::protocol::{
     FRAME_DATA, FRAME_EXIT, FRAME_RESIZE, key_bytes, pack_frame, read_frames, recv_json, send_json,
 };
-use crate::screen::Screen;
+use crate::record::{RecordConfig, Recorder};
 use crate::transport::{Listener, Stream};
+use ptyhost_screen::Screen;
+use ptyhost_screen::grid;
 
 pub const BACKLOG_LIMIT: usize = 32 << 20;
 pub const SCREEN_SYNC_TIMEOUT: Duration = Duration::from_secs(2);
@@ -98,6 +100,16 @@ fn stop_owned_child(
     } else if pid > 0 {
         hup(pid);
     }
+}
+
+/// 屏幕线程的网格发送状态。
+#[derive(Default)]
+struct GridSync {
+    last: Option<grid::GridState>,
+    last_title: Option<String>,
+    seq: u64,
+    need_snapshot: bool,
+    policy: grid::FlushPolicy,
 }
 
 #[derive(Default)]
@@ -192,11 +204,21 @@ pub struct Session {
     boot_id: Option<String>,
     token: String,
     history: usize,
+    /// 录制器；打开失败或写盘失败后为 None / 内部 failed，会话照常运行。
+    record: Mutex<Option<Recorder>>,
     size: Mutex<(u16, u16)>,
     screen: Mutex<Screen>,
     backlog: Mutex<Backlog>,
     backlog_cv: Condvar,
     clients: Mutex<Vec<Arc<Client>>>,
+    /// 网格客户端：收 JSON 增量而不是原始字节；由屏幕线程发送。
+    grid_clients: Mutex<Vec<Arc<Client>>>,
+    /// 刚 attach、还没拿到首个快照的网格客户端。
+    grid_pending: Mutex<Vec<Arc<Client>>>,
+    /// finish 请求屏幕线程立刻 flush 网格增量，并等它完成（计数递增）。
+    grid_flush_request: AtomicBool,
+    grid_flush_done: Mutex<u64>,
+    grid_flush_cv: Condvar,
     next_client: AtomicU64,
     attachment_slots: AtomicUsize,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -276,6 +298,7 @@ impl Session {
         meta: Value,
         directory: PathBuf,
         history: usize,
+        record: Option<RecordConfig>,
     ) -> std::io::Result<Arc<Self>> {
         if argv.is_empty() {
             return Err(std::io::Error::new(
@@ -337,6 +360,25 @@ impl Session {
         } else {
             String::new()
         };
+        let recorder = record.and_then(|config| {
+            match Recorder::open(
+                &directory,
+                &name,
+                crate::record::now_unix_ms(),
+                &argv,
+                cwd.as_deref(),
+                &meta,
+                cols.max(1),
+                rows.max(1),
+                config,
+            ) {
+                Ok(recorder) => Some(recorder),
+                Err(error) => {
+                    eprintln!("ptyhost: 无法打开录制目录，本会话不录制: {error}");
+                    None
+                }
+            }
+        });
         let session = Arc::new(Self {
             name: Mutex::new(name),
             argv,
@@ -348,11 +390,17 @@ impl Session {
             boot_id: current_boot_id(),
             token,
             history,
+            record: Mutex::new(recorder),
             size: Mutex::new((cols.max(1), rows.max(1))),
             screen: Mutex::new(Screen::new(cols.max(1), rows.max(1), history)),
             backlog: Mutex::new(Backlog::default()),
             backlog_cv: Condvar::new(),
             clients: Mutex::new(Vec::new()),
+            grid_clients: Mutex::new(Vec::new()),
+            grid_pending: Mutex::new(Vec::new()),
+            grid_flush_request: AtomicBool::new(false),
+            grid_flush_done: Mutex::new(0),
+            grid_flush_cv: Condvar::new(),
             next_client: AtomicU64::new(1),
             attachment_slots: AtomicUsize::new(0),
             writer: Mutex::new(writer),
@@ -436,7 +484,8 @@ impl Session {
 
     pub fn info(&self) -> Value {
         let (cols, rows) = *lock(&self.size);
-        let attached = lock(&self.clients).iter().any(|c| !c.is_dead());
+        let attached = lock(&self.clients).iter().any(|c| !c.is_dead())
+            || lock(&self.grid_clients).iter().any(|c| !c.is_dead());
         let mut info = json!({
             "name": self.name_now(),
             "host_pid": std::process::id(),
@@ -450,8 +499,13 @@ impl Session {
             "attached": attached,
             "meta": self.meta,
             "backend": "ptyhost",
+            // 新宿主支持网格 attach（`mode":"grid"`）；旧宿主的记录里没有这个键。
+            "grid": true,
         });
         let map = info.as_object_mut().unwrap();
+        if let Some(recorder) = lock(&self.record).as_ref() {
+            map.insert("record".into(), recorder.info());
+        }
         if let Some(boot_id) = &self.boot_id {
             map.insert("boot_id".into(), json!(boot_id));
         }
@@ -549,25 +603,73 @@ impl Session {
     }
 
     fn screen_loop(self: Arc<Self>) {
+        let mut sync = GridSync::default();
         loop {
+            // 同步输出（DEC 2026）在模型里缓冲，`?2026l` 不来也得到期应用；
+            // 到期时刻先在 backlog 锁外读，锁序是 screen → backlog。
+            let sync_deadline = lock(&self.screen).sync_deadline();
             let piece = {
                 let mut backlog = lock(&self.backlog);
+                let mut woke_for_grid = false;
                 while backlog.queue.is_empty() {
                     if self.exited.load(Ordering::Relaxed) {
                         return;
                     }
+                    let now = Instant::now();
+                    let mut wait = Duration::from_millis(200);
+                    if let Some(deadline) = sync_deadline {
+                        let left = deadline.saturating_duration_since(now);
+                        if left.is_zero() {
+                            woke_for_grid = true;
+                            break;
+                        }
+                        wait = wait.min(left);
+                    }
+                    // 网格：有新客户端等快照、增量到期或 finish 要求立刻 flush，都要在没有新字节时醒来。
+                    if !lock(&self.grid_pending).is_empty()
+                        || sync.policy.due(now, true)
+                        || self.grid_flush_request.load(Ordering::Acquire)
+                    {
+                        woke_for_grid = true;
+                        break;
+                    }
+                    if let Some(left) = sync.policy.wait(now) {
+                        wait = wait.min(left.max(Duration::from_micros(200)));
+                    }
                     let (guard, _) = self
                         .backlog_cv
-                        .wait_timeout(backlog, Duration::from_millis(200))
+                        .wait_timeout(backlog, wait)
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     backlog = guard;
                 }
-                let piece = backlog.queue.pop_front().unwrap();
-                // 出队后仍计入 pending：在途块既不在队列也没进模型，
-                // attach 的回放必须把它算上，否则客户端会丢这一段。
-                backlog.inflight = Some(piece.clone());
-                piece
+                if woke_for_grid {
+                    None
+                } else {
+                    let piece = backlog.queue.pop_front().unwrap();
+                    // 出队后仍计入 pending：在途块既不在队列也没进模型，
+                    // attach 的回放必须把它算上，否则客户端会丢这一段。
+                    backlog.inflight = Some(piece.clone());
+                    Some(piece)
+                }
             };
+            let Some(piece) = piece else {
+                if lock(&self.screen).expire_sync() {
+                    sync.policy.note(Instant::now());
+                }
+                self.maybe_grid_flush(&mut sync);
+                continue;
+            };
+            // 录制锁跨越"喂模型 + 写帧"：finish 等 pending 归零后再取这把锁写 Exit，
+            // 于是 Exit 一定排在最后一段输出之后。checkpoint 必须取喂入之前的画面，
+            // 否则这段字节会既在快照里又被回放一遍。
+            let mut record = lock(&self.record);
+            if let Some(recorder) = record.as_mut() {
+                if recorder.needs_checkpoint() {
+                    let state = lock(&self.screen).replay_bytes(self.history);
+                    let (cols, rows) = *lock(&self.size);
+                    recorder.checkpoint(cols, rows, state);
+                }
+            }
             let answer = apply_screen_piece(
                 &self.screen,
                 &self.backlog,
@@ -575,10 +677,58 @@ impl Session {
                 #[cfg(test)]
                 || {},
             );
+            if let Some(recorder) = record.as_mut() {
+                match &piece {
+                    Piece::Data(bytes) => recorder.output(bytes),
+                    Piece::Resize { cols, rows } => recorder.resize(*cols, *rows),
+                    _ => {}
+                }
+                recorder.maybe_sync();
+            }
+            drop(record);
             self.backlog_cv.notify_all();
             if let Some(answer) = answer {
                 self.write_pty(&answer);
             }
+            // 模型自己应答的查询（DA、DECRQM、颜色……）：有 xterm.js 连着时由它答，
+            // 否则（只有网格客户端或无人连接）由模型答，应用才不会等到超时。
+            let responses = lock(&self.screen).take_responses();
+            if !responses.is_empty() && self.live_clients().is_empty() {
+                self.write_pty(&responses);
+            }
+            if self.has_grid_audience() {
+                match &piece {
+                    Piece::Data(_) => sync.policy.note(Instant::now()),
+                    Piece::Resize { .. } => {
+                        sync.need_snapshot = true;
+                        sync.policy.note(Instant::now());
+                    }
+                    _ => {}
+                }
+            }
+            self.maybe_grid_flush(&mut sync);
+        }
+    }
+
+    /// 到期（静默 1 ms / 上限 8 ms）或有新客户端等着时 flush；同步输出进行中不发。
+    fn maybe_grid_flush(&self, sync: &mut GridSync) {
+        if self.grid_flush_request.swap(false, Ordering::AcqRel) {
+            // 退出前的最后一帧：不等静默，立刻发。
+            self.grid_flush(sync);
+            *lock(&self.grid_flush_done) += 1;
+            self.grid_flush_cv.notify_all();
+            return;
+        }
+        let pending = !lock(&self.grid_pending).is_empty();
+        if !pending && !sync.policy.dirty() {
+            return;
+        }
+        if lock(&self.screen).sync_deadline().is_some() {
+            return;
+        }
+        let queue_empty = lock(&self.backlog).queue.is_empty();
+        if pending && !sync.policy.dirty() || sync.policy.due(Instant::now(), queue_empty) {
+            self.grid_flush(sync);
         }
     }
 
@@ -622,6 +772,25 @@ impl Session {
         // Drain the model for bytes already published; exited stays false while
         // it works. A timeout/read error cannot claim a complete PTY output tail.
         self.wait_applied(SCREEN_SYNC_TIMEOUT);
+        // 网格客户端还差最后一帧增量：让屏幕线程立刻 flush，再发 Exit。
+        if self.has_grid_audience() {
+            let target = *lock(&self.grid_flush_done) + 1;
+            self.grid_flush_request.store(true, Ordering::Release);
+            self.backlog_cv.notify_all();
+            let deadline = Instant::now() + Duration::from_millis(250);
+            let mut done = lock(&self.grid_flush_done);
+            while *done < target {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                let (guard, _) = self
+                    .grid_flush_cv
+                    .wait_timeout(done, left)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                done = guard;
+            }
+        }
 
         let code = {
             let mut child = lock(&self.child);
@@ -640,10 +809,15 @@ impl Session {
             }
         };
         self.exit_code.store(code, Ordering::SeqCst);
-        let clients: Vec<Arc<Client>> = std::mem::take(&mut *lock(&self.clients));
+        let mut clients: Vec<Arc<Client>> = std::mem::take(&mut *lock(&self.clients));
+        clients.extend(std::mem::take(&mut *lock(&self.grid_clients)));
+        clients.extend(std::mem::take(&mut *lock(&self.grid_pending)));
         let mut exit = json!({"code": code, "output_complete": reason.is_none()});
         if let Some(reason) = reason {
             exit["reason"] = json!(reason);
+        }
+        if let Some(recorder) = lock(&self.record).as_mut() {
+            recorder.exit(&exit);
         }
         let frame: Arc<[u8]> = pack_frame(FRAME_EXIT, exit.to_string().as_bytes()).into();
         let deadline = Instant::now() + DRAIN_TIMEOUT;
@@ -836,6 +1010,24 @@ impl Session {
                 Ok(json!({"ok": true}))
             }
             "capture" => self.capture(req),
+            "grid_rows" => {
+                // 网格历史分页：绝对历史行 [from, to)，0 = 最旧；一次最多 2000 行。
+                let from = req.get("from").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let to = req.get("to").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
+                let screen = lock(&self.screen);
+                let total = screen.history_len();
+                let to = to
+                    .min(total)
+                    .min(from.saturating_add(grid::SNAPSHOT_HISTORY_ROWS));
+                let rows: Vec<Value> = grid::history_rows(&screen, from, to)
+                    .iter()
+                    .map(|row| serde_json::from_str(row).unwrap_or(Value::Null))
+                    .collect();
+                Ok(json!({
+                    "ok": true, "rows": rows, "from": from, "to": to, "total": total, "lag": lag
+                }))
+            }
             "cursor" => {
                 let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
                 let dropped = lock(&self.backlog).dropped;
@@ -868,7 +1060,7 @@ impl Session {
         let lag = self.wait_applied(SCREEN_SYNC_TIMEOUT);
         let dropped = lock(&self.backlog).dropped;
         let (cols, rows) = *lock(&self.size);
-        let mut screen = lock(&self.screen);
+        let screen = lock(&self.screen);
         let text = if kind == "screen" {
             screen.screen_lines(styled, join)
         } else {
@@ -893,6 +1085,14 @@ impl Session {
             *size = (cols, rows);
         }
         lock(&self.screen).resize(cols, rows);
+        {
+            // 录制按队列顺序记尺寸变化；模型本身已在上面即时改过。
+            let mut backlog = lock(&self.backlog);
+            if !self.finishing.load(Ordering::Acquire) {
+                backlog.queue.push_back(Piece::Resize { cols, rows });
+                self.backlog_cv.notify_all();
+            }
+        }
         {
             let master = lock(&self.master);
             let _ = master.resize(PtySize {
@@ -925,6 +1125,9 @@ impl Session {
             *lock(&self.listener) = Some(Arc::new(fresh));
         }
         *lock(&self.name) = new.to_string();
+        if let Some(recorder) = lock(&self.record).as_mut() {
+            recorder.rename(new);
+        }
         self.write_info();
         #[cfg(unix)]
         {
@@ -982,9 +1185,10 @@ impl Session {
         prepared.acknowledge(&mut acknowledgement);
         let mut acknowledgement = acknowledgement.to_string().into_bytes();
         acknowledgement.push(b'\n');
+        let grid = req.get("mode").and_then(|v| v.as_str()) == Some("grid");
         let registered = with_replay_boundary(&self.screen, &self.backlog, |screen, backlog| {
             let mut replay = Vec::new();
-            if req.get("replay").and_then(|v| v.as_bool()).unwrap_or(true) {
+            if !grid && req.get("replay").and_then(|v| v.as_bool()).unwrap_or(true) {
                 replay.extend_from_slice(&screen.replay_bytes(self.history));
                 replay.extend_from_slice(&backlog.unapplied_bytes());
             }
@@ -996,11 +1200,18 @@ impl Session {
             if self.finishing.load(Ordering::Acquire) || !client.initialize(acknowledgement, replay)
             {
                 false
+            } else if grid {
+                // 首个快照由屏幕线程生成，才能与后续增量严格接续。
+                lock(&self.grid_pending).push(client.clone());
+                true
             } else {
                 lock(&self.clients).push(client.clone());
                 true
             }
         });
+        if grid && registered {
+            self.backlog_cv.notify_all();
+        }
         if !registered {
             client.disconnect();
             return;
@@ -1037,6 +1248,96 @@ impl Session {
 
     fn drop_client(&self, client: &Arc<Client>) {
         lock(&self.clients).retain(|c| c.id != client.id);
+        lock(&self.grid_clients).retain(|c| c.id != client.id);
+        lock(&self.grid_pending).retain(|c| c.id != client.id);
+    }
+
+    fn live_grid_clients(&self) -> Vec<Arc<Client>> {
+        lock(&self.grid_clients)
+            .iter()
+            .filter(|c| !c.is_dead())
+            .cloned()
+            .collect()
+    }
+
+    fn has_grid_audience(&self) -> bool {
+        !lock(&self.grid_pending).is_empty() || !self.live_grid_clients().is_empty()
+    }
+
+    /// 把一行网格 JSON 打成帧广播给一组客户端。
+    fn send_grid(clients: &[Arc<Client>], line: &str) {
+        let mut payload = Vec::with_capacity(line.len() + 1);
+        payload.extend_from_slice(line.as_bytes());
+        payload.push(b'\n');
+        let frame: Arc<[u8]> = pack_frame(FRAME_DATA, &payload).into();
+        for client in clients {
+            client.send(frame.clone());
+        }
+    }
+
+    /// 网格 flush：已有客户端收 diff（resize 后收 reset:false 的快照），
+    /// 新客户端收 reset:true 的快照并转正。只在屏幕线程调用。
+    fn grid_flush(&self, state: &mut GridSync) {
+        let pending: Vec<Arc<Client>> = std::mem::take(&mut *lock(&self.grid_pending));
+        let live = self.live_grid_clients();
+        lock(&self.grid_clients).retain(|c| !c.is_dead());
+        if pending.is_empty() && live.is_empty() {
+            state.last = None;
+            state.policy.reset();
+            state.need_snapshot = false;
+            return;
+        }
+        let (next, scrolled, history, title) = {
+            let screen = lock(&self.screen);
+            let next = grid::capture(&screen);
+            let scrolled = match &state.last {
+                Some(prev) if !state.need_snapshot && !next.alt && next.history > prev.history => {
+                    grid::history_rows(&screen, prev.history, next.history)
+                }
+                _ => Vec::new(),
+            };
+            let history = if pending.is_empty() {
+                Vec::new()
+            } else {
+                let from = next.history.saturating_sub(grid::SNAPSHOT_HISTORY_ROWS);
+                grid::history_rows(&screen, from, next.history)
+            };
+            (next, scrolled, history, screen.title())
+        };
+        // OSC 52：xterm.js 客户端自己处理该序列；网格客户端收到解码后的文本。
+        let clipboard = lock(&self.screen).take_clipboard();
+        let title_changed = state.last_title.as_deref() != Some(title.as_str());
+        if !live.is_empty() {
+            if state.need_snapshot || state.last.is_none() {
+                state.seq += 1;
+                let line = grid::snapshot_json(&next, &[], next.history, state.seq, false);
+                Self::send_grid(&live, &line);
+            } else if let Some(prev) = &state.last {
+                let title = title_changed.then_some(title.as_str());
+                state.seq += 1;
+                match grid::diff_json(prev, &next, &scrolled, title, state.seq) {
+                    Some(line) => Self::send_grid(&live, &line),
+                    None => state.seq -= 1,
+                }
+            }
+        }
+        if !pending.is_empty() {
+            state.seq += 1;
+            let line = grid::snapshot_json(&next, &history, next.history, state.seq, true);
+            Self::send_grid(&pending, &line);
+            lock(&self.grid_clients).extend(pending);
+        }
+        if !clipboard.is_empty() {
+            let all = self.live_grid_clients();
+            for text in clipboard {
+                let line = json!({"t": "clipboard", "text": text}).to_string();
+                Self::send_grid(&all, &line);
+            }
+        }
+        state.last = Some(next);
+        state.last_title = Some(title);
+        state.need_snapshot = false;
+        state.policy.reset();
     }
 }
 

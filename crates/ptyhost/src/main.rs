@@ -3,7 +3,8 @@
 //! 每个会话一个独立进程，持有一个 pty 跑 CLI，并在本地 socket 上接受连接：
 //!
 //!   ptyhost [--dir DIR] run --name N [--cwd DIR] [--cols C] [--rows R]
-//!                           [--meta JSON] [--history N] -- CMD...
+//!                           [--meta JSON] [--history N]
+//!                           [--no-record] [--record-segment-bytes N] [--record-total-bytes N] -- CMD...
 //!   ptyhost [--dir DIR] list
 //!   ptyhost [--dir DIR] attach NAME
 //!   ptyhost [--dir DIR] kill NAME [--force]
@@ -15,7 +16,7 @@ mod dsr;
 mod guard;
 mod output;
 mod protocol;
-mod screen;
+mod record;
 mod session;
 mod transport;
 
@@ -34,6 +35,7 @@ struct Args {
     rows: u16,
     meta: Option<String>,
     history: usize,
+    record: Option<record::RecordConfig>,
     text: Option<String>,
     lines: usize,
     plain: bool,
@@ -62,6 +64,7 @@ fn parse() -> Args {
         rows: 32,
         meta: None,
         history: 10000,
+        record: Some(record::RecordConfig::default()),
         text: None,
         lines: 0,
         plain: false,
@@ -89,6 +92,19 @@ fn parse() -> Args {
             "--rows" => args.rows = value("--rows").parse().unwrap_or(32),
             "--meta" => args.meta = Some(value("--meta")),
             "--history" => args.history = value("--history").parse().unwrap_or(10000),
+            "--no-record" => args.record = None,
+            "--record-segment-bytes" => {
+                let bytes = value("--record-segment-bytes").parse().unwrap_or(0);
+                if let Some(record) = args.record.as_mut() {
+                    record.segment_bytes = bytes;
+                }
+            }
+            "--record-total-bytes" => {
+                let bytes = value("--record-total-bytes").parse().unwrap_or(0);
+                if let Some(record) = args.record.as_mut() {
+                    record.total_bytes = bytes;
+                }
+            }
             "--lines" => args.lines = value("--lines").parse().unwrap_or(0),
             "--plain" => args.plain = true,
             "--join" => args.join = true,
@@ -190,6 +206,7 @@ fn cmd_run(args: &Args, dir: PathBuf) -> i32 {
         meta,
         dir,
         args.history,
+        args.record,
     ) {
         Ok(session) => session.serve(),
         Err(e) => {

@@ -218,6 +218,7 @@ impl TargetResolver for FakeResolver {
 fn synthetic_target(name: &str, uid: &str) -> DeliveryTarget {
     let observation = HostObservation {
         summary: SessionSummary {
+            grid: false,
             name: name.into(),
             created: 1,
             attached: false,
