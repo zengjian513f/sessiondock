@@ -77,6 +77,6 @@ generated settings are private and atomic. Codex prompt recognition must match
 the frozen bridge. See [terminal-input.md](terminal-input.md) and
 [lifecycle-launcher.md](lifecycle-launcher.md).
 
-Validate with the bridge unit tests and `tests/claude_prompt_suite.py`. Run the
+Validate with `tests/claude_prompt_suite.py`. Run the
 real Claude and Codex prompt suites only under the real-CLI policy in
 `AGENTS.md`.

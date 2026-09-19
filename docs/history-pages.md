@@ -237,7 +237,6 @@ legacy gap button no longer uses it. See
 ## Fixture checks
 
 ```sh
-cargo test -p sessiondock sessions:: --locked
 cargo test -p sessiondock --test history_pages --locked
 node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs
 cargo build -p sessiondock --locked

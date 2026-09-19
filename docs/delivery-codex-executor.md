@@ -23,8 +23,8 @@ display name) and shares everything that is not domain-specific:
 | `overwrite_draft` (consent before any durable write), `prepare` (paste + independent full-text observation), `enter` (frame recheck, `Enter`) | the outbox projection (`claude_outbox` / `codex_outbox`) and the messages |
 | the tracker tick | the replay schedule: Claude's in-memory `confirm_timeout` clock vs Codex's `codex_adapter::ReplayClock` |
 
-The Claude path, its unit tests (`delivery::executor::tests`) and the
-`delivery_send` integration suite are unchanged in behaviour.
+The Claude path and the `delivery_send` integration suite are unchanged in
+behaviour.
 
 ## Codex flow: persist before every write, two steps, no idle wait
 
@@ -167,18 +167,6 @@ its batch-6 semantics and tests.
 
 ## Validation
 
-- Unit: `cargo test -p sessiondock --lib delivery::driver` (six Codex
-  composer tests: placeholder + particles, bright draft, wrapped rows,
-  Ready/Context and rewind footers, footerless cursor rules, menus/lag/busy),
-  `--lib delivery::codex` (`Dismiss`), `--lib delivery::executor::codex_tests`
-  (persist → paste → Enter → causal `PossibleTextMatch` → Completed with the fence
-  captured before the paste; request-ID replay/conflict; draft consent;
-  ownership/unlinked/unknown session; swallowed line uncertain + retry
-  refused + restart without re-injection + dismiss hides + tombstone replay +
-  a fresh identical request confirms on its own record; no-turn-ID and
-  duplicate native records confirm in row order; ambiguous Enter and unknown composer
-  (pre-write failure, manual retry); lagging capture never idle; tracking
-  window; immediate follow-up).
 - Integration (real router + temporary ptyhost + launcher + ledger, fake Codex
   CLI only): `cargo test -p sessiondock --test delivery_send_codex` —
   resume through `resume_args ["resume","{sid}"]`; the driver reads the

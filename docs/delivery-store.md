@@ -57,7 +57,5 @@ There is no application quota on ledger bytes, JSON depth or retained receipts.
 
 Unix and Windows use file flush followed by atomic replacement. Unix directory
 synchronization is implemented; this code does not claim a portable Windows
-directory-fsync guarantee. Synthetic tests cover persistence, restart, exact
-proposal replay, independent provider retention, aliases, external edits and
-failures around replacement. Current batch results belong in the migration
-ledger.
+directory-fsync guarantee. Default check is the delivery HTTP/browser path
+that uses this store. Do not run crate unit tests unless the user asks.

@@ -18,7 +18,6 @@ are reported directly by the operation.
 
 ## Validation
 
-Configuration and initialization tests use temporary directories. Store, engine,
-service and HTTP suites cover the configured runtime, recovery and send behavior.
-See [delivery-store.md](delivery-store.md), [delivery-service.md](delivery-service.md)
-and the release record for final validation results.
+Default check is `python3 tests/check_config_suite.py` and the delivery HTTP
+suites. Do not run crate unit tests unless the user asks. See
+[delivery-store.md](delivery-store.md), [delivery-service.md](delivery-service.md).

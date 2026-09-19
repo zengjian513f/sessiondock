@@ -145,11 +145,7 @@ native-file mutation capability.
 
 ## Validation
 
-`cargo test -p ptyhost --locked` includes pure tests for malformed identity and
-fields, prior metadata, child reaped/error refusal, idempotent replay after exit,
-concurrent first publication and separate legacy/native/launch guard behavior.
-
-`tests/host_native_binding.rs` uses only built development ptyhost processes,
+`cargo test -p ptyhost --test host_native_binding --locked` uses only built development ptyhost processes,
 fixed free POSIX shells, explicit private `--dir`/cwd, and a cleared environment.
 It checks simultaneous socket binds, complete Info snapshots, lost ACK recovery
 on a new connection, preservation of an already attached pending stream,

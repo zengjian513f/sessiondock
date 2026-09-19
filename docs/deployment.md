@@ -95,7 +95,7 @@ stage，须重新构建，避免不同平台部署不同版本。
 | --- | --- | --- |
 | `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
 | `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（`*_real` 付费套件与 run_validation 一样默认排除） |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（`*_real` 与 `cargo_test` 和 run_validation 一样默认排除） |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
@@ -135,7 +135,7 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | --- | --- |
 | `.gitignore`、`.gitattributes`、`.editorconfig` | 不测（不影响产物） |
 | `docs/**`、任何 `*.md` | 只跑文档检查：`tests/check_docs_links.py`、`tests/check_agents_md.py` |
-| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道，`cargo_test` 就是 workspace）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
+| `crates/ptyhost/**`、`crates/ptyhost-client/**` | `cargo_*`（run_validation 没有按 crate 的 Rust 车道；默认 `--list` 不含 `cargo_test`，所以这里是 fmt/clippy/check/build）+ 依赖 ptyhost 的 Python 套件：`terminal*`、`term_*`、`lifecycle*`、`cutover*`、`host*`、`native_*`、`managed_*`、`send_*`、`live_*`、`session_stop_*`、`pending_*`、`restart_state_*`、`bug_report_*`、`grok_raw_send_*` |
 | `crates/sessiondock/src/<module>/**`、`src/<module>.rs` | `cargo_*` + 模块别名：`sessions` → `history_*`、`sessions_*`、`messages_*`、`native_*`、`*_parity`、`codex_*`、`claude_*`、`grok_*`、`agent_*`、`orphan_*`、`continued_*`、`fork_*`、`list_rows_*`、`input_history_*`、`inventory_*`、`debug_runs_*`、`symlink_*`、`unicode_*`、`names_*`、`budget_*`、`reader_pool_*`、`sse_*`、`rewind_*`；`terminal` → `terminal_*`、`term_*`、`managed_*`、`session_stop_*`、`grok_raw_send_*`；`lifecycle` → `lifecycle_*`、`send_*`、`outbox*`、`pending_*`、`restart_state_*`、`live_*`、`session_stop_*`；`hub`/`hub_config`/`bin` → `hub_*`（`hub` 另加 `node_auth_*`）；`search` → `search_*`；`media` → `media_*`、`native_*`；`files` → `file*`；`delivery` → `delivery_*`、`send_*`、`outbox*`；`bug_report` → `bug_report_*`；`audit` → `audit_*`；`metadata` → `metadata_*`、`prefs_*`；`trash` → `trash_*`；`runtime` → `live_*`、`spawned_by_*`、`managed_*`、`restart_state_*`、`lifecycle_*`；`bridge` → `claude_prompt_*`、`prompt_*`、`live_*`；`native_replay` → `native_*`；`assets` → `static_assets_*`、`meta_*`、`prefs_*`。表里没有的模块用 `<module>*`，一个都匹配不上就全量 |
 | `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |

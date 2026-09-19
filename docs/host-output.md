@@ -84,13 +84,7 @@ reader/model lock is held while waiting for PTY EOF or socket drainage.
 
 ## Validation
 
-`cargo test -p ptyhost --locked` includes socket regressions for ACK/replay/live
-order, inflight accounting, per-byte/per-frame limits, slow-peer isolation, input
-read shutdown, write expiry, and one shared exit-drain deadline. Model tests
-check that inflight data appears once before and after applying it, and pause
-exactly after screen feed to prove a snapshot cannot enter before retirement.
-
-`crates/ptyhost/tests/host_output.rs` launches only a fixed free `/bin/sh` fixture
+`cargo test -p ptyhost --test host_output --locked` launches only a fixed free `/bin/sh` fixture
 with an explicit private temporary `--dir`. It checks both legacy and guarded
 attach, final data before exit and EOF, the child exit code, and capacity rejection
 before resize while all existing connections remain usable. A test-owned slave

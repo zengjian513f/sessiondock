@@ -110,7 +110,13 @@ native-confirmation outbox is created.
 
 Selecting/pasting a file saves metadata and streams the bytes into private
 server staging right away, on the machine chosen in the dialog; choosing another
-machine at Send re-uploads there. A failed staging keeps the File on its card
+machine at Send re-uploads there. The draft is per machine because its staged
+bytes are, but the machine picker only chooses where the worker runs, not which
+report is being written: switching it moves the description, the quotes and every
+attachment this page still holds to the chosen machine's draft, empties the
+previous machine's draft and releases the bytes staged there. An attachment
+restored from the server after a refresh has no local bytes to re-upload; it
+stays in the previous machine's draft and the dialog says so. A failed staging keeps the File on its card
 with a retry, and Send retries it too. Only a file whose staging never finished
 needs reselection after refresh; leaving with such bytes or an unfinished save
 warns. Removing a staged file discards its private bytes once the draft is
@@ -154,7 +160,9 @@ relative to the repository. The prompt lists them as `附件N: ./<relative_path>
 
 The browser uses `POST /api/session/conversation/attachment` to stream private
 uploads scoped by draft/session identity and upload ID. Identical retries reuse
-metadata; different bytes under that ID return conflict and never overwrite.
+metadata; different bytes under that ID return conflict and never overwrite. The
+same route reads those bytes back with `GET` under the same identity, so a
+report form reopened on another page still previews its image cards.
 Explicit report submission publishes the files to
 `<repo>/sessiondock_attachments/<batch>/<name>` through the existing checked file
 writer, then freezes diagnostic attachment copies. Ordinary conversation sends
@@ -217,8 +225,6 @@ window's dates line by line (≤ 100 000 rows).
 
 ## Validation
 
-- `cargo test -p sessiondock --lib bug_report --lib audit::query --lib api::bug_report --locked`
-  (bundle, attachments, composer probes, manifest merge).
 - `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
   501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
   files, `submitted` from the synthetic native record, second report sees the
