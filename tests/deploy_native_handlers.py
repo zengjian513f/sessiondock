@@ -6,7 +6,7 @@ state machine (launchd pid, tasklist, shasum/certutil, web digests), so the exac
 command sequence of stage/backup/swap/restart/verify/rollback is asserted for both
 kinds and the verify invariants are shown to fail when ptyhost pids vanish, the
 on-disk hash differs, the build hash does not move with web, or the Windows service
-lands outside desktop session 1. The per-platform test step (DeployOptions.test_mode:
+lands in session 0 instead of a desktop session. The per-platform test step (DeployOptions.test_mode:
 Rust tests on the node between extraction and build) is pinned for both kinds: absent
 with `none`, present with `affected`/`full`, and a failing run stops stage() before
 anything is staged. No network, no subprocess, < 5 s.
@@ -420,7 +420,7 @@ class WinFake(windows.CmdShell):
             s["svc"] = [s["svc"][0] + 100]
             s["build"] = "build-" + s["digest"][f"{p}\\web"]
             out = ("===STOP_OLD===\nVerified target PIDs: 100\n===SWAP_BINARY===\n" + ("SWAPPED sessiondock\n" if swapped else "")
-                   + "===SWAP_WEB===\nWEB_MIRRORED\n===LAUNCH_IN_SESSION1===\n===VERIFY===\n"
+                   + "===SWAP_WEB===\nWEB_MIRRORED\n===LAUNCH_ON_DESKTOP===\n===VERIFY===\n"
                    f"sessiondock.exe pid={s['svc'][0]} session={s['session']} parent=pythonw.exe\nterm/list=200\n===END===\n")
         elif "Expand-Archive" in cmd and "web.staging" in cmd:
             s["digest"][f"{p}\\web.staging"] = "d-new" if self.web_differs else "d-old"
@@ -571,7 +571,7 @@ def test_windows_full_cycle(tmp: Path) -> None:
     text = script.decode("ascii")
     order = ["===STOP_OLD===", f'"%PY%" "%SD%\\process_identity.py" --include-supervisor', "===SWAP_BINARY===",
              "call :swap", "===SWAP_WEB===", 'robocopy "%SD%\\web.staging" "%SD%\\web" /MIR', 'del /q "%SD%\\STOP"',
-             "===LAUNCH_IN_SESSION1===", 'schtasks /create /tn sd-restart-s1 /tr "explorer.exe %LNK%" /sc once /st 23:59 /it /f',
+             "===LAUNCH_ON_DESKTOP===", 'schtasks /create /tn sd-restart-s1 /tr "explorer.exe %LNK%" /sc once /st 23:59 /it /f',
              "schtasks /run /tn sd-restart-s1", "===VERIFY===", "/api/term/list", "===END===",
              'move /y "%SD%\\bin\\%1.new.exe" "%SD%\\bin\\%1.exe"']
     positions = [text.find(n) for n in order]
@@ -629,7 +629,11 @@ def test_windows_verify_catches(tmp: Path) -> None:
         return h
     h = deployed(session="0")
     v = h.verify()
-    check(not v.ok and "runs in session 0, not 1" in v.detail, f"session 0 undetected: {v.detail}")
+    check(not v.ok and "runs in session 0, not a desktop session" in v.detail, f"session 0 undetected: {v.detail}")
+    # The desktop session number moves across logons (Cetus was 1, then 2): any non-zero one is fine.
+    h = deployed(session="2")
+    v = h.verify()
+    check(v.ok, f"desktop session 2 refused: {v.detail}")
     h = deployed()
     h.sh.state["ptyhost"] = [7064]
     v = h.verify()

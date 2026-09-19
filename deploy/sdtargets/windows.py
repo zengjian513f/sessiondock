@@ -1,4 +1,4 @@
-r"""Windows node handler: native `cargo build` on the node, relaunch in desktop session 1.
+r"""Windows node handler: native `cargo build` on the node, relaunch in the desktop session.
 
 Automates docs/deploy-windows.md sections 2-4 plus the operator recipe around the node's
 `restart-session1.cmd`. Everything that runs on the node is a cmd.exe string: `CmdShell`
@@ -16,7 +16,9 @@ and `web.staging\`. `swap()` runs ONE script mirroring `restart-session1.cmd` wi
 swap inserted after the stop phase (the running exe is locked; ptyhost.exe hosts are never
 touched), so the restart happens there and `restart()` is a no-op afterwards. `verify()`
 polls `/api/meta`, compares certutil hashes, checks the ptyhost.exe pid set survived and
-that the service landed in session 1. Optional `service` keys `python` / `shortcut`
+that the service landed in a desktop session (never session 0, where SSH lives; the
+desktop session number changes across logons, so no particular one is expected).
+Optional `service` keys `python` / `shortcut`
 default to the `set PY=` / `set LNK=` lines of `service["restart_cmd"]` read at probe time.
 
 As of 2026-09-15 this path was written from the recipe and unit-tested offline only; the
@@ -322,7 +324,7 @@ class WindowsNode(TargetHandler):
                   f"scp swap-restart.cmd ; run (timeout {int(SWAP_TIMEOUT)}s): process_identity.py --include-supervisor "
                   "-> move /y .new.exe -> robocopy /MIR web.staging web -> schtasks /IT explorer.exe SessionDock.lnk",
                   "restart: no-op (done inside swap-restart.cmd)",
-                  f"verify: {self.t.health_url} within {self.o.health_timeout:.0f}s, new sessiondock.exe pid in session 1, "
+                  f"verify: {self.t.health_url} within {self.o.health_timeout:.0f}s, new sessiondock.exe pid in a desktop session (not 0), "
                   "certutil sha == staged, build changed iff web changed, ptyhost.exe pids kept, host records >= before",
                   f"marker: {p}\\etc\\deployed-commit = '{self.a.commit} {self.a.short} {self.a.built_at} dirty={int(self.a.dirty)}'"]
         for name, text in self._scripts().items():
@@ -417,8 +419,8 @@ class WindowsNode(TargetHandler):
                              '$_.SessionId }"', timeout=60)
         for line in out.splitlines():
             tok = line.split()
-            if len(tok) == 3 and tok[0] == "SESSION" and tok[2] != "1":
-                problems.append(f"sessiondock.exe pid {tok[1]} runs in session {tok[2]}, not 1")
+            if len(tok) == 3 and tok[0] == "SESSION" and tok[2] == "0":
+                problems.append(f"sessiondock.exe pid {tok[1]} runs in session 0, not a desktop session")
         expected = dict(before.binary_sha)
         expected.update(self.expected_sha)
         for name in self.bins:

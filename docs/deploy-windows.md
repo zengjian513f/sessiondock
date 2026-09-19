@@ -106,11 +106,11 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   `process_identity.py --include-supervisor` 停旧进程 → `move /y bin\sessiondock.new.exe
   bin\sessiondock.exe`（运行中的 exe 被锁，必须停后再换；旧文件先改名停放，ptyhost.exe 宿主不受影响）
   → `robocopy /MIR web.staging web` → 清 STOP/lock → `/IT` 一次性计划任务
-  `explorer.exe SessionDock.lnk` 在桌面会话 1 里拉起 → 打印 pid/session/父进程与 `term/list` 状态码。
+  `explorer.exe SessionDock.lnk` 在桌面会话里拉起（会话号随登录变化，不固定是 1；只有 session 0 不合格）→ 打印 pid/session/父进程与 `term/list` 状态码。
   因此重启发生在 swap 里，`restart()` 之后是空操作；rollback 把备份拷回 `.new.exe` / `web.staging` 后
   再跑同一份脚本。绝不从 SSH 直接 `start_sessiondock.py start`（会造出 session 0 的 supervisor）。
 - verify：`/api/meta` 在健康超时内应答且 `sessiondock.exe` 的 pid 已变、`Win32_Process` 里它的
-  SessionId 为 1、certutil 哈希等于 stage 时的值、web 内容变了则 `build` 必须变、probe 时的每个
+  SessionId 不为 0（桌面会话）、certutil 哈希等于 stage 时的值、web 内容变了则 `build` 必须变、probe 时的每个
   `ptyhost.exe` pid 仍在、host 记录数不少于之前；`etc\deployed-commit` 由 PowerShell `Set-Content` 写入。
 
 **状态（2026-09-15）**：这条自动化路径是按上述手工配方和转录记录写成的，只有
