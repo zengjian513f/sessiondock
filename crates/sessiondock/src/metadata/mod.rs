@@ -154,6 +154,15 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_fork_visibility(uids, visible))
     }
 
+    pub fn set_nest_display(
+        &self,
+        uid: &str,
+        parent: Option<SpawnedBy>,
+        independent: bool,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_nest_display(uid, parent, independent))
+    }
+
     /// Persist newly observed spawners, first
     /// relation wins; returns how many sessions were recorded this time.
     pub fn record_spawn_parents(

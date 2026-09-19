@@ -665,3 +665,59 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
         Some(&parent)
     );
 }
+
+#[test]
+fn nest_display_overrides_spawned_by_and_clears() {
+    let root = temp();
+    let store = MetadataStore::open(root.path()).unwrap();
+    let spawned = SpawnedBy {
+        source: "claude".into(),
+        sid: "parent-sid".into(),
+    };
+    store
+        .record_spawn_parents(&[("grok:child".into(), spawned.clone())])
+        .unwrap();
+    let attached = store
+        .set_nest_display(
+            "grok:child",
+            Some(SpawnedBy {
+                source: "codex".into(),
+                sid: "other".into(),
+            }),
+            false,
+        )
+        .unwrap();
+    assert_eq!(attached.revision(), 2);
+    assert_eq!(
+        attached.nest_parent("grok:child"),
+        Some(&SpawnedBy {
+            source: "codex".into(),
+            sid: "other".into()
+        })
+    );
+    assert!(!attached.nest_independent("grok:child"));
+    let independent = store.set_nest_display("grok:child", None, true).unwrap();
+    assert!(independent.nest_independent("grok:child"));
+    assert!(independent.nest_parent("grok:child").is_none());
+    let restored = store.set_nest_display("grok:child", None, false).unwrap();
+    assert!(!restored.nest_independent("grok:child"));
+    assert!(restored.nest_parent("grok:child").is_none());
+    assert_eq!(restored.spawned_by("grok:child"), Some(&spawned));
+    let again = store.set_nest_display("grok:child", None, false).unwrap();
+    assert!(Arc::ptr_eq(&restored, &again));
+    let mut row = json!({"uid":"grok:child", "nest_parent":{"source":"stale","sid":"x"}});
+    restored.enrich(std::slice::from_mut(&mut row));
+    assert!(row.get("nest_parent").is_none());
+    assert!(row.get("nest_independent").is_none());
+    assert_eq!(
+        row["spawned_by"],
+        json!({"source":"claude","sid":"parent-sid"})
+    );
+    let independent = store.set_nest_display("grok:child", None, true).unwrap();
+    independent.enrich(std::slice::from_mut(&mut row));
+    assert_eq!(row["nest_independent"], true);
+    assert_eq!(
+        row["spawned_by"],
+        json!({"source":"claude","sid":"parent-sid"})
+    );
+}

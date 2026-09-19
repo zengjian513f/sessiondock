@@ -125,6 +125,29 @@ HTTP route to set or clear it, and stars/visibility/pins never touch it.
 "grok:example": {"spawned_by": {"source": "claude", "sid": "8accf618-…"}}
 ```
 
+## Sidebar nest override
+
+`POST /api/session/nest` writes a display-only parent for the sidebar tree.
+It never rewrites `spawned_by`. The row carries:
+
+- `nest_parent: {source, sid}` — manual parent, same shape as `spawned_by`
+- `nest_independent: true` — ignore `spawned_by` and show the session as a root
+
+`{uid, parent_uid}` stores the listed target's `{source, sid}` and clears
+independence. `{uid, independent: true}` (no `parent_uid`) makes the session
+independent. `{uid, independent: false}` clears both fields so `spawned_by`
+applies again. The handler rejects attaching to self (`400 nest_parent_self`),
+a missing target (`404 nest_parent_missing`), a descendant (`409 nest_parent_cycle`),
+a different `node_id` (`400 nest_parent_node`), or `independent` together with
+`parent_uid` (`400 nest_conflict`). Without a state directory the route is
+`501 metadata_disabled`.
+
+The legacy sidebar offers these from the session context menu: 从父会话独立,
+取消独立 (restore `spawned_by`), and 附属到… (click the parent, with 取消).
+
+Validation: `python3 tests/metadata_suite.py`,
+`python3 tests/nest_tree_browser.py`.
+
 ## Writer exclusion and durable publication
 
 An in-process mutex serializes metadata updates. Each read and update reloads

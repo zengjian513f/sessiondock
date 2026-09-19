@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""HTTP contract of persisted preferences (star, fork-visibility) vs /api/sessions,
+"""HTTP contract of persisted preferences (star, fork-visibility, nest) vs /api/sessions,
 plus the server-recorded `spawned_by` row key: seeded on disk, carried
-by the row, untouched by star/unstar, durable across restart.
+by the row, untouched by star/unstar/nest, durable across restart.
 
 Loopback synthetic fixtures, no Chromium. Codes from api/metadata.rs; disk keys
 from Document (schema_version 1). Request types omit deny_unknown_fields.
@@ -18,9 +18,11 @@ from history_parity import (  # noqa: E402
 
 BINARY = (p if (p := REPO / "target/release" / DEBUG_BINARY.name).is_file() else DEBUG_BINARY)
 KEYS = {"schema_version", "revision", "sessions"}
-ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "spawned_by"}
+ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "spawned_by",
+            "nest_parent", "nest_independent"}
 SPAWNED_BY = {"source": "codex", "sid": "parent-native-sid"}
-FILE, STAR, VIS = "session-metadata.json", "/api/session/star", "/api/sessions/fork-visibility"
+FILE, STAR, VIS, NEST = ("session-metadata.json", "/api/session/star",
+                         "/api/sessions/fork-visibility", "/api/session/nest")
 
 def fail(area, why, body=b""):
     text = body.decode("utf-8", "replace") if isinstance(body, (bytes, bytearray)) else str(body)
@@ -157,6 +159,35 @@ def run(opener, base, state, extra):
         fail("visibility", "list after clear", raw)
     want(opener, base, VIS, 200, {"uids": [puid], "visible": True})
     passed("fork visibility set/clear")
+    other = rows[extra[0]]["uid"]
+    attached, araw = want(opener, base, NEST, 200, {"uid": uid, "parent_uid": other})
+    expect_parent = {"source": "claude", "sid": extra[0]}
+    if attached.get("ok") is not True or attached.get("nest_parent") != expect_parent \
+            or attached.get("nest_independent") is True:
+        fail("nest", "attach shape", araw)
+    rows, raw = listed(opener, base)
+    if rows["claude-branch"].get("nest_parent") != expect_parent \
+            or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
+        fail("nest", "list after attach lost spawned_by or nest_parent", raw)
+    want(opener, base, NEST, 200, {"uid": uid, "independent": True})
+    rows, raw = listed(opener, base)
+    if rows["claude-branch"].get("nest_independent") is not True \
+            or "nest_parent" in rows["claude-branch"] \
+            or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
+        fail("nest", "independent did not hide nest_parent", raw)
+    want(opener, base, NEST, 200, {"uid": uid, "independent": False})
+    rows, raw = listed(opener, base)
+    if rows["claude-branch"].get("nest_independent") or "nest_parent" in rows["claude-branch"]:
+        fail("nest", "restore still independent", raw)
+    want(opener, base, NEST, 400, {"uid": uid, "parent_uid": uid}, code="nest_parent_self")
+    want(opener, base, NEST, 404, {"uid": uid, "parent_uid": "codex:missing"},
+         code="nest_parent_missing")
+    want(opener, base, NEST, 400, {"uid": uid, "parent_uid": other, "independent": True},
+         code="nest_conflict")
+    want(opener, base, NEST, 200, {"uid": other, "parent_uid": uid})
+    want(opener, base, NEST, 409, {"uid": uid, "parent_uid": other}, code="nest_parent_cycle")
+    want(opener, base, NEST, 200, {"uid": other, "independent": False})
+    passed("nest attach / independent / restore / cycle")
     parsed = urlsplit(base)
     conc(parsed.hostname, parsed.port, [rows[sid]["uid"] for sid in extra])
     rows, raw = listed(opener, base)
@@ -184,10 +215,12 @@ def main():
         for sid in extra:
             corpus.put(sid, "claude", [claude_row(sid, "user", "u0", None, sid)], [])
         star, vis = {"uid": "x", "starred": True}, {"uids": ["x"], "visible": True}
+        nest = {"uid": "x", "parent_uid": "y"}
         with isolated_server(corpus, args.binary) as (base, opener):
             cap(opener, base, False)
             want(opener, base, STAR, 501, star, code="metadata_disabled")
             want(opener, base, VIS, 501, vis, code="metadata_disabled")
+            want(opener, base, NEST, 501, nest, code="metadata_disabled")
             passed("disabled 501 metadata:false")
         state = root / "state"
         state.mkdir(mode=0o700); state.chmod(0o700)

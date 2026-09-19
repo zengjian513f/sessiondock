@@ -268,7 +268,7 @@ pub fn display_route(path: &str) -> Option<&str> {
 /// `HubHandler.resolve`: exactly one machine from the explicit route, the
 /// path (`/api/messages/<global>`, `DELETE /api/session/<global>`), the
 /// query (`uid`, `name` on terminal routes, `node`) and the body (`uid`,
-/// `name`, `_node`, `terminal_name`, `id`, `media[].src`); every scoped
+/// `name`, `parent_uid`, `_node`, `terminal_name`, `id`, `media[].src`); every scoped
 /// reference is replaced by its local form. Several machines, or none, is
 /// `操作必须明确指定同一台机器`.
 pub fn resolve(
@@ -322,7 +322,7 @@ pub fn resolve(
             }
         }
         if let Some(map) = body.as_mut().filter(|map| !map.is_empty()) {
-            for key in ["uid", "name", "draft_uid"] {
+            for key in ["uid", "name", "draft_uid", "parent_uid"] {
                 let scoped = map
                     .get(key)
                     .filter(|value| truthy(value))
@@ -330,6 +330,7 @@ pub fn resolve(
                 if let Some(value) = scoped
                     && (key == "uid"
                         || key == "draft_uid"
+                        || key == "parent_uid"
                         || path.starts_with("/api/term/")
                         || matches!(
                             path.as_str(),
@@ -340,7 +341,10 @@ pub fn resolve(
                                 | "/api/session/conversation/check"
                         ))
                 {
-                    let local = decode(&value, key == "uid" || key == "draft_uid")?;
+                    let local = decode(
+                        &value,
+                        key == "uid" || key == "draft_uid" || key == "parent_uid",
+                    )?;
                     map.insert(key.to_string(), Value::String(local));
                 }
             }

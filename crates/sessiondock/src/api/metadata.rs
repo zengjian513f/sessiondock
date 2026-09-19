@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::{
     error::ApiError,
-    metadata::{MetadataError, MetadataStore, fork_parent_uids},
+    metadata::{MetadataError, MetadataSnapshot, MetadataStore, SpawnedBy, fork_parent_uids},
     sessions::SessionStore,
     state::{AppState, JsonBytes},
 };
@@ -61,6 +61,19 @@ pub struct StarRequest {
 pub struct VisibilityRequest {
     uids: Vec<String>,
     visible: bool,
+    #[serde(flatten)]
+    diagnostics: Diagnostics,
+}
+
+/// `parent_uid` attaches this session under another listed session;
+/// `independent` shows it as a root and ignores `spawned_by`.
+#[derive(Deserialize)]
+pub struct NestRequest {
+    uid: String,
+    #[serde(default)]
+    parent_uid: Option<String>,
+    #[serde(default)]
+    independent: bool,
     #[serde(flatten)]
     diagnostics: Diagnostics,
 }
@@ -201,6 +214,158 @@ pub async fn visibility(
         let updated: Vec<_> = valid.into_iter().map(|uid| json!({"uid":uid,"fork_parent_visible":body.visible})).collect();
         Ok(json!({"ok":true,"updated":updated,"errors":errors,"metadata_revision":snapshot.revision()}))
     }).await
+}
+
+fn listed_row<'a>(rows: &'a [Value], uid: &str) -> Option<&'a Value> {
+    rows.iter().find(|row| row["uid"] == uid)
+}
+
+fn row_node(row: &Value) -> &str {
+    row["node_id"].as_str().unwrap_or("")
+}
+
+fn lookup_nest_parent(rows: &[Value], child_uid: &str, source: &str, sid: &str) -> Option<String> {
+    let child_node = listed_row(rows, child_uid).map(row_node).unwrap_or("");
+    rows.iter().find_map(|row| {
+        let uid = row["uid"].as_str()?;
+        if uid == child_uid {
+            return None;
+        }
+        (row["source"] == source && row["sid"] == sid && row_node(row) == child_node)
+            .then(|| uid.to_owned())
+    })
+}
+
+fn display_parent_uid(uid: &str, rows: &[Value], snapshot: &MetadataSnapshot) -> Option<String> {
+    if snapshot.nest_independent(uid) {
+        return None;
+    }
+    if let Some(parent) = snapshot.nest_parent(uid) {
+        return lookup_nest_parent(rows, uid, &parent.source, &parent.sid);
+    }
+    let spawned = snapshot.spawned_by(uid)?;
+    lookup_nest_parent(rows, uid, &spawned.source, &spawned.sid)
+}
+
+fn nest_would_cycle(
+    uid: &str,
+    parent_uid: &str,
+    rows: &[Value],
+    snapshot: &MetadataSnapshot,
+) -> bool {
+    if uid == parent_uid {
+        return true;
+    }
+    let mut seen = BTreeSet::from([uid.to_owned()]);
+    let mut current = Some(parent_uid.to_owned());
+    while let Some(next) = current {
+        if !seen.insert(next.clone()) {
+            return true;
+        }
+        current = display_parent_uid(&next, rows, snapshot);
+    }
+    false
+}
+
+pub async fn nest(
+    State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    body: Result<Json<NestRequest>, JsonRejection>,
+) -> Result<JsonBytes, ApiError> {
+    let metadata = configured(&state)?;
+    let Json(body) = body.map_err(invalid)?;
+    body.diagnostics.validate(&state, hub.is_some())?;
+    if body.uid.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_metadata_uid",
+            "需要有效的会话 uid",
+        ));
+    }
+    let parent_uid = body
+        .parent_uid
+        .as_deref()
+        .map(str::trim)
+        .filter(|uid| !uid.is_empty())
+        .map(str::to_owned);
+    if body.independent && parent_uid.is_some() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "nest_conflict",
+            "独立显示时不能同时指定父会话",
+        ));
+    }
+    write(state, move |store| {
+        let list = store.list(true)?;
+        let rows = list["sessions"].as_array().expect("session snapshot rows");
+        if listed_row(rows, &body.uid).is_none() {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "session_missing",
+                "会话不存在",
+            ));
+        }
+        let parent = if let Some(parent_uid) = parent_uid {
+            if parent_uid == body.uid {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "nest_parent_self",
+                    "不能附属到自己下面",
+                ));
+            }
+            let parent_row = listed_row(rows, &parent_uid).ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::NOT_FOUND,
+                    "nest_parent_missing",
+                    "目标会话不存在",
+                )
+            })?;
+            let child_node = listed_row(rows, &body.uid).map(row_node).unwrap_or("");
+            let parent_node = row_node(parent_row);
+            if !child_node.is_empty() && !parent_node.is_empty() && child_node != parent_node {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "nest_parent_node",
+                    "只能附属到同一台机器上的会话",
+                ));
+            }
+            let source = parent_row["source"].as_str().unwrap_or("").trim();
+            let sid = parent_row["sid"].as_str().unwrap_or("").trim();
+            if source.is_empty() || sid.is_empty() {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "nest_parent_missing",
+                    "目标会话缺少来源或会话 id",
+                ));
+            }
+            let snapshot = metadata.snapshot()?;
+            if nest_would_cycle(&body.uid, &parent_uid, rows, &snapshot) {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "nest_parent_cycle",
+                    "不能附属到自己的子会话下面",
+                ));
+            }
+            Some(SpawnedBy {
+                source: source.to_owned(),
+                sid: sid.to_owned(),
+            })
+        } else {
+            None
+        };
+        let snapshot = metadata.set_nest_display(&body.uid, parent, body.independent)?;
+        let nest_parent = snapshot
+            .nest_parent(&body.uid)
+            .map(|parent| json!({"source": parent.source, "sid": parent.sid}));
+        Ok(json!({
+            "ok": true,
+            "uid": body.uid,
+            "nest_parent": nest_parent,
+            "nest_independent": snapshot.nest_independent(&body.uid),
+            "metadata_revision": snapshot.revision(),
+        }))
+    })
+    .await
 }
 
 /// Persist a Claude display pin ("rewind" of the read model only). The target
