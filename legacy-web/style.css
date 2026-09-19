@@ -738,6 +738,7 @@ main { display: flex; flex: 1; min-height: 0; }
 #side {
   width: 100%; flex: 1; min-height: 0; overflow-y: auto;
   background: var(--panel);
+  overflow-anchor: none;
 }
 
 #drag {
@@ -1630,6 +1631,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 /* 已接管会话的输入框 */
 #composer {
   flex: none; display: flex; flex-direction: column; gap: 7px;
+  position: relative; z-index: 2;
   width: 100%;
   padding: 9px 18px; border-top: 1px solid var(--border); background: var(--panel);
 }
@@ -1685,6 +1687,19 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .attach-menu button > span { width: 18px; color: var(--muted); text-align: center; }
 #compose-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 #compose-items:empty { display: none; }
+#composer-input-status {
+  position: absolute; z-index: 10; bottom: calc(100% + 2px); left: 18px;
+  display: flex; align-items: center; gap: 8px;
+  width: max-content; max-width: calc(100% - 36px);
+  max-height: min(20vh, 120px); overflow: auto;
+  color: var(--muted); font-size: 12px; line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+#composer-input-status .composer-input-status-copy { flex: 1; min-width: 0; }
+#composer-input-status .btn { flex: none; }
+#composer-input-status.blocked { color: var(--danger); }
+#right.shell-session #composer-input-status { display: none; }
+body.stale-build #composer-input-status { display: none; }
 .draft-card {
   position: relative; display: flex; align-items: center; gap: 8px;
   min-width: 0; max-width: min(360px, 100%); min-height: 42px;
@@ -1980,6 +1995,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     max-width: none; gap: 6px;
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
   }
+  #composer-input-status { left: 8px; max-width: calc(100% - 16px); }
   .composer-row { gap: 4px; }
   #cadd { min-width: var(--composer-control-height); }
   .attach-menu { width: 156px; }
@@ -2023,6 +2039,14 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     border-color: var(--accent); background: var(--accent); color: #fff;
   }
   #xterm { padding-left: 4px; }
+  /* 键盘弹出时 PTY 行列不变，画布可能高于容器：底对齐以保住 CLI 编辑区。
+     display:flex 会盖掉 [hidden] 的 UA display:none，必须写回。 */
+  .xterm-view:not([hidden]) {
+    display: flex; flex-direction: column; justify-content: flex-end;
+    overflow: hidden;
+  }
+  .xterm-view[hidden] { display: none !important; }
+  #xterm .xterm { height: auto; }
 
   .trash-item { flex-wrap: wrap; }
   .trash-acts { width: 100%; justify-content: flex-end; }
