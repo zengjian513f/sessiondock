@@ -224,7 +224,7 @@ helper.
 | --- | --- |
 | `grid/wire.js` | `LineDecoder` (newline-delimited JSON, UTF-8-safe), `encodeResize`, grapheme `segmentText` (cache 256) |
 | `grid/model.js` | viewport, scrollback, cursor, modes, title, `seq`. Applies `snapshot`/`diff`. Materializes cells lazily. Default `scrollbackLimit` 100_000. **Does not reflow the viewport** (the host resends it) |
-| `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight)` with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio`; the context is scaled by `dpr`. Fit floor: 2 columns, 1 row |
+| `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight * dpr) / dpr` (a whole device pixel, like the width) with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio`; the context is scaled by `dpr`. Every row is painted inside a clip of its own box: glyphs taller than the em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) cannot spill into the neighbouring rows, which only repaint when dirty. Fit floor: 2 columns, 1 row |
 | `grid/input.js` | `InputEncoder`: keys, paste (newlines → CR; bracketed `\x1b[200~…\x1b[201~` when that mode is on), focus (`\x1b[I` / `\x1b[O`), mouse (SGR / UTF-8 / X10, default X10 clamped at 223), alt-screen wheel-as-arrows (3 lines). `KeyCapture` holds a hidden textarea |
 | `grid.js` | claim, attach `mode=grid`, list, fit/resize, follow/scroll, selection, copy/paste, mouse reporting vs selection, IME, title, reconnect |
 
