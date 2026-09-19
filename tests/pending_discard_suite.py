@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse, json, os, subprocess, sys, tempfile, time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request
-from history_parity import Corpus, isolated_server, REPO
+from history_parity import Corpus, claude_row, isolated_server, REPO
 from lifecycle_http_suite import (
     BINARY, FAKE, PTYHOST, SHELL, call, fail, passed, qstat, wait_run)
 
@@ -126,6 +127,84 @@ def flow(opener, base, work):
     ok("POST /api/term/discard unknown record_id 404 launch_missing")
 
 
+def wait_session(opener, base, sid, timeout=4):
+    deadline, last, raw = time.monotonic() + timeout, {}, b""
+    while time.monotonic() < deadline:
+        last, raw = call(opener, base, "GET", "/api/sessions")
+        for row in last.get("sessions") or []:
+            if row.get("sid") == sid:
+                return row
+        time.sleep(0.05)
+    fail("sessions", f"missing sid={sid!r}", raw)
+
+
+def native_delete_retires_launch(opener, base, corpus, work):
+    # Grok (and Claude new_assigned) writes a native record before the first
+    # user turn. 删除 the native session must also discard the finished
+    # receipt; otherwise the pending row returns and 丢弃 still keeps a
+    # draft aliased to the trashed UID.
+    rec, raw = call(opener, base, "POST", "/api/term/create",
+                    {"source": "claude", "cwd": work, "request_id": "discard-native-1"})
+    rec = wait_run(opener, base, rec)
+    sid = rec.get("declared_sid")
+    if not sid:
+        fail("declared_sid", rec, raw)
+    ok(f"POST /api/term/create claude declared_sid={sid}")
+
+    killed, raw = call(opener, base, "POST", "/api/term/kill",
+                       {"record_id": rec["record_id"], "instance_id": rec["instance_id"]})
+    deadline, last = time.monotonic() + 8, killed
+    while time.monotonic() < deadline:
+        if last.get("running") is False and last.get("state") in ("exited", "cancel_requested", "uncertain"):
+            break
+        last, raw = call(opener, base, "GET", qstat(rec))
+        time.sleep(0.05)
+    else:
+        fail("native kill wait", last, raw)
+    ok("claude launch exited")
+
+    pending_uid = "tmux:" + rec["name"]
+    saved, raw = call(opener, base, "POST", "/api/session/conversation",
+                      {"uid": pending_uid, "revision": 0,
+                       "value": {"text": "审计下所有", "attachments": [], "quotes": []}})
+    if not saved.get("ok"):
+        fail("draft save before native delete", saved, raw)
+    ok("retained launch draft before native files appear")
+
+    corpus.put(sid, "claude", [claude_row(sid, "user", "u0", None, "placeholder")], [])
+    native = wait_session(opener, base, sid)
+    opened, raw = call(opener, base, "GET",
+                       "/api/session/conversation?uid=" + quote(native["uid"], safe=":"))
+    if not opened.get("ok"):
+        fail("conversation GET native uid", opened, raw)
+    ok("GET /api/session/conversation native uid aliases the launch draft")
+
+    deleted, raw, code = call_codes(
+        opener, base, "DELETE",
+        f"/api/session/{quote(native['uid'], safe=':')}?force=1",
+        want=200)
+    if deleted.get("ok") is not True:
+        fail("DELETE native session", deleted, raw)
+    ok(f"DELETE native session HTTP {code}")
+
+    listed, raw = call(opener, base, "GET", "/api/term/list")
+    if pending_row(listed, rec) is not None:
+        fail("list after native delete still pending", listed.get("pending"), raw)
+    ok("GET /api/term/list pending gone after native delete")
+
+    drafts, raw = call(opener, base, "GET", "/api/session/conversation/drafts")
+    leftover = [row for row in drafts.get("drafts") or []
+                if row.get("uid") in (pending_uid, native["uid"])]
+    if leftover:
+        fail("drafts after native delete", leftover, raw)
+    ok("GET /api/session/conversation/drafts no longer lists the trashed launch")
+
+    st, raw = call(opener, base, "GET", qstat(rec))
+    if st.get("discarded") is not True:
+        fail("new-status after native delete not discarded", st, raw)
+    ok("GET /api/term/new-status discarded=true after native delete")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -138,7 +217,7 @@ def main():
         return
     with tempfile.TemporaryDirectory(prefix="sessiondock-pending-discard-") as tmp:
         root = Path(tmp)
-        for name in ("host", "work", "work/claude-area", "ledger", "bin", "claude", "codex", "grok", "state"):
+        for name in ("host", "work", "work/claude-area", "ledger", "bin", "claude", "codex", "grok", "state", "trash"):
             (root / name).mkdir(mode=0o700, parents=True, exist_ok=True)
             (root / name).chmod(0o700)
         corpus, fake = Corpus(root), root / "bin" / "fake-claude"
@@ -165,8 +244,10 @@ def main():
         # state_dir enables the conversation service, whose retained drafts
         # must follow the receipt's discard.
         with isolated_server(corpus, args.binary, state_dir=root / "state", host_dir=root / "host",
-                             lifecycle_dir=root / "ledger", launcher_config=cfg) as (base, opener):
+                             lifecycle_dir=root / "ledger", launcher_config=cfg,
+                             trash_dir=root / "trash") as (base, opener):
             flow(opener, base, str(root / "work"))
+            native_delete_retires_launch(opener, base, corpus, str(root / "work"))
     print(f"pending_discard_suite: {CHECKS} checks passed", flush=True)
 
 

@@ -3,7 +3,7 @@ use crate::delivery::executor::Failure;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -591,15 +591,24 @@ impl Store {
     /// The logical draft key of a launch receipt and whether a native UID
     /// shares it: the receipt's own key, or the earlier receipt a restart
     /// chained it to; shared once an alias from a native UID (or the key
-    /// itself) is not a `launch:` key.
-    fn launch_draft(doc: &Document, record_id: &str) -> (String, bool) {
+    /// itself) is not a `launch:` key. `live_native` is the current catalog;
+    /// `None` treats every native alias as live (unit tests, catalog unread).
+    fn launch_draft(
+        doc: &Document,
+        record_id: &str,
+        live_native: Option<&HashSet<String>>,
+    ) -> (String, bool) {
         let launch_key = format!("launch:{record_id}");
         let key = doc.aliases.get(&launch_key).cloned().unwrap_or(launch_key);
-        let shared = !key.starts_with("launch:")
+        let native_live = |alias: &str| {
+            !alias.starts_with("launch:")
+                && live_native.map(|set| set.contains(alias)).unwrap_or(true)
+        };
+        let shared = native_live(&key)
             || doc
                 .aliases
                 .iter()
-                .any(|(alias, target)| *target == key && !alias.starts_with("launch:"));
+                .any(|(alias, target)| *target == key && native_live(alias));
         (key, shared)
     }
     /// Drop the input retained for a receipt the operator discarded, so
@@ -607,20 +616,56 @@ impl Store {
     /// native UID stays: that session still shows it. Returns whether a draft
     /// was removed.
     pub fn forget_launch(&self, record_id: &str) -> Result<bool> {
+        self.forget_launch_unshared(record_id, None)
+    }
+    /// Same as [`Self::forget_launch`], but a native alias only counts as
+    /// shared while that UID is still in the catalog. After the native
+    /// session is trashed, the launch draft must go or `drafts` rebuilds
+    /// the pending row.
+    pub fn forget_launch_unshared(
+        &self,
+        record_id: &str,
+        live_native: Option<&HashSet<String>>,
+    ) -> Result<bool> {
         {
             let doc = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let (key, shared) = Self::launch_draft(&doc, record_id);
+            let (key, shared) = Self::launch_draft(&doc, record_id, live_native);
             if shared || !doc.drafts.contains_key(&key) {
                 return Ok(false);
             }
         }
         self.update(|doc| {
-            let (key, shared) = Self::launch_draft(doc, record_id);
+            let (key, shared) = Self::launch_draft(doc, record_id, live_native);
             if shared {
                 return Ok(false);
             }
             Ok(doc.drafts.remove(&key).is_some())
         })
+    }
+    /// Launch record ids whose draft this native UID aliases, in either
+    /// direction. Used when trashing the native session so the finished
+    /// receipt leaves `term/list.pending`.
+    pub fn launch_records_for(&self, uid: &str) -> Vec<String> {
+        let doc = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut ids = Vec::new();
+        let mut push = |value: &str| {
+            if let Some(id) = value.strip_prefix("launch:") {
+                ids.push(id.to_owned());
+            }
+        };
+        push(uid);
+        if let Some(target) = doc.aliases.get(uid) {
+            push(target);
+        }
+        for (alias, target) in &doc.aliases {
+            if alias == uid || target == uid {
+                push(alias);
+                push(target);
+            }
+        }
+        ids.sort();
+        ids.dedup();
+        ids
     }
     pub fn drafts(&self) -> Vec<(String, Draft)> {
         self.state
@@ -1047,5 +1092,33 @@ mod upload_tests {
         assert!(!store.forget_launch("origin").unwrap());
         assert_eq!(store.drafts().len(), 2);
         assert_eq!(Store::open(temp.path()).unwrap().drafts().len(), 2);
+    }
+    #[test]
+    fn discarded_launch_forgets_draft_when_native_alias_left_the_catalog() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        store
+            .save(
+                "launch:stale",
+                0,
+                json!({"text":"审计下所有","attachments":[],"quotes":[],
+                    "session":{"uid":"tmux:stale","name":"stale"}}),
+            )
+            .unwrap();
+        store.link("grok:c4eb1b7af1c080bf", "launch:stale").unwrap();
+        assert_eq!(
+            store.launch_records_for("grok:c4eb1b7af1c080bf"),
+            vec!["stale".to_string()]
+        );
+        let mut live = HashSet::new();
+        live.insert("grok:c4eb1b7af1c080bf".into());
+        assert!(!store.forget_launch_unshared("stale", Some(&live)).unwrap());
+        assert_eq!(store.drafts().len(), 1);
+        assert!(
+            store
+                .forget_launch_unshared("stale", Some(&HashSet::new()))
+                .unwrap()
+        );
+        assert!(store.drafts().is_empty());
     }
 }

@@ -14,8 +14,8 @@ python3 tests/run_validation.py --only node_contracts,legacy_browser
 `--tags` defaults to `rust,node,python`. `--only NAME[,NAME…]` and `--skip`
 filter by suite name. `--keep-going` continues after a failure. Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
-share no cargo build directory (`cargo_test` → `cargo_clippy`; `cargo_build`;
-`cargo_check_windows`; `cargo_fmt`), then Node and Python (`tests/*.py` with
+share no cargo build directory (`cargo_clippy` with optional `cargo_test`;
+`cargo_build`; `cargo_check_windows`; `cargo_fmt`), then Node and Python (`tests/*.py` with
 `if __name__ == "__main__"`, sorted) — every suite already owns its loopback
 port and temp directories. Non-browser suites run through a pool of `--jobs`
 workers; suites that drive Chromium (any that import `playwright`) run through a
@@ -27,13 +27,21 @@ order; `--jobs 1` runs everything serially in that order.
 
 ## When to run which tier
 
-The full sweep is ~5 min even in parallel, so it is not a per-edit gate:
+The full sweep is ~5 min even in parallel, so it is not a per-edit gate.
 
-- **Small change / one bug fix** — run only the affected suites: the touched
-  crate's tests (`cargo test -p <crate> --test <name>`) plus the one browser or
-  HTTP suite that covers it (`--only <name>`). Do not reflexively full-sweep,
-  push, and deploy-to-all after every small fix — the cost adds up; batch the
-  full sweep, push, and deploy for when the work is ready to land.
+**Headless browser is the default gate for a feature or bug fix.** After
+the change, run the `*_browser.py` (or `--browser` parity) that covers the
+affected path end to end in Chromium. If no suite covers it, add or extend
+one. HTTP / `--test` / node suites may run alongside; they are not a
+substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
+
+**Never run unit tests on your own**; validate the changed surface with the
+headless browser suite that covers it.
+
+- **Small change / one bug fix** — run the affected headless browser suite
+  (`--only <name>`). Do not reflexively full-sweep, push, and deploy-to-all
+  after every small fix — the cost adds up; batch the full sweep, push, and
+  deploy for when the work is ready to land.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
   not unattended.
@@ -72,7 +80,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 
 | Suite | Command | Covers | Needs | Typical time |
 | --- | --- | --- | --- | --- |
-| cargo_test | `cargo test --workspace --locked` | Workspace unit/integration: history/media/files/search/audit/delivery/lifecycle/terminal/runtime/bug-report HTTP; synthetic fixtures; opt-in ignored `launch_host` needs `SESSIONDOCK_TEST_PTYHOST_BINARY` | cargo | n/a |
+| cargo_test | `cargo test --workspace --locked` | Workspace unit and integration tests. Opt-in only (`--include-unit` / `--only cargo_test`). Opt-in ignored `launch_host` needs `SESSIONDOCK_TEST_PTYHOST_BINARY` | cargo | n/a |
 | cargo_fmt | `cargo fmt -p sessiondock -p ptyhost-client --check` | rustfmt on those two packages | cargo | n/a |
 | cargo_clippy | `cargo clippy -p sessiondock -p ptyhost-client --all-targets --locked -- -D warnings` | clippy, warnings denied | cargo | n/a |
 | cargo_check_windows | `cargo check --workspace --all-targets --target x86_64-pc-windows-msvc --locked` | Linux cross-compile to MSVC; not a Windows run | cargo | n/a |
