@@ -272,46 +272,21 @@ function adaptSgrBody(body) {
 
 function stripOscColorSets(s) {
   // 丢掉 CLI 把默认前景/背景/光标改成黑底的 OSC。查询（11;?）仍交给 xterm；
-  // 回包在 rewriteOscColorReports 里改写成暗色 palettes，不把亮色页面告诉 CLI。
+  // 回包在 stripOscColorReports 里丢掉，不写回 PTY。
   return s.replace(/\x1b\](?:10|11|12|104|110|111|112);(?!\?)[^\x07\x1b]*(?:\x07|\x1b\\)/g, '');
 }
 
-// OSC 10/11/12/4 查询回包始终用暗色控制台 palettes（与 style.css
-// :root[data-theme="dark"] #xterm 一致）。亮色页面只在浏览器反色，
-// 不让 Codex/Claude/Grok 按 OSC 11 切浅色 TUI。
-const DARK_TERM_REPORT = {
-  10: [0x9d, 0xa5, 0xb0],
-  11: [0x00, 0x00, 0x00],
-  12: [0x6d, 0x95, 0xff],
-  ansi: [
-    [0x48, 0x4f, 0x58], [0xff, 0x7b, 0x72], [0x7e, 0xe7, 0x87], [0xe3, 0xb3, 0x41],
-    [0x79, 0xc0, 0xff], [0xd2, 0xa8, 0xff], [0x56, 0xd4, 0xdd], [0x9d, 0xa5, 0xb0],
-    [0x6e, 0x76, 0x81], [0xff, 0xa1, 0x98], [0xa7, 0xf3, 0xb2], [0xf2, 0xcc, 0x60],
-    [0xa5, 0xd6, 0xff], [0xe2, 0xc5, 0xff], [0x7e, 0xe6, 0xed], [0xb9, 0xc0, 0xca],
-  ],
-};
-
-function oscRgbString(r, g, b) {
-  const hex = n => Number(n).toString(16).padStart(2, '0').repeat(2);
-  return `rgb:${hex(r)}/${hex(g)}/${hex(b)}`;
-}
-
-function oscColorReport(id, rgb, bel) {
-  const body = `\x1b]${id};${oscRgbString(...rgb)}`;
-  return bel ? `${body}\x07` : `${body}\x1b\\`;
-}
-
-function rewriteOscColorReports(s) {
+// xterm 会回答 OSC 10/11/12/4 查询，答案走 term.onData，看起来像键盘输入。
+// 把回包改写成暗色 palettes 再写回 PTY，会让 gh/survey 这类在查询后立刻
+// 进 raw 读键的 CLI 把 ESC ] 当成非法按键（leftover 11;rgb:0000/0000/0000）。
+// 丢掉回包：CLI 超时后沿用默认暗色 TUI，亮色页面只在浏览器反色，
+// 也不把页面底色告诉 Codex/Claude/Grok。
+function stripOscColorReports(s) {
   if (!s || !s.includes('\x1b]')) return s;
   s = s.replace(
-    /\x1b\](10|11|12);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g,
-    (full, id) => oscColorReport(id, DARK_TERM_REPORT[id], full.endsWith('\x07')));
+    /\x1b\](?:10|11|12);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g, '');
   return s.replace(
-    /\x1b\]4;(\d+);(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g,
-    (full, index) => {
-      const rgb = DARK_TERM_REPORT.ansi[+index];
-      return rgb ? oscColorReport(`4;${index}`, rgb, full.endsWith('\x07')) : full;
-    });
+    /\x1b\]4;\d+;(?:rgb:[^\\\x07]*|#[0-9a-fA-F]+)(?:\x07|\x1b\\)/g, '');
 }
 
 function lightTerminalAnsi(s) {
@@ -2277,7 +2252,8 @@ function ensureTerm(name) {
   term.onData(d => {
     if (T.name !== name) return;
     d = applyTermCtrl(d);
-    d = rewriteOscColorReports(d);
+    d = stripOscColorReports(d);
+    if (!d) return;
     if (view.ws?.readyState !== 1) return;
     browserAuditEvent('terminal.input', {name, bytes: new TextEncoder().encode(d).length},
       d, {uid: T.uid || '', connectionId: view.auditConnectionId || ''});
