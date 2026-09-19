@@ -447,6 +447,11 @@ async function fetchTermList() {
     // term/list 已经把 pane 映射到当前叶子；若本页还选中旧叶子，
     // 必须连同草稿和终端归属一起跟进，不能继续向已消失的 uid 请求接管。
     await rebindSelectedTermSession();
+    const view = currentTermViewObject();
+    if (view && !view.replay && (view.ended || view.keepOutput)
+        && !$('#termpane')?.classList.contains('hidden')
+        && typeof startShellRecordingReplay === 'function')
+      startShellRecordingReplay(view, view.bindingUid || T.uid);
   }
   const create = $('#new-session');
   const createEnabled = T.enabled && SessionDockCapabilities.allows('terminal_create');
@@ -1810,15 +1815,16 @@ function sessionIsPtyOnly(uid = S.sel) {
 async function openPendingSession(info) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending);
-  // Agent 会话留在对话页，直到用户打开控制台。SSH 没有归档，默认 PTY 在
-  // 输入框上方；点控制台再进纯终端。记住的布局优先。
+  // Agent 会话留在对话页，直到用户打开控制台。SSH 运行中默认 PTY 在
+  // 输入框上方；结束后有录制则全幅只读回放。记住的布局优先。
   const running = SessionDockCapabilities.config.backend !== 'rust'
     || (pending.running && !pending.stale);
   const retained = T.views?.get(pending.name)?.keepOutput || T.views?.get(pending.name)?.ended;
   const remembered = T.openViews.has(pending.name) && running;
+  const replay = pending.source === 'shell' && pending.recording && !running;
   // 已结束但有录制的 SSH 会话：控制台面板里只读回放它的录制。
   if (pending.source === 'shell' && (running || retained || pending.recording))
-    await openTermPane(pending.name, true, remembered ? null : 'collapsed');
+    await openTermPane(pending.name, true, remembered ? null : (replay ? 'full' : 'collapsed'));
   else if (remembered)
     await openTermPane(pending.name);
   resolveNewSession(pending);
@@ -2455,6 +2461,8 @@ function ensureTerm(name) {
   // xterm 的正常 scrollback。改造前遗留在默认 server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
+    // 录制回放和已退出的画面没有宿主 copy-mode；滚轮留给 xterm / 面板滚动条。
+    if (view.replay || view.ended || view.revoked) return true;
     if (T.list?.find(x => x.name === name)?.server === 'sessiondock') return true;
     wheelBy(e.deltaY);
     return false;
@@ -2933,10 +2941,14 @@ function recordHostExit(view, uid, event) {
   const reason = incomplete
     ? `终端输出不完整：${event.reason}。已保留收到的尾部输出，不会自动重新连接。`
     : '终端进程已退出，已保留收到的输出。';
+  const pendingRow = (T.pending || []).find(item => item.name === view.name);
+  const shell = pendingRow?.source === 'shell'
+    || (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid));
+  const keepPane = shell && T.name === view.name;
   view.ended = true;
   view.revoked = true; // An explicitly exited instance must never be auto-claimed.
   cancelTermReconnect(view);
-  rememberTermOpen(view.name, false);
+  if (!keepPane) rememberTermOpen(view.name, false);
   T.ended.set(uid, {instanceId: view.instanceId, reason});
   if (T.ended.size > 256) T.ended.delete(T.ended.keys().next().value);
   ConsoleUI.errors.set(uid, reason);
@@ -2952,12 +2964,26 @@ function recordHostExit(view, uid, event) {
     }
   } else {
     // AI sessions close the pane and return to the conversation. SSH/shell
-    // has no archive, so the retained PTY stays the only surface.
+    // keeps the console and, when a recording exists, switches it to
+    // read-only replay with the timeline — the live tail is not the archive.
     view.keepOutput = true;
-    if (T.name === view.name && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)))
+    if (T.name === view.name && !shell)
       closeTermPane(true);
+    else if (keepPane) {
+      T.mode = 'full';
+      if (typeof rememberTermLayout === 'function') rememberTermLayout(view.name);
+      if (typeof layoutTermPane === 'function') layoutTermPane();
+      if (!(typeof startShellRecordingReplay === 'function' && startShellRecordingReplay(view, uid))
+          && typeof loadTermList === 'function') {
+        void Promise.resolve(loadTermList()).then(() => {
+          if (T.views.get(view.name) === view && !view.replay
+              && typeof startShellRecordingReplay === 'function')
+            startShellRecordingReplay(view, uid);
+        });
+      }
+    }
     const stopNotice = document.querySelector('#session-stop-notice');
-    if (uid === S.sel && typeof showSessionStopNotice === 'function'
+    if (!shell && uid === S.sel && typeof showSessionStopNotice === 'function'
         && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
   }
   renderTakeoverBtn();
@@ -2965,6 +2991,35 @@ function recordHostExit(view, uid, event) {
 }
 
 /** 在控制台面板里只读回放一段录制：不 claim、不发输入；网格视图收 JSON 行，xterm 视图收净化后的字节。 */
+function startShellRecordingReplay(view, uid) {
+  if (typeof attachRecordingReplay !== 'function' || !view) return false;
+  if (view.replay && view.ws && view.ws.readyState < 2) return true;
+  const row = (T.pending || []).find(item => item.name === view.name);
+  if (!row?.recording?.id) return false;
+  if (T.name === view.name) T.mode = 'full';
+  attachRecordingReplay(view, row, uid);
+  if (T.name === view.name) {
+    if (typeof rememberTermLayout === 'function') rememberTermLayout(view.name);
+    if (typeof layoutTermPane === 'function') layoutTermPane();
+    renderTimeline(view);
+  }
+  return true;
+}
+
+function sessionRecordingReplayable(uid) {
+  if (!uid || typeof T === 'undefined') return false;
+  const name = String(uid).startsWith('tmux:')
+    ? String(uid).slice(5)
+    : (typeof takenOver === 'function' ? takenOver(uid) : '');
+  const view = name ? T.views?.get(name) : null;
+  if (view?.replay) return true;
+  const row = (T.pending || []).find(item =>
+    item.name === name
+    || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
+  return !!(row?.recording?.id && typeof pendingPhase === 'function'
+    && (pendingPhase(row) === 'exited' || pendingPhase(row) === 'failed'));
+}
+
 /** 录制回放的时间轴：进度条、播放/暂停、倍速、跳到最新。只对当前视图画。 */
 function replayTimeElapsed(ms) {
   const total = Math.max(0, Math.round(ms / 1000));
@@ -3141,7 +3196,8 @@ function attachTerm(name, auto = false, directClaim = false) {
 }
 
 async function attachOwnedTerm(view, allowRefresh = true, auto = false, directClaim = false) {
-  if (view.ended || view.retired) return false;
+  if (view.retired) return false;
+  if (view.replay && view.ws && view.ws.readyState < 2) return true;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
   const row = (SessionDockCapabilities.config.backend === 'rust'
@@ -3150,8 +3206,13 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   const uid = row?.uid || T.uid;
   const bound = SessionDockCapabilities.config.backend === 'rust';
   // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
+  // 本页刚观察到的宿主退出（view.ended / pendingPhase）也走这条路，不能
+  // 被 ended 提前 return 挡住，否则直播尾帧既没有时间轴也滚不动。
   // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
-  if (bound && row && row.running === false && row.recording?.id) return attachRecordingReplay(view, row, uid);
+  if (bound && row?.recording?.id
+      && (view.ended || pendingPhase(row) === 'exited' || pendingPhase(row) === 'failed'))
+    return attachRecordingReplay(view, row, uid);
+  if (view.ended) return false;
   if (bound && row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
     ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下录制。' : '实例已退出。');
     renderTakeoverBtn();

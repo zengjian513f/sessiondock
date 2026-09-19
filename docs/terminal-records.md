@@ -39,6 +39,11 @@ there after 1.2 s, like `session/stop` for a CLI) and an exited one offers
 page follows the exit it observes itself (`T.ended`, `pendingPhase`):
 the header action, the sidebar subtitle and the console notice change at
 once, and a later list poll that still says running cannot flip them back.
+A live SSH console that observes the host exit on this page switches to
+the same read-only replay — timeline under the terminal, recorded screen
+scrollable inside `#xterm` so it does not cover the bar — instead of
+keeping a clipped live tail; `T.ended` does not grey the console while a
+recording exists. Opening the exited row from the list is the same path.
 A replay shows a timeline under the terminal
 (`#term-timeline`: slider, play/pause, speed 1–16×, and 最新 while the
 recording is live): a full-screen program's history is a sequence of

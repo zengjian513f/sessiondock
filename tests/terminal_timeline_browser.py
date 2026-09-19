@@ -57,6 +57,19 @@ def run(browser, base, root, renderer):
     kb.press_sequentially("quit")
     kb.press("Enter")
     page.wait_for_function("[...T.views.values()].some(v => v.ended)", timeout=15000)
+    # Live exit on this page must switch to recording replay with a timeline.
+    # Reloading and clicking the row is a second path; the first mismatch in
+    # BUG-20260919-122121-bbc5dc was staying on the clipped live tail.
+    page.wait_for_function("document.querySelector('#termpane').classList.contains('replay')"
+                           " && getComputedStyle(document.querySelector('#term-timeline')).display === 'flex'",
+                           timeout=15000)
+    assert page.evaluate("getComputedStyle(document.querySelector('#xterm')).overflow") in ("auto", "scroll")
+    assert page.locator("#a-term").get_attribute("data-unavailable") == "false"
+    page.locator(f'#side .item[data-uid="{uid}"]').first.click()
+    page.wait_for_function("document.querySelector('#termpane').classList.contains('replay')"
+                           " && getComputedStyle(document.querySelector('#term-timeline')).display === 'flex'",
+                           timeout=15000)
+    print(f"PASS {renderer} live-exit (same page switches to replay with a timeline)", flush=True)
     deadline = time.monotonic() + 15
     row = None
     while time.monotonic() < deadline:
