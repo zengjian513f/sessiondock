@@ -28,7 +28,7 @@ RULE = "─" * 48
 
 def parse(argv):
     options = {"sid": "", "delay": 0.0, "swallow": 0, "reply": False,
-               "busy_footer": False}
+               "busy_footer": False, "collapse_paste": False}
     i = 0
     while i < len(argv):
         arg = argv[i]
@@ -45,6 +45,8 @@ def parse(argv):
             options["reply"] = True
         elif arg == "--busy-footer":
             options["busy_footer"] = True
+        elif arg == "--collapse-paste":
+            options["collapse_paste"] = True
         elif arg in ("--settings", "--model", "--effort") and i + 1 < len(argv):
             i += 1
         i += 1
@@ -56,6 +58,7 @@ class Fake:
         self.sid = options["sid"]
         self.options = options
         self.buffer = ""
+        self.collapsed_paste = None
         self.transcript = []
         self.parent = None
         self.submitted = 0
@@ -90,7 +93,8 @@ class Fake:
         # Preserve the actual composer cursor while drawing its bottom rule.
         # Keep the fake editor inside the PTY viewport for long report prompts.
         # The input buffer (and the native user record) still holds the full text.
-        visible = self.buffer
+        visible = (f"[Pasted text #1 +{self.collapsed_paste} lines]"
+                   if self.collapsed_paste is not None else self.buffer)
         if len(visible) > 160:
             visible = "…" + visible[-160:].replace("\n", " ")
         body = "\r\n".join(lines) + "\r\n❯ " + visible.replace("\n", "\r\n")
@@ -129,6 +133,7 @@ class Fake:
     def submit(self):
         text = self.buffer
         self.buffer = ""
+        self.collapsed_paste = None
         if not text.strip():
             self.render()
             return
@@ -167,7 +172,10 @@ class Fake:
                             break
                         paste += pending[:end]
                         pending = pending[end + 6:]
-                        self.buffer += paste.decode("utf-8", "replace").replace("\r", "")
+                        pasted = paste.decode("utf-8", "replace").replace("\r", "")
+                        self.buffer += pasted
+                        if self.options["collapse_paste"] and "\n" in pasted:
+                            self.collapsed_paste = pasted.count("\n")
                         paste = None
                         self.render()
                         continue
@@ -193,6 +201,7 @@ class Fake:
                     if byte == b"\x15":  # C-u
                         pending = pending[1:]
                         self.buffer = ""
+                        self.collapsed_paste = None
                         self.render()
                         continue
                     if byte == b"\x0b":  # C-k
@@ -202,6 +211,7 @@ class Fake:
                     if byte == b"\x7f":
                         pending = pending[1:]
                         self.buffer = self.buffer[:-1]
+                        self.collapsed_paste = None
                         self.render()
                         continue
                     if byte in (b"\x03", b"\x04"):
@@ -228,6 +238,7 @@ class Fake:
                             text = pending[:cut].decode("utf-8", "replace")
                     pending = pending[cut:]
                     self.buffer += text
+                    self.collapsed_paste = None
                     self.render()
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, saved)

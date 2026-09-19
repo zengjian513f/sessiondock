@@ -710,6 +710,14 @@ pub fn same_text_ignoring_whitespace(observed: &str, payload: &str) -> bool {
     a.eq(b)
 }
 
+/// Claude Code collapses a multi-line paste into `[Pasted text #1 +N lines]`;
+/// Codex can show `[Pasted Content N chars]`. Styled captures may encode the
+/// inner spaces as cursor moves, so compare the visible token without spaces.
+pub fn paste_placeholder(text: &str) -> bool {
+    let text: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    text.starts_with("[Pasted") && text.contains(']')
+}
+
 /// Host operations needed by the executor. One production implementation
 /// exists; tests provide fakes. Every method must be safe to call only under
 /// the executor's per-session serialization.

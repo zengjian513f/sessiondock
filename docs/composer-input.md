@@ -23,7 +23,7 @@
 - 其余状态：HTTP 409，`ok` 为 false，并带父合同已有的顶层 `code`/`error` 以及 `draft_revision`。
 - 顶层码与 `input.code` 一致：`cli_starting`（空屏）、`cli_catching_up`（捕获滞后）、`cli_pasting`（粘贴中）、`cli_question`（已知菜单）、`cli_not_ready`（未知画面）。身份或所有权等错误仍返回原有错误响应，不伪造画面分类。
 
-SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 ready；真正执行 SEND 时每个检查点最多等待 3 秒，每 100ms 再检。Claude/Codex 粘贴后必须看到编辑区文字变化、包含消息末尾，并连续 200ms 未再变化，且没有粘贴提示或画面滞后，才发送 Enter；超时保留输入。Grok 尚无可用的编辑区正文提取，仍保留 600ms 最短间隔和画面就绪再检。
+SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 ready；真正执行 SEND 时每个检查点最多等待 3 秒，每 100ms 再检。Claude/Codex 粘贴后必须看到编辑区文字变化，且新文字包含消息末尾或 CLI 的多行粘贴折叠占位符；该画面还必须连续 200ms 未再变化，没有粘贴提示或画面滞后，才发送 Enter；超时保留输入。Grok 尚无可用的编辑区正文提取，仍保留 600ms 最短间隔和画面就绪再检。
 
 ## UI 与否决边界
 
