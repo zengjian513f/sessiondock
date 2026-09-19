@@ -173,6 +173,27 @@ def run_source(page, context, base, source, work):
     else:
         passed(f"{source}: no native row before first send")
 
+    # SSH receipts survive exit for recording replay, so they first offer
+    # stop. Unused native AI rows still offer direct discard after the merge.
+    row = page.locator(f'#side .item[data-uid="{native_uid or pending_uid}"]')
+    row.click(button="right")
+    menu_stop = page.locator('#item-menu [data-act="stop"]')
+    menu_delete = page.locator('#item-menu [data-act="delete"]')
+    if source == "shell":
+        expect(menu_stop).to_be_visible()
+        expect(menu_delete).to_be_hidden()
+        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/kill") as stopped:
+            menu_stop.click()
+        assert stopped.value.status == 200, stopped.value.text()
+        page.wait_for_function(
+            "id => T.pending.some(row => row.record_id === id && row.running === false)",
+            arg=receipt["record_id"], timeout=15000)
+        row.click(button="right")
+        passed("shell: sidebar stop exits the session and retains its row")
+    expect(menu_stop).to_be_hidden()
+    expect(menu_delete).to_be_visible()
+    expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
+    page.keyboard.press("Escape")
     discard_selected(page)
     deadline = time.monotonic() + 8
     last = None

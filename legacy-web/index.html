@@ -244,6 +244,14 @@
         <div class="term-resizer" id="tgrip" title="拖动终端上边界调整高度"></div>
         <span id="term-ctrl-lock" role="status">Ctrl（下一键）</span>
         <div id="xterm"></div>
+        <div id="term-output-notice" role="status" hidden></div>
+        <div id="term-timeline" class="term-timeline" aria-label="录制回放进度">
+          <button type="button" id="tl-play" title="播放" aria-label="播放">▶</button>
+          <input type="range" id="tl-seek" min="0" max="1000" value="1000" step="1" aria-label="回放进度">
+          <span id="tl-time">00:00 / 00:00</span>
+          <select id="tl-speed" aria-label="倍速"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select>
+          <button type="button" id="tl-live" title="跳到最新并跟随" aria-label="跳到最新并跟随" hidden>最新</button>
+        </div>
         <div class="term-keys" aria-label="终端快捷键">
           <button data-term-modifier="ctrl" title="Ctrl（下一键生效）" aria-label="Ctrl，下一键生效" aria-pressed="false">Ctrl</button>
           <button data-term-key="Escape" title="Escape" aria-label="Escape">Esc</button>
@@ -403,7 +411,7 @@
     </label>
     <a class="avatar-credits" href="avatars/credits.html" target="_blank" rel="noopener">头像来源与许可</a>
     <label class="setting-row" for="setting-cache">
-      <span><b>历史缓存</b><small>tmux 对话固定驻留，不计入此上限</small></span>
+      <span><b>历史缓存</b><small>打开中的会话固定驻留，不计入此上限</small></span>
       <select id="setting-cache">
         <option value="64">64 MB</option>
         <option value="128">128 MB</option>
@@ -436,6 +444,11 @@
 <script defer src="vendor/addon-fit.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/addon-unicode11.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/addon-webgl.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script type="module">
+  // 服务端网格的 xterm 兼容外观层；模块脚本与 defer 脚本按文档顺序执行，term.js 能直接用到。
+  import {GridTerm} from './grid/facade.js?v=__SESSIONDOCK_ASSET_VERSION__';
+  globalThis.GridTerm = GridTerm;
+</script>
 <script defer src="term.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/katex/katex.min.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="vendor/katex/auto-render.min.js?v=__SESSIONDOCK_ASSET_VERSION__" onload="refreshFormulae()"></script>

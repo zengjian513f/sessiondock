@@ -185,6 +185,8 @@ pub struct AttachQuery {
     /// URL by the frontend; accepted and ignored here.
     #[allow(dead_code)]
     debug_run: String,
+    /// `grid` streams the server-side grid protocol instead of raw bytes.
+    mode: String,
 }
 
 impl Default for AttachQuery {
@@ -201,6 +203,7 @@ impl Default for AttachQuery {
             record_id: None,
             launch_id: None,
             debug_run: String::new(),
+            mode: String::new(),
         }
     }
 }
@@ -305,6 +308,11 @@ pub async fn attach(
     // WebSocket frames up to 8 MiB are accepted. HTTP send/paste keeps the
     // ptyhost guarded-operation 1 MiB ceiling.
     let max_input = service.limits().max_host_frame_bytes;
+    let mode = if query.mode == "grid" {
+        crate::terminal::AttachMode::Grid
+    } else {
+        crate::terminal::AttachMode::Bytes
+    };
     Ok(ws
         .read_buffer_size(16 * 1024)
         .write_buffer_size(0)
@@ -314,7 +322,7 @@ pub async fn attach(
         // Upgrade failures drop the callback's PreparedAttachment guard; do not
         // log the rejection, request URI, token, or peer's arbitrary text.
         .on_failed_upgrade(|_| {})
-        .on_upgrade(move |socket| prepared.run(socket, size, state.shutdown)))
+        .on_upgrade(move |socket| prepared.with_mode(mode).run(socket, size, state.shutdown)))
 }
 
 fn binding_unavailable() -> ApiError {
@@ -360,6 +368,70 @@ pub struct SendRequest {
 
 fn invalid_input(message: &'static str) -> ApiError {
     ApiError::new(StatusCode::BAD_REQUEST, "invalid_terminal_input", message)
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct GridHistoryQuery {
+    name: String,
+    page: String,
+    token: String,
+    uid: Option<String>,
+    instance_id: Option<String>,
+    record_id: Option<String>,
+    launch_id: Option<String>,
+    from: usize,
+    to: usize,
+    #[allow(dead_code)]
+    debug_run: String,
+}
+
+/// `GET /api/term/grid/history`: grid-protocol scrollback rows `[from, to)`
+/// (absolute history line numbers, 0 = oldest) for the page's own console
+/// lease. Read-only; the host caps a page at 2000 rows.
+pub async fn grid_history(
+    State(state): State<AppState>,
+    query: Result<Query<GridHistoryQuery>, QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let service = enabled(&state)?;
+    let Query(query) = query
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalid_history", "历史行参数无效"))?;
+    if query.to <= query.from {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "invalid_history",
+            "历史行范围无效",
+        ));
+    }
+    let expected = match (
+        &query.uid,
+        &query.instance_id,
+        &query.record_id,
+        &query.launch_id,
+    ) {
+        (None, None, None, None) => ExpectedTarget::Raw,
+        (Some(uid), Some(instance), None, None) => ExpectedTarget::Native { uid, instance },
+        (None, Some(instance), Some(record), Some(launch)) => {
+            if record.len() != 32 || launch.len() != 32 || instance.len() != 32 {
+                return Err(binding_unavailable());
+            }
+            ExpectedTarget::Launch { launch, instance }
+        }
+        _ => return Err(binding_unavailable()),
+    };
+    let reply = service
+        .grid_rows(
+            &query.name,
+            &query.page,
+            &query.token,
+            expected,
+            query.from,
+            query.to,
+        )
+        .await?;
+    Ok(Json(json!({
+        "rows": reply.rows, "from": reply.from, "to": reply.to, "total": reply.total,
+    })))
 }
 
 pub async fn send(
@@ -598,9 +670,13 @@ async fn launch_target(
 pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 
 /// Whether a receipt still belongs in the sidebar's pending list: not
-/// discarded by the operator and not finished for longer than
-/// [`PENDING_ARCHIVE_AFTER`]. A finished receipt with no recorded time (an
-/// older ledger) is archived at once.
+/// discarded by the operator and, for an agent launch, not finished for
+/// longer than [`PENDING_ARCHIVE_AFTER`] (an agent session's own record is
+/// its native transcript; the receipt is only the launch). A finished shell
+/// receipt is the SSH session itself, so it stays listed until 删除 exactly
+/// like an agent session's row: with its recording (open = read-only
+/// replay) or without one (open = "no recording"). A finished agent receipt
+/// with no recorded time (an older ledger) is archived at once.
 fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     use crate::lifecycle::model::State;
     if record.discarded() {
@@ -608,7 +684,7 @@ fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     }
     if matches!(record.state(), State::Exited | State::Failed) {
         if record.spec().source() == crate::lifecycle::model::Source::Shell {
-            return false;
+            return true;
         }
         return record
             .finished_at()
@@ -645,6 +721,34 @@ pub async fn list(
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(|home| home.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Which host names accept grid attachments; pending rows get it too so the
+    // console picks a renderer the host understands.
+    let mut grid_hosts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // Newest recording per host name; rows carry it so the console can replay
+    // an exited session instead of showing an empty pane.
+    let recorded: std::collections::BTreeMap<String, crate::terminal::records::RecordEntry> =
+        match state
+            .terminal
+            .as_ref()
+            .map(|service| service.directory().to_path_buf())
+        {
+            Some(root) => tokio::task::spawn_blocking(move || {
+                let mut map = std::collections::BTreeMap::new();
+                for entry in crate::terminal::records::list(&root).unwrap_or_default() {
+                    map.entry(entry.name.clone()).or_insert(entry);
+                }
+                map
+            })
+            .await
+            .unwrap_or_default(),
+            None => Default::default(),
+        };
+    let recording_json = |name: &str| {
+        recorded.get(name).map(|entry| {
+            json!({"id": entry.id, "live": entry.live, "bytes": entry.bytes,
+                   "ended_ms": entry.ended_ms, "created_ms": entry.created_ms})
+        })
+    };
     let mut response = json!({"enabled":false, "transport_enabled":state.terminal.is_some(),
         "unavailable_reason":"没有通过完整会话 UID 和实例校验的运行中终端；创建和 CLI 接管尚未启用。",
         "sources":{},"home":home,"backend":"ptyhost","backends":[],"sessions":[],"pending":[],"hosts":[]});
@@ -675,6 +779,14 @@ pub async fn list(
                     }
                 }
             }
+            // From the host records themselves, not the (up to 500 ms old) shared
+            // observation: a session created a moment ago must not be reported as an
+            // old host for one poll, or its console would start in the wrong renderer.
+            if let Some(service) = &state.terminal
+                && let Ok(hosts) = service.hosts().await
+            {
+                grid_hosts.extend(hosts.into_iter().filter(|h| h.grid).map(|h| h.name));
+            }
             let sessions: Vec<Value> = observed
                 .snapshot
                 .hosts
@@ -687,6 +799,9 @@ pub async fn list(
                     row["source"] = json!(target.source().as_str());
                     row["instance_id"] = json!(target.instance_id());
                     row["origin_launch_id"] = json!(target.origin_launch_id());
+                    if let Some(recording) = recording_json(&host.summary.name) {
+                        row["recording"] = recording;
+                    }
                     if let Some(uids) = current.get(&host.summary.name)
                         && let [uid] = uids.as_slice()
                     {
@@ -720,6 +835,10 @@ pub async fn list(
                 .filter(|record| pending_listed(record, now))
                 .map(|record| {
                     let mut row = super::lifecycle::project(record);
+                    row["grid"] = json!(grid_hosts.contains(record.host_name()));
+                    if let Some(recording) = recording_json(record.host_name()) {
+                        row["recording"] = recording;
+                    }
                     if let Some(extra) = state
                         .bug_report
                         .as_ref()

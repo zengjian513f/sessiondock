@@ -49,8 +49,8 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | --- | --- | --- |
 | POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
 | GET `/api/term/new-status` | `record_id`, `instance_id` | Refresh status of that exact recorded instance |
-| POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, guarded stop, verify exit |
-| POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` together with the input the conversation service retained for it (a draft shared with a native session still in the catalog stays; an alias to a trashed UID does not keep it). A `new_assigned` launch also moves the matching empty native session into trash, so Grok's startup `summary.json` cannot rebuild the row; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
+| POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, for a shell receipt EOF (`C-d`) then up to 1.2 s for the shell's own exit, guarded stop, verify exit |
+| POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` together with the input the conversation service retained for it (a draft shared with a native session still in the catalog stays; an alias to a trashed UID does not keep it). A `new_assigned` launch also moves the matching empty native session into trash, so Grok's startup `summary.json` cannot rebuild the row; a shell receipt's recordings are deleted with it; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
 | POST `/api/session/stop` | `uid` | Stop a managed instance through guarded host control or terminate process IDs attributed to this exact external native session; an already-stopped session succeeds with `stopped:false` |
 | POST `/api/term/bind` | `record_id`, `instance_id`, `uid`, `operator_confirmed: true` | Validate a real main-session scope, persist one immutable intent, bind and observe |
 | GET `/api/term/list` | optional `force=1` | Native-bound sessions plus separate launch-only pending receipts, `resume_sources{claude,codex,grok}` and `backends`; served from a 2 s per-view response cache that every mutation above drops at once, `force=1` bypasses it ([liveness.md](liveness.md#response-caches)) |
@@ -71,9 +71,10 @@ The legacy source picker advertises only this unambiguous subset and labels
 sources remain the three AI CLIs. Shell receipts use fixed argv, stay in the
 terminal list while running, and support the same guarded attach, reconnect,
 kill and discard as other launch receipts without native binding.
-Shell receipts leave the sidebar as soon as exit or launch failure is verified;
-the minimal lifecycle receipt stays queryable for idempotency. Terminal output
-is a bounded in-memory screen/scrollback, not a persisted conversation archive.
+Shell receipts stay in the sidebar after exit or launch failure until explicitly
+discarded; the minimal lifecycle receipt stays queryable for idempotency. An
+exited shell's console replays its [recording](terminal-records.md) read-only,
+or explains that no recording exists. Discard also deletes its recordings.
 An existing running shell can be reattached; an exited shell cannot be resumed.
 
 Receipt replies include record/request IDs, routing name, declared source/cwd,
@@ -87,11 +88,11 @@ deleted or reported as running. A name-only kill is rejected.
 Receipts carry `started` (Unix seconds the intent was persisted), `finished_at`
 (Unix seconds the receipt became Exited/Failed), `discarded`, `discardable`
 and, on `binding`, `method` (`operator` | `process`), `evidence` and
-`bound_at`. `GET /api/term/list` lists a receipt under `pending` only while
-it is not discarded and — once Exited/Failed — for at most 600 s after
-`finished_at` (a resolved AI row is kept for 600 s; finished `shell` rows leave immediately;
-a finished receipt migrated from an older ledger has no time and is archived
-at once). Archived receipts still answer `term/new-status`.
+`bound_at`. `GET /api/term/list` excludes discarded receipts from `pending`.
+Shell receipts stay listed until discarded, including after Exited/Failed.
+Finished AI receipts stay for at most 600 s after `finished_at`; a finished
+AI receipt migrated from an older ledger without that time is archived at
+once. Archived receipts still answer `term/new-status`.
 
 ## Automatic binding by process evidence
 

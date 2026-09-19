@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **200** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -229,7 +229,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `invalid_attach`
 
-- 终端连接参数无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L215 → `GET /api/term/attach`
+- 终端连接参数无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L218 → `GET /api/term/attach`
 
 ### `invalid_audit_request`
 
@@ -246,6 +246,12 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 ### `invalid_file_request`
 
 - 需要有效的会话、分支和文件参数 — [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `invalid` L47
+
+### `invalid_history`
+
+- 历史行参数无效
+- 历史行范围无效
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `grid_history` L398, L400 → `GET /api/term/grid/history`
 
 ### `invalid_launch_request`
 
@@ -286,13 +292,17 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `delete_session` L289, L291
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `list` L407 → `GET /api/trash`
 
+### `invalid_record`
+
+- 录制参数无效 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L68 → `GET /api/term/records/attach`
+
 ### `invalid_rewind_target`
 
 - target 必须是 Claude 记录节点 ID，或 null 表示取消固定 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L391 → `POST /api/session/rewind`
 
 ### `invalid_scroll`
 
-- 终端滚动请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L541 → `POST /api/term/scroll`
+- 终端滚动请求格式无效 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L613 → `POST /api/term/scroll`
 
 ### `invalid_search_query`
 
@@ -300,11 +310,11 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `invalid_stop_request`
 
-- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L1021
+- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L1033
 
 ### `invalid_terminal_input`
 
-- (dynamic) — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `invalid_input` L362
+- (dynamic) — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `invalid_input` L370
 
 ### `invalid_trash_request`
 
@@ -357,7 +367,9 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `websocket_required`
 
-- 需要有效的 WebSocket 升级请求 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L269 → `GET /api/term/attach`
+- 需要有效的 WebSocket 升级请求
+- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L93 → `GET /api/term/records/attach`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L272 → `GET /api/term/attach`
 
 ## 403 Forbidden
 
@@ -489,8 +501,12 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L330
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L338 → `ANY (fallback)`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L338
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L346 → `ANY (fallback)`
+
+### `record_not_found`
+
+- 没有这个录制 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L79, L86 → `GET /api/term/records/attach`
 
 ### `session_error`
 
@@ -517,7 +533,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 - 会话不存在
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L529
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1067 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1079 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L302 → `POST /api/session/nest`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L428 → `POST /api/session/rewind`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L169 → `POST /api/session/star`
@@ -530,7 +546,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `terminal_missing`
 
-- 指定目录中没有这个终端 host — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L548 → `POST /api/term/scroll`
+- 指定目录中没有这个终端 host — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L620 → `POST /api/term/scroll`
 
 ## 409 Conflict
 
@@ -659,7 +675,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `run_state_unknown`
 
-- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1152 → `POST /api/session/stop`
+- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1164 → `POST /api/session/stop`
 
 ### `session_error`
 
@@ -721,7 +737,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `stop_superseded`
 
-- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1075 → `POST /api/session/stop`
+- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1087 → `POST /api/session/stop`
 
 ### `takeover_superseded`
 
@@ -729,7 +745,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ### `terminal_binding_unavailable`
 
-- 无法确认会话与终端实例的唯一关联；请刷新，不会降级按名称连接。 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `binding_unavailable` L321
+- 无法确认会话与终端实例的唯一关联；请刷新，不会降级按名称连接。 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `binding_unavailable` L329
 
 ## 410 Gone
 
@@ -759,7 +775,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `action` L526 → `POST /api/session/files/action`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `resolve` L125 → `POST /api/session/resolve-files`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L102
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1040 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1052 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L106
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L111 → `POST /api/term/claim`
 - [`security.rs`](../crates/sessiondock/src/security.rs) `api_policy` L107
@@ -821,7 +837,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - 终端输入请求体过大
 - 单次终端输入不能超过 1 MiB
 - 单次终端粘贴不能超过 1 MiB
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L373, L402, L428, L440 → `POST /api/term/send`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L445, L474, L500, L512 → `POST /api/term/send`
 
 ### `too_many_events`
 
@@ -978,13 +994,15 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - [`api/audit.rs`](../crates/sessiondock/src/api/audit.rs) `browser` L32 → `POST /api/audit/browser`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L845 → `POST /api/term/backend`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `enabled` L32
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1035, L1083 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1047, L1095 → `POST /api/session/stop`
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `configured` L36
 - [`error.rs`](../crates/sessiondock/src/error.rs) `unavailable` L31
 
 ### `terminal_disabled`
 
-- 终端传输未启用：必须显式配置隔离的 ptyhost 目录 — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L40
+- 终端传输未启用：必须显式配置隔离的 ptyhost 目录
+- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `root` L26
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `enabled` L40
 
 ### `unsupported_history`
 
@@ -1078,7 +1096,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - 草稿保存任务失败
 - 草稿清理任务失败
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `save` L148
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `forget_discarded_launch` L992
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `forget_discarded_launch` L1004
 
 ### `cwd_check_failed`
 
@@ -1144,7 +1162,7 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 ### `process_control_unavailable`
 
 - 无法结束外部会话进程：{error:?}
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1106 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1118 → `POST /api/session/stop`
 - [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L754 → `POST /api/term/takeover`
 
 ### `process_scan_unavailable`
@@ -1156,6 +1174,10 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 ### `reader_busy`
 
 - 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L125
+
+### `records_unreadable`
+
+- 无法读取录制目录 — [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `unreadable` L35
 
 ### `runtime_closed`
 
@@ -1222,11 +1244,12 @@ Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_admission` L468
 - [`api/media.rs`](../crates/sessiondock/src/api/media.rs) `get` L79 → `GET /api/media/{token}`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L124
+- [`api/records.rs`](../crates/sessiondock/src/api/records.rs) `attach` L100 → `GET /api/term/records/attach`
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `observe` L521
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `shared` L464
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L278 → `GET /api/term/attach`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `attach` L281 → `GET /api/term/attach`
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim` L139 → `POST /api/term/claim`
-- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L469 → `POST /api/term/send`
+- [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `send` L541 → `POST /api/term/send`
 
 ### `watch_closed`
 

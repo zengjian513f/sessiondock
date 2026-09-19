@@ -99,6 +99,9 @@ branch; it is not Windows or macOS runtime validation.
 
 The client additionally checks typed exit metadata; the Web bridge keeps output
 ahead of close and distinguishes an unmarked socket EOF from an explicit host
-exit. `tests/terminal_exit_browser.py` verifies the real legacy xterm tail and
-specific exit explanation on desktop/mobile, without automatic reclaims of an
-exited instance. See [terminal ownership](terminal-ownership.md).
+exit. `tests/terminal_exit_browser.py` verifies both xterm and grid renderers:
+the retained tail and specific exit explanation on desktop/mobile, without
+automatic reclaims of an exited instance. Incomplete output is explained in
+xterm's buffer or, for the grid, in a visible notice inside the console pane;
+plain diagnostic text is never passed to the grid JSON decoder. See
+[terminal ownership](terminal-ownership.md).

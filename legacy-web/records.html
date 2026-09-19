@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="sessiondock-mode" content="__SESSIONDOCK_MODE__">
+  <meta name="sessiondock-build" content="__SESSIONDOCK_ASSET_VERSION__">
+  <title>终端录制 · SessionDock</title>
+<script>
+  // 在样式表加载前确定明暗，避免刷新时先闪出另一套颜色。
+  (() => {
+    let choice = 'system';
+    let namespace = '';
+    try {
+      const caps = JSON.parse(document.querySelector('meta[name="sessiondock-capabilities"]')?.content || '{}');
+      namespace = typeof caps.storage_namespace === 'string' && caps.storage_namespace
+        ? caps.storage_namespace : caps.backend === 'rust' ? 'sessiondock.' : '';
+    } catch {}
+    const current = document.querySelector('meta[name="sessiondock-mode"]')?.content === 'hub'
+      ? `sessiondock.hub.${location.pathname}.` : 'sessiondock.';
+    const prefix = namespace || current;
+    try {
+      const saved = localStorage.getItem(prefix + 'theme');
+      choice = JSON.parse(saved) || 'system';
+    } catch {}
+    document.documentElement.dataset.theme = choice === 'system'
+      ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : choice;
+  })();
+</script>
+  <script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+  <link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
+  <script defer src="typography.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+  <link rel="stylesheet" href="vendor/xterm.css?v=__SESSIONDOCK_ASSET_VERSION__">
+  <script defer src="vendor/xterm.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+  <script defer src="vendor/addon-fit.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+  <script defer src="vendor/addon-unicode11.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+  <link rel="stylesheet" href="records.css?v=__SESSIONDOCK_ASSET_VERSION__">
+  <script defer src="records.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+</head>
+<body>
+  <main>
+    <header><div class="app-mark" aria-hidden="true">▰</div><h1>终端录制</h1><span id="machine"></span></header>
+    <div id="panes">
+      <aside id="list">
+        <div class="toolbar">
+          <button id="refresh">刷新</button>
+          <label><input id="live-only" type="checkbox">只看进行中</label>
+        </div>
+        <ul id="records" role="listbox" aria-label="录制列表" tabindex="0"></ul>
+      </aside>
+      <section id="viewer">
+        <div class="bar">
+          <span id="status" role="status" aria-live="polite"></span>
+          <span id="size"></span>
+          <button id="fit" aria-pressed="false" title="按窗口重新折行">适应窗口</button>
+          <button id="copy">复制选区</button>
+          <button id="bottom">回到底部</button>
+        </div>
+        <div id="xterm"></div>
+        <div id="empty" hidden>选择左侧的录制</div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

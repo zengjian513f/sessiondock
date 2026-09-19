@@ -303,6 +303,7 @@ fn build_app(
     let mut capabilities = state::capabilities();
     capabilities["terminal_transport"] = serde_json::json!(terminal.is_some());
     capabilities["terminal"] = serde_json::json!(terminal.is_some());
+    capabilities["terminal_records"] = serde_json::json!(terminal.is_some());
     capabilities["terminal_create"] = serde_json::json!(lifecycle.is_some());
     capabilities["terminal_pending"] = serde_json::json!(lifecycle.is_some());
     capabilities["terminal_bind"] = serde_json::json!(lifecycle.is_some());
