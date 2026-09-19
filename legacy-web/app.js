@@ -2803,18 +2803,19 @@ function openItemMenu(uid, x, y) {
   const row = list.find(session => session.uid === uid);
   const parent = !!row?.fork_parent;
   const running = sessionStoppable(uid);
+  const unusedLaunch = !row?.pending && unusedNewAssignedLaunch(row);
   const byKey = new Map(list.map(session => [spawnKey(session.node_id, session.source, session.sid), session]));
   const nested = !!(row && nestParentOf(row, byKey));
   const canRestore = !!(row?.spawned_by?.source && row.spawned_by.sid)
     && (!!row.nest_independent || !!(row.nest_parent?.source && row.nest_parent.sid));
   const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
-  menu.querySelector('[data-act="stop"]').hidden = parent || row?.pending || !running;
+  menu.querySelector('[data-act="stop"]').hidden = parent || row?.pending || !running || !!unusedLaunch;
   menu.querySelector('[data-act="hide"]').hidden = !parent;
   menu.querySelector('[data-act="detach"]').hidden = !nestable || !nested;
   menu.querySelector('[data-act="reattach"]').hidden = !nestable || !canRestore;
   menu.querySelector('[data-act="attach"]').hidden = !nestable;
-  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running);
-  menu.querySelector('[data-act="delete"]').textContent = row?.pending ? '丢弃会话' : '删除会话';
+  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running && !unusedLaunch);
+  menu.querySelector('[data-act="delete"]').textContent = (row?.pending || unusedLaunch) ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
@@ -2978,6 +2979,12 @@ $('#item-menu').onclick = async e => {
   if (button.dataset.act === 'stop') {
     const row = S.sessions.find(x => x.uid === uid);
     if (row) await stopSession(row);
+    return;
+  }
+  const row = sidebarSessions().find(session => session.uid === uid);
+  const launch = unusedNewAssignedLaunch(row);
+  if (launch && typeof deletePendingSession === 'function') {
+    await deletePendingSession(launch);
     return;
   }
   await deleteSessions([uid]);
@@ -5126,6 +5133,20 @@ document.addEventListener('keydown', event => {
   }
 }, true);
 
+function newAssignedLaunchFor(session) {
+  if (typeof T === 'undefined' || !session?.sid) return null;
+  return (T.pending || []).find(row => row.launch_kind === 'new_assigned'
+    && row.source === session.source
+    && String(row.declared_sid || '') === String(session.sid)) || null;
+}
+
+function unusedNewAssignedLaunch(session) {
+  const launch = newAssignedLaunchFor(session);
+  if (!launch) return null;
+  if (Number(session.cursor?.end) > 0) return null;
+  return launch;
+}
+
 function renderSessionAction(m, button = $('#a-session-action')) {
   if (!button || m.uid !== S.sel) return;
   if (m.fork_parent) {
@@ -5135,6 +5156,15 @@ function renderSessionAction(m, button = $('#a-session-action')) {
     button.title = button.ariaLabel = label;
     labelSessionAction(button);
     button.onclick = () => setForkParentVisibility([m.uid], !shown, button);
+    return;
+  }
+  const launch = unusedNewAssignedLaunch(m);
+  if (launch && typeof deletePendingSession === 'function') {
+    const label = '删除会话';
+    button.innerHTML = uiIcon('trash');
+    button.title = button.ariaLabel = label;
+    labelSessionAction(button);
+    button.onclick = () => deletePendingSession(launch, button);
     return;
   }
   const running = sessionStoppable(m.uid);
