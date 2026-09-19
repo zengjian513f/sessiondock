@@ -170,6 +170,22 @@ function nodeOfflineReason(node) {
   return lines.join('\n');
 }
 
+function nodeRequestFailures(node) {
+  if (!node) return [];
+  const labels = {search: '全文搜索', sessions: '会话列表', live: '运行状态', term: '终端列表'};
+  return ['live', 'term', 'sessions', 'search']
+    .filter(context => (Nodes.errors.get(context) || []).some(row => row.node_id === node.id))
+    .map(context => labels[context]);
+}
+
+function nodeChipReason(node) {
+  const offline = nodeOfflineReason(node);
+  if (offline) return offline;
+  const failed = nodeRequestFailures(node);
+  if (!failed.length) return '';
+  return `${node.name} ${failed.join('、')}失败或超时。相关结果可能不完整或未更新。`;
+}
+
 // 中窄屏机器筛选收成一个下拉按钮，按钮上概括当前选中的机器。
 function paintNodePick() {
   const label = document.querySelector('#node-pick .node-pick-label');
@@ -187,7 +203,11 @@ function paintNodePick() {
   label.dataset.nodeColor = color;
   label.classList.toggle('node-none', none);
   const button = label.parentElement;
-  button.title = button.ariaLabel = `选择机器：${text}`;
+  const troubled = Nodes.list.filter(n => nodeChipReason(n) && !Nodes.off.has(n.id));
+  button.classList.toggle('node-issue', troubled.length > 0);
+  button.title = button.ariaLabel = troubled.length
+    ? `选择机器：${text}\n` + troubled.map(n => nodeChipReason(n)).join('\n')
+    : `选择机器：${text}`;
 }
 
 function closeNodePick() {
@@ -244,19 +264,21 @@ function renderNodes() {
   };
   for (const n of Nodes.list) {
     const count = S.sessions.filter(s => s.node_id === n.id && !sessionHidden(s)).length;
+    const reason = nodeChipReason(n);
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
         if (n.online === false) return alert(nodeOfflineReason(n));
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
-      }, n.online === false ? '' : '点击选择或取消；双击只选这台机器');
+      }, reason || '点击选择或取消；双击只选这台机器');
     const countLabel = document.createElement('b');
     countLabel.className = 'node-count'; countLabel.textContent = count;
     item.replaceChildren(document.createTextNode(`${n.name} `), countLabel);
     item.dataset.node = n.id;
     item.dataset.nodeColor = n.color || '';
     item.classList.toggle('node-offline', n.online === false);
-    item.ariaLabel = `${n.name} ${count}` + (n.online === false ? `，${nodeOfflineReason(n)}` : '');
+    item.classList.toggle('node-issue', n.online !== false && !!reason);
+    item.ariaLabel = `${n.name} ${count}` + (reason ? `，${reason}` : '');
     item.ondblclick = () => {
       if (n.online === false) return;
       Nodes.off = new Set(Nodes.list.filter(x => x.id !== n.id).map(x => x.id)); change();
@@ -267,17 +289,10 @@ function renderNodes() {
   host.parentElement.scrollLeft = toolbarScroll;
   paintNodePick();
   const notice = document.querySelector('#node-notice');
-  const labels = {search: '全文搜索', sessions: '会话列表', live: '运行状态', term: '终端列表'};
-  const failures = [...Nodes.errors].flatMap(([context, errors]) => {
-    // 已不在列表里的机器（刚停用的）留下的旧错误不算
-    const names = [...new Set(errors.filter(e => !Nodes.off.has(e.node_id)
-      && Nodes.list.some(n => n.id === e.node_id && n.online !== false)).map(e => e.name))];
-    return names.length ? [`${names.join('、')} ${labels[context] || '请求'}失败或超时`] : [];
-  });
-  notice.hidden = !failures.length && !!Nodes.list.length;
-  notice.textContent = failures.length
-    ? `${failures.join('；')}；相关结果可能不完整或未更新。`
-    : '暂无可用机器。';
+  if (notice && (!notice.hidden || notice.textContent)) {
+    notice.textContent = '';
+    notice.hidden = true;
+  }
 }
 
 async function loadNodes() {

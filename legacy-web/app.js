@@ -3241,7 +3241,7 @@ for (const host of [$('#node-chips'), $('#chips')]) {
       event.stopImmediatePropagation();
     }, true);
     const paintHints = () => {
-      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline)')) {
+      for (const button of host.querySelectorAll('button[data-node]:not(.node-offline):not(.node-issue)')) {
         const hint = '点击选择或取消；右键或长按只选这台机器';
         if (button.title !== hint) button.title = hint;
       }
