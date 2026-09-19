@@ -32,6 +32,12 @@ the pinned instance like a leased input. Nothing is reserved or minted, so no
 token can linger; without an identity there is no name-only write
 (409 `terminal_binding_unavailable`).
 
+The conversation view shows an explicit **接管** action beside a
+`terminal_ownership` status. Clicking it force-claims that same pinned terminal
+instance through the ordinary console claim route, opens the PTY, then checks
+composer readiness again. The click never replays a refused SEND or clears its
+draft.
+
 ## `POST /api/term/send`
 
 Body (`deny_unknown_fields`): `name`, `page`, `token`, the identity fields
@@ -98,7 +104,7 @@ the list.
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
 refusal without lease, after revoke and after exit, size limits and input bursts,
 the lease-less page written only while nobody holds the lease and refused with
-the owner otherwise; skips when ptyhost is not built) plus five input unit tests, and
+the owner otherwise; skips when ptyhost is not built) and
 `python3 tests/terminal_input_browser.py` (desktop HTTP `data` while a scroll
 is pending, 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
 claim/input after exit, composer hidden, fixture bytes unchanged);

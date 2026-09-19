@@ -160,6 +160,11 @@ pub struct ComposerView {
 static ANSI: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))").expect("ansi regex")
 });
+/// Cursor-forward (`ESC [ n C`). The host's screen model (vt100) writes a
+/// styled row's blank cells as these moves instead of spaces, so Claude Code's
+/// ` ❯ No, exit` arrives as `\x1b[C❯\x1b[CNo,\x1b[Cexit`; dropping them with the
+/// other escapes loses every word gap and column (BUG-20260917-012213-bfffee).
+static CUF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\x1b\[(\d*)C").expect("cuf regex"));
 static SGR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\x1b\[([0-9;:]*)m$").expect("sgr"));
 static SGR_ANY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\x1b\[[0-9;:]*m").expect("sgr any"));
@@ -184,6 +189,10 @@ static CODEX_BUSY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bWorking\b.*\besc to interrupt\b").expect("codex busy"));
 static CODEX_CONTEXT_FOOTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bContext\s+\d+%\s+used\b").expect("codex context"));
+static CODEX_CONTEXT_LEFT_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(?:tab\s+to\s+queue\s+message\s+)?\d+%\s+context\s+left\s*$")
+        .expect("codex context left")
+});
 static CODEX_READY_FOOTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bReady\b").expect("codex ready"));
 static CODEX_MODEL_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
@@ -200,8 +209,21 @@ pub enum ComposerKind {
     Codex,
 }
 
+/// The visible text of a capture: cursor-forward moves become the blank cells
+/// they stand for, every other escape (SGR, OSC, other CSI) is removed.
 pub fn strip_ansi(text: &str) -> String {
-    ANSI.replace_all(text, "").into_owned()
+    let spaced = CUF.replace_all(text, |found: &regex::Captures| " ".repeat(cuf_width(found)));
+    ANSI.replace_all(&spaced, "").into_owned()
+}
+
+/// Cells skipped by one cursor-forward move; an omitted count means one.
+fn cuf_width(found: &regex::Captures) -> usize {
+    found
+        .get(1)
+        .map_or("", |m| m.as_str())
+        .parse::<usize>()
+        .unwrap_or(1)
+        .clamp(1, 4096)
 }
 
 /// Codex 0.154 animates braille "particles" (U+2800–U+28FF) through the
@@ -238,6 +260,11 @@ fn styled_chars(text: &str) -> Vec<(char, bool)> {
     for found in ANSI.find_iter(text) {
         result.extend(text[last..found.start()].chars().map(|ch| (ch, dim)));
         last = found.end();
+        if let Some(cuf) = CUF.captures(found.as_str()) {
+            // Blank cells keep the current dim state like the spaces they are.
+            result.extend(std::iter::repeat_n((' ', dim), cuf_width(&cuf)));
+            continue;
+        }
         let Some(captures) = SGR.captures(found.as_str()) else {
             continue;
         };
@@ -449,7 +476,9 @@ fn locate_codex(
         }
         footer = Some(at);
     } else if let Some(candidate) = clean_lines.iter().rposition(|line| nonblank(line)) {
-        if CODEX_MODEL_FOOTER.is_match(&clean_lines[candidate]) {
+        if CODEX_MODEL_FOOTER.is_match(&clean_lines[candidate])
+            || CODEX_CONTEXT_LEFT_FOOTER.is_match(&clean_lines[candidate])
+        {
             footer = Some(candidate);
         } else if CODEX_REWIND_FOOTER.is_match(&clean_lines[candidate]) {
             // Immediately after Esc, Codex swaps its footer for a dim "esc
@@ -467,7 +496,9 @@ fn locate_codex(
     }
     let (start, end) = if let Some(footer) = footer {
         // Only the nonblank block immediately above the status bar; a deeper
-        // search could reach transcript history mid-redraw.
+        // search could reach transcript history mid-redraw. A pasted prompt
+        // can contain blank lines, though: in that case the cursor must still
+        // sit within the editor, and the nearest preceding › anchors it.
         let mut end = footer.checked_sub(1)?;
         while !nonblank(&clean_lines[end]) {
             end = end.checked_sub(1)?;
@@ -475,6 +506,21 @@ fn locate_codex(
         let mut start = end;
         while start > 0 && nonblank(&clean_lines[start - 1]) {
             start -= 1;
+        }
+        if !matches!(
+            clean_lines[start].trim_start().chars().next(),
+            Some('›' | '»')
+        ) {
+            let cursor_y = usize::from(cursor.1);
+            if cursor_y > end {
+                return None;
+            }
+            start = (0..=cursor_y).rev().find(|&index| {
+                matches!(
+                    clean_lines[index].trim_start().chars().next(),
+                    Some('›' | '»')
+                )
+            })?;
         }
         (start, end)
     } else {
@@ -494,20 +540,50 @@ fn locate_codex(
             }
             (start, end)
         } else {
-            // Codex 0.150.1 can park the cursor one or two blank rows above a
-            // footerless composer on the bottom row; accept only that layout.
-            let end = clean_lines.len() - 1;
-            if !nonblank(&clean_lines[end])
-                || !(1..=2).contains(&(end - cursor_y))
-                || (cursor_y..end).any(|index| nonblank(&clean_lines[index]))
-            {
-                return None;
+            let below = cursor_y
+                .checked_sub(1)
+                .filter(|&row| nonblank(&clean_lines[row]))
+                .and_then(|end| {
+                    // A real multiline paste parks Codex's cursor on the first
+                    // blank row *below* its footerless editor. Require the editor
+                    // to be the final nonblank block, with continuation rows; a
+                    // lone old transcript prompt cannot grant SEND readiness.
+                    if clean_lines[cursor_y..].iter().any(|line| nonblank(line)) {
+                        return None;
+                    }
+                    let mut start = end;
+                    while start > 0 && nonblank(&clean_lines[start - 1]) {
+                        start -= 1;
+                    }
+                    if start == 0
+                        || start == end
+                        || !matches!(
+                            clean_lines[start].trim_start().chars().next(),
+                            Some('›' | '»')
+                        )
+                    {
+                        return None;
+                    }
+                    Some((start, end))
+                });
+            if let Some(range) = below {
+                range
+            } else {
+                // Codex 0.150.1 can also park the cursor one or two blank
+                // rows above a footerless composer on the bottom row.
+                let end = clean_lines.len() - 1;
+                if !nonblank(&clean_lines[end])
+                    || !(1..=2).contains(&(end - cursor_y))
+                    || (cursor_y..end).any(|index| nonblank(&clean_lines[index]))
+                {
+                    return None;
+                }
+                let mut start = end;
+                while start > 0 && nonblank(&clean_lines[start - 1]) {
+                    start -= 1;
+                }
+                (start, end)
             }
-            let mut start = end;
-            while start > 0 && nonblank(&clean_lines[start - 1]) {
-                start -= 1;
-            }
-            (start, end)
         };
         let line = &clean_lines[start];
         let marker_col = line.chars().count() - line.trim_start().chars().count();
@@ -515,6 +591,9 @@ fn locate_codex(
             return None;
         }
         if cursor_y < start && cursor_x != marker_col + 2 {
+            return None;
+        }
+        if cursor_y > end && (cursor_y != end + 1 || cursor_x != marker_col + 2) {
             return None;
         }
         (start, end)
@@ -588,6 +667,20 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
         lagging,
         dropped: capture.dropped,
     }
+}
+
+/// Codex can show the pasted multiline editor before its footer and paste
+/// burst settle. Enter on this parked-cursor frame becomes a newline rather
+/// than a submission; wait for the ordinary editor frame to return.
+pub fn codex_paste_settling(capture: &ScreenCapture) -> bool {
+    let normalized = capture.text.replace('\r', "");
+    let raw_lines: Vec<&str> = normalized.lines().collect();
+    let clean_lines: Vec<String> = raw_lines.iter().map(|line| codex_plain(line)).collect();
+    let Some((_, end)) = locate_codex(&raw_lines, &clean_lines, capture.cursor) else {
+        return false;
+    };
+    usize::from(capture.cursor.1) == end + 1
+        && clean_lines[end + 1..].iter().all(|line| !nonblank(line))
 }
 
 /// Fingerprint: sha256 of `x\0y\0screen`.

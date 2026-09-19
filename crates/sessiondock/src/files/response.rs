@@ -268,7 +268,7 @@ pub(super) fn describe_preview(
     Ok(())
 }
 
-fn disposition(name: &str, download: bool) -> String {
+pub(crate) fn disposition(name: &str, download: bool) -> String {
     let safe: String = name
         .chars()
         .map(|character| {

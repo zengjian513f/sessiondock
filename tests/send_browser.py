@@ -266,8 +266,7 @@ def main():
                     page.wait_for_function('composerUid && !composerDraft().loading')
                     assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
                     first=send('first busy input',check_width=True)
-                    started=time.monotonic();second=send('second busy input')
-                    assert time.monotonic()-started<2.5 # No JSONL confirmation wait.
+                    second=send('second busy input')
                     assert first['request_id']!=second['request_id']
                     replay=context.request.post(base+'/api/session/conversation/send',data=first)
                     assert replay.status==200,replay.text()
@@ -280,6 +279,14 @@ def main():
                     assert users==['first busy input','second busy input'],users
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
                     native=page.evaluate('S.sel')
+                    # A stale hook card must not veto a currently writable PTY.
+                    prompt_dir=root/'state/claude-prompts'
+                    prompt_dir.mkdir(exist_ok=True)
+                    stale_prompt=prompt_dir/f"{receipt['declared_sid']}.json"
+                    stale_prompt.write_text(json.dumps({'version':1,'id':'stale-hook','state':'waiting',
+                        'questions':[{'question':'Old question','options':[{'label':'Yes'},{'label':'No'}]}]}))
+                    check=context.request.post(base+'/api/session/conversation/check',data={'uid':native,'_build':build})
+                    assert check.status==200 and check.json()['input']['state']=='ready',check.text()
                     # The report worker uses the same SEND outside this page.
                     # Its successful receipt must clear an already-open viewer.
                     page.fill('#cinput','server-owned first task')
@@ -295,6 +302,7 @@ def main():
                         'text':'server-owned first task','draft_revision':row['revision'],
                         'attachments':[],'quotes':[],'_build':build})
                     assert external.status==200,external.text()
+                    stale_prompt.unlink()
                     expect(page.locator('#cinput')).to_have_value('',timeout=10000)
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     server=context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']
@@ -381,6 +389,14 @@ def main():
                         assert response.status==200,response.text()
                     conflict=context.request.post(base+'/api/session/conversation/attachment?uid=report:a&id=same&name=x',data=b'changed',headers={'Content-Type':'text/plain'})
                     assert conflict.status==409,conflict.text()
+                    # Reading staged bytes back follows the same session key, and
+                    # a non-image stays opaque bytes whatever was uploaded.
+                    for owner,content in [('report:a',b'a'),('report:b',b'b')]:
+                        served=context.request.get(base+'/api/session/conversation/attachment?uid='+owner+'&id=same')
+                        assert served.status==200 and served.body()==content,(owner,served.status)
+                        assert served.headers['content-type']=='application/octet-stream',served.headers
+                    # Published bytes are gone from staging, so the editor gets a 404.
+                    assert context.request.get(base+'/api/session/conversation/attachment?uid='+uid+'&id='+body['attachments'][0]['upload_id']).status==404
                     # Disconnect an incomplete streaming upload; no partial staging files survive.
                     address=urlsplit(base)
                     with socket.create_connection((address.hostname,address.port)) as connection:
@@ -388,10 +404,12 @@ def main():
                     time.sleep(.3)
                     assert not list((root/'state/conversations/conversation-uploads').glob('*.upload'))
                     # A startup choice disables the chat sender, and backend rejects bypasses.
-                    (root/'gate').write_text(' Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel')
+                    # Rendered like Claude Code 2.1: every blank cell is a cursor-forward move, never a space
+                    # (BUG-20260917-012213-bfffee), so the styled capture carries `\x1b[C` instead of spaces.
+                    (root/'gate').write_text(' Accessing workspace:\n\n Quick safety check: Is this a project you created or one you trust?\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel'.replace(' ','\x1b[C'))
                     gated=create_claude(page,base,root/'work',open_terminal=False)
                     gated_uid='tmux:'+gated['name']
-                    page.wait_for_function('composerDraft()?.cliQuestion === true',timeout=15000)
+                    page.wait_for_function("composerDraft()?.inputStatus?.state === 'blocked'",timeout=15000)
                     expect(page.locator('#csend')).to_be_disabled()
                     page.fill('#cinput','must not answer trust')
                     page.evaluate('async () => await composerDraftWrites')

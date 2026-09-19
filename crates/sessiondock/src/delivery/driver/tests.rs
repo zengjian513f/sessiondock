@@ -206,6 +206,33 @@ fn ansi_stripping_handles_osc_and_csi() {
     assert_eq!(strip_ansi("\x1b]0;title\x07a\x1b[31mb\x1b[0m"), "ab");
 }
 
+/// vt100 styled rows encode blank cells as cursor-forward moves; the strip
+/// must give those cells back as spaces so words and columns survive
+/// (the real Claude 2.1.274 trust dialog through ptyhost).
+#[test]
+fn cursor_forward_moves_strip_to_blank_cells() {
+    assert_eq!(
+        strip_ansi("\x1b[C\x1b[38;2;177;185;249m❯\x1b[CNo,\x1b[Cexit"),
+        " ❯ No, exit"
+    );
+    assert_eq!(
+        strip_ansi("\x1b[3CYes,\x1b[CI\x1b[Ctrust\x1b[Cthis\x1b[Cfolder"),
+        "   Yes, I trust this folder"
+    );
+    assert_eq!(
+        strip_ansi("a\x1b[12Cb\x1b[0C"),
+        format!("a{}b ", " ".repeat(12))
+    );
+    // Other cursor CSI (up/down/back) still vanish without leaving cells.
+    assert_eq!(strip_ansi("a\x1b[2A\x1b[3D\x1b[Bb"), "ab");
+    // Dim tracking sees the same cells.
+    let dimmed: String = styled_chars("\x1b[2mx\x1b[2Cy\x1b[0m z")
+        .iter()
+        .map(|(ch, dim)| if *dim { ch.to_ascii_uppercase() } else { *ch })
+        .collect();
+    assert_eq!(dimmed, "X  Y z");
+}
+
 // ---- Codex composer (port of codex_bridge.composer_state) --------
 
 const CODEX_FOOTER: &str = "gpt-5.6-luna low · /synthetic/codex-area";
@@ -304,6 +331,26 @@ fn codex_ready_context_footer_and_rewind_hint_locate_the_block() {
         inspect_codex(&capture(&quoted, (0, 2))).state,
         ComposerState::Unknown
     );
+    // Real Codex TUI after a multiline paste: its status bar uses remaining
+    // context, with no model/Ready label, and parks the cursor below the text.
+    let pasted = [
+        "older output",
+        "",
+        "› Reply with OK.",
+        "  continued line",
+        "",
+        "",
+        "tab to queue message                    100% context left",
+        "",
+    ]
+    .join("\n");
+    let view = inspect_codex(&capture(&pasted, (2, 4)));
+    assert_eq!(view.state, ComposerState::Editing);
+    assert!(same_text_ignoring_whitespace(
+        view.text.as_deref().unwrap(),
+        "Reply with OK. continued line"
+    ));
+    assert!(!codex_paste_settling(&capture(&pasted, (2, 4))));
 }
 
 #[test]
@@ -344,6 +391,44 @@ fn codex_footerless_frame_needs_the_cursor_inside_the_block() {
         inspect_codex(&capture(&["", "", "", "", "› too far"].join("\n"), (2, 1))).state,
         ComposerState::Unknown
     );
+}
+
+#[test]
+fn codex_multiline_paste_parks_cursor_below_footerless_editor() {
+    // Captured from a real Luna low TUI after a six-line bracketed paste:
+    // the model footer vanishes and the cursor sits at column 2 on the first
+    // blank row below the editor. SEND must still be able to press Enter.
+    let screen = [
+        "previous output",
+        "",
+        "› Reply with OK. Ignore padding.",
+        "  xxxxxxxxxxxxxxxxxxxx",
+        "  xxxxxxxxxxxxxxxxxxxx",
+        "",
+        "",
+        "",
+    ]
+    .join("\n");
+    let view = inspect_codex(&capture(&screen, (2, 5)));
+    assert_eq!(view.state, ComposerState::Editing);
+    assert!(view.composer_token.is_some());
+    assert!(codex_paste_settling(&capture(&screen, (2, 5))));
+    // The cursor position, continuation rows and trailing blank screen are
+    // all necessary: a transcript prompt alone never becomes a composer.
+    assert_eq!(
+        inspect_codex(&capture(&screen, (3, 5))).state,
+        ComposerState::Unknown
+    );
+    assert_eq!(
+        inspect_codex(&capture("older output\n\n› old prompt\n", (2, 3))).state,
+        ComposerState::Unknown
+    );
+    let output_below = screen.replace("\n\n\n", "\n\nnew output\n");
+    assert_eq!(
+        inspect_codex(&capture(&output_below, (2, 5))).state,
+        ComposerState::Unknown
+    );
+    assert!(!codex_paste_settling(&capture(&output_below, (2, 5))));
 }
 
 #[test]
