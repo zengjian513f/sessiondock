@@ -139,6 +139,35 @@ fn resolve_unscopes_path_query_and_body_for_one_machine() {
     )
     .unwrap();
     assert_eq!(star.body.unwrap()["uid"], "claude:same-file-hash");
+    let nest = resolve(
+        None,
+        "POST",
+        "/api/session/nest",
+        q(""),
+        body(json!({
+            "uid": scoped,
+            "parent_uid": format!("codex:{A}~parent-sid"),
+            "independent": false
+        })),
+    )
+    .unwrap();
+    let nest_body = nest.body.unwrap();
+    assert_eq!(nest_body["uid"], "claude:same-file-hash");
+    assert_eq!(nest_body["parent_uid"], "codex:parent-sid");
+    assert_eq!(
+        resolve(
+            None,
+            "POST",
+            "/api/session/nest",
+            q(""),
+            body(json!({
+                "uid": scoped,
+                "parent_uid": format!("codex:{B}~parent-sid")
+            })),
+        )
+        .unwrap_err(),
+        ProxyError::Invalid(ONE_MACHINE.to_string())
+    );
     let trash = resolve(
         None,
         "POST",

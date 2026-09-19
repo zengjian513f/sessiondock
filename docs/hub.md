@@ -314,7 +314,7 @@ capabilities.js 读取前把路径补进 `storage_namespace`（按 `location.pat
 **resolve / proxy（`proxy.rs`，对照 `HubHandler.resolve` 760-809 / `proxy` 951-1076）**：
 `resolve` 从显式路由、路径（`/api/messages/<global>`、`DELETE /api/session/<global>`；Rust 的
 `/page`、`/media-page` 后缀保留）、query（`uid`，`name` 仅 term 路由，`node`）、body（`uid`、
-`name`、`_node`、`terminal_name`（`/api/bug-report` 与 `/api/bug-report/capture`）、`id`、`media[].src`）收集机器 id，去限定成本地引用；多于一个 →
+`name`、`parent_uid`、`_node`、`terminal_name`（`/api/bug-report` 与 `/api/bug-report/capture`）、`id`、`media[].src`）收集机器 id，去限定成本地引用；多于一个 →
 400 `操作必须明确指定同一台机器`，附件来自另一台 → 400 `附件来自另一台机器`。机器未注册 → 404；
 离线且 `recheck` 仍失败 → 503 `{error,node_offline,node_id,offline_since}`；
 `send/outbox/retry/term/send/term/create` 校 `body._build == 前端 build`，否则 409

@@ -39,6 +39,7 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
         "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
         "/api/bug-report" => bug_report::REPORT_BODY_LIMIT,
         "/api/session/star"
+        | "/api/session/nest"
         | "/api/sessions/fork-visibility"
         | "/api/audit/browser"
         | "/api/bug-report/capture"
@@ -161,6 +162,12 @@ pub fn router() -> Router<AppState> {
             post(metadata::visibility).layer(axum::extract::DefaultBodyLimit::max(
                 request_body_limit("/api/sessions/fork-visibility"),
             )),
+        )
+        .route(
+            "/session/nest",
+            post(metadata::nest).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
+                "/api/session/nest",
+            ))),
         )
         // Read-model display pin only; 501 when no metadata directory is configured.
         .route(

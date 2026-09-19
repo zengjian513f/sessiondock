@@ -49,6 +49,12 @@ pub(super) struct Row {
     /// while both were alive; never rewritten.
     #[serde(skip_serializing_if = "Option::is_none")]
     spawned_by: Option<SpawnedBy>,
+    /// Manual sidebar parent (`{source, sid}`), overriding `spawned_by`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nest_parent: Option<SpawnedBy>,
+    /// Ignore `spawned_by` in the sidebar tree and show this session as a root.
+    #[serde(skip_serializing_if = "no")]
+    nest_independent: bool,
 }
 
 /// The spawner's source and
@@ -300,6 +306,47 @@ impl MetadataSnapshot {
         })
     }
 
+    pub fn nest_parent(&self, uid: &str) -> Option<&SpawnedBy> {
+        self.document.sessions.get(uid)?.nest_parent.as_ref()
+    }
+
+    pub fn nest_independent(&self, uid: &str) -> bool {
+        self.document
+            .sessions
+            .get(uid)
+            .is_some_and(|row| row.nest_independent)
+    }
+
+    /// Sidebar nesting override. `independent` clears a manual parent and
+    /// hides `spawned_by`; otherwise `parent` replaces the manual parent
+    /// (`None` restores `spawned_by`).
+    pub fn with_nest_display(
+        &self,
+        uid: &str,
+        parent: Option<SpawnedBy>,
+        independent: bool,
+    ) -> Result<Self, MetadataError> {
+        validate_uid(uid)?;
+        let parent = if independent {
+            None
+        } else if let Some(parent) = parent {
+            let parent = SpawnedBy {
+                source: parent.source.trim().to_owned(),
+                sid: parent.sid.trim().to_owned(),
+            };
+            validate_spawned_by(&parent)?;
+            Some(parent)
+        } else {
+            None
+        };
+        self.change(|rows| {
+            let row = rows.entry(uid.to_owned()).or_default();
+            row.nest_independent = independent;
+            row.nest_parent = parent;
+            Ok(())
+        })
+    }
+
     pub fn with_fork_visibility(
         &self,
         uids: &[String],
@@ -493,6 +540,8 @@ impl MetadataSnapshot {
             "fork_parent",
             "fork_parent_visible",
             "spawned_by",
+            "nest_parent",
+            "nest_independent",
         ] {
             object.remove(key);
         }
@@ -506,6 +555,15 @@ impl MetadataSnapshot {
                 "spawned_by".into(),
                 json!({"source": parent.source, "sid": parent.sid}),
             );
+        }
+        if let Some(parent) = saved.and_then(|row| row.nest_parent.as_ref()) {
+            object.insert(
+                "nest_parent".into(),
+                json!({"source": parent.source, "sid": parent.sid}),
+            );
+        }
+        if saved.is_some_and(|row| row.nest_independent) {
+            object.insert("nest_independent".into(), json!(true));
         }
         if parents.contains(&uid) {
             object.insert("fork_parent".into(), json!(true));
