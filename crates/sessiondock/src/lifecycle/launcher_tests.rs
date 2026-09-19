@@ -225,7 +225,9 @@ fn cwd_validation_follows_python_resolve_without_a_configured_root() {
 }
 
 #[test]
-fn executable_aliases_execute_the_checked_target_after_alias_retargeting() {
+fn executable_aliases_launch_their_current_target() {
+    // A CLI updater re-targets its alias (`~/.local/bin/claude` → the new
+    // version directory); the next launch runs the new target.
     let fixture = Fixture::new();
     let alias = fixture.directory.path().join("adapter-alias");
     symlink(&fixture.config.adapters[0].executable, &alias).unwrap();
@@ -233,24 +235,62 @@ fn executable_aliases_execute_the_checked_target_after_alias_retargeting() {
     config.adapters[0].executable = alias.clone();
     let launcher = Launcher::new(config).unwrap();
     let record = fixture.record(&fixture.spec());
+    assert_eq!(
+        launcher.argv(&record).unwrap()[0],
+        fixture.config.adapters[0].executable
+    );
     fs::remove_file(&alias).unwrap();
     symlink(&fixture.config.host_binary, &alias).unwrap();
     launcher.validate_spec(record.spec()).unwrap();
     assert_eq!(
         launcher.argv(&record).unwrap()[0],
-        fixture.config.adapters[0].executable
+        fixture.config.host_binary
     );
-    // Replacing the resolved target itself is still caught by the held handle.
-    fs::remove_file(&fixture.config.adapters[0].executable).unwrap();
-    symlink(
+    // A target that stops being an ordinary executable is refused, whether
+    // the alias now dangles or points at a non-executable file.
+    fs::remove_file(&fixture.config.host_binary).unwrap();
+    assert_eq!(
+        launcher.validate_spec(record.spec()),
+        Err(Error::UnsafePath)
+    );
+    fs::write(&fixture.config.host_binary, b"replaced").unwrap();
+    fs::set_permissions(
         &fixture.config.host_binary,
-        &fixture.config.adapters[0].executable,
+        fs::Permissions::from_mode(0o600),
     )
     .unwrap();
-    assert!(matches!(
+    assert_eq!(
         launcher.validate_spec(record.spec()),
-        Err(Error::UnsafePath | Error::Changed)
-    ));
+        Err(Error::UnsafePermissions)
+    );
+}
+
+#[test]
+fn executables_rewritten_in_place_launch_their_current_contents() {
+    // The Windows Claude updater overwrites `claude.exe` in place after the
+    // service has started; creation must keep working without a restart.
+    let fixture = Fixture::new();
+    let config = fixture.profiles();
+    let executable = config.profiles[0].executable.clone();
+    let launcher = Launcher::new(config).unwrap();
+    let spec = LaunchSpec::profile_new(
+        Source::Claude,
+        "claude-cli-v1".into(),
+        &fixture.directory.path().join("work/claude-area"),
+    )
+    .unwrap();
+    let record = fixture.record(&spec);
+    launcher.validate_spec(&spec).unwrap();
+    fs::write(&executable, b"updated-cli-with-a-different-length").unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    launcher.validate_spec(&spec).unwrap();
+    assert_eq!(launcher.argv(&record).unwrap()[0], executable);
+    fs::write(&fixture.config.host_binary, b"updated-host").unwrap();
+    launcher.validate_spec(&spec).unwrap();
+    // Removing the executable bit is still refused.
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(launcher.validate_spec(&spec), Err(Error::UnsafePermissions));
+    assert_eq!(launcher.argv(&record), Err(Error::UnsafePermissions));
 }
 
 #[test]
@@ -280,7 +320,13 @@ fn launch_rechecks_executable_and_current_cwd() {
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
     fs::write(&fixture.config.host_binary, b"changed").unwrap();
-    assert_eq!(launcher.validate_spec(&fixture.spec()), Err(Error::Changed));
+    assert!(launcher.validate_spec(&fixture.spec()).is_ok());
+    fs::remove_file(&fixture.config.host_binary).unwrap();
+    fs::create_dir(&fixture.config.host_binary).unwrap();
+    assert_eq!(
+        launcher.validate_spec(&fixture.spec()),
+        Err(Error::UnsafePath)
+    );
 
     let fixture = Fixture::new();
     let launcher = Launcher::new(fixture.config.clone()).unwrap();
