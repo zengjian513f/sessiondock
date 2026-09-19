@@ -53,11 +53,14 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
     if (error) return `${node.name} 终端列表请求失败：${error.error || '服务器未返回原因'}。`;
     if (!cap) return `${node.name} 的控制台状态尚未返回，请稍后重试。`;
   }
+  if (typeof sessionRecordingReplayable === 'function' && sessionRecordingReplayable(uid))
+    return '';
   if (SessionDockCapabilities.config.backend === 'rust' && T.ended?.has(uid)) {
     // An exited instance leaves the button as "接管会话"
     // whenever the source has a resume-capable CLI profile (the click starts
     // a fresh `--resume`); only an unresumable source keeps the gray
     // explanation. The exited xterm is never reclaimed automatically.
+    // A shell recording is the console itself, so it must not go gray.
     const source = sessionTermMeta(uid)?.source || String(uid).split(':')[0];
     const resumable = !String(uid).startsWith('tmux:') && cap?.enabled
       && SessionDockCapabilities.allows('terminal_takeover') && !!cap?.resume_sources?.[source]
@@ -66,7 +69,11 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   }
   if (SessionDockCapabilities.config.backend === 'rust') {
     const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);
-    if (pending?.stale) return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';
+    if (pending?.stale) {
+      const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';
+      if (phase !== 'exited' && phase !== 'failed')
+        return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';
+    }
   }
   if (!cap?.enabled) return `${node ? node.name + '：' : ''}${cap?.unavailable_reason || '服务报告控制台不可用，但未返回具体原因。'}`;
   const linked = linkedTermSession(uid, {followReplacement: true});
