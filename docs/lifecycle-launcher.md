@@ -31,7 +31,12 @@ The host command line is `--dir <host dir> run --name <host name> --cwd <cwd>
 --meta <json> [--no-record] -- <argv>`. Only a shell session's host records its
 terminal ([terminal records](terminal-records.md)): every other source gets
 `--no-record`, because an agent session's record is its native transcript and
-the recording would be a second copy of the same output with no reader.
+the recording would be a second copy of the same output with no reader. A node
+keeps running the host binary its configuration names, which may predate
+recordings and rejects the unknown option with status 2 before the CLI starts;
+before every launch the launcher probes the host (`--dir <host dir>/.probe
+--no-record list`, an empty private directory, so no session file is read or
+removed) and such a host, which never records anyway, is simply not told.
 
 The host and CLI executable paths must be usable absolute executable files, and
 the host directory must be usable by `ptyhost`. Executable symlinks are
