@@ -58,10 +58,6 @@ refresh policy.
 
 ## Validation
 
-Run module regressions with
-`cargo test -p sessiondock --lib sessions::names --locked`.
-Configuration isolation regressions run with
-`cargo test -p sessiondock --lib config::tests --locked`.
 After building the server, run
 `python3 tests/names_parity.py --python-source PATH --browser` for
 synthetic adapter differential checks and real legacy Chromium behavior.

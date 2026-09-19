@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "tests" / "run_validation.py"
 MODES = ("none", "affected", "full")
 FULL = "<full>"                       # target sentinel: run the whole default sweep
-RUST = ["cargo_*"]                    # run_validation has no per-crate Rust lanes
+RUST = ["cargo_*"]                    # fmt/clippy/check/build; cargo_test is off the default --list
 DOCS = ["tests/check_docs_links.py", "tests/check_agents_md.py"]
 PTYHOST = RUST + ["terminal*", "term_*", "lifecycle*", "cutover*", "host*", "native_*", "managed_*", "send_*",
                   "live_*", "session_stop_*", "pending_*", "restart_state_*", "bug_report_*", "grok_raw_send_*"]

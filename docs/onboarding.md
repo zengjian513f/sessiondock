@@ -66,8 +66,10 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ## 6. Validate and run locally
 
-- [validation.md](validation.md) — Validation suites and runner options. A full
-  run takes the `target/` lock; do not start one during another build.
+- [validation.md](validation.md) — Validation suites and runner options. A
+  feature or bug fix must run the affected headless `*_browser.py` before it
+  is done. A full sweep takes the `target/` lock; do not start one during
+  another build.
 - [runbook-dev.md](runbook-dev.md) — Synthetic corpus, loopback bind and optional service configuration.
 
 ## 7. Delegating tooling tasks

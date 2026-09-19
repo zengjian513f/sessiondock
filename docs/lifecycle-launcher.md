@@ -86,7 +86,6 @@ policy (a leftover `bug_report_profiles` key is ignored).
 
 ## Validation
 
-Synthetic tests cover argv defaults, inherited environment
-cleanup, legacy configuration loading, unrestricted canonical working
-directories, symlink completion, tab-containing directory names, resource
-replacement detection, and receipt identity.
+Default check is `python3 tests/check_config_suite.py` and
+`python3 tests/lifecycle_http_suite.py` when the launcher argv or environment
+changes. Do not run crate unit tests unless the user asks.

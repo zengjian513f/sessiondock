@@ -132,7 +132,10 @@ are idempotent, conflicting chunks fail without rewriting accepted bytes.
 
 Conversation composer attachments are staged in private conversation storage as
 soon as they are selected (`POST /api/session/conversation/attachment`) and
-published into the session cwd by SEND; `POST
+published into the session cwd by SEND; `GET
+/api/session/conversation/attachment` reads staged bytes back for an editor
+that loaded the draft from the server (image media types only, otherwise opaque
+bytes, always `nosniff` under a sandbox CSP); `POST
 /api/session/conversation/attachment/discard` releases staged bytes the editor
 removed. The older direct path below publishes at once:
 
@@ -156,12 +159,6 @@ spelling, so `\\?\C:\…` does not defeat configured-root comparisons. Spaces an
 message, not shell commands.
 
 ## Validation
-
-`cargo test -p sessiondock --lib files:: --locked` covers reference/agent
-isolation, cross-directory navigation, grant persistence, symlink/`..` resolution,
-deep paths/tool arguments, large directory pagination, hard-link aliases,
-symlink-leaf writes, no-clobber/replace, raw/preview limits, checked-handle races,
-scoped jobs and chunk replay. Every fixture is synthetic and temporary.
 
 `python3 tests/files_browser.py`, `python3 tests/files_write_browser.py` and the
 file HTTP suites exercise the actual frontend, including error presentation and

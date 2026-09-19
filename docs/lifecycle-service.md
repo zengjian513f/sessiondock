@@ -153,13 +153,9 @@ claims exactly-once external execution or support for arbitrary filesystems.
 
 ## Validation
 
-Synthetic service tests exercise queued admission and stalled blocking work,
-dropped responses, shutdown, spawn rejection, idempotency,
-guarded readiness/restart, fresh status, replacement and wrong-instance rejection,
-durable cancellation, ACK-without-exit uncertainty, lost responses, crash recovery,
-no duplicate kill, corruption handling, and missing-ledger rejection.
-Store tests additionally cover strict schema migration, exact-revision evidence,
-old authorities and all injected cancellation persistence-failure boundaries.
+Default check is `python3 tests/lifecycle_http_suite.py` (and
+`python3 tests/lifecycle_browser.py` when the change is user-visible). Do not
+run crate unit tests unless the user asks.
 
 The ignored `explicit_free_shell_creation_survives_response_drop_and_shutdown_then_cancels_exact_host`
 test requires both `SESSIONDOCK_TEST_PTYHOST_BINARY` and

@@ -132,11 +132,7 @@ when the host remains alive and the Web process restarts with an empty registry.
 
 ## Validation scope
 
-Synthetic store tests cover durable intents, exact/old authorities, conflicting
-specs and observations, explicit retry, all injected write-failure boundaries,
-schema-1/2 migration, required shapes, source identity and cancellation races.
-Service peers validate persist-before-call, dropped responses, lost ACK and missing
-Info, ACK without a matching observation, explicit retry versus read-only recovery,
-Confirmed-to-offline downgrade, unsupported scopes/capability, stale instances,
-host binding without ledger intent, and cancellation protection across service
-restart. These tests do not start a CLI or alter native history.
+Default check is `python3 tests/lifecycle_http_suite.py` (and
+`python3 tests/lifecycle_browser.py` / `python3 tests/lifecycle_browser.py --native-binding`
+when the change is user-visible). Do not run crate unit tests unless the user
+asks. These suites do not start a model CLI or alter native history.

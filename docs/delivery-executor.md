@@ -228,13 +228,6 @@ error. A raw text-submit with Enter still routes to the reliable-send composer
   at desktop and 390 px, using actual legacy outbox functions and intercepted
   server responses. Covers ambiguous-row controls, targeted dismissal, late
   snapshots, reopening/new sends, reload, already-missing receipts and failures.
-- Unit: `cargo test -p sessiondock --lib delivery::driver` (composer model,
-  dim suggestions, lag/dropped health, fingerprints, busy footer),
-  `delivery::claude_adapter` (end-trim match, byte-order, fence invalidation,
-  VerifiedEnter), `delivery::executor` (persist→inject two-step, confirm from
-  native record, request-ID replay, draft consent, lease-held ownership,
-  swallowed line uncertain + retry refused + discard, restart recovery without
-  re-injection, unknown composer, tracking window, FIFO).
 - Integration (real router + temporary ptyhost + launcher + ledger, fake Claude
   CLI only): `cargo test -p sessiondock --test delivery_send` — send →
   receipt persisted before injection → native `user` record appears → confirmed;

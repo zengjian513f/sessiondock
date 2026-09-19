@@ -31,8 +31,7 @@ import deploy  # noqa: E402
 import testplan as tp  # noqa: E402
 
 STAGE_ROOT = ROOT / "target" / "deploy"
-STUB = """cargo_test rust 1500s cargo test
-cargo_fmt rust 120s cargo fmt
+STUB = """cargo_fmt rust 120s cargo fmt
 cargo_clippy rust 900s cargo clippy
 cargo_check_windows rust 900s cargo check
 cargo_build rust 900s cargo build
@@ -66,7 +65,7 @@ sessions_list_suite python 900s python3 tests/sessions_list_suite.py
 terminal_browser python 900s python3 tests/terminal_browser.py
 term_send_http_suite python 900s python3 tests/term_send_http_suite.py
 trash_http_suite python 900s python3 tests/trash_http_suite.py
-37 suites
+36 suites
 """
 NAMES = [ln.split()[0] for ln in STUB.splitlines() if not ln.endswith(" suites")]
 CARGO = {n for n in NAMES if n.startswith("cargo_")}

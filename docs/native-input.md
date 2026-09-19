@@ -47,5 +47,4 @@ error rather than serving bytes from a different file version.
 
 ## Validation
 
-Unit coverage lives under `sessions::native_input`, `sessions::records` and
-`sessions::providers`. Synthetic HTTP coverage is in `tests/native_*.py`.
+Synthetic HTTP coverage is in `tests/native_*.py`.

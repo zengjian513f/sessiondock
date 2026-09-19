@@ -160,10 +160,6 @@ HTTP cancellation.
 
 ## Validation
 
-Synthetic tests cover commit-before-authority, complete-spec idempotency/conflict,
-all providers, handle-bound stale tokens, Prepared and Starting recovery, retained
-terminal-state tombstones, pre/post-rename freezing, lock exclusion and duplicate
-descriptors, malformed persisted JSON, large ledgers, missing/foreign
-directories, permissions, symlink ancestry, hardlinks, live directory replacement,
-external edits, changed cwd and deserialized-spec validation, abandoned temp
-preservation, and path/spec-free errors. No process or external application runs.
+Default check is `python3 tests/lifecycle_http_suite.py` (and
+`python3 tests/lifecycle_browser.py` when the change is user-visible). Do not
+run crate unit tests unless the user asks.

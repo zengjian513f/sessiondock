@@ -96,17 +96,13 @@ agent ownership semantics remain unchanged.
 
 ## Validation
 
-Run `cargo test -p sessiondock --locked sessions::` and build the server.
-Then run `python3 tests/grok_parity.py --python-source PATH --browser`.
+Build the server, then run
+`python3 tests/grok_parity.py --python-source PATH --browser`.
 The Python checkout is adapter-only and read-only. Tests create all data in a
 temporary directory and bind the server to loopback. They access no CLI homes,
 paid CLIs, production hosts, or active sessions.
 
-Rust tests cover optional chat stamps, stable directory UID, metadata/cursor
-separation, frozen search snapshots, independent mtime fallbacks, bounded
-discovery, the whole-directory size, malformed/oversized summaries,
-permissions and symlinks, hiding the `type: system` preamble, and the
-untitled `新建 Grok 会话` fallback. Grok `run_terminal_command` results start with an
+Grok `run_terminal_command` results start with an
 `exit: N` header (one space before the number);
 it is not an exit code, so such results carry `exit_code: null` and
 `error: false`. The

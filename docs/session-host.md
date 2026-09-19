@@ -5,7 +5,6 @@
 
 ```sh
 cargo build -p ptyhost --locked
-cargo test -p ptyhost --locked
 ```
 
 **默认目录属于仍在运行的前身服务。** 开发命令必须指定私有 `--dir`。

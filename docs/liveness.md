@@ -248,23 +248,6 @@ service (the launcher `env_clear`s).
 
 ## Validation
 
-- `cargo test -p sessiondock --lib polls:: runtime::tests::shared_observation
-  lifecycle::service::tests::generation_advances` — the response cache keys
-  (same sources hit; generation, topology, scan state, hidden set and view
-  miss; `term/list` TTL turnover and registry change), the shared
-  observation turning over with the generation and `invalidate`, and the
-  generation advancing on mutating commands only.
-- `cargo test -p sessiondock --lib runtime::procscan runtime::spawn
-  api::runtime metadata::` — every `tests/test_live.py` and
-  `test_session_meta.py` case over a synthetic tree (`FakeProc`): bare claude
-  window, orphan helper, command line beats environment, cross-family, Codex
-  fork folding, headless Grok `events.jsonl`, Grok active file, tmux/host
-  ancestry, caps, TTL/single flight/force, the seven-session spawn fixture,
-  depth 16, memo and write-once; plus one real `/proc` scan that prints its
-  timing. `test_host.py` PaneOwnershipTests (the CLI barrier on both walks)
-  and `test_server.py` PaneLinkingTests (origin keeps its pane, the continued
-  session inherits it, the spawned grandchild has no console, the eight-hop
-  bound, first listed origin wins) are ported verbatim.
 - `python3 tests/live_http_suite.py --binary … [--ptyhost …]` — scan over a
   synthetic tree: uids/tmux_uids/started_at, envelope, cache hit and force
   miss, `spawned_by` on the rows and on disk, persistence across restart with

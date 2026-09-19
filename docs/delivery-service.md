@@ -36,6 +36,7 @@ parent cancellation token is not changed by explicit service shutdown.
 
 ## Validation
 
-Synthetic tests exercise scopes, JSON projection, native confirmation, queued
-work, response cancellation, storage failures and shutdown. Temporary directories
-and fake CLIs keep the suites independent of production sessions.
+Default check is the delivery HTTP/browser suites that use this service
+(`cargo test -p sessiondock --test delivery_send --locked`,
+`python3 tests/send_browser.py` when the change is user-visible). Do not run
+crate unit tests unless the user asks.

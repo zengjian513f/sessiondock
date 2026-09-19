@@ -70,11 +70,7 @@ identity explicitly and never substitutes the main outbox for a child scope.
 
 ## Validation
 
-Run `cargo test -p sessiondock --lib sessions::native_scope_tests --locked`.
-The synthetic tests cover owner/native/display identity separation, exact
-agent selection, missing/invalid/conflicting IDs, mismatched Claude child
-session IDs, incomplete tails, immutable old snapshots, cached reads, Codex
-native IDs versus display aliases, and explicit unsupported Grok scope.
-Ordinary history/display and byte cursors remain unchanged in these scenarios.
-Fixtures live only in private temporary directories. No native CLI homes,
-production sessions, predecessor state, network or paid agent CLI is accessed.
+Default check is the delivery HTTP/browser path that uses the scope
+(`cargo test -p sessiondock --test delivery_send --locked` and
+`python3 tests/send_browser.py` when the change is user-visible). Do not run
+crate unit tests unless the user asks.

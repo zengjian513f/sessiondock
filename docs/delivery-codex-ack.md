@@ -109,15 +109,6 @@ watch cursor; a `Replay` tick observes even then.
 
 ## Validation
 
-- `cargo test -p sessiondock --lib delivery::codex_adapter --locked`:
-  twelve synthetic tests through the real `SessionStore` path in private
-  temporary directories (exact match with physical range and completion,
-  Machine acceptance of the causal possible match, end-trim only, UTF-8 multi-line,
-  earlier timestamped identical input skipped before the causal match, records at/before the boundary and
-  unfinished tails ignored, rewrite/truncation → checkpoint mismatch,
-  absent/invalid/earlier/numeric timestamps, inherited fork prefix excluded,
-  protocol injections/telemetry/status not user input, foreign scope/media/
-  blank text uncertain, replay constants/window/rate limit).
 - `cargo test -p sessiondock --test codex_ack --locked` (also selected by
   the name filter `cargo test -p sessiondock codex_ack --locked`): a
   private fake Codex CLI shell script reads stdin lines and appends

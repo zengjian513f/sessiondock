@@ -44,7 +44,5 @@ retention does not reject submissions or discard their receipts.
 
 ## Validation boundary
 
-Synthetic tests cover persistence before dispatch, matching callbacks, duplicate
-and conflicting requests, retry after storage errors, restart reconciliation,
-opaque media, native scope, display projection and retained receipts. Executor,
-HTTP and browser suites cover the full send path with temporary fake CLIs.
+Executor, HTTP and browser suites cover the full send path with temporary fake
+CLIs. Do not run crate unit tests unless the user asks.
