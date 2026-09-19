@@ -20,7 +20,10 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Component, Path, PathBuf},
+};
 
 pub(super) fn enabled(state: &AppState) -> Result<&std::sync::Arc<LifecycleService>, ApiError> {
     state
@@ -924,8 +927,10 @@ pub async fn cancel(
 /// list. The receipt itself stays queryable through `term/new-status`; a
 /// receipt whose instance may still run is 409 and must be stopped first.
 /// The input the conversation service retained for the receipt goes with
-/// it (`Store::forget_launch`): otherwise `conversation/drafts` keeps
-/// advertising the deleted session and the sidebar rebuilds its row.
+/// it (`Store::forget_launch_unshared`): otherwise `conversation/drafts`
+/// keeps advertising the deleted session and the sidebar rebuilds its row.
+/// A native alias left by a session already moved to trash does not keep
+/// that draft.
 pub async fn discard(
     State(state): State<AppState>,
     body: Result<Json<CancelRequest>, JsonRejection>,
@@ -948,27 +953,56 @@ pub async fn discard(
             ),
             other => failure(other),
         })?;
-    if let Some(conversations) = &state.conversations {
-        let store = conversations.store.clone();
-        let record_id = record.record_id().to_owned();
-        tokio::task::spawn_blocking(move || store.forget_launch(&record_id))
-            .await
-            .map_err(|_| {
-                ApiError::new(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "conversation_storage",
-                    "草稿清理任务失败",
-                )
-            })?
-            .map_err(|error| {
-                ApiError::new(
-                    StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
-                    error.code,
-                    error.message,
-                )
-            })?;
-    }
+    forget_discarded_launch(&state, record.record_id()).await?;
+    super::trash::trash_new_assigned(&state, &record).await;
     response(project(&record), permit).await
+}
+
+/// Session UIDs currently in the published inventory. `None` if the catalog
+/// cannot be read: callers then treat every native alias as live.
+pub(super) async fn live_session_uids(state: &AppState) -> Option<HashSet<String>> {
+    state
+        .reader
+        .run_wait(&state.shutdown, |store| {
+            let document = store.list_recent()?;
+            Ok(document["sessions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|row| row["uid"].as_str().map(str::to_owned))
+                .collect())
+        })
+        .await
+        .ok()
+}
+
+pub(super) async fn forget_discarded_launch(
+    state: &AppState,
+    record_id: &str,
+) -> Result<(), ApiError> {
+    let Some(conversations) = &state.conversations else {
+        return Ok(());
+    };
+    let store = conversations.store.clone();
+    let record_id = record_id.to_owned();
+    let live = live_session_uids(state).await;
+    tokio::task::spawn_blocking(move || store.forget_launch_unshared(&record_id, live.as_ref()))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "conversation_storage",
+                "草稿清理任务失败",
+            )
+        })?
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::from_u16(error.status).unwrap_or(StatusCode::SERVICE_UNAVAILABLE),
+                error.code,
+                error.message,
+            )
+        })?;
+    Ok(())
 }
 
 // ------------------------------------------------------------------ session stop
