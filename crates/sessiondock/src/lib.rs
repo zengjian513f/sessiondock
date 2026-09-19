@@ -502,7 +502,6 @@ fn build_app(
                 }),
                 Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
                 writer.clone(),
-                prompts.clone(),
                 bug_report.as_ref().map(|ctx| ctx.service.clone()),
             )))
         }

@@ -36,6 +36,7 @@ class Boundary:
         self.capture_status = 200
         self.drafts = {}
         self.uploads = []
+        self.previews = []
         self.discards = []
         self.defer = False
         self.pending = []
@@ -46,6 +47,10 @@ class Boundary:
         body=request.post_data_json if request.method=='POST' and ('attachment' not in path or path.endswith('/discard')) else {}
         uid=body.get('uid') or query.get('uid',[''])[0]
         row=self.drafts.setdefault(uid, {'revision':0,'value':None})
+        if path.endswith('/attachment') and request.method=='GET':
+            # Staged bytes read back for an image card that holds no File.
+            self.previews.append((uid,query['id'][0]))
+            return route.fulfill(status=200,content_type='image/png',body=PNG)
         if path.endswith('/attachment'):
             self.uploads.append(uid)
             data={'ok':True,'upload_id':query['id'][0],'name':query['name'][0],'size':len(request.post_data_buffer or b'')}
@@ -297,6 +302,10 @@ def check_shared_draft_recovery(page, boundary):
     page.wait_for_function('!bugReportDraftObject().loading')
     assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
     assert not page.evaluate('bugReportDraftObject().attachments[0].file instanceof Blob')
+    # That card still shows a thumbnail: the bytes come back from staging.
+    staged_id=page.evaluate('bugReportDraftObject().attachments[0].uploaded.upload_id')
+    page.wait_for_function("document.querySelector('#bug-report-items .draft-card .draft-thumb img')?.src.startsWith('blob:') || false", timeout=5000)
+    assert boundary.previews==[(uid,staged_id)], boundary.previews
     # Removing a staged attachment needs one click and no confirmation; the
     # staged bytes are released after the draft without it is saved.
     page.locator('#bug-report-items .draft-remove').click()
@@ -305,17 +314,71 @@ def check_shared_draft_recovery(page, boundary):
     deadline=time.time()+5
     while not boundary.discards and time.time()<deadline: page.wait_for_timeout(100) # Pumps the route handlers.
     assert boundary.discards and boundary.discards[0][0]==uid, boundary.discards
+    # 换处理机器只是换跑处理会话的机器，不是另开一份报告：已经写好的描述跟着
+    # 这次选择搬到新机器的草稿上，原机器那份随即清空（BUG-20260919-080848）。
     page.select_option('#bug-report-node',NID['b'])
     page.wait_for_function('!bugReportDraftObject().loading')
-    assert page.locator('#bug-report-description').input_value()==''
-    page.fill('#bug-report-description','NodeB 自己的草稿');wait_drafts(page)
+    assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
+    other=page.evaluate('BUG_REPORT_DRAFT_UID')
+    assert other!=uid
+    wait_drafts(page)
+    assert boundary.drafts[other]['value']['text']=='服务端保存 [附件1]', boundary.drafts[other]
+    assert boundary.drafts[uid]['value']['text']=='', boundary.drafts[uid]
+    # 空着的输入框不搬任何东西：切回去看到的仍是那台机器自己的草稿。
+    page.fill('#bug-report-description','');wait_drafts(page)
     page.select_option('#bug-report-node',NID['a'])
     page.wait_for_function('!bugReportDraftObject().loading')
-    assert page.locator('#bug-report-description').input_value()=='服务端保存 [附件1]'
+    assert page.evaluate('BUG_REPORT_DRAFT_UID')==uid
+    assert page.locator('#bug-report-description').input_value()==''
     assert not page.locator('.draft-saved').count()
     page.evaluate("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}");wait_drafts(page)
     page.locator('#bug-report-dialog .modal-close').click()
     boundary.calls.clear()
+
+
+def check_draft_follows_machine(page, boundary):
+    # The user's complaint: typing the report, then picking another machine,
+    # emptied the box. Description, quotes and the attachments this page still
+    # holds follow the selection; the previous machine keeps nothing.
+    boundary.uploads.clear();boundary.discards.clear()
+    page.evaluate("openBugReportDialog()")
+    page.wait_for_function("!bugReportDraftObject().loading")
+    page.fill('#bug-report-description','切换机器也别清空 [附件1]')
+    page.locator('#bug-report-file').set_input_files([
+        {'name':'switch.png','mimeType':'image/png','buffer':PNG}])
+    page.wait_for_function("bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging")
+    wait_drafts(page)
+    first=page.evaluate('BUG_REPORT_DRAFT_UID')
+    assert boundary.uploads==[first], boundary.uploads
+    page.select_option('#bug-report-node',NID['c'])
+    page.wait_for_function('!bugReportDraftObject().loading')
+    second=page.evaluate('BUG_REPORT_DRAFT_UID')
+    assert second!=first
+    assert page.locator('#bug-report-description').input_value()=='切换机器也别清空 [附件1]'
+    assert not page.locator('#bug-report-error').inner_text()
+    # The card's bytes are staged again on the machine that will handle it.
+    page.wait_for_function("bugReportDraftObject().attachments.length===1 && bugReportDraftObject().attachments[0].uploaded?.uid===BUG_REPORT_DRAFT_UID && !bugReportDraftObject().attachments[0].staging")
+    wait_drafts(page)
+    assert boundary.uploads==[first,second], boundary.uploads
+    assert boundary.drafts[second]['value']['text']=='切换机器也别清空 [附件1]'
+    assert len(boundary.drafts[second]['value']['attachments'])==1
+    assert boundary.drafts[second]['value']['attachments'][0]['uploaded']['upload_id']
+    # Nothing is left behind on the machine that was dropped, and its staged
+    # bytes are released once the emptied draft is saved.
+    assert boundary.drafts[first]['value']['text']==''
+    assert not boundary.drafts[first]['value']['attachments']
+    deadline=time.time()+5
+    while not boundary.discards and time.time()<deadline: page.wait_for_timeout(100)
+    assert boundary.discards and boundary.discards[0][0]==first, boundary.discards
+    page.evaluate("async () => {for (const [uid,draft] of composerDrafts) {draft.text='';draft.attachments=[];draft.quotes=[];await persistComposerDraft(uid);}}");wait_drafts(page)
+    # An empty box carries nothing; leave the remembered machine as the suite found it.
+    page.fill('#bug-report-description','')
+    page.select_option('#bug-report-node',NID['a'])
+    page.wait_for_function('!bugReportDraftObject().loading')
+    assert page.locator('#bug-report-description').input_value()==''
+    wait_drafts(page)
+    page.locator('#bug-report-dialog .modal-close').click()
+    boundary.calls.clear();boundary.uploads.clear();boundary.discards.clear()
 
 
 def main():
@@ -348,6 +411,7 @@ def main():
                         'S.sessions.length === 3 && Nodes.list.length === 3 && !!Nodes.capabilities["' + NID["b"] + '"]')
 
                     check_shared_draft_recovery(page, boundary)
+                    check_draft_follows_machine(page, boundary)
                     check_report_scroll(page)
                     check_report_layout(page)
                     check_send_busy_width(page, boundary)
@@ -457,7 +521,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS bug_report_node_browser: server drafts, session/node isolation, staged on selection, no browser message store, one-click removal with discard, scrollable submit, named sources, two-up attachments, picker and capture")
+    print("PASS bug_report_node_browser: server drafts, draft follows the chosen machine, staged on selection, no browser message store, one-click removal with discard, scrollable submit, named sources, two-up attachments, picker and capture")
 
 
 if __name__ == "__main__":

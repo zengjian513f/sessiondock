@@ -853,8 +853,60 @@ function bindBugReportDraft() {
 let bugReportSending = false;
 const bugReportDraftObject = () => composerDraft(BUG_REPORT_DRAFT_UID);
 
+/** 下拉选的是跑处理会话的机器，不是另一份报告：正在写的描述、引用和附件
+ *  跟着这次选择走，切换机器不清空输入框。草稿本身仍然一机一份（附件的字节
+ *  暂存在处理机器上），所以这里把内容搬到新机器的草稿上，再把原机器那份清
+ *  空；目标机器上已有的服务端草稿由 hydrate 的早期编辑合并规则接上，两边
+ *  都不丢。本页仍握着 File 的附件在新机器上重新暂存，原机器的暂存字节随
+ *  清空后的草稿释放；重开页面后只剩服务端引用的卡片没有字节可重传，留在
+ *  原机器的草稿里并在对话框上说明。返回要显示的提示文案。 */
+function carryBugReportDraft(fromUid, toUid) {
+  if (!fromUid || !toUid || fromUid === toUid || bugReportSending) return '';
+  const from = composerDrafts.get(composerDraftOwner(fromUid));
+  if (!from || from.handedOffSession) return '';
+  const moving = from.attachments.filter(item => item.file instanceof Blob);
+  const stranded = from.attachments.length - moving.length;
+  if (!from.text && !from.quotes.length && !moving.length) return '';
+  const to = composerDraft(toUid);
+  if (!to) return '';
+  const node = bugReportNode();
+  to.text = to.text ? to.text + '\n' + from.text : from.text;
+  to.quotes = [...to.quotes, ...from.quotes];
+  to.attachments = [...to.attachments, ...moving];
+  to.nextAttachmentNumber = Math.max(to.nextAttachmentNumber || 1, from.nextAttachmentNumber || 1);
+  ensureComposerAttachmentNumbers(to);
+  for (const field of ['requestId','requestText','report_prompt','report_text']) {
+    delete to[field]; delete from[field];
+  }
+  from.attachments = from.attachments.filter(item => !moving.includes(item));
+  from.text = ''; from.quotes = [];
+  if (!from.attachments.length) from.nextAttachmentNumber = 1;
+  const saved = persistComposerDraft(fromUid);
+  for (const item of moving) {
+    // 原机器上的暂存字节随清空后的草稿释放；新机器要的是一份新的上传。
+    const previous = item.uploaded;
+    if (item.cancelUpload) item.cancelUpload();
+    item.uploaded = null; item.status = ''; item.error = '';
+    discardStagedAttachment({uploaded: previous}, saved);
+    const restage = () => {
+      if (!to.attachments.includes(item)) return;
+      // 被取消前已经落地的上传仍会写回 uploaded，再清一次才会重新暂存。
+      if (item.uploaded) discardStagedAttachment(item, saved);
+      item.uploaded = null; item.status = ''; item.error = '';
+      stageComposerAttachment(item, toUid, {node, render: renderBugReportItems});
+    };
+    (item.staging || Promise.resolve()).then(restage, restage);
+  }
+  persistComposerDraft(toUid);
+  if (!stranded) return '';
+  const where = bugReportNodeName(nodeOf(fromUid)) || '原机器';
+  return `${stranded} 个附件的文件只暂存在${where}，已留在那台机器的草稿里；`
+    + '要随这份报告一起提交，请重新选择文件。';
+}
+
 function renderBugReportItems() {
   renderAttachmentCards($('#bug-report-items'), bugReportDraftObject().attachments, {
+    uid: BUG_REPORT_DRAFT_UID, render: renderBugReportItems,
     disabled: bugReportSending,
     onInsert: number => insertComposerReference(number, $('#bug-report-description')),
     onRetry: attachment => stageComposerAttachment(attachment, BUG_REPORT_DRAFT_UID,
@@ -869,6 +921,8 @@ function renderBugReportItems() {
   renderSavedComposerInputs($('#bug-report-items'), bugReportDraftObject(), BUG_REPORT_DRAFT_UID);
   $('#bug-report-description').disabled = bugReportSending || !!bugReportDraftObject().loading;
   $('#bug-report-add').disabled = bugReportSending || !!bugReportDraftObject().loading;
+  // 发送中换机器会把正在提交的内容搬走；锁住下拉直到这一次提交结束。
+  $('#bug-report-node').disabled = bugReportSending;
 }
 
 function addBugReportFiles(files) {
@@ -992,13 +1046,16 @@ document.addEventListener('click', event => {
   openBugReportDialog();
 });
 $('#bug-report-node').onchange = () => {
+  const previous = BUG_REPORT_DRAFT_UID;
   store.set('bugReportNode', bugReportNode());
   bindBugReportDraft();
+  const notice = carryBugReportDraft(previous, BUG_REPORT_DRAFT_UID);
   $('#bug-report-description').value=bugReportDraftObject().text;
   renderBugReportItems();
   hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
-  $('#bug-report-error').textContent = '';
+  $('#bug-report-error').textContent = notice;
+  autoGrow($('#bug-report-description'));
 };
 $('#bug-report-source').addEventListener('change', () => store.set('bugReportSource', bugReportSource()));
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
@@ -1641,6 +1698,7 @@ async function deletePendingSession(info, button) {
   try {
     await discardPendingSession(info);
     await loadTermList();
+    if (typeof loadSessions === 'function') await loadSessions(true);
   } catch (error) { alert(error.message || '删除失败，请重试。'); }
   finally { if (button) button.disabled = false; }
 }
@@ -1704,6 +1762,10 @@ function discardAbandonedNewSession(info) {
   pendingFirstInput.delete(info.name);
   T.pending = (T.pending || []).filter(x => x.name !== info.name);
   T.list = (T.list || []).filter(x => x.name !== info.name);
+  const sid = info.declared_sid;
+  if (sid && Array.isArray(S.sessions)) {
+    S.sessions = S.sessions.filter(session => String(session.sid) !== String(sid));
+  }
   T.openViews.delete(info.name);
   store.set('termviews', [...T.openViews]);
   disposeTermView(info.name);
@@ -2406,6 +2468,13 @@ function repaintTermView(view) {
 
 function performTermFit(view, forceSync = false) {
   if (!termPaneRenderable(view)) return;
+  // 软键盘会把 FitAddon 量到的行数砍掉一截。把这个尺寸发给 PTY 会让 CLI
+  // 重排并丢掉编辑区，会话模式 CHECK/SEND 随即 409 cli_not_ready。网页已经
+  // 按 visual viewport 让位，这里保持键盘收起时的行列，只把画面钉在提示符。
+  if (typeof visualKeyboardOpen === 'function' && visualKeyboardOpen()) {
+    try { view.term.scrollToBottom(); } catch { /* disposed */ }
+    return;
+  }
   let dimensions;
   try { dimensions = view.fit.proposeDimensions(); } catch { return; }
   if (!dimensions || !Number.isFinite(dimensions.cols) || !Number.isFinite(dimensions.rows)) return;
@@ -2438,8 +2507,8 @@ function fitTerm(immediate = false, forceSync = false) {
     performTermFit(view, forceSync);
     return;
   }
-  // 浏览器最大化、拖边界和软键盘动画都会连续发 resize；每个动画帧最多 fit
-  // 一次，既跟手又不在同一帧重复测量和重排。
+  // 浏览器最大化、拖边界会连续发 resize；每个动画帧最多 fit 一次。
+  // 软键盘只改网页可视高度，performTermFit 会拒绝随之 SIGWINCH。
   view.fitFrame = requestAnimationFrame(() => {
     view.fitFrame = null;
     performTermFit(view, forceSync);
@@ -2517,7 +2586,7 @@ function restoreTermPane(uid, agent = null) {
   openTermPane(name, false, null, true);
 }
 
-async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false) {
+async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false, directClaim = false) {
   // 同一宿主上另一类控制台（如已关联前的等待页）还连着时，先放开它；
   // 原生控制台随后按自己的租约重新连接，和跨页面抢占走同一条路。
   const existing = T.views.get(name);
@@ -2556,7 +2625,7 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
     // 缓存 view 即使行列数相同也可能丢了 renderer surface；强制同步并重绘。
     fitTerm(true, true);                 // 连接前先确定尺寸，避免 80×24 → 实际尺寸的首屏跳变
     settleActivatedTermView(view);
-    if (view.ws?.readyState !== 1) await attachTerm(name, auto);
+    if (view.ws?.readyState !== 1) await attachTerm(name, auto, directClaim);
     else focusTermIfRequested(view);
   }
   return true;
@@ -2678,7 +2747,7 @@ function layoutTermPane() {
 
 // `auto`：由布局恢复（选中会话、刷新、题卡）自动打开的 pty。进入对话页不该被
 // 抢占问题打断：别处持有时静默放弃、留在对话页；只有用户主动打开 pty 才问。
-async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false) {
+async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false, direct = false) {
   const claim = async force => {
     try {
       return await post('api/term/claim', {name, page: TERM_PAGE_ID,
@@ -2688,8 +2757,8 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false)
       return {timeout: true, error: '控制台控制权请求超时；服务端可能已取得控制权。请重新打开控制台核对状态。'};
     }
   };
-  let result = await claim(false);
-  if (result.conflict) {
+  let result = await claim(direct);
+  if (result.conflict && !direct) {
     if (auto) {
       auditTermPane('restore-held', {target: name, by: result.owner?.label || ''});
       return null;
@@ -2758,17 +2827,17 @@ function recordHostExit(view, uid, event) {
   return true;
 }
 
-function attachTerm(name, auto = false) {
+function attachTerm(name, auto = false, directClaim = false) {
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
-  const job = attachOwnedTerm(view, true, auto).finally(() => {
+  const job = attachOwnedTerm(view, true, auto, directClaim).finally(() => {
     if (view.attachPromise === job) view.attachPromise = null;
   });
   view.attachPromise = job;
   return job;
 }
 
-async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
+async function attachOwnedTerm(view, allowRefresh = true, auto = false, directClaim = false) {
   if (view.ended || view.retired) return false;
   const name = view.name;
   const wantedUid = view.bindingUid || T.uid;
@@ -2786,7 +2855,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
     // once before exposing the transient mismatch to the user.
     if (allowRefresh && typeof loadTermList === 'function' && !view.ended && !view.retired) {
       await loadTermList();
-      if (T.views.get(name) === view) return attachOwnedTerm(view, false, auto);
+      if (T.views.get(name) === view) return attachOwnedTerm(view, false, auto, directClaim);
     }
     ConsoleUI.errors.set(uid, '终端实例关联已失效，请刷新控制台状态。');
     renderTakeoverBtn();
@@ -2801,7 +2870,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   if (active) activateTermView(view);
   cancelTermReconnect(view);
   dropTermSocket(view);
-  const token = await claimTermOwnership(name, uid, binding, auto);
+  const token = await claimTermOwnership(name, uid, binding, auto, directClaim);
   if (bound && T.views.get(name) !== view) return false;
   if (!token) {
     view.revoked = true;
@@ -3429,7 +3498,13 @@ function persistComposerDraft(uid = composerUid) {
       draft.storageError='服务端草稿保存失败，当前输入保留：'+(error.message || error);
       return false;
     } finally {
-      composerSaving.delete(draft);syncComposerUnloadProtection();refreshComposerDraft(composerDraftOwner(uid));
+      composerSaving.delete(draft);syncComposerUnloadProtection();
+      const owner = composerDraftOwner(uid);
+      if (owner === BUG_REPORT_DRAFT_UID) {
+        renderSavedComposerInputs($('#bug-report-items'), draft);
+      } else if (composerDraftOwner(composerUid) === owner) {
+        renderSavedComposerInputs($('#compose-items'), draft);
+      }
     }
   })();
   composerSaveQueues.set(draft,task);
@@ -3448,10 +3523,11 @@ function syncComposerUnloadProtection() {
   else window.removeEventListener('beforeunload', composerUnloadWarning);
 }
 function renderSavedComposerInputs(box, draft) {
-  if (draft.storageError) {
-    const error = el('div', 'draft-save-error', draft.storageError);
-    error.setAttribute('role','alert'); box.append(error);
-  }
+  const existing = box.querySelector(':scope > .draft-save-error[role="alert"]');
+  if (!draft.storageError) { existing?.remove(); return; }
+  if (existing) { existing.textContent = draft.storageError; return; }
+  const error = el('div', 'draft-save-error', draft.storageError);
+  error.setAttribute('role','alert'); box.append(error);
 }
 const composerDraftRecoveryReady = Promise.resolve();
 
@@ -3739,6 +3815,7 @@ function switchComposerDraft(uid) {
   closeComposerHistory();
   composerUid = uid;
   const draft = composerDraft(uid, !!uid);
+  if (draft) {draft.inputStatus = null; draft.inputProbe = (draft.inputProbe || 0) + 1;}
   ta.value = draft?.text || '';
   renderComposerItems();
   autoGrow(ta);
@@ -3828,7 +3905,7 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         draft_revision:options.draftRevision, attachments:options.attachments || [],
         quotes:options.quotes || [], lease:termSendLease(name).lease || null,
       });
-      if (data.error) throw new Error(data.error);
+      if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
       acceptComposerServerRevision(draft,data.draft);
       S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
       paintLive();
@@ -3937,7 +4014,8 @@ function closeAttachMenu() {
 }
 
 // 附件卡片同时服务对话输入框和缺陷报告框：两者的草稿结构、编号与上传流程一致。
-function renderAttachmentCards(box, attachments, { onInsert, onRemove, onRetry = null, disabled = false }) {
+function renderAttachmentCards(box, attachments,
+  { onInsert, onRemove, onRetry = null, disabled = false, uid = null, render = () => {} }) {
   box.replaceChildren();
   for (const attachment of attachments) {
     const card = el('div', `draft-card ${attachment.status || ''}`);
@@ -3947,7 +4025,8 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, onRetry =
       if (!e.target.closest('.draft-remove')) onInsert(attachment.number);
     };
     const thumb = el('span', 'draft-thumb');
-    if (attachment.kind === 'image') {
+    if (attachment.kind === 'image') loadStagedComposerPreview(attachment, uid, render);
+    if (attachment.kind === 'image' && attachment.preview) {
       const image = document.createElement('img');
       image.src = attachment.preview;
       image.alt = '';
@@ -3957,12 +4036,12 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, onRetry =
     }
     const info = el('span', 'draft-info');
     const name = document.createElement('b');
-    name.textContent = attachment.uploaded?.name || attachment.file.name || 'attachment';
+    name.textContent = attachment.uploaded?.name || attachment.file?.name || 'attachment';
     const meta = document.createElement('small');
     const ref = `[附件${attachment.number}]`;
     const kindName = attachment.kind === 'file' ? '文件'
       : ({ image: '图片', video: '视频', audio: '音频' }[attachment.kind]);
-    const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file.size)}`;
+    const summary = `${ref} · ${kindName} · ${fmtSize(attachment.file?.size ?? attachment.uploaded?.size ?? 0)}`;
     meta.textContent = attachment.status === 'uploading' ? `${summary} · ${attachment.progress || 0}%`
       : attachment.status === 'queued' ? `${summary} · 等待上传`
         : attachment.status === 'failed' ? `${summary} · ${attachment.error || '上传失败'}`
@@ -3989,10 +4068,123 @@ function renderAttachmentCards(box, attachments, { onInsert, onRemove, onRetry =
   }
 }
 
+// Normalize both structured CHECK responses and older nodes during a rollout.
+// Only an explicit successful response can grant readiness.
+function composerInputStatus(data) {
+  const fallback = {state:'unknown', code:'input_check_pending', message:'正在检查 CLI 输入状态'};
+  if (!data || typeof data !== 'object') return fallback;
+  if (Object.prototype.hasOwnProperty.call(data, 'input')) {
+    const input = data.input;
+    if (!input || !['ready','starting','blocked','unknown'].includes(input.state)
+        || typeof input.code !== 'string' || typeof input.message !== 'string') return fallback;
+    if (input.state !== 'ready') return {state:input.state, code:input.code, message:input.message};
+    if (data.ok === true && !data.error) return {state:input.state, code:input.code, message:input.message};
+    return {state:'unknown', code:data.code || 'input_check_failed', message:data.error || '未确认 CLI 可输入，请切换终端检查'};
+  }
+  if (data.ok === true && !data.error) return {state:'ready', code:'', message:''};
+  const code = typeof data.code === 'string' ? data.code : 'input_check_failed';
+  const state = ['cli_starting','cli_catching_up','cli_pasting'].includes(code) ? 'starting'
+    : code === 'cli_question' ? 'blocked' : 'unknown';
+  return {state, code, message:typeof data.error === 'string' ? data.error : '未确认 CLI 可输入，请切换终端检查'};
+}
+
+function composerInputAllowsSend(status) {
+  return status?.state === 'ready';
+}
+
+function composerUsesInputStatus(uid = composerUid) {
+  return conversationSendEnabled()
+    && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid));
+}
+
+function updateComposerInputStatus(uid, data) {
+  const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
+  if (!draft) return;
+  draft.inputProbe = (draft.inputProbe || 0) + 1;
+  const status = composerInputStatus(data);
+  const changed = JSON.stringify(draft.inputStatus) !== JSON.stringify(status);
+  draft.inputStatus = status;
+  if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
+}
+
+async function probeComposerInput(uid) {
+  const draft = composerDrafts.get(composerDraftOwner(uid)), name = takenOver(uid);
+  if (!draft || !name) return {error:'会话尚未就绪，请切换终端检查'};
+  const probe = (draft.inputProbe || 0) + 1;
+  draft.inputProbe = probe;
+  let data;
+  try {
+    data = await post('api/session/conversation/check', {uid, name,
+      lease:termSendLease(name).lease || null});
+  } catch (error) {
+    data = {error:error.message || String(error)};
+  }
+  // An older poll cannot overwrite a newer SEND check, a switched view, or
+  // the state of a replacement terminal using the same logical draft.
+  if (draft.inputProbe === probe && takenOver(uid) === name) updateComposerInputStatus(uid, data);
+  return data;
+}
+
 function syncComposerSendState() {
-  const draft=composerDrafts.get(composerUid);
-  $('#csend').disabled=(typeof staleBuildShown !== 'undefined' && staleBuildShown)
-    || composerSending || !!draft?.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
+  const draft = composerDrafts.get(composerDraftOwner(composerUid));
+  const blocked = composerUsesInputStatus()
+    ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
+  $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
+    || composerSending || !!draft?.loading || blocked;
+}
+
+const composerClaiming = new Set();
+async function takeComposerTerminal(uid) {
+  if (composerClaiming.has(uid) || composerUid !== uid || S.sel !== uid) return;
+  composerClaiming.add(uid);
+  renderComposerInputStatus();
+  try {
+    const name = takenOver(uid);
+    if (!name) throw new Error('终端已不可用，请刷新会话状态');
+    // Wait for an automatic attach already in flight before the explicit
+    // force claim. The user click is the authorization to revoke its holder.
+    const pending = T.views.get(name)?.attachPromise;
+    if (pending) await pending;
+    if (composerUid !== uid || S.sel !== uid) return;
+    T.uid = uid;
+    const opened = await openTermPane(name, true, MOBILE.matches ? null : 'full', false, true);
+    if (!opened || !T.views.get(name)?.inputLease?.token) {
+      throw new Error(ConsoleUI.errors.get(uid) || '未取得终端控制权');
+    }
+    await probeComposerInput(uid);
+  } catch (error) {
+    alert('接管终端失败：' + (error.message || error));
+  } finally {
+    composerClaiming.delete(uid);
+    if (composerUid === uid) renderComposerInputStatus();
+  }
+}
+
+function renderComposerInputStatus() {
+  const node = $('#composer-input-status');
+  const draft = composerDrafts.get(composerDraftOwner(composerUid));
+  const status = draft && composerUsesInputStatus()
+    && !composerInputAllowsSend(draft.inputStatus)
+    ? draft.inputStatus || composerInputStatus(null) : null;
+  const blocking = status && (status.state === 'blocked'
+    || (status.state === 'unknown' && status.code !== 'input_check_pending'));
+  node.classList.toggle('blocked', !!blocking);
+  node.classList.toggle('hidden', !status);
+  node.title = status?.message || '';
+  node.replaceChildren();
+  if (status) {
+    node.append(el('span', 'composer-input-status-copy', status.message));
+    if (status.code === 'terminal_ownership') {
+      const uid = composerUid;
+      const button = el('button', 'btn', composerClaiming.has(uid) ? '接管中…' : '接管');
+      button.type = 'button';
+      button.disabled = composerClaiming.has(uid);
+      button.title = button.ariaLabel = '接管终端控制权';
+      button.onclick = () => takeComposerTerminal(uid);
+      node.append(button);
+    }
+  }
+  syncComposerSendState();
 }
 
 async function reconcileComposerSubmission(uid) {
@@ -4008,25 +4200,19 @@ async function reconcileComposerSubmission(uid) {
   adoptServerDraft(draft,result.draft);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
-let composerQuestionProbeBusy=false;
+let composerInputProbeBusy=false;
 setInterval(async () => {
   const uid=composerUid;
-  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerQuestionProbeBusy
+  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
       || $('#composer').classList.contains('hidden') || !takenOver(uid)) return;
-  composerQuestionProbeBusy=true;
+  composerInputProbeBusy=true;
   try {
-    const data=await post('api/session/conversation/check',{uid,name:takenOver(uid),
-      lease:termSendLease(takenOver(uid)).lease || null});
-    const draft=composerDrafts.get(composerDraftOwner(uid));
-    if (draft) {
-      const question=data.code==='cli_question';
-      if (draft.cliQuestion!==question) {draft.cliQuestion=question;if (composerUid===uid) renderComposerItems();}
-    }
+    const data = await probeComposerInput(uid);
     if (Number.isInteger(data.draft_revision)) await followServerDraft(uid,data.draft_revision);
-  } catch { /* The SEND endpoint independently checks the current question. */ }
+  } catch { /* SEND independently checks the current input surface. */ }
   finally {
     try {await reconcileComposerSubmission(uid);} catch { /* A missing/in-progress receipt keeps the editor intact. */ }
-    composerQuestionProbeBusy=false;
+    composerInputProbeBusy=false;
   }
 },1500);
 
@@ -4035,9 +4221,11 @@ function renderComposerItems() {
   const draft = composerDraft();
   if (!draft) {
     box.replaceChildren();
+    renderComposerInputStatus();
     return;
   }
   renderAttachmentCards(box, draft.attachments, {
+    uid: composerUid, render: renderComposerItems,
     disabled: composerSending,
     onRetry: attachment => stageComposerAttachment(attachment, composerUid),
     onInsert: insertComposerReference,
@@ -4081,12 +4269,10 @@ function renderComposerItems() {
     box.append(restart);
   }
   renderSavedComposerInputs(box, draft, composerUid);
-  if (draft.cliQuestion) box.append(el('div','draft-save-error','CLI 等待选择，请切换终端回答'));
   $('#cinput').disabled = !!draft.loading;
   $('#cadd').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
     || composerSending || !!draft.loading;
-  $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
-    || composerSending || !!draft.loading || (!!activeCliQuestion(composerUid) || !!draft?.cliQuestion);
+  renderComposerInputStatus();
 }
 
 function addComposerFiles(files) {
@@ -4337,6 +4523,39 @@ function pumpComposerUploads(lane) {
     lane.queue.shift()().finally(() => { lane.active--; pumpComposerUploads(lane); });
   }
 }
+/** A draft read back from the server carries attachment metadata only: an
+ *  image card has no local File for its thumbnail. Fetch the staged bytes once
+ *  per card and keep the object URL on the attachment, so later renders reuse
+ *  it and the existing removal paths revoke it. A card whose bytes are gone
+ *  (published, or collected) keeps the kind icon instead of a broken image. */
+const COMPOSER_PREVIEW_MAX_BYTES = 32 * 1024 * 1024;
+function loadStagedComposerPreview(attachment, uid, render = () => {}) {
+  if (!uid || attachment.kind !== 'image' || attachment.preview || attachment.previewLoading
+    || Date.now() < (attachment.previewRetryAt || 0)) return;
+  const id = attachment.uploaded?.upload_id;
+  const size = attachment.file?.size ?? attachment.uploaded?.size ?? 0;
+  if (!id || attachment.file instanceof Blob || size > COMPOSER_PREVIEW_MAX_BYTES) return;
+  const url = new URL(appUrl('api/session/conversation/attachment'));
+  url.searchParams.set('uid', uid); url.searchParams.set('id', id);
+  attachment.previewLoading = true;
+  (async () => {
+    try {
+      const response = await fetch(url, {cache:'no-store'});
+      // Bytes that are gone stay gone; a transient failure may be retried.
+      if (response.status === 404) attachment.previewRetryAt = Infinity;
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const live = composerDrafts.get(composerDraftOwner(uid))?.attachments.includes(attachment);
+      // The card may be gone by now: never leak the object URL of a dropped one.
+      if (live && !attachment.preview) attachment.preview = URL.createObjectURL(blob);
+    } catch {
+      attachment.previewRetryAt ||= Date.now() + 60000;
+    } finally {
+      delete attachment.previewLoading;
+      render();
+    }
+  })();
+}
 /** Staged bytes of a removed attachment are released once the draft without
  *  it is saved; the server refuses while a draft or submission still names
  *  them, and the 24 h sweep covers a failed call. */
@@ -4395,10 +4614,8 @@ async function submitComposer() {
     }
     return;
   }
-  if (activeCliQuestion(uid)) {
-    alert('CLI 正在等待选择题回答，请先回答；输入已保留'); return;
-  }
   closeComposerHistory(); composerSending = true;
+  let sendFailed = false;
   button.disabled = true; add.disabled = true;
   setSendButtonBusy(button, '发送中');
   renderComposerItems();
@@ -4413,10 +4630,9 @@ async function submitComposer() {
       }
     }
     if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
-    const name = takenOver(uid);
-    const check = await post('api/session/conversation/check', {uid, name,
-      lease:termSendLease(name).lease || null});
-    if (check.error) throw new Error(check.error);
+    const check = await probeComposerInput(uid);
+    const inputStatus = composerInputStatus(check);
+    if (!composerInputAllowsSend(inputStatus)) throw new Error(inputStatus.message);
     const uploaded = [];
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
@@ -4434,11 +4650,20 @@ async function submitComposer() {
     const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
       draftRevision:submittedRevision, attachments:uploaded, quotes});
     if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);
+    else sendFailed = true;
   } catch (error) {
+    sendFailed = true;
     alert('发送失败，输入保留：' + (error.message || error));
   } finally {
     composerSending = false; setSendButtonBusy(button, ''); add.disabled = false;
     renderComposerItems(); autoGrow(ta);
+    // A disabled Send button (including keyboard/touch activation) can leave
+    // focus on <body> after the error dialog closes. Resume the retained draft
+    // only if the user has not focused another control meanwhile.
+    if (sendFailed && composerUid === uid && !ta.disabled
+        && (document.activeElement === button || document.activeElement === document.body)) {
+      ta.focus({preventScroll:true});
+    }
   }
 }
 
@@ -4488,6 +4713,11 @@ MOBILE.addEventListener('change', () => {
   renderTakeoverBtn();
 });
 syncComposerMode();
+// A mouse click submits the current draft; it must not move focus from the
+// editor to a button that is disabled while SEND is in flight.
+$('#csend').addEventListener('mousedown', event => {
+  if (document.activeElement === $('#cinput')) event.preventDefault();
+});
 $('#csend').onclick = () => {
   submitComposer();
 };
