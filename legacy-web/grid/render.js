@@ -199,7 +199,10 @@ export class GridRenderer {
     const dpr = this.dpr;
     // Fallback metrics if no 2D context exists (Node, or getContext → null).
     const fallbackWidth = Math.max(1, Math.round(this.fontSize * 0.6 * dpr) / dpr);
-    const cellHeight = Math.max(1, Math.round(this.fontSize * this.lineHeight));
+    // Snap the cell height to a whole device pixel too: with a fractional dpr
+    // (1.25, 1.5) a CSS-integer height puts row edges between device pixels and
+    // every row clear leaves an anti-aliased 1px sliver of the neighbour.
+    const cellHeight = Math.max(1, Math.round(this.fontSize * this.lineHeight * dpr) / dpr);
     this.cellHeight = cellHeight;
 
     if (!this._measureSurface) this._measureSurface = makeSurface(32, 32);
@@ -363,6 +366,23 @@ export class GridRenderer {
   }
 
   _paintSlot(ctx, slot, cols, cells, sel, cursorCol, cursorMode) {
+    // Everything a row draws stays inside its own box. Glyphs taller than the
+    // em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) would
+    // otherwise spill into the neighbouring rows, and since a repaint clears
+    // only the dirty row, the spill survived as stray pixels / a ghost line at
+    // the top of the row below until that row happened to repaint.
+    ctx.save();
+    try {
+      ctx.beginPath();
+      ctx.rect(0, slot * this.cellHeight, cols * this.cellWidth, this.cellHeight);
+      ctx.clip();
+      this._paintSlotClipped(ctx, slot, cols, cells, sel, cursorCol, cursorMode);
+    } finally {
+      ctx.restore();
+    }
+  }
+
+  _paintSlotClipped(ctx, slot, cols, cells, sel, cursorCol, cursorMode) {
     const y = slot * this.cellHeight;
     const cw = this.cellWidth;
     const ch = this.cellHeight;

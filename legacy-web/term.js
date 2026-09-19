@@ -1583,7 +1583,7 @@ function workerStatusMessage(info) {
  *  回来一份仍写着 running 的旧行也不会把按钮翻回"停止"。 */
 function pendingPhase(row) {
   if (!row) return 'gone';
-  const ended = T.ended?.get(pendingUid(row.name));
+  const ended = typeof T !== 'undefined' && T.ended?.get?.(`tmux:${row.name}`);
   if (ended && (!row.instance_id || ended.instanceId === row.instance_id)) return 'exited';
   if (row.state === 'exited') return 'exited';
   if (row.state === 'failed') return 'failed';
