@@ -379,7 +379,13 @@ def run_cases(hub, a, b):
                                  headers={"Content-Type": "image/png"}, raw=b"x")
     if status != 400:
         fail("upload", "guessed a machine", raw)
-    passed("attachment uploads stream to the named machine; no machine is guessed")
+    status, headers, raw = hub.request("GET", f"/api/session/conversation/attachment?uid={ua}&id=staged-one")
+    staged = [query for path, query in a.state()["gets"] if path == "/api/session/conversation/attachment"]
+    if (status != 200 or not raw.startswith(b"\x89PNG") or headers.get("Content-Type") != "image/png"
+            or staged[-1]["uid"] != ["claude:same-file-hash"] or staged[-1]["id"] != ["staged-one"]):
+        fail("upload", "staged attachment read back", raw)
+    passed("attachment uploads stream to the named machine; no machine is guessed; "
+           "staged bytes are read back from the scoped machine")
 
     # Offline: two failed aggregate fetches strike B out; explicit actions are 503 until it answers.
     b.set(offline=True)
