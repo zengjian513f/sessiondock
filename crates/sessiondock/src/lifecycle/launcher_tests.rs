@@ -1056,7 +1056,8 @@ fn only_shell_hosts_record_their_terminal() {
     // The host flags as `launch` assembles them, before the CLI argv.
     let host_flags = |launcher: &Launcher, record: &Record| -> Vec<String> {
         let argv = launcher.argv(record).unwrap();
-        let command = launcher.command(&launcher.host_binary, record, &argv);
+        let no_record = record.spec().source() != Source::Shell;
+        let command = launcher.command(&launcher.host_binary, record, &argv, no_record);
         let args: Vec<String> = command
             .get_args()
             .map(|arg| arg.to_str().unwrap().to_owned())
@@ -1122,6 +1123,43 @@ fn only_shell_hosts_record_their_terminal() {
         assert_eq!(flags.last().map(String::as_str), Some("--no-record"));
         assert_eq!(flags[flags.len() - 3], "--meta");
     }
+}
+
+#[test]
+fn hosts_that_predate_recordings_are_not_told_no_record() {
+    // A node keeps the host binary its configuration names. One from before
+    // recordings rejects `--no-record` with status 2 (Cetus, 2026-09-19);
+    // it never records, so the option is dropped for it and kept for a
+    // current host.
+    let fixture = Fixture::new();
+    let root = fixture.directory.path();
+    let stale = root.join("bin/stale-host");
+    fs::write(
+        &stale,
+        "#!/bin/sh\nfor arg in \"$@\"; do case \"$arg\" in --no-record) echo \"未知参数: $arg\" >&2; exit 2;; esac; done\nexit 0\n",
+    )
+    .unwrap();
+    fs::set_permissions(&stale, fs::Permissions::from_mode(0o700)).unwrap();
+    let current = root.join("bin/current-host");
+    fs::write(&current, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&current, fs::Permissions::from_mode(0o700)).unwrap();
+    let host_dir = fixture.config.host_dir.clone();
+    assert!(!host_accepts_no_record(&stale, &host_dir));
+    assert!(host_accepts_no_record(&current, &host_dir));
+    // The probe leaves the host directory's session files alone and probes
+    // an empty private directory.
+    assert!(host_dir.join(".probe").is_dir());
+    assert!(
+        fs::read_dir(host_dir.join(".probe"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    // A host that cannot run keeps the option; its launch fails on its own.
+    assert!(host_accepts_no_record(
+        &fixture.config.host_binary,
+        &host_dir
+    ));
 }
 
 #[test]

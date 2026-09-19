@@ -9,8 +9,11 @@ An existing synthetic Codex session is resumed through the existing console
 button (`/api/term/takeover`), whose fake CLI echoes `resume <sid>`. Before the
 second creation the configured Claude executable is rewritten in place, the way
 the Windows Claude installer overwrites `claude.exe` while the service runs;
-creation must keep working and launch the rewritten file. No model binary,
-native CLI home or production host is touched.
+creation must keep working and launch the rewritten file. A second server
+then runs with a host binary from before recordings (a wrapper that rejects
+`--no-record` with status 2 and otherwise runs the real ptyhost, the Cetus
+shape of 2026-09-19): an agent session must still be created through it. No
+model binary, native CLI home or production host is touched.
 """
 import hashlib
 import json
@@ -55,6 +58,7 @@ printf 'FAKE_CLAUDE_SID_ENV [%s]\\n' "$CLAUDE_CODE_SESSION_ID$CODEX_COMPANION_SE
 printf 'FAKE_CLAUDE_HOME [%s]\\n' "$HOME"
 printf 'SERVICE_WRAPPER [%s]\\n' "$SESSIONDOCK_TEST_WRAPPER"
 printf 'SERVICE_PATH [%s]\\n' "$PATH"
+printf 'SERVICE_HOST_KIND [%s]\\n' "$SESSIONDOCK_TEST_HOST_KIND"
 sid=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--session-id" ]; then sid="$2"; fi
@@ -111,7 +115,7 @@ def xterm_includes(page, text):
         raise
 
 
-def create_claude(page, context, base, work, expect_completion, full_argv=True, wrapper="loaded"):
+def create_claude(page, context, base, work, expect_completion, full_argv=True, wrapper="loaded", host_kind=""):
     # Narrow layouts fold the button into the header "more" menu.
     if not page.locator("#new-session").is_visible():
         page.locator("#header-more-btn").click()
@@ -162,6 +166,7 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True, 
     xterm_includes(page, "FAKE_CLAUDE_SID_ENV []")
     xterm_includes(page, f"SERVICE_WRAPPER [{wrapper}]")
     xterm_includes(page, "SERVICE_PATH [/usr/bin:/bin]")
+    xterm_includes(page, f"SERVICE_HOST_KIND [{host_kind}]")
     expect(page.locator(".new-session-wait")).to_have_text("")
     return receipt
 
@@ -171,7 +176,8 @@ def main():
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-cli-") as temporary:
         root = Path(temporary).resolve()
-        for name in ["host", "work", "work/claude-area", "work/codex-area", "ledger", "bin", "claude", "codex", "grok"]:
+        for name in ["host", "host-stale", "work", "work/claude-area", "work/codex-area", "ledger", "ledger-stale",
+                     "bin", "claude", "codex", "grok"]:
             (root / name).mkdir(mode=0o700)
         (root / "work/linked-claude").symlink_to(root / "work/claude-area", target_is_directory=True)
         server_wrapper = root / "bin/server-home"
@@ -198,12 +204,17 @@ def main():
         codex_uid = corpus.uid(CODEX_SID)
         for name, body in [("fake-claude", FAKE_CLAUDE), ("fake-codex", FAKE_CODEX),
                            ("service-env-tool", "#!/bin/sh\nprintf 'SERVICE_PATH_OK\\n'\n"),
-                           ("cli-wrapper", '#!/bin/sh\nexport SESSIONDOCK_TEST_WRAPPER=loaded\nexec "$@"\n')]:
+                           ("cli-wrapper", '#!/bin/sh\nexport SESSIONDOCK_TEST_WRAPPER=loaded\nexec "$@"\n'),
+                           # A host binary from before recordings: it rejects the option
+                           # with status 2 like the real one did, then runs the real host.
+                           ("stale-host", '#!/bin/sh\nfor arg in "$@"; do case "$arg" in --no-record) '
+                            'echo "未知参数: $arg" >&2; exit 2;; esac; done\n'
+                            'export SESSIONDOCK_TEST_HOST_KIND=stale\nexec ' + shlex.quote(str(REPO / "target/debug/ptyhost")) + ' "$@"\n')]:
             (root / "bin" / name).write_text(body)
             (root / "bin" / name).chmod(0o700)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
-        configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
+        launcher = {"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
             "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "claude-cli-v1", "source": "claude", "executable": str(root / "bin/cli-wrapper"),
                  "args": [str(root / "bin/fake-claude"), "--settings", SETTINGS], "new_args": ["--session-id", "{session_id}"],
@@ -214,10 +225,16 @@ def main():
                  "args": ["--enable", "default_mode_request_user_input", "-c", "suppress_unstable_features_warning=true"],
                  "resume_args": ["resume", "{sid}"],
                  "env": {"TERM": "xterm-256color", "SESSIONDOCK_TEST_OVERRIDE": "profile-value"},
-                 "env_remove": ["SESSIONDOCK_TEST_REMOVE"]}]}))
-        initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
-            cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
-        assert initialized.returncode == 0, initialized.stderr.decode()
+                 "env_remove": ["SESSIONDOCK_TEST_REMOVE"]}]}
+        configuration.write_text(json.dumps(launcher))
+        stale_configuration = root / "launcher-stale.json"
+        stale_configuration.touch(mode=0o600)
+        stale_configuration.write_text(json.dumps({**launcher, "host_binary": str(root / "bin/stale-host"),
+                                                   "host_dir": str(root / "host-stale")}))
+        for ledger in ["ledger", "ledger-stale"]:
+            initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / ledger)],
+                cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+            assert initialized.returncode == 0, initialized.stderr.decode()
         with sync_playwright() as playwright:
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -336,29 +353,46 @@ def main():
                     assert not errors, errors
                     mobile.close()
                     assert corpus.paths[CODEX_SID].read_bytes() == native
+
+                # ---- A host binary from before recordings still creates agent
+                # sessions: the launcher probes it and drops `--no-record`.
+                with isolated_server(corpus, server_wrapper, host_dir=root / "host-stale", lifecycle_dir=root / "ledger-stale",
+                                     launcher_config=stale_configuration) as (base, _):
+                    errors = []
+                    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+                    page = watch(context)
+                    expect(page.locator("#new-session")).to_be_visible()
+                    stale = create_claude(page, context, base, root / "work", expect_completion=False,
+                                          wrapper="updated", host_kind="stale")
+                    meta = json.loads((root / "host-stale" / (stale["name"] + ".json")).read_text())["meta"]
+                    assert meta["sid"] == stale["declared_sid"] and meta["launch_id"] == stale["launch_id"], meta
+                    assert not errors, errors
+                    context.close()
             finally:
                 browser.close()
                 # Cleanup only explicitly created instances in this private
                 # fixture, protected by their full immutable launch envelope.
-                for path in (root / "host").glob("*.json"):
+                for path in list((root / "host").glob("*.json")) + list((root / "host-stale").glob("*.json")):
                     record = json.loads(path.read_text())
                     meta = record["meta"]
                     try:
                         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
                             stream.settimeout(2)
-                            stream.connect(str(root / "host" / (record["name"] + ".sock")))
+                            stream.connect(str(path.with_suffix(".sock")))
                             stream.sendall(json.dumps({"op": "launch_guard_v1", "expected_source": meta["source"],
                                 "expected_launch_id": meta["launch_id"], "expected_instance_id": meta["instance_id"],
                                 "request": {"op": "kill", "force": True}}).encode() + b"\n")
                     except OSError:
                         pass
                 deadline = time.monotonic() + 6
-                while list((root / "host").glob("*.sock")) and time.monotonic() < deadline:
+                while (list((root / "host").glob("*.sock")) or list((root / "host-stale").glob("*.sock"))) \
+                        and time.monotonic() < deadline:
                     time.sleep(.05)
     print("PASS lifecycle CLI browser: Claude profile --session-id echoed in pending console (desktop+mobile), "
           "declared identity followed after the fake CLI persisted its record, Codex resume via console button "
           "with exact `resume <sid>` argv, inherited service PATH/HOME/custom env, explicit overrides/removals, "
-          "stale parent identity removal, executable wrapper, reuse including legacy force, tmux refusal, native bytes unchanged")
+          "stale parent identity removal, executable wrapper, reuse including legacy force, tmux refusal, native bytes unchanged, "
+          "agent creation through a host that predates --no-record")
 
 
 if __name__ == "__main__":

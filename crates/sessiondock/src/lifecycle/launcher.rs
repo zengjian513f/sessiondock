@@ -469,7 +469,9 @@ impl Launcher {
             Ok(host_binary) => host_binary,
             Err(error) => return Err(LaunchFailure { authority, error }),
         };
-        match spawn_detached(self.command(&host_binary, record, &argv)) {
+        let no_record = record.spec().source() != Source::Shell
+            && host_accepts_no_record(&host_binary, self.host_dir());
+        match spawn_detached(self.command(&host_binary, record, &argv, no_record)) {
             Ok(child) => Ok(Started { authority, child }),
             Err(error) => Err(LaunchFailure {
                 authority,
@@ -481,8 +483,16 @@ impl Launcher {
     /// The platform-independent host command line: inherited service environment
     /// with explicit profile overrides and stale session identities removed,
     /// authorized cwd, null stdio, the host arguments, then the CLI argv.
-    /// Only how the child is detached from this process differs per platform.
-    fn command(&self, host_binary: &Path, record: &Record, argv: &[OsString]) -> Command {
+    /// `no_record` is the launch's decision (agent source, host accepts the
+    /// option). Only how the child is detached from this process differs per
+    /// platform.
+    fn command(
+        &self,
+        host_binary: &Path,
+        record: &Record,
+        argv: &[OsString],
+        no_record: bool,
+    ) -> Command {
         let metadata = Self::metadata(record);
         let mut command = Command::new(host_binary);
         if let Some(adapter) = self.adapters.get(record.spec().adapter_id()) {
@@ -510,11 +520,36 @@ impl Launcher {
         // Only a shell session is recorded: the recording is its archive. An
         // agent session's record is its native transcript, so its host writes
         // no `records/` directory (docs/terminal-records.md).
-        if record.spec().source() != Source::Shell {
+        if no_record {
             command.arg("--no-record");
         }
         command.arg("--").args(argv);
         command
+    }
+}
+
+/// Whether this host binary accepts `--no-record`. A node keeps running the
+/// host binary its configuration names, which may predate recordings; such a
+/// host rejects the unknown option with status 2 before starting the CLI, and
+/// it never records anyway, so it is simply not told. The probe is `list`
+/// over an empty private directory: no session file is read or removed. A
+/// host that cannot be probed keeps the option; its launch fails on its own.
+fn host_accepts_no_record(host_binary: &Path, host_dir: &Path) -> bool {
+    let probe = host_dir.join(".probe");
+    if std::fs::create_dir_all(&probe).is_err() {
+        return true;
+    }
+    match Command::new(host_binary)
+        .arg("--dir")
+        .arg(&probe)
+        .args(["--no-record", "list"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => status.success(),
+        Err(_) => true,
     }
 }
 
