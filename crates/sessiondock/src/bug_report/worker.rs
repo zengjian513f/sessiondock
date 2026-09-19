@@ -367,15 +367,7 @@ impl Probe {
     }
 }
 
-/// Claude Code collapses a multi-line paste into `[Pasted text #1 +N lines]`;
-/// Codex shows `[Pasted Content N chars]`.
-pub fn paste_placeholder(text: &str) -> bool {
-    // The styled screen encodes the placeholder's inner spaces as cursor
-    // moves (`\x1b[C`), which the ANSI strip removes: compare without
-    // whitespace (`[Pastedtext#1+21lines]` on the real Claude 2.1 screen).
-    let text: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-    text.starts_with("[Pasted") && text.contains(']')
-}
+pub use crate::delivery::driver::paste_placeholder;
 
 /// Paste evidence when the composer block cannot be read as a whole (a
 /// screen or composer too small for the prompt): the frame shows the report
