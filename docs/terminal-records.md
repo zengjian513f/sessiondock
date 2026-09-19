@@ -10,17 +10,25 @@ complete historical byte log ([host attachment output](host-output.md)) —
 and nothing here is a transcript: input is not recorded, and native JSONL
 is not involved.
 
-There is no separate index page: the session list is the index. A
-managed session (`/api/term/list` session and pending rows) carries
-`recording: {id, live, bytes, ended_ms, created_ms}` when a recording of
-its host name exists, and an exited shell session stays listed as long
-as that recording exists. A running shell session offers 停止 (host
-stop, the row stays with its recording) and an exited one offers 删除
-(discard), like an agent session. Opening the console of an exited session
-replays the recording read-only in the console pane itself
-(`term.js` `attachRecordingReplay`: no claim, no input; the byte stream
-into xterm.js, or `mode=grid` into the grid view when the renderer
-setting is the server grid). A replay shows a timeline under the terminal
+There is no separate index page: the session list is the index, and the
+launch receipt is the SSH session (the recording is its archive, not its
+identity). A managed session (`/api/term/list` session and pending rows)
+carries `recording: {id, live, bytes, ended_ms, created_ms}` when a
+recording of its host name exists. An exited shell session stays listed
+until 删除 whether or not a recording exists, exactly like an agent
+session's row (`pending_listed`): with a recording, opening its console
+replays it read-only in the console pane itself (`term.js`
+`attachRecordingReplay`: no claim, no input; the byte stream into
+xterm.js, or `mode=grid` into the grid view when the renderer setting is
+the server grid); without one (an old host, `--no-record`), the console
+says 会话已结束，没有留下录制. A running shell session offers 停止
+(`term/kill`: EOF first, the guarded stop only if the shell is still
+there after 1.2 s, like `session/stop` for a CLI) and an exited one offers
+删除 (`term/discard`, which also deletes the session's recordings). The
+page follows the exit it observes itself (`T.ended`, `pendingPhase`):
+the header action, the sidebar subtitle and the console notice change at
+once, and a later list poll that still says running cannot flip them back.
+A replay shows a timeline under the terminal
 (`#term-timeline`: slider, play/pause, speed 1–16×, and 最新 while the
 recording is live): a full-screen program's history is a sequence of
 screens, not scrollback, so the slider seeks to any instant and play

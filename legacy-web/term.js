@@ -408,7 +408,13 @@ async function fetchTermList() {
     T.home = data.home || '';
     T.backend = data.backend || '';
     T.backends = data.backends || [];
+    const hadSelected = String(S.sel || '').startsWith('tmux:')
+      && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
     T.pending = data.pending || [];
+    if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
+        && !T.discarding.has(String(S.sel).slice(5))
+        && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
+      pendingSelectionGone(String(S.sel).slice(5));
     if (typeof recoverServerComposerDrafts === 'function') void recoverServerComposerDrafts();
     if (typeof syncComposerDraftBindings === 'function') syncComposerDraftBindings();
     if (SessionDockCapabilities.config.backend === 'rust') {
@@ -1571,16 +1577,37 @@ function workerStatusMessage(info) {
   return info.worker_error ? `${text}：${info.worker_error}` : text;
 }
 
+/** 启动型行（SSH 与代理的 receipt）唯一的状态来源。头部按钮、侧栏副标题、
+ *  右键菜单和等待页文案都从这里取值，不各自拿 state/running 推断。
+ *  本页刚观察到的宿主退出（T.ended，按实例）先于服务端落账生效，列表轮询
+ *  回来一份仍写着 running 的旧行也不会把按钮翻回"停止"。 */
+function pendingPhase(row) {
+  if (!row) return 'gone';
+  const ended = T.ended?.get(pendingUid(row.name));
+  if (ended && (!row.instance_id || ended.instanceId === row.instance_id)) return 'exited';
+  if (row.state === 'exited') return 'exited';
+  if (row.state === 'failed') return 'failed';
+  if (row.state === 'cancel_requested') return 'stopping';
+  if (row.state === 'uncertain') return 'uncertain';
+  if (row.state === 'prepared' || row.state === 'starting') return 'starting';
+  if (row.running === false || row.stale) return 'stopping';
+  return 'running';
+}
+
 /** Sidebar meta text of a Rust pending row (other rows keep "等待首条消息"). */
 function pendingStateLabel(s) {
   if (SessionDockCapabilities.config.backend !== 'rust' || !s.record_id) return '等待首条消息';
-  if (s.state === 'exited') return '实例已退出';
-  if (s.state === 'failed') return '启动失败';
-  if (s.state === 'cancel_requested') return '正在停止';
-  if (s.state === 'uncertain') return '运行状态不确定';
-  if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting')
+  if (s.kind === 'bug-report' && s.worker_status && s.worker_status !== 'starting'
+      && pendingPhase(s) === 'running')
     return WORKER_STATUS_TEXT[s.worker_status] || s.worker_status;
-  return s.source === 'shell' ? '交互式终端' : '等待首条消息';
+  switch (pendingPhase(s)) {
+    case 'exited': return '已结束';
+    case 'failed': return '启动失败';
+    case 'stopping': return '正在停止';
+    case 'uncertain': return '运行状态不确定';
+    case 'starting': return '正在启动';
+    default: return s.source === 'shell' ? '交互式终端' : '等待首条消息';
+  }
 }
 
 // 等待页只说用户看得懂的事：启动、结束、停止、还没找到记录。关联方法、
@@ -1591,11 +1618,14 @@ const pendingFirstInput = new Map();
 function pendingStageMessage(info) {
   const worker = workerStatusMessage(info);
   if (worker) return worker;
-  if (info.state === 'prepared' || info.state === 'starting') return '正在启动…';
-  if (info.state === 'exited') return '会话已结束。';
-  if (info.state === 'failed') return '启动失败。';
-  if (info.state === 'cancel_requested' || (info.state === 'running' && !info.running)) return '正在停止…';
-  if (info.state === 'uncertain') return '暂时无法确认会话状态。';
+  switch (pendingPhase(info)) {
+    case 'starting': return '正在启动…';
+    case 'exited': return info.source === 'shell' && !info.recording?.id ? '会话已结束，没有留下录制。' : '会话已结束。';
+    case 'failed': return '启动失败。';
+    case 'stopping': return '正在停止…';
+    case 'uncertain': return '暂时无法确认会话状态。';
+    default: break;
+  }
   if (info.binding?.state === 'confirmed') return '正在打开会话…';
   if (info.source !== 'shell' && !info.declared_sid && pendingRecordMissing(info))
     return '会话在运行，但还没找到它的记录，终端可以继续用。';
@@ -1621,15 +1651,20 @@ function pendingSessionRow(name) {
     || null;
 }
 
-/** SSH 会话和代理会话同一套结构：运行中是"停止"（宿主 HUP，行保留、录制可回放），
- *  结束后是"删除"（discard）。其它待定行沿用"删除"（先停再丢弃）。 */
+/** SSH 会话和代理会话同一套结构：运行中是"停止"（先 Ctrl-D，再宿主停止；行保留、
+ *  录制可回放），结束后是"删除"（discard，录制一并删）。其它待定行沿用"删除"（先停再丢弃）。 */
 function pendingShellRunning(row) {
-  return row?.source === 'shell' && row.running === true && !row.stale;
+  return row?.source === 'shell' && pendingPhase(row) === 'running';
+}
+
+function pendingTitle(info) {
+  return info?.title || `新建 ${SOURCES[info?.source]?.name || ''} 会话`;
 }
 
 function renderPendingSessionAction(info, button = $('#a-session-action')) {
   if (!button || S.sel !== pendingUid(info.name)) return;
-  const current = pendingSessionRow(info.name) || info;
+  // 行已不在列表里（别的页面删了、或已归档）：按已结束处理，绝不按旧 receipt 显示"停止"。
+  const current = pendingSessionRow(info.name) || { ...info, running: false, stale: true, state: 'exited' };
   const stop = pendingShellRunning(current);
   const label = stop ? '停止会话' : '删除会话';
   button.innerHTML = uiIcon(stop ? 'power' : 'trash');
@@ -1639,16 +1674,39 @@ function renderPendingSessionAction(info, button = $('#a-session-action')) {
 }
 
 function refreshPendingStage(name) {
+  if (S.sel !== pendingUid(name)) return;
   const current = pendingSessionRow(name);
-  if (!current || S.sel !== pendingUid(name)) return;
+  if (!current) {
+    renderPendingSessionAction({ name, source: 'shell' });
+    return;
+  }
   const wait = $('.new-session-wait');
   if (wait) wait.textContent = pendingStageMessage(current);
   renderPendingSessionAction(current);
 }
 
+/** 本页观察到宿主退出后，页面立刻进入结束态（头部"删除"、副标题"已结束"），
+ *  并强制刷一次列表让服务端落账跟上；不等下一轮轮询。 */
+function notePendingEnded(name) {
+  const row = T.pending.find(row => row.name === name);
+  if (row) { row.running = false; row.stale = true; }
+  refreshPendingStage(name);
+  if (row && typeof renderSide === 'function') renderSide();
+  void loadTermList();
+}
+
+/** 选中的启动型行在两次列表之间从服务端消失（另一个页面删了它）：详情页不能
+ *  留着旧头部。 */
+function pendingSelectionGone(name) {
+  const info = T.pending.find(row => row.name === name) || { name };
+  discardAbandonedNewSession(info);
+  const detail = $('#detail');
+  if (detail && !S.sel) detail.innerHTML = '<div class="empty">该会话已被删除。</div>';
+}
+
 async function stopPendingSession(info, button) {
   if (SessionDockCapabilities.config.backend === 'rust') {
-    if (!confirm('停止这个会话？')) return;
+    if (!confirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
     if (button) button.disabled = true;
     try {
       const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
@@ -1669,6 +1727,8 @@ async function stopPendingSession(info, button) {
 }
 
 async function deletePendingSession(info, button) {
+  if (info.source === 'shell' && SessionDockCapabilities.config.backend === 'rust'
+      && !confirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
   if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
@@ -2815,6 +2875,7 @@ function recordHostExit(view, uid, event) {
   T.ended.set(uid, {instanceId: view.instanceId, reason});
   if (T.ended.size > 256) T.ended.delete(T.ended.keys().next().value);
   ConsoleUI.errors.set(uid, reason);
+  if (String(uid).startsWith('tmux:')) notePendingEnded(view.name);
   if (incomplete) {
     // A truncated drain is a diagnostic: keep the pane with the tail and
     // say inside the xterm why it is incomplete.
@@ -3021,6 +3082,11 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
   // 进程已退出但有录制：不 claim，直接只读回放录制（会话列表就是录制的索引）。
   // 只有启动型（pending）行才有 running 字段；原生会话行是活的，永远走 claim。
   if (bound && row && row.running === false && row.recording?.id) return attachRecordingReplay(view, row, uid);
+  if (bound && row?.record_id && pendingPhase(row) !== 'running' && pendingPhase(row) !== 'starting' && !row.recording?.id) {
+    ConsoleUI.errors.set(uid, row.source === 'shell' ? '会话已结束，没有留下录制。' : '实例已退出。');
+    renderTakeoverBtn();
+    return false;
+  }
   const launch = bound && row?.record_id && row?.launch_id && !row?.stale;
   if (bound && ((!row?.uid && !launch) || !row.instance_id
       || (view.instanceId && view.instanceId !== row.instance_id))) {
@@ -3159,8 +3225,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false) {
       rememberTermOpen(name, false);
       const pending = T.pending.find(row => row.name === name && row.instance_id === view.instanceId);
       const reason = '此启动实例的输入授权已撤销，正在核对取消/退出状态；不会自动重新连接。';
-      if (pending) { pending.stale = true; pending.unavailable_reason = reason; }
+      if (pending) { pending.stale = true; pending.running = false; pending.unavailable_reason = reason; }
       ConsoleUI.errors.set(uid, reason);
+      if (pending) { refreshPendingStage(name); void loadTermList(); }
       // The host-performed stop (`session/stop` escalation, `term/kill`)
       // retires the lease before the exit is observed: AI sessions close the
       // pane like a host exit; SSH/shell keeps the retained PTY.

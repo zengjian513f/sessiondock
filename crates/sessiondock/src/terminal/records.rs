@@ -88,6 +88,24 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
+/// Delete every recording of host `name` whose host is gone (a discarded
+/// SSH session takes its recordings with it). Returns how many were removed;
+/// a live recording is left alone.
+pub fn remove_for_host(root: &Path, name: &str) -> io::Result<usize> {
+    let mut removed = 0;
+    for entry in list(root)? {
+        if entry.name != name || entry.live {
+            continue;
+        }
+        let Some(dir) = record_dir(root, &entry.id) else {
+            continue;
+        };
+        std::fs::remove_dir_all(&dir)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 /// The recording directory for a validated id, if it exists.
 pub fn record_dir(root: &Path, id: &str) -> Option<PathBuf> {
     if !valid_id(id) {
