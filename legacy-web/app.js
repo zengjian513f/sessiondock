@@ -620,12 +620,36 @@ document.addEventListener('visibilitychange', () => {
 
 // Android 默认只缩小 visual viewport；iOS 也不会让 100dvh 可靠地避开软键盘。
 // 把应用高度钉到真正可见区域，并在 Safari 产生 viewport 偏移时跟着移动。
+// interactive-widget=resizes-content 时 innerHeight 也会跟着掉，所以不能靠
+// innerHeight vs visualViewport 判断键盘。同一宽度下相对最近的满高度掉
+// 120px 以上视为软键盘：网页让位，PTY 行列保持键盘收起时的尺寸。
+const VISUAL_KEYBOARD_INSET_MIN = 120;
+let visualLayoutWidth = 0;
+let visualLayoutHeight = 0;
+function visualKeyboardOpen() {
+  if (!MOBILE.matches) return false;
+  const viewport = window.visualViewport;
+  const width = Math.round(viewport?.width || window.innerWidth);
+  const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
+  if (width !== visualLayoutWidth) {
+    visualLayoutWidth = width;
+    visualLayoutHeight = height;
+    return false;
+  }
+  if (height > visualLayoutHeight) {
+    visualLayoutHeight = height;
+    return false;
+  }
+  return visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
+}
 let viewportFrame = 0;
 function syncMobileViewport() {
   cancelAnimationFrame(viewportFrame);
   viewportFrame = requestAnimationFrame(() => {
     const root = document.documentElement.style;
     if (!MOBILE.matches) {
+      visualLayoutWidth = 0;
+      visualLayoutHeight = 0;
       root.removeProperty('--visual-viewport-height');
       root.removeProperty('--visual-viewport-top');
       return;
@@ -637,7 +661,11 @@ function syncMobileViewport() {
     root.setProperty('--visual-viewport-top', `${top}px`);
     if (typeof layoutTermPane === 'function') {
       layoutTermPane();
-      fitTerm();
+      if (visualKeyboardOpen()) {
+        try { currentTermViewObject()?.term?.scrollToBottom(); } catch { /* no view yet */ }
+      } else if (typeof fitTerm === 'function') {
+        fitTerm();
+      }
     }
   });
 }
