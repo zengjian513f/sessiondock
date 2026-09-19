@@ -670,26 +670,21 @@ async fn launch_target(
 pub const PENDING_ARCHIVE_AFTER: u64 = 600;
 
 /// Whether a receipt still belongs in the sidebar's pending list: not
-/// discarded by the operator and not finished for longer than
-/// [`PENDING_ARCHIVE_AFTER`]. A finished receipt with no recorded time (an
-/// older ledger) is archived at once.
-fn pending_listed(
-    record: &crate::lifecycle::model::Record,
-    now: u64,
-    recorded: &std::collections::BTreeMap<String, crate::terminal::records::RecordEntry>,
-) -> bool {
+/// discarded by the operator and, for an agent launch, not finished for
+/// longer than [`PENDING_ARCHIVE_AFTER`] (an agent session's own record is
+/// its native transcript; the receipt is only the launch). A finished shell
+/// receipt is the SSH session itself, so it stays listed until 删除 exactly
+/// like an agent session's row: with its recording (open = read-only
+/// replay) or without one (open = "no recording"). A finished agent receipt
+/// with no recorded time (an older ledger) is archived at once.
+fn pending_listed(record: &crate::lifecycle::model::Record, now: u64) -> bool {
     use crate::lifecycle::model::State;
     if record.discarded() {
         return false;
     }
     if matches!(record.state(), State::Exited | State::Failed) {
-        // The session list is the index of recordings: an exited shell stays
-        // listed as long as its recording exists (open = read-only replay).
-        if recorded.contains_key(record.host_name()) {
-            return true;
-        }
         if record.spec().source() == crate::lifecycle::model::Source::Shell {
-            return false;
+            return true;
         }
         return record
             .finished_at()
@@ -837,7 +832,7 @@ pub async fn list(
         response["pending"] = json!(
             records
                 .iter()
-                .filter(|record| pending_listed(record, now, &recorded))
+                .filter(|record| pending_listed(record, now))
                 .map(|record| {
                     let mut row = super::lifecycle::project(record);
                     row["grid"] = json!(grid_hosts.contains(record.host_name()));

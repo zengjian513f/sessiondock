@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in isolated launch pipeline acceptance: fixed free shell, never model CLI."""
 import json
+import shutil
 import os
 from pathlib import Path
 import socket
@@ -234,6 +235,8 @@ def main(bind_native=False, bare_shell=False):
                                     with action_page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/kill") as killed:
                                         action.click()
                                     assert killed.value.status==200,killed.value.text()
+                                    # The shell exits on the Ctrl-D the stop sends first; no HUP needed.
+                                    assert killed.value.json()["state"]=="exited",killed.value.text()
                                     action_page.wait_for_function("id => T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id)",arg=receipt["record_id"],timeout=15000)
                                     action=action_page.locator("#a-session-action")
                                     if not action.is_visible():
@@ -266,13 +269,29 @@ def main(bind_native=False, bare_shell=False):
                                 page.locator("#termpane .xterm-helper-textarea:visible").press_sequentially("quit")
                                 page.locator("#termpane .xterm-helper-textarea:visible").press("Enter")
                                 page.wait_for_function("name => T.views.get(name)?.ended",arg=natural["name"])
-                                # The session list is the index of recordings: a naturally
-                                # exited SSH stays listed (not running, with its recording)
-                                # until discarded; opening it replays the recording read-only.
+                                # The page follows the exit it just observed: the header
+                                # action is 删除 and the sidebar says 已结束 before the
+                                # list poll brings the server's own state.
+                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话",timeout=3000)
+                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"] .m')).to_contain_text("已结束",timeout=3000)
+                                # The receipt is the session: a naturally exited SSH stays
+                                # listed (not running) until 删除, with its recording
+                                # (opening it replays read-only) ...
                                 page.wait_for_function("async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && row.recording?.id); }",arg=natural["record_id"])
                                 expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
                                 final = context.request.get(base+"/api/term/new-status",params={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert final.status == 200 and final.json()["state"] == "exited", final.text()
+                                # ... and equally without one (an old host, a pruned
+                                # store): the row stays and the console says so.
+                                recording_id = page.evaluate("id => T.pending.find(row => row.record_id === id).recording.id",natural["record_id"])
+                                shutil.rmtree(root/"host"/"records"/recording_id)
+                                page.wait_for_function("async id => { await loadTermList(); return T.pending.some(row => row.record_id === id && row.running === false && !row.recording); }",arg=natural["record_id"])
+                                expect(page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]')).to_have_count(1)
+                                expect(page.locator("#a-session-action")).to_have_attribute("aria-label","删除会话")
+                                # A fresh console view (the retained one keeps the last
+                                # output) is told there is nothing to replay.
+                                page.evaluate("name => { disposeTermView(name); return attachTerm(name); }",natural["name"])
+                                page.wait_for_function("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下录制')",arg="tmux:"+natural["name"])
                                 gone = context.request.post(base+"/api/term/discard",data={"record_id":natural["record_id"],"instance_id":natural["instance_id"]})
                                 assert gone.status == 200, gone.text()
                                 page.wait_for_function("async id => { await loadTermList(); return !T.pending.some(row => row.record_id === id); }",arg=natural["record_id"])
@@ -302,6 +321,9 @@ def main(bind_native=False, bare_shell=False):
                                     action.click()
                                 assert discarded.value.status==200,discarded.value.text()
                                 expect(page.locator(f'#side .item[data-uid="tmux:{drafted["name"]}"]')).to_have_count(0)
+                                # 删除 of an SSH session removes its recordings too.
+                                listed = context.request.get(base+"/api/term/records").json()["records"]
+                                assert not any(row["name"] == drafted["name"] for row in listed), listed
                         assert not errors,errors
                         context.close()
                 assert corpus.paths["fixture"].read_bytes()==native
