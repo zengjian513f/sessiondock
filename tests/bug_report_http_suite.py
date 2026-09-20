@@ -140,7 +140,9 @@ def check_bundle(path, area, attachments=0):
     if len(document.get("attachments") or []) != attachments:
         fail(area, "manifest attachments", json.dumps(document.get("attachments")))
     prompt = (Path(path) / "worker-prompt.md").read_text(encoding="utf-8")
-    if document["report_id"] not in prompt or "不要 push" not in prompt or "push 到 GitHub" in prompt:
+    if (document["report_id"] not in prompt or "随后立即 push" not in prompt
+            or "python3 deploy/deploy.py deploy --all" not in prompt
+            or "无需再次确认" not in prompt or "不要 push" in prompt or "不要部署" in prompt):
         fail(area, "worker prompt is not the Rust-repository version")
     environment = json.loads((Path(path) / "environment.json").read_text(encoding="utf-8"))
     if "build" not in environment or environment.get("git_head", {}).get("argv", [None])[0] != "git":

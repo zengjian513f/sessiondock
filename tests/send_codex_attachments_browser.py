@@ -140,7 +140,12 @@ def main():
                 assert manifest['status'] == 'submitted', manifest
                 submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
                 assert len(submissions) == 4, submissions
-                assert submissions[-1] == (bundle / 'worker-prompt.md').read_text()
+                worker_prompt = (bundle / 'worker-prompt.md').read_text()
+                assert submissions[-1] == worker_prompt
+                assert '随后立即 push' in worker_prompt
+                assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
+                assert '无需再次确认' in worker_prompt
+                assert '不要 push' not in worker_prompt and '不要部署' not in worker_prompt
                 assert not dialogs and not errors, (dialogs, errors)
             finally:
                 if worker and context:

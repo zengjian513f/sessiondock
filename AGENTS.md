@@ -25,9 +25,13 @@
   costlier model. See `~/.claude/cli-model-isolation.md`.
 - Never commit deployment addresses, personal absolute paths, credentials,
   runtime data, build outputs, or local environment files.
-- `origin` is `zengjian513f/sessiondock`. Push landed work, not every small fix.
+- `origin` is `zengjian513f/sessiondock`. Every completed change must be
+  validated, committed, pushed and deployed immediately, without another
+  confirmation. Do not stop at a local commit. Stage only this task's changes;
+  preserve concurrent edits. If validation, push or deployment fails, report
+  the failure and which steps or targets remain incomplete.
 - Hub SSH: `ecs-user@driftnode.cn`.
-- A production bug fix includes build, validation, deployment, restart and
+- Every change includes build as applicable, validation, push, deployment, restart and
   health check. Deploy the current workspace unless the user names another
   source. Preserve sessions, state and concurrent changes; keep a rollback.
   Use `python3 deploy/deploy.py deploy --all` (build once, push every target,
