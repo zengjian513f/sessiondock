@@ -63,9 +63,6 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
             "CLI 正在等待选择，请切换到 PTY（终端）模式回答；输入已保留",
         );
     }
-    if source == "codex" && driver::codex_paste_settling(capture) {
-        return InputStatus::new(Starting, "cli_pasting", "CLI 正在处理粘贴，输入已保留");
-    }
     let (recognized, pasting) = match source {
         "claude" | "codex" => {
             let editor = if source == "claude" {
@@ -268,12 +265,9 @@ mod tests {
     }
 
     #[test]
-    fn codex_multiline_paste_waits_for_current_context_footer() {
+    fn codex_multiline_editor_does_not_require_a_footer() {
         let transient = "older output\n\n› Reply with OK.\n  continued line\n\n\n";
-        assert_eq!(
-            classify("codex", &frame(transient, (2, 4))).code,
-            "cli_pasting"
-        );
+        assert!(classify("codex", &frame(transient, (2, 4))).ready());
         let settled =
             format!("{transient}tab to queue message                    100% context left\n");
         assert!(classify("codex", &frame(&settled, (2, 4))).ready());
