@@ -820,10 +820,9 @@ pub async fn list(
             json!("Rust 后端当前为只读开发阶段，尚未接入控制台或 CLI 进程。");
     }
     if let Some(service) = &state.lifecycle {
-        // The first 128 receipts in ledger order, as before, out of the
-        // shared list (`force=1` refreshes it like everything else).
-        let shared = super::lifecycle::shared_records(&state, service, force).await?;
-        let records = &shared[..shared.len().min(128)];
+        // This is a complete snapshot, not a page. Historical receipts must
+        // neither hide later launches nor remove their bound terminals.
+        let records = super::lifecycle::shared_records(&state, service, force).await?;
         // A bug-report worker's row carries the pending record
         // fields (`kind`, `title` "处理 <id>", `report_id`) so the sidebar
         // names the report instead of "新建 … 会话".
