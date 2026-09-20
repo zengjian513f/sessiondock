@@ -3,7 +3,7 @@
 // helper textarea. Incoming `write` data is newline-delimited JSON text.
 
 import {GridModel} from './model.js';
-import {GridRenderer, THEMES} from './render.js';
+import {GridRenderer, THEMES, isLightBackground} from './render.js';
 import {InputEncoder, KeyCapture} from './input.js';
 
 const DEFAULT_COLS = 80;
@@ -65,6 +65,7 @@ function mapTheme(theme) {
     cursor: theme.cursor || dark.cursor,
     selection: theme.selectionBackground || theme.selection || dark.selection,
     palette,
+    light: isLightBackground(theme.background || dark.background),
   };
 }
 

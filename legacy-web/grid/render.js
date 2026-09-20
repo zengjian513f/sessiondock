@@ -53,8 +53,61 @@ export const THEMES = Object.freeze({
     cursor: '#252a32',
     selection: '#c8d6ea',
     palette: XTERM_16,
+    light: true,
   }),
 });
+
+// The host always models a dark terminal. Only presentation changes: retain
+// hue/saturation and reflect conflicting lightness, as the byte renderer does.
+function rgbChannels(css) {
+  if (css.startsWith('#')) {
+    const hex = css.slice(1);
+    const n = parseInt(hex.length === 3 ? [...hex].map(v => v + v).join('') : hex, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  return css.match(/[\d.]+/g).slice(0, 3).map(Number);
+}
+
+export function isLightBackground(css) {
+  const rgb = rgbChannels(css);
+  return Math.max(...rgb) + Math.min(...rgb) >= 255;
+}
+
+function lightColor(css, background) {
+  const rgb = rgbChannels(css).map(v => v / 255);
+  const hi = Math.max(...rgb), lo = Math.min(...rgb), l = (hi + lo) / 2;
+  if (background ? l >= .5 : l < .5) return css;
+  const reflected = 1 - l;
+  let target = .5 + Math.sign(reflected - .5) * .5 * Math.pow(Math.abs(reflected - .5) * 2, 1.35);
+  if (background) target = Math.min(target, .96);
+  const scale = hi === lo ? 0 : (1 - Math.abs(2 * target - 1)) / (1 - Math.abs(2 * l - 1));
+  return `rgb(${rgb.map(v => Math.round(255 * (target + (v - l) * scale))).join(',')})`;
+}
+
+function luminance(rgb) {
+  return rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+}
+
+// Saturated yellow/green and dim text can still be faint after HSL reflection.
+// Check the actual pair (including inverse and dim) before painting the glyph.
+function readableForeground(fg, bg, alpha) {
+  const ink = rgbChannels(fg), paper = rgbChannels(bg), lum = luminance(paper);
+  const contrast = rgb => {
+    const value = luminance(rgb.map((v, i) => v * alpha + paper[i] * (1 - alpha)));
+    return (Math.max(value, lum) + .05) / (Math.min(value, lum) + .05);
+  };
+  if (contrast(ink) >= 4.5) return fg;
+  const end = contrast([0, 0, 0]) >= contrast([255, 255, 255]) ? 0 : 255;
+  let low = 0, high = 1;
+  for (let i = 0; i < 10; i++) {
+    const amount = (low + high) / 2;
+    if (contrast(ink.map(v => v + (end - v) * amount)) < 4.5) low = amount;
+    else high = amount;
+  }
+  const round = end === 0 ? Math.floor : Math.ceil;
+  return `rgb(${ink.map(v => round(v + (end - v) * high)).join(',')})`;
+}
 
 function currentDpr() {
   const n = Number(globalThis.devicePixelRatio);
@@ -105,12 +158,14 @@ function resolveColor(value, theme, isFg, bold) {
     const r = (rgb >> 16) & 255;
     const g = (rgb >> 8) & 255;
     const b = rgb & 255;
-    return `rgb(${r},${g},${b})`;
+    const css = `rgb(${r},${g},${b})`;
+    return theme.light ? lightColor(css, !isFg) : css;
   }
   if (value >= 0 && value <= 255) {
     let idx = value | 0;
     if (isFg && bold && idx >= 0 && idx <= 7) idx += 8;
-    return indexedCss(idx, theme.palette) || (isFg ? theme.foreground : theme.background);
+    const css = indexedCss(idx, theme.palette) || (isFg ? theme.foreground : theme.background);
+    return theme.light ? lightColor(css, !isFg) : css;
   }
   return isFg ? theme.foreground : theme.background;
 }
@@ -409,6 +464,7 @@ export class GridRenderer {
         fg = bg;
         bg = swapped;
       }
+      if (theme.light) fg = readableForeground(fg, bg, flags & FLAG_DIM ? .7 : 1);
       prepared.push({
         col,
         width: span,
@@ -487,7 +543,7 @@ export class GridRenderer {
         lastFont = font;
       }
 
-      if (dim) ctx.globalAlpha = 0.5;
+      if (dim) ctx.globalAlpha = theme.light ? 0.7 : 0.5;
       if (!hidden && cell.text && cell.text !== ' ') {
         ctx.fillStyle = fg;
         // Glyph origin is the cell's left edge (wide cells are not centered).
@@ -495,7 +551,8 @@ export class GridRenderer {
       }
       if (!hidden && ((flags & FLAG_UNDERLINE) || cell.link)) {
         // 下划线颜色（SGR 58）优先；超链接没有下划线属性时也画一条，便于识别。
-        ctx.fillStyle = cell.ul != null ? resolveColor(cell.ul, theme, true, false) : fg;
+        const ul = cell.ul != null ? resolveColor(cell.ul, theme, true, false) : fg;
+        ctx.fillStyle = theme.light ? readableForeground(ul, cell.bg, dim ? .7 : 1) : ul;
         const uy = y + this.baseline + 2;
         if (cell.link && !(flags & FLAG_UNDERLINE)) {
           for (let dx = 0; dx < cell.width * cw; dx += 3) ctx.fillRect(x + dx, uy, 1, 1);
