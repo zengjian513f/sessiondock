@@ -15,6 +15,27 @@ from terminal_browser import SHELL_SCRIPT
 from terminal_exit_browser import XTERM_TEXT
 
 
+def seed_archived_receipts(root):
+    """Historical receipts must not crowd a new launch out of term/list."""
+    path = root / "ledger/lifecycle-ledger.json"
+    ledger = json.loads(path.read_text())
+    assert not ledger["records"]
+    for index in range(1, 129):
+        identifier = f"{index:032x}"
+        ledger["records"][identifier] = {
+            "record_id": identifier, "request_id": "historical-" + identifier,
+            "spec": {"source": "codex", "adapter_id": "synthetic-shell-v1",
+                     "cwd": str(root / "work"), "launch": {"kind": "new_pending"}},
+            "launch_id": identifier, "instance_id": identifier,
+            "host_name": "sessiondock-" + identifier, "revision": index,
+            "state": "exited", "failure": None, "cancel_requested": False,
+            "binding": None, "session_id": None, "created_at": 1,
+            "finished_at": 2, "discarded": index % 2 == 0,
+        }
+    ledger["revision"] = 128
+    path.write_text(json.dumps(ledger))
+
+
 def main(bind_native=False, bare_shell=False):
     source = "shell" if bare_shell else "codex"
     if os.name != "posix":
@@ -38,6 +59,7 @@ def main(bind_native=False, bare_shell=False):
         initialized=subprocess.run([str(BINARY),"--initialize-lifecycle",str(root/"ledger")],
             cwd=REPO,env={"PATH":"/usr/bin:/bin"},capture_output=True,timeout=15)
         assert initialized.returncode==0,initialized.stderr.decode()
+        seed_archived_receipts(root)
         with sync_playwright() as playwright:
             options={"headless":True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -91,6 +113,14 @@ def main(bind_native=False, bare_shell=False):
                             response=created.value
                             assert response.status==200,response.text()
                             receipt=response.json()
+                            ledger = json.loads((root/"ledger/lifecycle-ledger.json").read_text())
+                            assert sorted(ledger["records"]).index(receipt["record_id"]) >= 128
+                            for query in ("?force=1", ""):
+                                listed = context.request.get(base+"/api/term/list"+query).json()
+                                assert [row["record_id"] for row in listed["pending"]] == [receipt["record_id"]], listed
+                            page.evaluate("loadTermList()")
+                            assert page.evaluate("S.sel") == "tmux:" + receipt["name"]
+                            expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(1)
                             if bare_shell:
                                 page.set_viewport_size({"width":1280,"height":900})
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
