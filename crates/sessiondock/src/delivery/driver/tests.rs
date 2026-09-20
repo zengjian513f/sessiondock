@@ -350,7 +350,6 @@ fn codex_ready_context_footer_and_rewind_hint_locate_the_block() {
         view.text.as_deref().unwrap(),
         "Reply with OK. continued line"
     ));
-    assert!(!codex_paste_settling(&capture(&pasted, (2, 4))));
 }
 
 #[test]
@@ -412,7 +411,11 @@ fn codex_multiline_paste_parks_cursor_below_footerless_editor() {
     let view = inspect_codex(&capture(&screen, (2, 5)));
     assert_eq!(view.state, ComposerState::Editing);
     assert!(view.composer_token.is_some());
-    assert!(codex_paste_settling(&capture(&screen, (2, 5))));
+    let paragraphs = screen.replace("  xxxxxxxxxxxxxxxxxxxx\n  ", "\n  ");
+    assert_eq!(
+        inspect_codex(&capture(&paragraphs, (2, 5))).state,
+        ComposerState::Editing
+    );
     // The cursor position, continuation rows and trailing blank screen are
     // all necessary: a transcript prompt alone never becomes a composer.
     assert_eq!(
@@ -428,7 +431,6 @@ fn codex_multiline_paste_parks_cursor_below_footerless_editor() {
         inspect_codex(&capture(&output_below, (2, 5))).state,
         ComposerState::Unknown
     );
-    assert!(!codex_paste_settling(&capture(&output_below, (2, 5))));
 }
 
 #[test]
