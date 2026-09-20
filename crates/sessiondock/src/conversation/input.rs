@@ -63,6 +63,9 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
             "CLI 正在等待选择，请切换到 PTY（终端）模式回答；输入已保留",
         );
     }
+    if source == "codex" && codex_loading(capture) {
+        return InputStatus::new(Starting, "cli_starting", "CLI 正在启动，输入已保留");
+    }
     let (recognized, pasting) = match source {
         "claude" | "codex" => {
             let editor = if source == "claude" {
@@ -86,6 +89,33 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
     } else {
         ready
     }
+}
+
+// Codex paints an editable composer before initialization finishes. In this
+// window bracketed paste is accepted but Enter can be ignored. Recognize the
+// startup header, not a quoted "loading" in a user's message or transcript.
+fn codex_loading(capture: &ScreenCapture) -> bool {
+    let text = driver::strip_ansi(&capture.text);
+    let mut header = false;
+    let mut top_border = false;
+    for line in text.lines().take(usize::from(capture.cursor.1)) {
+        let row = line.trim();
+        if matches!(row.chars().next(), Some('›' | '»')) || (header && row.starts_with('╰')) {
+            return false;
+        }
+        if top_border && row.starts_with("│ >_ OpenAI Codex (") {
+            header = true;
+        } else if header
+            && row
+                .strip_prefix('│')
+                .and_then(|s| s.trim().strip_prefix("model:"))
+                .is_some_and(|s| s.split_whitespace().next() == Some("loading"))
+        {
+            return true;
+        }
+        top_border = row.starts_with("╭─");
+    }
+    false
 }
 
 // The old inspector also flags quoted "Pasting…" in transcript/draft text.
