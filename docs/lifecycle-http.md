@@ -89,6 +89,8 @@ Receipts carry `started` (Unix seconds the intent was persisted), `finished_at`
 (Unix seconds the receipt became Exited/Failed), `discarded`, `discardable`
 and, on `binding`, `method` (`operator` | `process`), `evidence` and
 `bound_at`. `GET /api/term/list` excludes discarded receipts from `pending`.
+It considers the complete receipt ledger before filtering; historical receipts
+do not limit which new launches or bound terminals appear in this snapshot.
 Shell receipts stay listed until discarded, including after Exited/Failed.
 Finished AI receipts stay for at most 600 s after `finished_at`; a finished
 AI receipt migrated from an older ledger without that time is archived at
