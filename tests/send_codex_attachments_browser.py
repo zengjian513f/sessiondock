@@ -29,6 +29,7 @@ def main():
                 'new_args': [], 'resume_args': ['resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
+                    'SESSIONDOCK_TEST_ANIMATED_PADDING': '1',
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
@@ -61,6 +62,13 @@ def main():
                 assert receipt['running'], receipt
                 page.wait_for_function("composerUid && !composerDraft().loading")
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                page.locator('#cinput').fill('report task\nfirst line\nlast line')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=15000) as multiline:
+                    page.locator('#cinput').press('Enter')
+                assert multiline.value.status == 200, multiline.value.text()
+                page.locator('#a-term').click()
+                xterm_includes(page, '> report task')
+                page.locator('#a-term').click()
                 png = base64.b64decode(PNG)
                 page.locator('#cadd').click()
                 with page.expect_file_chooser() as chooser:

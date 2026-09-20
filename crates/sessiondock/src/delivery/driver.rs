@@ -647,8 +647,11 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
     // soft wraps compare whitespace-insensitively like Claude's.
     let text: String = after
         .iter()
-        .filter(|(ch, dim)| !is_particle(*ch) && (!dim || ch.is_whitespace()))
-        .map(|(ch, _)| *ch)
+        .filter(|(ch, dim)| is_particle(*ch) || !dim || ch.is_whitespace())
+        // Particles occupy blank cells. Deleting them changes whitespace on
+        // every animation frame, making an unchanged multiline paste appear
+        // unstable forever. Preserve their cells just as codex_plain does.
+        .map(|(ch, _)| if is_particle(*ch) { ' ' } else { *ch })
         .collect();
     ComposerView {
         state: if editing {
