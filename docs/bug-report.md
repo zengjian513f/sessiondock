@@ -102,6 +102,16 @@ open the pending console exactly as after `term/create`.
 ## Server input preservation
 
 Reports and ordinary messages use the same [conversation service](conversation.md).
+Codex can display its editable composer while the startup banner still says
+`model: loading`. This is `starting` / `cli_starting`, even when a paste already
+appears in that editor: the CLI can ignore Enter during initialization. The
+worker waits for this header to clear before the ordinary one-shot SEND;
+it does not repair an unconfirmed write by pressing Enter again. The regression
+suite clicks the report dialog against a fake CLI that accepts paste but ignores
+Enter during startup. The operator-only
+[real browser suite](../tests/send_codex_startup_browser_real.py) verifies a
+cold-start SEND against native user text, model/effort and an assistant reply.
+
 There is one revisioned editing draft per logical session in the private state
 directory. Browser storage holds preferences and draft identifiers only. A report
 uses a provisional `report:<id>` identity until its processing launch is bound to
