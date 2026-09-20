@@ -109,6 +109,16 @@ palette, 16–231 through the 6³ cube (`55 + n*40`, zero stays 0), and
 232–255 through the gray ramp (`8 + (i-232)*10`). Bold plus a
 foreground in 0–7 uses the bright pair 8–15.
 
+Light mode is a browser presentation transform for both the standalone grid
+and the embedded console: explicit RGB/indexed foregrounds and backgrounds
+receive hue-preserving lightness reflection. A final contrast adjustment uses
+the actual foreground/background pair, including inverse and dim text; dim
+opacity is 0.7 in light mode (0.5 in dark mode). Theme changes repaint existing
+cells without changing the stored grid, PTY bytes, or CLI settings. The host
+continues answering colour queries with its fixed dark palette in either mode.
+`tests/terminal_grid_theme_browser.py` exercises theme switching in the main
+console, code/diff/prompt colours, and the CLI's OSC background query.
+
 ### Flags
 
 | Bit | Name | Render |
