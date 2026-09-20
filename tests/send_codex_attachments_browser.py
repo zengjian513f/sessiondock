@@ -128,7 +128,7 @@ def main():
                 if not page.locator('#report-bug').is_visible():
                     page.locator('#header-more-btn').click()
                 page.locator('#report-bug').click()
-                page.locator('#bug-report-description').fill('多段落任务没有提交')
+                page.locator('#bug-report-description').fill('多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20)
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
                     page.locator('#bug-report-go').click()
                 assert report.value.status == 202, report.value.text()
@@ -144,6 +144,7 @@ def main():
                 submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
                 assert len(submissions) == 4, submissions
                 worker_prompt = (bundle / 'worker-prompt.md').read_text()
+                assert len(worker_prompt) > 1000, 'report must exercise Codex collapsed paste'
                 assert submissions[-1] == worker_prompt
                 assert '随后立即 push' in worker_prompt
                 assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
