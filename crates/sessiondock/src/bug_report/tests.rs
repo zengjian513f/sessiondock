@@ -173,8 +173,11 @@ async fn bundle_filters_related_events_and_captures_context() {
     assert!(prompt.contains("问题机器：host\n"));
     assert!(!prompt.contains("另一台机器"));
     assert!(prompt.contains("相关会话：codex:one"));
-    assert!(prompt.contains("不要 push、不要部署"));
-    assert!(!prompt.contains("push 到 GitHub"));
+    assert!(prompt.contains("随后立即 push"));
+    assert!(prompt.contains("python3 deploy/deploy.py deploy --all"));
+    assert!(prompt.contains("无需再次确认"));
+    assert!(!prompt.contains("不要 push"));
+    assert!(!prompt.contains("不要部署"));
     assert!(!prompt.contains("同步到中央 Hub"));
     assert!(!prompt.split("诊断包").next().unwrap().contains("附件"));
     // Every bundle file is private.

@@ -17,7 +17,7 @@
 //! UTC; `terminal.txt` is captured from the ptyhost screen model of a managed
 //! instance (8000 scrollback rows) and never from an external CLI; a worker
 //! session is confirmed from its native `user` record, not from the composer
-//! clearing; the prompt never asks the worker to push or deploy.
+//! clearing; the prompt requires validated fixes to be pushed and deployed.
 
 pub mod worker;
 
@@ -683,7 +683,7 @@ pub fn attachment_block(attachments: &[(Attachment, String)]) -> String {
 
 /// The worker's task, rewritten for this repository: read the bundle, find
 /// the first event that diverges, fix minimally, validate proportionately,
-/// and never push, deploy or restart anything. `origin` names the machine
+/// then commit, push and deploy the validated fix. `origin` names the machine
 /// the problem was seen on; `local_hostname` is the worker's machine.
 pub fn worker_prompt(
     report_id: &str,
@@ -730,9 +730,11 @@ pub fn worker_prompt(
 3. 保留工作区里已有的用户改动，完成最小而完整的修复；只运行与改动相称的验证
    （相关 cargo test / tests/ 下的对应套件），不要跑全量扫描；
 4. 验证通过后只 stage 本次修复涉及的文件并 commit（其它会话的未提交改动不要碰，
-   不要 `git add -A`）；不要 push、不要部署、不要重启已部署服务、不要改动生产目录。
-   若验证未通过或改动相互重叠而无法安全隔离，不要勉强 commit，并在会话中明确说明原因；
-5. 完成后在会话中说明根因、修改的文件、验证结果和仍存风险。
+   不要 `git add -A`）；随后立即 push，并按仓库部署流程运行
+   `python3 deploy/deploy.py deploy --all`，完成服务重启与健康检查，无需再次确认。
+   保留生产会话、状态和回滚备份，不手工修改生产数据。
+   若验证未通过或改动相互重叠而无法安全隔离，不要勉强 commit、push 或部署，明确说明原因；
+5. 完成后说明根因、修改的文件、验证结果、push 与各节点部署结果和仍存风险。
 ",
         dir = report_dir.display(),
         machine = origin_label(origin),
