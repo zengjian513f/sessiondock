@@ -31,6 +31,8 @@ def main():
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
                     'SESSIONDOCK_TEST_ANIMATED_PADDING': '1',
+                    'SESSIONDOCK_TEST_STARTUP_DELAY': '5',
+                    'SESSIONDOCK_TEST_COLLAPSED_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
                     'SESSIONDOCK_TEST_SUBMISSIONS': str(root / 'submissions.jsonl'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
@@ -68,8 +70,9 @@ def main():
                 receipt = created.value.json()
                 assert receipt['running'], receipt
                 page.wait_for_function("composerUid && !composerDraft().loading")
+                page.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_starting'", timeout=4000)
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
-                page.locator('#cinput').fill('report task\n\nfirst paragraph\n\n最后一段\n')
+                page.locator('#cinput').fill('report task\n\n│ >_ OpenAI Codex (quoted text)\n│ model: loading\n\n最后一段\n')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=15000) as multiline:
                     page.locator('#cinput').press('Enter')
                 assert multiline.value.status == 200, multiline.value.text()
@@ -125,7 +128,7 @@ def main():
                 if not page.locator('#report-bug').is_visible():
                     page.locator('#header-more-btn').click()
                 page.locator('#report-bug').click()
-                page.locator('#bug-report-description').fill('多段落任务没有提交')
+                page.locator('#bug-report-description').fill('多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20)
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
                     page.locator('#bug-report-go').click()
                 assert report.value.status == 202, report.value.text()
@@ -141,6 +144,7 @@ def main():
                 submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
                 assert len(submissions) == 4, submissions
                 worker_prompt = (bundle / 'worker-prompt.md').read_text()
+                assert len(worker_prompt) > 1000, 'report must exercise Codex collapsed paste'
                 assert submissions[-1] == worker_prompt
                 assert '随后立即 push' in worker_prompt
                 assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
@@ -157,7 +161,7 @@ def main():
                 if context:
                     context.close()
                 browser.close()
-    print('PASS Codex browser: text plus two images, then text plus .txt; each published and submitted with Enter')
+    print('PASS Codex browser: startup wait, footerless text, attachments, collapsed report task; exactly one submission each')
 
 
 if __name__ == '__main__':

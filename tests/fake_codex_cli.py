@@ -114,6 +114,7 @@ class Fake:
         self.frame = 0
         self.path = find_rollout(os.environ.get("SESSIONDOCK_TEST_CODEX_ROOT", ""), self.sid)
         self.out = sys.stdout
+        self.ready_at = time.monotonic() + float(os.environ.get("SESSIONDOCK_TEST_STARTUP_DELAY", "0"))
 
     def write(self, text):
         self.out.write(text)
@@ -129,7 +130,21 @@ class Fake:
         return '\x1b[48;2;30;30;30m' + GREY + '⠁' * count + ' ' * (20 - count) + RESET
 
     def render(self, working=False):
-        if os.environ.get('SESSIONDOCK_TEST_FOOTERLESS_PASTE') and '\n' in self.buffer:
+        if time.monotonic() < self.ready_at:
+            # Codex 0.155.1 exposes its editable composer before startup has
+            # completed. Paste works here, but Enter does not submit it.
+            shown = ('[Pasted Content %d chars]' % len(self.buffer)) if self.buffer else PLACEHOLDER
+            self.write('\x1b[2J\x1b[H' + '\r\n'.join([
+                '╭────────────────────────────────────────────╮',
+                '│ >_ OpenAI Codex (v0.155.1)                  │',
+                '│ model:     loading   /model to change      │',
+                '│ directory: /test                           │',
+                '╰────────────────────────────────────────────╯', '',
+                '› ' + shown, '', '  ? for shortcuts']))
+            self.write('\x1b[7;%dH' % (3 + (len(shown) if self.buffer else 0)))
+            return
+        collapsed = os.environ.get('SESSIONDOCK_TEST_COLLAPSED_PASTE') and len(self.buffer) > 1000
+        if os.environ.get('SESSIONDOCK_TEST_FOOTERLESS_PASTE') and '\n' in self.buffer and not collapsed:
             # Codex can keep this layout indefinitely: paragraphs, no footer,
             # and the cursor on the blank line after a newline-terminated paste.
             # Do not truncate to 72 chars like the ordinary compact fixture.
@@ -169,6 +184,8 @@ class Fake:
             # A long paste must not scroll › or the model footer off the 36-row
             # PTY; inspect_codex needs both on the captured screen.
             shown = self.buffer if len(self.buffer) <= 72 else self.buffer[-72:]
+            if collapsed:
+                shown = "[Pasted Content %d chars]" % len(self.buffer)
             parts = shown.split("\n")
             lines.append("› " + parts[0])
             lines.extend("  " + part for part in parts[1:])
@@ -225,6 +242,8 @@ class Fake:
             os.fsync(stream.fileno())
 
     def submit(self):
+        if time.monotonic() < self.ready_at:
+            return
         text = self.buffer
         self.buffer = ""
         if not text.strip():
@@ -254,7 +273,7 @@ class Fake:
             pending = b""
             paste = None
             while True:
-                if os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING') and not select.select([fd], [], [], .03)[0]:
+                if (os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING') or os.environ.get('SESSIONDOCK_TEST_STARTUP_DELAY')) and not select.select([fd], [], [], .03)[0]:
                     self.render()
                     continue
                 chunk = os.read(fd, 4096)
