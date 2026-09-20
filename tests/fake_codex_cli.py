@@ -37,6 +37,7 @@ import sys
 import termios
 import time
 import tty
+import unicodedata
 import uuid
 
 PLACEHOLDER = "Ask Codex to do anything"
@@ -128,6 +129,32 @@ class Fake:
         return '\x1b[48;2;30;30;30m' + GREY + '⠁' * count + ' ' * (20 - count) + RESET
 
     def render(self, working=False):
+        if os.environ.get('SESSIONDOCK_TEST_FOOTERLESS_PASTE') and '\n' in self.buffer:
+            # Codex can keep this layout indefinitely: paragraphs, no footer,
+            # and the cursor on the blank line after a newline-terminated paste.
+            # Do not truncate to 72 chars like the ordinary compact fixture.
+            cols, rows = os.get_terminal_size()
+            parts = []
+            for paragraph in self.buffer.split('\n'):
+                part, width = '', 0
+                for char in paragraph:
+                    cells = 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+                    if width + cells > cols - 2:
+                        parts.append(part)
+                        part, width = '', 0
+                    part += char
+                    width += cells
+                parts.append(part)
+            parts = parts[-(rows - 2):]
+            lines = ['', '', '› ' + parts[0]] + ['  ' + part for part in parts[1:]]
+            self.frame += 1
+            if os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING'):
+                lines = [line + self.animated_padding() if len(line.encode('utf-8')) < cols - 20 else line
+                         for line in lines]
+            self.write('\x1b[2J\x1b[H' + '\r\n'.join(lines))
+            column = 3 + sum(2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in parts[-1])
+            self.write('\x1b[%d;%dH' % (len(lines), min(column, cols)))
+            return
         lines = ["FAKE_CODEX_TUI sid=[%s]" % self.sid]
         for text in self.transcript[-4:]:
             parts = text.split("\n")
@@ -203,6 +230,9 @@ class Fake:
         if not text.strip():
             self.render()
             return
+        if trace := os.environ.get('SESSIONDOCK_TEST_SUBMISSIONS'):
+            with open(trace, 'a', encoding='utf-8') as stream:
+                stream.write(json.dumps({'text': text}) + '\n')
         self.transcript.append(text)
         self.submitted += 1
         if self.options["swallow"] == self.submitted:

@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,7 +19,7 @@ from send_browser import initialize, xterm_includes
 def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-codex-images-') as temporary:
         root = Path(temporary).resolve()
-        for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
+        for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok', 'audit', 'reports'):
             (root / name).mkdir(mode=0o700)
         launcher = root / 'launcher.json'
         launcher.write_text(json.dumps({'schema': 2,
@@ -30,18 +31,24 @@ def main():
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
                     'SESSIONDOCK_TEST_ANIMATED_PADDING': '1',
+                    'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
+                    'SESSIONDOCK_TEST_SUBMISSIONS': str(root / 'submissions.jsonl'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
         initialize('--initialize-delivery', root / 'delivery')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
+                audit_dir=root / 'audit', extra_env={
+                    'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
+                    'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
                 file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**options)
             receipt = None
+            worker = None
             context = None
             try:
                 context = browser.new_context(service_workers='block')
@@ -62,7 +69,7 @@ def main():
                 assert receipt['running'], receipt
                 page.wait_for_function("composerUid && !composerDraft().loading")
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
-                page.locator('#cinput').fill('report task\nfirst line\nlast line')
+                page.locator('#cinput').fill('report task\n\nfirst paragraph\n\n最后一段\n')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=15000) as multiline:
                     page.locator('#cinput').press('Enter')
                 assert multiline.value.status == 200, multiline.value.text()
@@ -113,8 +120,32 @@ def main():
                 assert len(note_paths) == 1 and note_paths[0].read_bytes() == b'text attachment bytes', note_paths
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
+                # Submit an actual report through the dialog. The worker must
+                # consume its whole task once without a manual terminal Enter.
+                if not page.locator('#report-bug').is_visible():
+                    page.locator('#header-more-btn').click()
+                page.locator('#report-bug').click()
+                page.locator('#bug-report-description').fill('多段落任务没有提交')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
+                    page.locator('#bug-report-go').click()
+                assert report.value.status == 202, report.value.text()
+                worker = report.value.json()['worker']
+                bundle = Path(report.value.json()['path'])
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    manifest = json.loads((bundle / 'manifest.json').read_text())
+                    if manifest['status'] in ('submitted', 'failed'):
+                        break
+                    page.wait_for_timeout(100)
+                assert manifest['status'] == 'submitted', manifest
+                submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
+                assert len(submissions) == 4, submissions
+                assert submissions[-1] == (bundle / 'worker-prompt.md').read_text()
                 assert not dialogs and not errors, (dialogs, errors)
             finally:
+                if worker and context:
+                    context.request.post(base + '/api/term/kill', data={
+                        'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
                 if receipt and context:
                     context.request.post(base + '/api/term/kill', data={
                         'record_id': receipt['record_id'], 'instance_id': receipt['instance_id']})

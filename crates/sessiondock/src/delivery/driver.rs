@@ -535,6 +535,11 @@ fn locate_codex(
             while start > 0 && nonblank(&clean_lines[start - 1]) {
                 start -= 1;
             }
+            if !matches!(clean_lines[start].trim_start().chars().next(), Some('›' | '»')) {
+                start = (0..=cursor_y).rev().find(|&index| {
+                    matches!(clean_lines[index].trim_start().chars().next(), Some('›' | '»'))
+                })?;
+            }
             while end + 1 < clean_lines.len() && nonblank(&clean_lines[end + 1]) {
                 end += 1;
             }
@@ -551,10 +556,15 @@ fn locate_codex(
                     if clean_lines[cursor_y..].iter().any(|line| nonblank(line)) {
                         return None;
                     }
-                    let mut start = end;
-                    while start > 0 && nonblank(&clean_lines[start - 1]) {
-                        start -= 1;
-                    }
+                    // A multiline draft may contain blank paragraphs. The
+                    // cursor still anchors its end; find the nearest prompt
+                    // marker, as in the footer-backed editor above.
+                    let start = (0..=end).rev().find(|&index| {
+                        matches!(
+                            clean_lines[index].trim_start().chars().next(),
+                            Some('›' | '»')
+                        )
+                    })?;
                     if start == 0
                         || start == end
                         || !matches!(
@@ -670,20 +680,6 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
         lagging,
         dropped: capture.dropped,
     }
-}
-
-/// Codex can show the pasted multiline editor before its footer and paste
-/// burst settle. Enter on this parked-cursor frame becomes a newline rather
-/// than a submission; wait for the ordinary editor frame to return.
-pub fn codex_paste_settling(capture: &ScreenCapture) -> bool {
-    let normalized = capture.text.replace('\r', "");
-    let raw_lines: Vec<&str> = normalized.lines().collect();
-    let clean_lines: Vec<String> = raw_lines.iter().map(|line| codex_plain(line)).collect();
-    let Some((_, end)) = locate_codex(&raw_lines, &clean_lines, capture.cursor) else {
-        return false;
-    };
-    usize::from(capture.cursor.1) == end + 1
-        && clean_lines[end + 1..].iter().all(|line| !nonblank(line))
 }
 
 /// Fingerprint: sha256 of `x\0y\0screen`.

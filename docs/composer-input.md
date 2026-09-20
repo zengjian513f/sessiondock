@@ -39,7 +39,7 @@ SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 re
 
 Claude/Codex 按父合同复用各自 composer 识别。Grok 匹配框式编辑区结构、框内光标、以及非空页脚标签；不依赖特定模型名子串。CLI 布局变化导致无法识别时，状态为 `unknown`，须用 PTY。
 
-Codex 多行粘贴时可能先画出无页脚的编辑区，光标停在下一空行；此时仍是 `starting`，SEND 等待状态栏恢复。当前状态栏的 `tab to queue message … 100% context left` 与旧版 `Context … used / Ready` 都作为编辑区的边界，而非消息正文。
+Codex 多行编辑区可以持续隐藏页脚，光标停在下一空行；不能据此判断仍在粘贴，也不等待状态栏恢复。SEND 仍须确认消息末尾或折叠占位符已经出现，并连续稳定 200ms；编辑区中的空段落不会截断识别。当前状态栏的 `tab to queue message … 100% context left` 与旧版 `Context … used / Ready` 都作为编辑区的边界，而非消息正文。
 
 ## 测试矩阵
 
