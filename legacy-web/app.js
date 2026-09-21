@@ -8452,10 +8452,21 @@ function uidOfDeepLink(spec) {
     || S.sessions.find(s => s.uid === spec);
   return hit ? hit.uid : null;
 }
+function agentOfDeepLink(spec) {
+  if (!spec) return null;
+  const cut=spec.indexOf(':');
+  const source=cut>0 ? spec.slice(0,cut) : null;
+  const id=cut>0 ? spec.slice(cut+1) : spec;
+  const matches=S.sessions.filter(s=>(!source || s.source===source) && (!DEEP_NODE || s.node_id===DEEP_NODE))
+    .flatMap(s=>(s.agent_items || []).filter(a=>a.id===id).map(a=>({uid:s.uid,agent:a.id})));
+  return matches.length===1 ? matches[0] : null;
+}
 loadSessions(false).then(ok => {
   if (!ok) return;
   const deep = uidOfDeepLink(DEEP_SID);
   if (deep) { openSession(deep); return; }   // 深链优先于上次浏览位置
+  const child=agentOfDeepLink(DEEP_SID);
+  if (child) { openSession(child.uid,child.agent); return; }
   const last = store.get('sel', null);       // 恢复上次看的会话
   const savedAgent = store.get('agent', null);
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
