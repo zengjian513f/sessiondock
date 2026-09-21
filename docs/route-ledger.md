@@ -8,7 +8,7 @@ linked from [the documentation index](README.md).
 | Area | Interfaces | Status |
 | --- | --- | --- |
 | Base | GET `/api/health`, `/api/meta`, `/api/nodes`; static pages | current |
-| Sessions | GET `/api/sessions`, `/api/messages/{uid}`, `/api/messages/{uid}/page`, `/api/messages/{uid}/media-page`, `/api/session/input-history` | current |
+| Sessions | GET `/api/sessions`, `/api/sessions/titles`, `/api/messages/{uid}`, `/api/messages/{uid}/page`, `/api/messages/{uid}/media-page`, `/api/session/input-history` | current |
 | Sync and search | GET `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
 | Runtime state | GET `/api/live`, `/api/term/list`, `/api/session/outbox` | capability-gated |
 | Preferences and timeline | POST `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
