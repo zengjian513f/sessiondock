@@ -205,14 +205,13 @@ def main():
                     page.mouse.move(point["x0"], point["y"])
                     page.mouse.down()
                     page.mouse.move(point["x1"], point["y"], steps=8)
-                    page.mouse.up()
                     page.wait_for_function("""() => {
                       const s = __grid.state.selection;
                       return !!(s && s.start && s.end
                         && (s.start.line !== s.end.line || s.start.col !== s.end.col));
                     }""", timeout=10000)
-                    page.locator("#keys").focus()
-                    page.keyboard.press("Control+c")
+                    page.mouse.up()
+                    page.wait_for_function("__grid.state.selection === null")
                     page.wait_for_function(
                         "expected => navigator.clipboard.readText().then(text => text.includes(expected))",
                         arg=token, timeout=10000)

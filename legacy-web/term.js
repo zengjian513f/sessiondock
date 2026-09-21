@@ -2384,6 +2384,16 @@ function ensureTerm(name) {
   const forwardedSelectionStarts = new WeakSet();
   host.addEventListener('mousedown', e => {
     if (forwardedSelectionStarts.has(e) || e.button !== 0) return;
+    if (e.shiftKey || term.modes.mouseTrackingMode === 'none') {
+      // Complete the local selection before copying, including releases
+      // outside the terminal. Remote CLI mouse gestures never enter here.
+      window.addEventListener('mouseup', () => {
+        view.selectionLocked = false;
+        view.selectionSnapshot = null;
+        copyTermSelection(term);
+        term.clearSelection();
+      }, {once: true});
+    }
     view.selectionLocked = e.shiftKey;
     if (!e.shiftKey) return;
     view.selectionSnapshot = null;
@@ -2407,11 +2417,6 @@ function ensureTerm(name) {
     if (e.code === 'ControlRight') {
       if (e.type === 'keydown' && !e.repeat) setTermCtrl(true);
       return false;                        // 右 Ctrl 只锁定下一键，不交给 xterm
-    }
-    const copy = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'c';
-    if (copy && term.hasSelection()) {
-      if (e.type === 'keydown' && !e.repeat) copyTermSelection(term);
-      return false;                       // 有选区时绝不能把 Ctrl+C 送给 Claude/Codex
     }
     const paste = (e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'v';
     if (paste) {

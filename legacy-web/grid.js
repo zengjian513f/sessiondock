@@ -627,18 +627,6 @@ async function connect(force = false, fromReconnect = false) {
 
 function setup() {
   const keys = $('keys');
-  keys.addEventListener('keydown', event => {
-    const range = orderedSelection();
-    if ((event.ctrlKey || event.metaKey) && event.key === 'c' && range) {
-      const text = model.selectionText(range.start, range.end);
-      if (text) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        navigator.clipboard.writeText(text);
-        clearSelection();
-      }
-    }
-  });
   new KeyCapture(keys, {
     encoder,
     onBytes: sendInput,
@@ -747,6 +735,10 @@ function setup() {
           && selection.start.col === selection.end.col) {
         clearSelection();
       }
+      const range = orderedSelection();
+      const text = range && model.selectionText(range.start, range.end);
+      if (text) navigator.clipboard.writeText(text).catch(error => setStatus(error.message, true));
+      clearSelection();
     }
   });
 
