@@ -247,7 +247,10 @@ Selection is a half-open column range on model lines (scrollback +
 viewport). Drag on the canvas; Shift-drag still selects when mouse
 reporting is on. Double-click selects a word (ASCII alnum, `_`, or
 code point > 127). Copy uses `selectionText` (no newline inside a
-soft-wrapped logical line) via the Copy button or Ctrl/Meta+C.
+soft-wrapped logical line) automatically on mouse release after a local drag,
+then clears the selection. Ctrl+C is CLI input, not a copy shortcut. CLI mouse
+gestures and empty selections leave the clipboard unchanged. The main console
+uses the same copy-on-release behavior with either renderer.
 Paste uses the clipboard button, the textarea `paste` event, or
 `navigator.clipboard.readText`; the encoder applies bracketed paste
 when the host mode is on.

@@ -96,6 +96,7 @@ def check_surface(pw, surface):
                   return {x:b.x,y:b.y,cw:b.width/t.cols,ch:b.height/t.rows};
                 }""")
                 # No capture: plain drag. Capture: Shift must bypass the CLI.
+                page.evaluate("navigator.clipboard.writeText('selection-sentinel')")
                 if mode != 'none': page.keyboard.down('Shift')
                 page.mouse.move(b['x'] + .2*b['cw'], b['y'] + .5*b['ch'])
                 # xterm's any-motion hover precedes the local drag. Start the
@@ -109,17 +110,22 @@ def check_surface(pw, surface):
                     # the user lets go of Shift before finishing the drag.
                     page.keyboard.up('Shift')
                 page.mouse.move(b['x'] + 12.8*b['cw'], b['y'] + .5*b['ch'], steps=12)
-                page.mouse.up()
-                if mode != 'none': page.keyboard.up('Shift')
+                assert page.evaluate('navigator.clipboard.readText()') == 'selection-sentinel'
                 selected = page.evaluate('selectionTerm.getSelection()')
                 assert selected.strip() == 'SELECT_FIRST', (surface, mode, selected, errors)
-                page.keyboard.press('Control+c')
+                page.mouse.up()
+                if mode != 'none': page.keyboard.up('Shift')
+                page.wait_for_function("selectionTerm.getSelection() === ''")
                 page.wait_for_function("navigator.clipboard.readText().then(t => t.trim() === 'SELECT_FIRST')")
                 assert not page.evaluate('selectionBytes'), (surface, mode, page.evaluate('selectionBytes'))
                 assert (root / 'work/input.bin').read_bytes() == before, (surface, mode, 'selection reached CLI')
-                print('PASS', surface, mode, 'drag + copy, no PTY input', flush=True)
+                page.keyboard.press('Control+c')
+                page.wait_for_function('selectionBytes.some(bytes => bytes.length === 1 && bytes[0] === 3)')
+                assert page.evaluate('navigator.clipboard.readText()').strip() == 'SELECT_FIRST'
+                print('PASS', surface, mode, 'copy on mouse release, no PTY input', flush=True)
                 # With capture, an ordinary drag must still reach the CLI.
                 if mode != 'none':
+                    page.evaluate("navigator.clipboard.writeText('remote-gesture-sentinel')")
                     page.evaluate('selectionBytes = []')
                     page.mouse.move(b['x'] + 15*b['cw'], b['y'] + .5*b['ch'])
                     page.mouse.down()
@@ -128,6 +134,7 @@ def check_surface(pw, surface):
                     page.wait_for_function('selectionBytes.length >= 2')
                     data = bytes(sum(page.evaluate('selectionBytes'), []))
                     assert b'\x1b[<' in data and data.endswith(b'm'), (surface, mode, data)
+                    assert page.evaluate('navigator.clipboard.readText()') == 'remote-gesture-sentinel'
             assert not errors, errors
             context.close()
             browser.close()
