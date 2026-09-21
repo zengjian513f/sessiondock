@@ -128,7 +128,30 @@ def main():
                 assert stable['before'] == stable['shown'] == stable['hidden'], stable
                 assert stable['bubbleBottom'] <= stable['shown'][0], stable
                 assert (stable['border'], stable['radius'], stable['background']) == (
-                    '0px', '0px', 'rgba(0, 0, 0, 0)'), stable
+                    '1px', '6px', 'rgb(255, 255, 255)'), stable
+                # Exercise the real settings controls and composer in both
+                # themes, including the report's narrow keyboard-sized viewport.
+                for width, height in [(1280, 720), (424, 259)]:
+                    for theme, background in [('dark', 'rgb(28, 31, 38)'),
+                                              ('light', 'rgb(255, 255, 255)')]:
+                        page.set_viewport_size({'width': 1280, 'height': 720})
+                        page.locator('#settings').click()
+                        page.locator('#setting-theme').select_option(theme)
+                        page.keyboard.press('Escape')
+                        page.set_viewport_size({'width': width, 'height': height})
+                        if width < 600:
+                            page.evaluate('showMobileDetail()')
+                        page.locator('#cinput').fill('keep this message')
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
+                        expect(page.locator('#composer-input-status')).to_be_visible()
+                        expect(page.locator('#composer-input-status')).to_have_css('background-color', background)
+                        bounds = page.locator('#composer-input-status').bounding_box()
+                        assert bounds and bounds['x'] >= 0 and bounds['y'] >= 0, bounds
+                        assert bounds['x'] + bounds['width'] <= width, bounds
+                        page.locator('#cinput').press('End')
+                        page.locator('#cinput').press('!')
+                        expect(page.locator('#cinput')).to_have_value('keep this message!')
+                        page.locator('#cinput').fill('keep this message')
                 page.set_viewport_size({'width': 390, 'height': 844})
                 page.evaluate('showMobileDetail()')
                 if page.locator('#termpane').is_visible():
