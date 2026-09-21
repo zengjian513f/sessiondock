@@ -118,12 +118,17 @@ export class GridTerm {
     theme,
     scrollback = 100000,
     cursorBlink = true,
+    onDiagnostic = null,
   } = {}) {
     this._cols = DEFAULT_COLS;
     this._rows = DEFAULT_ROWS;
     this._scrollback = scrollback;
     this._cursorBlink = cursorBlink !== false;
     this._xtermTheme = theme;
+    this._onDiagnostic = onDiagnostic;
+    this._firstSnapshot = false;
+    this._firstPaint = false;
+    this._parseErrorReported = false;
     this.dropped = 0;
     this._pending = '';
     this._decoder = new TextDecoder('utf-8');
@@ -434,9 +439,20 @@ export class GridTerm {
         msg = JSON.parse(line);
       } catch {
         this.dropped++;
+        if (!this._parseErrorReported) {
+          this._parseErrorReported = true;
+          this._diagnostic('grid_parse_error', {line_chars: line.length, dropped: this.dropped});
+        }
         continue;
       }
       this.model.apply(msg);
+      if (msg?.t === 'snapshot' && !this._firstSnapshot) {
+        this._firstSnapshot = true;
+        this._diagnostic('snapshot_applied', {
+          seq: msg.seq, cols: this.model.cols, rows: this.model.rows,
+          history_rows: this.model.scrollback.length,
+        });
+      }
       if (this.model.cols > 0) this._cols = this.model.cols;
       if (this.model.rows > 0) this._rows = this.model.rows;
       if (msg && (msg.t === 'diff' || msg.t === 'snapshot') && msg.title != null) {
@@ -468,6 +484,9 @@ export class GridTerm {
   }
 
   reset() {
+    this._firstSnapshot = false;
+    this._firstPaint = false;
+    this._parseErrorReported = false;
     const cols = this.cols;
     const rows = this.rows;
     this.model = new GridModel({scrollbackLimit: this._scrollback});
@@ -697,6 +716,10 @@ export class GridTerm {
     emit(this._scrollListeners, this._viewportTop);
   }
 
+  _diagnostic(event, data) {
+    try { this._onDiagnostic?.(event, data); } catch { /* diagnostics cannot interrupt output */ }
+  }
+
   _paint() {
     if (this._disposed) return;
     this._stickFollow();
@@ -706,6 +729,14 @@ export class GridTerm {
       focused: this._focused,
       cursorBlinkOn: this._cursorBlink ? this._blinkOn : true,
     });
+    if (this._firstSnapshot && !this._firstPaint && this.renderer.lastPaintedLines > 0
+        && this._canvas?.getClientRects().length) {
+      const rect = this._canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        this._firstPaint = true;
+        this._diagnostic('first_paint', {seq: this.model.seq, width: rect.width, height: rect.height});
+      }
+    }
   }
 
   _scheduleRender(callback) {

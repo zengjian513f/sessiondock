@@ -730,6 +730,7 @@ async function post(url, body, {timeoutMs = 0} = {}) {
     uid: body?.uid || '', traceId, requestId: body?.request_id || '',
   });
   const started = performance.now();
+  let phase = 'headers', headersMs = null, status = null;
   const controller = timeoutMs ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
@@ -741,7 +742,14 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       body: JSON.stringify(payload),
       ...(controller ? {signal: controller.signal} : {}),
     });
+    headersMs = Math.round((performance.now() - started) * 1000) / 1000;
+    status = r.status;
+    phase = 'body';
+    browserAuditEvent?.('http.response.headers', {url, status, headers_ms: headersMs}, null,
+      {uid: body?.uid || '', traceId, requestId: body?.request_id || ''});
     const text = await r.text();
+    const bodyMs = Math.round((performance.now() - started - headersMs) * 1000) / 1000;
+    phase = 'parse';
     let data;
     try {
       data = JSON.parse(text);
@@ -751,7 +759,8 @@ async function post(url, body, {timeoutMs = 0} = {}) {
         : '服务返回了无法解析的响应，请重新加载');
     }
     browserAuditEvent?.('http.response.received', {
-      url, status: r.status, ok: r.ok,
+      url, status: r.status, ok: r.ok, headers_ms: headersMs,
+      body_ms: bodyMs,
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
     }, data, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
       severity: r.ok ? 'info' : 'warning'});
@@ -763,7 +772,8 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       error.name = 'TimeoutError';
     }
     browserAuditEvent?.('http.request.failed', {
-      url, error: String(error?.stack || error),
+      url, error: String(error?.stack || error), phase, status, headers_ms: headersMs,
+      timeout_ms: timeoutMs, online: navigator.onLine, visibility: document.visibilityState,
       duration_ms: Math.round((performance.now() - started) * 1000) / 1000,
     }, null, {uid: body?.uid || '', traceId, requestId: body?.request_id || '',
       severity: 'error'});
@@ -2309,6 +2319,14 @@ function ensureTerm(name) {
   const term = grid ? new GridTerm({
     fontFamily: termFont(), fontSize: termFontSize(), theme: termTheme(),
     cursorBlink: true, scrollback: 100000,
+    onDiagnostic: (event, data) => {
+      if (!view?.auditConnectionId) return;
+      browserAuditEvent?.(`terminal.${event}`, {
+        name, ...data, visible: termPaneRenderable(view),
+        visibility: document.visibilityState,
+        elapsed_ms: Math.round(performance.now() - view.auditConnectStarted),
+      }, null, {uid: view.bindingUid || T.uid || '', connectionId: view.auditConnectionId});
+    },
   }) : new Terminal({
     allowProposedApi: true,
     fontFamily: termFont(),
@@ -3281,6 +3299,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   const connectionId = globalThis.crypto?.randomUUID?.()
     || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   view.auditConnectionId = connectionId;
+  view.auditConnectStarted = performance.now();
+  browserAuditEvent('terminal.connecting', {name, cols, rows, renderer: view.grid ? 'grid' : 'xterm'},
+    null, {uid: uid || '', connectionId});
   wsUrl.search = new URLSearchParams({name, page: TERM_PAGE_ID, token,
                                       connection: connectionId, ...binding,
                                       cols: String(cols), rows: String(rows),
@@ -3301,7 +3322,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     outputBytes = 0;
     outputChunks = 0;
   };
-  let settled = false;
+  let settled = false, firstOutput = true;
   ws.onmessage = e => {
     if (view.ws !== ws) return;           // 已替换连接的尾包不能重画新终端
     if (!settled) {
@@ -3326,6 +3347,12 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     outputBytes += typeof e.data === 'string'
       ? new TextEncoder().encode(e.data).length : e.data.byteLength;
     outputChunks++;
+    if (firstOutput) {
+      firstOutput = false;
+      browserAuditEvent('terminal.first_output', {
+        name, bytes: outputBytes, elapsed_ms: Math.round(performance.now() - view.auditConnectStarted),
+      }, null, {uid: uid || '', connectionId});
+    }
     if (!outputTimer) outputTimer = setTimeout(flushOutputAudit, 750);
     writeTermOutput(view, s);
   };
