@@ -229,18 +229,26 @@ def main():
                 screen.write_text('custom')
                 wait_code(None)
                 page.set_viewport_size({'width': 608, 'height': 788})
-                opened = page.evaluate('''async () => {
-                    showMobileDetail();
-                    const name = takenOver(composerUid);
-                    const ok = name ? await openTermPane(name, false, null, false, true) : false;
-                    if (typeof fitTerm === 'function') fitTerm(true, true);
-                    const v = currentTermViewObject();
-                    return {ok, name, key: v?.lastResizeKey || '', ws: v?.ws?.readyState || 0,
-                        cols: v?.term?.cols || 0, rows: v?.term?.rows || 0};
-                }''')
-                assert opened['ok'] and opened['name'], opened
+                page.evaluate('showMobileDetail()')
+                page.locator('#a-term').click()
                 expect(page.locator('#termpane')).to_be_visible()
-                name = opened['name']
+                name = receipt['name']
+                # A list refresh must not let the old question above undo the
+                # user's explicit switch to the terminal. Force the poll here
+                # instead of depending on its timer racing this assertion.
+                page.evaluate('async () => await loadTermList()')
+                expect(page.locator('#termpane')).to_be_visible()
+                # A genuinely new question still reveals the conversation;
+                # switching back acknowledges that ID, not all future prompts.
+                page.evaluate('''async () => {
+                    const entry=cache.get(viewKey(composerUid));
+                    entry.prompt={id:'new-question',questions:[{question:'New question',options:['Yes','No']}]};
+                    await loadTermList();
+                }''')
+                expect(page.locator('#termpane')).to_be_hidden()
+                page.locator('#a-term').click()
+                page.evaluate('async () => await loadTermList()')
+                expect(page.locator('#termpane')).to_be_visible()
                 page.wait_for_function('''name => {
                     const v = T.views.get(name);
                     return !!(v && v.term && v.lastResizeKey && v.ws && v.ws.readyState === 1);
