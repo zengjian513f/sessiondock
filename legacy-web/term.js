@@ -2722,6 +2722,15 @@ function restoreTermPane(uid, agent = null) {
 }
 
 async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false, directClaim = false) {
+  // An explicit switch to the terminal acknowledges the question already on
+  // the conversation page. A later list refresh must not reveal it again and
+  // undo that choice; a newly arriving question ID can still reveal itself.
+  if (!auto && T.uid === S.sel && !S.agent) {
+    const prompt = cache.get(viewKey(T.uid))?.prompt;
+    if (prompt?.id && prompt.questions?.length && (prompt.state || 'waiting') === 'waiting') {
+      revealedTermPrompts.set(T.uid, String(prompt.id));
+    }
+  }
   // 同一宿主上另一类控制台（如已关联前的等待页）还连着时，先放开它；
   // 原生控制台随后按自己的租约重新连接，和跨页面抢占走同一条路。
   const existing = T.views.get(name);
