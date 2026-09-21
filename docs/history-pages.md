@@ -8,6 +8,27 @@ session is opened, which per-session codes ask the client to retry, and the
 finite history pages. Nothing here is a frontend framework, a
 native-span parser or a large-image promise.
 
+## Point title lookup
+
+`GET /api/sessions/titles?ids=claude:<sid>,codex:<sid>` returns only requested
+`session_uid/source/sid/title` rows and a `missing` list (also used for ambiguous
+IDs). Through the hub, use `/api/nodes/<nid>/api/sessions/titles` to select the
+owning node. No full session-list response or message projection is produced.
+
+A cold process initializes its index once (`index_initialized: true`). Warm
+queries use native-ID lookup, stat only selected files and necessary Codex
+ancestors, and reread bounded summaries only when those files change
+(`summary_reads`). Codex names use the existing names-file stamp cache; changing
+that shared names file reloads that metadata file. Warm title queries do not
+walk session directories or discover new sessions. Unknown IDs stay missing
+until normal list/index discovery has seen them; callers retain their stored
+title on a missing result or an unavailable node. The normal list and its
+invalidation state remain independent of point reads.
+
+Validation: `python3 tests/session_titles_browser.py` uses 500 synthetic sessions,
+clicks refresh, appends a native rename, and checks that hot point requests do
+not discover a newly created unrelated session.
+
 ## The list: index rows plus the physical cursor
 
 `GET /api/sessions` (`?force=1` rescans; otherwise rows younger than 500 ms

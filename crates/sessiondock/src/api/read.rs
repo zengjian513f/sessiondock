@@ -62,6 +62,29 @@ pub async fn list(
         .await
 }
 
+#[derive(Default, Deserialize)]
+#[serde(default)]
+pub struct TitlesQuery {
+    ids: String,
+}
+
+pub async fn titles(
+    State(state): State<AppState>,
+    query: Result<Query<TitlesQuery>, QueryRejection>,
+) -> Result<axum::Json<Value>, ApiError> {
+    let Query(query) = query.map_err(query_error)?;
+    let ids: Vec<String> = query
+        .ids
+        .split(',')
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .collect();
+    state
+        .reader
+        .run(move |store| store.titles(&ids).map(axum::Json))
+        .await
+}
+
 pub async fn messages(
     State(state): State<AppState>,
     Path(uid): Path<String>,

@@ -649,6 +649,10 @@ impl SessionStore {
     /// whose cached view is the same file version the index published;
     /// `sig` covers the index rows and metadata only, so opening a session
     /// never changes the signature.
+    pub fn titles(&self, ids: &[String]) -> Result<Value, SessionError> {
+        self.index.titles(ids)
+    }
+
     pub fn list(&self, force: bool) -> Result<Value, SessionError> {
         let published = self.publish(force)?;
         let mut document = (*published.document).clone();

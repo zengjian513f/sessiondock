@@ -58,6 +58,7 @@ pub fn router() -> Router<AppState> {
         .route("/meta", get(meta))
         .route("/nodes", get(nodes))
         .route("/sessions", get(read::list))
+        .route("/sessions/titles", get(read::titles))
         .route("/messages/{uid}", get(read::messages))
         .route("/messages/{uid}/page", get(read::history_page))
         .route("/messages/{uid}/media-page", get(read::media_page))
