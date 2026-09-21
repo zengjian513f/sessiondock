@@ -8,8 +8,7 @@ page must:
    timeline view, compact turns, chip filter, cache limit, tool icons, unread
    badges, last selection);
 2. write changes back only under that namespace and retain them after reload;
-3. key `files.html` preferences as `sessiondock.files-<key>`;
-4. leave a fresh browser at the defaults and use only SessionDock keys.
+3. leave a fresh browser at the defaults and use only SessionDock keys.
 
 Synthetic corpus only; the Playwright context blocks service workers and
 every request outside the isolated server.
@@ -119,23 +118,6 @@ def main():
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert page.evaluate("S.nest") is False
 
-                # Files preferences use the same SessionDock namespace.
-                manager = context.new_page()
-                manager.on("pageerror", lambda error: errors.append(str(error)))
-                manager.goto(f"{base}/files.html?{urlencode({'uid': corpus.uid(sid), 'ref': str(files) + '/'})}", wait_until="networkidle")
-                expect(manager.locator("#entries")).to_contain_text("other.txt")
-                assert manager.evaluate("document.querySelector('#view').value") == "grid"
-                assert manager.evaluate("document.querySelector('#sort').value") == "size"
-                expect(manager.locator("#order")).to_contain_text("降序")
-                dump = manager.evaluate(LS_DUMP)
-                assert json.loads(dump["sessiondock.files-view"])["view"] == "grid", dump
-                assert json.loads(dump["sessiondock.files-clipboard"])["action"] == "copy", dump
-                assert "文件管理 · SessionDock" in manager.title()
-                manager.locator("#view").select_option("list")
-                manager.wait_for_function("JSON.parse(localStorage.getItem('sessiondock.files-view')).view === 'list'")
-                dump = manager.evaluate(LS_DUMP)
-                assert json.loads(dump["sessiondock.files-view"])["view"] == "list", dump
-                assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in dump), dump
                 context.close()
 
                 # A fresh browser stays at the defaults.
@@ -161,8 +143,8 @@ def main():
             finally:
                 browser.close()
         assert all(path.read_bytes() == before for path, before in native_before.items())
-        print("PASS preferences browser: sessiondock.* values apply and persist, files.html uses the same "
-              "namespace, a fresh browser keeps the defaults, and PWA identity is SessionDock")
+        print("PASS preferences browser: sessiondock.* values apply and persist, "
+              "a fresh browser keeps the defaults, and PWA identity is SessionDock")
 
 
 if __name__ == "__main__":

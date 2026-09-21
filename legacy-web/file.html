@@ -1,26 +1,12 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="referrer" content="no-referrer">
-  <meta name="sessiondock-mode" content="__SESSIONDOCK_MODE__">
-  <meta name="sessiondock-build" content="__SESSIONDOCK_ASSET_VERSION__">
-  <title>正在打开 · SessionDock</title>
-  <script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
-  <link rel="stylesheet" href="files.css?v=__SESSIONDOCK_ASSET_VERSION__">
-  <link rel="stylesheet" href="file-preview.css?v=__SESSIONDOCK_ASSET_VERSION__">
-  <script defer src="typography.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script defer src="vendor/markdown-it/markdown-it.min.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script defer src="file-preview.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script defer src="file.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
-  <script type="module" src="syntax.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>正在打开文件 · SessionDock</title>
+<script defer src="capabilities.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="file.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<style>body{font:14px/1.6 system-ui,sans-serif;margin:24px;color:#475569}h1{font-size:18px}button{font:inherit}header{display:flex;gap:16px;align-items:center}</style>
 </head>
-<body class="file-page">
-  <main>
-    <header hidden><h1 id="file-title"></h1><div id="file-actions"></div><button id="file-retry" hidden>刷新</button><a id="file-download" hidden>下载</a></header>
-    <div id="file-content" aria-live="polite">正在加载…</div>
-  </main>
-</body>
+<body><header hidden><h1 id="file-title"></h1><button id="file-retry" hidden>刷新</button></header><main id="file-content" role="status">正在打开文件…</main></body>
 </html>
