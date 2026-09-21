@@ -432,6 +432,17 @@ def check_timeline(ws, rec_id):
     clock = next((t for t in ws.texts[n_texts:] if t.get("t") == "clock"), None)
     if not clock or clock["unix_ms"] > end:
         fail(area, f"seek(end) clock {clock} beyond end {end}")
+    # Arbitrary instants between output frames must not snap to the last event.
+    for fraction in (0.37, 0.61, 0.83):
+        target = round(start + (end - start) * fraction)
+        n_texts = len(ws.texts)
+        ws.send(json.dumps({"t": "seek", "unix_ms": target}), op=1)
+        if not ws.pump(10, sought):
+            fail(area, "idle seek did not complete")
+        for kind in ("record", "clock"):
+            frame = next(t for t in ws.texts[n_texts:] if t.get("t") == kind)
+            if frame.get("unix_ms") != target:
+                fail(area, f"{kind} snapped away from requested instant {target}: {frame}")
     # Pause is accepted silently; the socket stays usable.
     ws.send(json.dumps({"t": "pause"}), op=1)
     ws.pump(0.3, lambda w: False)

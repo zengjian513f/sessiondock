@@ -2337,7 +2337,11 @@ function ensureTerm(name) {
   });
   // 网格外观层没有 FitAddon：按 #xterm 容器尺寸提议行列，其余流程不变。
   const fit = grid
-    ? {proposeDimensions: () => term.proposeDimensions($('#xterm').clientWidth, $('#xterm').clientHeight)}
+    ? {proposeDimensions: () => {
+      const box = $('#xterm'), css = getComputedStyle(box);
+      return term.proposeDimensions(box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight),
+        box.clientHeight - parseFloat(css.paddingTop) - parseFloat(css.paddingBottom));
+    }}
     : new FitAddon.FitAddon();
   view = {
     name, host, term, fit, grid, ws: null, connectTimer: null, reconnectTimer: null,
@@ -2618,6 +2622,23 @@ function performTermFit(view, forceSync = false) {
   if (view.replay) {
     const size = view.replaySize;
     if (size && (view.term.cols !== size.cols || view.term.rows !== size.rows)) view.term.resize(size.cols, size.rows);
+    // Older grid recordings included container padding in their column count.
+    // Fit their pixels to the available width without changing recorded cells.
+    if (view.grid && size) {
+      const box = $('#xterm'), css = getComputedStyle(box);
+      const width = box.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+      view.term.options.fontSize = termFontSize();
+      const recordedWidth = view.term.renderer.cellWidth * size.cols;
+      if (recordedWidth > width && width > 0) {
+        view.term.options.fontSize = termFontSize() * width / recordedWidth;
+        // Grid cells round to device pixels, which can round the width up.
+        while (view.term.renderer.cellWidth * size.cols > width && view.term.options.fontSize > 1)
+          view.term.options.fontSize = Math.max(1, view.term.options.fontSize - .25);
+      }
+      view.term.renderer.fit(size.cols * view.term.renderer.cellWidth,
+        size.rows * view.term.renderer.cellHeight);
+      repaintTermView(view);
+    }
     if (forceSync) repaintTermView(view);
     return;
   }
@@ -3072,6 +3093,19 @@ function renderTimeline(view = currentTermViewObject()) {
   if (!tl.scrubbing) seek.value = span ? String(Math.round((tl.clock - tl.start) / span * 1000)) : '1000';
   const at = tl.scrubbing ? tl.start + Number(seek.value) / 1000 * span : tl.clock;
   $('#tl-time').textContent = `${replayTimeElapsed(at - tl.start)} / ${replayTimeElapsed(span)}`;
+  seek.setAttribute('aria-valuetext', replayTimeElapsed(at - tl.start));
+  seek.title = new Date(at).toLocaleTimeString();
+  $('#tl-status').textContent = tl.live ? '只读回放' : '会话已结束 · 只读回放';
+  const ticks = $('#tl-ticks');
+  const tickKey = `${tl.start}:${tl.end}`;
+  if (ticks.dataset.bounds !== tickKey) {
+    ticks.dataset.bounds = tickKey;
+    ticks.replaceChildren(...[0, .25, .5, .75, 1].map(fraction => {
+      const tick = document.createElement('span');
+      tick.textContent = replayTimeElapsed(span * fraction);
+      return tick;
+    }));
+  }
   const play = $('#tl-play');
   play.textContent = tl.playing ? '❚❚' : '▶';
   play.title = play.ariaLabel = tl.playing ? '暂停' : (tl.atEnd ? '从头播放' : '播放');
@@ -3096,7 +3130,6 @@ function timelineSeekTo(view, unixMs) {
 function bindTimeline() {
   const seek = $('#tl-seek');
   if (!seek) return;
-  let debounce = null;
   const view = () => { const v = currentTermViewObject(); return v?.replay && v.timeline ? v : null; };
   const target = v => v.timeline.start + Number(seek.value) / 1000 * Math.max(0, v.timeline.end - v.timeline.start);
   seek.addEventListener('pointerdown', () => { const v = view(); if (v) v.timeline.scrubbing = true; });
@@ -3105,16 +3138,26 @@ function bindTimeline() {
     if (!v) return;
     v.timeline.scrubbing = true;
     renderTimeline(v);
-    clearTimeout(debounce);
-    debounce = setTimeout(() => { const w = view(); if (w === v) timelineSeekTo(v, target(v)); }, 120);
   });
   seek.addEventListener('change', () => {
     const v = view();
     if (!v) return;
-    clearTimeout(debounce);
     v.timeline.scrubbing = false;
     timelineSeekTo(v, target(v));
     renderTimeline(v);
+  });
+  // A drag previews locally and submits once on release; intermediate seek
+  // responses cannot pull the thumb back while the user is choosing a time.
+  seek.addEventListener('pointerup', () => setTimeout(() => {
+    const v = view();
+    if (v?.timeline.scrubbing) {
+      v.timeline.scrubbing = false;
+      renderTimeline(v);
+    }
+  }, 0));
+  seek.addEventListener('pointercancel', () => {
+    const v = view();
+    if (v) { v.timeline.scrubbing = false; renderTimeline(v); }
   });
   $('#tl-play').addEventListener('click', () => {
     const v = view();
@@ -3180,6 +3223,7 @@ function attachRecordingReplay(view, row, uid) {
         if (message.cols && message.rows) {
           view.replaySize = { cols: message.cols, rows: message.rows };
           view.term.resize(message.cols, message.rows);
+          fitTerm(true);
         }
         if (!view.grid) view.term.reset();
         tl.clock = message.unix_ms || tl.clock;
@@ -3187,6 +3231,7 @@ function attachRecordingReplay(view, row, uid) {
       } else if (message.t === 'resize' && !view.grid && message.cols && message.rows) {
         view.replaySize = { cols: message.cols, rows: message.rows };
         view.term.resize(message.cols, message.rows);
+        fitTerm(true);
       } else if (message.t === 'gap') {
         if (!view.grid) view.term.reset();
       } else if (message.t === 'exit') {
