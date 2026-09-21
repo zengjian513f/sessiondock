@@ -160,13 +160,17 @@ class Fake:
                     part += char
                     width += cells
                 parts.append(part)
-            parts = parts[-(rows - 2):]
+            footer_paste = os.environ.get('SESSIONDOCK_TEST_FOOTER_PASTE_FILE')
+            footer_paste = footer_paste and os.path.exists(footer_paste)
+            parts = parts[-(rows - (5 if footer_paste else 2)):]
             lines = ['', '', '› ' + parts[0]] + ['  ' + part for part in parts[1:]]
             self.frame += 1
             if os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING'):
                 lines = [line + self.animated_padding() if len(line.encode('utf-8')) < cols - 20 else line
                          for line in lines]
             self.write('\x1b[2J\x1b[H' + '\r\n'.join(lines))
+            if footer_paste:
+                self.write('\r\n\r\n%s low · /test · Context 0%% used' % self.options['model'])
             column = 3 + sum(2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1 for c in parts[-1])
             self.write('\x1b[%d;%dH' % (len(lines), min(column, cols)))
             return

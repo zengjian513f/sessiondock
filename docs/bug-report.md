@@ -112,6 +112,13 @@ Enter during startup. The operator-only
 [real browser suite](../tests/send_codex_startup_browser_real.py) verifies a
 cold-start SEND against native user text, model/effort and an assistant reply.
 
+A newline-terminated report can leave Codex's cursor on the blank row after
+the final paragraph while its status footer remains visible. Composer detection
+includes that final input row; trimming blank footer padding must not reject the
+editor and suppress Enter (`BUG-20260921-131130-09bec4`). The fake-CLI browser
+regression covers both this expanded report layout and collapsed long reports,
+requiring exactly one complete submission for each.
+
 There is one revisioned editing draft per logical session in the private state
 directory. Browser storage holds preferences and draft identifiers only. A report
 uses a provisional `report:<id>` identity until its processing launch is bound to
@@ -204,9 +211,8 @@ change, then commit only the fix's own files (other sessions' uncommitted
 changes stay untouched, no `git add -A`), then **immediately push and deploy
 with `python3 deploy/deploy.py deploy --all`, including restart and health
 checks, without another confirmation**. Preserve production sessions, state
-and rollback backups. A fix that did not validate or cannot be isolated is
-explained in the session instead of being committed, pushed or deployed;
-failed pushes and individual deployment targets must be reported explicitly.
+and rollback backups. Failed pushes and individual deployment targets must
+be reported explicitly.
 The header names the machine the problem was seen
 on (`问题机器：Lyra（主机 lyra）`); a worker on another machine is told that
 the bundle's session row, ledger, terminal frame and audit rows were fetched

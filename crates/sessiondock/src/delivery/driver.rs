@@ -512,7 +512,11 @@ fn locate_codex(
             Some('›' | '»')
         ) {
             let cursor_y = usize::from(cursor.1);
-            if cursor_y > end {
+            // A newline-terminated multiline paste leaves the cursor on its
+            // final blank row, even when the status footer remains visible.
+            // Keep that row anchored to the editor rather than rejecting it
+            // after trimming the blank rows above the footer.
+            if cursor_y >= footer || cursor_y > end + 1 {
                 return None;
             }
             start = (0..=cursor_y).rev().find(|&index| {
@@ -521,6 +525,13 @@ fn locate_codex(
                     Some('›' | '»')
                 )
             })?;
+            if cursor_y > end {
+                let marker_col = clean_lines[start].chars().count()
+                    - clean_lines[start].trim_start().chars().count();
+                if start == end || usize::from(cursor.0) != marker_col + 2 {
+                    return None;
+                }
+            }
         }
         (start, end)
     } else {
