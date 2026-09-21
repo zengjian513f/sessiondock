@@ -58,3 +58,42 @@ post per second the renderer's 1024-fd soft limit fills within minutes, after
 which the GPU command buffer cannot allocate shared memory and the tab freezes
 in native code with no JavaScript on the stack. `tests/renderer_fd_browser.py`
 guards it.
+
+## Terminal opening and response phases
+
+Browser `post()` receipts share `trace_id` and `page_id`:
+
+- `browser.http.response.headers`: fetch returned response headers; records
+  `status` and `headers_ms` from request start.
+- `browser.http.response.received`: the body was read and JSON parsed; includes
+  separate `headers_ms` and `body_ms` (body read only), plus total `duration_ms`.
+- `browser.http.request.failed`: records `phase` (`headers`, `body`, or `parse`),
+  nullable `status`/`headers_ms`, `timeout_ms`, visibility and online state.
+  An online browser can still have an unreachable or stalled connection.
+
+The node records `terminal.claim.received` on entry to the decoded claim
+handler and `terminal.claim.response_ready` when it returns, including errors.
+These carry the browser's trace/page/build headers, the target UID/name,
+status and elapsed milliseconds. They use the existing nonblocking audit writer
+and appear in bug-report bundles. A missing response-ready event may mean a
+pending/cancelled request or a dropped audit record; it does not prove a hang.
+Response-ready proves handler completion, **not delivery to the browser**.
+No lease token, request body, response body or terminal text is recorded.
+
+Terminal receipts share `connection_id` and terminal name:
+`browser.terminal.connecting` → `browser.terminal.first_output` → (grid only)
+`browser.terminal.snapshot_applied` → `browser.terminal.first_paint`.
+First-output is immediate, unlike the existing 750 ms aggregated byte counts.
+The grid records its first complete snapshot after parsing/application, then
+its first nonempty canvas render with a nonzero layout rectangle. Hidden
+canvases wait until rendered while shown; incomplete JSON does not count as a
+snapshot. Paint records include pane visibility, document visibility, dimensions
+and elapsed time from connection creation. This measures a canvas draw, not
+physical display/compositor presentation. The first malformed grid line is
+reported as `browser.terminal.grid_parse_error` with its length, never its text.
+These first-frame/error markers reset on a new attachment, not on every diff.
+Byte/xterm consoles currently report first-output but not snapshot/paint markers.
+
+`tests/terminal_diagnostics_browser.py` clicks the mobile console, sends shell
+input, correlates node/browser claim receipts and exercises real delayed HTTP
+headers and bodies using isolated loopback fixtures.

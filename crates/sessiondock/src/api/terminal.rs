@@ -98,7 +98,63 @@ fn claimant_ip(hub: bool, headers: &HeaderMap, peer: Option<IpAddr>) -> IpAddr {
         .unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST))
 }
 
+/// Correlate node-side claim processing with browser header/body deadlines.
+/// Response-ready means the handler completed, not that the browser received it.
 pub async fn claim(
+    state: State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    headers: HeaderMap,
+    body: Result<Json<ClaimRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let started = std::time::Instant::now();
+    let audit = state.audit.clone();
+    let text = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let trace_id = text("x-sessiondock-trace");
+    let page_id = text("x-sessiondock-page");
+    let build = text("x-sessiondock-build");
+    let uid = body
+        .as_ref()
+        .ok()
+        .and_then(|body| body.uid.clone())
+        .unwrap_or_default();
+    let name = body
+        .as_ref()
+        .ok()
+        .map(|body| body.name.clone())
+        .unwrap_or_default();
+    let record = |event, status: Option<u16>| {
+        if let Some(audit) = &audit {
+            audit.record(crate::audit::query::ServerEvent {
+                event,
+                category: "terminal",
+                severity: "info",
+                uid: &uid,
+                trace_id: &trace_id,
+                page_id: &page_id,
+                build: &build,
+                data: json!({"name": name, "status": status,
+                    "elapsed_ms": started.elapsed().as_secs_f64() * 1000.0}),
+            });
+        }
+    };
+    record("terminal.claim.received", None);
+    let result = claim_inner(state, peer, hub, headers, body).await;
+    let status = match &result {
+        Ok(response) => response.status(),
+        Err(error) => error.status,
+    };
+    record("terminal.claim.response_ready", Some(status.as_u16()));
+    result
+}
+
+async fn claim_inner(
     State(state): State<AppState>,
     peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
