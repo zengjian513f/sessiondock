@@ -246,8 +246,12 @@
         <div id="xterm"></div>
         <div id="term-output-notice" role="status" hidden></div>
         <div id="term-timeline" class="term-timeline" aria-label="录制回放进度">
+          <span id="tl-status" role="status">会话已结束 · 只读回放</span>
           <button type="button" id="tl-play" title="播放" aria-label="播放">▶</button>
-          <input type="range" id="tl-seek" min="0" max="1000" value="1000" step="1" aria-label="回放进度">
+          <div class="tl-track">
+            <input type="range" id="tl-seek" min="0" max="1000" value="1000" step="1" aria-label="回放进度">
+            <div id="tl-ticks" aria-hidden="true"></div>
+          </div>
           <span id="tl-time">00:00 / 00:00</span>
           <select id="tl-speed" aria-label="倍速"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select>
           <button type="button" id="tl-live" title="跳到最新并跟随" aria-label="跳到最新并跟随" hidden>最新</button>

@@ -441,7 +441,7 @@ struct Playback {
     /// The last read reached the end of what is on disk.
     at_end: bool,
     exited: bool,
-    /// Playback clock: unix ms of the last applied event.
+    /// Playback position, including a requested instant between recorded events.
     clock: u64,
 }
 
@@ -570,6 +570,9 @@ impl Playback {
                 break;
             }
         }
+        // The screen can stay unchanged throughout an idle interval, but seeking
+        // there must retain the requested position (also the origin for play).
+        self.clock = t;
         model.screen.expire_sync();
         let captured = grid::capture(&model.screen);
         let (cols, rows) = (captured.cols, captured.rows);

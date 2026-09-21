@@ -48,7 +48,12 @@ A replay shows a timeline under the terminal
 (`#term-timeline`: slider, play/pause, speed 1–16×, and 最新 while the
 recording is live): a full-screen program's history is a sequence of
 screens, not scrollback, so the slider seeks to any instant and play
-replays the recorded pacing. `records.html` and `grid.html?record=` remain
+replays the recorded pacing. The ended/read-only notice sits to the left of
+the timeline instead of occupying the waiting page. Elapsed-time ticks label
+the track; dragging previews locally and commits a seek on release. Grid
+fitting excludes container padding; replay preserves the recorded cells and
+reduces its display font when necessary to fit the available width.
+`records.html` and `grid.html?record=` remain
 as unlinked engineering pages used by the suites. Listing and replay take
 no ownership lease, send no input, and do not talk to the host process
 ([terminal ownership](terminal-ownership.md),
@@ -282,8 +287,10 @@ fast mode.
 
 A `seek` finds the newest checkpoint at or before the instant
 (`reader::checkpoint_before`), runs the terminal model silently over the
-events up to it, and sends `record` plus that screen: on the grid wire a
-`reset:true` snapshot, on the byte wire the model's re-rendered state
+events up to it, and sends `record` plus that screen. Both `record` and
+`clock` retain the requested (clamped) instant, even in an idle interval;
+resuming playback measures the next gap from that instant. The grid wire sends a
+`reset:true` snapshot; the byte wire sends the model's re-rendered state
 (`Screen::replay_bytes`), so a byte viewer sees exactly what the grid
 viewer would. Seeking inside a segment is therefore bounded by one
 segment (≤ 8 MiB) of model work.
