@@ -383,7 +383,10 @@ export class GridTerm {
     const win = doc.defaultView || globalThis;
     this._listen(win, 'mousemove', event => {
       const cell = this._cellFromEvent(event);
-      if (this._mouseHeld || this.model.modes.mouse === 'any_motion') {
+      // A local selection owns the whole drag, even if Shift is released
+      // before mouseup. In any-motion mode, Shift also suppresses hover reports.
+      if (!this._selecting && !event.shiftKey
+          && (this._mouseHeld || this.model.modes.mouse === 'any_motion')) {
         const button = this._mouseHeld ? this._mouseHeld.button : 0;
         const last = this._lastMouseCell;
         if (!last || last.col !== cell.col || last.line !== cell.line) {
