@@ -55,23 +55,14 @@ def main():
         failures.append("legacy-web/index.html: registers a service worker (it pins new tabs to a hung page process)")
     if "key.startsWith('sessiondock-shell-')" not in index:
         failures.append("legacy-web/index.html: does not clear the retired sessiondock-shell-* caches")
-    for page, expected in (("files.html", "<title>文件管理 · SessionDock</title>"),
-                           ("file.html", "<title>正在打开 · SessionDock</title>")):
+    for page, expected in (("files.html", "<title>正在打开文件 · SessionDock</title>"),
+                           ("file.html", "<title>正在打开文件 · SessionDock</title>")):
         if expected not in (WEB / page).read_text(encoding="utf-8"):
             failures.append(f"legacy-web/{page}: missing {expected}")
-    for script, needles in (("files.js", ["' · 文件管理 · SessionDock'"]),
-                            ("file.js", ["' · SessionDock'", "'无法打开文件 · SessionDock'"])):
-        text = (WEB / script).read_text(encoding="utf-8")
-        for needle in needles:
-            if needle not in text:
-                failures.append(f"legacy-web/{script}: missing runtime title {needle}")
+    if "'无法打开文件 · SessionDock'" not in (WEB / "file.js").read_text(encoding="utf-8"):
+        failures.append("file adapter missing SessionDock error title")
     if 'SessionDock 已更新。当前页面已停止发送，请重新加载。' not in (WEB / "app.js").read_text(encoding="utf-8"):
         failures.append("legacy-web/app.js: stale-page notice does not name SessionDock")
-    # Storage keys use `<namespace>files-*` directly.
-    files_js = (WEB / "files.js").read_text(encoding="utf-8")
-    if "namespace + 'files-'" not in files_js:
-        failures.append("legacy-web/files.js: preferences are not keyed as <namespace>files-*")
-
     if failures:
         print("FAIL brand names check:")
         for line in failures:

@@ -920,12 +920,6 @@ test('hub pages use the configured prefix of the same path', () => {
   assert.equal(localStorage.getItem('sessiondock.hub./hub/.nodesOff'), '["n1"]');
 });
 
-test('files pages key their preferences under the namespace', () => {
-  const source = read('files.js');
-  assert.match(source, /const storageKey = key => namespace \+ 'files-' \+ key;/);
-  for (const key of ['view', 'clipboard']) assert.match(source, new RegExp(`store\\('${key}'`));
-  assert.match(source, /const historyKey = 'history:' \+ context\.toString\(\);/);
-});
 
 test('the installable shell is SessionDock', () => {
   const manifest = JSON.parse(read('manifest.webmanifest'));
@@ -942,7 +936,7 @@ test('the installable shell is SessionDock', () => {
   assert.match(index, /data-app-name="SessionDock" data-storage-key="sessiondock\.pwa-install-dismissed"/);
   assert.match(index, /localStorage\.getItem\(prefix \+ 'theme'\)/);
   for (const page of ['files.html', 'file.html']) assert.match(read(page), /<title>[^<]*SessionDock/);
-  assert.match(read('file.js') + read('files.js'), /· SessionDock'/);
+  assert.match(read('file.js'), /· SessionDock'/);
 });
 
 test('all pages load the optional contract before their consumers', () => {
@@ -956,9 +950,9 @@ test('all pages load the optional contract before their consumers', () => {
   assert.match(appSource, /#session-active'\)\.textContent = known \? active : '\?'/);
 });
 
-test('file resolution is gated and Python console availability remains unchanged', () => {
-  assert.match(read('file.js'), /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
-  assert.match(read('files.js'), /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
+test('file entry delegates to FileDock and console availability remains unchanged', () => {
+  assert.match(read('file.js'), /api\/session\/resolve-files/);
+  assert.match(read('file.js'), /location\.replace\(destination\)/);
   assert.match(appSource, /if \(!SessionDockCapabilities\.allows\('files'\)\) throw new Error/);
   const baseline = readFileSync(new URL('../reference/legacy-web/nodes.js', import.meta.url), 'utf8');
   const start = 'function consoleUnavailableReason';
