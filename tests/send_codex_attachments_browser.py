@@ -34,6 +34,7 @@ def main():
                     'SESSIONDOCK_TEST_STARTUP_DELAY': '5',
                     'SESSIONDOCK_TEST_COLLAPSED_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
+                    'SESSIONDOCK_TEST_FOOTER_PASTE_FILE': str(root / 'footer-paste'),
                     'SESSIONDOCK_TEST_SUBMISSIONS': str(root / 'submissions.jsonl'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
@@ -123,34 +124,39 @@ def main():
                 assert len(note_paths) == 1 and note_paths[0].read_bytes() == b'text attachment bytes', note_paths
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
-                # Submit an actual report through the dialog. The worker must
-                # consume its whole task once without a manual terminal Enter.
-                if not page.locator('#report-bug').is_visible():
-                    page.locator('#header-more-btn').click()
-                page.locator('#report-bug').click()
-                page.locator('#bug-report-description').fill('多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20)
-                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
-                    page.locator('#bug-report-go').click()
-                assert report.value.status == 202, report.value.text()
-                worker = report.value.json()['worker']
-                bundle = Path(report.value.json()['path'])
-                deadline = time.monotonic() + 15
-                while time.monotonic() < deadline:
-                    manifest = json.loads((bundle / 'manifest.json').read_text())
-                    if manifest['status'] in ('submitted', 'failed'):
-                        break
-                    page.wait_for_timeout(100)
-                assert manifest['status'] == 'submitted', manifest
-                submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
-                assert len(submissions) == 4, submissions
-                worker_prompt = (bundle / 'worker-prompt.md').read_text()
-                assert len(worker_prompt) > 1000, 'report must exercise Codex collapsed paste'
-                assert submissions[-1] == worker_prompt
-                assert '随后立即 push' in worker_prompt
-                assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
-                assert '无需再次确认' in worker_prompt
-                assert '不要 push' not in worker_prompt and '不要部署' not in worker_prompt
-                assert not dialogs and not errors, (dialogs, errors)
+                (root / 'footer-paste').touch()
+                for index, description in enumerate(['没回车', '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20]):
+                    # Submit an actual report through the dialog. The worker must
+                    # consume its whole task once without a manual terminal Enter.
+                    if not page.locator('#report-bug').is_visible():
+                        page.locator('#header-more-btn').click()
+                    page.locator('#report-bug').click()
+                    page.locator('#bug-report-description').fill(description)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
+                        page.locator('#bug-report-go').click()
+                    assert report.value.status == 202, report.value.text()
+                    worker = report.value.json()['worker']
+                    bundle = Path(report.value.json()['path'])
+                    deadline = time.monotonic() + 15
+                    while time.monotonic() < deadline:
+                        manifest = json.loads((bundle / 'manifest.json').read_text())
+                        if manifest['status'] in ('submitted', 'failed'):
+                            break
+                        page.wait_for_timeout(100)
+                    assert manifest['status'] == 'submitted', manifest
+                    submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
+                    assert len(submissions) == 4 + index, submissions
+                    worker_prompt = (bundle / 'worker-prompt.md').read_text()
+                    assert (len(worker_prompt) > 1000) == bool(index), 'cover expanded and collapsed reports'
+                    assert submissions[-1] == worker_prompt
+                    assert '随后立即 push' in worker_prompt
+                    assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
+                    assert '无需再次确认' in worker_prompt
+                    assert '不要 push' not in worker_prompt and '不要部署' not in worker_prompt
+                    assert not dialogs and not errors, (dialogs, errors)
+                    context.request.post(base + '/api/term/kill', data={
+                        'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
+                    worker = None
             finally:
                 if worker and context:
                     context.request.post(base + '/api/term/kill', data={
@@ -161,7 +167,7 @@ def main():
                 if context:
                     context.close()
                 browser.close()
-    print('PASS Codex browser: startup wait, footerless text, attachments, collapsed report task; exactly one submission each')
+    print('PASS Codex browser: startup wait, footerless text, attachments, expanded report with footer and blank cursor row, collapsed report; exactly one submission each')
 
 
 if __name__ == '__main__':
