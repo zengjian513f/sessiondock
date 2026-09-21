@@ -69,6 +69,7 @@
 pub mod agent_stops;
 pub mod graph;
 pub mod names;
+mod titles;
 pub mod summary;
 
 use std::collections::{BTreeMap, HashMap};
@@ -341,6 +342,8 @@ struct Cached {
 #[derive(Default)]
 struct State {
     cache: HashMap<PathBuf, Cached>,
+    title_cache: HashMap<PathBuf, Cached>,
+    title_names: Option<Arc<names::NameIndex>>,
     /// (parent data path, parent stamp, cut) → boundary check outcome.
     cuts: HashMap<(PathBuf, Stamp, u64), CutCheck>,
     /// Claude owner data path → incremental stop-notice scan (kept while
