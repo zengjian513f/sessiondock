@@ -716,7 +716,9 @@ function setup() {
 
   addEventListener('mousemove', event => {
     const cell = cellFromEvent(event);
-    if (!readOnly && (mouseHeld || model.modes.mouse === 'any_motion')) {
+    // Keep Shift selection local for the entire drag, including any-motion mode.
+    if (!readOnly && !selecting && !event.shiftKey
+        && (mouseHeld || model.modes.mouse === 'any_motion')) {
       const button = mouseHeld ? mouseHeld.button : 0;
       if (!lastMouseCell || lastMouseCell.col !== cell.col || lastMouseCell.line !== cell.line) {
         send(mouseSeq('move', button, cell, event));
