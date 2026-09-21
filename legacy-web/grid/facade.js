@@ -349,7 +349,7 @@ export class GridTerm {
       this._following = false;
       this._viewportTop += event.deltaY < 0 ? -WHEEL_LINES : WHEEL_LINES;
       this._stickFollow();
-      this._emit(this._scrollListeners, this._viewportTop);
+      emit(this._scrollListeners, this._viewportTop);
       this._scheduleRender();
     }, {passive: false});
 

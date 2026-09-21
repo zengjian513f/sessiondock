@@ -53,7 +53,7 @@ def run(browser, base, root, renderer):
     kb.press_sequentially("hello")
     kb.press("Enter")
     page.wait_for_function("(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=10000)
-    time.sleep(0.4)  # a recorded gap worth scrubbing over
+    time.sleep(3)  # most of this recording is idle, like the reported SSH session
     kb.press_sequentially("quit")
     kb.press("Enter")
     page.wait_for_function("[...T.views.values()].some(v => v.ended)", timeout=15000)
@@ -101,6 +101,46 @@ def run(browser, base, root, renderer):
     assert page.evaluate("(() => { const r = document.querySelector('#tl-play').getBoundingClientRect();"
                          " return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.id; })()") == "tl-play"
     print(f"PASS {renderer} b (replay opens at the end with a timeline)", flush=True)
+    assert page.locator('.new-session-wait').is_hidden()
+    assert '只读回放' in page.locator('#tl-status').inner_text()
+    assert page.locator('#tl-ticks span').count() == 5
+    # Real pointer clicks inside the idle interval must retain the requested
+    # time, even though the rendered screen has no new output there.
+    slider = page.locator('#tl-seek')
+    for fraction in (0.45, 0.65, 0.8):
+        bounds = slider.bounding_box()
+        page.mouse.click(bounds['x'] + 7 + (bounds['width'] - 14) * fraction,
+                         bounds['y'] + bounds['height'] / 2)
+        page.wait_for_timeout(350)
+        value = float(slider.input_value())
+        assert abs(value - fraction * 1000) < 20, (renderer, fraction, value)
+        current = page.evaluate(TIMELINE)
+        expected = current['start'] + value / 1000 * (current['end'] - current['start'])
+        assert abs(current['clock'] - expected) < 25, current
+    # A pointer drag, keyboard seek and wheel scroll exercise actual handlers.
+    bounds = slider.bounding_box()
+    page.mouse.move(bounds['x'] + bounds['width'] * .8, bounds['y'] + bounds['height'] / 2)
+    page.mouse.down()
+    page.mouse.move(bounds['x'] + bounds['width'] * .55, bounds['y'] + bounds['height'] / 2, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(300)
+    assert 520 < float(slider.input_value()) < 580
+    slider.press('ArrowRight')
+    page.wait_for_timeout(200)
+    box = page.locator('#xterm')
+    assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), box.evaluate('(e) => [e.scrollWidth,e.clientWidth]')
+    box.hover()
+    page.mouse.wheel(0, -300)
+    page.wait_for_timeout(200)
+    if renderer == 'grid':
+        # Historical recordings can be wider than the available pixels. Keep
+        # their cells intact while fitting their font, including after resize.
+        page.set_viewport_size({'width': 1000, 'height': 800})
+        page.wait_for_timeout(300)
+        assert box.evaluate('(e) => e.scrollWidth <= e.clientWidth + 1'), page.evaluate('''() => {const v=currentTermViewObject(), e=document.querySelector('#xterm');return {width:e.clientWidth,scroll:e.scrollWidth,font:v.term.options.fontSize,cell:v.term.renderer.cellWidth,size:v.replaySize,canvas:v.host.querySelector('canvas').getBoundingClientRect().toJSON(),host:v.host.getBoundingClientRect().toJSON()}}''')
+        page.set_viewport_size({'width': 1280, 'height': 900})
+    print(f"PASS {renderer} idle clicks/drag/keyboard, compact status, ticks, wheel and width", flush=True)
+
 
     seek(page, 0)
     page.wait_for_function("!(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=10000)
