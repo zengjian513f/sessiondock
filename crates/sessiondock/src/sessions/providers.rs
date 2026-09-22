@@ -436,6 +436,39 @@ fn strip_grok_user_query(text: &str) -> String {
         .to_owned()
 }
 
+/// Claude's paste envelope repeats its id on the closing tag. Only unwrap a
+/// complete matching pair; unknown/malformed markup and the pasted body stay
+/// literal. This is display normalization, never a change to native input.
+pub(super) fn claude_pasted_text(text: &str) -> String {
+    static OPEN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"<pasted_content id="([^"]+)">"#).unwrap());
+    let mut out = String::with_capacity(text.len());
+    let mut position = 0;
+    while let Some(captures) = OPEN.captures_at(text, position) {
+        let opening = captures.get(0).unwrap();
+        let closing = format!("</pasted_content id=\"{}\">", &captures[1]);
+        let Some(offset) = text[opening.end()..].find(&closing) else {
+            out.push_str(&text[position..opening.end()]);
+            position = opening.end();
+            continue;
+        };
+        out.push_str(&text[position..opening.start()]);
+        let body = &text[opening.end()..opening.end() + offset];
+        let body = body
+            .strip_prefix("\r\n")
+            .or_else(|| body.strip_prefix('\n'))
+            .unwrap_or(body);
+        out.push_str(
+            body.strip_suffix("\r\n")
+                .or_else(|| body.strip_suffix('\n'))
+                .unwrap_or(body),
+        );
+        position = opening.end() + offset + closing.len();
+    }
+    out.push_str(&text[position..]);
+    out
+}
+
 fn timeline_protocol(text: &str) -> bool {
     let text = text.trim_start().to_lowercase();
     if let Some(heading) = text.strip_prefix('#')

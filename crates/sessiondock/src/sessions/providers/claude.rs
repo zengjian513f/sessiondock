@@ -629,7 +629,25 @@ pub(super) fn record(
                     {
                         continue;
                     } else {
-                        parser.content(end, &role, &part, &ts, phase)?;
+                        // Classify the native envelope before unwrapping: pasted
+                        // protocol-looking text is still literal user content.
+                        if kind == "user" && super::claude_pasted_text(text) != text {
+                            let (text, media) = super::image_content::parts_with_media(
+                                &part,
+                                parser.media.as_ref(),
+                                &mut parser.skipped,
+                            )?;
+                            parser.emit_media(
+                                end,
+                                &role,
+                                super::claude_pasted_text(&text),
+                                &ts,
+                                json!({}),
+                                media,
+                            )?;
+                        } else {
+                            parser.content(end, &role, &part, &ts, phase)?;
+                        }
                         emitted_abandoned |= abandoned;
                     }
                 } else {
