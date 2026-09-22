@@ -145,6 +145,14 @@ a different `node_id` (`400 nest_parent_node`), or `independent` together with
 The legacy sidebar offers these from the session context menu: 从父会话独立,
 取消独立 (restore `spawned_by`), and 附属到… (click the parent, with 取消).
 
+When rewind or continuation hides a recorded parent, the sidebar resolves its
+children under the visible successor on the same node and source. Fork selection
+uses the existing live-first, then newest-created order, and follows hidden
+intermediate parents. Showing the original parent restores its own subtree.
+This applies to both recorded and manual parents; `nest_independent` still wins.
+Missing or filtered parents without a visible successor leave their children as
+roots. These display decisions never rewrite the stored relationship.
+
 Validation: `python3 tests/metadata_suite.py`,
 `python3 tests/nest_tree_browser.py`.
 
