@@ -21,7 +21,7 @@ def corpus(root):
     for source in ("claude", "codex", "grok"):
         (root / source).mkdir(parents=True)
     rows = [claude_row("search-main", "user", "u0", None, "Synthetic search title"),
-            claude_row("search-main", "assistant", "a0", "u0", "Needle Cat cat caterpillar cat. 猫 猫猫 a.b A.B"),
+            claude_row("search-main", "assistant", "a0", "u0", "Needle Cat cat caterpillar cat. 猫 猫猫 a.b A.B 无法识别的tag？ xtag"),
             claude_row("search-main", "user", "old-u", "a0", "DISCARDED_SEARCH_ONLY"),
             claude_row("search-main", "assistant", "old-a", "old-u", "DISCARDED_SEARCH_ANSWER"),
             {"type": "last-prompt", "leafUuid": "a0"}]
@@ -146,6 +146,21 @@ def main():
                 expect(page.locator("#side .item[data-uid]")).to_have_count(1)
                 search('"Needle Synthetic"')
                 expect(page.locator("#side .item[data-uid]")).to_have_count(0)
+
+                search("tag")
+                hits(2)
+                flag("word")
+                hits(1)
+                main = page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]')
+                expect(main.locator(".snip")).to_contain_text("无法识别的tag")
+                main.click()
+                expect(page.locator("#msgs mark")).to_have_count(1)
+                expect(page.locator("#msgs mark")).to_have_text("tag")
+                assert page.evaluate("""() => {
+                    const mark = document.querySelector('#msgs mark');
+                    return mark.previousSibling.textContent.endsWith('的');
+                }""")
+                flag("word")
 
                 search("cat")
                 hits(4)

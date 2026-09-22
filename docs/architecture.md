@@ -77,7 +77,7 @@ checkpoint仍核对投影。
   取消响应会取消工作并释放阻塞发送，blocking permit保持到实际工作结束。JSON大对象
   序列化也在worker。
 - 字面搜索按空白拆词、双引号保留短语，默认 AND（整个会话内全部词出现），
-  `mode=any` 选择 OR。每个词用字面匹配器和 Unicode 全词边界，复用缓存预筛，
+  `mode=any` 选择 OR。每个词用字面匹配器和 Unicode 全词边界（汉字、假名、谚文与其它字母之间断开），复用缓存预筛，
   不合成为回溯正则；前端搜索框内的 AND / OR 按钮切换“全部词 / 任一词”，
   与大小写、全词、正则按钮保持单排布局。
   `regex=1` 不拆词、忽略 `mode`，由 `fancy-regex` 支持 lookaround/backreference。

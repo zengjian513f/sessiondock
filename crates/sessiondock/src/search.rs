@@ -23,8 +23,10 @@
 //! that cannot match. Literal and whole-word queries then run the regex
 //! crate's literal search on the original text (`Matcher`), the whole-word
 //! form checking each occurrence's neighbours against the boundary class
-//! `[\p{L}\p{N}_]` instead of driving the backtracking engine across the
-//! text; regex queries run `fancy-regex` as before.
+//! `[\p{L}\p{N}_]`, except a Han/kana/hangul/bopomofo letter beside a
+//! non-CJK letter (`的tag` matches `tag`; `猫猫` does not match `猫`),
+//! instead of driving the backtracking engine across the text; regex
+//! queries run `fancy-regex` as before.
 //!
 //! Literal queries split on whitespace with double-quoted phrases; `mode=any`
 //! selects OR, otherwise every term must occur somewhere in the session (AND).
@@ -130,11 +132,12 @@ pub struct SearchQuery {
 /// How one body is matched. Every variant finds the same spans as the
 /// `fancy-regex` pattern the query used to compile to (`tests::reference`):
 /// a literal is delegated to the regex crate by `fancy-regex` anyway, and the
-/// whole-word form `(?<![\p{L}\p{N}_])(?:lit)(?![\p{L}\p{N}_])` matches
-/// at `s` exactly when the literal matches at `s` and neither neighbour is
-/// in the class — checked here per occurrence, so the engine never scans
-/// the text between occurrences (its look-behind defeats the literal
-/// prefilter, 3 s of CPU over 19 MB).
+/// whole-word form from `whole_word` matches at `s` exactly when the literal
+/// matches at `s` and neither neighbour blocks (`fold::word_edge_blocks`):
+/// a `[\p{L}\p{N}_]` neighbour blocks, unless it and the adjacent match
+/// letter are on opposite sides of the CJK/non-CJK split. Checked here per
+/// occurrence, so the engine never scans the text between occurrences (its
+/// look-behind defeats the literal prefilter, 3 s of CPU over 19 MB).
 enum Matcher {
     Literal(PlainRegex),
     Word(PlainRegex),
@@ -153,11 +156,16 @@ impl Matcher {
                 let mut pos = pos;
                 while let Some(found) = plain.find_at(hay, pos) {
                     let (start, end) = (found.start(), found.end());
+                    let edge_first = hay[start..end].chars().next();
+                    let edge_last = hay[start..end].chars().next_back();
                     let before = hay[..start]
                         .chars()
                         .next_back()
-                        .is_some_and(fold::is_word_char);
-                    let after = hay[end..].chars().next().is_some_and(fold::is_word_char);
+                        .is_some_and(|c| fold::word_edge_blocks(c, edge_first));
+                    let after = hay[end..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| fold::word_edge_blocks(c, edge_last));
                     if !before && !after {
                         return Ok(Some((start, end)));
                     }
@@ -223,8 +231,24 @@ fn invalid_regex(error: impl std::fmt::Display) -> SearchError {
 }
 
 /// The whole-word wrapper around a regex source.
+///
+/// A neighbour in `[\p{L}\p{N}_]` blocks, except a CJK letter
+/// (Han/Hiragana/Katakana/Hangul/Bopomofo) directly beside a non-CJK letter.
+/// Digits and `_` still join, and a non-letter edge still blocks on any word
+/// neighbour, matching `fold::word_edge_blocks`.
 fn whole_word(source: &str) -> String {
-    format!(r"(?<![\p{{L}}\p{{N}}_])(?:{source})(?![\p{{L}}\p{{N}}_])")
+    const CJK: &str =
+        r"\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}";
+    let non_cjk_letter = format!(r"(?:[\p{{L}}&&[^{CJK}]])", CJK = CJK);
+    let split = format!(
+        r"(?<=[{CJK}])(?={non})|(?<={non})(?=[{CJK}])",
+        CJK = CJK,
+        non = non_cjk_letter,
+    );
+    // The leading check looks at the character before the match; the trailing
+    // check looks at the character after it. The script-split alternatives
+    // are the same text at those two positions.
+    format!(r"(?:(?<![\p{{L}}\p{{N}}_])|{split})(?:{source})(?:(?![\p{{L}}\p{{N}}_])|{split})")
 }
 
 /// The query's `fancy-regex` pattern: a regex query as written (with the
@@ -918,6 +942,13 @@ mod tests {
     fn whole_word_alternation_neighbors_unicode_and_punctuation() {
         assert_eq!(count("a|ab", "ab ab ax", true, true), 2);
         assert_eq!(count("猫", "猫 猫猫 _猫 猫", true, false), 2);
+        assert_eq!(
+            count("tag", "无法识别的tag？ xtag tagx tag 的TAG", true, false),
+            3
+        );
+        assert_eq!(count("tag", "无法识别的tag？", true, true), 1);
+        assert_eq!(count("会话", "会话列表", true, false), 0);
+        assert_eq!(count("猫", "a猫 猫a 猫2", true, false), 2);
         assert_eq!(count("#tag", "#tag x#tag #tagx #tag", true, false), 2);
         assert_eq!(count("#", "##", true, false), 2);
         assert_eq!(count("#|()", "##", true, true), 3);
@@ -1186,7 +1217,7 @@ mod tests {
             "İstanbul ıstanbul istanbul Istanbul İ ı i I",
             "Σίσυφος ΣΊΣΥΦΟΣ σίσυφος ς σ Σ",
             "straße STRASSE Straẞe ß ẞ",
-            "猫 猫猫 _猫 猫\n会话列表 会話列表",
+            "猫 猫猫 _猫 猫\n会话列表 会話列表\n无法识别的tag？ xtag tag",
             "\x1b[31mguard\x1b[0m \x1b[1mGuard\x1b[0m Guard guard",
             "cat\u{0301} \u{203f}cat _cat cat9 9cat cat catcat CatCAT",
             "",
