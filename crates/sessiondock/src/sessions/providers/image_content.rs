@@ -59,6 +59,37 @@ fn contains_image(value: &Value) -> bool {
             .is_some_and(|items| items.iter().any(contains_image))
 }
 
+pub(super) fn codex_parts_with_media(
+    value: &Value,
+    context: Option<&MediaContext<'_>>,
+    skipped: &mut Skipped,
+) -> Result<(String, Vec<NativeImage>), String> {
+    let wrappers = super::envelopes::codex_image_wrappers(value);
+    if wrappers.is_empty() {
+        return parts_with_media(value, context, skipped);
+    }
+    let mut media = Vec::new();
+    let mut cleaned = Vec::new();
+    for (i, part) in value.as_array().unwrap().iter().enumerate() {
+        // Visit the original image nodes, not a cloned content array: lazy
+        // image spans are keyed to these nodes and carry media authority.
+        if !wrappers.contains(&i)
+            && let Some(part) = clean(part, &mut media, context)?
+        {
+            cleaned.push(part);
+        }
+    }
+    let text = super::text_parts(&Value::Array(cleaned), skipped)?;
+    Ok((
+        if text.is_empty() {
+            "[图片]".into()
+        } else {
+            text
+        },
+        media,
+    ))
+}
+
 pub(super) fn placeholder(text: String, media: &[NativeImage]) -> String {
     if text.is_empty() && !media.is_empty() {
         "[图片]".into()

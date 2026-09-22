@@ -2,6 +2,7 @@
 //! persistent timeline overrides are owned by the session/history layer.
 
 mod claude;
+pub(super) mod envelopes;
 mod grok;
 mod image_content;
 #[cfg(test)]
@@ -416,7 +417,8 @@ static GROK_USER_QUERY: LazyLock<Regex> = LazyLock::new(|| {
         r"(?:The user (?:sent a message while you were working|interrupted the previous turn):\s*)?",
         r"(?:<image_files>.*?</image_files>\s*)*",
         r"<user_query>(.*?)</user_query>\s*",
-        r"(?:Make sure to complete any unfinished tasks from previous turns\.)?\s*$",
+        r"(?:Make sure to complete any unfinished tasks from previous turns\.)?\s*",
+        r"(?:<skill_information>.*?</skill_information>\s*)?$",
     ))
     .unwrap()
 });
@@ -499,6 +501,7 @@ fn codex_internal(payload: &Value, text: &str) -> bool {
     payload["role"] == "developer"
         || (payload["role"] == "user"
             && (timeline_protocol(text)
+                || envelopes::recommended_plugins(text)
                 || payload["internal_chat_message_metadata_passthrough"]["content_item_kinds"]
                     .as_array()
                     .is_some_and(|kinds| kinds.iter().any(|kind| kind == "goal.internal_context"))))
@@ -648,7 +651,9 @@ fn metadata(
                     && payload["role"] == "user"
                     && title.is_empty()
                 {
-                    let text = strip_codex_abort_prefix(&visible_text(&payload["content"]));
+                    let text = strip_codex_abort_prefix(&visible_text(
+                        &envelopes::codex_title_content(&payload["content"]),
+                    ));
                     if !codex_internal(payload, &text) {
                         title = text
                     }
@@ -890,11 +895,13 @@ impl Parser<'_> {
                 if let Some(phase) = phase {
                     extra["phase"] = json!(phase)
                 }
-                let (parts, media) = image_content::parts_with_media(
-                    &payload["content"],
-                    self.media.as_ref(),
-                    &mut self.skipped,
-                )?;
+                let parts_with_media = if native_role == "user" {
+                    image_content::codex_parts_with_media
+                } else {
+                    image_content::parts_with_media
+                };
+                let (parts, media) =
+                    parts_with_media(&payload["content"], self.media.as_ref(), &mut self.skipped)?;
                 let parts = if native_role == "user" {
                     strip_codex_abort_prefix(&parts)
                 } else {
@@ -981,8 +988,11 @@ impl Parser<'_> {
                     self.media.as_ref(),
                     &mut self.skipped,
                 )?;
+                let mut user_query = false;
                 if kind == "user" {
-                    text = strip_grok_user_query(&text);
+                    let unwrapped = strip_grok_user_query(&text);
+                    user_query = unwrapped != text;
+                    text = unwrapped;
                 }
                 // Grok CLI writes the session preamble as the first
                 // `type: system` record (no synthetic_reason). Real
@@ -991,7 +1001,7 @@ impl Parser<'_> {
                 if kind != "system"
                     && !truthy(&record["synthetic_reason"])
                     && !text.trim().is_empty()
-                    && !(kind == "user" && timeline_protocol(&text))
+                    && !(kind == "user" && !user_query && timeline_protocol(&text))
                 {
                     if kind == "user" {
                         self.turn = if record["prompt_index"].is_null() {
@@ -1205,6 +1215,7 @@ impl Parser<'_> {
                 failed = true;
             }
         }
+        text = envelopes::tool_text(&self.source, name.as_deref(), &text);
         fields["name"] = json!(name);
         fields["call_id"] = json!(call_id);
         fields["error"] = json!(failed);

@@ -732,6 +732,7 @@ pub fn is_codex_protocol_injection(text: &str, native_meta: &Value) -> bool {
         .as_array()
         .is_some_and(|kinds| kinds.iter().any(|kind| kind == "goal.internal_context"))
         || is_timeline_protocol(text)
+        || crate::sessions::providers::envelopes::recommended_plugins(text)
 }
 
 /// `urllib.parse.unquote`: percent UTF-8 decoding with replacement for invalid

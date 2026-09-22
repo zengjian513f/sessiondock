@@ -519,6 +519,14 @@ pub(super) fn record(
                 return Ok(());
             }
             let parts = blocks(&record["message"]["content"], &mut parser.skipped)?;
+            let parts: Vec<_> = parts
+                .into_iter()
+                .filter(|part| {
+                    !(kind == "user"
+                        && (truthy(&record["isSidechain"]) || !agent.is_empty())
+                        && part_text(part).is_some_and(super::envelopes::fork_boilerplate))
+                })
+                .collect();
             let visible_user = parts.iter().any(|part| {
                 super::image_content::image_shape(part)
                     || parser
@@ -905,7 +913,7 @@ fn notification(text: &str) -> Option<(String, String, Option<String>)> {
     }
     let status = tag_value(text, "status").unwrap_or_default().to_lowercase();
     let summary = tag_value(text, "summary").unwrap_or_default();
-    let details = tag_value(text, "result").filter(|value| !value.is_empty());
+    let details = super::envelopes::notification_details(text);
     Some((notification_summary(&summary, &status), status, details))
 }
 
