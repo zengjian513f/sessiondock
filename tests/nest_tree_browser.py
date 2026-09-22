@@ -243,6 +243,15 @@ def check_page(page, uid, data, server, width):
 
     # compact/continue keeps only the newest session of the chain: the old file's row is hidden
     # (its spawned_by-recorded continuation is not its child), opening the old uid follows to the new one.
+    claude_lines(data, "nest-old", "Old continued", "/proj/alpha", "12:00")
+    old_uid = data.uid("nest-old")
+    poll(page, server, 'S.sessions.length === 6')
+    to_list(page)
+    open_item_menu(page, E)
+    page.locator('#item-menu [data-act="attach"]').click()
+    page.wait_for_function("S.nestAttach")
+    page.locator(f'#side .item[data-uid="{old_uid}"]').click()
+    page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === 'nest-old'", arg=E)
     claude_lines(data, "nest-old", "Old continued", "/proj/alpha", "12:00",
                  tail=[{"type": "continued-in", "continuedInSessionId": "nest-new", "sessionId": "nest-old"}])
     claude_lines(data, "nest-new", "New continued", "/proj/alpha", "12:30")
@@ -254,12 +263,18 @@ def check_page(page, uid, data, server, width):
     listed = [r["uid"] for r in continued if not r["agent"]]
     assert new_uid in listed and old_uid not in listed, listed
     assert next(r["depth"] for r in continued if r["uid"] == new_uid) == 0
+    assert session_depth(page, E) == 1
+    assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [new_uid, E])
     to_list(page)
     page.evaluate("uid => openSession(uid)", old_uid)
     page.wait_for_function("uid => S.sel === uid", arg=new_uid)
     page.wait_for_function('document.querySelector(".dhead h2")?.textContent.includes("New continued")')
     opened(page, new_uid)
     assert [r["uid"] for r in rows() if r["sel"]] == [new_uid]
+    to_list(page)
+    open_item_menu(page, E)
+    page.locator('#item-menu [data-act="detach"]').click()
+    page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_independent", arg=E)
     for sid in ("nest-old", "nest-new"):
         data.paths.pop(sid).unlink()
     poll(page, server, "S.sessions.length === 5")
@@ -294,6 +309,80 @@ def check_page(page, uid, data, server, width):
     back = rows()
     assert [r["uid"] for r in back] == [r["uid"] for r in flat] and all(r["depth"] == 0 for r in back)
     assert not page.locator("#side .item.agent").count()
+
+
+def check_hidden_spawner(browser, binary, root, width):
+    """BUG-20260922-081423-93ca71: a rewind hides the recorded spawner."""
+    data = Corpus(root)
+    for source in ("claude", "codex", "grok"):
+        (root / source).mkdir(parents=True)
+
+    def put(sid, parent=None):
+        meta = {"id": sid, "cwd": "/proj/nest-rewind", "timestamp": stamp("12:00")}
+        if parent:
+            meta.update(forked_from_id=parent, history_base={
+                "thread_id": parent, "end_byte_offset": data.paths[parent].stat().st_size})
+        data.put(sid, "codex", [codex_row("session_meta", meta),
+                                codex_message("user", sid), codex_message("assistant", "reply " + sid)], [])
+        return data.uid(sid)
+
+    parent, worker = put("spawner"), put("worker")
+    state = root / "state"
+    state.mkdir(mode=0o700)
+    document = state / "session-metadata.json"
+    relation = {"source": "codex", "sid": "spawner"}
+    document.write_text(json.dumps({"schema_version": 1, "revision": 1,
+                                   "sessions": {worker: {"spawned_by": relation}}}))
+    document.chmod(0o600)
+    with isolated_server(data, binary, state_dir=state) as (base, opener):
+        context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
+        page = context.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        page.goto(base, wait_until="networkidle")
+        page.wait_for_function("S.sessions.length === 2")
+        page.locator("#nest-toggle").click()
+        assert session_depth(page, worker) == 1
+        # Real list refresh after new native files appear; no invented browser row fields.
+        fork = put("rewind-one", "spawner")
+        poll(page, (opener, base), "S.sessions.length === 3")
+        assert session_depth(page, parent) is None
+        assert session_depth(page, worker) == 1, "worker escaped when its spawner became hidden"
+        leaf = put("rewind-two", "rewind-one")
+        poll(page, (opener, base), "S.sessions.length === 4")
+        assert session_depth(page, fork) is None
+        assert session_depth(page, worker) == 1
+        assert page.evaluate("uid => nestDescendantUids(uid).has(" + json.dumps(worker) + ")", leaf)
+        caret = page.locator(f'#side .item[data-uid="{leaf}"] .nest-caret')
+        caret.click()
+        assert session_depth(page, worker) is None
+        caret.click()
+        page.locator(f'#side .item[data-uid="{worker}"]').click()
+        opened(page, worker)
+        page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply worker")')
+        to_list(page)
+        open_item_menu(page, worker)
+        page.locator('#item-menu [data-act="detach"]').click()
+        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_independent", arg=worker)
+        assert session_depth(page, worker) == 0
+        open_item_menu(page, worker)
+        page.locator('#item-menu [data-act="reattach"]').click()
+        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_independent", arg=worker)
+        assert session_depth(page, worker) == 1
+        # Showing the historical parent restores its own subtree, without rewriting spawn metadata.
+        page.locator(f'#side .item[data-uid="{leaf}"]').click()
+        opened(page, leaf)
+        page.locator("#a-fork-chain").click()
+        page.locator(f'#fork-chain-menu .chain-row[data-uid="{parent}"] .chain-toggle').click()
+        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).fork_parent_visible", arg=parent)
+        to_list(page)
+        assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [parent, worker])
+        assert not page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
+        # Filtering an ordinary visible parent must still leave a root; node/source identity is scoped.
+        assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", parent) == 0
+        assert json.loads(document.read_text())["sessions"][worker] == {"spawned_by": relation}
+        assert not errors, errors
+        context.close()
 
 
 def main():
@@ -336,10 +425,11 @@ def main():
                     assert not errors, errors
                     assert not failed, failed
                     context.close()
+                    check_hidden_spawner(browser, args.binary, root / f"rewind-{width}", width)
             finally:
                 browser.close()
     print("PASS nest tree browser: tree/order/carets/marks from the backend's spawned_by, active and continued_in, "
-          "hidden continued-in parent, in-place refresh, detach/restore/attach, desktop + 390px", flush=True)
+          "hidden continued-in parent, hidden rewind spawner, in-place refresh, detach/restore/attach, desktop + 390px", flush=True)
 
 
 if __name__ == "__main__":
