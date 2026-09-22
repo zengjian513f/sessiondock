@@ -88,7 +88,9 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             && payload["type"] == "message"
             && payload["role"] == "user"
         {
-            match flatten_text(&payload["content"]) {
+            match flatten_text(&crate::sessions::providers::envelopes::codex_title_content(
+                &payload["content"],
+            )) {
                 Ok(text) => {
                     let native_meta = &payload["internal_chat_message_metadata_passthrough"];
                     if !py_strip(&text).is_empty()

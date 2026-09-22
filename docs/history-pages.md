@@ -257,6 +257,9 @@ legacy gap button no longer uses it. See
 
 ## Fixture checks
 
+Additional provider-specific tag envelopes and their intentional display DELTAs
+are documented in [native-tags.md](native-tags.md).
+
 Claude paste envelopes (`<pasted_content id="…">` with the same id on the
 closing tag, observed in Claude Code 2.1.278) are unwrapped by the native
 projection for user text, before history and search serialization. One framing
