@@ -3382,21 +3382,40 @@ function nestSpecParent(session) {
   return null;
 }
 
-function nestParentOf(session, byKey) {
+function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
+  [spawnKey(s.node_id, s.source, s.sid), s]))) {
   const spec = nestSpecParent(session);
   if (!spec) return null;
-  const row = byKey.get(spawnKey(session.node_id, spec.parent.source, spec.parent.sid));
-  return row && row !== session ? row : null;
+  const key = spawnKey(session.node_id, spec.parent.source, spec.parent.sid);
+  let row = byKey.get(key) || allByKey.get(key);
+  const seen = new Set([session.uid]);
+  while (row && !seen.has(row.uid)) {
+    seen.add(row.uid);
+    const visible = byKey.get(spawnKey(row.node_id, row.source, row.sid));
+    if (visible) return visible;
+    // 回退/续写隐藏旧父会话时，附属会话跟随它的可见后继；不改写历史发起关系。
+    // 普通筛选或删除不意味着续写，找不到可见后继仍按孤立会话处理。
+    if (sessionContinued(row)) {
+      const next = S.sessions.find(s => s.uid === row.continued_in);
+      row = next?.source === row.source && (next.node_id || '') === (row.node_id || '') ? next : null;
+    } else if (hiddenForkParent(row)) {
+      row = forkChildren(row)[0];
+    } else {
+      return null;
+    }
+  }
+  return null;
 }
 
 function nestEdges(list) {
   const children = new Map(), nested = new Set();
   const byKey = new Map(list.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const allByKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
   const parentOf = new Map();
   for (const s of list) {
     const spec = nestSpecParent(s);
     if (!spec) continue;
-    const parent = nestParentOf(s, byKey);
+    const parent = nestParentOf(s, byKey, allByKey);
     if (!parent) continue;
     // compact/continue 会另写一份 JSONL，新进程常继承旧会话的环境变量，
     // spawned_by 会误把「同一条对话的续写」当成派出去的孩子。手动附属除外。
@@ -3417,7 +3436,7 @@ function nestEdges(list) {
 }
 
 /** 分层模式下的树：每条会话直接发起的会话，以及哪些会话已挂在别人下面。
- *  发起者不在当前列表里（被筛掉、已删除）的会话仍作根显示。 */
+ *  回退/续写隐藏的发起者沿后继解析；被筛掉或已删除且无可见后继的仍作根显示。 */
 function nestTree(list) {
   if (!S.nest) return {children: new Map(), nested: new Set()};
   return nestEdges(list);
