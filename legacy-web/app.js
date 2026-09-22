@@ -3861,9 +3861,18 @@ function searchTerms(text) {
   return [...new Set(terms)];
 }
 
+// 与 search.rs whole_word 一致：[\p{L}\p{N}_] 邻字挡住全词，但汉字/假名/谚文
+// 与其它字母之间是边界。「无法识别的tag」能命中 tag，「猫猫」不能命中「猫」。
 function literalSource(term) {
   const src = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return S.opts.word ? `(?<![\\p{L}\\p{N}_])(?:${src})(?![\\p{L}\\p{N}_])` : src;
+  if (!S.opts.word) return src;
+  const cjk = '\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Bopomofo}';
+  // JS has no class intersection; a letter outside those scripts is the other side.
+  const nonCjkLetter = `(?:(?![${cjk}])\\p{L})`;
+  const split = `(?<=[${cjk}])(?=${nonCjkLetter})|(?<=${nonCjkLetter})(?=[${cjk}])`;
+  const before = `(?:(?<![\\p{L}\\p{N}_])|${split})`;
+  const after = `(?:(?![\\p{L}\\p{N}_])|${split})`;
+  return `${before}(?:${src})${after}`;
 }
 
 // Individual message previews and highlighting match any term, even when

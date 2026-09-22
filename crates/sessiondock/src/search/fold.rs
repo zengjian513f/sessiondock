@@ -123,32 +123,21 @@ pub fn fold(text: &str) -> Vec<u8> {
     out
 }
 
-/// The whole-word boundary class `[\p{L}\p{N}_]`, exactly as the matcher
-/// compiles it (same `regex-syntax` tables), as sorted inclusive ranges.
-fn word_class() -> &'static [(char, char)] {
-    static CLASS: OnceLock<Vec<(char, char)>> = OnceLock::new();
-    CLASS.get_or_init(|| {
-        let hir = regex_syntax::Parser::new()
-            .parse(r"[\p{L}\p{N}_]")
-            .expect("constant class");
-        match hir.kind() {
-            HirKind::Class(Class::Unicode(class)) => class
-                .ranges()
-                .iter()
-                .map(|range| (range.start(), range.end()))
-                .collect(),
-            _ => unreachable!("a class parses to a class"),
-        }
-    })
+fn class_ranges(pattern: &str) -> Vec<(char, char)> {
+    let hir = regex_syntax::Parser::new()
+        .parse(pattern)
+        .expect("constant class");
+    match hir.kind() {
+        HirKind::Class(Class::Unicode(class)) => class
+            .ranges()
+            .iter()
+            .map(|range| (range.start(), range.end()))
+            .collect(),
+        _ => unreachable!("a class parses to a class"),
+    }
 }
 
-/// Whether `c` is in `[\p{L}\p{N}_]`: a whole-word match may neither be
-/// preceded nor followed by such a character.
-pub fn is_word_char(c: char) -> bool {
-    if c.is_ascii() {
-        return c.is_ascii_alphanumeric() || c == '_';
-    }
-    let class = word_class();
+fn in_ranges(class: &[(char, char)], c: char) -> bool {
     class
         .binary_search_by(|(start, end)| {
             if *end < c {
@@ -160,6 +149,65 @@ pub fn is_word_char(c: char) -> bool {
             }
         })
         .is_ok()
+}
+
+/// The whole-word class `[\p{L}\p{N}_]`, exactly as the matcher compiles it
+/// (same `regex-syntax` tables), as sorted inclusive ranges.
+fn word_class() -> &'static [(char, char)] {
+    static CLASS: OnceLock<Vec<(char, char)>> = OnceLock::new();
+    CLASS.get_or_init(|| class_ranges(r"[\p{L}\p{N}_]"))
+}
+
+/// Han, kana, hangul and bopomofo letters. These form words among themselves
+/// and break from every other letter, so `tag` matches `的tag`.
+fn cjk_script(c: char) -> bool {
+    if c.is_ascii() {
+        return false;
+    }
+    static CLASS: OnceLock<Vec<(char, char)>> = OnceLock::new();
+    let class = CLASS.get_or_init(|| {
+        class_ranges(
+            r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Bopomofo}]",
+        )
+    });
+    in_ranges(class, c)
+}
+
+/// Whether `c` is in `[\p{L}\p{N}_]`.
+pub fn is_word_char(c: char) -> bool {
+    if c.is_ascii() {
+        return c.is_ascii_alphanumeric() || c == '_';
+    }
+    in_ranges(word_class(), c)
+}
+
+fn is_cjk_letter(c: char) -> bool {
+    is_word_char(c) && cjk_script(c)
+}
+
+fn is_non_cjk_letter(c: char) -> bool {
+    is_word_char(c) && c != '_' && !c.is_numeric() && !cjk_script(c)
+}
+
+fn script_split(a: char, b: char) -> bool {
+    if a.is_ascii() && b.is_ascii() {
+        return false;
+    }
+    (is_cjk_letter(a) && is_non_cjk_letter(b)) || (is_non_cjk_letter(a) && is_cjk_letter(b))
+}
+
+/// Whether `neighbor` blocks a whole-word hit whose adjacent match character
+/// is `edge` (`None` when the match is empty). A word character blocks,
+/// except a CJK letter against a non-CJK letter: `的` does not swallow `tag`,
+/// while `猫猫` still swallows `猫`, and digits or `_` still join.
+pub fn word_edge_blocks(neighbor: char, edge: Option<char>) -> bool {
+    if !is_word_char(neighbor) {
+        return false;
+    }
+    match edge {
+        Some(edge) if script_split(neighbor, edge) => false,
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +366,18 @@ mod tests {
         assert!(words > 100_000, "{words}");
         assert!(is_word_char('_') && is_word_char('猫') && is_word_char('9'));
         assert!(!is_word_char('#') && !is_word_char(' ') && !is_word_char('\u{301}'));
+    }
+
+    #[test]
+    fn cjk_and_latin_letters_split_a_whole_word() {
+        assert!(word_edge_blocks('x', Some('t')));
+        assert!(word_edge_blocks('猫', Some('猫')));
+        assert!(word_edge_blocks('_', Some('猫')));
+        assert!(word_edge_blocks('2', Some('t')));
+        assert!(word_edge_blocks('的', None));
+        assert!(!word_edge_blocks('的', Some('t')));
+        assert!(!word_edge_blocks('t', Some('的')));
+        assert!(!word_edge_blocks(' ', Some('t')));
+        assert!(!word_edge_blocks('#', Some('t')));
     }
 }
