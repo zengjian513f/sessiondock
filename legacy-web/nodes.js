@@ -108,7 +108,8 @@ function paintConsoleAvailability(button, uid, agent = null) {
     button.title = '';
     button.ariaLabel = '控制台不可用：' + reason;
   }
-  if (button.matches(':hover') || document.activeElement === button) showConsoleToast(reason);
+  if (button.matches(':hover') || document.activeElement === button)
+    showConsoleToast(consoleUnavailableReason(uid, agent));
 }
 
 function consoleButtonMarkup() {
@@ -117,7 +118,7 @@ function consoleButtonMarkup() {
 
 function bindConsoleButton(button, uid, agent = null) {
   if (!button) return;
-  button.onmouseenter = button.onfocus = () => showConsoleToast(consoleUnavailableReason(uid, agent, false));
+  button.onmouseenter = button.onfocus = () => showConsoleToast(consoleUnavailableReason(uid, agent));
   button.onmouseleave = button.onblur = () => showConsoleToast('');
   button.onclick = async () => {
     showConsoleToast('');

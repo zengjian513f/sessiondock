@@ -6,7 +6,9 @@
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
 const TERM_CONNECT_TIMEOUT_MS = 15_000;
-const TERM_CLAIM_TIMEOUT_MS = 5_000;
+// Claim includes browser/proxy transit plus the Hub's 5 s connect / 10 s read
+// waits. A 5 s page deadline can cancel before the node even sees the request.
+const TERM_CLAIM_TIMEOUT_MS = 20_000;
 // DEC 2026 同步帧在页面这层暂存的上限：超过就先交给 xterm（它自己对 2026 还有
 // 1 s 兜底），不让一个没收尾的帧无限占住输出。
 const TERM_SYNC_HOLD_MAX = 256 * 1024;
@@ -2957,6 +2959,7 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false,
     if (!auto && !result.timeout) alert('打开终端失败：' + (result.error || '无法取得终端控制权'));
     return null;
   }
+  ConsoleUI.errors.delete(uid);
   return result.token;
 }
 
@@ -3319,7 +3322,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   if (active) activateTermView(view);
   cancelTermReconnect(view);
   dropTermSocket(view);
-  const token = await claimTermOwnership(name, uid, binding, auto, directClaim);
+  // A fork/current thread can display its ancestor's bound host. Report the
+  // attempt on the selected view; the wire binding remains the host's tuple.
+  const token = await claimTermOwnership(name, active ? T.uid || uid : uid, binding, auto, directClaim);
   if (bound && T.views.get(name) !== view) return false;
   if (!token) {
     view.revoked = true;
