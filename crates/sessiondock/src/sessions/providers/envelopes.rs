@@ -63,8 +63,24 @@ fn text_part(part: &Value) -> Option<&str> {
         .flatten()
 }
 
+/// Classify native text blocks before flattening: Codex bundles independent
+/// injections and user content into a single message, especially in forks.
+pub(super) fn codex_hidden_parts(content: &Value) -> HashSet<usize> {
+    let mut hidden = codex_image_wrappers(content);
+    if let Some(parts) = content.as_array() {
+        for (i, part) in parts.iter().enumerate() {
+            if text_part(part)
+                .is_some_and(|text| recommended_plugins(text) || super::timeline_protocol(text))
+            {
+                hidden.insert(i);
+            }
+        }
+    }
+    hidden
+}
+
 pub(in crate::sessions) fn codex_title_content(content: &Value) -> Value {
-    let wrappers = codex_image_wrappers(content);
+    let wrappers = codex_hidden_parts(content);
     match content.as_array() {
         Some(parts) if !wrappers.is_empty() => Value::Array(
             parts

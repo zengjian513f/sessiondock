@@ -64,7 +64,7 @@ pub(super) fn codex_parts_with_media(
     context: Option<&MediaContext<'_>>,
     skipped: &mut Skipped,
 ) -> Result<(String, Vec<NativeImage>), String> {
-    let wrappers = super::envelopes::codex_image_wrappers(value);
+    let wrappers = super::envelopes::codex_hidden_parts(value);
     if wrappers.is_empty() {
         return parts_with_media(value, context, skipped);
     }
@@ -81,7 +81,7 @@ pub(super) fn codex_parts_with_media(
     }
     let text = super::text_parts(&Value::Array(cleaned), skipped)?;
     Ok((
-        if text.is_empty() {
+        if text.is_empty() && !media.is_empty() {
             "[图片]".into()
         } else {
             text

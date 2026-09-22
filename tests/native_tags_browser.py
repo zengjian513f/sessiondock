@@ -46,6 +46,23 @@ def build(root):
         put(sid, 'codex', rows, expected, forbidden)
 
     cx('plugins', [PLUGINS, 'ActualPluginQuestion'], 'ActualPluginQuestion', ['recommended_plugins', 'PluginInjectionSentinel'])
+    bundled = [{'type': 'input_text', 'text': text} for text in (
+        PLUGINS, '# AGENTS.md instructions for /synthetic/tags\n<INSTRUCTIONS>HiddenBundledRules</INSTRUCTIONS>',
+        '<environment_context>HiddenBundledEnvironment</environment_context>')]
+    cx('plugins-bundled', [bundled, 'ActualBundledQuestion'], 'ActualBundledQuestion',
+       ['recommended_plugins', 'PluginInjectionSentinel', 'HiddenBundled', '[图片]'])
+    cx('plugins-mixed', [bundled + [{'type': 'input_text', 'text': 'ActualMixedQuestion'}]],
+       'ActualMixedQuestion', ['recommended_plugins', 'PluginInjectionSentinel', 'HiddenBundled'])
+    cx('plugins-after-user', [[{'type': 'input_text', 'text': 'ActualBeforeQuestion'}] + bundled],
+       'ActualBeforeQuestion', ['recommended_plugins', 'PluginInjectionSentinel', 'HiddenBundled'])
+    corpus.put('bundled-agent', 'codex', [
+        codex_row('session_meta', {'id': 'bundled-agent', 'cwd': '/synthetic/tags',
+            'thread_source': 'subagent', 'parent_thread_id': 'plugins-bundled',
+            'source': {'subagent': {'thread_spawn': {'parent_thread_id': 'plugins-bundled',
+                'agent_path': '/root/bundled-agent', 'agent_role': 'reviewer'}}}}),
+        codex_row('response_item', {'type': 'message', 'role': 'user', 'content': bundled}),
+        codex_row('response_item', {'type': 'message', 'role': 'user', 'content': 'ActualAgentQuestion'})
+    ], [], parent='plugins-bundled')
     cx('plugins-literal', ['Discuss ' + PLUGINS], 'Discuss ' + PLUGINS)
     cx('plugins-broken', [PLUGINS.removesuffix('</recommended_plugins>')], PLUGINS.removesuffix('</recommended_plugins>'))
     image_open = '<image name=[Image #1] path="/synthetic/not-authorized.png">'
@@ -175,9 +192,17 @@ def main():
                         page.wait_for_function("document.querySelector('#msgs img')?.naturalWidth === 2")
                         assert messages[0]['media'] and data['meta']['title'] == 'ActualImageQuestion'
                         expect(page.locator(f'#side .item[data-uid="{case["uid"]}"]')).to_contain_text('ActualImageQuestion')
-                    if sid == 'plugins':
-                        assert data['meta']['title'] == 'ActualPluginQuestion'
-                        expect(page.locator(f'#side .item[data-uid="{case["uid"]}"]')).to_contain_text('ActualPluginQuestion')
+                    if sid in ('plugins', 'plugins-bundled', 'plugins-mixed', 'plugins-after-user'):
+                        assert data['meta']['title'] == case['expected']
+                        expect(page.locator(f'#side .item[data-uid="{case["uid"]}"]')).to_contain_text(case['expected'])
+                    if sid == 'plugins-bundled':
+                        page.locator('#a-view-switch').click()
+                        page.locator('#session-view-menu button[data-agent="bundled-agent"]').click()
+                        expect(page.locator('#msgs')).to_contain_text('ActualAgentQuestion')
+                        for hidden in ['recommended_plugins', 'HiddenBundled', 'PluginInjectionSentinel', '[图片]']:
+                            expect(page.locator('#msgs')).not_to_contain_text(hidden)
+                        agent_data = get_json(opener, base, '/api/messages/' + case['uid'] + '?agent=bundled-agent')
+                        assert [m['text'] for m in agent_data['messages'] if m['role'] == 'user'] == ['ActualAgentQuestion']
                     if sid == 'parent':
                         page.locator('#a-view-switch').click()
                         page.locator('#session-view-menu button[data-agent="child"]').click()
@@ -198,7 +223,7 @@ def main():
                 expect(page.locator('#msgs')).not_to_contain_text('SkillInjectionSentinel')
                 # Search through the actual search input, including hidden
                 # injection text: it must not reappear through cached bodies.
-                for query, hit in [('ActualSkillQuestion', True), ('ActualImageQuestion', True), ('ActualPluginQuestion', True), ('PluginInjectionSentinel', False), ('SkillInjectionSentinel', False)]:
+                for query, hit in [('ActualSkillQuestion', True), ('ActualImageQuestion', True), ('ActualPluginQuestion', True), ('ActualBundledQuestion', True), ('ActualMixedQuestion', True), ('PluginInjectionSentinel', False), ('SkillInjectionSentinel', False)]:
                     old = page.locator('#stat').get_attribute('data-seq') or ''
                     page.locator('#q').fill(query)
                     page.locator('#q').press('Enter')
@@ -209,11 +234,13 @@ def main():
                     # only the normalized positive fixture must disappear.
                     target = cases['plugins' if query == 'PluginInjectionSentinel' else 'skill']['uid']
                     if hit:
-                        target = cases[{'ActualSkillQuestion': 'skill', 'ActualImageQuestion': 'image', 'ActualPluginQuestion': 'plugins'}[query]]['uid']
+                        target = cases[{'ActualSkillQuestion': 'skill', 'ActualImageQuestion': 'image', 'ActualPluginQuestion': 'plugins', 'ActualBundledQuestion': 'plugins-bundled', 'ActualMixedQuestion': 'plugins-mixed'}[query]]['uid']
                         assert any(r.get('uid') == target for r in results), query
                         expect(page.locator(f'#side .item[data-uid="{target}"] .snip')).to_contain_text(query)
                     else:
                         assert all(r.get('uid') != target for r in results), (query, results)
+                        if query == 'PluginInjectionSentinel':
+                            assert not any(r.get('uid') in {cases[k]['uid'] for k in ('plugins-bundled', 'plugins-mixed', 'plugins-after-user')} for r in results)
                         expect(page.locator(f'#side .item[data-uid="{target}"]')).to_have_count(0)
                 assert not errors, errors
             finally:
