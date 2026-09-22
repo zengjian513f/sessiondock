@@ -121,11 +121,16 @@ revocation and shutdown cancel the bridge promptly.
 The browser abandons an attach that remains in WebSocket `CONNECTING` for 15
 seconds, refreshes host liveness and enters the normal reconnect path. This
 transport timeout does not imply that the independent ptyhost process exited.
-Control ownership HTTP requests time out after 5 seconds, including reading
-the response body. A timeout leaves ownership uncertain: the page closes the
-failed open attempt without automatically retrying or forcing a takeover.
+Control ownership HTTP requests time out after 20 seconds, including reading
+the response body. This covers the Hub's 5-second connect and 10-second upstream
+read waits plus browser/proxy transit; the former 5-second page deadline could
+cancel a request before the node received it. A timeout leaves ownership uncertain:
+the page closes the failed open attempt without automatically retrying or forcing a takeover.
 Repeated clicks while opening show a nonblocking waiting hint so response and
 timeout callbacks can continue. Automatic restores never display a timeout alert.
+Retryable claim errors belong to the displayed session, even when a Codex fork
+uses its ancestor's guarded host identity. Button refreshes and hover/focus keep
+that explanation available without disabling an explicit retry.
 
 `/api/term/list` publishes the observed sessions plus pending and source
 information from the shared managed observation and a 2 s response cache
