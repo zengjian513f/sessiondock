@@ -546,9 +546,15 @@ fn locate_codex(
             while start > 0 && nonblank(&clean_lines[start - 1]) {
                 start -= 1;
             }
-            if !matches!(clean_lines[start].trim_start().chars().next(), Some('›' | '»')) {
+            if !matches!(
+                clean_lines[start].trim_start().chars().next(),
+                Some('›' | '»')
+            ) {
                 start = (0..=cursor_y).rev().find(|&index| {
-                    matches!(clean_lines[index].trim_start().chars().next(), Some('›' | '»'))
+                    matches!(
+                        clean_lines[index].trim_start().chars().next(),
+                        Some('›' | '»')
+                    )
                 })?;
             }
             while end + 1 < clean_lines.len() && nonblank(&clean_lines[end + 1]) {

@@ -204,10 +204,7 @@ pub fn word_edge_blocks(neighbor: char, edge: Option<char>) -> bool {
     if !is_word_char(neighbor) {
         return false;
     }
-    match edge {
-        Some(edge) if script_split(neighbor, edge) => false,
-        _ => true,
-    }
+    !matches!(edge, Some(edge) if script_split(neighbor, edge))
 }
 
 #[cfg(test)]

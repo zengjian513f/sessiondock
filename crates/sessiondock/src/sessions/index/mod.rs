@@ -69,8 +69,8 @@
 pub mod agent_stops;
 pub mod graph;
 pub mod names;
-mod titles;
 pub mod summary;
+mod titles;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek, SeekFrom};
