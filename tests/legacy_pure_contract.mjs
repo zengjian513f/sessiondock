@@ -279,7 +279,9 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
 });
 
 test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing fields degrade to flat', () => {
-  const S = {nest: true, nestClosed: new Set(), live: new Set()};
+  // nestEdges also resolves a spawner hidden by rewind/continuation through S.sessions;
+  // here every spawner is listed, so the full inventory equals the rendered list.
+  const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
   const context = ctx({S});
   for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'agentRunning', 'expandRows']) load(context, name);
   const a = {uid: 'claude:a', source: 'claude', sid: 'a', updated: '2026-09-12T00:00:00Z',
