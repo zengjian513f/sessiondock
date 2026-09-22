@@ -13,7 +13,7 @@ incomplete structures remain text, not rejected input.
 
 | Family | Interpretation |
 | --- | --- |
-| Codex `recommended_plugins` | A complete user envelope beginning with the native unavailable-plugin-list introduction is injected context. Exclude it from history, fallback titles and search. Inline quotations and incomplete envelopes stay literal |
+| Codex `recommended_plugins` | A complete user envelope beginning with the native unavailable-plugin-list introduction is injected context. Exclude it from history, fallback titles and search. Classify each native text block before joining bundled plugin, AGENTS and environment injections; preserve adjacent user blocks in either order. Inline quotations and incomplete envelopes stay literal |
 | Claude `fork-boilerplate` | A complete native worker-fork introduction in a subagent user text block is context. Drop only that block, preserving the actual directive in adjacent blocks. Main-session user text stays literal |
 | Grok `user_query` + `skill_information/skills_referenced/skill` | The optional complete skill appendix is injected context outside the user's query. Extract the query; its protocol-looking body remains literal user text. Unknown trailing text prevents unwrapping |
 | Codex `image` | Remove text delimiters only when they enclose contiguous native image blocks in a user content array. Keep typed images and surrounding text. A textual path does not authorize any read; text-only and incomplete examples stay literal |

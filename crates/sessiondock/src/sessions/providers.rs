@@ -877,7 +877,11 @@ impl Parser<'_> {
                     "tool" => "tool_result",
                     other => other,
                 };
-                let text = visible_text(&payload["content"]);
+                let text = if native_role == "user" {
+                    visible_text(&envelopes::codex_title_content(&payload["content"]))
+                } else {
+                    visible_text(&payload["content"])
+                };
                 let text = if native_role == "user" {
                     strip_codex_abort_prefix(&text)
                 } else {
