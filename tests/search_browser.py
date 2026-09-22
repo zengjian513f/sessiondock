@@ -61,6 +61,8 @@ def main():
                 page.goto(base, wait_until="networkidle")
                 assert page.evaluate("SessionDockCapabilities.allows('search')") is True
                 expect(page.locator("#backend-notice")).to_be_hidden()  # no standing banner
+                expect(page.locator('#side-search-state')).to_be_hidden()
+                normal_background = page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor')
 
                 def single_row():
                     layout = page.evaluate("""() => {
@@ -115,6 +117,10 @@ def main():
                     expect(item.locator(".m")).to_contain_text(f"命中 {expected}")
 
                 search("needle")
+                expect(page.locator('#side-search-state')).to_be_visible()
+                expect(page.locator('#side-search-query')).to_have_text('needle')
+                expect(page.locator('#side-search-count')).to_have_text('2 条')
+                assert page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor') != normal_background
                 expect(page.locator("#side .item[data-uid]")).to_have_count(2)
                 expect(page.locator("#stat")).to_contain_text("结果不完整")
                 expect(page.locator("#stat")).to_contain_text("Unsupported synthetic history")
@@ -195,6 +201,31 @@ def main():
                 page.locator("#reload").click()
                 expect(page.locator("#q")).to_have_value("")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
+                expect(page.locator('#side-search-state')).to_be_hidden()
+                # The search mode remains obvious inside the list area at both
+                # widths; its heading stays put when the session list scrolls.
+                for width in (1280, 390):
+                    page.set_viewport_size({'width': width, 'height': 700})
+                    page.reload(wait_until='networkidle')
+                    search('Needle')
+                    banner = page.locator('#side-search-state')
+                    expect(banner).to_be_visible()
+                    before = banner.bounding_box()
+                    page.locator('#side').evaluate("el => { el.style.height = '60px'; el.style.flex = 'none'; el.scrollTop = el.scrollHeight; }")
+                    assert banner.bounding_box()['y'] == before['y']
+                    expect(page.locator('#side-search-exit')).to_be_in_viewport()
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+                    page.locator('#side-search-exit').click()
+                    expect(banner).to_be_hidden()
+                    expect(page.locator('#side .item[data-uid]')).to_have_count(3)
+                    assert page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor') == normal_background
+                    page.locator('#side').evaluate("el => { el.style.height = ''; el.style.flex = ''; }")
+                    search('no-such-session')
+                    expect(page.locator('#side')).to_contain_text('当前搜索无匹配会话')
+                    page.get_by_role('button', name='返回全部会话', exact=True).click()
+                    expect(banner).to_be_hidden()
+                    expect(page.locator('#q')).to_have_value('')
+                    expect(page.locator('#side .item[data-uid]')).to_have_count(3)
                 assert not errors, errors
                 assert all(url.startswith(base + "/") for url in requests)
                 assert any(status == 200 and "application/x-ndjson" in mime for _, status, mime in searches)
