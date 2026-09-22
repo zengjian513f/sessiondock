@@ -123,7 +123,7 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
                         && !py_strip(&text).is_empty()
                         && !is_injected(&text)
                     {
-                        first_user = Some(text);
+                        first_user = Some(crate::sessions::providers::claude_pasted_text(&text));
                     }
                 }
                 Err(reason) => {

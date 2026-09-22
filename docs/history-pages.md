@@ -257,6 +257,17 @@ legacy gap button no longer uses it. See
 
 ## Fixture checks
 
+Claude paste envelopes (`<pasted_content id="…">` with the same id on the
+closing tag, observed in Claude Code 2.1.278) are unwrapped by the native
+projection for user text, before history and search serialization. One framing
+newline at each end is removed; body indentation, surrounding text, unknown
+tags and incomplete/mismatched envelopes remain literal. Pasted protocol-looking
+text remains user content. Assistant/tool text and native files are unchanged.
+The list's fallback title uses the same unwrapping. This is an intentional
+display DELTA from the frozen Python adapter's verbatim paste envelope, matching
+the native terminal. `history_browser.py` covers wire output, title, live append
+and actual page interaction using synthetic records.
+
 ```sh
 cargo test -p sessiondock --test history_pages --locked
 node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs

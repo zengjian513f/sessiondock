@@ -23,6 +23,30 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-history-browser-") as temporary:
         corpus = build_corpus(Path(temporary))
+        # BUG-20260922-092750-387c1c: Claude 2.1.278 repeats the paste id
+        # on both tags. Bodies are literal, including protocol-looking text.
+        paste = lambda ident, text: f'<pasted_content id="{ident}">\n{text}\n</pasted_content id="{ident}">'
+        paste_cases = [
+            ("\n\n" + paste("a202", "Pasted needle 正文") + "\n", "Pasted needle 正文"),
+            ("before " + paste("b", "  indented\n    body  ") + " after " + paste("c", "second"),
+             "before   indented\n    body   after second"),
+            (paste("d", "<system-reminder>literal user paste</system-reminder>"),
+             "<system-reminder>literal user paste</system-reminder>"),
+            ('<pasted_content id="x">unclosed', '<pasted_content id="x">unclosed'),
+            ('<pasted_content id="x">mismatch</pasted_content id="y">',
+             '<pasted_content id="x">mismatch</pasted_content id="y">'),
+            ('discuss <unknown>literal</unknown>', 'discuss <unknown>literal</unknown>'),
+        ]
+        paste_rows = []
+        parent = None
+        for index, (raw, _) in enumerate(paste_cases):
+            uid = f"paste-{index}"
+            content = raw if index == 0 else [{"type": "text", "text": raw}]
+            paste_rows.append(claude_row("claude-pasted", "user", uid, parent, content))
+            parent = uid
+        assistant_paste = paste("assistant", "assistant literal envelope")
+        paste_rows.append(claude_row("claude-pasted", "assistant", "paste-answer", parent, assistant_paste))
+        corpus.put("claude-pasted", "claude", paste_rows, [])
         with isolated_server(corpus, args.binary) as (base, opener), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -69,6 +93,27 @@ def main():
                     expect(page.locator("#msgs")).to_contain_text(text)
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_be_enabled()
+
+                select("claude-pasted", "Pasted needle 正文")
+                # Assert the wire result too: a renderer-only fix is insufficient.
+                wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))
+                users = [m["text"].strip() for m in wire["messages"] if m.get("role") == "user"]
+                assert users == [expected for _, expected in paste_cases], users
+                assert wire["meta"]["title"] == "Pasted needle 正文"
+                expect(page.locator("#msgs")).not_to_contain_text('<pasted_content id="a202">')
+                expect(page.locator("#msgs")).to_contain_text("literal user paste")
+                expect(page.locator("#msgs")).to_contain_text(assistant_paste)
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                with corpus.paths["claude-pasted"].open("ab") as stream:
+                    stream.write(encoded(claude_row("claude-pasted", "user", "paste-live", "paste-answer", paste("live", "Live pasted 正文"))))
+                expect(page.locator("#msgs")).to_contain_text("Live pasted 正文", timeout=10000)
+                expect(page.locator("#msgs")).not_to_contain_text('<pasted_content id="live">')
+                matches = get_json(opener, base, "/api/search?q=Pasted%20needle")
+                assert any("Pasted needle" in hit.get("snippet", "") for hit in matches["results"]), matches
+                assert not get_json(opener, base, "/api/search?q=a202")["results"]
+                listed = get_json(opener, base, "/api/sessions")["sessions"]
+                assert next(row for row in listed if row["uid"] == corpus.uid("claude-pasted"))["title"] == "Pasted needle 正文"
+                print("PASS Claude paste envelopes: wire, list title, search, browser, live append, literal bodies and malformed tags")
 
                 select("claude-branch", "Claude selected answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Claude discarded completed")
