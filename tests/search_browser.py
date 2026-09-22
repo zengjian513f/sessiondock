@@ -211,6 +211,7 @@ def main():
                     banner = page.locator('#side-search-state')
                     expect(banner).to_be_visible()
                     before = banner.bounding_box()
+                    assert before['height'] <= 32, before
                     page.locator('#side').evaluate("el => { el.style.height = '60px'; el.style.flex = 'none'; el.scrollTop = el.scrollHeight; }")
                     assert banner.bounding_box()['y'] == before['y']
                     expect(page.locator('#side-search-exit')).to_be_in_viewport()
@@ -220,6 +221,11 @@ def main():
                     expect(page.locator('#side .item[data-uid]')).to_have_count(3)
                     assert page.locator('#side').evaluate('el => getComputedStyle(el).backgroundColor') == normal_background
                     page.locator('#side').evaluate("el => { el.style.height = ''; el.style.flex = ''; }")
+                    page.locator('#q').fill('很长的搜索条件' * 20)
+                    expect(banner).to_be_visible()
+                    assert banner.bounding_box()['height'] <= 32
+                    expect(page.locator('#side-search-exit')).to_be_in_viewport()
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     search('no-such-session')
                     expect(page.locator('#side')).to_contain_text('当前搜索无匹配会话')
                     page.get_by_role('button', name='返回全部会话', exact=True).click()

@@ -747,18 +747,18 @@ main { display: flex; flex: 1; min-height: 0; }
   border-left: 3px solid #d99a32;
 }
 #side-search-state {
-  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-  padding: 10px 11px; border-left: 3px solid #d99a32;
+  flex: none; display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-left: 3px solid #d99a32;
   border-bottom: 1px solid color-mix(in srgb, #d99a32 40%, var(--border));
   background: color-mix(in srgb, #d99a32 15%, var(--panel));
   font-size: 12px;
 }
 #side-search-state[hidden] { display: none; }
-.side-search-summary { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
-.side-search-summary strong { white-space: nowrap; }
-#side-search-query { overflow-wrap: anywhere; max-height: 3em; overflow: auto; }
-#side-search-count { color: var(--muted); white-space: nowrap; }
-#side-search-exit { flex: none; }
+.side-search-summary { flex: 1; min-width: 0; display: flex; gap: 6px; align-items: baseline; }
+.side-search-summary strong { flex: none; white-space: nowrap; }
+#side-search-query { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#side-search-count { flex: none; color: var(--muted); white-space: nowrap; }
+#side-search-exit { flex: none; padding: 2px 6px; font-size: 12px; line-height: 16px; white-space: nowrap; }
 .search-empty button { display: block; margin: 12px auto 0; }
 
 #drag {
