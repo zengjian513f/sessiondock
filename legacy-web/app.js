@@ -3615,6 +3615,7 @@ const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') 
  *  每次都重建整棵子树的话, 看起来就是列表一直在闪。
  *  只有真的多了/少了会话(或分组变了)才回去整体重渲染。 */
 function patchSide(list) {
+  paintSearchMode(list);
   if (sidebarTextSelectionProtected()) {
     sidebarRenderDeferred = true;
     return true;
@@ -3737,6 +3738,23 @@ function paintSidebarSelection(uid, agent = null) {
   return true;
 }
 
+function exitSidebarSearch() {
+  cancelSearch(true);
+  showSessionCount();
+  renderSide();
+}
+
+$('#side-search-exit').onclick = exitSidebarSearch;
+
+function paintSearchMode(list) {
+  const searching = !!S.term;
+  $('#side').classList.toggle('search-mode', searching);
+  $('#side-search-state').hidden = !searching;
+  $('#side-search-label').textContent = S.results !== null ? '搜索结果' : '筛选结果';
+  $('#side-search-query').textContent = S.term;
+  $('#side-search-count').textContent = `${list.length} 条`;
+}
+
 function renderSide() {
   if (sidebarTextSelectionProtected()) {
     sidebarRenderDeferred = true;
@@ -3748,9 +3766,20 @@ function renderSide() {
   const top = side.scrollTop;
   side.innerHTML = '';
   const list = visible();
+  paintSearchMode(list);
   const picked = syncPickedSessions();
   renderPickBar();
   if (!list.length) {
+    if (S.term) {
+      const empty = el('div', 'empty search-empty', '当前搜索无匹配会话');
+      const back = el('button', 'btn', '返回全部会话');
+      back.type = 'button';
+      back.onclick = exitSidebarSearch;
+      empty.appendChild(back);
+      side.appendChild(empty);
+      side.scrollTop = top;
+      return;
+    }
     const text = S.activeOnly
       ? (S.results ? '没有活动的匹配会话' : '没有活动会话')
       : (S.results ? '没有匹配的会话' : '没有会话');

@@ -742,6 +742,25 @@ main { display: flex; flex: 1; min-height: 0; }
   overflow-anchor: none;
 }
 
+#side.search-mode {
+  background: color-mix(in srgb, #d99a32 8%, var(--panel));
+  border-left: 3px solid #d99a32;
+}
+#side-search-state {
+  flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 10px 11px; border-left: 3px solid #d99a32;
+  border-bottom: 1px solid color-mix(in srgb, #d99a32 40%, var(--border));
+  background: color-mix(in srgb, #d99a32 15%, var(--panel));
+  font-size: 12px;
+}
+#side-search-state[hidden] { display: none; }
+.side-search-summary { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.side-search-summary strong { white-space: nowrap; }
+#side-search-query { overflow-wrap: anywhere; max-height: 3em; overflow: auto; }
+#side-search-count { color: var(--muted); white-space: nowrap; }
+#side-search-exit { flex: none; }
+.search-empty button { display: block; margin: 12px auto 0; }
+
 #drag {
   flex: none; width: 5px; margin-left: -3px; margin-right: -2px;
   cursor: col-resize; z-index: 5; background: transparent;
