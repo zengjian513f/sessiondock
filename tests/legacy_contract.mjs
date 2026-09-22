@@ -130,12 +130,15 @@ test('Rust terminal lookup requires a unique full UID and instance, never a name
 test('terminal ownership force retry retains the exact captured binding', async () => {
   const calls = [];
   const prompts = [];
+  const ConsoleUI = {errors: new Map([['codex:uid', '上次失败']]), busy: new Set()};
   const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
+    ConsoleUI, renderTakeoverBtn: () => {},
     confirm: message => { prompts.push(message); return true; },
     post: async (_path, body) => {calls.push(body); return calls.length === 1 ? {conflict: true, owner: {ip: '10.66.66.1', label: ''}} : {token: 'lease'};}});
   loadFunction(context, 'describeTermTaker', read('term.js'));
   const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
   assert.equal(await claim('name', 'codex:uid', {uid: 'codex:uid', instance_id: 'captured-instance'}), 'lease');
+  assert.equal(ConsoleUI.errors.has('codex:uid'), false, 'a granted lease clears the remembered failure');
   for (const body of calls) {
     assert.equal(body.uid, 'codex:uid');
     assert.equal(body.instance_id, 'captured-instance');
@@ -149,6 +152,7 @@ test('terminal ownership force retry retains the exact captured binding', async 
 test('composer takeover claims the captured terminal directly without a second prompt', async () => {
   const calls = [];
   const context = contextWithCapabilities(disabled, {T: {}, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
+    ConsoleUI: {errors: new Map(), busy: new Set()}, renderTakeoverBtn: () => {},
     confirm: () => assert.fail('the explicit takeover button already authorizes the claim'),
     post: async (_path, body) => {calls.push(body);return {token: 'new-lease'};}});
   const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
@@ -178,6 +182,7 @@ test('terminal claim POST deadline covers headers and body without retrying inpu
     let requests = 0, signal;
     const context = vm.createContext({BUILD_ID: 'fixture', TERM_PAGE_ID: 'fixture-page',
       AbortController, performance, appUrl: path => path,
+      navigator: {onLine: true}, document: {visibilityState: 'visible'},
       setTimeout: (fn, ms) => { timers.set(1, {fn, ms}); return 1; },
       clearTimeout: id => timers.delete(id),
       browserAuditEvent: (...args) => audits.push(args),
@@ -204,6 +209,8 @@ test('terminal claim POST deadline covers headers and body without retrying inpu
       timers.get(1).fn();
       await rejected;
       assert.equal(audits.at(-1)[0], 'http.request.failed');
+      assert.equal(audits.at(-1)[1].phase, phase, 'the failed phase is audited');
+      assert.equal(audits.at(-1)[1].online, true);
     } else {
       assert.equal((await job).token, 'lease');
       assert.equal(signal === undefined, phase === 'input');
@@ -376,7 +383,7 @@ test('binding appearance does not upgrade the remembered pending target', () => 
 test('opening the native console releases a pending console of the same host instead of refusing', async () => {
   const calls=[];
   const T={uid:'codex:native',views:new Map([['pane',{bindingUid:'tmux:pane'}]])};
-  const context=contextWithCapabilities(disabled,{T,
+  const context=contextWithCapabilities(disabled,{T,S:{sel:null,agent:null},
     rememberTermOpen:(name,open)=>calls.push(['remember',name,open]),
     disposeTermView:name=>{calls.push(['dispose',name]); throw new Error('stop after release');}});
   loadFunction(context,'termBindingServes',read('term.js'));
@@ -940,10 +947,12 @@ test('the installable shell is SessionDock', () => {
 });
 
 test('all pages load the optional contract before their consumers', () => {
-  for (const page of ['index.html', 'file.html', 'files.html']) {
+  for (const [page, consumer] of [['index.html', 'typography.js'], ['file.html', 'file.js'], ['files.html', 'file.js']]) {
     const html = read(page);
     assert.equal(html.match(/src="capabilities\.js/g).length, 1);
-    assert.ok(html.indexOf('src="capabilities.js') < html.indexOf('src="typography.js'));
+    const consumerAt = html.indexOf(`src="${consumer}`);
+    assert.ok(consumerAt > 0, `${page} loads ${consumer}`);
+    assert.ok(html.indexOf('src="capabilities.js') < consumerAt, `${page}: capabilities.js before ${consumer}`);
   }
   assert.match(read('nodes.js'), /const STORAGE_PREFIX = SessionDockCapabilities\.namespace/);
   assert.match(read('index.html'), /id="backend-notice" hidden role="status"/);
@@ -964,7 +973,13 @@ test('file entry delegates to FileDock and console availability remains unchange
   assert.ok(read('nodes.js').includes(exitGuard));
   const pendingGuard = "  if (SessionDockCapabilities.config.backend === 'rust') {\n    const pending = T.pending?.find(row => row.record_id && pendingUid(row.name) === uid);\n    if (pending?.stale) {\n      const phase = typeof pendingPhase === 'function' ? pendingPhase(pending) : '';\n      if (phase !== 'exited' && phase !== 'failed')\n        return pending.unavailable_reason || '创建实例尚未就绪，不能连接控制台。';\n    }\n  }\n";
   assert.ok(read('nodes.js').includes(pendingGuard));
-  const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '');
+  // A repaint while the pointer rests on the button shows the current reason,
+  // including the last failed claim, instead of the reason computed before it.
+  const hoverToast = "  if (button.matches(':hover') || document.activeElement === button)\n    showConsoleToast(consoleUnavailableReason(uid, agent));\n";
+  const baselineHoverToast = "  if (button.matches(':hover') || document.activeElement === button) showConsoleToast(reason);\n";
+  assert.ok(read('nodes.js').includes(hoverToast));
+  const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '')
+    .replace(hoverToast, baselineHoverToast);
   // Availability stays compatible; the intentionally changed click handling is
   // exercised by hub_console_availability_browser.py and recorded in reference/README.md.
   const end = 'function bindConsoleButton';
@@ -1727,6 +1742,7 @@ test('post() does not surface HTML as a JSON parse error', async () => {
   const stale = [];
   const context = vm.createContext({
     BUILD_ID: 'old', TERM_PAGE_ID: 'page', staleBuildShown: false,
+    navigator: {onLine: true}, document: {visibilityState: 'visible'},
     appUrl: url => url, browserAuditEvent() {}, markStaleBuild: () => stale.push(1),
     performance: {now: () => 0}, crypto: {randomUUID: () => 'id'},
     fetch: async () => ({
