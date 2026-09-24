@@ -618,10 +618,9 @@ async fn input_requires_the_exact_current_lease_and_stops_after_revoke_or_exit()
 
 /// The conversation view's Esc, question cards and Grok text arrive with an
 /// empty token and the pinned identity (`term.js termRowBinding`): written
-/// while nobody holds the lease, the documented ownership conflict while any
-/// page does, never a name-only write.
+/// independently of browser PTY ownership, never a name-only write.
 #[tokio::test]
-async fn a_page_without_a_lease_writes_under_the_ordinary_claimant_rule() {
+async fn a_page_without_a_lease_writes_without_revoking_the_pty_holder() {
     let Some(binary) = ptyhost_binary() else {
         eprintln!("SKIP: build the local ptyhost target first (cargo build -p ptyhost)");
         return;
@@ -664,17 +663,11 @@ async fn a_page_without_a_lease_writes_under_the_ordinary_claimant_rule() {
     let mut ws = h.connect("page", &token, instance).await;
     read_until(&mut ws, "RS_PING_OK").await;
 
-    // While a page holds the lease, another page without one is refused with
-    // the owner, exactly as a reliable send would be; the holder keeps typing.
+    // Conversation input leaves the existing PTY lease usable.
     let (status, body) = h
         .send("other", "", instance, json!({"keys":["enter"]}))
         .await;
-    assert_eq!(status, StatusCode::CONFLICT, "{body}");
-    assert_eq!(body["code"], "terminal_ownership");
-    assert!(
-        body["error"].as_str().unwrap().contains("其他页面持有"),
-        "{body}"
-    );
+    ok_receipt(status, &body, 1);
     let (status, body) = h
         .send("page", &token, instance, json!({"data":"ping"}))
         .await;
@@ -685,22 +678,10 @@ async fn a_page_without_a_lease_writes_under_the_ordinary_claimant_rule() {
     ok_receipt(status, &body, 1);
     read_until(&mut ws, "RS_PING_OK").await;
 
-    // Closing the console releases the lease; the lease-less path writes again
-    // and the shell's own quit ends the host.
+    // Closing the console does not affect conversation input.
     drop(ws);
-    timeout(Duration::from_secs(10), async {
-        loop {
-            let (status, body) = h.send("page", "", instance, json!({"data":"quit"})).await;
-            if status == StatusCode::OK {
-                ok_receipt(status, &body, 4);
-                break;
-            }
-            assert_eq!(body["code"], "terminal_ownership", "{body}");
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("the bound lease must be released after the socket closes");
+    let (status, body) = h.send("page", "", instance, json!({"data":"quit"})).await;
+    ok_receipt(status, &body, 4);
     let (status, body) = h
         .send("page", "", instance, json!({"keys":["enter"]}))
         .await;

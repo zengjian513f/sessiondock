@@ -115,6 +115,14 @@ def main():
                 expect(page.locator("#composer")).to_be_visible()
                 expect(page.locator("#termpane")).to_be_hidden()
 
+                holder_context = browser.new_context(service_workers="block")
+                holder = holder_context.new_page()
+                holder.goto(base, wait_until="networkidle")
+                holder.locator(f'#side .item[data-uid="{uid}"]').click()
+                holder.locator('#a-term').click()
+                holder.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                holder_token = holder.evaluate('name => T.views.get(name)?.inputLease?.token', 'synthetic-grok-host')
+
                 # ---- The phone's composer, console closed: paste + Enter over
                 # raw input, no lease, no claim, no reliable-send call.
                 page.locator("#cinput").fill("ping")
@@ -132,6 +140,10 @@ def main():
                     assert "record_id" not in body and "launch_id" not in body and "text" not in body, body
                 assert not claims and not reliable and not dialogs, (claims, reliable, dialogs)
                 expect(page.locator("#cinput")).to_have_value("")
+
+                assert holder.evaluate('name => T.views.get(name)?.inputLease?.token', 'synthetic-grok-host') == holder_token
+                assert holder.evaluate('T.ws?.readyState === WebSocket.OPEN')
+                holder_context.close()
 
                 # ---- Opening the console afterwards shows the shell answered.
                 page.locator("#a-term").click()

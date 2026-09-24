@@ -12,9 +12,8 @@
 //!
 //! `input` adds raw HTTP text/key writes under the same lease and per-name
 //! gate as the WebSocket path, bounded to the host's 1 MiB payload ceiling.
-//! A page holding no lease writes through the pinned instance only while no
-//! lease exists at all (`TerminalService::send_input_unleased`), the same
-//! ordinary-claimant rule the delivery executor follows. A success is the
+//! A page holding no lease writes through the verified pinned instance
+//! independently of browser ownership (`TerminalService::send_input_unleased`). A success is the
 //! host's write acknowledgement only; it never claims the CLI consumed the
 //! bytes and enables no send ledger or composer.
 

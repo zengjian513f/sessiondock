@@ -279,6 +279,13 @@ def main():
                     assert users==['first busy input','second busy input'],users
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
                     native=page.evaluate('S.sel')
+                    holder_context=browser.new_context(service_workers='block')
+                    holder=watch(holder_context)
+                    holder.locator(f'#side .item[data-uid="{native}"]').click()
+                    holder.locator('#a-term').click()
+                    holder.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+                    held_token=holder.evaluate('name => T.views.get(name)?.inputLease?.token',receipt['name'])
+                    assert held_token
                     # A stale hook card must not veto a currently writable PTY.
                     prompt_dir=root/'state/claude-prompts'
                     prompt_dir.mkdir(exist_ok=True)
@@ -302,6 +309,9 @@ def main():
                         'text':'server-owned first task','draft_revision':row['revision'],
                         'attachments':[],'quotes':[],'_build':build})
                     assert external.status==200,external.text()
+                    assert holder.evaluate('name => T.views.get(name)?.inputLease?.token',receipt['name']) == held_token
+                    assert holder.evaluate('T.ws?.readyState === WebSocket.OPEN')
+                    holder_context.close()
                     stale_prompt.unlink()
                     expect(page.locator('#cinput')).to_have_value('',timeout=10000)
                     # Recreate the retained report metadata from a failed initial

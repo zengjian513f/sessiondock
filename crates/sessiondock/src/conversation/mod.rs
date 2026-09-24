@@ -266,7 +266,7 @@ impl Conversations {
     async fn lease(
         &self,
         identity: &Identity,
-        page: Option<&PageLease>,
+        _page: Option<&PageLease>,
     ) -> Result<LeaseHandle, Failure> {
         if identity.uid.starts_with("tmux:") {
             let record = identity
@@ -278,16 +278,10 @@ impl Conversations {
                 .target(record.record_id().into())
                 .await
                 .map_err(|_| Failure::new(409, "terminal_unlinked", "会话未运行，输入已保留"))?;
-            self.driver
-                .acquire_launch(target, page)
-                .await
-                .map_err(driver_error)
+            Ok(self.driver.conversation_launch(target))
         } else {
             let target = self.resolver.resolve(&identity.uid).await?;
-            self.driver
-                .acquire(&target, page)
-                .await
-                .map_err(driver_error)
+            Ok(self.driver.conversation_native(&target))
         }
     }
     async fn ensure_sendable(

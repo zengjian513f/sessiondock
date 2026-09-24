@@ -24,19 +24,16 @@ console closed or open on another device — sends an **empty `token`**
 with the pinned identity. The route
 then resolves the instance exactly as a claim would (runtime catalog and
 lifecycle authorization for native targets, the lifecycle receipt for launch
-targets) and `TerminalService::send_input_unleased` applies the delivery
-executor's ordinary-claimant rule under the per-name gate: any current lease
-(another page's console or reservation, or a server send in flight) is
-409 `terminal_ownership` naming the owner IP, otherwise the write goes through
-the pinned instance like a leased input. Nothing is reserved or minted, so no
-token can linger; without an identity there is no name-only write
+targets). `TerminalService::send_input_unleased` rechecks that pinned instance
+and serializes the write under the per-name gate, independently of any browser
+PTY lease. Nothing is reserved, replaced or minted; the existing terminal stays
+connected. Without an identity there is no name-only write
 (409 `terminal_binding_unavailable`).
 
-The conversation view shows an explicit **接管** action beside a
-`terminal_ownership` status. Clicking it force-claims that same pinned terminal
-instance through the ordinary console claim route, opens the PTY, then checks
-composer readiness again. The click never replays a refused SEND or clears its
-draft.
+The conversation view has no takeover action. CHECK and SEND use the same
+instance-guarded path without a browser lease. Only explicitly opening PTY mode
+asks to replace an existing holder. CLI readiness checks and draft preservation
+still apply.
 
 ## `POST /api/term/send`
 
@@ -103,16 +100,13 @@ the list.
 `cargo test -p sessiondock --test terminal_input --locked` (temporary
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
 refusal without lease, after revoke and after exit, size limits and input bursts,
-the lease-less page written only while nobody holds the lease and refused with
-the owner otherwise; skips when ptyhost is not built) and
+the lease-less page written through its pinned instance even with a PTY holder; skips when ptyhost is not built) and
 `python3 tests/terminal_input_browser.py` (desktop HTTP `data` while a scroll
 is pending, 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
 claim/input after exit, composer hidden, fixture bytes unchanged);
-`python3 tests/send_browser.py` (the composer's Esc from a second page refused
-with the owner while the first page's console holds the lease, and written
-from a 390 px page with no console open); `python3 tests/grok_raw_send_browser.py`
+`python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease); `python3 tests/grok_raw_send_browser.py`
 (Grok composer text from a 390 px page without a console: paste + Enter with
-an empty token and the pane identity, no claim, no reliable-send call, the
+an empty token and the pane identity while another page holds the console, no claim, no reliable-send call, the
 shell's reply visible once the console opens).
 Out of scope: reliable send, Escape's activity side effects, `text`+`enter`
 submit semantics, tmux copy-mode.
