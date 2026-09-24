@@ -352,8 +352,10 @@ async function fetchTermList() {
   let data = null;
   let failure = '';
   let transient = false;   // Rust：网络错误 / 5xx / 429 只影响这一轮，不清空控制台状态
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(appUrl('api/term/list'));
+    const response = await fetch(appUrl('api/term/list'), {signal:controller.signal});
     transient = response.status === 429 || response.status >= 500;
     data = await response.json();
     if (!response.ok || data.error) throw new Error(
@@ -362,8 +364,8 @@ async function fetchTermList() {
     transient = false;
   } catch (error) {
     failure = error.message || String(error);
-    if (error?.name === 'TypeError') transient = true;
-  }
+    if (error?.name === 'TypeError' || controller.signal.aborted) transient = true;
+  } finally { clearTimeout(timer); }
   // 只允许最后发出的请求改状态；否则慢响应会覆盖更新的 tmux 列表。
   if (requestSeq !== termListRequestSeq) return;
   // 请求在终端打开/切换之前发出时，它的“没有该视图”结论已经过期。丢弃
@@ -2987,7 +2989,7 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false,
       return await post('api/term/claim', {name, page: TERM_PAGE_ID,
         ...(force ? {force: true} : {}), ...binding}, {timeoutMs: TERM_CLAIM_TIMEOUT_MS});
     } catch (error) {
-      if (error.name !== 'TimeoutError') throw error;
+      if (auto || error.name !== 'TimeoutError') throw error;
       return {timeout: true, error: '控制台控制权请求超时；服务端可能已取得控制权。请重新打开控制台核对状态。'};
     }
   };
@@ -3317,7 +3319,15 @@ function attachRecordingReplay(view, row, uid) {
 function attachTerm(name, auto = false, directClaim = false) {
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
-  const job = attachOwnedTerm(view, true, auto, directClaim).finally(() => {
+  const job = attachOwnedTerm(view, true, auto, directClaim).catch(error => {
+    if (!auto) throw error;
+    if (T.views.get(name) !== view || view.revoked || view.retired || view.ended) return false;
+    ConsoleUI.errors.set(T.name === name ? T.uid : view.bindingUid,
+      '控制台连接暂时失败，正在自动重试：' + (error.message || error));
+    renderTakeoverBtn();
+    scheduleTermReconnect(view);
+    return false;
+  }).finally(() => {
     if (view.attachPromise === job) view.attachPromise = null;
   });
   view.attachPromise = job;
@@ -3625,23 +3635,23 @@ function dropTermSocket(view = currentTermViewObject()) {
 
 /** 网络短断后自动恢复。tmux 才是会话本体，WebSocket 只是可随时重建的视图。 */
 function scheduleTermReconnect(view = currentTermViewObject()) {
-  if (!view || view.revoked || document.hidden || !navigator.onLine || view.reconnectTimer) return;
+  if (!view || view.revoked || view.retired || view.ended || document.hidden || !navigator.onLine || view.reconnectTimer) return;
   const stillAlive = [...(T.list || []), ...(T.pending || [])].some(x => x.name === view.name);
   if (!stillAlive) return;
   const delay = view.reconnectDelay;
   view.reconnectTimer = setTimeout(() => {
     view.reconnectTimer = null;
-    if (!T.views.has(view.name) || document.hidden) return;
+    if (T.views.get(view.name) !== view || view.revoked || view.retired || view.ended || document.hidden || !navigator.onLine) return;
     view.reconnectDelay = Math.min(8000, Math.round(view.reconnectDelay * 1.8));
-    attachTerm(view.name);
+    attachTerm(view.name, true);
   }, delay);
 }
 
 /** 手机锁屏会冻结一个看似仍 OPEN、实际已经失效的 socket；恢复时必须强制换新。 */
 function reconnectTerm(view = currentTermViewObject()) {
-  if (!view || document.hidden || !navigator.onLine) return;
+  if (!view || view.revoked || view.retired || view.ended || document.hidden || !navigator.onLine) return;
   if (view === currentTermViewObject() && !termPaneRenderable(view)) return;
-  attachTerm(view.name);
+  attachTerm(view.name, true);
   if (T.name === view.name) setTimeout(() => { layoutTermPane(); fitTerm(); }, 20);
 }
 
@@ -3773,11 +3783,15 @@ async function consumeComposerSubmission(uid,text,attachments,quotes) {
   await persistComposerDraft(owner);refreshComposerDraft(owner);
 }
 async function readServerComposerDraft(uid) {
-  const response = await fetch(appUrl('api/session/conversation?' + new URLSearchParams({uid})),
-    {cache:'no-store'});
-  const data = await response.json();
-  if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-  return data.draft;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(appUrl('api/session/conversation?' + new URLSearchParams({uid})),
+      {cache:'no-store', signal:controller.signal});
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    return data.draft;
+  } finally { clearTimeout(timer); }
 }
 // Read old browser copies once; never write new input into browser storage.
 // Migration copies legacy File bytes to the server before removing verified originals.
@@ -3853,9 +3867,13 @@ async function importLegacyComposer(uid) {
   }
   return {record:converted,db};
 }
-function hydrateComposerDraft(uid) {
+function hydrateComposerDraft(uid, retry = false) {
   uid = composerDraftOwner(uid);
-  if (composerHydrations.has(uid)) return composerHydrations.get(uid);
+  if (composerHydrations.has(uid)) {
+    if (!retry || !composerDrafts.get(uid)?.loadFailed || composerDrafts.get(uid)?.loading)
+      return composerHydrations.get(uid);
+    composerHydrations.delete(uid);
+  }
   if (!conversationSendEnabled()) return Promise.resolve();
   const task = (async () => {
     const draft = composerDrafts.get(uid);
@@ -3893,6 +3911,7 @@ function hydrateComposerDraft(uid) {
         mergeEarlyComposerEdit(draft, restoreComposerDraftRecord(row.value), uid);
       }
       draft.storageError = '';
+      draft.loadFailed = false;
     } catch (error) {
       draft.storageError = '服务端草稿读取失败，当前输入保留：' + (error.message || error);
       draft.loadFailed = true;
@@ -3993,17 +4012,18 @@ function persistComposerDraft(uid = composerUid) {
   const task=(async () => {
     await new Promise(resolve=>setTimeout(resolve,150));
     try {
-      await hydrateComposerDraft(uid);
-      if (!conversationSendEnabled() || draft.loadFailed) throw new Error(draft.storageError || '草稿保存未启用');
+      await hydrateComposerDraft(uid, true);
+      if (draft.loadFailed) return false; // Keep the read error; never wrap it again.
+      if (!conversationSendEnabled()) throw new Error('草稿保存未启用');
       while (composerPendingSaves.has(draft)) {
         const pending=composerPendingSaves.get(draft);composerPendingSaves.delete(draft);
-        let data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+        let data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
         for (let attempt=0;data.code==='draft_revision' && attempt<2;attempt++) {
           // Another page saved first. This page is the one still editing, so
           // its input wins: rebase onto the server revision and save again.
           const row=await readServerComposerDraft(pending.uid);
           if (row.revision>draft.revision) draft.revision=row.revision;
-          data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value});
+          data=await post('api/session/conversation',{uid:pending.uid,revision:draft.revision,value:pending.value}, {timeoutMs:12000});
         }
         if (data.reload) throw new Error(data.error || '页面已更新，请重新加载后再提交');
         if (data.error) throw new Error(data.error);
@@ -4027,6 +4047,24 @@ function persistComposerDraft(uid = composerUid) {
   composerDraftWrites=Promise.all([...composerSaveQueues.values()]);
   return task;
 }
+// Retry storage, never SEND: keep unsaved text/Files in memory until the
+// transport recovers, including a report dialog whose first read failed.
+let composerRecoveryBusy = false;
+async function recoverComposerDrafts() {
+  if (composerRecoveryBusy || document.hidden || !navigator.onLine || composerSending) return;
+  composerRecoveryBusy = true;
+  try {
+    for (const [uid, draft] of composerDrafts) {
+      if (!draft.storageError || draft.loading || composerSaving.has(draft)
+          || draft.handedOffSession || draft.requestId) continue;
+      if (draft.loadFailed) await hydrateComposerDraft(uid, true);
+      if (!draft.loadFailed && draft.editVersion > draft.savedVersion) await persistComposerDraft(uid);
+    }
+  } finally { composerRecoveryBusy = false; }
+}
+setInterval(recoverComposerDrafts, 3000);
+addEventListener('online', recoverComposerDrafts);
+
 const composerUnloadWarning = event => {event.preventDefault(); event.returnValue = '';};
 let composerUnloadProtected = false;
 function syncComposerUnloadProtection() {

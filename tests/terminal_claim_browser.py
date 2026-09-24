@@ -106,9 +106,40 @@ def scenario(root, browser, renderer, phase):
             assert len(claims) == (2 if phase == 'timeout' else 1)
             assert all(not claim.get('force') for claim in claims)
             assert not page.evaluate('uid => ConsoleUI.errors.has(uid)', selected_uid)
+            # A transport disconnect followed by repeated failed lease requests
+            # must keep retrying without a click, reload, dialog or forced claim.
+            retries = []
+            def fail_reclaims(route):
+                retries.append(route.request.post_data_json)
+                if len(retries) <= 2:
+                    route.abort('failed')
+                else:
+                    route.continue_()
+            page.route('**/api/term/claim', fail_reclaims)
+            page.evaluate('T.ws.close()')
+            page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=15000)
+            assert len(retries) >= 3, retries
+            assert all(not item.get('force') for item in retries)
+            keyboard.press_sequentially('ping')
+            keyboard.press('Enter')
+            page.wait_for_function('(' + XTERM_TEXT + ")().includes('RS_PING_OK')")
+            page.unroute('**/api/term/claim', fail_reclaims)
+
             assert process.poll() is None and corpus.paths[sid].read_bytes() == native
+            if renderer == 'xterm':
+                # A new owner is an authority decision, not a network failure.
+                conflicts = []
+                def held_elsewhere(route):
+                    conflicts.append(route.request.post_data_json)
+                    route.fulfill(status=409, content_type='application/json', body=json.dumps({
+                        'conflict': True, 'owner': {'label': 'other page'}, 'same_address': True}))
+                page.route('**/api/term/claim', held_elsewhere)
+                page.evaluate('T.ws.close()')
+                expect(page.locator('#termpane')).to_be_hidden(timeout=10000)
+                page.wait_for_timeout(1500)
+                assert len(conflicts) == 1 and not conflicts[0].get('force'), conflicts
             assert not errors and not dialogs, (errors, dialogs)
-            print(f'PASS terminal claim {renderer}/{phase}: real click, delayed transport, shell input/output, no automatic force/retry', flush=True)
+            print(f'PASS terminal claim {renderer}/{phase}: real click, delayed transport, shell input/output, network recovery, no automatic force', flush=True)
         finally:
             context.close()
 

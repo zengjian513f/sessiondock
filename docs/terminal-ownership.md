@@ -127,7 +127,10 @@ Control ownership HTTP requests time out after 20 seconds, including reading
 the response body. This covers the Hub's 5-second connect and 10-second upstream
 read waits plus browser/proxy transit; the former 5-second page deadline could
 cancel a request before the node received it. A timeout leaves ownership uncertain:
-the page closes the failed open attempt without automatically retrying or forcing a takeover.
+an explicit open closes the failed attempt without automatically retrying or forcing a takeover.
+An already-open console recovering from a transport interruption retries failed
+claims with backoff, including timeouts, using the same page and instance binding.
+Recovery never forces ownership or asks for takeover; a conflicting owner stops it.
 Repeated clicks while opening show a nonblocking waiting hint so response and
 timeout callbacks can continue. Automatic restores never display a timeout alert.
 Retryable claim errors belong to the displayed session, even when a Codex fork

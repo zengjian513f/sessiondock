@@ -86,11 +86,13 @@ def main():
                                      file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _):
                     errors, sends = [], []
 
-                    def open_page(context):
+                    def open_page(context, draft_route=None):
                         context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
                         page = context.new_page()
                         page.on('pageerror', lambda error: errors.append(str(error)))
                         page.on('dialog', lambda dialog: dialog.accept())
+                        if draft_route:
+                            page.route('**/api/session/conversation?*', draft_route)
                         page.goto(base, wait_until='networkidle')
                         return page
 
@@ -187,6 +189,37 @@ def main():
                     b.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
                     a.wait_for_function('composerDraft().attachments.length === 0', timeout=6000)
 
+                    # Failed writes recover without another keystroke or SEND.
+                    def fail_draft(route):
+                        route.abort('failed')
+                    a.route('**/api/session/conversation', fail_draft)
+                    a.fill('#cinput', 'offline draft')
+                    a.wait_for_function('!!composerDraft().storageError')
+                    expect(a.locator('#cinput')).to_have_value('offline draft')
+                    a.unroute('**/api/session/conversation', fail_draft)
+                    a.wait_for_function('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
+                    wait_server_text(context, base, uid, 'offline draft')
+                    assert len(sends) == 1, sends
+
+                    # A new page fails its first read, keeps edits, then merges
+                    # the existing server text once networking returns.
+                    c = open_page(context, fail_draft)
+                    open_session(c, a.evaluate("S.sel"))
+                    c.wait_for_function('composerDraft().loadFailed === true')
+                    c.fill('#cinput', 'early offline edit')
+                    c.evaluate('async () => await composerDraftWrites')
+                    c.type('#cinput', ' retained')
+                    c.evaluate('async () => await composerDraftWrites')
+                    error_text = c.locator('.draft-save-error').inner_text()
+                    assert error_text.count('服务端草稿读取失败') == 1, error_text
+                    assert '服务端草稿保存失败' not in error_text, error_text
+                    c.unroute('**/api/session/conversation?*', fail_draft)
+                    c.wait_for_function('!composerDraft().loadFailed && !composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
+                    expect(c.locator('#cinput')).to_have_value('offline draft\nearly offline edit retained')
+                    wait_server_text(context, base, uid, 'offline draft\nearly offline edit retained')
+                    assert len(sends) == 1, sends
+                    c.close()
+
                     # 5. A console (SSH/shell) command sent from the composer clears
                     #    the server draft; the exited console leaves no
                     #    "retained draft" row behind.
@@ -218,7 +251,7 @@ def main():
                     context.close()
             finally:
                 browser.close()
-    print('PASS draft_sync_browser: second page reads without error, 409 rebase, idle follow both ways, cross-page staged attachment send, SEND empties the other page, staged image preview on a page without the File, console composer send clears the server draft')
+    print('PASS draft_sync_browser: second page reads without error, 409 rebase, idle follow both ways, cross-page staged attachment send, SEND empties the other page, staged image preview on a page without the File, console composer send clears the server draft, failed writes and initial reads recover without SEND')
 
 
 if __name__ == '__main__':
