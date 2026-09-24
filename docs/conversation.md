@@ -12,7 +12,9 @@ CLI 忙碌时直接 SEND，由 CLI 管理后续消息。选择题、trust、更�
 
 旧客户端记录按可验证 UID 导入；旧 File 原件先复制到私有服务端，再删除已验证的浏览器副本。成功消息归档不恢复到草稿，多个旧副本不合并。无法确认身份的数据及未迁移 File 保留原件。旧服务端账本保留，停止后台派发，新 outbox 投影返回空列表及只读 legacy_delivery。
 
-SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting / blocked / unknown` 及原因，前端直接用于按钮和提示。原生历史/hook 问题保留问答展示，不再独立否决 SEND；身份、所有权、草稿和去重检查仍独立。识别、短暂等待和兼容边界见[对话输入就绪](composer-input.md)。
+SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting / blocked / unknown` 及原因，前端直接用于按钮和提示。原生历史/hook 问题保留问答展示，不再独立否决 SEND；身份、草稿和去重检查仍独立。识别、短暂等待和兼容边界见[对话输入就绪](composer-input.md)。
+
+会话页的 CHECK、SEND 和回答不依赖浏览器 PTY 控制权，也不抢占已打开的终端。服务端仍核验完整会话与实例身份，并在每次 host 操作时串行写入。只有用户主动进入 PTY 模式且终端由其他页面持有时，才询问是否接管。
 
 ## HTTP
 
@@ -23,7 +25,7 @@ SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting 
 | POST /api/session/conversation/attachment | `{uid, id, name}` 查询参数，原始流式文件体；成功返回 upload_id |
 | GET /api/session/conversation/attachment | `{uid, id}` 读回暂存字节；图片类型原样下发，其余按不透明字节，一律 `nosniff` 加沙箱 CSP；已发布或已回收的上传返回 404 |
 | POST /api/session/conversation/attachment/discard | `{uid, id}` 丢弃未发布且无引用的暂存上传；返回 `removed`，被引用或已发布返回 409 |
-| POST /api/session/conversation/check | 检查 PTY 输入状态和终端所有权；画面检查结果带 `input` 和 `draft_revision`，供前端展示及空闲草稿同步 |
+| POST /api/session/conversation/check | 检查 PTY 输入状态；画面检查结果带 `input` 和 `draft_revision`，供前端展示及空闲草稿同步 |
 | POST /api/session/conversation/send | `{uid, request_id, text, attachments, quotes, draft_revision, lease}` |
 | POST /api/session/conversation/restart | 已退出、未绑定的实例重新启动，保留逻辑草稿 |
 | POST /api/session/conversation/import | 只读迁移旧版输入证据 |

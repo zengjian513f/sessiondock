@@ -19,7 +19,9 @@ use sha2::{Digest, Sha256};
 use std::sync::LazyLock;
 
 use super::claude::ComposerState;
-use crate::terminal::{ExpectedTarget, InputPayload, TerminalError, TerminalService};
+use crate::terminal::{
+    ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
+};
 
 /// Page identity under which the executor claims a server-held lease. It is a
 /// registry page ID like any browser page, so a page holding the lease sees
@@ -54,7 +56,8 @@ pub struct PageLease {
 
 /// Lease under which one executor operation performs its host requests.
 /// `owned` leases were claimed by the executor and are released afterwards;
-/// page leases are borrowed and never released by the executor.
+/// page leases are borrowed and never released by the executor. Conversation
+/// handles instead hold a verified target and never enter the browser registry.
 pub struct LeaseHandle {
     pub name: String,
     pub uid: String,
@@ -63,6 +66,21 @@ pub struct LeaseHandle {
     page: String,
     token: String,
     owned: bool,
+    conversation: Option<ConversationTarget>,
+}
+
+enum ConversationTarget {
+    Native(Arc<BoundTarget>),
+    Launch(Arc<ptyhost_client::LaunchTarget>),
+}
+
+impl ConversationTarget {
+    fn as_unleased(&self) -> UnleasedTarget<'_> {
+        match self {
+            Self::Native(target) => UnleasedTarget::Native(target),
+            Self::Launch(target) => UnleasedTarget::Launch(target),
+        }
+    }
 }
 
 impl LeaseHandle {
@@ -774,6 +792,33 @@ impl HostTerminalDriver {
         Self { terminal }
     }
 
+    /// Resolved conversation targets do not claim or revoke browser PTY ownership.
+    pub fn conversation_native(&self, target: &DeliveryTarget) -> LeaseHandle {
+        LeaseHandle {
+            name: target.name.clone(),
+            uid: target.uid.clone(),
+            instance_id: target.instance_id.clone(),
+            launch_id: None,
+            page: String::new(),
+            token: String::new(),
+            owned: false,
+            conversation: Some(ConversationTarget::Native(target.bound.clone())),
+        }
+    }
+
+    pub fn conversation_launch(&self, target: Arc<ptyhost_client::LaunchTarget>) -> LeaseHandle {
+        LeaseHandle {
+            name: target.name().into(),
+            uid: format!("tmux:{}", target.name()),
+            instance_id: target.instance_id().into(),
+            launch_id: Some(target.launch_id().into()),
+            page: String::new(),
+            token: String::new(),
+            owned: false,
+            conversation: Some(ConversationTarget::Launch(target)),
+        }
+    }
+
     /// The same lease registry and launch guard, before a native history exists.
     pub async fn acquire_launch(
         &self,
@@ -792,6 +837,7 @@ impl HostTerminalDriver {
                 page: page.page.clone(),
                 token: page.token.clone(),
                 owned: false,
+                conversation: None,
             };
             match self
                 .terminal
@@ -825,6 +871,7 @@ impl HostTerminalDriver {
             page: SERVER_PAGE.into(),
             token,
             owned: true,
+            conversation: None,
         })
     }
 
@@ -866,6 +913,7 @@ impl HostTerminalDriver {
                 page: SERVER_PAGE.to_owned(),
                 token,
                 owned: true,
+                conversation: None,
             }),
             Err(owner) => Err(DriverError {
                 status: 409,
@@ -897,6 +945,7 @@ impl TerminalDriver for HostTerminalDriver {
                     page: page.page.clone(),
                     token: page.token.clone(),
                     owned: false,
+                    conversation: None,
                 };
                 // A capture both validates the lease and warms nothing: the
                 // executor captures again for its own inspection.
@@ -919,10 +968,15 @@ impl TerminalDriver for HostTerminalDriver {
         lease: &'a LeaseHandle,
     ) -> BoxFuture<'a, Result<ScreenCapture, DriverError>> {
         Box::pin(async move {
-            let reply = self
-                .terminal
-                .capture_screen(&lease.name, &lease.page, &lease.token, lease.expected())
-                .await?;
+            let reply = if let Some(target) = &lease.conversation {
+                self.terminal
+                    .capture_screen_unleased(target.as_unleased())
+                    .await?
+            } else {
+                self.terminal
+                    .capture_screen(&lease.name, &lease.page, &lease.token, lease.expected())
+                    .await?
+            };
             Ok(ScreenCapture {
                 text: reply.text,
                 cursor: (reply.cursor[0], reply.cursor[1]),
@@ -940,6 +994,14 @@ impl TerminalDriver for HostTerminalDriver {
         text: &'a str,
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
+            if let Some(target) = &lease.conversation {
+                return self
+                    .terminal
+                    .send_input_unleased(target.as_unleased(), InputPayload::Paste(text.to_owned()))
+                    .await
+                    .map(|_| ())
+                    .map_err(DriverError::from);
+            }
             self.terminal
                 .send_input(
                     &lease.name,
@@ -960,6 +1022,17 @@ impl TerminalDriver for HostTerminalDriver {
         keys: &'a [&'static str],
     ) -> BoxFuture<'a, Result<(), DriverError>> {
         Box::pin(async move {
+            if let Some(target) = &lease.conversation {
+                return self
+                    .terminal
+                    .send_input_unleased(
+                        target.as_unleased(),
+                        InputPayload::Keys(keys.iter().copied().map(str::to_owned).collect()),
+                    )
+                    .await
+                    .map(|_| ())
+                    .map_err(DriverError::from);
+            }
             self.terminal
                 .send_input(
                     &lease.name,
@@ -994,6 +1067,7 @@ pub(crate) fn test_lease(name: &str, uid: &str, instance: &str) -> LeaseHandle {
         page: "test-page".into(),
         token: "0".repeat(64),
         owned: false,
+        conversation: None,
     }
 }
 

@@ -362,9 +362,8 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, 'Waiting for approval...')
                 expect(page.locator('#composer-input-status')).to_be_hidden()
-                # A second page sees the ownership refusal beside a direct
-                # takeover action. One click claims this exact instance with
-                # force, attaches the terminal and leaves its draft intact.
+                # Conversation CHECK/SEND leave another page's PTY lease intact.
+                # Only an explicit terminal open asks before revoking it.
                 other = browser.new_context(service_workers='block')
                 other.route('**/*', lambda route: route.continue_()
                     if route.request.url.startswith(base + '/') else route.abort())
@@ -372,27 +371,37 @@ def main():
                 claims, other_dialogs = [], []
                 page_two.on('request', lambda request: claims.append(request.post_data_json)
                     if urlsplit(request.url).path == '/api/term/claim' else None)
-                page_two.on('dialog', lambda dialog: (other_dialogs.append(dialog.message), dialog.dismiss()))
+                page_two.on('dialog', lambda dialog: (other_dialogs.append(dialog.message), dialog.accept()))
                 try:
                     page_two.goto(base, wait_until='networkidle')
                     page_two.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}', receipt)
                     page_two.wait_for_function('uid => composerUid === uid', arg=uid)
+                    page_two.locator('#cinput').fill('message without takeover')
+                    page_two.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_not_ready'", timeout=10000)
+                    expect(page_two.locator('#composer-input-status .btn')).to_have_count(0)
+                    assert not other_dialogs, other_dialogs
+                    owner_token = page.evaluate('name => T.views.get(name)?.inputLease?.token', receipt['name'])
+                    assert owner_token
+                    screen.write_text('custom')
+                    page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
+                    with page_two.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as sent:
+                        page_two.locator('#csend').click()
+                    assert sent.value.status == 200, sent.value.text()
+                    expect(page_two.locator('#cinput')).to_have_value('')
+                    assert trace.read_bytes() == b'\x1b[200~message without takeover\x1b[201~\r', trace.read_bytes()
+                    assert not other_dialogs and not any(c.get('force') for c in claims), (other_dialogs, claims)
+                    assert page.evaluate('name => T.views.get(name)?.inputLease?.token', receipt['name']) == owner_token
+                    assert page.evaluate('T.ws?.readyState === WebSocket.OPEN')
                     page_two.locator('#cinput').fill('draft after takeover')
-                    page_two.wait_for_function("composerDraft()?.inputStatus?.code === 'terminal_ownership'", timeout=10000)
-                    expect(page_two.locator('#composer-input-status .btn')).to_have_text('接管')
-                    page_two.locator('#composer-input-status .btn').click()
+                    page_two.locator('#a-term').click()
                     page_two.wait_for_function('name => T.views.get(name)?.inputLease?.token && T.ws?.readyState === WebSocket.OPEN',
                         arg=receipt['name'], timeout=15000)
                     force_claims = [claim for claim in claims if claim.get('force') is True]
                     assert len(force_claims) == 1 and force_claims[0]['instance_id'] == receipt['instance_id'], claims
-                    assert not other_dialogs, other_dialogs
+                    assert len(other_dialogs) == 1 and '抢占' in other_dialogs[0], other_dialogs
                     expect(page_two.locator('#cinput')).to_have_value('draft after takeover')
-                    screen.write_text('custom')
                     page_two.locator('#a-term').click()
                     page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
-                    with page_two.expect_response(lambda r: urlsplit(r.url).path.endswith('/conversation/send')) as sent_after_claim:
-                        page_two.locator('#csend').click()
-                    assert sent_after_claim.value.status == 200, sent_after_claim.value.text()
                     stale = page_two.evaluate('''() => {
                         const status=document.querySelector('#composer-input-status');
                         updateComposerInputStatus(composerUid, {ok:false,
