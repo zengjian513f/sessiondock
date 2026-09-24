@@ -112,6 +112,43 @@ def open_report(page):
         page.locator("#report-bug").click()
 
 
+def check_report_drag_selection(page):
+    open_report(page)
+    dialog = page.locator('#bug-report-dialog')
+    page.wait_for_selector('#bug-report-dialog[open]')
+    textarea = page.locator('#bug-report-description')
+    text = 'Select this report text and release outside the dialog.'
+    textarea.fill(text)
+    wait_drafts(page)
+    box = textarea.bounding_box()
+    bounds = dialog.bounding_box()
+    outside = (bounds['x'] - 20, box['y'] + 16)
+    page.mouse.move(box['x'] + 110, box['y'] + 16)
+    page.mouse.down()
+    page.mouse.move(*outside, steps=12)
+    page.mouse.up()
+    assert dialog.is_visible(), 'Dragging selected report text outside closed the dialog'
+    assert textarea.evaluate('el => el.selectionEnd > el.selectionStart')
+    assert textarea.input_value() == text
+    # A gesture beginning outside and ending inside is not a backdrop click either.
+    page.mouse.move(*outside)
+    page.mouse.down()
+    page.mouse.move(box['x'] + 20, box['y'] + 16, steps=12)
+    page.mouse.up()
+    assert dialog.is_visible()
+    page.mouse.click(*outside)
+    assert not dialog.is_visible(), 'An ordinary backdrop click must still close'
+    open_report(page)
+    assert textarea.input_value() == text
+    page.locator('#bug-report-dialog .modal-close').click()
+    assert not dialog.is_visible()
+    open_report(page)
+    page.keyboard.press('Escape')
+    assert not dialog.is_visible()
+    page.evaluate('clearBugReportDraft()')
+    wait_drafts(page)
+
+
 def check_report_scroll(page):
     # The submit button used to be clipped by the dialog's overflow:hidden.
     # Scroll with the pointer and click by coordinates: locator.click() would
@@ -412,6 +449,7 @@ def main():
 
                     check_shared_draft_recovery(page, boundary)
                     check_draft_follows_machine(page, boundary)
+                    check_report_drag_selection(page)
                     check_report_scroll(page)
                     check_report_layout(page)
                     check_send_busy_width(page, boundary)
