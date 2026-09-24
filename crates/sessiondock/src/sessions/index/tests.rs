@@ -1159,9 +1159,7 @@ fn discovery_follows_python_file_and_project_aliases_and_skips_unrelated_files()
         },
         None,
     );
-    let error = missing.refresh(true).unwrap_err();
-    assert_eq!(error.status, 400);
-    assert_eq!(error.message, "已配置的数据源目录不存在或不可访问");
+    assert!(missing.refresh(true).unwrap().sessions().is_empty());
     let empty = Index::new(SessionRoots::default(), None);
     assert_eq!(empty.refresh(true).unwrap().sessions(), &[] as &[Value]);
 }

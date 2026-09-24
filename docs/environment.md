@@ -12,9 +12,9 @@ python3 tests/env_reference.py --write
 | --- | --- | --- | --- | --- | --- |
 | `SESSIONDOCK_BIND` | `bind` | no (default) | invalid SESSIONDOCK_BIND | isolated_server, delivery_init.rs | [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) |  | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
-| `SESSIONDOCK_CLAUDE_ROOT` | `roots.claude` | no (Option) | must not be empty; must be a directory | isolated_server | [liveness.md](liveness.md) |
-| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | must not be empty; must be a directory | isolated_server | — |
-| `SESSIONDOCK_GROK_ROOT` | `roots.grok` | no (Option) | must not be empty; must be a directory | isolated_server | — |
+| `SESSIONDOCK_CLAUDE_ROOT` | `roots.claude` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [liveness.md](liveness.md) |
+| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
+| `SESSIONDOCK_GROK_ROOT` | `roots.grok` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
 | `SESSIONDOCK_PTYHOST_DIR` | `ptyhost_dir` | no (Option) | Opt-in isolated terminal transport; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md), [processes.md](processes.md), [runbook-dev.md](runbook-dev.md), [terminal-ownership.md](terminal-ownership.md) |
 | `SESSIONDOCK_STATE_DIR` | `state_dir` | no (Option) | SessionDock-owned preferences and grants; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [error-codes.md](error-codes.md), [liveness.md](liveness.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_DELIVERY_DIR` | `delivery_dir` | no (Option) | Delivery state directory | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [delivery-configuration.md](delivery-configuration.md), [runbook-dev.md](runbook-dev.md) |

@@ -39,6 +39,8 @@
   sidecar；Codex 根下递归的 `rollout-*.jsonl`；Grok `<root>/<dir>/summary.json`
   （+ `chat_history.jsonl`）。目录递归和普通文件链接跟随 `glob`/`rglob`
   语义，不另设目录层数、路径组件、canonical root 或硬链接数量门槛。
+  已配置的原生读根不存在时，该来源暂为空，不阻断其他来源或服务启动，也不创建目录；
+  后续扫描会自动发现重新出现的目录。权限及其他 I/O 错误仍按原有错误语义报告。
 - **stamp** = `dev/ino/size/mtime_ns`。摘要缓存以 stamp 为键：stamp 未变则
   热刷新只有 `stat`；变了只重读这一个文件。
 - **摘要读取**：头 96 KiB 内最多 40 条完整记录 + 尾 512 KiB 内的完整记录
