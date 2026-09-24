@@ -2096,13 +2096,16 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     border-color: var(--accent); background: var(--accent); color: #fff;
   }
   #xterm { padding-left: 4px; }
-  /* 键盘弹出时 PTY 行列不变，画布可能高于容器：底对齐以保住 CLI 编辑区。
+  /* 键盘弹出时 PTY 行列不变；按内容和光标移动画面，不把尾部空行底对齐。
      display:flex 会盖掉 [hidden] 的 UA display:none，必须写回。 */
   .xterm-view:not([hidden]) {
-    display: flex; flex-direction: column; justify-content: flex-end;
+    display: flex; flex-direction: column; justify-content: flex-start;
     overflow: hidden;
   }
   .xterm-view[hidden] { display: none !important; }
+  .xterm-view > .grid-canvas, .xterm-view > .xterm {
+    flex: none; transform: translateY(var(--terminal-viewport-offset, 0px));
+  }
   #xterm .xterm { height: auto; }
 
   .trash-item { flex-wrap: wrap; }
