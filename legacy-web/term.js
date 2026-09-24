@@ -2384,6 +2384,7 @@ function ensureTerm(name) {
     } catch { view.unicode11 = null; }
   }
   term.open(host);
+  term.onScroll(() => positionTermViewport(view));
   // Edge 在任何聚焦的可编辑元素插入点旁挂一个 Copilot“撰写”浮动按钮（一个蓝点），
   // 它会贴着 xterm 这个隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
   // 同时关掉文本预测；其它浏览器忽略。
@@ -2605,7 +2606,37 @@ function scheduleCodexSideThreadScan(view) {
 }
 
 function writeParsedTermOutput(view, chunk) {
-  view.term.write(chunk, () => scheduleCodexSideThreadScan(view));
+  view.term.write(chunk, () => {
+    scheduleCodexSideThreadScan(view);
+    positionTermViewport(view);
+  });
+}
+
+// Keep the PTY size stable under a soft keyboard, but do not bottom-align its
+// blank tail. Short menus fit from the top; tall screens follow their content
+// and cursor. Use parsed cells for both renderers, not CLI-specific text rules.
+function positionTermViewport(view) {
+  if (!termPaneRenderable(view)) return;
+  const host = view.host, term = view.term, buffer = term.buffer?.active;
+  let offset = 0;
+  if (!view.replay && visualKeyboardOpen() && buffer) {
+    const screen = host.querySelector(view.grid ? 'canvas' : '.xterm-screen');
+    const height = screen?.getBoundingClientRect().height || 0;
+    const cellHeight = height / term.rows;
+    const top = buffer.viewportY;
+    const cursor = buffer.baseY + buffer.cursorY - top;
+    let last = -1;
+    for (let row = term.rows - 1; row >= 0; row--) {
+      if (buffer.getLine(top + row)?.translateToString(true).trim()) { last = row; break; }
+    }
+    const cursorInView = cursor >= 0 && cursor < term.rows;
+    if (cursorInView) last = Math.max(last, cursor);
+    offset = Math.max(0, (last + 1) * cellHeight - host.clientHeight);
+    // A status footer must not push an editor/menu cursor above the pane.
+    if (cursorInView) offset = Math.min(offset, cursor * cellHeight);
+    offset = Math.min(offset, Math.max(0, height - host.clientHeight));
+  }
+  host.style.setProperty('--terminal-viewport-offset', `${-offset}px`);
 }
 
 function dropTermSyncHold(view) {
@@ -2636,6 +2667,7 @@ function repaintTermView(view) {
 
 function performTermFit(view, forceSync = false) {
   if (!termPaneRenderable(view)) return;
+  positionTermViewport(view);
   // 录制回放按录制时的尺寸呈现，不随面板大小重排（服务端也不接受 resize）。
   if (view.replay) {
     const size = view.replaySize;
@@ -2665,6 +2697,7 @@ function performTermFit(view, forceSync = false) {
   // 按 visual viewport 让位，这里保持键盘收起时的行列，只把画面钉在提示符。
   if (typeof visualKeyboardOpen === 'function' && visualKeyboardOpen()) {
     try { view.term.scrollToBottom(); } catch { /* disposed */ }
+    positionTermViewport(view);
     return;
   }
   let dimensions;
