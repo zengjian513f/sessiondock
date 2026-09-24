@@ -491,8 +491,8 @@ impl SessionStore {
 
     /// The optional Codex name index is an explicit file, never inferred from
     /// a session directory or the user's home. Native files stay read-only.
-    /// Roots are canonicalized once; a missing root is a configuration error
-    /// reported by every list, never an empty library.
+    /// Existing roots are canonicalized once; missing native roots are skipped
+    /// until they reappear, without blocking other sources.
     pub fn with_metadata_and_names(
         roots: SessionRoots,
         metadata: Option<Arc<MetadataStore>>,

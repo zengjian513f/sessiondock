@@ -130,7 +130,8 @@ def rows_of(src, struct, vmap):
         req = "yes" if required else "no (Option)" if "." in field or "Option" in typ else "no (default)"
         parts, seen = ([doc.split(". ")[0].rstrip(".")] if doc else []), set()
         if uses_root:
-            parts.append("must not be empty; must be a directory")
+            parts.append("nonempty; directory when present; missing roots are retried"
+                         if field.startswith("roots.") else "must not be empty; must be a directory")
         for msg in local + vmap.get(field.split(".")[-1], []):
             compact = " ".join(msg.split())
             if compact not in seen:
