@@ -49,6 +49,8 @@ The page then says "已被 iPhone · Safari 抢占" or, with no label, "已被�
 抢占", appending the address only when the server marked it as elsewhere.
 Server-side messages name the holder as `"<label>，<ip>"` (`PublicOwner::describe`).
 
+Conversation CHECK, SEND and lease-less answer inputs use the verified instance
+without claiming browser ownership; an existing PTY remains connected.
 Only an explicit pty open asks. A pty the page restores on its own — selecting
 a session whose console was remembered open, a reload, the collapsed pane
 behind a question card — claims without `force` and, on a conflict, silently

@@ -4616,33 +4616,6 @@ function syncComposerSendState() {
     || composerSending || !!draft?.loading || blocked;
 }
 
-const composerClaiming = new Set();
-async function takeComposerTerminal(uid) {
-  if (composerClaiming.has(uid) || composerUid !== uid || S.sel !== uid) return;
-  composerClaiming.add(uid);
-  renderComposerInputStatus();
-  try {
-    const name = takenOver(uid);
-    if (!name) throw new Error('终端已不可用，请刷新会话状态');
-    // Wait for an automatic attach already in flight before the explicit
-    // force claim. The user click is the authorization to revoke its holder.
-    const pending = T.views.get(name)?.attachPromise;
-    if (pending) await pending;
-    if (composerUid !== uid || S.sel !== uid) return;
-    T.uid = uid;
-    const opened = await openTermPane(name, true, MOBILE.matches ? null : 'full', false, true);
-    if (!opened || !T.views.get(name)?.inputLease?.token) {
-      throw new Error(ConsoleUI.errors.get(uid) || '未取得终端控制权');
-    }
-    await probeComposerInput(uid);
-  } catch (error) {
-    alert('接管终端失败：' + (error.message || error));
-  } finally {
-    composerClaiming.delete(uid);
-    if (composerUid === uid) renderComposerInputStatus();
-  }
-}
-
 function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
@@ -4657,15 +4630,7 @@ function renderComposerInputStatus() {
   node.replaceChildren();
   if (status) {
     node.append(el('span', 'composer-input-status-copy', status.message));
-    if (status.code === 'terminal_ownership') {
-      const uid = composerUid;
-      const button = el('button', 'btn', composerClaiming.has(uid) ? '接管中…' : '接管');
-      button.type = 'button';
-      button.disabled = composerClaiming.has(uid);
-      button.title = button.ariaLabel = '接管终端控制权';
-      button.onclick = () => takeComposerTerminal(uid);
-      node.append(button);
-    }
+
   }
   syncComposerSendState();
 }

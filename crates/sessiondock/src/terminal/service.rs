@@ -469,36 +469,52 @@ impl TerminalService {
             .map(|_| InputReceipt { bytes })
     }
 
-    /// Raw HTTP input from a page that holds no lease for this terminal: a
-    /// conversation view whose console is open elsewhere or not at all (the
-    /// composer's Esc, a question card, a Grok text submit). It follows the
-    /// delivery executor's ordinary-claimant rule: under the per-name
-    /// gate, any
-    /// current lease — another page's console, a reservation, or a server
-    /// send in flight — is the documented ownership conflict, and otherwise
-    /// the write goes through the pinned instance exactly like a leased
-    /// input. Nothing is reserved or minted: the gate already serializes this
-    /// write against claims and leased input, so no token can leak or linger.
+    /// Conversation input uses a freshly verified instance independently of
+    /// the browser PTY lease. The per-name gate serializes host operations.
     pub async fn send_input_unleased(
         &self,
         target: UnleasedTarget<'_>,
         payload: InputPayload,
     ) -> Result<InputReceipt, TerminalError> {
+        let (bytes, operation) = input_operation(payload)?;
+        self.request_unleased(target, operation).await?;
+        Ok(InputReceipt { bytes })
+    }
+
+    pub async fn capture_screen_unleased(
+        &self,
+        target: UnleasedTarget<'_>,
+    ) -> Result<CaptureReply, TerminalError> {
+        match self
+            .request_unleased(
+                target,
+                ControlOp::Capture {
+                    kind: CaptureKind::Screen,
+                    styled: true,
+                    join: false,
+                    lines: 0,
+                },
+            )
+            .await?
+        {
+            ControlReply::Capture(capture) => Ok(capture),
+            _ => Err(TerminalError::new(
+                503,
+                "terminal_unavailable",
+                "终端 host 未返回屏幕捕获",
+            )),
+        }
+    }
+
+    async fn request_unleased(
+        &self,
+        target: UnleasedTarget<'_>,
+        operation: ControlOp,
+    ) -> Result<ControlReply, TerminalError> {
         let name = target.name();
         ownership::validate_name(name)?;
-        let (bytes, operation) = input_operation(payload)?;
         let gate = self.gate(name)?;
         let _gate = gate.lock().await;
-        if let Some(owner) = self.registry.owner(name)? {
-            return Err(TerminalError::new(
-                409,
-                "terminal_ownership",
-                format!(
-                    "终端控制权正由其他页面持有（{}）；请从持有控制台的页面发送，或先释放/接管该控制台",
-                    owner.describe()
-                ),
-            ));
-        }
         let observation = self.client.probe(name).await.map_err(host_error)?;
         let result = match target {
             UnleasedTarget::Native(target) => {
@@ -529,7 +545,7 @@ impl TerminalService {
                 self.client.request_launch(&fresh, operation).await
             }
         };
-        result.map_err(input_error).map(|_| InputReceipt { bytes })
+        result.map_err(input_error)
     }
 
     /// Delivery driver: the host's screen model plus cursor and
