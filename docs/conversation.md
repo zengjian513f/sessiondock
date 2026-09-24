@@ -32,3 +32,5 @@ SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting 
 | GET /api/session/conversation/drafts | 发现保留输入的会话，包括退出实例；`term/discard` 删除的回执随之清除草稿，不再列出。原生 UID 别名只有在目录里仍有该会话时才挡住草稿清理；已进回收站的会话不算共享。缺少 `session.started` 的旧草稿按账本记录的创建时间回填，侧栏行不随渲染时钟移动 |
 
 状态：sent 表示 SEND 已成功；cli_question 拒绝选择题期间发送；draft_revision 表示编辑冲突；send_result_unknown 不授权重发。需要 state、terminal、runtime、lifecycle、files_write 服务，conversation_send 能力明确启用。测试使用私有目录和假 CLI。
+
+草稿首次读取失败和保存失败会在网络可用时自动重试；读取与保存都有请求期限，避免永久等待。读取恢复后先合并服务端草稿与本页早期输入，再保存，保留附件与引用。失败提示只显示当前错误，不递归叠加；后台恢复仅重试草稿读写，不自动 SEND。
