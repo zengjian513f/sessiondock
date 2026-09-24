@@ -1090,8 +1090,24 @@ $('#bug-report-description').addEventListener('input', event => {
 window.addEventListener('resize', () => {
   if ($('#bug-report-dialog').open) autoGrow($('#bug-report-description'));
 });
+let bugReportBackdropPressed = false;
+function bugReportBackdropHit(event) {
+  const dialog = $('#bug-report-dialog');
+  const rect = dialog.getBoundingClientRect();
+  return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
+    || event.clientY < rect.top || event.clientY >= rect.bottom);
+}
+$('#bug-report-dialog').addEventListener('pointerdown', event => {
+  bugReportBackdropPressed = event.button === 0 && bugReportBackdropHit(event);
+});
+$('#bug-report-dialog').addEventListener('pointercancel', () => { bugReportBackdropPressed = false; });
+$('#bug-report-dialog').addEventListener('close', () => { bugReportBackdropPressed = false; });
 $('#bug-report-dialog').addEventListener('click', event => {
-  if (event.target === $('#bug-report-dialog')) $('#bug-report-dialog').close();
+  // A selection dragged from the form to the backdrop also targets the dialog.
+  // Dismiss only when the gesture both starts and ends on the actual backdrop.
+  const dismiss = bugReportBackdropPressed && bugReportBackdropHit(event);
+  bugReportBackdropPressed = false;
+  if (dismiss) $('#bug-report-dialog').close();
 });
 $('#bug-report-add').onclick = event => {
   event.stopPropagation();
