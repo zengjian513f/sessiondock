@@ -663,6 +663,7 @@ function syncMobileViewport() {
       layoutTermPane();
       if (visualKeyboardOpen()) {
         try { currentTermViewObject()?.term?.scrollToBottom(); } catch { /* no view yet */ }
+        if (typeof positionTermViewport === 'function') positionTermViewport(currentTermViewObject());
       } else if (typeof fitTerm === 'function') {
         fitTerm();
       }

@@ -243,6 +243,13 @@ Scrollback reflow happens only in the model, on `reset: false` when
 concatenated and rewrapped; a wide cell is never split. The viewport is
 replaced by the next snapshot/diff from the host.
 
+On narrow screens, a soft keyboard reduces the visible pane without resizing
+the PTY. Both console renderers move the screen only enough to show its last
+nonblank row and cursor; blank trailing rows do not push short menus off the
+top. The cursor takes priority over a lower footer. Closing the keyboard clears
+the offset. [terminal_keyboard_browser.py](../tests/terminal_keyboard_browser.py)
+covers short menus, bottom editors, cursor visibility and both viewport resize paths.
+
 Selection is a half-open column range on model lines (scrollback +
 viewport). Drag on the canvas; Shift-drag still selects when mouse
 reporting is on. Double-click selects a word (ASCII alnum, `_`, or
