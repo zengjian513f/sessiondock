@@ -368,9 +368,9 @@ pub struct Index {
 }
 
 impl Index {
-    /// Roots are canonicalized once, like today's `SessionStore`; a missing
-    /// native root is reported by every refresh rather than becoming an empty
-    /// library. A name index without a Codex root is simply unused.
+    /// Existing roots are canonicalized once. Missing native roots stay
+    /// configured and are retried on each discovery pass.
+    /// A name index without a Codex root is simply unused.
     pub fn new(roots: SessionRoots, codex_index: Option<PathBuf>) -> Self {
         Self::with_workers(roots, codex_index, DEFAULT_WORKERS)
     }
@@ -380,6 +380,9 @@ impl Index {
         let mut freeze = |configured: Option<PathBuf>| {
             configured.map(|path| match path.canonicalize() {
                 Ok(canonical) if canonical.is_dir() => canonical,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    std::path::absolute(&path).unwrap_or(path)
+                }
                 _ => {
                     root_error = Some("已配置的数据源目录不存在或不可访问".to_owned());
                     path
@@ -689,8 +692,16 @@ impl Index {
             ("grok", &self.roots.grok),
         ] {
             let Some(root) = configured else { continue };
-            let dir = Dir::open_ambient_dir(root, ambient_authority())
-                .map_err(|_| SessionError::new(503, format!("{source} 数据源目录暂时不可枚举")))?;
+            let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
+                Ok(dir) => dir,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    return Err(SessionError::new(
+                        503,
+                        format!("{source} 数据源目录暂时不可枚举"),
+                    ));
+                }
+            };
             dir.entries()
                 .map_err(|_| SessionError::new(503, format!("{source} 数据源目录暂时不可枚举")))?;
             let mut walk = Walk {

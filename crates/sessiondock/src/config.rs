@@ -330,7 +330,7 @@ impl Config {
         if let Some(path) = env::var_os("SESSIONDOCK_WEB_DIR") {
             config.web_dir = path.into();
         }
-        fn root(name: &str) -> io::Result<Option<PathBuf>> {
+        fn root(name: &str, allow_missing: bool) -> io::Result<Option<PathBuf>> {
             match env::var_os(name) {
                 None => Ok(None),
                 Some(value) if value.is_empty() => Err(io::Error::new(
@@ -338,7 +338,14 @@ impl Config {
                     format!("{name} must not be empty"),
                 )),
                 Some(value) => {
-                    let path = PathBuf::from(value).canonicalize()?;
+                    let configured = PathBuf::from(value);
+                    let path = match configured.canonicalize() {
+                        Ok(path) => path,
+                        Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
+                            return Ok(Some(std::path::absolute(configured)?));
+                        }
+                        Err(error) => return Err(error),
+                    };
                     if !path.is_dir() {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -350,12 +357,12 @@ impl Config {
             }
         }
         config.roots = SessionRoots {
-            claude: root("SESSIONDOCK_CLAUDE_ROOT")?,
-            codex: root("SESSIONDOCK_CODEX_ROOT")?,
-            grok: root("SESSIONDOCK_GROK_ROOT")?,
+            claude: root("SESSIONDOCK_CLAUDE_ROOT", true)?,
+            codex: root("SESSIONDOCK_CODEX_ROOT", true)?,
+            grok: root("SESSIONDOCK_GROK_ROOT", true)?,
         };
-        config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR")?;
-        config.state_dir = root("SESSIONDOCK_STATE_DIR")?;
+        config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
+        config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;
         // Keep the original spelling for the store's no-follow checks. Unlike
         // the legacy root helper, this must not canonicalize and store an alias.
         config.delivery_dir = env::var_os("SESSIONDOCK_DELIVERY_DIR").map(PathBuf::from);
