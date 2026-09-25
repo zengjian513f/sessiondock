@@ -36,6 +36,7 @@ const T = {
   backends: [],
   height: store.get('termh', 320),
   mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话：PTY+输入) | full(纯终端)
+  altArmed: false,                          // 手机 Alt：只修饰下一次输入
   ctrlArmed: false,                         // 手机 Ctrl / 桌面右 Ctrl：只修饰下一次输入
   sources: {},
   home: '',
@@ -2477,7 +2478,7 @@ function ensureTerm(name) {
   });
   term.onData(d => {
     if (T.name !== name || view.replay) return;   // 录制回放只读
-    d = applyTermCtrl(d);
+    d = applyTermAlt(applyTermCtrl(d));
     d = stripOscColorReports(d);
     if (!d) return;
     if (view.ws?.readyState !== 1) return;
@@ -3668,6 +3669,7 @@ function deactivateTermView() {
   T.name = null;
   syncTermAliases();
   setTermCtrl(false);
+  setTermAlt(false);
   renderTimeline(null);
   renderTermOutputNotice(null);
 }
@@ -5439,6 +5441,32 @@ function bindFileDrop(zone, addFiles) {
 $('#cinput').addEventListener('paste', e => pasteAttachmentFiles(e, addComposerFiles));
 bindFileDrop($('#composer'), addComposerFiles);
 
+function setTermAlt(on) {
+  T.altArmed = !!on;
+  const b = $('[data-term-modifier="alt"]');
+  if (b) {
+    b.classList.toggle('on', T.altArmed);
+    b.setAttribute('aria-pressed', String(T.altArmed));
+  }
+}
+
+/** Match physical Alt: CSI modifier for navigation, ESC prefix for a character.
+ * Ignore paste, mouse, focus and terminal replies; they are not the next key. */
+function applyTermAlt(data) {
+  if (!T.altArmed) return data;
+  const cursor = /^\x1b(?:\[|O)([ABCDHF])$/.exec(data);
+  const modified = /^\x1b\[(\d+);(\d+)([ABCDHF~])$/.exec(data);
+  const page = /^\x1b\[(\d+)~$/.exec(data);
+  let result;
+  if (cursor) result = `\x1b[1;3${cursor[1]}`;
+  else if (modified) result = `\x1b[${modified[1]};${1 + ((Number(modified[2]) - 1) | 2)}${modified[3]}`;
+  else if (page && ['2', '3', '5', '6'].includes(page[1])) result = `\x1b[${page[1]};3~`;
+  else if (data.length === 1) result = '\x1b' + data;
+  else return data;
+  setTermAlt(false);
+  return result;
+}
+
 function setTermCtrl(on) {
   T.ctrlArmed = !!on;
   $('#termpane').classList.toggle('ctrl-locked', T.ctrlArmed);
@@ -5466,13 +5494,24 @@ function applyTermCtrl(data) {
 $('.term-keys').onclick = e => {
   const modifier = e.target.closest('[data-term-modifier]');
   if (modifier) {
-    setTermCtrl(!T.ctrlArmed);
+    if (modifier.dataset.termModifier === 'alt') setTermAlt(!T.altArmed);
+    else setTermCtrl(!T.ctrlArmed);
     T.term?.focus();
     return;
   }
   const b = e.target.closest('[data-term-key]');
   if (!b) return;
-  const key = T.ctrlArmed ? `C-${b.dataset.termKey}` : b.dataset.termKey;
+  let key = T.ctrlArmed ? `C-${b.dataset.termKey}` : b.dataset.termKey;
+  if (T.altArmed) {
+    const navigation = {Up:'A', Down:'B', Right:'C', Left:'D'};
+    const final = navigation[b.dataset.termKey];
+    const m = T.ctrlArmed ? 7 : 3;
+    if (final) key = `\x1b[1;${m}${final}`;
+    else if (['PPage', 'NPage'].includes(b.dataset.termKey)) {
+      key = `\x1b[${b.dataset.termKey === 'PPage' ? 5 : 6};${m}~`;
+    } else key = `M-${key}`;
+  }
+  setTermAlt(false);
   setTermCtrl(false);
   sendToSession(null, [key]);
   T.term?.focus();
