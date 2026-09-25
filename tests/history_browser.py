@@ -14,7 +14,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 
-from history_parity import BINARY, build_corpus, claude_row, codex_message, encoded, get_json, isolated_server
+from history_parity import batch35_meta, batch35_agent_meta, BINARY, build_corpus, claude_row, codex_message, encoded, get_json, isolated_server
 
 
 def main():
@@ -47,6 +47,23 @@ def main():
         assistant_paste = paste("assistant", "assistant literal envelope")
         paste_rows.append(claude_row("claude-pasted", "assistant", "paste-answer", parent, assistant_paste))
         corpus.put("claude-pasted", "claude", paste_rows, [])
+        # Codex rotates a physical rollout but keeps the same native thread id.
+        old_meta = batch35_meta("codex-rotation", "2026-09-11T08:00:00Z")
+        old_meta["ordinal"] = 10
+        old_meta["payload"]["synthetic_padding"] = "x" * 8000
+        old_rows = [old_meta, codex_message("user", "Rotation inherited question", 11),
+                    codex_message("assistant", "Rotation inherited answer", 12)]
+        old = corpus.put("rotation-old", "codex", old_rows, [])
+        cut = old.stat().st_size
+        with old.open("ab") as stream:
+            stream.write(encoded(codex_message("assistant", "Rotation excluded old tail", 13)))
+        new_meta = batch35_meta("codex-rotation", "2026-09-11T09:00:00Z",
+                               history_base={"thread_id": "codex-rotation", "end_byte_offset": cut,
+                                             "end_ordinal_exclusive": 13})
+        new_meta["ordinal"] = 13
+        corpus.put("rotation-new", "codex", [new_meta, codex_message("user", "Rotation continued question", 14)], [])
+        corpus.put("rotation-agent", "codex", [batch35_agent_meta("rotation-agent", "codex-rotation"),
+                   codex_message("assistant", "Rotation attached agent answer", 15)], [])
         with isolated_server(corpus, args.binary) as (base, opener), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -94,6 +111,44 @@ def main():
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_be_enabled()
 
+                select("rotation-new", "Rotation continued question")
+                expect(page.locator("#msgs")).to_contain_text("Rotation inherited question")
+                expect(page.locator("#msgs")).to_contain_text("Rotation inherited answer")
+                expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
+                rows = get_json(opener, base, "/api/sessions")["sessions"]
+                rotated = next(row for row in rows if row["uid"] == corpus.uid("rotation-new"))
+                assert rotated["supported"] and {a["id"] for a in rotated["agent_items"]} == {"rotation-agent"}
+                agent("rotation-agent", "Rotation attached agent answer")
+                select("rotation-old", "Rotation excluded old tail")
+                select("rotation-new", "Rotation continued question")
+                with corpus.paths["rotation-new"].open("ab") as stream:
+                    stream.write(encoded(codex_message("assistant", "Rotation live appended answer", 15)))
+                expect(page.locator("#msgs")).to_contain_text("Rotation live appended answer", timeout=15000)
+                titles = get_json(opener, base, "/api/sessions/titles?ids=codex:codex-rotation")
+                assert not titles.get("missing"), titles
+                # An unrelated duplicate is still a real conflict; removing it
+                # restores the explicit continuation without touching transcripts.
+                duplicate = corpus.put("rotation-conflict", "codex", [
+                    batch35_meta("codex-rotation", "2026-09-11T07:00:00Z"),
+                    codex_message("user", "Unrelated duplicate")], [])
+                page.reload(wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{corpus.uid("rotation-new")}"]').click()
+                expect(page.locator("#migration-read-error")).to_contain_text("父线程 ID 在已配置索引中存在歧义", timeout=15000)
+                duplicate.unlink()
+                page.reload(wait_until="networkidle")
+                select("rotation-new", "Rotation live appended answer")
+                next_meta = batch35_meta("codex-rotation", "2026-09-11T10:00:00Z",
+                    history_base={"thread_id": "codex-rotation", "end_ordinal_exclusive": 16,
+                                  "end_byte_offset": corpus.paths["rotation-new"].stat().st_size})
+                next_meta["ordinal"] = 16
+                corpus.put("rotation-next", "codex", [next_meta,
+                    codex_message("user", "Rotation second continuation", 17)], [])
+                page.reload(wait_until="networkidle")
+                select("rotation-next", "Rotation second continuation")
+                expect(page.locator("#msgs")).to_contain_text("Rotation inherited answer")
+                expect(page.locator("#msgs")).to_contain_text("Rotation live appended answer")
+                expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
+                print("PASS Codex same-ID rollout rotation: inherited prefix, excluded old tail, agent ownership, live append, titles, duplicate conflict and recovery")
                 select("claude-pasted", "Pasted needle 正文")
                 # Assert the wire result too: a renderer-only fix is insufficient.
                 wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))

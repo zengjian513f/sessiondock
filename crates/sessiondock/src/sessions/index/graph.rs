@@ -130,7 +130,90 @@ pub(super) fn mains_by_sid(
             .or_default()
             .push(entry);
     }
+    for group in mains.values_mut() {
+        if let Some(generations) = generations(group.clone()) {
+            *group = vec![*generations.last().unwrap()];
+        }
+    }
     mains
+}
+
+/// Codex can rotate a rollout while preserving its native thread id. Only
+/// explicit same-thread history_base generations qualify; ordinary duplicate
+/// IDs remain conflicts. Native timestamps order generations, never filenames.
+pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&CandidateRef>> {
+    if entries.len() < 2
+        || entries.iter().any(|e| {
+            e.source != "codex"
+                || e.summary.agent.is_some()
+                || e.summary.native_id.as_ref().ok() != Some(&e.summary.sid)
+        })
+    {
+        return None;
+    }
+    entries.sort_by(|a, b| a.summary.created.cmp(&b.summary.created));
+    let sid = &entries[0].summary.sid;
+    if entries
+        .windows(2)
+        .any(|pair| pair[0].summary.created == pair[1].summary.created)
+    {
+        return None;
+    }
+    if history_link(entries[0])
+        .ok()
+        .flatten()
+        .is_some_and(|(parent, _)| parent == sid)
+    {
+        return None;
+    }
+    for entry in &entries[1..] {
+        let codex = entry.summary.codex.as_ref()?;
+        if &entry.summary.sid != sid
+            || codex.history_base["thread_id"].as_str() != Some(sid)
+            || codex.start_ordinal.is_none()
+            || codex.history_base["end_ordinal_exclusive"].as_u64() != codex.start_ordinal
+            || codex.history_base["end_byte_offset"].as_u64().is_none()
+        {
+            return None;
+        }
+    }
+    Some(entries)
+}
+
+/// Resolve a physical prefix independently from the latest logical generation.
+/// The requesting file cannot supply its own inherited prefix. Ordinals and
+/// byte extent distinguish a historical rollout from its shorter continuation.
+pub(super) fn physical_parent<'a>(
+    entries: Vec<&'a CandidateRef>,
+    child: &str,
+    base: &Value,
+) -> Option<&'a CandidateRef> {
+    if entries.len() == 1 {
+        return entries.into_iter().next();
+    }
+    let generations = generations(entries)?;
+    let end = base["end_ordinal_exclusive"].as_u64()?;
+    let cut = base["end_byte_offset"].as_u64()?;
+    let child_created = generations
+        .iter()
+        .find(|e| e.uid == child)
+        .map(|e| &e.summary.created);
+    let mut matches = generations.into_iter().filter(|e| {
+        e.uid != child
+            && child_created.is_none_or(|created| e.summary.created < *created)
+            && e.summary.size >= cut
+            && e.summary
+                .codex
+                .as_ref()
+                .and_then(|c| c.start_ordinal)
+                .is_some_and(|start| start < end)
+            && super::prefix_ordinal(e, cut) == Some(end)
+    });
+    let parent = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(parent)
 }
 
 /// Fork chain, nearest parent first:
@@ -288,7 +371,11 @@ impl<'a> Graph<'a> {
         // Resolve every declared fork cut once, in uid order.
         for entry in entries.values() {
             if let Ok(Some((sid, cut))) = history_link(entry)
-                && let Ok(parent) = graph.history_parent(sid)
+                && let Ok(parent) = graph.history_parent(
+                    sid,
+                    &entry.uid,
+                    &entry.summary.codex.as_ref().unwrap().history_base,
+                )
                 && !graph.cuts.contains_key(&(parent.clone(), cut))
             {
                 let outcome = check_cut(&entries[&parent], cut);
@@ -320,15 +407,26 @@ impl<'a> Graph<'a> {
         }
         match self.sids.get(&(source, sid)).map(Vec::as_slice) {
             Some([uid]) => Ok(uid.clone()),
-            Some(_) => Err(SessionError::new(409, "父线程 ID 在已配置索引中存在歧义")),
+            Some(ids) => generations(ids.iter().map(|uid| &self.entries[uid]).collect())
+                .and_then(|entries| entries.last().map(|entry| entry.uid.clone()))
+                .ok_or_else(|| SessionError::new(409, "父线程 ID 在已配置索引中存在歧义")),
             None => Err(unsupported(
                 "父线程不在已配置索引中，请确认显式数据源包含其原生文件",
             )),
         }
     }
 
-    fn history_parent(&self, sid: &str) -> Result<String, SessionError> {
-        let uid = self.sid("codex", sid)?;
+    fn history_parent(&self, sid: &str, child: &str, base: &Value) -> Result<String, SessionError> {
+        let uid = match self.sids.get(&("codex", sid)) {
+            Some(ids) if ids.len() > 1 => physical_parent(
+                ids.iter().map(|uid| &self.entries[uid]).collect(),
+                child,
+                base,
+            )
+            .map(|entry| entry.uid.clone())
+            .ok_or_else(|| SessionError::new(409, "父线程 ID 在已配置索引中存在歧义"))?,
+            _ => self.sid("codex", sid)?,
+        };
         if self.agents.contains_key(&uid) {
             return Err(unsupported("分叉历史不能把子代理文件当作主线程父历史"));
         }
@@ -386,7 +484,16 @@ impl<'a> Graph<'a> {
             let Some((sid, cut)) = history_link(&self.entries[&current])? else {
                 return Ok(chain);
             };
-            let parent = self.history_parent(sid)?;
+            let parent = self.history_parent(
+                sid,
+                &current,
+                &self.entries[&current]
+                    .summary
+                    .codex
+                    .as_ref()
+                    .unwrap()
+                    .history_base,
+            )?;
             if !seen.insert(parent.clone()) {
                 return Err(unsupported("分叉历史依赖存在循环"));
             }

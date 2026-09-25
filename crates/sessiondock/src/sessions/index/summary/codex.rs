@@ -209,6 +209,12 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         model,
         branch: Value::Null,
         codex: Some(CodexMeta {
+            start_ordinal: records
+                .head
+                .records
+                .iter()
+                .find(|r| r.value["type"] == "session_meta")
+                .and_then(|r| r.value["ordinal"].as_u64()),
             has_meta: truthy(&meta),
             forked_from_id: text_if_truthy(&meta["forked_from_id"]).unwrap_or_default(),
             history_base: if meta["history_base"].is_object() {
