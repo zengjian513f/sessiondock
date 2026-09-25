@@ -104,6 +104,19 @@ strict guard acknowledgement, coalesced replay/raw byte framing, and ambiguous
 timeout handling. Host-side enforcement and the Web bridge must be validated
 separately; fake peers are not evidence that an older host binary enforces guards.
 
+## Same-thread rollout generations
+
+When Codex rotates a rollout without changing its native thread ID, catalog
+aliases resolve resume requests to the latest generation. An existing host
+continues to use its originally declared UID for every guarded request and for
+duplicate-host detection. The alias must not rewrite that immutable identity.
+`/api/term/list` exposes the newer view as `current_uid`, independently of the
+host's `uid`; an observed open rollout takes precedence over the catalog alias.
+This allows the original console to remain accessible even if a later resume
+is waiting in another host. No process is stopped or host metadata rewritten.
+`tests/managed_terminal_browser.py` exercises both hosts together, original
+console input/output, second-page takeover and Web restart using synthetic shells.
+
 ## Output completion is separate from identity
 
 An exact instance guard identifies a stream but does not guarantee complete PTY
