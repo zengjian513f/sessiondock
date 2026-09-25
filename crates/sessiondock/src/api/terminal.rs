@@ -845,6 +845,10 @@ pub async fn list(
             {
                 grid_hosts.extend(hosts.into_iter().filter(|h| h.grid).map(|h| h.name));
             }
+            let catalog = state
+                .reader
+                .run_wait(&state.shutdown, |store| store.native_catalog())
+                .await?;
             let sessions: Vec<Value> = observed
                 .snapshot
                 .hosts
@@ -864,6 +868,13 @@ pub async fn list(
                         && let [uid] = uids.as_slice()
                     {
                         row["current_uid"] = json!(uid);
+                    } else if !current.contains_key(&host.summary.name)
+                        && let Ok(scope) = catalog.verified_scope(target.uid())
+                        && scope.uid != target.uid()
+                    {
+                        // Explicit rollout generations share a native thread;
+                        // keep the guard UID while routing its latest view here.
+                        row["current_uid"] = json!(scope.uid);
                     }
                     Some(row)
                 })
