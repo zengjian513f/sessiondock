@@ -208,6 +208,8 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | sse_suite | `python3 tests/sse_suite.py --binary target/release/sessiondock` | Raw-HTTP coverage of GET /api/watch SSE for Claude, Codex and Grok. | binary | n/a |
 | static_assets_suite | `python3 tests/static_assets_suite.py --binary target/release/sessiondock` | Contract coverage for static serving and HTML template injection. | binary | n/a |
 | term_send_http_suite | `python3 tests/term_send_http_suite.py --binary target/release/sessiondock` | HTTP-only contract of POST /api/term/send and /api/term/scroll. | binary, ptyhost | n/a |
+| terminal_alt_browser | `python3 tests/terminal_alt_browser.py` | Mobile Alt emits physical-key PTY bytes in xterm and grid renderers. | debug server, ptyhost, Chromium | n/a |
+| terminal_keyboard_browser | `python3 tests/terminal_keyboard_browser.py` | Keyboard inset keeps prompts and bottom editors visible without SIGWINCH. | debug server, ptyhost, Chromium | n/a |
 | terminal_browser | `python3 tests/terminal_browser.py` | Temporary POSIX shell: bytes, resize, takeover, and PTY survival across Web restart. | debug server, ptyhost, Chromium | 4s |
 | terminal_claim_browser | `python3 tests/terminal_claim_browser.py` | Real console clicks and shell input/output after a 6 s request/response delay; desktop xterm, mobile grid, full claim timeout without automatic retry, and explicit recovery. | debug server, ptyhost, Chromium | 40s |
 | terminal_diagnostics_browser | `python3 tests/terminal_diagnostics_browser.py` | Claim, header, body, and first grid-paint receipts on an isolated shell with delayed HTTP. | Chromium, ptyhost | n/a |
