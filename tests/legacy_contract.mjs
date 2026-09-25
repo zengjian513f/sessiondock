@@ -237,13 +237,17 @@ test('claim timeout never forces ownership or attaches using an uncertain lease'
       });
       loadFunction(context, 'describeTermTaker', read('term.js'));
       const claim = loadFunction(context, 'claimTermOwnership', read('term.js'));
-      assert.equal(await claim('pane', 'claude:fixture', {uid: 'claude:fixture', instance_id: 'pinned'}, auto), null);
+      const attempt = claim('pane', 'claude:fixture', {uid: 'claude:fixture', instance_id: 'pinned'}, auto);
+      // Automatic reconnect propagates transient failures to its retry owner;
+      // an explicit click instead retains an actionable uncertainty message.
+      if (auto && !force) await assert.rejects(attempt, {name: 'TimeoutError'});
+      else assert.equal(await attempt, null);
       assert.equal(calls.length, force && !auto ? 2 : 1);
       for (const {body, options} of calls) {
         assert.equal(body.instance_id, 'pinned');
         assert.equal(options.timeoutMs, 5000);
       }
-      if (!(force && auto)) assert.match(ConsoleUI.errors.get('claude:fixture'), /服务端可能已取得控制权/);
+      if (!auto) assert.match(ConsoleUI.errors.get('claude:fixture'), /服务端可能已取得控制权/);
     }
   }
 });
