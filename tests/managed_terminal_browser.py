@@ -16,11 +16,20 @@ def main():
             (root/name).mkdir(mode=0o700)
         corpus=Corpus(root)
         sid="synthetic-native-sid"
-        corpus.put(sid,"codex",[codex_row("session_meta",{"id":sid,"cwd":str(root/"work")}),codex_message("user","Synthetic managed console")],[])
-        uid=corpus.uid(sid)
+        corpus.put(sid,"codex",[codex_row("session_meta",{"id":sid,"cwd":str(root/"work"),
+            "timestamp":"2026-09-11T08:00:00Z"},0),codex_message("user","Synthetic managed console",1)],[])
+        guard_uid=corpus.uid(sid)
+        corpus.put("rotation", "codex", [codex_row("session_meta", {"id":sid,
+            "cwd":str(root/"work"), "timestamp":"2026-09-11T09:00:00Z",
+            "history_base":{"thread_id":sid,"end_byte_offset":corpus.paths[sid].stat().st_size,
+                            "end_ordinal_exclusive":2}},2),
+            codex_message("user","Rotated managed console",3)],[])
+        uid=corpus.uid("rotation")
         native=corpus.paths[sid].read_bytes()
         instance="synthetic-"+uuid.uuid4().hex
-        with host(root,instance,uid=uid) as (process,record), sync_playwright() as playwright:
+        with host(root,instance,uid=guard_uid) as (process,record), \
+             host(root,"waiting-"+uuid.uuid4().hex,uid=uid,name="synthetic-waiting-resume"), \
+             sync_playwright() as playwright:
             launch={"headless":True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 launch["executable_path"]=os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -40,8 +49,13 @@ def main():
                         expect(page.locator("#a-term")).to_be_visible()
                         expect(page.locator("#a-term")).to_have_attribute("data-unavailable","false")
                         expect(page.locator("#composer")).to_be_hidden()
+                        listed=context.request.get(base+"/api/term/list?force=1").json()
+                        original=next(row for row in listed["sessions"] if row["name"]=="synthetic-identity-host")
+                        assert original["uid"]==guard_uid and original["current_uid"]==uid, original
+                        assert len(listed["sessions"])==2, listed
                         page.locator("#a-term").click()
                         expect(page.locator("#termpane")).to_be_visible()
+                        page.wait_for_function("T.name === 'synthetic-identity-host'")
                         page.wait_for_function("T.ws && T.ws.readyState === WebSocket.OPEN")
                         # Read the actual imported xterm buffer only to assert
                         # rendered output; all controls use normal user events.

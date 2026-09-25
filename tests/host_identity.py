@@ -51,8 +51,7 @@ def guarded(instance,value,*,uid="codex:0123456789abcdef"):
 
 
 @contextmanager
-def host(root,instance,*,uid="codex:0123456789abcdef",tty_file=None):
-    name="synthetic-identity-host"
+def host(root,instance,*,uid="codex:0123456789abcdef",tty_file=None,name="synthetic-identity-host"):
     environment={key:value for key,value in os.environ.items() if key in {"PATH","LANG","LC_ALL","LC_CTYPE"}}
     environment["TERM"]="xterm-256color"
     script=SHELL_SCRIPT

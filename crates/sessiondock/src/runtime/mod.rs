@@ -220,7 +220,7 @@ impl NativeCatalog {
         &self,
         observation: &HostObservation,
     ) -> Result<&NativeSession, AssociationReason> {
-        match &observation.native_binding {
+        let matched = match &observation.native_binding {
             NativeBindingState::Bound(binding) => {
                 let scope = self.verified_scope(binding.uid())?;
                 if scope.source != binding.source().as_str() || scope.session_id != binding.sid() {
@@ -238,7 +238,32 @@ impl NativeCatalog {
             NativeBindingState::Unsupported | NativeBindingState::Unbound => {
                 self.match_declared(&observation.association)
             }
+        }?;
+        // A generation alias changes the displayed/resumable session, never
+        // the immutable UID checked by an already-running host's guard.
+        let declared_uid = match &observation.native_binding {
+            NativeBindingState::Bound(binding) => Some(binding.uid()),
+            _ => match &observation.association {
+                AssociationState::Declared(identity) => identity.uid.as_deref(),
+                _ => None,
+            },
+        };
+        if let Some(uid) = declared_uid.filter(|uid| *uid != matched.uid) {
+            let mut originals = self.rows.iter().filter(|row| {
+                row.uid == uid
+                    && row.source == matched.source
+                    && row.sid == matched.sid
+                    && row.supported
+                    && !row.subagent
+                    && row.identity_error.is_none()
+            });
+            let original = originals.next().ok_or(AssociationReason::NativeConflict)?;
+            if originals.next().is_some() {
+                return Err(AssociationReason::NativeAmbiguous);
+            }
+            return Ok(original);
         }
+        Ok(matched)
     }
 
     /// Declared legacy metadata resolved against the same-snapshot public
