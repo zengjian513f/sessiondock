@@ -131,6 +131,21 @@ before a confirmed rewind boundary (`abandoned_after`) stay hidden. A native
 interrupt record never starts a turn. The batch-35 lineage notes (missing
 ancestor, cycle, missing declared leaf) are unchanged and non-fatal.
 
+**Codex rollout rotation.** Codex 0.156.1 can keep a native thread ID while
+starting a new physical rollout whose `history_base.thread_id` is that same
+ID. The new header's ordinal equals `end_ordinal_exclusive`. These explicit
+generations are ordered by native header timestamps; filenames do not establish
+identity. The inherited prefix is resolved among older indexed files using the
+declared byte offset and the ordinal of the record immediately before it,
+excluding the requesting file. A genuinely
+ambiguous prefix still reports 409. The old tail beyond the cutoff is excluded.
+Both physical rows remain readable; agent ownership, point title lookup and
+runtime resume identity use the latest generation. Existing UID bindings remain
+aliases for that same native session once all generation chains validate.
+This is an intentional extension beyond the frozen Python oracle for a newer
+native format. Regression: `tests/history_browser.py` and
+`tests/lifecycle_cli_browser.py` use synthetic rollouts and fake CLIs.
+
 Per-session codes (they concern this one session; the list is unaffected):
 
 | Code | Meaning | Client action |

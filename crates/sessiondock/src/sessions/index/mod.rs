@@ -247,6 +247,27 @@ impl IndexSnapshot {
             )),
         }
     }
+    pub fn thread_from(
+        &self,
+        source: &str,
+        sid: &str,
+        child: &str,
+        base: &Value,
+    ) -> Result<&CandidateRef, SessionError> {
+        if source == "codex"
+            && let Some(ids) = self.threads.get(&(source.to_owned(), sid.to_owned()))
+            && ids.len() > 1
+        {
+            return graph::physical_parent(
+                ids.iter().map(|uid| &self.candidates[uid]).collect(),
+                child,
+                base,
+            )
+            .ok_or_else(|| SessionError::new(409, "父线程 ID 在已配置索引中存在歧义"));
+        }
+        self.thread(source, sid)
+    }
+
     /// The declared physical fixed-prefix chain of a main Codex transcript,
     /// nearest parent first, from summaries alone (`Graph::chain` without the
     /// cut check): `(parent, cut)` pairs an open will read. Errors are the
@@ -260,7 +281,12 @@ impl IndexSnapshot {
         let mut chain = Vec::new();
         let mut seen = std::collections::BTreeSet::from([uid.to_owned()]);
         while let Some((sid, cut)) = graph::history_link(current)? {
-            let parent = self.thread("codex", sid)?;
+            let parent = self.thread_from(
+                "codex",
+                sid,
+                &current.uid,
+                &current.summary.codex.as_ref().unwrap().history_base,
+            )?;
             if !seen.insert(parent.uid.clone()) {
                 return Err(SessionError::new(501, "分叉历史依赖存在循环"));
             }
@@ -271,7 +297,7 @@ impl IndexSnapshot {
     }
     /// Verified runtime identity catalog from this snapshot's summaries.
     pub fn catalog(&self) -> crate::runtime::NativeCatalog {
-        crate::runtime::NativeCatalog::from_native_entries(
+        let mut catalog = crate::runtime::NativeCatalog::from_native_entries(
             self.catalog
                 .iter()
                 .map(|seed| NativeCatalogEntry {
@@ -283,7 +309,25 @@ impl IndexSnapshot {
                 })
                 .collect(),
             self.sessions(),
-        )
+        );
+        for ids in self.threads.values() {
+            if let Some(entries) =
+                graph::generations(ids.iter().map(|uid| &self.candidates[uid]).collect())
+                && entries
+                    .iter()
+                    .all(|entry| self.physical_chain(&entry.uid).is_ok())
+            {
+                let latest = &entries.last().unwrap().uid;
+                catalog.alias_generations(
+                    &entries
+                        .iter()
+                        .map(|entry| entry.uid.clone())
+                        .collect::<Vec<_>>(),
+                    latest,
+                );
+            }
+        }
+        catalog
     }
 }
 
@@ -1295,6 +1339,38 @@ fn unreadable(candidate: &Discovered) -> RowSummary {
     summary.unsupported = Some("会话文件暂时不可读取".to_owned());
     summary.warnings.clear();
     summary
+}
+
+/// Read only the record immediately before a declared generation boundary.
+/// A byte offset alone can also fit an older, larger rollout; the native
+/// ordinal proves which physical prefix the continuation actually names.
+fn prefix_ordinal(entry: &CandidateRef, cut: u64) -> Option<u64> {
+    let stamp = entry.stamp?;
+    if cut == 0 || cut > stamp.size {
+        return None;
+    }
+    let mut file = open_indexed(&entry.root, &entry.data).ok()?;
+    if Stamp::of(&Metadata::from_file(&file).ok()?) != stamp {
+        return None;
+    }
+    let mut size = 4096_u64.min(cut);
+    loop {
+        let start = cut - size;
+        let bytes = read_exact_at(&mut file, start, size).ok()?;
+        if bytes.last() != Some(&b'\n') {
+            return None;
+        }
+        let line = &bytes[..bytes.len() - 1];
+        let begin = line.iter().rposition(|byte| *byte == b'\n').map(|i| i + 1);
+        if begin.is_some() || start == 0 {
+            let record: Value = serde_json::from_slice(&line[begin.unwrap_or(0)..]).ok()?;
+            if Stamp::of(&Metadata::from_file(&file).ok()?) != stamp {
+                return None;
+            }
+            return record["ordinal"].as_u64()?.checked_add(1);
+        }
+        size = size.saturating_mul(2).min(cut);
+    }
 }
 
 /// One-byte probe: is `cut` a line boundary of the parent at this stamp?

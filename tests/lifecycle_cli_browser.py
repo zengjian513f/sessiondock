@@ -198,8 +198,17 @@ def main():
         )
         server_wrapper.chmod(0o700)
         corpus = Corpus(root)
-        corpus.put(CODEX_SID, "codex", [codex_row("session_meta", {"id": CODEX_SID, "cwd": str(root / "work/codex-area")}),
-            codex_message("user", "Unchanged native history")], [])
+        # A same-SID rollout rotation must remain resumable by native identity.
+        original = corpus.put("rotation-original", "codex", [codex_row("session_meta", {
+            "id": CODEX_SID, "timestamp": "2026-09-11T08:00:00Z",
+            "cwd": str(root / "work/codex-area")}, 0),
+            codex_message("user", "Inherited native history", 1)], [])
+        corpus.put(CODEX_SID, "codex", [codex_row("session_meta", {
+            "id": CODEX_SID, "timestamp": "2026-09-11T09:00:00Z",
+            "cwd": str(root / "work/codex-area"),
+            "history_base": {"thread_id": CODEX_SID, "end_byte_offset": original.stat().st_size,
+                             "end_ordinal_exclusive": 2}}, 2),
+            codex_message("user", "Unchanged native history", 3)], [])
         native = corpus.paths[CODEX_SID].read_bytes()
         codex_uid = corpus.uid(CODEX_SID)
         for name, body in [("fake-claude", FAKE_CLAUDE), ("fake-codex", FAKE_CODEX),
@@ -316,6 +325,9 @@ def main():
                     # the exact live instance.
                     again = context.request.post(base + "/api/term/takeover", data={"uid": codex_uid, "request_id": "browser-repeat-request"})
                     assert again.status == 200 and again.json()["record_id"] == resumed["record_id"] and again.json()["action"] == "reused", again.text()
+                    old_link = context.request.post(base + "/api/term/takeover", data={
+                        "uid": corpus.uid("rotation-original"), "request_id": "browser-old-generation"})
+                    assert old_link.status == 200 and old_link.json()["record_id"] == resumed["record_id"] and old_link.json()["action"] == "reused", old_link.text()
                     forced = context.request.post(base + "/api/term/takeover", data={"uid": codex_uid, "request_id": "browser-force-request", "force": True})
                     assert forced.status == 200 and forced.json()["record_id"] == resumed["record_id"] and forced.json()["action"] == "reused", forced.text()
                     tmux = context.request.post(base + "/api/term/backend", data={"backend": "tmux"})

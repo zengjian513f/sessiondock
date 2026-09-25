@@ -75,6 +75,8 @@ pub struct Input<'a> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodexMeta {
+    /// Ordinal of the first native session_meta (rollout generation boundary).
+    pub start_ordinal: Option<u64>,
     /// A `session_meta` header was seen (today's rows carry
     /// `forked_from_id`/`history_base` only then).
     pub has_meta: bool,

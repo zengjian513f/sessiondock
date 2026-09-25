@@ -453,6 +453,18 @@ struct IndexDeps<'a> {
 }
 
 impl Dependencies for IndexDeps<'_> {
+    fn thread_from(
+        &self,
+        source: &str,
+        thread_id: &str,
+        child: &str,
+        base: &Value,
+    ) -> Result<Candidate, SessionError> {
+        self.index
+            .thread_from(source, thread_id, child, base)
+            .map(Candidate::of)
+    }
+
     fn thread(&self, source: &str, thread_id: &str) -> Result<Candidate, SessionError> {
         self.index.thread(source, thread_id).map(Candidate::of)
     }

@@ -1089,6 +1089,15 @@ pub(crate) trait Dependencies {
     /// 501 when the parent is not indexed or is a subagent file, 409 when the
     /// id is ambiguous.
     fn thread(&self, source: &str, thread_id: &str) -> Result<Candidate, SessionError>;
+    fn thread_from(
+        &self,
+        source: &str,
+        thread_id: &str,
+        _child: &str,
+        _base: &Value,
+    ) -> Result<Candidate, SessionError> {
+        self.thread(source, thread_id)
+    }
     /// A parse of exactly this candidate (same stamps) and pin the caller
     /// already holds, so one file is never streamed twice for one change.
     /// Optional; the lazy index has none.
@@ -1106,6 +1115,8 @@ struct FileEntry {
 /// One inherited fixed prefix, with the stamp of the parent file it was read
 /// from: an unchanged stamp lets a rebuild of the child skip re-reading it.
 struct Prefix {
+    child: String,
+    base: Value,
     /// The thread id the child declared for this parent.
     thread: String,
     candidate: Candidate,
@@ -1144,7 +1155,12 @@ impl CachedView {
             return Ok(false);
         }
         for prefix in &self.prefixes {
-            let resolved = deps.thread(prefix.candidate.source, &prefix.thread)?;
+            let resolved = deps.thread_from(
+                prefix.candidate.source,
+                &prefix.thread,
+                &prefix.child,
+                &prefix.base,
+            )?;
             if resolved.path != prefix.candidate.path
                 || restamp(&prefix.candidate)? != prefix.candidate
             {
@@ -1855,6 +1871,8 @@ fn build(
             prefixes
                 .iter()
                 .map(|prefix| Prefix {
+                    child: prefix.child.clone(),
+                    base: prefix.base.clone(),
                     thread: prefix.thread.clone(),
                     candidate: prefix.candidate.clone(),
                     cut: prefix.cut,
@@ -1873,7 +1891,11 @@ fn build(
                 prefixes: Vec::new(),
                 seen: BTreeSet::from([uid_for(parsed.candidate.source, &parsed.candidate.path)]),
             };
-            chain.inherit(parsed.candidate.source, &parsed.meta)?;
+            chain.inherit(
+                parsed.candidate.source,
+                &parsed.meta,
+                &uid_for(parsed.candidate.source, &parsed.candidate.path),
+            )?;
             let prefixes = std::mem::take(&mut chain.prefixes);
             let inherited = chain.inherited();
             let encoded = Arc::new(encode_events(inherited.as_slice(), files.retains(), None)?);
@@ -2021,11 +2043,13 @@ impl Chain<'_> {
         Ok((meta, events, digest))
     }
 
-    fn inherit(&mut self, source: &str, meta: &Value) -> Result<(), SessionError> {
+    fn inherit(&mut self, source: &str, meta: &Value, child: &str) -> Result<(), SessionError> {
         let Some((sid, cut)) = history::history_link(source, meta)? else {
             return Ok(());
         };
-        let candidate = self.deps.thread("codex", sid)?;
+        let candidate = self
+            .deps
+            .thread_from("codex", sid, child, &meta["history_base"])?;
         let uid = uid_for(candidate.source, &candidate.path);
         if !self.seen.insert(uid.clone()) {
             return Err(SessionError::new(501, "分叉历史依赖存在循环"));
@@ -2052,10 +2076,12 @@ impl Chain<'_> {
             };
         // Zero is an empty prefix, not permission to include grandparents.
         if cut > 0 {
-            self.inherit(candidate.source, &prefix_meta)?;
+            self.inherit(candidate.source, &prefix_meta, &uid)?;
             self.segments.push(prefix_events);
         }
         self.prefixes.push(Prefix {
+            child: child.to_owned(),
+            base: meta["history_base"].clone(),
             thread: sid.to_owned(),
             digest: json!([uid, cut, digest]),
             candidate,

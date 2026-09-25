@@ -57,6 +57,25 @@ pub struct NativeCatalog {
 }
 
 impl NativeCatalog {
+    /// Proven same-thread rollout generations share the latest runtime identity.
+    pub(crate) fn alias_generations(&mut self, uids: &[String], latest: &str) {
+        if let Some(indices) = self.by_uid.get(latest).cloned()
+            && let [index] = indices.as_slice()
+        {
+            let row = &self.rows[*index];
+            if row.identity_error.is_none() && row.supported {
+                self.by_sid
+                    .insert((row.source, row.sid.clone()), indices.clone());
+                for uid in uids {
+                    self.by_uid.insert(uid.clone(), indices.clone());
+                }
+            }
+        }
+        if let Some(legacy) = &mut self.legacy {
+            legacy.alias_generations(uids, latest);
+        }
+    }
+
     pub fn from_rows(rows: &[Value]) -> Self {
         let mut catalog = Self::default();
         for row in rows {

@@ -44,12 +44,17 @@ impl Index {
                 missing.push(id.clone());
                 continue;
             };
-            if uids.len() != 1 {
+            let selected = if uids.len() == 1 {
+                Some(uids[0].clone())
+            } else {
+                graph::generations(uids.iter().map(|uid| &snapshot.candidates[uid]).collect())
+                    .and_then(|entries| entries.last().map(|entry| entry.uid.clone()))
+            };
+            let Some(mut uid) = selected else {
                 missing.push(id.clone());
                 continue;
-            }
-            requested.insert(id.clone(), uids[0].clone());
-            let mut uid = uids[0].clone();
+            };
+            requested.insert(id.clone(), uid.clone());
             while !entries.contains_key(&uid) {
                 let Some(original) = snapshot.candidate(&uid) else {
                     break;
