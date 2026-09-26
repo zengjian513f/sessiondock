@@ -100,7 +100,7 @@ def run_b(base, uids):
     codes_ok("queued burst of 24 reads", results)
 
 
-def check_env(corpus: Corpus, extra):
+def check_env(binary: Path, corpus: Corpus, extra):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SESSIONDOCK_")}
     env.update({
         "SESSIONDOCK_BIND": "127.0.0.1:0",
@@ -109,15 +109,15 @@ def check_env(corpus: Corpus, extra):
     })
     for source in ("claude", "codex", "grok"):
         env["SESSIONDOCK_" + source.upper() + "_ROOT"] = str(corpus.root / source)
-    return subprocess.run([str(BINARY), "--check-config"], env=env, capture_output=True, timeout=15)
+    return subprocess.run([str(binary), "--check-config"], env=env, capture_output=True, timeout=15)
 
 
-def run_c(corpus: Corpus):
-    bad = check_env(corpus, {"SESSIONDOCK_READ_WORKERS": "0"})
+def run_c(binary: Path, corpus: Corpus):
+    bad = check_env(binary, corpus, {"SESSIONDOCK_READ_WORKERS": "0"})
     if bad.returncode == 0:
         fail("check-config workers=0", "expected non-zero", bad.stdout.decode("utf-8", "replace")[:200])
     passed("check-config READ_WORKERS=0 fails")
-    ok = check_env(corpus, {"SESSIONDOCK_READ_WORKERS": "4"})
+    ok = check_env(binary, corpus, {"SESSIONDOCK_READ_WORKERS": "4"})
     text = (ok.stdout + ok.stderr).decode("utf-8", "replace")
     if ok.returncode != 0 or "read_workers=4" not in text:
         fail("check-config workers=4", f"rc={ok.returncode}", text[:240])
@@ -144,7 +144,7 @@ def main():
             "SESSIONDOCK_READ_WORKERS": "1",
         }) as (base, opener):
             run_b(base, uids)
-        run_c(corpus)
+        run_c(binary, corpus)
     print(f"reader_pool_suite: {CHECKS} checks passed")
     return 0
 
