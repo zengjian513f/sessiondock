@@ -102,6 +102,44 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> report task')
                 page.locator('#a-term').click()
+                # Count the critical path and hold the post-send draft save.
+                # A slow cleanup must not keep the successful send spinning.
+                page.locator('#cinput').fill('latency regression')
+                page.evaluate('async () => await composerDraftWrites')
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                page.evaluate('''() => {
+                    window.sendTrace = [];
+                    window.sendFetch = window.fetch;
+                    window.releaseCleanup = null;
+                    window.fetch = async (url, options) => {
+                        const path = new URL(url, location.href).pathname;
+                        if ((composerSending || sendTrace.includes('send')) && options?.method === 'POST'
+                            && path.includes('/conversation')) {
+                            sendTrace.push(path.split('/').pop());
+                            if (path.endsWith('/conversation') && sendTrace.includes('send') && !window.releaseCleanup)
+                                await new Promise(resolve => { window.releaseCleanup = resolve; });
+                        }
+                        return sendFetch(url, options);
+                    };
+                    window.sendStarted = performance.now();
+                }''')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as fast_sent:
+                    page.locator('#csend').click()
+                assert fast_sent.value.status == 200, fast_sent.value.text()
+                page.wait_for_function('() => !composerSending', timeout=2000)
+                expect(page.locator('#cinput')).to_have_value('')
+                trace = page.evaluate('sendTrace')
+                assert trace[:2] == ['conversation', 'send'], trace
+                print('Codex click-to-clear ms:', round(page.evaluate('performance.now() - sendStarted')), flush=True)
+                page.wait_for_function('() => !!window.releaseCleanup')
+                page.locator('#cinput').fill('edit while cleanup is pending')
+                page.evaluate('''() => { window.fetch = sendFetch; releaseCleanup?.(); }''')
+                page.evaluate('async () => await composerDraftWrites')
+                expect(page.locator('#cinput')).to_have_value('edit while cleanup is pending')
+                saved = context.request.get(base + '/api/session/conversation',
+                    params={'uid': page.evaluate('composerUid')}).json()['draft']
+                assert saved['value']['text'] == 'edit while cleanup is pending', saved
+                page.locator('#cinput').fill('')
                 png = base64.b64decode(PNG)
                 page.locator('#cadd').click()
                 with page.expect_file_chooser() as chooser:
@@ -188,7 +226,7 @@ def main():
                     if index == 0:
                         assert (root / 'footer-paste.scrolled').exists(), 'exercise a genuinely clipped prompt marker'
                     submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
-                    assert len(submissions) == 4 + index, submissions
+                    assert len(submissions) == 5 + index, submissions
                     worker_prompt = (bundle / 'worker-prompt.md').read_text()
                     assert (len(worker_prompt) > 1000) == (index == 1), 'cover expanded and collapsed reports'
                     assert submissions[-1] == worker_prompt
