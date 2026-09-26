@@ -94,6 +94,24 @@ reported as `browser.terminal.grid_parse_error` with its length, never its text.
 These first-frame/error markers reset on a new attachment, not on every diff.
 Byte/xterm consoles currently report first-output but not snapshot/paint markers.
 
+The node records its side of each attach with the page's `page_id` and, in
+`data.connection`, the page's connection id. Frames are aggregated into windows
+that close 1 s after their first frame:
+
+- `terminal.input.written`: browser frames the node received and wrote to the
+  host (`frames`, `bytes`, `span_ms`), with `max_write_ms` covering the
+  per-name gate wait plus the host write acknowledgement.
+- `terminal.output.sent`: host output handed to the browser socket, with
+  `max_write_ms` for the slowest socket write.
+- `terminal.attach.closed`: the close code and reason.
+
+A `max_write_ms` of 1 s or more is a warning. Page `browser.terminal.input` rows
+without a matching `terminal.input.written` window mean the frames did not reach
+the node. Prompt input receipts followed by no `terminal.output.sent` mean the
+CLI produced no screen change. Output sent but not received points to the link
+back to the browser. Only counts and timings are recorded, never terminal bytes.
+
 `tests/terminal_diagnostics_browser.py` clicks the mobile console, sends shell
-input, correlates node/browser claim receipts and exercises real delayed HTTP
+input, correlates node/browser claim and terminal I/O receipts, checks the
+node's close receipt, and exercises real delayed HTTP
 headers and bodies using isolated loopback fixtures.

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::ws::{CloseFrame, Message, WebSocket};
@@ -23,6 +23,7 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::input;
+use super::receipts::{IoDirection, IoMeter, IoObserver, IoReceipt};
 use super::ownership::{
     self, BoundLease, ClaimResponse, Claimant, ExpectedTarget, LeaseTarget, Registry, Revocation,
 };
@@ -716,6 +717,7 @@ impl TerminalService {
                 gate,
             },
             mode: AttachMode::Bytes,
+            observer: None,
         })
     }
 }
@@ -739,11 +741,18 @@ pub struct PreparedAttachment {
     guard: LeaseGuard,
     /// Byte stream for xterm.js, or grid JSON lines for the server-grid page.
     mode: AttachMode,
+    observer: Option<IoObserver>,
 }
 
 impl PreparedAttachment {
     pub fn with_mode(mut self, mode: AttachMode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// Diagnostic receipts of this connection's I/O windows and close.
+    pub fn with_observer(mut self, observer: IoObserver) -> Self {
+        self.observer = Some(observer);
         self
     }
 }
@@ -767,8 +776,9 @@ impl PreparedAttachment {
                     // These futures stay inside one scope. Exiting it drops both
                     // host halves before attempting the browser close handshake.
                     let output = host_output(reader, send.clone());
-                    let input = browser_input(stream, writer, send, &self.guard);
-                    let sending = browser_output(&mut sink, receive);
+                    let observer = self.observer.as_ref();
+                    let input = browser_input(stream, writer, send, &self.guard, observer);
+                    let sending = browser_output(&mut sink, receive, observer);
                     tokio::pin!(output, input, sending);
                     tokio::select! {
                         biased;
@@ -784,6 +794,12 @@ impl PreparedAttachment {
         // Do not hold ownership until the peer acknowledges its close. The
         // exact credential guard is safe even after a newer claim was installed.
         let _ = self.guard.registry.release(&self.guard.bound);
+        if let Some(observer) = &self.observer {
+            observer(IoReceipt::Closed {
+                code: close.code,
+                reason: close.reason.clone(),
+            });
+        }
         close_browser(&mut sink, close).await;
     }
 
@@ -980,12 +996,50 @@ enum BrowserControl {
 }
 
 async fn browser_input(
+    stream: SplitStream<WebSocket>,
+    writer: AttachWriter,
+    sender: mpsc::Sender<BrowserOutput>,
+    guard: &LeaseGuard,
+    observer: Option<&IoObserver>,
+) -> Close {
+    let mut meter = IoMeter::new(IoDirection::Input);
+    let close = browser_input_frames(stream, writer, sender, guard, observer, &mut meter).await;
+    meter.flush(observer);
+    close
+}
+
+/// Waits for the next item, first reporting a window that falls due while idle.
+async fn next_or_flush<F: Future>(
+    meter: &mut IoMeter,
+    observer: Option<&IoObserver>,
+    next: F,
+) -> F::Output {
+    tokio::pin!(next);
+    if let Some(deadline) = meter.deadline() {
+        if let Ok(item) = tokio::time::timeout_at(deadline.into(), next.as_mut()).await {
+            return item;
+        }
+        meter.flush(observer);
+    }
+    next.await
+}
+
+async fn browser_input_frames(
     mut stream: SplitStream<WebSocket>,
     mut writer: AttachWriter,
     sender: mpsc::Sender<BrowserOutput>,
     guard: &LeaseGuard,
+    observer: Option<&IoObserver>,
+    meter: &mut IoMeter,
 ) -> Close {
-    while let Some(message) = stream.next().await {
+    loop {
+        if meter.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
+            meter.flush(observer);
+        }
+        let Some(message) = next_or_flush(meter, observer, stream.next()).await else {
+            break;
+        };
+        let received = Instant::now();
         let message = match message {
             Ok(message) => message,
             Err(_) => return Close::new(1009, "invalid or oversized browser frame"),
@@ -1019,9 +1073,14 @@ async fn browser_input(
             }
             Message::Pong(_) => continue,
         };
+        let bytes = match &write {
+            HostInput::Data(bytes) => bytes.len(),
+            HostInput::Resize(_) => 0,
+        };
         if let Err(close) = gated_write(guard, &mut writer, write).await {
             return close;
         }
+        meter.note(received, bytes, received.elapsed());
     }
     Close::new(1000, "client disconnected")
 }
@@ -1060,11 +1119,36 @@ async fn gated_write(
 
 async fn browser_output(
     sink: &mut SplitSink<WebSocket, Message>,
-    mut receiver: mpsc::Receiver<BrowserOutput>,
+    receiver: mpsc::Receiver<BrowserOutput>,
+    observer: Option<&IoObserver>,
 ) -> Close {
-    while let Some(item) = receiver.recv().await {
+    let mut meter = IoMeter::new(IoDirection::Output);
+    let close = browser_output_frames(sink, receiver, observer, &mut meter).await;
+    meter.flush(observer);
+    close
+}
+
+async fn browser_output_frames(
+    sink: &mut SplitSink<WebSocket, Message>,
+    mut receiver: mpsc::Receiver<BrowserOutput>,
+    observer: Option<&IoObserver>,
+    meter: &mut IoMeter,
+) -> Close {
+    loop {
+        if meter.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
+            meter.flush(observer);
+        }
+        let Some(item) = next_or_flush(meter, observer, receiver.recv()).await else {
+            break;
+        };
+        let started = Instant::now();
         let result = match item {
-            BrowserOutput::Data(bytes) => sink.send(Message::Binary(bytes)).await,
+            BrowserOutput::Data(bytes) => {
+                let length = bytes.len();
+                let result = sink.send(Message::Binary(bytes)).await;
+                meter.note(started, length, started.elapsed());
+                result
+            }
             BrowserOutput::Flush => sink.flush().await,
             BrowserOutput::Finish(close) => return close,
         };

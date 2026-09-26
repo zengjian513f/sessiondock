@@ -106,6 +106,19 @@ def main():
                     assert len(frames) == 4 and len({r['connection_id'] for r in frames}) == 1, frames
                     assert frames[-1]['event'] == 'browser.terminal.first_paint'
                     assert frames[-1]['data']['visible'] and frames[-1]['data']['width'] > 0
+                    # The node's own receipts for the typed bytes and the echo,
+                    # joined to the page's rows by page and connection id.
+                    connection = frames[0]['connection_id']
+                    wait_for_events(page, root/'audit', {'terminal.input.written', 'terminal.output.sent'})
+                    rows = audit_lines(root/'audit')
+                    written = [r for r in rows if r['event'] == 'terminal.input.written']
+                    sent = [r for r in rows if r['event'] == 'terminal.output.sent']
+                    for row in written + sent:
+                        assert row['client'] == 'server' and row['page_id'] == ready['page_id'], row
+                        assert row['data']['connection'] == connection, row
+                        assert row['data']['frames'] >= 1 and row['data']['max_write_ms'] >= 0, row
+                    assert sum(r['data']['bytes'] for r in written) >= len('ping\r'), written
+                    assert sum(r['data']['bytes'] for r in sent) > 0, sent
                     # A split snapshot must not claim success before the last byte;
                     # a hidden canvas must not claim it was visibly painted.
                     page.evaluate("""() => {
@@ -165,6 +178,14 @@ def main():
                     ok = next(r['data'] for r in rows if r['trace_id'] == 'diag-ok' and r['event'] == 'browser.http.response.received')
                     assert ok['headers_ms'] >= 0 and ok['body_ms'] >= 0
                     assert 'DIAGNOSTIC_SECRET_SENTINEL' not in json.dumps(rows)
+                    assert 'RS_PING_OK' not in json.dumps(rows), 'terminal bytes reached the audit'
+                    # Leaving the page ends the attach; the node records why.
+                    page.close()
+                    deadline = time.monotonic() + 10
+                    while not any(r['event'] == 'terminal.attach.closed' and r['data']['connection'] == connection
+                                  for r in audit_lines(root/'audit')):
+                        assert time.monotonic() < deadline, 'no terminal.attach.closed receipt'
+                        time.sleep(.1)
                     assert not errors, errors
                     assert corpus.paths[sid].read_bytes() == native
                 finally:

@@ -369,6 +369,10 @@ pub async fn attach(
     } else {
         crate::terminal::AttachMode::Bytes
     };
+    let mut prepared = prepared.with_mode(mode);
+    if let Some(audit) = state.audit.clone() {
+        prepared = prepared.with_observer(io_observer(audit, &query));
+    }
     Ok(ws
         .read_buffer_size(16 * 1024)
         .write_buffer_size(0)
@@ -378,7 +382,58 @@ pub async fn attach(
         // Upgrade failures drop the callback's PreparedAttachment guard; do not
         // log the rejection, request URI, token, or peer's arbitrary text.
         .on_failed_upgrade(|_| {})
-        .on_upgrade(move |socket| prepared.with_mode(mode).run(socket, size, state.shutdown)))
+        .on_upgrade(move |socket| prepared.run(socket, size, state.shutdown)))
+}
+
+/// Server-side receipts of one attach: when browser frames reached this node
+/// and how long their host writes took, output handed to the browser socket,
+/// and the close. With the page's `terminal.input`/`output_received` rows they
+/// place a missing echo in the browser link, this node, or the CLI.
+fn io_observer(
+    audit: std::sync::Arc<crate::audit::AuditService>,
+    query: &AttachQuery,
+) -> crate::terminal::receipts::IoObserver {
+    use crate::terminal::receipts::{IoDirection, IoReceipt};
+    let (name, page, connection) = (
+        query.name.clone(),
+        query.page.clone(),
+        query.connection.clone(),
+    );
+    let uid = query.uid.clone().unwrap_or_default();
+    std::sync::Arc::new(move |receipt| {
+        let (event, severity, data) = match receipt {
+            IoReceipt::Window {
+                direction,
+                frames,
+                bytes,
+                span_ms,
+                max_write_ms,
+            } => (
+                match direction {
+                    IoDirection::Input => "terminal.input.written",
+                    IoDirection::Output => "terminal.output.sent",
+                },
+                if max_write_ms >= 1000.0 { "warning" } else { "info" },
+                json!({"name": name, "connection": connection, "frames": frames,
+                    "bytes": bytes, "span_ms": span_ms, "max_write_ms": max_write_ms}),
+            ),
+            IoReceipt::Closed { code, reason } => (
+                "terminal.attach.closed",
+                if code == 1000 { "info" } else { "warning" },
+                json!({"name": name, "connection": connection, "code": code, "reason": reason}),
+            ),
+        };
+        audit.record(crate::audit::query::ServerEvent {
+            event,
+            category: "terminal",
+            severity,
+            uid: &uid,
+            trace_id: "",
+            page_id: &page,
+            build: "",
+            data,
+        });
+    })
 }
 
 fn binding_unavailable() -> ApiError {
