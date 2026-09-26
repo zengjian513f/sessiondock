@@ -75,8 +75,10 @@ shape, 501 when the transport is off. `scroll()` returns 0 and
 `leave_copy_mode()` is a no-op because the browser's
 xterm scrolls itself; the host protocol has no view/scroll state (only
 `capture` snapshots), so the route performs no host I/O and never writes to
-the PTY. The legacy wheel handler keeps its existing behaviour for `ptyhost`
-rows.
+the PTY. For `ptyhost` rows the console leaves wheel events to the grid/xterm
+renderer: ordinary shell output scrolls locally, while mouse-reporting or
+alternate-screen applications retain their terminal input behavior. Only old
+tmux rows use the legacy HTTP scroll path.
 
 ## Legacy
 
@@ -101,8 +103,10 @@ the list.
 ptyhost running a private `/bin/sh`: text + Enter echoed through capture,
 refusal without lease, after revoke and after exit, size limits and input bursts,
 the lease-less page written through its pinned instance even with a PTY holder; skips when ptyhost is not built) and
-`python3 tests/terminal_input_browser.py` (desktop HTTP `data` while a scroll
-is pending, 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
+`python3 tests/terminal_scrollback_browser.py` (real wheel up/down over PTY history
+in grid and xterm, stable history position, subsequent live input, no HTTP scroll);
+`python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
+390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
 claim/input after exit, composer hidden, fixture bytes unchanged);
 `python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease); `python3 tests/grok_raw_send_browser.py`
 (Grok composer text from a 390 px page without a console: paste + Enter with
