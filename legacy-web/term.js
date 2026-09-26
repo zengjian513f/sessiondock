@@ -2307,7 +2307,8 @@ function termSelectionMouseDown(event) {
 }
 
 function shouldUseTermWebgl(uid = T.uid) {
-  return !String(uid || '').startsWith('tmux:');
+  return !String(uid || '').startsWith('tmux:')
+    && Math.abs((parseFloat(getComputedStyle(document.documentElement).zoom) || 1) - 1) < .001;
 }
 
 /** 用户选择的控制台渲染器：`grid` = 服务端网格（宿主解析，浏览器只画格子）。
@@ -2728,6 +2729,25 @@ function performTermFit(view, forceSync = false) {
   // display:none 下缓存的 WebGL/DOM surface 可能失去内容；若行列数碰巧没变，
   // Terminal.resize 不会触发 renderer。重新激活时必须显式画回整个 viewport。
   if (resized || forceSync) repaintTermView(view);
+}
+
+function refreshTerminalScale(settled = false) {
+  // xterm's WebGL atlas uses window DPR alone. DOM text is rasterized by the
+  // browser at CSS zoom, so scaled views must not stretch the old glyph atlas.
+  const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+  for (const view of T.views.values()) {
+    // Removing a canvas mid-pinch cancels touches anchored to it. Switch only
+    // after the gesture ends; grid canvases can be repainted in place throughout.
+    if (settled && view.webgl && Math.abs(zoom - 1) >= .001) {
+      const webgl = view.webgl;
+      view.webgl = null;
+      view.renderer = 'dom';
+      webgl.dispose();
+    }
+  }
+  fitTerm();
+  const view = currentTermViewObject();
+  if (termPaneRenderable(view)) repaintTermView(view);
 }
 
 function fitTerm(immediate = false, forceSync = false) {

@@ -1,5 +1,5 @@
 // Canvas 2D grid renderer. The page injects a model; this module does not import it.
-// Pixel math is in CSS pixels unless noted; the backing store is CSS × devicePixelRatio.
+// Pixel math is in CSS pixels unless noted; the backing store is CSS × devicePixelRatio × effective CSS zoom.
 
 const FLAG_BOLD = 1;
 const FLAG_DIM = 2;
@@ -109,9 +109,19 @@ function readableForeground(fg, bg, alpha) {
   return `rgb(${ink.map(v => round(v + (end - v) * high)).join(',')})`;
 }
 
-function currentDpr() {
-  const n = Number(globalThis.devicePixelRatio);
-  return n > 0 ? n : 1;
+function currentDpr(canvas) {
+  const win = canvas?.ownerDocument?.defaultView || globalThis;
+  const n = Number(win.devicePixelRatio);
+  let ratio = n > 0 ? n : 1;
+  // CSS zoom enlarges the canvas without changing window.devicePixelRatio.
+  // Include ancestor zoom so glyphs are rasterized at their displayed density.
+  if (typeof win.getComputedStyle === 'function') {
+    for (let node = canvas; node; node = node.parentElement) {
+      const zoom = parseFloat(win.getComputedStyle(node).zoom);
+      if (zoom > 0) ratio *= zoom;
+    }
+  }
+  return ratio;
 }
 
 // Offscreen measure surface so metrics work when the visible canvas is detached.
@@ -250,7 +260,7 @@ export class GridRenderer {
   }
 
   measure() {
-    this.dpr = currentDpr();
+    this.dpr = currentDpr(this.canvas);
     const dpr = this.dpr;
     // Fallback metrics if no 2D context exists (Node, or getContext → null).
     const fallbackWidth = Math.max(1, Math.round(this.fontSize * 0.6 * dpr) / dpr);
@@ -297,6 +307,7 @@ export class GridRenderer {
 
   _syncBacking(cssW, cssH) {
     const dpr = this.dpr;
+    this._backingDpr = dpr;
     const canvas = this.canvas;
     if (!canvas) return;
     if (canvas.style) {
@@ -345,6 +356,12 @@ export class GridRenderer {
   } = {}) {
     this.lastPaintedLines = 0;
     if (!model) return;
+    if (currentDpr(this.canvas) !== this._backingDpr) {
+      this.measure();
+      this._syncBacking(Math.max(0, model.cols | 0) * this.cellWidth,
+        Math.max(0, model.rows | 0) * this.cellHeight);
+      this.invalidate();
+    }
     const ctx = this._ensureCtx();
     if (!ctx) return;
 

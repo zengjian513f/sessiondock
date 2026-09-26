@@ -37,7 +37,7 @@ def set_scale(page, value):
     slider = page.locator("#setting-scale")
     slider.focus()
     slider.press("Home")
-    for _ in range(int(value) - 75):
+    for _ in range(int(value) - 30):
         slider.press("ArrowRight")
     expect(slider).to_have_value(str(value))
     expect(page.locator("#setting-scale-value")).to_have_text(f"{value}%")
@@ -75,9 +75,10 @@ def check_pinch(browser, base):
         for step in range(1, 6):
             cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": [{"x": x+slider_box["width"]*.04*step, "y": y, "id": 1}]})
         cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
-        assert 120 < page.evaluate("interfaceScale()") < 140
+        assert 105 < page.evaluate("interfaceScale()") < 125
         after = page.locator("#setting-scale").bounding_box()
-        assert all(abs(after[key] - slider_box[key]) < 1 for key in ("x", "y", "width", "height")), (slider_box, after)
+        # Reciprocal fractional zoom can round the centered dialog by a pixel.
+        assert all(abs(after[key] - slider_box[key]) < 2 for key in ("x", "y", "width", "height")), (slider_box, after)
         page.locator("#setting-scale-reset").tap()
         page.locator("#settings-dialog .modal-close").tap()
         pinch(page, cdp)
@@ -102,8 +103,10 @@ def check_pinch(browser, base):
         page.locator("#pinch-widget").evaluate("e => e.remove()")
         pinch(page, cdp, end=42, cancel=True)
         assert page.evaluate("interfaceScale()") == 120
+        pinch(page, cdp, start=90, end=15)
+        assert page.evaluate("interfaceScale()") == 30
         page.reload(wait_until="networkidle")
-        assert page.evaluate("interfaceScale()") == 120
+        assert page.evaluate("interfaceScale()") == 30
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert not errors, errors
         context.close()
@@ -119,7 +122,7 @@ def check_compact_scale(page):
 
     for width in (320, 390, 820, 1100, 1440):
         page.set_viewport_size({"width": width, "height": 900})
-        for value in ("75", "99", "100", "101", "137", "150"):
+        for value in ("30", "31", "75", "100", "137", "150"):
             print(f"scale browser: {width}px {value}%", flush=True)
             settings()
             set_scale(page, value)

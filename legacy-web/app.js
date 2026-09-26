@@ -58,7 +58,7 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
 
 function normalizedInterfaceScale(value) {
   value = Number(value);
-  return Number.isFinite(value) && value >= 75 && value <= 150 ? Math.round(value) : 100;
+  return Number.isFinite(value) && value >= 30 && value <= 150 ? Math.round(value) : 100;
 }
 function interfaceScale() {
   return normalizedInterfaceScale(store.get('interfaceScale', 100));
@@ -69,6 +69,7 @@ function applyInterfaceScale(value = interfaceScale(), persist = false) {
   document.documentElement.style.setProperty('--compact-scale', value / 100);
   document.querySelector('#setting-scale').value = String(value);
   document.querySelector('#setting-scale-value').value = `${value}%`;
+  if (typeof refreshTerminalScale === 'function') refreshTerminalScale(persist);
   // Resize listeners also update terminal fitting and the visible mobile viewport.
   if (persist) window.dispatchEvent(new Event('resize'));
 }
@@ -102,7 +103,7 @@ applyInterfaceScale();
     consume(event);
     const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
     if (event.touches.length !== 2 || touches.some(touch => !touch)) return;
-    pinch.value = Math.round(Math.max(75, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
+    pinch.value = Math.round(Math.max(30, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
     if (!frame) frame = requestAnimationFrame(() => {
       frame = 0;
       if (pinch) applyInterfaceScale(pinch.value);
