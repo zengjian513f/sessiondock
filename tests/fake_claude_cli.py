@@ -14,6 +14,17 @@ line) to `$SESSIONDOCK_TEST_CLAUDE_ROOT/project-history/<sid>.jsonl`. Options:
   --swallow N      drop the N-th submitted line (1-based) without any record
   --reply          also append a synthetic assistant reply after each user record
   --busy-footer    show Claude's "esc to interrupt" footer while delayed
+
+With `$SESSIONDOCK_TEST_CLAUDE_QUESTION` set, a JSON file at that path
+(`{"questions": [{"question", "options": [label…]}], "tab", "cursors",
+"review"}`) opens an AskUserQuestion menu on the next input. It models the
+navigation measured on Claude Code 2.1.283: each question lists its options,
+then "Type something." and "Chat about this"; Up wraps from the first option
+to the text row, Down stops on the chat row; the text row takes digits and
+Left/Right as text; Left/Right switch questions only from an option row and
+stop at the first question and at Review; Enter or an option's digit answers
+and moves on (a single question submits at once); Review's two rows wrap and
+`1` submits. The outcome is written to `<path>.answers`.
 """
 import json
 import os
@@ -62,6 +73,7 @@ class Fake:
         self.transcript = []
         self.parent = None
         self.submitted = 0
+        self.menu = None
         root = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ROOT", "")
         self.path = os.path.join(root, "project-history", f"{self.sid}.jsonl") if root and self.sid else ""
         # A resumed session chains from the file's last record like the real
@@ -130,6 +142,91 @@ class Fake:
             stream.flush()
             os.fsync(stream.fileno())
 
+    def load_menu(self):
+        path = os.environ.get("SESSIONDOCK_TEST_CLAUDE_QUESTION", "")
+        if self.menu is not None or not path or not os.path.isfile(path):
+            return
+        with open(path, encoding="utf-8") as stream:
+            spec = json.load(stream)
+        os.unlink(path)
+        questions = spec["questions"]
+        self.menu = {"path": path, "questions": questions, "tab": spec.get("tab", 0),
+                     "cursors": list(spec.get("cursors") or [0] * len(questions)),
+                     "texts": [""] * len(questions), "answers": [None] * len(questions),
+                     "review": spec.get("review", 0)}
+        self.render_menu()
+
+    def render_menu(self):
+        menu = self.menu
+        count = len(menu["questions"])
+        lines = ["FAKE_CLAUDE_QUESTION tab=%d" % menu["tab"]]
+        if menu["tab"] == count:
+            lines += ["Review your answers"] + [("❯ " if menu["review"] == i else "  ") + row
+                                               for i, row in enumerate(("1. Submit answers", "2. Cancel"))]
+        else:
+            question = menu["questions"][menu["tab"]]
+            rows = question["options"] + [menu["texts"][menu["tab"]] or "Type something.", "Chat about this"]
+            lines.append(question["question"])
+            lines += [("❯ " if menu["cursors"][menu["tab"]] == i else "  ") + "%d. %s" % (i + 1, row)
+                      for i, row in enumerate(rows)]
+        self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
+
+    def finish_menu(self, outcome):
+        menu = self.menu
+        self.menu = None
+        answers = {q["question"]: a for q, a in zip(menu["questions"], menu["answers"]) if a is not None}
+        with open(menu["path"] + ".answers", "w", encoding="utf-8") as stream:
+            json.dump({"outcome": outcome, "answers": answers}, stream, ensure_ascii=False)
+        self.render()
+
+    def menu_key(self, key):
+        menu = self.menu
+        count = len(menu["questions"])
+        tab = menu["tab"]
+        if tab == count:
+            if key in ("Up", "Down"):
+                menu["review"] ^= 1
+            elif key == "Left":
+                menu["tab"] -= 1
+            elif key in ("1", "2") or key == "Enter":
+                submit = key == "1" or (key == "Enter" and menu["review"] == 0)
+                self.finish_menu("submitted" if submit else "cancelled")
+                return
+            self.render_menu()
+            return
+        options = menu["questions"][tab]["options"]
+        n = len(options)
+        cursor = menu["cursors"][tab]
+        answer = None
+        if key == "Up":
+            menu["cursors"][tab] = n if cursor == 0 else cursor - 1
+        elif key == "Down":
+            menu["cursors"][tab] = min(cursor + 1, n + 1)
+        elif cursor == n:
+            if key == "Enter" and menu["texts"][tab]:
+                answer = menu["texts"][tab]
+            elif len(key) == 1:
+                menu["texts"][tab] += key
+        elif cursor == n + 1:
+            if key == "Enter":
+                self.finish_menu("chat")
+                return
+        elif key in ("Left", "Right"):
+            if count > 1:
+                menu["tab"] = max(0, min(count, tab + (1 if key == "Right" else -1)))
+        elif key == "Enter":
+            answer = options[cursor]
+        elif key.isdigit() and 1 <= int(key) <= n:
+            menu["cursors"][tab] = int(key) - 1
+            answer = options[int(key) - 1]
+        if answer is not None:
+            menu["answers"][tab] = answer
+            if count == 1:
+                self.finish_menu("submitted")
+                return
+            menu["tab"] += 1
+        self.render_menu()
+
     def submit(self):
         text = self.buffer
         self.buffer = ""
@@ -163,7 +260,22 @@ class Fake:
                 if not chunk:
                     return 0
                 pending += chunk
+                self.load_menu()
                 while pending:
+                    if self.menu is not None:
+                        arrows = {b"A": "Up", b"B": "Down", b"C": "Right", b"D": "Left"}
+                        if pending[:1] == b"\x1b":
+                            if len(pending) < 3:
+                                break
+                            key = arrows.get(pending[2:3], "")
+                            pending = pending[3:]
+                        elif pending[:1] in (b"\r", b"\n"):
+                            key, pending = "Enter", pending[1:]
+                        else:
+                            key, pending = pending[:1].decode("utf-8", "replace"), pending[1:]
+                        if key:
+                            self.menu_key(key)
+                        continue
                     if paste is not None:
                         end = pending.find(b"\x1b[201~")
                         if end < 0:
