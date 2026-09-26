@@ -38,6 +38,7 @@ const T = {
   backends: [],
   height: store.get('termh', 320),
   mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话：PTY+输入) | full(纯终端)
+  shiftSelect: false,                       // 手机 Shift：锁定本地拖动选字，不发送到 CLI
   altArmed: false,                          // 手机 Alt：只修饰下一次输入
   ctrlArmed: false,                         // 手机 Ctrl / 桌面右 Ctrl：只修饰下一次输入
   sources: {},
@@ -3748,6 +3749,7 @@ function deactivateTermView() {
   syncTermAliases();
   setTermCtrl(false);
   setTermAlt(false);
+  setTermShiftSelection(false);
   renderTimeline(null);
   renderTermOutputNotice(null);
 }
@@ -5519,6 +5521,14 @@ function bindFileDrop(zone, addFiles) {
 $('#cinput').addEventListener('paste', e => pasteAttachmentFiles(e, addComposerFiles));
 bindFileDrop($('#composer'), addComposerFiles);
 
+function setTermShiftSelection(on) {
+  T.shiftSelect = !!on;
+  $('#termpane').classList.toggle('term-shift-select', T.shiftSelect);
+  const button = $('[data-term-modifier="shift"]');
+  button.classList.toggle('on', T.shiftSelect);
+  button.setAttribute('aria-pressed', String(T.shiftSelect));
+}
+
 function setTermAlt(on) {
   T.altArmed = !!on;
   const b = $('[data-term-modifier="alt"]');
@@ -5572,6 +5582,10 @@ function applyTermCtrl(data) {
 $('.term-keys').onclick = e => {
   const modifier = e.target.closest('[data-term-modifier]');
   if (modifier) {
+    if (modifier.dataset.termModifier === 'shift') {
+      setTermShiftSelection(!T.shiftSelect);
+      return; // Selecting output must not focus the CLI or raise its keyboard.
+    }
     if (modifier.dataset.termModifier === 'alt') setTermAlt(!T.altArmed);
     else setTermCtrl(!T.ctrlArmed);
     T.term?.focus();

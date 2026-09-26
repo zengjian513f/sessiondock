@@ -31,7 +31,11 @@ step 1; default 100), adjusted with a live slider, reset button, or a two-finger
 pinch on the main console. All screen widths use this preference and retain
 viewport-based layout breakpoints. The settings dialog stays a stable size
 while the slider moves. A pinch saves once the fingers lift, sharing the slider's
-value. Single-finger scrolling stays native.
+value. Single-finger scrolling stays native. When page pinch takes over it
+sends `sessiondock-pinch-start` to both touch targets, cancelling pending or
+active terminal selection without copying. It owns the gesture until all fingers
+lift, including a one-finger remainder; its synthetic click/context-menu tail is
+suppressed. Real mouse input is identified separately and is not time-blocked.
 
 `#app` declares `touch-action: pan-x pan-y` before gestures start; cancelable
 two-touch events are handled with a non-passive listener so browser pixel zoom
