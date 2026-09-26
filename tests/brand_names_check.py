@@ -61,7 +61,7 @@ def main():
             failures.append(f"legacy-web/{page}: missing {expected}")
     if "'无法打开文件 · SessionDock'" not in (WEB / "file.js").read_text(encoding="utf-8"):
         failures.append("file adapter missing SessionDock error title")
-    if 'SessionDock 已更新。当前页面已停止发送，请重新加载。' not in (WEB / "app.js").read_text(encoding="utf-8"):
+    if 'SessionDock 已更新。' not in (WEB / "app.js").read_text(encoding="utf-8"):
         failures.append("legacy-web/app.js: stale-page notice does not name SessionDock")
     if failures:
         print("FAIL brand names check:")

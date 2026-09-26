@@ -249,6 +249,11 @@ The main console's xterm renderer uses DOM text at interface scales other than
 WebGL views switch to DOM without reconnecting; they retain DOM until recreated.
 The default grid renderer keeps its Canvas 2D path at every scale.
 
+On narrow screens, the overlaid terminal rounds its top toward the opaque
+header. Fractional interface zoom must not expose a strip of message glyphs
+between the header and terminal; the keyboard browser suite checks this at
+85–125% scale for both renderers.
+
 On narrow screens, a soft keyboard reduces the visible pane without resizing
 the PTY. Both console renderers move the screen only enough to show its last
 nonblank row and cursor; blank trailing rows do not push short menus off the

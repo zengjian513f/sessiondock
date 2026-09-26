@@ -2995,7 +2995,9 @@ function layoutTermPane() {
     pane.style.removeProperty('height');
     const rightTop = right.getBoundingClientRect().top;
     const headBottom = $('#detail > .dhead')?.getBoundingClientRect().bottom ?? rightTop;
-    pane.style.setProperty('--mobile-terminal-top', `${Math.max(0, Math.round(headBottom - rightTop))}px`);
+    // Round toward the header: rounding down overlaps its opaque background;
+    // rounding up exposes a strip of message text below it at fractional zoom.
+    pane.style.setProperty('--mobile-terminal-top', `${Math.max(0, Math.floor(headBottom - rightTop))}px`);
   } else {
     pane.style.removeProperty('--mobile-terminal-top');
     if (T.mode === 'collapsed') pane.style.height = '0px';
@@ -5101,7 +5103,7 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
   url.searchParams.set('name', attachment.file.name || 'attachment');
   if (node) url.searchParams.set('node', node);
   try {
-    const data = await new Promise((resolve, reject) => {
+    const sendUpload = () => new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       attachment.cancelUpload = () => xhr.abort();
       xhr.open('POST', url);
@@ -5112,14 +5114,26 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
       };
       xhr.onload = () => {
         let data;
-        try {data = JSON.parse(xhr.responseText);} catch {return reject(new Error(`HTTP ${xhr.status}`));}
-        if (xhr.status < 200 || xhr.status >= 300 || data.error) reject(new Error(data.error || `HTTP ${xhr.status}`));
+        const failure = message => Object.assign(new Error(message), {
+          retryUpload: [502, 503, 504].includes(xhr.status),
+        });
+        try {data = JSON.parse(xhr.responseText);} catch {return reject(failure(`HTTP ${xhr.status}`));}
+        if (xhr.status < 200 || xhr.status >= 300 || data.error) reject(failure(data.error || `HTTP ${xhr.status}`));
         else resolve(data);
       };
-      xhr.onerror = () => reject(new Error('上传连接中断'));
+      xhr.onerror = () => reject(Object.assign(new Error('上传连接中断'), {retryUpload: true}));
       xhr.onabort = () => reject(new Error('上传已取消'));
       xhr.send(attachment.file);
     });
+    let data;
+    try {data = await sendUpload();}
+    catch (error) {
+      if (!error.retryUpload) throw error;
+      // Staging is idempotent by (draft uid, upload id, bytes). A lost reply
+      // can safely repeat this upload, including after the node saved it.
+      // This never retries the report launch or the conversation SEND.
+      data = await sendUpload();
+    }
     attachment.uploaded = {...data, uid, node}; attachment.status = 'ready'; render();
     // Uploaded references become durable before any publication or SEND.
     if (!await persistComposerDraft(uid)) throw new Error('附件已上传，草稿引用保存失败');
