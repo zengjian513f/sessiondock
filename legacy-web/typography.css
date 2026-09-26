@@ -35,6 +35,30 @@
                  U+4E00-9FFF, U+F900-FAFF, U+FF00-FFEF, U+20000-2FA1F;
 }
 
+/* Keep code as native inline text, including selection. Cascadia advances
+ * 1200/2048 em per cell. CJK advances one em, so enlarge it to two cells;
+ * DejaVu's missing-arrow fallback advances 1233/2048 em, so match one cell.
+ * These faces are code-only: terminal fonts and reading text are unchanged. */
+@font-face {
+  font-family: "SessionDock Code Symbols";
+  src: url("fonts/CodeSymbols.woff2?v=__SESSIONDOCK_ASSET_VERSION__") format("woff2");
+  size-adjust: 97.323601%;
+  font-weight: 400; font-style: normal; font-display: swap;
+  unicode-range: U+2190-21FF;
+}
+
+@font-face {
+  font-family: "SessionDock Code CJK";
+  src: local("Sarasa Mono SC"), local("Noto Sans Mono CJK SC"),
+       local("Microsoft YaHei UI"), local("Microsoft YaHei"),
+       local("PingFang SC"), local("Noto Sans CJK SC"),
+       local("Source Han Sans SC"), local("WenQuanYi Micro Hei");
+  size-adjust: 117.1875%;
+  font-weight: 200 700; font-style: normal; font-display: swap;
+  unicode-range: U+2E80-2FDF, U+3000-303F, U+31C0-31EF, U+3400-4DBF,
+                 U+4E00-9FFF, U+F900-FAFF, U+FF00-FFEF, U+20000-2FA1F;
+}
+
 :root {
   --terminal-font: "SessionDock CJK Sans", "SessionDock Ubuntu Sans Mono", "Ubuntu Sans Mono",
     "SessionDock Cascadia Mono", "Cascadia Mono", "Adwaita Mono", "Ubuntu Mono",
