@@ -2131,14 +2131,13 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 .draft-save-error { width:100%; color:var(--danger); font-size:12px; }
 
 .xterm-view { position: relative; }
-.term-context-menu, .term-find {
+.term-find {
   position: absolute; z-index: 20; padding: 6px; border: 1px solid var(--border, #888);
   border-radius: 6px; background: var(--bg, #fff); color: var(--text);
   box-shadow: 0 3px 12px #0003;
 }
 .term-context-menu[hidden], .term-find[hidden] { display: none; }
-.term-context-menu { min-width: 120px; display: grid; }
-.term-context-menu button { text-align: left; padding: 7px 14px; }
+.term-context-menu { position: absolute; z-index: 20; }
 .term-find { right: 8px; top: 4px; display: flex; gap: 4px; max-width: calc(100% - 16px); }
 .term-find input { min-width: 0; width: 180px; }
 .term-find [role="status"] { white-space: nowrap; align-self: center; }
@@ -2159,8 +2158,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   }
 }
 
-.term-context-menu button, .term-find button, .term-find input {
+.term-find button, .term-find input {
   color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
 }
-.term-context-menu button:hover:not(:disabled) { background: var(--hover); }
-.term-context-menu button:disabled { opacity: .45; }
+.term-context-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

@@ -2,7 +2,7 @@
 function installTermMenu(view) {
   const {host, term} = view;
   const menu = document.createElement('div');
-  menu.className = 'term-context-menu';
+  menu.className = 'ctx-menu term-context-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
   const search = document.createElement('form');
