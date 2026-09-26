@@ -35,9 +35,8 @@ def main():
             assert all(not (root / source).exists() for source in sources)
 
             def refresh(present):
-                with page.expect_response(lambda r: "/api/sessions?" in r.url
-                                          and "force=1" in r.url) as response:
-                    page.locator("#reload").click()
+                with page.expect_response(lambda r: r.url.split("?")[0].endswith("/api/sessions")) as response:
+                    page.reload(wait_until="networkidle")
                 assert response.value.status == 200, response.value.text()
                 expect(page.locator("#side .item[data-uid]")).to_have_count(len(present))
                 assert page.request.get(base + "/api/live").status == 200

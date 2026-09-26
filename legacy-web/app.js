@@ -4939,9 +4939,9 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   1. Agent / 组织方式 / 分层 的文字标签
 //   2. 主机标题（.brand-name）
 //   3. 机器名从平铺收进下拉（仅中央站、机器筛选可见时）
-//   4. 右侧按钮从末尾折进 ⋯（新建、重新扫描、回收站、报告问题、设置）
+//   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'reload', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'page-reload', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -7993,7 +7993,21 @@ function renderOpts() {
                                      : '搜索… Enter 搜正文';
 }
 
-$('#reload').onclick = () => { cancelSearch(true); loadSessions(true); };
+const appDisplayMode = matchMedia('(display-mode: standalone)');
+function syncPageReload() {
+  const button = $('#page-reload');
+  button.hidden = !(appDisplayMode.matches || navigator.standalone === true);
+  if (button.hidden && button.parentElement === $('#header-menu')) {
+    button.querySelector('.menu-label')?.remove();
+    button.removeAttribute('role');
+    $('#header-more').before(button);
+    $('#header-more').hidden = !$('#header-menu').children.length;
+  }
+  layoutHeader();
+}
+$('#page-reload').onclick = () => location.reload();
+appDisplayMode.addEventListener('change', syncPageReload);
+syncPageReload();
 
 /* ---------- 回收站 ---------- */
 // 删除只是把会话文件移进 ~/.local/share/sessiondock/trash/，这里是它唯一的出口：

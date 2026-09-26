@@ -196,9 +196,9 @@ def main():
                 hits(2)
                 expect(page.locator("#stat")).not_to_have_class("err")
 
-                # Normal reload clears the search using the legacy control;
+                # Reloading the page clears the search;
                 # the next search still uses the independently namespaced flags.
-                page.locator("#reload").click()
+                page.reload(wait_until="networkidle")
                 expect(page.locator("#q")).to_have_value("")
                 expect(page.locator("#side .item[data-uid]")).to_have_count(3)
                 expect(page.locator('#side-search-state')).to_be_hidden()
