@@ -344,6 +344,7 @@ def main():
                 assert trace.read_bytes() == b'\x1b[200~blocked from keyboard button\x1b[201~', trace.read_bytes()
                 trace.unlink()
                 screen.write_text('custom')
+                wait_code(None)  # Wait for the fake CLI's redraw, not filesystem state.
                 response = post('send', text='blocked after paste', request_id='changed-screen')
                 assert response.status == 409 and response.json()['code'] == 'cli_not_ready', response.text()
                 assert trace.read_bytes() == b'\x1b[200~blocked after paste\x1b[201~', trace.read_bytes()
