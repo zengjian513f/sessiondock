@@ -1490,7 +1490,10 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .mb pre {
   position: relative; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
   padding: 9px 11px; overflow-x: auto; margin: 8px 0;
-  font: 12px/1.5 "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  /* System CJK monospace fonts can give box drawing two cells but spaces one.
+     Use our bundled face for both so terminal-style diagrams retain columns. */
+  font: 12px/1.5 "SessionDock Cascadia Mono", "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-ligatures: none;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre; }
 :where(.mb pre, .tool-entry > pre)[data-code-language]::before {
