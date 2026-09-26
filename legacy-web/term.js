@@ -6,6 +6,8 @@
 // Hub 的节点侧连接/响应上限是 10 秒；再留出反向代理与浏览器调度余量。
 // WebSocket 没有标准的建立超时，必须由页面回收永久 CONNECTING 的尝试。
 const TERM_CONNECT_TIMEOUT_MS = 15_000;
+const TERM_HEARTBEAT_INTERVAL_MS = 3_000;
+const TERM_HEARTBEAT_TIMEOUT_MS = 10_000;
 // Claim includes browser/proxy transit plus the Hub's 5 s connect / 10 s read
 // waits. A 5 s page deadline can cancel before the node even sees the request.
 const TERM_CLAIM_TIMEOUT_MS = 20_000;
@@ -3414,6 +3416,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     null, {uid: uid || '', connectionId});
   wsUrl.search = new URLSearchParams({name, page: TERM_PAGE_ID, token,
                                       connection: connectionId, ...binding,
+                                      heartbeat: '1',
                                       cols: String(cols), rows: String(rows),
                                       ...(view.grid ? {mode: 'grid'} : {})});
   const ws = new WebSocket(wsUrl);
@@ -3435,6 +3438,18 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   let settled = false, firstOutput = true;
   ws.onmessage = e => {
     if (view.ws !== ws) return;           // 已替换连接的尾包不能重画新终端
+    if (typeof e.data === 'string') {
+      let control;
+      try { control = JSON.parse(e.data); } catch {}
+      if (control?.t === 'heartbeat_ready') {
+        startTermHeartbeat(view, ws, uid, connectionId);
+        return;
+      }
+      if (control?.t === 'pong') {
+        view.heartbeat?.ack(control.id);
+        return;
+      }
+    }
     if (!settled) {
       // 握手成功不等于接上了会话：服务端在升级之后才 attach，失败时立即以
       // 1011 关闭。只有真正收到会话字节才算连上——此时才清错误、重置退避，
@@ -3482,6 +3497,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   ws.onclose = event => {
     if (view.ws !== ws) return;           // 主动换 socket 后，旧 close 事件作废
     cancelTermConnectTimeout(view);
+    cancelTermHeartbeat(view);
     ConsoleUI.errors.set(uid,
       `控制台连接已关闭（WebSocket ${event.code}）${event.reason ? '：' + event.reason : '，服务器未提供详细原因。'}`);
     renderTakeoverBtn();
@@ -3628,10 +3644,50 @@ function armTermConnectTimeout(view, ws, uid, connectionId) {
 function dropTermSocket(view = currentTermViewObject()) {
   if (!view) return;
   cancelTermConnectTimeout(view);
+  cancelTermHeartbeat(view);
   const ws = view.ws;
   view.ws = null;                        // 先失效引用，close 回调便不会误判成意外断线
   if (T.name === view.name) T.ws = null;
   if (ws) { try { ws.close(); } catch {} }
+}
+
+function cancelTermHeartbeat(view) {
+  if (!view?.heartbeat) return;
+  clearTimeout(view.heartbeat.timer);
+  view.heartbeat = null;
+}
+
+/** OPEN only describes the local socket. Require a round trip through the node,
+ * even when the CLI is quiet or output still arrives on a one-way connection.
+ * Wait for the node's opt-in acknowledgement so old nodes never receive probes
+ * as literal PTY input. Recovery replaces the transport, never replays keys. */
+function startTermHeartbeat(view, ws, uid, connectionId) {
+  if (view.heartbeat) return;
+  let id = 0, pending = null, sentAt = 0;
+  const heartbeat = view.heartbeat = {timer: null, ack(received) {
+    if (view.ws !== ws || pending === null || received !== pending) return;
+    clearTimeout(heartbeat.timer);
+    pending = null;
+    heartbeat.timer = setTimeout(ping, TERM_HEARTBEAT_INTERVAL_MS);
+  }};
+  function ping() {
+    if (view.ws !== ws || ws.readyState !== WebSocket.OPEN || document.hidden) return;
+    pending = ++id;
+    sentAt = performance.now();
+    ws.send(JSON.stringify({t: 'ping', id: pending}));
+    heartbeat.timer = setTimeout(() => {
+      if (view.ws !== ws || pending === null) return;
+      browserAuditEvent('terminal.heartbeat_timeout', {
+        name: view.name, timeout_ms: TERM_HEARTBEAT_TIMEOUT_MS,
+        elapsed_ms: Math.round(performance.now() - sentAt), buffered_bytes: ws.bufferedAmount,
+      }, null, {uid: uid || '', connectionId, severity: 'warning'});
+      dropTermSocket(view);
+      ConsoleUI.errors.set(uid, '控制台连接无响应，正在重新连接；已输入的按键不会自动重发。');
+      renderTakeoverBtn();
+      scheduleTermReconnect(view);
+    }, TERM_HEARTBEAT_TIMEOUT_MS);
+  }
+  ping();
 }
 
 /** 网络短断后自动恢复。tmux 才是会话本体，WebSocket 只是可随时重建的视图。 */

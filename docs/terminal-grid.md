@@ -71,9 +71,10 @@ Unknown text frames are ignored.
 | --- | --- | --- |
 | → browser | binary | UTF-8 JSON lines (`snapshot` / `diff`) |
 | → browser | `{"t":"revoked","ip","by"}` | ownership replaced; then close 4001 `revoked:<ip>` (empty `ip` when the new claimant is at the same display address). Launch retirement is close 4002 `launch retired` with no notice |
+| → browser | `{"t":"heartbeat_ready"}`, `{"t":"pong","id":N}` | only with `heartbeat=1`; transport controls, never grid/byte output ([liveness contract](terminal-ownership.md#explicit-directory-http--websocket-bridge)) |
 | → browser | close 1000 `host exited` | host exit frame with complete output |
 | browser → | binary | raw PTY bytes (unchanged from the byte console) |
-| browser → | text `{"t":"resize","cols","rows"}` | PTY resize (unchanged). Any other text, including JSON that is not a valid resize, is treated as literal PTY input |
+| browser → | text `{"t":"resize","cols","rows"}` | PTY resize (unchanged). Other text is literal PTY input except `{"t":"ping","id":N}` on an attachment opted into `heartbeat=1`; that u32 probe is answered without host input |
 | browser → | Close / disconnect | ends the attachment |
 
 A `seq` gap is counted (`lostMessages`) and is **not** requested. A
