@@ -4797,8 +4797,7 @@ function composerInputNotice(status) {
     cli_question: '检测到终端选择界面，请切换到 PTY（终端）处理；输入已保留',
     cli_not_ready: '暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留',
   };
-  const message = messages[status.code] || status.message;
-  return `SessionDock · ${message}`;
+  return messages[status.code] || status.message;
 }
 
 function renderComposerInputStatus() {
