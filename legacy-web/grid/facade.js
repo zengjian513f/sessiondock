@@ -10,6 +10,8 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const BLINK_MS = 530;
 const WHEEL_LINES = 3;
+const SCROLLBAR_WIDTH = 12;
+let nextCanvasId = 0;
 
 const ANSI_NAMES = ['black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'];
 const BRIGHT_NAMES = [
@@ -103,7 +105,7 @@ export function proposeGridDimensions(term, containerWidthCss, containerHeightCs
   renderer.measure();
   const cw = renderer.cellWidth > 0 ? renderer.cellWidth : 1;
   const ch = renderer.cellHeight > 0 ? renderer.cellHeight : 1;
-  const boxW = Math.max(0, Number(containerWidthCss) || 0);
+  const boxW = Math.max(0, (Number(containerWidthCss) || 0) - SCROLLBAR_WIDTH);
   const boxH = Math.max(0, Number(containerHeightCss) || 0);
   return {
     cols: Math.max(2, Math.floor(boxW / cw)),
@@ -282,6 +284,7 @@ export class GridTerm {
     const doc = hostElement.ownerDocument;
     const canvas = doc.createElement('canvas');
     canvas.className = 'grid-canvas';
+    canvas.id = `grid-canvas-${++nextCanvasId}`;
     canvas.style.display = 'block';
     const textarea = doc.createElement('textarea');
     textarea.className = 'xterm-helper-textarea';
@@ -299,6 +302,7 @@ export class GridTerm {
     this._canvas = canvas;
     this._textarea = textarea;
     this.renderer.canvas = canvas;
+    this._openScrollbar(hostElement);
 
     this._keyCapture = new KeyCapture(textarea, {
       encoder: this._encoder,
@@ -675,6 +679,8 @@ export class GridTerm {
     this._renderPending = false;
     if (this._keyCapture) this._keyCapture.dispose();
     this._keyCapture = null;
+    this._scrollbar?.remove();
+    this._scrollbar = null;
     for (const drop of this._disposers.splice(0)) {
       try { drop(); } catch { /* already removed */ }
     }
@@ -699,6 +705,79 @@ export class GridTerm {
 
   _maxTop() {
     return Math.max(0, this.model.lineCount() - this.rows);
+  }
+
+  _openScrollbar(host) {
+    const track = host.ownerDocument.createElement('div');
+    track.className = 'grid-scrollbar';
+    track.tabIndex = 0;
+    track.setAttribute('role', 'scrollbar');
+    track.setAttribute('aria-label', '终端历史');
+    track.setAttribute('aria-orientation', 'vertical');
+    track.setAttribute('aria-controls', this._canvas.id);
+    track.style.cssText = `position:absolute;right:0;top:0;bottom:0;width:${SCROLLBAR_WIDTH}px;`
+      + 'background:var(--scroll-track, #222);touch-action:none;user-select:none;';
+    const thumb = host.ownerDocument.createElement('div');
+    thumb.className = 'grid-scrollbar-thumb';
+    thumb.style.cssText = 'position:absolute;left:2px;right:2px;border-radius:6px;'
+      + 'background:var(--scroll-thumb, #888);';
+    track.appendChild(thumb);
+    host.appendChild(track);
+    this._scrollbar = track;
+    this._scrollThumb = thumb;
+    let drag = null;
+    const move = event => {
+      const rect = track.getBoundingClientRect();
+      const height = thumb.getBoundingClientRect().height;
+      const travel = rect.height - height;
+      if (travel > 0) this.scrollToLine(Math.round(
+        (event.clientY - rect.top - drag.offset) / travel * this._maxTop()));
+    };
+    this._listen(track, 'pointerdown', event => {
+      if (event.button !== 0 || this.model.modes.alt || !this._maxTop()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      track.focus();
+      drag = {id: event.pointerId, offset: event.target === thumb
+        ? event.clientY - thumb.getBoundingClientRect().top
+        : thumb.getBoundingClientRect().height / 2};
+      track.setPointerCapture(event.pointerId);
+      move(event);
+    });
+    this._listen(track, 'pointermove', event => {
+      if (drag?.id === event.pointerId) move(event);
+    });
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+      this._listen(track, type, event => {
+        if (drag?.id !== event.pointerId) return;
+        drag = null;
+        if (track.hasPointerCapture(event.pointerId)) track.releasePointerCapture(event.pointerId);
+      });
+    }
+    this._listen(track, 'click', event => event.stopPropagation());
+    this._listen(track, 'keydown', event => {
+      const steps = {ArrowUp: -1, ArrowDown: 1, PageUp: -this.rows, PageDown: this.rows};
+      if (event.key === 'Home') this.scrollToTop();
+      else if (event.key === 'End') this.scrollToBottom();
+      else if (event.key in steps) this.scrollLines(steps[event.key]);
+      else return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
+  _syncScrollbar() {
+    if (!this._scrollbar) return;
+    const max = this._maxTop();
+    const height = this._scrollbar.clientHeight;
+    const thumbHeight = Math.min(height, Math.max(24, height * this.rows / (max + this.rows)));
+    this._scrollbar.style.visibility = this.model.modes.alt ? 'hidden' : 'visible';
+    this._scrollbar.setAttribute('aria-valuemin', '0');
+    this._scrollbar.setAttribute('aria-valuemax', String(max));
+    this._scrollbar.setAttribute('aria-valuenow', String(this._viewportTop));
+    this._scrollbar.setAttribute('aria-disabled', String(!max));
+    this._scrollThumb.style.height = `${thumbHeight}px`;
+    this._scrollThumb.style.top = `${max ? (height - thumbHeight) * this._viewportTop / max : 0}px`;
   }
 
   _stickFollow() {
@@ -726,6 +805,7 @@ export class GridTerm {
   _paint() {
     if (this._disposed) return;
     this._stickFollow();
+    this._syncScrollbar();
     this.renderer.render(this.model, {
       viewportTop: this._viewportTop,
       selection: this._orderedSelection(),
