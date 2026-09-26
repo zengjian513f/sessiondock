@@ -129,13 +129,12 @@ function installTermMenu(view) {
     menu.style.top = `${Math.max(0, Math.min((y - box.top) / scaleY, host.clientHeight - menu.offsetHeight))}px`;
     menu.querySelector('button:not(:disabled)')?.focus();
   };
-  let lastTouch = 0;
-  host.addEventListener('touchstart', () => { lastTouch = Date.now(); }, {passive: true});
+  host.addEventListener('sessiondock-pinch-start', closeMenu);
   host.addEventListener('contextmenu', event => {
     if (search.contains(event.target)) return;
     event.preventDefault(); event.stopPropagation();
     // Mobile long press belongs to text selection, never to the context menu.
-    if (event.pointerType === 'touch' || Date.now() - lastTouch < 1200) return;
+    if (SessionDockGestures.pinching || SessionDockGestures.isTouchEvent(event)) return;
     openMenu(event.clientX, event.clientY);
   });
   menuButton.onclick = () => {
@@ -208,8 +207,8 @@ function installTermTouchSelection(view, begin) {
     if (!gesture) return;
     clearTimeout(gesture.timer);
     if (gesture.selecting) {
-      if (event.cancelable) event.preventDefault();
-      event.stopImmediatePropagation();
+      if (event?.cancelable) event.preventDefault();
+      event?.stopImmediatePropagation();
       suppressClickUntil = Date.now() + 1000;
       view.selectionLocked = false;
       view.selectionSnapshot = null;
@@ -218,23 +217,30 @@ function installTermTouchSelection(view, begin) {
     }
     gesture = null;
   };
+  host.addEventListener('sessiondock-pinch-start', () => finish(null, false));
   host.addEventListener('touchstart', event => {
-    if (event.touches.length !== 1) { finish(event, false); return; }
+    if (SessionDockGestures.pinching || event.touches.length !== 1) { finish(event, false); return; }
     if (!screen()?.contains(event.target)) return;
     const touch = event.touches[0];
     gesture = {id: touch.identifier, x: touch.clientX, y: touch.clientY,
       anchor: cellAt(touch), selecting: false};
     const pending = gesture;
-    pending.timer = setTimeout(() => {
-      if (gesture !== pending || !host.isConnected || T.name !== view.name) return;
+    const startSelection = () => {
+      if (gesture !== pending || !host.isConnected || T.name !== view.name || SessionDockGestures.pinching) return;
       begin();
       gesture.selecting = true;
       view.selectionLocked = true;
       select(touch);
-    }, 450);
+    };
+    if (T.shiftSelect) {
+      startSelection();
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    } else pending.timer = setTimeout(startSelection, 450);
   }, {passive: false, capture: true});
   host.addEventListener('touchmove', event => {
     if (!gesture) return;
+    if (SessionDockGestures.pinching || event.touches.length !== 1) { finish(event, false); return; }
     const touch = [...event.touches].find(item => item.identifier === gesture.id);
     if (!touch) { finish(event, false); return; }
     if (gesture.selecting) {
@@ -243,10 +249,10 @@ function installTermTouchSelection(view, begin) {
       clearTimeout(gesture.timer); gesture = null;
     }
   }, {passive: false, capture: true});
-  host.addEventListener('touchend', event => finish(event, true), {passive: false, capture: true});
+  host.addEventListener('touchend', event => finish(event, !SessionDockGestures.pinching && event.touches.length === 0), {passive: false, capture: true});
   host.addEventListener('touchcancel', event => finish(event, false), {passive: false, capture: true});
   host.addEventListener('click', event => {
-    if (Date.now() < suppressClickUntil && screen()?.contains(event.target)) {
+    if (Date.now() < suppressClickUntil && SessionDockGestures.isTouchEvent(event) && screen()?.contains(event.target)) {
       event.preventDefault(); event.stopImmediatePropagation();
     }
   }, true);

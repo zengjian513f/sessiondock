@@ -83,6 +83,8 @@ def check_surface(pw, surface, mobile=False):
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
             if mobile:
                 check_touch(page, context, root, keyboard, surface)
+                check_touch_coexistence(page, context, root, keyboard, surface)
+                check_shift_selection(page, context, root, keyboard, surface)
                 assert not errors, errors
                 context.close()
                 browser.close()
@@ -263,6 +265,133 @@ def check_touch(page, context, root, keyboard, surface):
     page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
     page.get_by_role('button', name='关闭查找', exact=True).tap()
     print('PASS', surface, 'mobile menu and find via touch', flush=True)
+
+
+def check_touch_coexistence(page, context, root, keyboard, surface):
+    cdp = context.new_cdp_session(page)
+    def send(kind, points=()):
+        cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': list(points)})
+    def point(x, y, identifier):
+        return {'x': x, 'y': y, 'id': identifier}
+    def origin():
+        return page.evaluate("""() => {
+          const t = selectionTerm, screen = t._canvas || document.querySelector('.xterm-screen');
+          const b = screen.getBoundingClientRect();
+          return {x: b.x + .2*b.width/t.cols, y: b.y + .5*b.height/t.rows};
+        }""")
+    for mode in ('none', '1003'):
+        for delay in (100, 550):
+            page.evaluate('applyInterfaceScale(100, true)')
+            keyboard.focus()
+            page.keyboard.type('mode:' + mode)
+            page.keyboard.press('Enter')
+            page.wait_for_function('m => selectionTerm.modes.mouseTrackingMode === m',
+                                   arg='none' if mode == 'none' else 'any')
+            page.wait_for_timeout(150)
+            b = origin()
+            first, second = point(b['x'], b['y'], 1), point(b['x']+70, b['y'], 2)
+            page.evaluate("navigator.clipboard.writeText('coexist-sentinel'); selectionBytes = []")
+            before = (root / 'work/input.bin').read_bytes()
+            send('touchStart', [first])
+            page.wait_for_timeout(delay)
+            if delay > 450:
+                page.wait_for_function("selectionTerm.getSelection() === 'S'")
+            send('touchStart', [first, second])
+            # The pending hold must be cancelled even though the parent's capture
+            # listener owns the second touch and the terminal never receives it.
+            page.wait_for_timeout(550)
+            assert page.evaluate('selectionTerm.getSelection()') == '', (surface, mode, delay, 'stale hold')
+            for step in range(1, 9):
+                send('touchMove', [first, point(b['x']+70+28*step/8, b['y'], 2)])
+                page.wait_for_timeout(20)
+            send('touchEnd', [first])
+            page.wait_for_timeout(550)
+            send('touchMove', [point(b['x']+10, b['y']+10, 1)])
+            assert page.evaluate('selectionTerm.getSelection()') == ''
+            send('touchEnd')
+            page.wait_for_timeout(100)
+            assert page.evaluate('interfaceScale()') == 140
+            assert abs(page.evaluate('visualViewport.scale') - 1) < .01
+            assert page.evaluate('navigator.clipboard.readText()') == 'coexist-sentinel'
+            assert not page.locator('.term-context-menu').is_visible()
+            assert not page.evaluate('selectionBytes'), page.evaluate('selectionBytes')
+            assert (root / 'work/input.bin').read_bytes() == before
+            # After the pinch, an ordinary hold still selects/copies; a real
+            # mouse right-click immediately afterwards must not be time-blocked.
+            b = origin()
+            send('touchStart', [point(b['x'], b['y'], 1)])
+            page.wait_for_function("selectionTerm.getSelection() === 'S'")
+            send('touchEnd')
+            page.wait_for_function("navigator.clipboard.readText().then(t => t === 'S')")
+            screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
+            screen.click(button='right', position={'x': 30, 'y': 12})
+            page.locator('.term-context-menu:visible').wait_for()
+            page.get_by_role('menuitem', name='粘贴', exact=True).press('Escape')
+            print('PASS', surface, mode, delay, 'hold → pinch → hold → immediate mouse menu; no copied or PTY bytes from pinch', flush=True)
+
+
+def check_shift_selection(page, context, root, keyboard, surface):
+    cdp = context.new_cdp_session(page)
+    shift = page.locator('[data-term-modifier="shift"]')
+    def send(kind, points=()):
+        cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints': list(points)})
+    def box():
+        return page.evaluate("""() => {
+          const t=selectionTerm, b=(t._canvas || document.querySelector('.xterm-screen')).getBoundingClientRect();
+          return {x:b.x, y:b.y, cw:b.width/t.cols, ch:b.height/t.rows};
+        }""")
+    for mode in ('none', '1003'):
+        page.evaluate('applyInterfaceScale(100, true)')
+        keyboard.focus()
+        page.keyboard.type('mode:' + mode)
+        page.keyboard.press('Enter')
+        page.wait_for_function('m => selectionTerm.modes.mouseTrackingMode === m', arg='none' if mode == 'none' else 'any')
+        page.wait_for_timeout(150)
+        page.evaluate("navigator.clipboard.writeText('shift-sentinel'); selectionBytes=[]")
+        before = (root / 'work/input.bin').read_bytes()
+        shift.tap()
+        assert shift.get_attribute('aria-pressed') == 'true'
+        assert not keyboard.evaluate('e => e === document.activeElement')
+        b=box()
+        first={'id':1,'x':b['x']+.2*b['cw'],'y':b['y']+.5*b['ch']}
+        send('touchStart', [first])
+        # Immediate selection, without waiting for the 450 ms hold.
+        assert page.evaluate('selectionTerm.getSelection()') == 'S'
+        send('touchMove', [{'id':1,'x':b['x']+11.5*b['cw'],'y':first['y']}])
+        assert page.evaluate('selectionTerm.getSelection()') == 'SELECT_FIRST'
+        send('touchEnd')
+        page.wait_for_function("navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
+        assert shift.get_attribute('aria-pressed') == 'true'
+        page.evaluate("navigator.clipboard.writeText('shift-pinch-sentinel')")
+        send('touchStart', [first])
+        assert page.evaluate('selectionTerm.getSelection()') == 'S'
+        send('touchStart', [first, {'id':2,'x':first['x']+70,'y':first['y']}])
+        assert page.evaluate('selectionTerm.getSelection()') == ''
+        for step in range(1, 9):
+            send('touchMove', [first, {'id':2,'x':first['x']+70+28*step/8,'y':first['y']}])
+            page.wait_for_timeout(20)
+        send('touchEnd', [first])
+        page.wait_for_timeout(550)
+        assert page.evaluate('selectionTerm.getSelection()') == ''
+        send('touchEnd')
+        page.wait_for_timeout(150)
+        assert page.evaluate('interfaceScale()') == 140
+        assert shift.get_attribute('aria-pressed') == 'true'
+        assert page.evaluate('navigator.clipboard.readText()') == 'shift-pinch-sentinel'
+        assert not page.evaluate('selectionBytes'), page.evaluate('selectionBytes')
+        assert (root / 'work/input.bin').read_bytes() == before
+        assert not page.locator('.term-context-menu').is_visible()
+        shift.tap()
+        assert shift.get_attribute('aria-pressed') == 'false'
+        b=box()
+        send('touchStart', [{'id':1,'x':b['x']+.2*b['cw'],'y':b['y']+.5*b['ch']}])
+        assert page.evaluate('selectionTerm.getSelection()') == ''
+        send('touchCancel')
+        print('PASS', surface, mode, 'Shift immediate local selection, pinch preemption, retained latch, no CLI bytes', flush=True)
+    shift.tap()
+    page.locator('#a-term').click()
+    page.locator('#a-term').click()
+    assert shift.get_attribute('aria-pressed') == 'false'
 
 
 def main():

@@ -264,6 +264,19 @@ soft-wrapped logical line) automatically on mouse release after a local drag,
 then clears the selection. Ctrl+C is CLI input, not a copy shortcut. CLI mouse
 gestures and empty selections leave the clipboard unchanged. The main console
 uses the same copy-on-release behavior with either renderer.
+On touchscreens, a stationary single-finger hold (450 ms) starts selection;
+dragging extends it and release copies it. A second finger transfers ownership
+to interface zoom: cancel the hold timer or active selection without copying,
+close the menu, and wait for every finger to lift before accepting a new hold.
+The mobile key bar also provides a latched **Shift** selection button. While
+on, a single-finger drag starts local selection immediately, bypassing CLI mouse
+capture without sending Shift or mouse bytes and without focusing its keyboard.
+A pinch cancels the selection but keeps Shift latched; tap Shift again to return
+to ordinary touch behavior. Closing the terminal clears the latch.
+Touch long press does not open the terminal menu; use the visible `⋯` button.
+A real mouse right-click opens the menu immediately, including after a touch
+selection or pinch. Compatibility mouse events from touch do not become remote
+CLI mouse input or accidentally reopen a menu.
 Paste uses the clipboard button, the textarea `paste` event, or
 `navigator.clipboard.readText`; the encoder applies bracketed paste
 when the host mode is on.

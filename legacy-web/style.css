@@ -2185,3 +2185,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   }
   .xterm-view > .grid-canvas, .xterm-view .xterm-screen { -webkit-touch-callout: none; }
 }
+
+/* Shift selection owns a one-finger drag before native scrolling can claim it. */
+.term-shift-select .grid-canvas, .term-shift-select .xterm-screen { touch-action: none; }
