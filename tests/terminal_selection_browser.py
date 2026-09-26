@@ -38,7 +38,7 @@ WebSocket.prototype.send = function(data) {
 };"""
 
 
-def check_surface(pw, surface):
+def check_surface(pw, surface, mobile=False):
     with tempfile.TemporaryDirectory(prefix='sessiondock-selection-') as temporary:
         root = Path(temporary)
         for name in ['host', 'work', 'claude', 'codex', 'grok']:
@@ -54,7 +54,8 @@ def check_surface(pw, surface):
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
             browser = pw.chromium.launch(**options)
-            context = browser.new_context(viewport={'width':1280,'height':900}, service_workers='block',
+            context = browser.new_context(viewport={'width':390 if mobile else 1280,'height':900},
+                                          has_touch=mobile, is_mobile=mobile, service_workers='block',
                                           permissions=['clipboard-read','clipboard-write'])
             context.add_init_script(OBSERVE)
             context.add_init_script("localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(" + repr(surface) + "))")
@@ -80,6 +81,12 @@ def check_surface(pw, surface):
                 fixture.open_console(page, uid)
                 page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
+            if mobile:
+                check_touch(page, context, root, keyboard, surface)
+                assert not errors, errors
+                context.close()
+                browser.close()
+                return
             for mode in ['none', '1000', '1002', '1003']:
                 keyboard.focus()
                 page.keyboard.type('mode:' + mode)
@@ -202,11 +209,69 @@ def check_surface(pw, surface):
             browser.close()
 
 
+def check_touch(page, context, root, keyboard, surface):
+    cdp = context.new_cdp_session(page)
+    def touch(kind, x=0, y=0):
+        cdp.send('Input.dispatchTouchEvent', {'type': kind, 'touchPoints':
+                 [] if kind in ['touchEnd', 'touchCancel'] else [{'x': x, 'y': y, 'id': 1}]})
+    for mode in ['none', '1003']:
+        keyboard.focus()
+        page.keyboard.type('mode:' + mode)
+        page.keyboard.press('Enter')
+        page.wait_for_function('m => selectionTerm.modes.mouseTrackingMode === m',
+                               arg='none' if mode == 'none' else 'any')
+        page.wait_for_timeout(150)
+        b = page.evaluate("""() => {
+          const t = selectionTerm;
+          const screen = t._canvas || document.querySelector('.xterm-screen');
+          const b = screen.getBoundingClientRect();
+          return {x:b.x,y:b.y,cw:b.width/t.cols,ch:b.height/t.rows};
+        }""")
+        x, y = b['x'] + .2*b['cw'], b['y'] + .5*b['ch']
+        page.evaluate("navigator.clipboard.writeText('touch-sentinel')")
+        page.evaluate('selectionBytes = []')
+        before = (root / 'work/input.bin').read_bytes()
+        touch('touchStart', x, y)
+        page.wait_for_timeout(650)
+        page.wait_for_function("selectionTerm.getSelection() === 'S'")
+        for col in [3, 6, 9, 11]:
+            touch('touchMove', b['x'] + (col + .5)*b['cw'], y)
+        assert page.evaluate('selectionTerm.getSelection()') == 'SELECT_FIRST'
+        assert not page.locator('.term-context-menu').is_visible()
+        assert page.evaluate('navigator.clipboard.readText()') == 'touch-sentinel'
+        touch('touchEnd')
+        page.wait_for_function("navigator.clipboard.readText().then(t => t === 'SELECT_FIRST')")
+        page.wait_for_function("selectionTerm.getSelection() === ''")
+        assert (root / 'work/input.bin').read_bytes() == before
+        assert not page.evaluate('selectionBytes')
+        # A cancelled gesture must not copy; a quick swipe must not select.
+        touch('touchStart', x, y)
+        page.wait_for_timeout(550)
+        touch('touchCancel')
+        page.wait_for_function("selectionTerm.getSelection() === ''")
+        assert page.evaluate('navigator.clipboard.readText()') == 'SELECT_FIRST'
+        touch('touchStart', x, y)
+        touch('touchMove', x, y + 50)
+        touch('touchEnd')
+        page.wait_for_timeout(550)
+        assert page.evaluate('selectionTerm.getSelection()') == ''
+        print('PASS', surface, mode, 'mobile long press + drag + copy, cancel, swipe, no PTY input', flush=True)
+    page.get_by_role('button', name='终端菜单', exact=True).tap()
+    page.locator('.term-context-menu:visible').wait_for()
+    page.get_by_role('menuitem', name='查找', exact=True).tap()
+    page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+    page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
+    page.get_by_role('button', name='关闭查找', exact=True).tap()
+    print('PASS', surface, 'mobile menu and find via touch', flush=True)
+
+
 def main():
     fixture.SHELL = 'exec python3 -u -c ' + shlex.quote(CLI)
     with sync_playwright() as pw:
         for surface in ['grid', 'standalone', 'xterm']:
             check_surface(pw, surface)
+        for surface in ['grid', 'xterm']:
+            check_surface(pw, surface, mobile=True)
 
 
 if __name__ == '__main__':
