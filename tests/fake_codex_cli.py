@@ -162,12 +162,19 @@ class Fake:
                 parts.append(part)
             footer_paste = os.environ.get('SESSIONDOCK_TEST_FOOTER_PASTE_FILE')
             footer_paste = footer_paste and os.path.exists(footer_paste)
+            scrolled = footer_paste and os.environ.get('SESSIONDOCK_TEST_SCROLLED_PASTE')
+            clipped = scrolled and len(parts) > rows - 5
+            if clipped:
+                with open(os.environ['SESSIONDOCK_TEST_FOOTER_PASTE_FILE'] + '.scrolled', 'w') as proof:
+                    proof.write('prompt marker outside visible editor\n')
             parts = parts[-(rows - (5 if footer_paste else 2)):]
-            lines = ['', '', '› ' + parts[0]] + ['  ' + part for part in parts[1:]]
+            lines = ['', '', ('  ' if clipped else '› ') + parts[0]] + ['  ' + part for part in parts[1:]]
             self.frame += 1
             if os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING'):
                 lines = [line + self.animated_padding() if len(line.encode('utf-8')) < cols - 20 else line
                          for line in lines]
+            if scrolled:
+                lines[2:] = ['\x1b[48;2;30;30;30m' + line + '\x1b[K\x1b[0m' for line in lines[2:]]
             self.write('\x1b[2J\x1b[H' + '\r\n'.join(lines))
             if footer_paste:
                 self.write('\r\n\r\n%s low · /test · Context 0%% used' % self.options['model'])

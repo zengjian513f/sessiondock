@@ -675,15 +675,22 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
     let normalized = capture.text.replace('\r', "");
     let raw_lines: Vec<&str> = normalized.lines().collect();
     let clean_lines: Vec<String> = raw_lines.iter().map(|line| codex_plain(line)).collect();
-    let Some((start, end)) = locate_codex(&raw_lines, &clean_lines, capture.cursor) else {
+    let marked = locate_codex(&raw_lines, &clean_lines, capture.cursor);
+    let Some((start, end)) =
+        marked.or_else(|| locate_scrolled_codex(&raw_lines, &clean_lines, capture.cursor))
+    else {
         return unknown();
     };
     let block_raw = raw_lines[start..=end].join("\n");
     let styled = styled_chars(&block_raw);
-    let Some(marker_at) = styled.iter().position(|(ch, _)| matches!(ch, '›' | '»')) else {
-        return unknown();
+    let after = if marked.is_some() {
+        let Some(marker_at) = styled.iter().position(|(ch, _)| matches!(ch, '›' | '»')) else {
+            return unknown();
+        };
+        &styled[marker_at + 1..]
+    } else {
+        &styled[..]
     };
-    let after = &styled[marker_at + 1..];
     let editing = after
         .iter()
         .any(|(ch, dim)| !ch.is_whitespace() && !is_particle(*ch) && !dim);
@@ -715,6 +722,45 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
         lagging,
         dropped: capture.dropped,
     }
+}
+
+/// A tall Codex draft scrolls its first row (including `›`) out of the
+/// editor viewport. Anchor the visible continuation to the cursor's painted
+/// background and the status bar, never to an arbitrary transcript block.
+fn locate_scrolled_codex(
+    raw: &[&str],
+    clean: &[String],
+    cursor: (u16, u16),
+) -> Option<(usize, usize)> {
+    static BACKGROUND: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\x1b\[(?:\d+;)*?(48;2;\d+;\d+;\d+|48;5;\d+)(?:;\d+)*m")
+            .expect("codex editor background")
+    });
+    let y = usize::from(cursor.1);
+    let background = |line: &str| BACKGROUND.captures(line).map(|c| c[1].to_owned());
+    let color = background(raw.get(y)?)?;
+    let mut start = y;
+    while start > 0 && background(raw[start - 1]).as_ref() == Some(&color) {
+        start -= 1;
+    }
+    let mut end = y;
+    while end + 1 < raw.len() && background(raw[end + 1]).as_ref() == Some(&color) {
+        end += 1;
+    }
+    let footer = (end + 1..clean.len()).find(|&i| nonblank(&clean[i]))?;
+    if !(CODEX_CONTEXT_FOOTER.is_match(&clean[footer])
+        || CODEX_MODEL_FOOTER.is_match(&clean[footer])
+        || CODEX_CONTEXT_LEFT_FOOTER.is_match(&clean[footer]))
+        || cursor.0 < 2
+        || start == end
+        || !clean[start..=end].iter().any(|line| nonblank(line))
+        || clean[start..=end]
+            .iter()
+            .any(|line| matches!(line.trim_start().chars().next(), Some('›' | '»')))
+    {
+        return None;
+    }
+    Some((start, end))
 }
 
 /// Fingerprint: sha256 of `x\0y\0screen`.

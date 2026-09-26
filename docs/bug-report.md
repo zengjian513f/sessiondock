@@ -119,6 +119,14 @@ editor and suppress Enter (`BUG-20260921-131130-09bec4`). The fake-CLI browser
 regression covers both this expanded report layout and collapsed long reports,
 requiring exactly one complete submission for each.
 
+A report can also exceed the initial PTY height and scroll its `›` row out of
+the editor viewport (`BUG-20260926-061847-4c829b`). The Codex inspector then
+uses the continuous editor background containing the cursor and the following
+status footer to locate the visible continuation. SEND still requires the
+prompt suffix and a stable editor before its single Enter. The browser suite
+renders an actually clipped marker and checks the complete submitted task;
+it must not invent a new `›` before the visible tail.
+
 There is one revisioned editing draft per logical session in the private state
 directory. Browser storage holds preferences and draft identifiers only. A report
 uses a provisional `report:<id>` identity until its processing launch is bound to
