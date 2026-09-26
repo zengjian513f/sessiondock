@@ -2188,3 +2188,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 
 /* Shift selection owns a one-finger drag before native scrolling can claim it. */
 .term-shift-select .grid-canvas, .term-shift-select .xterm-screen { touch-action: none; }
+
+/* Global actions live in the session toolbar while the list is hidden. */
+header .btn[data-session-docked] { display: none; }
