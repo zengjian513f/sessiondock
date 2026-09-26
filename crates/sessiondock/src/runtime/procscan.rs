@@ -819,7 +819,7 @@ fn expand_user(path: &str) -> String {
 /// Parse `created` (replace `Z` with `+00:00`) as a Unix timestamp.
 /// Index rows always carry a zone (`…Z`); a naive
 /// stamp is read as UTC here.
-fn parse_created(created: &str) -> Option<f64> {
+pub(crate) fn parse_created(created: &str) -> Option<f64> {
     let text = created.replace('Z', "+00:00");
     if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(&text) {
         return Some(parsed.timestamp_micros() as f64 / 1e6);

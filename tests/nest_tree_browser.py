@@ -36,8 +36,8 @@ def stamp(hhmm):
     return f"{DAY}{hhmm}:00Z"
 
 
-def claude_lines(data, sid, title, cwd, hhmm, tail=()):
-    rows = [claude_row(sid, "user", "u0", None, title, cwd=cwd, timestamp=stamp(hhmm)),
+def claude_lines(data, sid, title, cwd, hhmm, tail=(), created=None):
+    rows = [claude_row(sid, "user", "u0", None, title, cwd=cwd, timestamp=stamp(created or hhmm)),
             claude_row(sid, "assistant", "a0", "u0", f"reply {title}", cwd=cwd, timestamp=stamp(hhmm)), *tail]
     data.put(sid, "claude", rows, [title, f"reply {title}"])
 
@@ -61,7 +61,7 @@ def corpus(root: Path) -> Corpus:
     data = Corpus(root)
     for source in ("claude", "codex", "grok"):
         (root / source).mkdir(parents=True)
-    claude_lines(data, "nest-root-a", "Root A", "/proj/alpha", "10:00")
+    claude_lines(data, "nest-root-a", "Root A", "/proj/alpha", "10:00", created="08:00")
     claude_lines(data, "nest-orphan-d", "Orphan D", "/proj/alpha", "08:30")
     claude_lines(data, "nest-alone-e", "Standalone E", "/proj/gamma", "07:00")
     agents = data.paths["nest-root-a"].with_suffix("") / "subagents"
@@ -86,7 +86,7 @@ def corpus(root: Path) -> Corpus:
         + json.dumps({"type": "assistant", "content": [{"type": "text", "text": "reply Child B"}]}) + "\n")
     (grok / "summary.json").write_text(json.dumps({
         "info": {"id": "nest-child-b", "cwd": "/proj/beta"}, "generated_title": "Child B",
-        "created_at": stamp("10:30"), "last_active_at": stamp("11:00")}))
+        "created_at": stamp("08:45"), "last_active_at": stamp("11:00")}))
     # spawned_by lives in the metadata document the process scan writes (metadata_suite seeds it the
     # same way); uids are path hashes, so the continuation written mid-test is seeded before its file exists.
     data.paths["nest-new"] = root / "claude/project-history/nest-new.jsonl"

@@ -12,7 +12,7 @@ visible. No CLI is launched and no native files are created by the reader.
 | `title` | `generated_title`, otherwise `session_summary`, otherwise `新建 Grok 会话` (the pending-session label). Python still falls back to the first eight directory-name characters (DELTA). Collapse whitespace, truncate after 110 Unicode characters and append `…` when needed |
 | `cwd` | `info.cwd`, otherwise percent-decode the parent directory name as UTF-8 with replacement; `+` stays literal |
 | `created` | Normalize `created_at`, otherwise fallback file mtime |
-| `updated` | Normalize the first truthy value of `last_active_at` / `updated_at`, otherwise fallback file mtime |
+| `updated` | Latest recognized native turn activity in `events.jsonl`; otherwise normalize the first truthy value of `last_active_at` / `updated_at`, then fallback file mtime |
 | `model` / `branch` | `current_model_id` / `agent_name` |
 
 Fallback mtime comes from an existing chat file, including a zero-byte one, or
@@ -20,6 +20,15 @@ from the summary when chat is absent. It is rounded down to seconds.
 Response timestamps are UTC ISO timestamps with
 millisecond precision; parity comparisons normalize the local timezone.
 First and last transcript-message timestamps never replace summary metadata.
+Native turn, tool, permission and phase events do supply activity time when
+available (DELTA from Python's summary-only timestamp). Grok background memory
+flushes rewrite `last_active_at` and may append synthetic chat reminders without
+another conversation turn; these maintenance writes must not promote an old
+conversation to today's activity. The index reads bounded complete head/tail
+event records and includes the event file stamp in cache invalidation. Unknown,
+missing or unreadable event files retain the summary fallback. List, search,
+detail and SSE use the same published row; history cursors remain chat offsets.
+Regression: `python3 tests/spawn_chronology_browser.py --binary target/release/sessiondock`.
 A nonempty whitespace-only generated title is selected before whitespace
 collapse, yielding an empty displayed title.
 The decoded cwd is display metadata; it grants no filesystem access.

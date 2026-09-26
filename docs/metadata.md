@@ -121,6 +121,13 @@ and native session id, not a UID, and the spawner row may no longer exist.
 HTTP route to set or clear it, and stars/visibility/pins never touch it.
 `tests/meta_import.py` carries the identical key over unchanged.
 
+Exception to write-once: native creation timestamps can disprove a recorded
+relationship. The spawn watcher moves a parent newer than its child to the
+non-displayed `invalid_spawned_by` field, retaining evidence and preserving
+stars, manual `nest_parent` and `nest_independent`. It compares the expected
+old value inside the atomic metadata update. Missing parents or unparseable
+dates are not repaired by guessing; later valid discovery can still set a parent.
+
 ```json
 "grok:example": {"spawned_by": {"source": "claude", "sid": "8accf618-…"}}
 ```
