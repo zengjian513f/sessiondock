@@ -689,11 +689,25 @@ function markStaleBuild(serverBuild = '') {
   document.body.classList.add('stale-build');
   const notice = el('div', 'version-stale');
   notice.setAttribute('role', 'alert');
-  notice.innerHTML = '<span>SessionDock 已更新。当前页面已停止发送，请重新加载。</span>';
+  notice.innerHTML = '<span>SessionDock 已更新。仍可编辑并自动保存草稿；发送前请重新加载。</span>';
+  browserAuditEvent('build.stale', {server_build: serverBuild});
   const reload = el('button', 'btn', '重新加载');
   reload.type = 'button';
   reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
-  reload.onclick = () => location.reload();
+  reload.onclick = async () => {
+    reload.disabled = true;
+    reload.textContent = '正在保存草稿…';
+    try {
+      if (typeof prepareComposerReload === 'function' && !await prepareComposerReload()) {
+        notice.querySelector('span').textContent = '草稿尚未保存或附件尚未上传完成，已取消重新加载。请等待保存成功或保留内容后重试。';
+        return;
+      }
+      location.reload();
+    } finally {
+      reload.disabled = false;
+      reload.textContent = '重新加载';
+    }
+  };
   notice.appendChild(reload);
   document.body.appendChild(notice);
   for (const sel of ['#csend', '#bug-report-go', '#cadd', '#bug-report-add']) {
