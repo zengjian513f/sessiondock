@@ -3865,7 +3865,9 @@ async function consumeComposerSubmission(uid,text,attachments,quotes) {
   draft.attachments=draft.attachments.filter(a=>!files.has(a.id));
   draft.quotes=draft.quotes.filter(q=>quoted.get(q.id)!==q.text);
   if (!draft.text && !draft.attachments.length && !draft.quotes.length) draft.nextAttachmentNumber=1;
-  await persistComposerDraft(owner);refreshComposerDraft(owner);
+  // SEND already durably consumed this revision. Save any remaining/new edits
+  // in the background; network latency here must not delay the successful UI.
+  persistComposerDraft(owner);refreshComposerDraft(owner);
 }
 async function readServerComposerDraft(uid) {
   const controller = new AbortController();
@@ -5252,10 +5254,9 @@ async function submitComposer() {
         await consumeComposerSubmission(uid,text,attachments,quotes);return;
       }
     }
-    if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
-    const check = await probeComposerInput(uid);
-    const inputStatus = composerInputStatus(check);
-    if (!composerInputAllowsSend(inputStatus)) throw new Error(inputStatus.message);
+    // Persist the payload and its stable submission ID together below.
+    // SEND performs fresh readiness checks before publishing, pasting and Enter;
+    // an extra browser CHECK only adds another serial network/identity lookup.
     const uploaded = [];
     for (let i = 0; i < attachments.length; i++) {
       setSendButtonBusy(button, `上传 ${i + 1}/${attachments.length}`);
