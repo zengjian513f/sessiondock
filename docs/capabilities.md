@@ -31,7 +31,9 @@ step 1; default 100), adjusted with a live slider, reset button, or a two-finger
 pinch on the main console. Older saved values of 30–49 apply as 50.
 All screen widths use this preference and retain
 viewport-based layout breakpoints. The settings dialog stays a stable size
-while the slider moves. A pinch saves once the fingers lift, sharing the slider's
+while the slider moves. Slider and pinch gestures show the current percentage
+in a translucent, fixed-size box centered on screen. It does not intercept input
+and fades out after the gesture ends. A pinch saves once the fingers lift, sharing the slider's
 value. Single-finger scrolling stays native. When page pinch takes over it
 sends `sessiondock-pinch-start` to both touch targets, cancelling pending or
 active terminal selection without copying. It owns the gesture until all fingers
