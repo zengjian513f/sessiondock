@@ -2627,7 +2627,8 @@ function positionTermViewport(view) {
   let offset = 0;
   if (!view.replay && visualKeyboardOpen() && buffer) {
     const screen = host.querySelector(view.grid ? 'canvas' : '.xterm-screen');
-    const height = screen?.getBoundingClientRect().height || 0;
+    const zoom = parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
+    const height = (screen?.getBoundingClientRect().height || 0) / zoom;
     const cellHeight = height / term.rows;
     const top = buffer.viewportY;
     const cursor = buffer.baseY + buffer.cursorY - top;

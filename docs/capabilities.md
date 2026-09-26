@@ -26,6 +26,11 @@ only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
 
+Appearance settings store `interfaceScale` as a percentage (75, 90, 100, 110,
+125 or 150; default 100). It scales the main console in phone/tablet layouts
+(up to 1199 CSS pixels) while retaining viewport-based layout breakpoints.
+Desktop layout remains at 100%; the browser retains the compact preference.
+
 ## Flags
 
 | Flag | Value | Legacy UI (`config.<flag>` / `allows('<flag>')`) | Doc |

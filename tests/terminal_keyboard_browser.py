@@ -40,7 +40,7 @@ GEOMETRY = """() => {
 }"""
 
 
-def run(browser, renderer):
+def run(browser, renderer, scale=100):
     with tempfile.TemporaryDirectory(prefix='sessiondock-keyboard-') as tmp:
         root = Path(tmp)
         for name in ('host', 'work', 'claude', 'codex', 'grok'):
@@ -57,14 +57,18 @@ def run(browser, renderer):
             page = context.new_page()
             errors = []
             page.on('pageerror', lambda e: errors.append(str(e)))
+            context.add_init_script(f'localStorage.setItem("sessiondock.interfaceScale", "{scale}")')
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
             page.wait_for_timeout(300)
+            pane = page.locator('#termpane').bounding_box()
+            heading = page.locator('#detail > .dhead').bounding_box()
+            assert abs(pane['y'] - heading['y'] - heading['height']) <= 1, (scale, pane, heading)
             keys = page.locator('#termpane .xterm-helper-textarea')
             keys.press('t')
             fixture.xterm_contains(page, 'Enter to confirm')
             before = page.evaluate(GEOMETRY)
-            assert before['rows'] > 25, before
+            assert before['rows'] > 16, before
             page.evaluate("""() => {
               window.keyboardResizes=[];
               const ws=T.ws, send=ws.send.bind(ws);
@@ -73,7 +77,7 @@ def run(browser, renderer):
                 return send(data);
               };
             }""")
-            page.set_viewport_size({'width': 608, 'height': 493})
+            page.set_viewport_size({'width': 608, 'height': 530})
             page.wait_for_function('visualKeyboardOpen()')
             page.wait_for_timeout(300)
             short = page.evaluate(GEOMETRY)
@@ -128,7 +132,7 @@ def run(browser, renderer):
             assert abs(page.evaluate(GEOMETRY)['top']) < 1
             assert not errors, errors
             context.close()
-            print('PASS', renderer, 'short menu, bottom editor, cursor, keyboard resize, reopen, desktop', flush=True)
+            print('PASS', renderer, scale, 'short menu, bottom editor, cursor, keyboard resize, reopen, desktop', flush=True)
 
 
 def main():
@@ -136,7 +140,8 @@ def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         for renderer in ('grid', 'xterm'):
-            run(browser, renderer)
+            for scale in (75, 100, 150):
+                run(browser, renderer, scale)
         browser.close()
 
 

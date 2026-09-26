@@ -2065,7 +2065,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   .cbtns .btn { padding-inline: 9px; }
 
   #termpane {
-    position: absolute; z-index: 6; top: var(--mobile-terminal-top, 0px);
+    position: absolute; z-index: 6; top: calc(var(--mobile-terminal-top, 0px) / var(--interface-scale, 1));
     right: 0; bottom: 0; left: 0; width: 100%; height: auto !important;
     max-width: none; max-height: none; border-top: 0;
   }
@@ -2142,6 +2142,22 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 .term-find { right: 8px; top: 4px; display: flex; gap: 4px; max-width: calc(100% - 16px); }
 .term-find input { min-width: 0; width: 180px; }
 .term-find [role="status"] { white-space: nowrap; align-self: center; }
+
+/* Keep the physical viewport breakpoints while scaling compact layouts. */
+@media (max-width: 1199px) {
+  :root { --interface-scale: var(--compact-scale, 1); zoom: var(--interface-scale); }
+  #app { height: calc(100dvh / var(--interface-scale)); }
+  .app-dialog {
+    max-width: calc(100vw / var(--interface-scale) - 16px);
+    max-height: calc(100dvh / var(--interface-scale) - 16px);
+  }
+}
+@media (max-width: 720px) {
+  #app {
+    top: calc(var(--visual-viewport-top, 0px) / var(--interface-scale));
+    height: calc(var(--visual-viewport-height, 100dvh) / var(--interface-scale));
+  }
+}
 
 .term-context-menu button, .term-find button, .term-find input {
   color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 4px;

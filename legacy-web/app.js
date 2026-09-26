@@ -56,6 +56,21 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
   if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(false);
 }
 
+const INTERFACE_SCALES = [75, 90, 100, 110, 125, 150];
+function interfaceScale() {
+  const value = Number(store.get('interfaceScale', 100));
+  return INTERFACE_SCALES.includes(value) ? value : 100;
+}
+function applyInterfaceScale(value = interfaceScale(), persist = false) {
+  value = Number(value);
+  if (!INTERFACE_SCALES.includes(value)) value = 100;
+  if (persist) store.set('interfaceScale', value);
+  document.documentElement.style.setProperty('--compact-scale', value / 100);
+  // Resize listeners also update terminal fitting and the visible mobile viewport.
+  if (persist) window.dispatchEvent(new Event('resize'));
+}
+applyInterfaceScale();
+
 function applyToolIcons(choice = store.get('toolIcons', 'brand'), persist = false) {
   if (!['brand', 'boss'].includes(choice)) choice = 'brand';
   if (persist) store.set('toolIcons', choice);
@@ -8455,6 +8470,7 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
 }
 
 function openSettings() {
+  $('#setting-scale').value = String(interfaceScale());
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
@@ -8468,6 +8484,7 @@ $('#settings').onclick = openSettings;
 $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
+$('#setting-scale').onchange = e => applyInterfaceScale(e.target.value, true);
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
 $('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);
