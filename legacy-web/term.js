@@ -2389,6 +2389,7 @@ function ensureTerm(name) {
     } catch { view.unicode11 = null; }
   }
   term.open(host);
+  installTermMenu(view);
   term.onScroll(() => positionTermViewport(view));
   // Edge 在任何聚焦的可编辑元素插入点旁挂一个 Copilot“撰写”浮动按钮（一个蓝点），
   // 它会贴着 xterm 这个隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
