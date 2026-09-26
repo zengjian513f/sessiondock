@@ -59,6 +59,13 @@ When a configured template contains an exact `{session_id}` or `{sid}` argument,
 the launcher substitutes it. Otherwise it appends the command above.
 Fixed profile arguments stay before those identity arguments.
 
+Managed Codex profiles append `-c check_for_update_on_startup=false` for new,
+resume and report-worker launches. An interactive startup update exits Codex
+before native session creation, abandoning the pending session. Update Codex
+from an external terminal instead; this per-invocation override leaves user
+configuration and model/effort defaults untouched. Fixed-argv adapters are
+unchanged. See the [official configuration reference](https://developers.openai.com/codex/config-reference).
+
 The child inherits the service environment, then applies `env` and
 `env_remove`. Session-lineage variables are cleared:
 `CLAUDE_CODE_SESSION_ID`, `CODEX_COMPANION_SESSION_ID`,

@@ -354,6 +354,15 @@ impl Launcher {
                 argv.push(OsString::from(arg));
             }
         }
+        // An in-session update exits Codex before it creates native history,
+        // abandoning new sessions and report workers. Keep updates outside
+        // managed sessions; this invocation override never edits user config.
+        if spec.source() == Source::Codex {
+            argv.extend([
+                OsString::from("-c"),
+                OsString::from("check_for_update_on_startup=false"),
+            ]);
+        }
         Ok(argv)
     }
 

@@ -1754,6 +1754,9 @@ function refreshPendingStage(name) {
   const wait = $('.new-session-wait');
   if (wait) wait.textContent = pendingStageMessage(current);
   renderPendingSessionAction(current);
+  if (composerUid === pendingUid(name) && current.source !== 'shell'
+      && ['exited', 'failed'].includes(current.state)
+      && !$('#compose-items [data-conversation-restart]')) renderComposerItems();
 }
 
 /** 本页观察到宿主退出后，页面立刻进入结束态（头部"删除"、副标题"已结束"），
@@ -4491,7 +4494,11 @@ function renderComposer() {
   const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox') || shell;
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');
-  const show = !sessionComposerEnded(S.sel) && !!(name || pending);
+  const receipt = pending && (T.pending || []).find(row => pendingUid(row.name) === S.sel);
+  const restartable = conversationSendEnabled() && !shell
+    && ['exited', 'failed'].includes(receipt?.state)
+    && receipt?.binding?.state !== 'confirmed';
+  const show = restartable || (!sessionComposerEnded(S.sel) && !!(name || pending));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);
   $('#right')?.classList.toggle('shell-session', !!shell);
@@ -4775,7 +4782,7 @@ function syncComposerSendState() {
   const blocked = composerUsesInputStatus()
     ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
   $('#csend').disabled = (typeof staleBuildShown !== 'undefined' && staleBuildShown)
-    || composerSending || !!draft?.loading || blocked;
+    || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
 }
 
 function renderComposerInputStatus() {
@@ -4861,18 +4868,23 @@ function renderComposerItems() {
   }
   if (composerUid?.startsWith('tmux:') && !takenOver(composerUid)
       && ['exited','failed'].includes((T.pending || []).find(r=>pendingUid(r.name)===composerUid)?.state)
-      && (draft.text || draft.attachments.length || draft.quotes.length)) {
+      && !sessionIsPtyOnly(composerUid)) {
     const restart=el('button','btn','重新启动');restart.type='button';
+    restart.dataset.conversationRestart='';
     restart.onclick=async () => {
       restart.disabled=true;
       try {
         draft.restartId ||= crypto.randomUUID();
         const uid=composerUid;
+        if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '草稿尚未保存');
         const data=await post('api/session/conversation/restart',{uid,request_id:draft.restartId});
         if (data.error) throw new Error(data.error);
         const next=pendingUid(data.name);
         // The server has already bound both instances to the same logical draft.
         migrateComposerDraft(uid,next);composerHydrations.delete(next);
+        // Re-enter the editor for the replacement instance; the old CLI's
+        // readiness and in-flight probes cannot authorize a send here.
+        composerUid=null;
         await loadTermList();await openPendingSession(data);
       } catch (error){draft.storageError=error.message || String(error);renderComposerItems();}
     };
