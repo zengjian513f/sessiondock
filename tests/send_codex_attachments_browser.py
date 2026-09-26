@@ -21,12 +21,20 @@ def main():
         root = Path(temporary).resolve()
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok', 'audit', 'reports'):
             (root / name).mkdir(mode=0o700)
+        # Model the update trap: without the launch override the CLI exits
+        # before rendering an editor or creating a native session.
+        cli = root / 'codex.py'
+        cli.write_text("import sys, runpy\n"
+            "assert any(sys.argv[i] in ('-c', '--config') and sys.argv[i+1] == "
+            "'check_for_update_on_startup=false' for i in range(1, len(sys.argv)-1)), "
+            "'startup updater would exit this session'\n"
+            + "runpy.run_path(" + repr(str(REPO / 'tests/fake_codex_cli.py')) + ", run_name='__main__')\n")
         launcher = root / 'launcher.json'
         launcher.write_text(json.dumps({'schema': 2,
             'host_binary': str(REPO / 'target/debug/ptyhost'), 'host_dir': str(root / 'host'),
             'adapters': [], 'profiles': [{'id': 'codex-cli-v1', 'source': 'codex',
                 'executable': str(Path(sys.executable).resolve()),
-                'args': [str(REPO / 'tests/fake_codex_cli.py'), '--model', 'gpt-5.6-luna'],
+                'args': [str(cli), '--model', 'gpt-5.6-luna'],
                 'new_args': [], 'resume_args': ['resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
@@ -72,6 +80,19 @@ def main():
                 assert receipt['running'], receipt
                 page.wait_for_function("composerUid && !composerDraft().loading")
                 page.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_starting'", timeout=4000)
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                # An already-open pre-fix Codex can still exit during update.
+                # Empty pending sessions must retain a clickable recovery path.
+                stopped = context.request.post(base + '/api/term/kill', data={
+                    'record_id': receipt['record_id'], 'instance_id': receipt['instance_id']})
+                assert stopped.status == 200, stopped.text()
+                restart = page.get_by_role('button', name='重新启动', exact=True)
+                expect(restart).to_be_visible(timeout=15000)
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/restart') as restarted:
+                    restart.click()
+                assert restarted.value.status == 200, restarted.value.text()
+                receipt = restarted.value.json()
+                assert receipt['source'] == 'codex' and receipt['cwd'] == str(root / 'work'), receipt
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                 page.locator('#cinput').fill('report task\n\n│ >_ OpenAI Codex (quoted text)\n│ model: loading\n\n最后一段\n')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=15000) as multiline:
@@ -125,7 +146,7 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
                 (root / 'footer-paste').touch()
-                for index, description in enumerate(['没回车', '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20]):
+                for index, description in enumerate(['没回车', '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告']):
                     # Submit an actual report through the dialog. The worker must
                     # consume its whole task once without a manual terminal Enter.
                     if not page.locator('#report-bug').is_visible():
@@ -137,6 +158,25 @@ def main():
                     assert report.value.status == 202, report.value.text()
                     worker = report.value.json()['worker']
                     bundle = Path(report.value.json()['path'])
+                    if index == 2:
+                        stopped = context.request.post(base + '/api/term/kill', data={
+                            'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
+                        assert stopped.status == 200, stopped.text()
+                        page.locator('#bug-report-toast').get_by_role('button', name='打开', exact=True).click()
+                        expect(page.get_by_role('button', name='重新启动', exact=True)).to_be_visible(timeout=15000)
+                        expect(page.locator('#cinput')).to_have_value(description)
+                        # Reload exercises recovery from server-owned report input.
+                        page.reload(wait_until='networkidle')
+                        page.locator('#side .item').filter(has_text='处理 ' + report.value.json()['report_id']).click()
+                        expect(page.locator('#cinput')).to_have_value(description)
+                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/restart') as recovered:
+                            page.get_by_role('button', name='重新启动', exact=True).click()
+                        assert recovered.value.status == 200, recovered.value.text()
+                        worker = recovered.value.json()
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as resent:
+                            page.locator('#csend').click()
+                        assert resent.value.status == 200, resent.value.text()
                     deadline = time.monotonic() + 15
                     while time.monotonic() < deadline:
                         manifest = json.loads((bundle / 'manifest.json').read_text())
@@ -147,7 +187,7 @@ def main():
                     submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
                     assert len(submissions) == 4 + index, submissions
                     worker_prompt = (bundle / 'worker-prompt.md').read_text()
-                    assert (len(worker_prompt) > 1000) == bool(index), 'cover expanded and collapsed reports'
+                    assert (len(worker_prompt) > 1000) == (index == 1), 'cover expanded and collapsed reports'
                     assert submissions[-1] == worker_prompt
                     assert '随后立即 push' in worker_prompt
                     assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
@@ -167,7 +207,7 @@ def main():
                 if context:
                     context.close()
                 browser.close()
-    print('PASS Codex browser: startup wait, footerless text, attachments, expanded report with footer and blank cursor row, collapsed report; exactly one submission each')
+    print('PASS Codex browser: startup update override, empty-session restart, report exit/reload/restart, startup wait, attachments, expanded/collapsed report; exactly one submission each')
 
 
 if __name__ == '__main__':
