@@ -1712,12 +1712,12 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #compose-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 #compose-items:empty { display: none; }
 #composer-input-status {
-  position: absolute; z-index: 10; bottom: calc(100% + 2px); left: 18px;
+  position: absolute; z-index: 10; bottom: calc(100% + 2px); left: 18px; right: 18px;
   display: flex; align-items: center; gap: 8px;
-  width: max-content; max-width: calc(100% - 36px);
+  width: auto;
   max-height: min(20vh, 120px); overflow: auto;
   padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--panel); box-shadow: var(--shadow);
+  background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
   color: var(--muted); font-size: 12px; line-height: 1.4;
   overflow-wrap: anywhere;
 }
@@ -2056,7 +2056,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     max-width: none; gap: 6px;
     padding: 7px 8px max(7px, env(safe-area-inset-bottom));
   }
-  #composer-input-status { left: 8px; max-width: calc(100% - 16px); }
+  #composer-input-status { left: 8px; right: 8px; }
   .composer-row { gap: 4px; }
   #cadd { min-width: var(--composer-control-height); }
   .attach-menu { width: 156px; }

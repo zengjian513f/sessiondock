@@ -763,8 +763,8 @@ async function post(url, body, {timeoutMs = 0} = {}) {
       data = JSON.parse(text);
     } catch {
       throw new Error(r.status >= 500
-        ? '服务暂时不可用，请稍后重试'
-        : '服务返回了无法解析的响应，请重新加载');
+        ? `SessionDock 请求失败（HTTP ${r.status}），请稍后重试`
+        : 'SessionDock 返回了无法解析的响应，请重新加载');
     }
     browserAuditEvent?.('http.response.received', {
       url, status: r.status, ok: r.ok, headers_ms: headersMs,
@@ -4787,6 +4787,20 @@ function syncComposerSendState() {
     || composerSending || !!draft?.loading || sessionComposerEnded(composerUid) || blocked;
 }
 
+function composerInputNotice(status) {
+  if (!status) return '';
+  const messages = {
+    input_check_pending: '正在检查终端输入状态',
+    cli_starting: '终端画面尚未就绪，正在重新检查；输入已保留',
+    cli_catching_up: '终端画面正在同步，正在重新检查；输入已保留',
+    cli_pasting: '检测到终端正在粘贴，正在重新检查；输入已保留',
+    cli_question: '检测到终端选择界面，请切换到 PTY（终端）处理；输入已保留',
+    cli_not_ready: '暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留',
+  };
+  const message = messages[status.code] || status.message;
+  return `SessionDock · ${message}`;
+}
+
 function renderComposerInputStatus() {
   const node = $('#composer-input-status');
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
@@ -4797,10 +4811,11 @@ function renderComposerInputStatus() {
     || (status.state === 'unknown' && status.code !== 'input_check_pending'));
   node.classList.toggle('blocked', !!blocking);
   node.classList.toggle('hidden', !status);
-  node.title = status?.message || '';
+  const notice = composerInputNotice(status);
+  node.title = notice;
   node.replaceChildren();
   if (status) {
-    node.append(el('span', 'composer-input-status-copy', status.message));
+    node.append(el('span', 'composer-input-status-copy', notice));
 
   }
   syncComposerSendState();
