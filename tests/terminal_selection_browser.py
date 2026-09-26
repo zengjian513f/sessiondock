@@ -146,6 +146,22 @@ def check_surface(pw, surface):
                     page.locator('.term-context-menu:visible').wait_for()
                 menu()
                 assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '复制全部', '查找']
+                # Reuse the existing menu surface, with menu rows rather than
+                # individually bordered form buttons, in both themes.
+                for theme in ['dark', 'light']:
+                    page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                    appearance = page.locator('.term-context-menu:visible').evaluate("""menu => {
+                      const button = menu.querySelector('button');
+                      const style = getComputedStyle(button);
+                      return {shared: menu.classList.contains('ctx-menu'), border: style.borderTopWidth,
+                        background: style.backgroundColor, size: style.fontSize,
+                        width: menu.getBoundingClientRect().width};
+                    }""")
+                    assert appearance['shared'] and appearance['border'] == '0px', appearance
+                    assert appearance['background'] == 'rgba(0, 0, 0, 0)', appearance
+                    assert appearance['size'] == '13px' and appearance['width'] >= 150, appearance
+                page.get_by_role('menuitem', name='粘贴', exact=True).press('ArrowDown')
+                assert page.get_by_role('menuitem', name='复制全部', exact=True).evaluate('e => e === document.activeElement')
                 page.get_by_role('menuitem', name='复制全部', exact=True).click()
                 page.wait_for_function("navigator.clipboard.readText().then(t => t.includes('SELECT_FIRST second_word') && t.includes('NEXT_LINE'))")
                 page.wait_for_function("selectionTerm.getSelection() === ''")
