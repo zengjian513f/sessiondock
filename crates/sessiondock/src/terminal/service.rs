@@ -23,10 +23,10 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use super::input;
-use super::receipts::{IoDirection, IoMeter, IoObserver, IoReceipt};
 use super::ownership::{
     self, BoundLease, ClaimResponse, Claimant, ExpectedTarget, LeaseTarget, Registry, Revocation,
 };
+use super::receipts::{IoDirection, IoMeter, IoObserver, IoReceipt};
 
 const OUTPUT_CHUNK: usize = 32 * 1024;
 const OUTPUT_QUEUE: usize = 16;
@@ -1033,7 +1033,10 @@ async fn browser_input_frames(
     meter: &mut IoMeter,
 ) -> Close {
     loop {
-        if meter.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
+        if meter
+            .deadline()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             meter.flush(observer);
         }
         let Some(message) = next_or_flush(meter, observer, stream.next()).await else {
@@ -1135,7 +1138,10 @@ async fn browser_output_frames(
     meter: &mut IoMeter,
 ) -> Close {
     loop {
-        if meter.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
+        if meter
+            .deadline()
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             meter.flush(observer);
         }
         let Some(item) = next_or_flush(meter, observer, receiver.recv()).await else {

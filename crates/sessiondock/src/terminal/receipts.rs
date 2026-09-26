@@ -110,7 +110,11 @@ mod tests {
         meter.flush(Some(&observer));
         let start = Instant::now();
         meter.note(start, 3, Duration::from_millis(2));
-        meter.note(start + Duration::from_millis(40), 1, Duration::from_millis(7));
+        meter.note(
+            start + Duration::from_millis(40),
+            1,
+            Duration::from_millis(7),
+        );
         assert_eq!(meter.deadline(), Some(start + WINDOW));
         meter.flush(Some(&observer));
         meter.flush(Some(&observer));

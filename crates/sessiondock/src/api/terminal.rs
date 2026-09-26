@@ -413,7 +413,11 @@ fn io_observer(
                     IoDirection::Input => "terminal.input.written",
                     IoDirection::Output => "terminal.output.sent",
                 },
-                if max_write_ms >= 1000.0 { "warning" } else { "info" },
+                if max_write_ms >= 1000.0 {
+                    "warning"
+                } else {
+                    "info"
+                },
                 json!({"name": name, "connection": connection, "frames": frames,
                     "bytes": bytes, "span_ms": span_ms, "max_write_ms": max_write_ms}),
             ),
