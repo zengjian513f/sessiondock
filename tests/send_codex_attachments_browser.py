@@ -43,6 +43,7 @@ def main():
                     'SESSIONDOCK_TEST_COLLAPSED_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTER_PASTE_FILE': str(root / 'footer-paste'),
+                    'SESSIONDOCK_TEST_SCROLLED_PASTE': '1',
                     'SESSIONDOCK_TEST_SUBMISSIONS': str(root / 'submissions.jsonl'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
@@ -146,7 +147,7 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
                 (root / 'footer-paste').touch()
-                for index, description in enumerate(['没回车', '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告']):
+                for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告']):
                     # Submit an actual report through the dialog. The worker must
                     # consume its whole task once without a manual terminal Enter.
                     if not page.locator('#report-bug').is_visible():
@@ -184,6 +185,8 @@ def main():
                             break
                         page.wait_for_timeout(100)
                     assert manifest['status'] == 'submitted', manifest
+                    if index == 0:
+                        assert (root / 'footer-paste.scrolled').exists(), 'exercise a genuinely clipped prompt marker'
                     submissions = [json.loads(line)['text'] for line in (root / 'submissions.jsonl').read_text().splitlines()]
                     assert len(submissions) == 4 + index, submissions
                     worker_prompt = (bundle / 'worker-prompt.md').read_text()
