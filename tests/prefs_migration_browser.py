@@ -36,11 +36,15 @@ def seed_script(values):
 def set_scale(page, value):
     slider = page.locator("#setting-scale")
     slider.focus()
+    slider.press("End")
     slider.press("Home")
     for _ in range(int(value) - 50):
         slider.press("ArrowRight")
     expect(slider).to_have_value(str(value))
     expect(page.locator("#setting-scale-value")).to_have_text(f"{value}%")
+    expect(page.locator("#scale-indicator")).to_have_text(f"{value}%")
+    expect(page.locator("#scale-indicator")).to_be_visible()
+    assert page.locator("#scale-indicator").evaluate("e => e.matches(':popover-open')")
 
 
 def pinch(page, cdp, start=35, end=49, target="#side", cancel=False):
@@ -49,9 +53,24 @@ def pinch(page, cdp, start=35, end=49, target="#side", cancel=False):
     def points(radius):
         return [{"x": x-radius, "y": y, "id": 1}, {"x": x+radius, "y": y, "id": 2}]
     cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": points(start)})
+    if target == '#side':
+        # A stationary pinch keeps the overlay visible until every finger lifts.
+        page.wait_for_timeout(950)
+        expect(page.locator('#scale-indicator')).to_be_visible()
     for step in range(1, 13):
         cdp.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": points(start+(end-start)*step/12)})
         page.wait_for_timeout(20)
+    if target == '#side':
+        page.wait_for_timeout(50)
+        indicator = page.locator('#scale-indicator')
+        value = page.locator('#setting-scale').input_value()
+        expect(indicator).to_have_text(f'{value}%')
+        b = indicator.bounding_box()
+        viewport = page.viewport_size
+        assert abs(b['x'] + b['width']/2 - viewport['width']/2) < 2, b
+        assert abs(b['y'] + b['height']/2 - viewport['height']/2) < 2, b
+        assert abs(b['width'] - 112) < 2, b
+        assert indicator.evaluate("e => getComputedStyle(e).pointerEvents") == 'none'
     cdp.send("Input.dispatchTouchEvent", {"type": "touchCancel" if cancel else "touchEnd", "touchPoints": []})
     page.wait_for_timeout(100)
 
@@ -83,7 +102,8 @@ def check_pinch(browser, base):
         page.locator("#settings-dialog .modal-close").tap()
         pinch(page, cdp)
         assert page.evaluate("interfaceScale()") == 140
-        page.wait_for_timeout(650)
+        page.wait_for_timeout(950)
+        expect(page.locator('#scale-indicator')).to_be_hidden()
         expect(page.locator("#item-menu")).to_be_hidden()
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert page.evaluate("document.querySelector('#app').getBoundingClientRect().height") >= 899
@@ -107,6 +127,7 @@ def check_pinch(browser, base):
         assert page.evaluate("interfaceScale()") == 50
         page.reload(wait_until="networkidle")
         assert page.evaluate("interfaceScale()") == 50
+        expect(page.locator('#scale-indicator')).to_be_hidden()
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert not errors, errors
         context.close()

@@ -79,6 +79,21 @@ function applyInterfaceScale(value = interfaceScale(), persist = false) {
 }
 applyInterfaceScale();
 
+let scaleIndicatorTimer = 0, scaleIndicatorFade = 0;
+function showScaleIndicator(value, active = false) {
+  const indicator = document.querySelector('#scale-indicator');
+  clearTimeout(scaleIndicatorTimer);
+  clearTimeout(scaleIndicatorFade);
+  indicator.textContent = `${normalizedInterfaceScale(value)}%`;
+  // A manual popover stays above the settings dialog without taking focus.
+  if (indicator.showPopover && !indicator.matches(':popover-open')) indicator.showPopover();
+  indicator.classList.add('visible');
+  if (!active) scaleIndicatorTimer = setTimeout(() => {
+    indicator.classList.remove('visible');
+    scaleIndicatorFade = setTimeout(() => indicator.hidePopover?.(), 180);
+  }, 700);
+}
+
 // A widget with its own two-finger gesture explicitly owns that surface.
 // Page pinch takes ownership until every finger lifts, cancelling child holds
 // before capture prevents the second touch from reaching those children.
@@ -111,6 +126,7 @@ const SessionDockGestures = (() => {
     if (startDistance < 10) return;
     pinch = {distance: startDistance, scale: interfaceScale(), value: interfaceScale(),
       ids: [...event.touches].map(touch => touch.identifier)};
+    showScaleIndicator(pinch.value, true);
     cancelLongPress();
     closeItemMenu();
     suppressItemClick = false;
@@ -127,7 +143,10 @@ const SessionDockGestures = (() => {
     pinch.value = Math.round(Math.max(50, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
     if (!frame) frame = requestAnimationFrame(() => {
       frame = 0;
-      if (pinch) applyInterfaceScale(pinch.value);
+      if (pinch) {
+        applyInterfaceScale(pinch.value);
+        showScaleIndicator(pinch.value, true);
+      }
     });
   }, {capture: true, passive: false});
   const finish = event => {
@@ -141,6 +160,7 @@ const SessionDockGestures = (() => {
     const value = pinch.value;
     pinch = null;
     applyInterfaceScale(value, true);
+    showScaleIndicator(value);
   };
   app.addEventListener('touchend', finish, {capture: true, passive: false});
   app.addEventListener('touchcancel', finish, {capture: true, passive: false});
@@ -8663,8 +8683,27 @@ $('#settings').onclick = openSettings;
 $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
-$('#setting-scale').oninput = e => applyInterfaceScale(e.target.value, true);
-$('#setting-scale-reset').onclick = () => applyInterfaceScale(100, true);
+let scaleSliderActive = false;
+$('#setting-scale').onpointerdown = e => {
+  scaleSliderActive = true;
+  showScaleIndicator(e.target.value, true);
+};
+$('#setting-scale').oninput = e => {
+  applyInterfaceScale(e.target.value, true);
+  showScaleIndicator(e.target.value, scaleSliderActive);
+};
+const finishScaleSlider = () => {
+  if (!scaleSliderActive) return;
+  scaleSliderActive = false;
+  showScaleIndicator(interfaceScale());
+};
+window.addEventListener('pointerup', finishScaleSlider);
+window.addEventListener('pointercancel', finishScaleSlider);
+$('#setting-scale').onblur = finishScaleSlider;
+$('#setting-scale-reset').onclick = () => {
+  applyInterfaceScale(100, true);
+  showScaleIndicator(100);
+};
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
 $('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);
