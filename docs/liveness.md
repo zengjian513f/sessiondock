@@ -232,6 +232,13 @@ the walk (its environment belongs to nobody). Among several candidates the one
 with the latest `created` wins (a child is born after its parent). Candidates
 are memoised per scan snapshot.
 
+Candidates newer than the child's native creation time are excluded before
+choosing a parent. A process launch/resume relationship does not establish that
+it created an already-existing session. Each scan also repairs persisted
+relationships disproved by the same native chronology, retaining the old value
+as `invalid_spawned_by` ([metadata.md](metadata.md#spawned_by)). This corrects
+historical inference rather than hiding incorrect nesting in the browser.
+
 The relation is visible only while both processes exist, so it is persisted
 immediately: every `/api/live` records it, and a background task ticks every
 10 s because headless fan-outs live and die while
@@ -239,7 +246,8 @@ no page is open. Both run only when the scan and `SESSIONDOCK_STATE_DIR` are
 configured. The metadata row key is `spawned_by: {source, sid}`, written once
 and never rewritten ([metadata.md](metadata.md#spawned_by)); rows of
 `/api/sessions` carry it verbatim. `tests/meta_import.py` converts the
-key as-is (the spawner may no longer exist).
+key as-is (the spawner may no longer exist). The native-chronology repair above
+is the sole exception to write-once discovery.
 
 The launcher refuses `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and `CLAUDE_PID`
 in profile environments in addition to the session ids, so a web-created

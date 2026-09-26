@@ -368,6 +368,14 @@ impl Discovered {
         CacheKey {
             stamp: self.stamp,
             summary_stamp: self.summary_stamp,
+            events_stamp: if self.source == "grok" {
+                file_metadata(&self.path.join("events.jsonl"))
+                    .ok()
+                    .filter(|meta| meta.is_file())
+                    .map(|meta| Stamp::of(&meta))
+            } else {
+                None
+            },
         }
     }
 }
@@ -376,6 +384,7 @@ impl Discovered {
 struct CacheKey {
     stamp: Option<Stamp>,
     summary_stamp: Option<Stamp>,
+    events_stamp: Option<Stamp>,
 }
 
 struct Cached {
@@ -1313,8 +1322,33 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
     {
         summary.size = size;
     }
+    let mut events_stamp = candidate.key().events_stamp;
+    if candidate.source == "grok" {
+        match read_data(&candidate.root, &candidate.path.join("events.jsonl")) {
+            FileRead::Data {
+                head,
+                tail,
+                tail_start,
+                stamp,
+            } => {
+                events_stamp = Some(stamp);
+                let events = DataFile {
+                    head: &head,
+                    tail: &tail,
+                    tail_start,
+                    stamp,
+                };
+                if let Some(updated) = summary::grok::activity_updated(&events) {
+                    summary.updated = updated;
+                }
+            }
+            FileRead::Unreadable => transient = true,
+            FileRead::Vanished => events_stamp = None,
+        }
+    }
     Some(ReadOutcome {
         key: CacheKey {
+            events_stamp,
             stamp: data.as_ref().map(|(_, _, _, stamp)| *stamp),
             summary_stamp: sidecar.as_ref().and_then(|(_, stamp, _)| *stamp),
         },
