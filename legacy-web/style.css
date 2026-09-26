@@ -2175,3 +2175,13 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   width: min(520px, calc(100vw - 16px));
   max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px);
 }
+
+.term-menu-button { display: none; }
+@media (any-pointer: coarse) {
+  .term-menu-button {
+    display: block; position: absolute; right: 4px; top: 4px; z-index: 19;
+    width: 36px; height: 32px; padding: 0; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--panel); color: var(--text); font-size: 22px;
+  }
+  .xterm-view > .grid-canvas, .xterm-view .xterm-screen { -webkit-touch-callout: none; }
+}
