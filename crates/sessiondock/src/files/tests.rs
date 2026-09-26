@@ -183,7 +183,11 @@ fn basename_directory_fallback_never_recurses_or_guesses_collisions() {
             .status,
         404
     );
-    fixture.write("README.md", b"two");
+    let local = fixture.write("README.md", b"two");
+    assert_eq!(fixture.target("README.md").path(), local);
+    fs::remove_file(local).unwrap();
+    fixture.write("second/README.md", b"three");
+    fixture.mention("`./second`");
     assert_eq!(
         fixture
             .service

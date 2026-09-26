@@ -203,8 +203,15 @@ impl FileService {
         if !basename {
             return self.probe(scope, reference, probes);
         }
+        // A bare filename is a relative path first. Historical references in
+        // other projects must not make an existing cwd file ambiguous.
+        match self.probe(scope, reference, probes) {
+            Ok(target) => return Ok(target),
+            Err(error) if error.status == 404 || error.code == "file_cwd_unavailable" => {}
+            Err(error) => return Err(error),
+        }
         let mut candidates: BTreeMap<PathBuf, ResolvedTarget> = BTreeMap::new();
-        // Basenames require all branch references: never guess the first match.
+        // Without a cwd match, consider all branch references, not the first one.
         for other in index.basenames.get(reference).into_iter().flatten() {
             if let Ok(target) = self.probe(scope, other, probes) {
                 candidates.insert(target.path().to_path_buf(), target);
