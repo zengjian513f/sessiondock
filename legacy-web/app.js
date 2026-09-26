@@ -7397,34 +7397,6 @@ function ensureSyntax() {
   document.head.appendChild(script);
 }
 
-let codeUnicode;
-const codeGraphemes = new Intl.Segmenter(undefined, {granularity: 'grapheme'});
-function codeColumns(text) {
-  if (!/[^\x00-\x7f]/.test(text)) return esc(text);
-  if (!codeUnicode) {
-    new Unicode11Addon.Unicode11Addon().activate({unicode: {register(provider) { codeUnicode = provider; }}});
-  }
-  // Fonts control glyph shapes, not terminal cell counts. In particular CJK
-  // fallback and diagonal arrows need explicit advances relative to ASCII.
-  return Array.from(codeGraphemes.segment(text), ({segment}) => {
-    if (!/[^\x00-\x7f]/.test(segment)) return esc(segment);
-    const width = Math.max(...Array.from(segment, ch => codeUnicode.wcwidth(ch.codePointAt(0))));
-    return `<span class="code-cell" style="width:${width}ch">${esc(segment)}</span>`;
-  }).join('');
-}
-
-function paintCodeColumns(code) {
-  const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
-  const nodes = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
-  for (const node of nodes) {
-    if (!/[^\x00-\x7f]/.test(node.data)) continue;
-    const fragment = document.createElement('template');
-    fragment.innerHTML = codeColumns(node.data);
-    node.replaceWith(fragment.content);
-  }
-}
-
 function paintSyntax(root = document) {
   const select = selector => [
     ...(root.matches?.(selector) ? [root] : []),
@@ -7449,7 +7421,6 @@ function paintSyntax(root = document) {
           : window.sessiondockHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
     if (!result?.html) continue;
     code.innerHTML = result.html;
-    if (code.classList.contains('code-block')) paintCodeColumns(code);
     code.classList.add('hljs');
     if (result.language) code.classList.add(`language-${result.language}`);
     if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
@@ -7499,7 +7470,7 @@ function md(text, full, media = [], context = {}) {
     const info = open[2].trim();
     const language = info.match(/^[\w+.-]+/)?.[0] || '';
     const code = lines.slice(i + 1, close).join('\n');
-    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${codeColumns(code)}</code></pre>`);
+    output.push(`<pre><code class="code-block" data-code-lang="${esc(language)}">${esc(code)}</code></pre>`);
     i = close < lines.length ? close + 1 : close;
   }
   flush();
