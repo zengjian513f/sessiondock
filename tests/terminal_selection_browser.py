@@ -26,7 +26,7 @@ while True:
   if mode not in ('none', '1000', '1002', '1003'): continue
   os.write(1, b'\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006h')
   if mode != 'none': os.write(1, ('\x1b[?' + mode + 'h').encode())
-  os.write(1, b'\x1b[2J\x1b[HSELECT_FIRST second_word\r\nNEXT_LINE\r\n')
+  os.write(1, '\x1b[?2004h\x1b[2J\x1b[HSELECT_FIRST second_word\r\nNEXT_LINE 中文查找 中文查找\r\n'.encode())
 '''
 
 # Only observe transport writes; all commands and selections use browser input.
@@ -135,6 +135,52 @@ def check_surface(pw, surface):
                     data = bytes(sum(page.evaluate('selectionBytes'), []))
                     assert b'\x1b[<' in data and data.endswith(b'm'), (surface, mode, data)
                     assert page.evaluate('navigator.clipboard.readText()') == 'remote-gesture-sentinel'
+            if not standalone:
+                keyboard.focus()
+                page.keyboard.type('mode:none')
+                page.keyboard.press('Enter')
+                page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
+                screen = page.locator('.grid-canvas' if surface == 'grid' else '.xterm-screen')
+                def menu():
+                    screen.click(button='right', position={'x': 30, 'y': 12})
+                    page.locator('.term-context-menu:visible').wait_for()
+                menu()
+                assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '复制全部', '查找']
+                page.get_by_role('menuitem', name='复制全部', exact=True).click()
+                page.wait_for_function("navigator.clipboard.readText().then(t => t.includes('SELECT_FIRST second_word') && t.includes('NEXT_LINE'))")
+                page.wait_for_function("selectionTerm.getSelection() === ''")
+                menu()
+                page.get_by_role('menuitem', name='查找', exact=True).click()
+                page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+                page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
+                page.get_by_role('searchbox', name='查找终端输出').fill('中文查找')
+                page.wait_for_function("selectionTerm.getSelection() === '中文查找'")
+                count = int(page.locator('.term-find [role=status]').inner_text().split('/')[1])
+                assert count >= 2
+                assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
+                page.get_by_role('button', name='下一个', exact=True).click()
+                assert page.locator('.term-find [role=status]').inner_text() == f'2/{count}'
+                page.get_by_role('button', name='上一个', exact=True).click()
+                assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
+                page.get_by_role('searchbox', name='查找终端输出').fill('absent-term-query')
+                assert page.locator('.term-find [role=status]').inner_text() == '无匹配'
+                page.get_by_role('searchbox', name='查找终端输出').press('Escape')
+                assert not page.locator('.term-find').is_visible()
+                page.evaluate("navigator.clipboard.writeText('PASTE_MENU_SENTINEL')")
+                before = (root / 'work/input.bin').read_bytes()
+                menu()
+                page.get_by_role('menuitem', name='粘贴', exact=True).click()
+                page.wait_for_function("selectionBytes.flat().length > 0")
+                import time
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and (root / 'work/input.bin').read_bytes() == before:
+                    page.wait_for_timeout(50)
+                assert (root / 'work/input.bin').read_bytes()[len(before):] == b'\x1b[200~PASTE_MENU_SENTINEL\x1b[201~'
+                page.evaluate("[...T.views.values()][0].replay = true")
+                menu()
+                assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
+                page.get_by_role('menuitem', name='复制全部', exact=True).click()
+                print('PASS', surface, 'context menu copy all / find / paste / read-only', flush=True)
             assert not errors, errors
             context.close()
             browser.close()
