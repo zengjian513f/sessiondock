@@ -26,9 +26,10 @@ only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
 
-Appearance settings store `interfaceScale` as an integer percentage (30–150,
+Appearance settings store `interfaceScale` as an integer percentage (50–150,
 step 1; default 100), adjusted with a live slider, reset button, or a two-finger
-pinch on the main console. All screen widths use this preference and retain
+pinch on the main console. Older saved values of 30–49 apply as 50.
+All screen widths use this preference and retain
 viewport-based layout breakpoints. The settings dialog stays a stable size
 while the slider moves. A pinch saves once the fingers lift, sharing the slider's
 value. Single-finger scrolling stays native. When page pinch takes over it
