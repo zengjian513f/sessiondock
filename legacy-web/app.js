@@ -58,10 +58,14 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
 
 function normalizedInterfaceScale(value) {
   value = Number(value);
-  return Number.isFinite(value) && value >= 30 && value <= 150 ? Math.round(value) : 100;
+  // Preserve older 30–49% preferences at the new minimum.
+  return Number.isFinite(value) && value >= 30 && value <= 150 ? Math.max(50, Math.round(value)) : 100;
 }
 function interfaceScale() {
-  return normalizedInterfaceScale(store.get('interfaceScale', 100));
+  const saved = store.get('interfaceScale', 100);
+  const value = normalizedInterfaceScale(saved);
+  if (value === 50 && Number(saved) < 50) store.set('interfaceScale', value);
+  return value;
 }
 function applyInterfaceScale(value = interfaceScale(), persist = false) {
   value = normalizedInterfaceScale(value);
@@ -120,7 +124,7 @@ const SessionDockGestures = (() => {
     consume(event);
     const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
     if (event.touches.length !== 2 || touches.some(touch => !touch)) return;
-    pinch.value = Math.round(Math.max(30, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
+    pinch.value = Math.round(Math.max(50, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
     if (!frame) frame = requestAnimationFrame(() => {
       frame = 0;
       if (pinch) applyInterfaceScale(pinch.value);

@@ -37,7 +37,7 @@ def set_scale(page, value):
     slider = page.locator("#setting-scale")
     slider.focus()
     slider.press("Home")
-    for _ in range(int(value) - 30):
+    for _ in range(int(value) - 50):
         slider.press("ArrowRight")
     expect(slider).to_have_value(str(value))
     expect(page.locator("#setting-scale-value")).to_have_text(f"{value}%")
@@ -104,9 +104,9 @@ def check_pinch(browser, base):
         pinch(page, cdp, end=42, cancel=True)
         assert page.evaluate("interfaceScale()") == 120
         pinch(page, cdp, start=90, end=15)
-        assert page.evaluate("interfaceScale()") == 30
+        assert page.evaluate("interfaceScale()") == 50
         page.reload(wait_until="networkidle")
-        assert page.evaluate("interfaceScale()") == 30
+        assert page.evaluate("interfaceScale()") == 50
         assert abs(page.evaluate("visualViewport.scale") - 1) < .01
         assert not errors, errors
         context.close()
@@ -114,6 +114,11 @@ def check_pinch(browser, base):
 
 
 def check_compact_scale(page):
+    page.evaluate("localStorage.setItem('sessiondock.interfaceScale', '30')")
+    page.reload(wait_until="networkidle")
+    assert page.evaluate("interfaceScale()") == 50
+    expect(page.locator("#setting-scale")).to_have_value("50")
+    assert page.evaluate("getComputedStyle(document.documentElement).zoom") == '0.5'
     def settings():
         page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
         if not page.locator("#settings").is_visible():
@@ -122,7 +127,7 @@ def check_compact_scale(page):
 
     for width in (320, 390, 820, 1100, 1440):
         page.set_viewport_size({"width": width, "height": 900})
-        for value in ("30", "31", "75", "100", "137", "150"):
+        for value in ("50", "51", "75", "100", "137", "150"):
             print(f"scale browser: {width}px {value}%", flush=True)
             settings()
             set_scale(page, value)
