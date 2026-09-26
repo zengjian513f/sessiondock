@@ -344,6 +344,8 @@ impl Conversations {
         if !value.is_object() {
             value = json!({"text":"","attachments":[],"quotes":[]});
         }
+        value["session"]["source"] = json!(identity.source);
+        value["session"]["cwd"] = json!(launched.spec().cwd());
         value["session"]["uid"] = json!(format!("tmux:{}", launched.host_name()));
         value["session"]["name"] = json!(launched.host_name());
         value["session"]["record_id"] = json!(launched.record_id());
