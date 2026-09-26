@@ -56,20 +56,75 @@ function applyFont(choice = store.get('font', 'ubuntu'), persist = false) {
   if (typeof refreshTerminalPreferences === 'function') refreshTerminalPreferences(false);
 }
 
-const INTERFACE_SCALES = [75, 90, 100, 110, 125, 150];
+function normalizedInterfaceScale(value) {
+  value = Number(value);
+  return Number.isFinite(value) && value >= 75 && value <= 150 ? Math.round(value) : 100;
+}
 function interfaceScale() {
-  const value = Number(store.get('interfaceScale', 100));
-  return INTERFACE_SCALES.includes(value) ? value : 100;
+  return normalizedInterfaceScale(store.get('interfaceScale', 100));
 }
 function applyInterfaceScale(value = interfaceScale(), persist = false) {
-  value = Number(value);
-  if (!INTERFACE_SCALES.includes(value)) value = 100;
+  value = normalizedInterfaceScale(value);
   if (persist) store.set('interfaceScale', value);
   document.documentElement.style.setProperty('--compact-scale', value / 100);
+  document.querySelector('#setting-scale').value = String(value);
+  document.querySelector('#setting-scale-value').value = `${value}%`;
   // Resize listeners also update terminal fitting and the visible mobile viewport.
   if (persist) window.dispatchEvent(new Event('resize'));
 }
 applyInterfaceScale();
+
+// A widget with its own two-finger gesture explicitly owns that surface.
+// Do not guess ownership from canvas/terminal markup or from one-finger handlers.
+(() => {
+  const app = document.querySelector('#app');
+  let pinch = null, frame = 0, suppressClick = false;
+  const distance = touches => Math.hypot(
+    touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const consume = event => {
+    if (event.cancelable) event.preventDefault();
+    event.stopPropagation();
+  };
+  app.addEventListener('touchstart', event => {
+    if (pinch) { consume(event); return; }
+    suppressClick = false;
+    if (event.touches.length !== 2 || [...event.touches].some(touch =>
+      !app.contains(touch.target) || touch.target.closest('[data-pinch-owner], input[type="range"]'))) return;
+    const startDistance = distance(event.touches);
+    if (startDistance < 10) return;
+    pinch = {distance: startDistance, scale: interfaceScale(), value: interfaceScale(),
+      ids: [...event.touches].map(touch => touch.identifier)};
+    cancelLongPress();
+    consume(event);
+  }, {capture: true, passive: false});
+  app.addEventListener('touchmove', event => {
+    if (!pinch) return;
+    consume(event);
+    const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
+    if (event.touches.length !== 2 || touches.some(touch => !touch)) return;
+    pinch.value = Math.round(Math.max(75, Math.min(150, pinch.scale * distance(touches) / pinch.distance)));
+    if (!frame) frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (pinch) applyInterfaceScale(pinch.value);
+    });
+  }, {capture: true, passive: false});
+  const finish = event => {
+    if (!pinch) return;
+    // Let child controls receive their end/cancel event and release single-touch state.
+    if (event.cancelable) event.preventDefault();
+    suppressClick = true;
+    if (event.touches.length && event.type !== 'touchcancel') return;
+    cancelAnimationFrame(frame); frame = 0;
+    applyInterfaceScale(pinch.value, true);
+    pinch = null;
+  };
+  app.addEventListener('touchend', finish, {capture: true, passive: false});
+  app.addEventListener('touchcancel', finish, {capture: true, passive: false});
+  app.addEventListener('pointermove', event => { if (pinch) consume(event); }, true);
+  app.addEventListener('click', event => {
+    if (suppressClick && event.detail) { consume(event); suppressClick = false; }
+  }, true);
+})();
 
 function applyToolIcons(choice = store.get('toolIcons', 'brand'), persist = false) {
   if (!['brand', 'boss'].includes(choice)) choice = 'brand';
@@ -641,21 +696,26 @@ document.addEventListener('visibilitychange', () => {
 const VISUAL_KEYBOARD_INSET_MIN = 120;
 let visualLayoutWidth = 0;
 let visualLayoutHeight = 0;
+let visualKeyboardWasOpen = false;
+function browserPinchZoomed() {
+  return Math.abs((window.visualViewport?.scale || 1) - 1) > 0.01;
+}
 function visualKeyboardOpen() {
   if (!MOBILE.matches) return false;
+  if (browserPinchZoomed()) return visualKeyboardWasOpen;
   const viewport = window.visualViewport;
   const width = Math.round(viewport?.width || window.innerWidth);
   const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
   if (width !== visualLayoutWidth) {
     visualLayoutWidth = width;
     visualLayoutHeight = height;
-    return false;
+    return visualKeyboardWasOpen = false;
   }
   if (height > visualLayoutHeight) {
     visualLayoutHeight = height;
-    return false;
+    return visualKeyboardWasOpen = false;
   }
-  return visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
+  return visualKeyboardWasOpen = visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
 }
 let viewportFrame = 0;
 function syncMobileViewport() {
@@ -665,10 +725,14 @@ function syncMobileViewport() {
     if (!MOBILE.matches) {
       visualLayoutWidth = 0;
       visualLayoutHeight = 0;
+      visualKeyboardWasOpen = false;
       root.removeProperty('--visual-viewport-height');
       root.removeProperty('--visual-viewport-top');
       return;
     }
+    // Pinch changes the visible window onto the page, not its layout or PTY size.
+    // Retain the last unzoomed keyboard geometry until native zoom returns to 1.
+    if (browserPinchZoomed()) return;
     const viewport = window.visualViewport;
     const height = Math.max(1, Math.round(viewport?.height || window.innerHeight));
     const top = Math.max(0, Math.round(viewport?.offsetTop || 0));
@@ -2968,6 +3032,7 @@ $('#side').addEventListener('pointerdown', e => {
   if (e.pointerType === 'mouse') return;             // 鼠标走 contextmenu
   const row = menuTarget(e);
   if (!row || S.picking || S.nestAttach) return;
+  cancelLongPress(); // A second finger must not leave the first hold timer alive.
   longPress = { timer: 0, x: e.clientX, y: e.clientY };
   longPress.timer = setTimeout(() => {
     longPress.timer = 0;
@@ -8470,7 +8535,7 @@ for (const tab of document.querySelectorAll('.settings-tab')) {
 }
 
 function openSettings() {
-  $('#setting-scale').value = String(interfaceScale());
+  applyInterfaceScale();
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
@@ -8484,7 +8549,8 @@ $('#settings').onclick = openSettings;
 $('#settings-dialog').addEventListener('click', e => {
   if (e.target === $('#settings-dialog')) $('#settings-dialog').close();
 });
-$('#setting-scale').onchange = e => applyInterfaceScale(e.target.value, true);
+$('#setting-scale').oninput = e => applyInterfaceScale(e.target.value, true);
+$('#setting-scale-reset').onclick = () => applyInterfaceScale(100, true);
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
 $('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);

@@ -10,6 +10,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
 import terminal_input_browser as fixture
+from prefs_migration_browser import pinch
 
 CLI = r'''
 import os, tty
@@ -52,7 +53,8 @@ def run(browser, renderer, scale=100):
         uid = corpus.uid(sid)
         with fixture.host(root, 'synthetic-' + uuid.uuid4().hex, uid), \
                 isolated_server(corpus, BINARY, host_dir=root / 'host') as (base, _):
-            context = browser.new_context(viewport={'width': 608, 'height': 761}, service_workers='block')
+            context = browser.new_context(viewport={'width': 608, 'height': 761}, service_workers='block',
+                                          has_touch=True, is_mobile=True)
             context.add_init_script('localStorage.setItem("sessiondock.consoleRenderer", JSON.stringify(%s))' % json.dumps(renderer))
             page = context.new_page()
             errors = []
@@ -130,6 +132,15 @@ def run(browser, renderer, scale=100):
             page.set_viewport_size({'width': 1280, 'height': 900})
             page.wait_for_timeout(300)
             assert abs(page.evaluate(GEOMETRY)['top']) < 1
+            # The terminal's single-finger handlers must not steal page pinch.
+            page.set_viewport_size({'width': 608, 'height': 761})
+            page.evaluate('applyInterfaceScale(100, true)')
+            page.wait_for_timeout(200)
+            pinch(page, context.new_cdp_session(page), target='#xterm')
+            assert page.evaluate('interfaceScale()') == 140
+            assert abs(page.evaluate('visualViewport.scale') - 1) < .01
+            keys.press('t')
+            fixture.xterm_contains(page, 'Enter to confirm')
             assert not errors, errors
             context.close()
             print('PASS', renderer, scale, 'short menu, bottom editor, cursor, keyboard resize, reopen, desktop', flush=True)

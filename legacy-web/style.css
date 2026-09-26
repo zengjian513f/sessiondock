@@ -383,7 +383,7 @@ header.header-fold-nodes #node-chips button + button { border-left: 0; border-to
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
   align-items: center; gap: 18px; padding: 11px 0; border-bottom: 1px solid var(--border);
 }
-.setting-row > span { min-width: 0; }
+.setting-row > span, .setting-row > label { min-width: 0; }
 .setting-row b, .setting-row small { display: block; }
 .setting-row b { font-size: 13px; }
 .setting-row small { margin-top: 2px; color: var(--muted); font-size: 11.5px; line-height: 1.35; }
@@ -2142,14 +2142,16 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 .term-find input { min-width: 0; width: 180px; }
 .term-find [role="status"] { white-space: nowrap; align-self: center; }
 
-/* Keep the physical viewport breakpoints while scaling compact layouts. */
-@media (max-width: 1199px) {
-  :root { --interface-scale: var(--compact-scale, 1); zoom: var(--interface-scale); }
-  #app { height: calc(100dvh / var(--interface-scale)); }
-  .app-dialog {
-    max-width: calc(100vw / var(--interface-scale) - 16px);
-    max-height: calc(100dvh / var(--interface-scale) - 16px);
-  }
+/* CSS zoom retains viewport-based layout breakpoints at every screen width. */
+:root { --interface-scale: var(--compact-scale, 1); zoom: var(--interface-scale); }
+#app {
+  height: calc(100dvh / var(--interface-scale));
+  /* Single-finger scrolling remains native; two-finger zoom belongs to the app. */
+  touch-action: pan-x pan-y;
+}
+.app-dialog {
+  max-width: calc(100vw / var(--interface-scale) - 16px);
+  max-height: calc(100dvh / var(--interface-scale) - 16px);
 }
 @media (max-width: 720px) {
   #app {
@@ -2162,3 +2164,14 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
 }
 .term-context-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.setting-scale-control { min-width: 0; }
+#setting-scale { width: 100%; margin: 0; min-height: 32px; accent-color: var(--accent); }
+.setting-scale-control > div { display: flex; align-items: center; justify-content: space-between; }
+#setting-scale-value { font-variant-numeric: tabular-nums; }
+/* Keep the slider under the finger while the surrounding interface resizes. */
+#settings-dialog {
+  zoom: calc(1 / var(--interface-scale));
+  width: min(520px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px);
+}
