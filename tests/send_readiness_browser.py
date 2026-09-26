@@ -81,11 +81,11 @@ def main():
                 # A proxy failure belongs to SessionDock, not the native CLI.
                 page.route('**/api/session/conversation/check', lambda route:
                     route.fulfill(status=502, content_type='text/html', body='Bad Gateway'))
-                expect(page.locator('#composer-input-status')).to_contain_text('SessionDock 请求失败（HTTP 502）', timeout=10000)
+                expect(page.locator('#composer-input-status')).to_have_text('SessionDock 请求失败（HTTP 502），请稍后重试', timeout=10000)
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#cinput')).to_have_value('keep this message')
                 page.unroute('**/api/session/conversation/check')
-                expect(page.locator('#composer-input-status')).to_contain_text('SessionDock · 暂未识别', timeout=10000)
+                expect(page.locator('#composer-input-status')).to_have_text('暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留', timeout=10000)
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
@@ -160,7 +160,7 @@ def main():
                         inset = 8 if width < 600 else 18
                         assert abs(bounds['x'] - composer['x'] - inset) < 2, (bounds, composer)
                         assert abs(bounds['width'] - composer['width'] + 2 * inset) < 2, (bounds, composer)
-                        expect(page.locator('#composer-input-status')).to_contain_text('SessionDock ·')
+                        expect(page.locator('#composer-input-status')).not_to_contain_text('SessionDock')
                         page.locator('#cinput').press('End')
                         page.locator('#cinput').press('!')
                         expect(page.locator('#cinput')).to_have_value('keep this message!')
