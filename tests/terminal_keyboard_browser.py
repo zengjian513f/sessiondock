@@ -77,6 +77,18 @@ def run(browser, renderer, scale=100):
             page.goto(base, wait_until='networkidle')
             fixture.open_console(page, uid)
             page.wait_for_timeout(300)
+            # Fractional interface scale must not expose message glyphs between
+            # the fixed header and the overlaid mobile terminal.
+            for zoom in (85, 95, 105, 115, 125):
+                page.evaluate('(scale) => applyInterfaceScale(scale, true)', zoom)
+                page.wait_for_timeout(150)
+                seam = page.evaluate('''() => ({
+                  head: document.querySelector('#detail > .dhead').getBoundingClientRect().bottom,
+                  pane: document.querySelector('#termpane').getBoundingClientRect().top
+                })''')
+                assert -1.1 <= seam['pane'] - seam['head'] <= .01, (zoom, seam)
+            page.evaluate('(scale) => applyInterfaceScale(scale, true)', scale)
+            page.wait_for_timeout(200)
             pane = page.locator('#termpane').bounding_box()
             heading = page.locator('#detail > .dhead').bounding_box()
             assert abs(pane['y'] - heading['y'] - heading['height']) <= 1, (scale, pane, heading)
