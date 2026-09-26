@@ -78,6 +78,14 @@ def main():
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
+                # A proxy failure belongs to SessionDock, not the native CLI.
+                page.route('**/api/session/conversation/check', lambda route:
+                    route.fulfill(status=502, content_type='text/html', body='Bad Gateway'))
+                expect(page.locator('#composer-input-status')).to_contain_text('SessionDock 请求失败（HTTP 502）', timeout=10000)
+                expect(page.locator('#csend')).to_be_disabled()
+                expect(page.locator('#cinput')).to_have_value('keep this message')
+                page.unroute('**/api/session/conversation/check')
+                expect(page.locator('#composer-input-status')).to_contain_text('SessionDock · 暂未识别', timeout=10000)
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
@@ -128,12 +136,12 @@ def main():
                 assert stable['before'] == stable['shown'] == stable['hidden'], stable
                 assert stable['bubbleBottom'] <= stable['shown'][0], stable
                 assert (stable['border'], stable['radius'], stable['background']) == (
-                    '1px', '6px', 'rgb(255, 255, 255)'), stable
+                    '1px', '6px', 'color(srgb 1 1 1 / 0.88)'), stable
                 # Exercise the real settings controls and composer in both
                 # themes, including the report's narrow keyboard-sized viewport.
                 for width, height in [(1280, 720), (424, 259)]:
-                    for theme, background in [('dark', 'rgb(28, 31, 38)'),
-                                              ('light', 'rgb(255, 255, 255)')]:
+                    for theme, background in [('dark', 'color(srgb 0.109804 0.121569 0.14902 / 0.88)'),
+                                              ('light', 'color(srgb 1 1 1 / 0.88)')]:
                         page.set_viewport_size({'width': 1280, 'height': 720})
                         page.locator('#settings').click()
                         page.locator('#setting-theme').select_option(theme)
@@ -148,6 +156,11 @@ def main():
                         bounds = page.locator('#composer-input-status').bounding_box()
                         assert bounds and bounds['x'] >= 0 and bounds['y'] >= 0, bounds
                         assert bounds['x'] + bounds['width'] <= width, bounds
+                        composer = page.locator('#composer').bounding_box()
+                        inset = 8 if width < 600 else 18
+                        assert abs(bounds['x'] - composer['x'] - inset) < 2, (bounds, composer)
+                        assert abs(bounds['width'] - composer['width'] + 2 * inset) < 2, (bounds, composer)
+                        expect(page.locator('#composer-input-status')).to_contain_text('SessionDock ·')
                         page.locator('#cinput').press('End')
                         page.locator('#cinput').press('!')
                         expect(page.locator('#cinput')).to_have_value('keep this message!')

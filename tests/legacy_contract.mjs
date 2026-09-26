@@ -1755,7 +1755,7 @@ test('post() does not surface HTML as a JSON parse error', async () => {
     }),
   });
   const post = loadFunction(context, 'post', read('term.js'));
-  await assert.rejects(() => post('api/session/conversation', {uid: 'x'}), /服务暂时不可用/);
+  await assert.rejects(() => post('api/session/conversation', {uid: 'x'}), /SessionDock 请求失败（HTTP 502）/);
   context.fetch = async () => ({
     status: 409, ok: false,
     text: async () => JSON.stringify({error: '页面版本已过期，请重新加载', reload: true, build: 'new'}),
