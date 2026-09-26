@@ -718,6 +718,7 @@ impl TerminalService {
             },
             mode: AttachMode::Bytes,
             observer: None,
+            heartbeat: false,
         })
     }
 }
@@ -742,9 +743,15 @@ pub struct PreparedAttachment {
     /// Byte stream for xterm.js, or grid JSON lines for the server-grid page.
     mode: AttachMode,
     observer: Option<IoObserver>,
+    heartbeat: bool,
 }
 
 impl PreparedAttachment {
+    pub fn with_heartbeat(mut self, enabled: bool) -> Self {
+        self.heartbeat = enabled;
+        self
+    }
+
     pub fn with_mode(mut self, mode: AttachMode) -> Self {
         self.mode = mode;
         self
@@ -777,8 +784,9 @@ impl PreparedAttachment {
                     // host halves before attempting the browser close handshake.
                     let output = host_output(reader, send.clone());
                     let observer = self.observer.as_ref();
-                    let input = browser_input(stream, writer, send, &self.guard, observer);
-                    let sending = browser_output(&mut sink, receive, observer);
+                    let input =
+                        browser_input(stream, writer, send, &self.guard, observer, self.heartbeat);
+                    let sending = browser_output(&mut sink, receive, observer, self.heartbeat);
                     tokio::pin!(output, input, sending);
                     tokio::select! {
                         biased;
@@ -922,6 +930,7 @@ async fn revocation(receiver: &mut watch::Receiver<Option<Revocation>>) -> Optio
 
 enum BrowserOutput {
     Data(Bytes),
+    Pong(u32),
     Flush,
     Finish(Close),
 }
@@ -993,6 +1002,8 @@ async fn finish_output(sender: &mpsc::Sender<BrowserOutput>, close: Close) -> Cl
 enum BrowserControl {
     #[serde(rename = "resize")]
     Resize { cols: u16, rows: u16 },
+    #[serde(rename = "ping")]
+    Ping { id: u32 },
 }
 
 async fn browser_input(
@@ -1001,9 +1012,13 @@ async fn browser_input(
     sender: mpsc::Sender<BrowserOutput>,
     guard: &LeaseGuard,
     observer: Option<&IoObserver>,
+    heartbeat: bool,
 ) -> Close {
     let mut meter = IoMeter::new(IoDirection::Input);
-    let close = browser_input_frames(stream, writer, sender, guard, observer, &mut meter).await;
+    let close = browser_input_frames(
+        stream, writer, sender, guard, observer, &mut meter, heartbeat,
+    )
+    .await;
     meter.flush(observer);
     close
 }
@@ -1031,6 +1046,7 @@ async fn browser_input_frames(
     guard: &LeaseGuard,
     observer: Option<&IoObserver>,
     meter: &mut IoMeter,
+    heartbeat: bool,
 ) -> Close {
     loop {
         if meter
@@ -1056,13 +1072,19 @@ async fn browser_input_frames(
             }
             Message::Text(text) => {
                 match serde_json::from_str::<BrowserControl>(&text) {
+                    Ok(BrowserControl::Ping { id }) if heartbeat => {
+                        if let Err(close) = enqueue(&sender, BrowserOutput::Pong(id)).await {
+                            return close;
+                        }
+                        continue;
+                    }
                     Ok(BrowserControl::Resize { cols, rows }) => match terminal_size(cols, rows) {
                         Ok(size) => HostInput::Resize(size),
                         Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
                     },
                     // Every other text frame, including JSON that is not
                     // a valid resize, is treated as literal PTY input.
-                    Err(_) => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
+                    _ => HostInput::Data(Bytes::copy_from_slice(text.as_bytes())),
                 }
             }
             Message::Close(_) => return Close::new(1000, "client closed"),
@@ -1124,7 +1146,16 @@ async fn browser_output(
     sink: &mut SplitSink<WebSocket, Message>,
     receiver: mpsc::Receiver<BrowserOutput>,
     observer: Option<&IoObserver>,
+    heartbeat: bool,
 ) -> Close {
+    if heartbeat
+        && sink
+            .send(Message::Text("{\"t\":\"heartbeat_ready\"}".into()))
+            .await
+            .is_err()
+    {
+        return Close::new(1001, "browser disconnected");
+    }
     let mut meter = IoMeter::new(IoDirection::Output);
     let close = browser_output_frames(sink, receiver, observer, &mut meter).await;
     meter.flush(observer);
@@ -1156,6 +1187,12 @@ async fn browser_output_frames(
                 result
             }
             BrowserOutput::Flush => sink.flush().await,
+            BrowserOutput::Pong(id) => {
+                sink.send(Message::Text(
+                    serde_json::json!({"t":"pong", "id":id}).to_string().into(),
+                ))
+                .await
+            }
             BrowserOutput::Finish(close) => return close,
         };
         if result.is_err() {

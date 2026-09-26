@@ -93,7 +93,8 @@ exit paths.
 
 Browser binary messages are raw PTY input. A resize JSON message is interpreted
 when it has valid dimensions (each 1–1000 and product at most 250,000);
-other text is forwarded literally as terminal input. Unknown key
+other text is forwarded literally as terminal input, except negotiated heartbeat
+controls described below. Unknown key
 names are forwarded literally within the ptyhost wire bounds of at most 256 keys
 and 256 bytes per key. Send/paste remains bounded by the host's 1 MiB protocol
 frame. Browser WebSocket frames retain the 8 MiB per-frame protocol boundary;
@@ -123,6 +124,31 @@ revocation and shutdown cancel the bridge promptly.
 The browser abandons an attach that remains in WebSocket `CONNECTING` for 15
 seconds, refreshes host liveness and enters the normal reconnect path. This
 transport timeout does not imply that the independent ptyhost process exited.
+An embedded console opts into application heartbeats with `heartbeat=1` on
+attach. The node sends the text control `{"t":"heartbeat_ready"}`; only after
+that acknowledgement does the page send `{"t":"ping","id":N}` (a u32 counter).
+The node answers `{"t":"pong","id":N}` through the same output queue without
+writing the probe to the PTY or counting it as CLI input/output. Non-opted-in
+connections retain literal-text semantics, and older nodes receive no probes.
+After each matching pong the page waits 3 seconds before the next probe. A probe
+unanswered for 10 seconds invalidates the socket, records
+`terminal.heartbeat_timeout`, and uses the existing ownership-aware reconnect
+path to obtain a fresh screen. Ordinary output or an unmatched pong cannot
+satisfy this bidirectional check. Closing, replacing or backgrounding the view
+cancels its timer. Quiet CLIs stay connected; recovery never restarts the host
+or replays uncertain keystrokes.
+
+BUG-20260926-025909-1ee07a exposed the missing OPEN-socket liveness check:
+node output receipts continued while the browser had an approximately 14-second
+receive gap, and browser inputs later arrived at the node in a burst with
+negligible host-write latency. Other page traffic and native session work
+continued. The bundle places the stall in the terminal transport but does not
+identify which network/proxy hop caused it. The regression
+`tests/terminal_heartbeat_browser.py` blocks each WebSocket direction separately
+while leaving it OPEN, then types through the recovered grid and xterm consoles;
+it checks that delivered input is not duplicated and undelivered input is not
+replayed.
+
 Control ownership HTTP requests time out after 20 seconds, including reading
 the response body. This covers the Hub's 5-second connect and 10-second upstream
 read waits plus browser/proxy transit; the former 5-second page deadline could

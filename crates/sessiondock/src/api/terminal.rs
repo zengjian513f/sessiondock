@@ -243,6 +243,8 @@ pub struct AttachQuery {
     debug_run: String,
     /// `grid` streams the server-side grid protocol instead of raw bytes.
     mode: String,
+    /// Opt in to application heartbeats; older clients keep literal text input.
+    heartbeat: String,
 }
 
 impl Default for AttachQuery {
@@ -260,6 +262,7 @@ impl Default for AttachQuery {
             launch_id: None,
             debug_run: String::new(),
             mode: String::new(),
+            heartbeat: String::new(),
         }
     }
 }
@@ -369,7 +372,9 @@ pub async fn attach(
     } else {
         crate::terminal::AttachMode::Bytes
     };
-    let mut prepared = prepared.with_mode(mode);
+    let mut prepared = prepared
+        .with_mode(mode)
+        .with_heartbeat(query.heartbeat == "1");
     if let Some(audit) = state.audit.clone() {
         prepared = prepared.with_observer(io_observer(audit, &query));
     }
