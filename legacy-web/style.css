@@ -1492,11 +1492,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   padding: 9px 11px; overflow-x: auto; margin: 8px 0;
   /* System CJK monospace fonts can give box drawing two cells but spaces one.
      Use our bundled face for both so terminal-style diagrams retain columns. */
-  font: 12px/1.5 "SessionDock Cascadia Mono", "SessionDock CJK Sans", ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 12px/1.5 "SessionDock Cascadia Mono", "SessionDock Code Symbols", "SessionDock Code CJK", ui-monospace, SFMono-Regular, Consolas, monospace;
   font-variant-ligatures: none;
+  text-rendering: geometricPrecision;
 }
 .mb pre > code.code-block { color: inherit; font: inherit; white-space: pre; }
-.mb pre .code-cell { display: inline-block; text-align: center; }
 :where(.mb pre, .tool-entry > pre)[data-code-language]::before {
   content: attr(data-code-language); position: sticky; float: right; right: 0; top: 0;
   margin: -5px -7px 3px 10px; padding: 1px 5px; border-radius: 4px;
