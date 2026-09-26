@@ -76,19 +76,31 @@ function applyInterfaceScale(value = interfaceScale(), persist = false) {
 applyInterfaceScale();
 
 // A widget with its own two-finger gesture explicitly owns that surface.
-// Do not guess ownership from canvas/terminal markup or from one-finger handlers.
-(() => {
+// Page pinch takes ownership until every finger lifts, cancelling child holds
+// before capture prevents the second touch from reaching those children.
+const SessionDockGestures = (() => {
   const app = document.querySelector('#app');
-  let pinch = null, frame = 0, suppressClick = false;
+  let pinch = null, frame = 0, suppressTouchTail = false, pointerType = '';
+  const isTouchEvent = event => {
+    if (event.pointerType) return event.pointerType === 'touch';
+    if (event.sourceCapabilities) return event.sourceCapabilities.firesTouchEvents;
+    return pointerType === 'touch';
+  };
   const distance = touches => Math.hypot(
     touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
   const consume = event => {
     if (event.cancelable) event.preventDefault();
     event.stopPropagation();
   };
+  app.addEventListener('pointerdown', event => {
+    pointerType = event.pointerType;
+    if (pointerType !== 'touch') suppressTouchTail = false;
+  }, true);
+  app.addEventListener('keydown', () => { pointerType = 'keyboard'; }, true);
   app.addEventListener('touchstart', event => {
+    pointerType = 'touch';
     if (pinch) { consume(event); return; }
-    suppressClick = false;
+    suppressTouchTail = false;
     if (event.touches.length !== 2 || [...event.touches].some(touch =>
       !app.contains(touch.target) || touch.target.closest('[data-pinch-owner], input[type="range"]'))) return;
     const startDistance = distance(event.touches);
@@ -96,6 +108,11 @@ applyInterfaceScale();
     pinch = {distance: startDistance, scale: interfaceScale(), value: interfaceScale(),
       ids: [...event.touches].map(touch => touch.identifier)};
     cancelLongPress();
+    closeItemMenu();
+    suppressItemClick = false;
+    for (const target of new Set([...event.touches].map(touch => touch.target))) {
+      target.dispatchEvent(new Event('sessiondock-pinch-start', {bubbles: true}));
+    }
     consume(event);
   }, {capture: true, passive: false});
   app.addEventListener('touchmove', event => {
@@ -111,20 +128,25 @@ applyInterfaceScale();
   }, {capture: true, passive: false});
   const finish = event => {
     if (!pinch) return;
-    // Let child controls receive their end/cancel event and release single-touch state.
+    // Child holds were cancelled at handoff. Let renderers clean up their
+    // original touch stream, but never turn remaining fingers back into a hold.
     if (event.cancelable) event.preventDefault();
-    suppressClick = true;
-    if (event.touches.length && event.type !== 'touchcancel') return;
+    suppressTouchTail = true;
+    if (event.touches.length) return;
     cancelAnimationFrame(frame); frame = 0;
-    applyInterfaceScale(pinch.value, true);
+    const value = pinch.value;
     pinch = null;
+    applyInterfaceScale(value, true);
   };
   app.addEventListener('touchend', finish, {capture: true, passive: false});
   app.addEventListener('touchcancel', finish, {capture: true, passive: false});
-  app.addEventListener('pointermove', event => { if (pinch) consume(event); }, true);
-  app.addEventListener('click', event => {
-    if (suppressClick && event.detail) { consume(event); suppressClick = false; }
-  }, true);
+  app.addEventListener('pointermove', event => { if (pinch && event.pointerType === 'touch') consume(event); }, true);
+  for (const type of ['click', 'contextmenu']) {
+    app.addEventListener(type, event => {
+      if ((pinch || suppressTouchTail) && isTouchEvent(event)) consume(event);
+    }, true);
+  }
+  return {isTouchEvent, get pinching() { return pinch !== null; }};
 })();
 
 function applyToolIcons(choice = store.get('toolIcons', 'brand'), persist = false) {

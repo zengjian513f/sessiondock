@@ -390,8 +390,11 @@ export class GridTerm {
       const cell = this._cellFromEvent(event);
       // A local selection owns the whole drag, even if Shift is released
       // before mouseup. In any-motion mode, Shift also suppresses hover reports.
+      // Window listeners retain drags outside the canvas, but toolbar hover
+      // (including compatibility mousemove after a touch) is not CLI input.
       if (!this._selecting && !event.shiftKey
-          && (this._mouseHeld || this.model.modes.mouse === 'any_motion')) {
+          && (this._mouseHeld || (this.model.modes.mouse === 'any_motion'
+            && canvas.contains(event.target)))) {
         const button = this._mouseHeld ? this._mouseHeld.button : 0;
         const last = this._lastMouseCell;
         if (!last || last.col !== cell.col || last.line !== cell.line) {
