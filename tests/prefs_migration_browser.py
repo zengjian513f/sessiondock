@@ -33,6 +33,45 @@ def seed_script(values):
             f"{body} localStorage.setItem('__prefs_seeded', '1'); }} catch {{}} }})()")
 
 
+def check_compact_scale(page):
+    def settings():
+        page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        if not page.locator("#settings").is_visible():
+            page.locator("#header-more-btn").click()
+        page.locator("#settings").click()
+
+    for width in (320, 390, 820, 1100):
+        page.set_viewport_size({"width": width, "height": 900})
+        for value in ("75", "90", "100", "110", "125", "150"):
+            print(f"scale browser: {width}px {value}%", flush=True)
+            settings()
+            page.locator("#setting-scale").select_option(value)
+            page.wait_for_function("v => Math.abs(parseFloat(getComputedStyle(document.documentElement).zoom) - v / 100) < .001", arg=int(value))
+            box = page.locator("#settings-dialog").bounding_box()
+            assert box and box["x"] >= -1 and box["x"] + box["width"] <= width + 1, (width, value, box)
+            page.locator('#settings-dialog .modal-close').click()
+            box = page.locator("#app").bounding_box()
+            assert abs(box["height"] - 900) <= 2 and abs(box["width"] - width) <= 2, (width, value, box)
+            search = page.locator("#q")
+            search.fill("unlikely-scale-search")
+            expect(search).to_have_value("unlikely-scale-search")
+            search.fill("")
+            page.locator("#side .item").first.click()
+            expect(page.locator("#msgs")).to_be_visible()
+            if width <= 720:
+                page.locator("#detail .mobile-back").click()
+            page.reload(wait_until="networkidle")
+            settings()
+            expect(page.locator("#setting-scale")).to_have_value(value)
+            assert page.evaluate("localStorage.getItem('sessiondock.interfaceScale')") == value
+            page.locator('#settings-dialog .modal-close').click()
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_function("getComputedStyle(document.documentElement).zoom === '1'")
+    settings()
+    page.locator("#setting-scale").select_option("100")
+    page.locator('#settings-dialog .modal-close').click()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -138,6 +177,7 @@ def main():
                 manifest = page.evaluate("fetch('manifest.webmanifest').then(r => r.json())")
                 assert manifest["name"] == "SessionDock" and manifest["short_name"] == "SessionDock", manifest
                 assert page.evaluate("navigator.serviceWorker.getRegistrations().then(list => list.length)") == 0
+                check_compact_scale(page)
                 fresh.close()
                 assert not errors, errors
             finally:
