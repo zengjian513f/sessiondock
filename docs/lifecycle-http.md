@@ -9,6 +9,11 @@ New sessions open the conversation page. The configured CLI and ptyhost still
 start on the backend; the browser does not claim or attach a console until the
 user switches to it. Reopening a session may restore the user’s saved terminal
 choice. Saved pending input remains editable even when its CLI has exited.
+Reload restores a selected pending session from `term/list` after the native
+catalog loads, even before its first native history record exists. A delayed
+list must not override a newer selection or the mobile list view. Restoration
+uses the existing pending opener, including its saved terminal choice and
+confirmed native-binding transition.
 
 ## Explicit configuration and startup
 
