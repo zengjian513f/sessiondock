@@ -26,10 +26,22 @@ only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
 
-Appearance settings store `interfaceScale` as a percentage (75, 90, 100, 110,
-125 or 150; default 100). It scales the main console in phone/tablet layouts
-(up to 1199 CSS pixels) while retaining viewport-based layout breakpoints.
-Desktop layout remains at 100%; the browser retains the compact preference.
+Appearance settings store `interfaceScale` as an integer percentage (75–150,
+step 1; default 100), adjusted with a live slider, reset button, or a two-finger
+pinch on the main console. All screen widths use this preference and retain
+viewport-based layout breakpoints. The settings dialog stays a stable size
+while the slider moves. A pinch saves once the fingers lift, sharing the slider's
+value. Single-finger scrolling stays native.
+
+`#app` declares `touch-action: pan-x pan-y` before gestures start; cancelable
+two-touch events are handled with a non-passive listener so browser pixel zoom
+and interface zoom do not both run. A widget with its own two-finger interaction
+must mark its surface with `data-pinch-owner`; the page then leaves its touch
+events alone. Ownership cannot be reliably inferred from other event handlers.
+If browser/accessibility settings nevertheless force native zoom, viewport
+updates while `visualViewport.scale` differs from 1 do not reinterpret pixel
+magnification as a keyboard or resize the PTY. Chromium touch emulation tests
+this routing; it does not establish mobile Edge device compatibility.
 
 ## Flags
 
