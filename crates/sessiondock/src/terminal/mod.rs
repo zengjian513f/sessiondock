@@ -20,6 +20,7 @@
 pub mod device;
 pub mod input;
 pub mod ownership;
+pub mod receipts;
 pub mod records;
 mod service;
 
