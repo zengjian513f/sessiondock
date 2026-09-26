@@ -4,7 +4,10 @@ pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
 use crate::{
     delivery::{
-        driver::{HostTerminalDriver, LeaseHandle, PageLease, ScreenCapture, TerminalDriver},
+        driver::{
+            DeliveryTarget, HostTerminalDriver, LeaseHandle, PageLease, ScreenCapture,
+            TerminalDriver,
+        },
         executor::{Failure, ManagedResolver, TargetResolver},
     },
     files::WriteService,
@@ -33,6 +36,8 @@ pub struct Identity {
     pub sid: String,
     pub cwd: PathBuf,
     pub record: Option<Record>,
+    // Request-local only: each host operation still verifies the pinned instance.
+    resolved: Option<Result<DeliveryTarget, Failure>>,
 }
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
@@ -137,6 +142,7 @@ impl Conversations {
                 sid: String::new(),
                 cwd: PathBuf::new(),
                 record: None,
+                resolved: None,
             });
         }
         let records = self
@@ -165,15 +171,23 @@ impl Conversations {
                 sid: record.declared_sid().unwrap_or("").into(),
                 cwd: record.spec().cwd().into(),
                 record: Some(record),
+                resolved: None,
             });
         }
         let requested = uid.to_owned();
-        let native = self
+        let (native, cwd) = self
             .reader
-            .run(move |s| s.native_scope(&requested, ""))
+            .run(move |s| {
+                let view = s.snapshot(&requested, "")?;
+                Ok((
+                    view.native_scope()?,
+                    PathBuf::from(view.metadata()["cwd"].as_str().unwrap_or("")),
+                ))
+            })
             .await
             .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
-        let resolved = self.resolver.resolve(&native.uid).await.ok();
+        let resolution = self.resolver.resolve(&native.uid).await;
+        let resolved = resolution.as_ref().ok();
         let bound_uid = resolved
             .as_ref()
             .map(|t| t.uid.as_str())
@@ -237,19 +251,14 @@ impl Conversations {
         } else {
             native_key
         };
-        let uid = native.uid.clone();
-        let view = self
-            .reader
-            .run(move |s| s.messages(&uid, &Default::default()))
-            .await
-            .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
         Ok(Identity {
             key,
             uid: native.uid,
             source: native.source,
             sid: native.session_id,
-            cwd: PathBuf::from(view["meta"]["cwd"].as_str().unwrap_or("")),
+            cwd,
             record,
+            resolved: Some(resolution),
         })
     }
     fn lock(&self, key: &str) -> Arc<AsyncMutex<()>> {
@@ -267,6 +276,7 @@ impl Conversations {
         &self,
         identity: &Identity,
         _page: Option<&PageLease>,
+        waited: bool,
     ) -> Result<LeaseHandle, Failure> {
         if identity.uid.starts_with("tmux:") {
             let record = identity
@@ -280,7 +290,13 @@ impl Conversations {
                 .map_err(|_| Failure::new(409, "terminal_unlinked", "会话未运行，输入已保留"))?;
             Ok(self.driver.conversation_launch(target))
         } else {
-            let target = self.resolver.resolve(&identity.uid).await?;
+            // Reuse the fresh resolution that established this request's identity.
+            // A request queued behind another send must resolve again after waiting.
+            let target = if !waited && let Some(resolved) = &identity.resolved {
+                resolved.clone()?
+            } else {
+                self.resolver.resolve(&identity.uid).await?
+            };
             Ok(self.driver.conversation_native(&target))
         }
     }
@@ -384,8 +400,11 @@ impl Conversations {
     ) -> Result<(u64, InputStatus), Failure> {
         let identity = self.identity(uid).await?;
         let lock = self.lock(&identity.key);
-        let _guard = lock.lock().await;
-        let lease = self.lease(&identity, page).await?;
+        let (_guard, waited) = match lock.try_lock() {
+            Ok(guard) => (guard, false),
+            Err(_) => (lock.lock().await, true),
+        };
+        let lease = self.lease(&identity, page, waited).await?;
         let result = self
             .driver
             .capture(&lease)
@@ -479,7 +498,10 @@ impl Conversations {
         }
         let identity = self.identity(&input.uid).await?;
         let lock = self.lock(&identity.key);
-        let _guard = lock.lock().await;
+        let (_guard, waited) = match lock.try_lock() {
+            Ok(guard) => (guard, false),
+            Err(_) => (lock.lock().await, true),
+        };
         let payload = json!({"text":input.text,"attachments":input.attachments.iter().map(|a|json!({"upload_id":a["upload_id"],"number":a["number"]})).collect::<Vec<_>>(),"quotes":input.quotes});
         if let Some(old) = self.store.request(&identity.key, &input.request_id) {
             if old.payload != store::fingerprint(&payload) {
@@ -494,7 +516,7 @@ impl Conversations {
             return Ok(response);
         }
         let page = page_lease(input.lease.as_ref());
-        let lease = self.lease(&identity, page.as_ref()).await?;
+        let lease = self.lease(&identity, page.as_ref(), waited).await?;
         if !input.name.is_empty() && input.name != lease.name {
             self.driver.release(lease).await;
             return Err(Failure::new(

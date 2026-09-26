@@ -138,7 +138,11 @@ impl TargetResolver for ManagedResolver {
                 .run(|store| store.native_catalog())
                 .await
                 .map_err(api_failure)?;
-            let observed = self.runtime.observe(&catalog).await.map_err(|_| {
+            // Both are fresh observations, independent of one another. Do not
+            // serialize a full process scan behind every host probe.
+            let (observed, process) =
+                tokio::join!(self.runtime.observe(&catalog), self.process_evidence(uid),);
+            let observed = observed.map_err(|_| {
                 Failure::new(
                     503,
                     "runtime_unavailable",
@@ -150,7 +154,12 @@ impl TargetResolver for ManagedResolver {
                 .iter()
                 .filter_map(|host| host.bound_target())
                 .filter(|target| target.uid() == uid);
-            let process_target = self.process_target(&observed, uid).await;
+            let process_target = process.as_ref().and_then(|(scan, sessions)| {
+                observed
+                    .codex_process_host(scan, sessions, uid)
+                    .or_else(|| observed.fork_host(scan, sessions, uid))?
+                    .bound_target()
+            });
             let target = match (process_target, matches.next()) {
                 (Some(target), _) => target,
                 (None, Some(_)) if matches.next().is_some() => return Err(unlinked()),
@@ -179,11 +188,13 @@ impl TargetResolver for ManagedResolver {
 impl ManagedResolver {
     /// Prefer the TUI actually holding the rollout after /new or a fork to
     /// a second resume that declares this SID but is waiting for its lock.
-    async fn process_target<'a>(
+    async fn process_evidence(
         &self,
-        observed: &'a crate::runtime::RuntimeSnapshot,
         uid: &str,
-    ) -> Option<&'a ptyhost_client::BoundTarget> {
+    ) -> Option<(
+        Arc<crate::runtime::procscan::Scan>,
+        Vec<crate::runtime::procscan::SessionRow>,
+    )> {
         if !uid.starts_with("codex:") {
             return None;
         }
@@ -191,10 +202,7 @@ impl ManagedResolver {
         let document = self.reader.run(|store| store.list_recent()).await.ok()?;
         let sessions = crate::runtime::procscan::SessionRow::from_list(&document);
         let scan = scanner.snapshot(true).await.ok()?;
-        observed
-            .codex_process_host(&scan.scan, &sessions, uid)
-            .or_else(|| observed.fork_host(&scan.scan, &sessions, uid))?
-            .bound_target()
+        Some((scan.scan, sessions))
     }
 }
 
