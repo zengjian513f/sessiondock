@@ -41,6 +41,20 @@ GEOMETRY = """() => {
 }"""
 
 
+def assert_terminal_density(page):
+    density = page.evaluate("""() => {
+      const v = currentTermViewObject(), canvas = v.host.querySelector('canvas');
+      const rect = canvas?.getBoundingClientRect();
+      return {grid: v.grid, renderer: v.renderer, zoom: parseFloat(getComputedStyle(document.documentElement).zoom),
+        dpr: devicePixelRatio, backing: canvas?.width, width: rect?.width,
+        dom: !!v.host.querySelector('.xterm-rows')};
+    }""")
+    if density['grid']:
+        assert abs(density['backing'] - density['width'] * density['dpr']) <= 1.1, density
+    elif abs(density['zoom'] - 1) > .001:
+        assert density['renderer'] == 'dom' and density['dom'], density
+
+
 def run(browser, renderer, scale=100):
     with tempfile.TemporaryDirectory(prefix='sessiondock-keyboard-') as tmp:
         root = Path(tmp)
@@ -69,6 +83,7 @@ def run(browser, renderer, scale=100):
             keys = page.locator('#termpane .xterm-helper-textarea')
             keys.press('t')
             fixture.xterm_contains(page, 'Enter to confirm')
+            assert_terminal_density(page)
             before = page.evaluate(GEOMETRY)
             assert before['rows'] > 16, before
             page.evaluate("""() => {
@@ -137,7 +152,8 @@ def run(browser, renderer, scale=100):
             page.evaluate('applyInterfaceScale(100, true)')
             page.wait_for_timeout(200)
             pinch(page, context.new_cdp_session(page), target='#xterm')
-            assert page.evaluate('interfaceScale()') == 140
+            assert page.evaluate('interfaceScale()') == 140, page.evaluate('interfaceScale()')
+            assert_terminal_density(page)
             assert abs(page.evaluate('visualViewport.scale') - 1) < .01
             keys.press('t')
             fixture.xterm_contains(page, 'Enter to confirm')
@@ -151,7 +167,7 @@ def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True)
         for renderer in ('grid', 'xterm'):
-            for scale in (75, 100, 150):
+            for scale in (30, 100, 150):
                 run(browser, renderer, scale)
         browser.close()
 

@@ -22,7 +22,7 @@ def row(text, bg=-1):
 SNAP = {"t": "snapshot", "seq": 1, "reset": True, "cols": 24, "rows": 5, "history": [], "history_total": 0,
         "cursor": {"x": 0, "y": 4, "visible": False}, "modes": {},
         "grid": [row(""), row("▓▓❯ ÀÇ 中文 \U0001f552 |"), row(""), row("▓▓▓▓▓▓", 0x1000000 + 0x404040), row("▓▓▓▓▓▓", 0x1000000 + 0x404040)]}
-HTML = "<!doctype html><html><body style='margin:0;background:#000'><div id=host style='width:400px;height:200px'></div></body></html>"
+HTML = "<!doctype html><html><body style='margin:0;background:#000'><input id=scale type=range min=30 max=150 value=100><div id=host style='width:400px;height:200px'></div></body></html>"
 def run(browser, dpr):
     ctx = browser.new_context(viewport={"width": 500, "height": 300}, device_scale_factor=dpr)
     page = ctx.new_page(); errors = []; page.on("pageerror", lambda e: errors.append(str(e)))
@@ -45,7 +45,11 @@ def run(browser, dpr):
       term.open(document.querySelector('#host'));
       term.write(JSON.stringify(snap) + '\\n');
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-      term._paint && term._paint();
+      document.querySelector('#scale').oninput = event => {
+        document.documentElement.style.zoom = event.target.value / 100;
+        term.refresh(0, term.rows - 1);
+      };
+      window.inspectPixels = () => {
       const canvas = document.querySelector('#host canvas');
       const r = term.renderer, dpr = r.dpr, ch = r.cellHeight, cw = r.cellWidth;
       const ctx = canvas.getContext('2d');
@@ -65,8 +69,21 @@ def run(browser, dpr):
       const seamY = Math.round(4 * ch * dpr), x0 = 0, w = Math.round(6 * cw * dpr);
       let seamDark = 0;
       for (const yy of [seamY - 1, seamY]) { const d = ctx.getImageData(x0, yy, w, 1).data; for (let i = 0; i < d.length; i += 4) if (d[i] < 0x30) seamDark++; }
-      return {dpr, ch, cw, chDevice: ch * dpr, spillAbove, spillBelow, glyphs, seamDark, seamWidth: w * 2, canvas: [canvas.width, canvas.height]};
+      return {dpr, ch, cw, chDevice: ch * dpr, spillAbove, spillBelow, glyphs, seamDark, seamWidth: w * 2, canvas: [canvas.width, canvas.height], displayedWidth: canvas.getBoundingClientRect().width, deviceDpr: devicePixelRatio};
+      };
+      return window.inspectPixels();
     }""", SNAP)
+    for scale in (150, 137, 30, 100):
+        slider = page.locator('#scale')
+        slider.focus()
+        slider.press('Home')
+        for _ in range(scale - 30):
+            slider.press('ArrowRight')
+        result = page.evaluate('inspectPixels()')
+        assert abs(result['dpr'] - dpr * scale / 100) < 1e-5, (scale, result)
+        assert abs(result['canvas'][0] - result['displayedWidth'] * dpr) <= 1.1, (scale, result)
+        assert result['spillAbove'] == result['spillBelow'] == result['seamDark'] == 0, (scale, result)
+        assert result['glyphs'] > 0 and abs(result['chDevice'] - round(result['chDevice'])) < 1e-6, (scale, result)
     print(f"dpr={dpr}: cellHeight*dpr={result['chDevice']:.3f} spillAbove={result['spillAbove']} spillBelow={result['spillBelow']} glyphs={result['glyphs']} seamDark={result['seamDark']}/{result['seamWidth']} errors={errors}")
     ctx.close()
     return result
