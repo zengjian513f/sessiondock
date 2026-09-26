@@ -82,6 +82,8 @@ HEAD_STATE_JS = f"""() => {{
   const last = brief && !brief.hidden ? brief : h2;
   const text = h2.querySelector('.session-view-switch > span, :scope > span');
   return {{
+    globals: [...actions.querySelectorAll('[id^="a-global-"]')]
+      .sort((a, b) => a.dataset.order - b.dataset.order).map(id),
     inline: [...actions.querySelectorAll('button')].filter(b => !b.hidden && b.offsetWidth).map(id),
     menu_actions: [...document.querySelectorAll('#session-actions-menu [role="menu"] > *')].map(id),
     brief: [...document.querySelectorAll('.dbrief > *')].map(key),
@@ -168,12 +170,13 @@ def check_header(page, width, tiers, header_actions, chrome_tiers):
 def check_head(page, width, tier, tiers, key, meta_order):
     state = page.evaluate(HEAD_STATE_JS)
     where = f"{key}@{width}"
-    priority = ACTION_ORDER + meta_order
+    action_order = state["globals"] + ACTION_ORDER
+    priority = action_order + meta_order
     inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more")]
     placed = inline_actions + state["brief"]
     assert placed == priority[:len(placed)], (where, placed, priority, state)
     assert state["brief"] + state["menu_meta"] == meta_order, (where, state)
-    assert inline_actions + state["menu_actions"] == ACTION_ORDER, (where, state)
+    assert inline_actions + state["menu_actions"] == action_order, (where, state)
     remaining = bool(state["menu_meta"] or state["menu_actions"])
     assert state["more"] == remaining, (where, state)
     assert ("a-more" in state["inline"]) == remaining, (where, state)
@@ -283,7 +286,10 @@ def run(page, uid):
     head = page.evaluate(HEAD_STATE_JS)
     meta_order = head["brief"] + head["menu_meta"]
     assert meta_order == ["mcount-total", "size", "time", "cwd", "meta-source", "session-id"], head
-    priority_of = lambda tier: ACTION_ORDER + meta_order  # noqa: E731
+    mobile_actions = ["a-global-settings"]
+    if page.evaluate("appDisplayMode.matches || navigator.standalone === true"):
+        mobile_actions.append("a-global-page-reload")
+    priority_of = lambda tier: (mobile_actions if tier == "narrow" else []) + ACTION_ORDER + meta_order  # noqa: E731
     header_rows, head_rows, heights, header_tiers, head_tiers, chrome_tiers = [], [], [], {}, {}, {}
     chrome_events = []
     previous_chrome = None

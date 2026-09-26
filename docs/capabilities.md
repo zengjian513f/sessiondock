@@ -92,6 +92,15 @@ the delivery ledger is configured but no terminal directory is, `outbox_read`
 is true and `outbox` stays false, so the composer stays hidden and the four
 send routes return `501 delivery_send_disabled`.
 
+## Actions with the session list hidden
+
+When the desktop sidebar is collapsed or mobile detail is open, New session,
+Settings and (in standalone App mode) Refresh page move into the session title
+bar. Available space determines which icons appear inline and which remain in
+its More menu. Expanding the list restores the header controls. New session
+keeps its original capability gate; page refresh reloads the page and session
+list. Dialog actions share the original controls and preferences.
+
 ## Optional services
 
 Node responses keep `hub:false`; the separate Hub server provides federation.

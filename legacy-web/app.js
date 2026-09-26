@@ -781,6 +781,7 @@ function showMobileDetail() {
   if (MOBILE.matches) {
     document.body.classList.add('mobile-detail');
     store.set('mobilePage', 'detail');
+    layoutSessionHead();
   }
 }
 
@@ -788,6 +789,8 @@ function showMobileList() {
   if (typeof T !== 'undefined' && !$('#termpane').classList.contains('hidden')) closeTermPane(true);
   document.body.classList.remove('mobile-detail');
   if (MOBILE.matches) store.set('mobilePage', 'list');
+  layoutSessionHead();
+  layoutHeader();
 }
 
 function fmtSize(n) {
@@ -4827,10 +4830,60 @@ function bindSessionActions(heading) {
 // 菜单空了 ⋯ 不显示。
 // 消息数会随新消息变宽，留一点余量免得刚好放下的一项被裁掉
 const HEAD_BRIEF_SLACK = 24;
+// Keep the original controls as the single action/capability authority. The
+// session toolbar gets lightweight entries that invoke those same controls.
+function syncSessionGlobalActions(heading, list) {
+  if (heading && !heading.isConnected) return;
+  const dock = !!list && (document.body.classList.contains('side-collapsed')
+    || (MOBILE.matches && document.body.classList.contains('mobile-detail')));
+  let changed = false;
+  for (const [index, id] of ['new-session', 'settings', 'page-reload'].entries()) {
+    const source = document.getElementById(id);
+    if (!source) continue;
+    const enabled = dock && !source.hidden && !source.classList.contains('hidden');
+    const proxyId = 'a-global-' + id;
+    let proxy = heading?.querySelector('#' + proxyId);
+    if (!enabled) proxy?.remove();
+    else {
+      if (!proxy) {
+        proxy = el('button', 'session-menu-action');
+        proxy.id = proxyId;
+        proxy.type = 'button';
+        proxy.dataset.order = index - 3;
+        proxy.setAttribute('role', 'menuitem');
+        proxy.appendChild(source.querySelector('svg').cloneNode(true));
+        proxy.onclick = () => source.click();
+        list.appendChild(proxy);
+      }
+      proxy.title = proxy.ariaLabel = source.ariaLabel || source.title;
+      proxy.disabled = source.disabled;
+      labelSessionAction(proxy);
+    }
+    if (source.hasAttribute('data-session-docked') !== enabled) {
+      source.toggleAttribute('data-session-docked', enabled);
+      changed = true;
+    }
+  }
+  if (changed) {
+    // Restore header order before measuring it again, including controls that
+    // had been folded into its menu before the sidebar was hidden.
+    closeHeaderMenu();
+    for (const id of HEADER_ACTIONS) {
+      const button = document.getElementById(id);
+      button.querySelector(':scope > .menu-label')?.remove();
+      button.removeAttribute('role');
+      $('#header-more').before(button);
+    }
+    $('#header-more').hidden = true;
+    layoutHeader();
+  }
+}
+
 function layoutSessionHead(heading = $('#detail .dhead')) {
   const wrap = heading?.querySelector('.session-actions');
   const menu = heading?.querySelector('#session-actions-menu');
   const list = menu?.querySelector('[role="menu"]');
+  syncSessionGlobalActions(heading, list);
   if (!wrap || !menu || !list) return;
   const actions = wrap.parentElement;
   const tier = layoutTier();
@@ -4954,6 +5007,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
     detailWidth = width;
     layoutSessionHead();
   }).observe($('#detail'));
+  new MutationObserver(() => layoutSessionHead()).observe($('#detail'), {childList: true});
   document.fonts?.ready.then(() => layoutSessionHead());   // 字体换过之后文字宽度会变
 }
 
@@ -4998,7 +5052,7 @@ function layoutHeader() {
   };
   // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
   const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
-    .filter(button => button && !button.hidden && button.parentElement !== menu);
+    .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
   if (MOBILE.matches && canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
     header.classList.add(HEADER_FOLD_NODES);
     if (typeof closeNodePick === 'function') closeNodePick();
@@ -7763,6 +7817,7 @@ function setSideCollapsed(collapsed, save = true) {
   if (save) store.set('sideCollapsed', collapsed);
   const width = parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT);
   document.documentElement.style.setProperty('--side-width', collapsed ? '0px' : width + 'px');
+  layoutSessionHead();
   requestAnimationFrame(() => {
     if (typeof fitTerm === 'function' && T?.term) fitTerm();
   });
@@ -8029,6 +8084,10 @@ function syncPageReload() {
 }
 $('#page-reload').onclick = () => location.reload();
 appDisplayMode.addEventListener('change', syncPageReload);
+for (const id of ['new-session', 'settings', 'page-reload']) {
+  new MutationObserver(() => layoutSessionHead()).observe(document.getElementById(id),
+    {attributes: true, attributeFilter: ['hidden', 'class', 'disabled']});
+}
 syncPageReload();
 
 /* ---------- 回收站 ---------- */
