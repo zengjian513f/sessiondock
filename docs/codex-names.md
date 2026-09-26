@@ -1,6 +1,10 @@
-# Explicit Codex name metadata
+# Codex name metadata
 
-`SESSIONDOCK_CODEX_INDEX` optionally selects a Codex `session_index.jsonl` file.
+With `SESSIONDOCK_CODEX_ROOT` configured, the service defaults to the sibling
+`session_index.jsonl` in that root's parent directory. This reads native `/rename`
+updates without requiring a second environment setting. No user home is searched
+when the Codex root is absent.
+`SESSIONDOCK_CODEX_INDEX` optionally overrides that names file.
 Relative paths resolve from the server's working directory. The reader follows
 ordinary file and directory aliases and does not write the name index.
 
