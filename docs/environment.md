@@ -13,7 +13,7 @@ python3 tests/env_reference.py --write
 | `SESSIONDOCK_BIND` | `bind` | no (default) | invalid SESSIONDOCK_BIND | isolated_server, delivery_init.rs | [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) |  | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_CLAUDE_ROOT` | `roots.claude` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [liveness.md](liveness.md) |
-| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
+| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [codex-names.md](codex-names.md) |
 | `SESSIONDOCK_GROK_ROOT` | `roots.grok` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
 | `SESSIONDOCK_PTYHOST_DIR` | `ptyhost_dir` | no (Option) | Opt-in isolated terminal transport; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md), [processes.md](processes.md), [runbook-dev.md](runbook-dev.md), [terminal-ownership.md](terminal-ownership.md) |
 | `SESSIONDOCK_STATE_DIR` | `state_dir` | no (Option) | SessionDock-owned preferences and grants; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [error-codes.md](error-codes.md), [liveness.md](liveness.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
@@ -22,7 +22,7 @@ python3 tests/env_reference.py --write
 | `SESSIONDOCK_LAUNCHER_CONFIG` | `launcher_config` | no (Option) | Server-owned adapter/launcher JSON, not browser input | isolated_server | [lifecycle-http.md](lifecycle-http.md) |
 | `SESSIONDOCK_AUDIT_DIR` | `audit_dir` | no (Option) | Directory for browser diagnostics JSONL | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [deploy-hub.md](deploy-hub.md), [diagnostics.md](diagnostics.md), [hub.md](hub.md) |
 | `SESSIONDOCK_TRASH_DIR` | `trash_dir` | no (Option) | Directory for the session recycle bin | isolated_server | [README.md](README.md), [trash.md](trash.md) |
-| `SESSIONDOCK_CODEX_INDEX` | `codex_index` | no (Option) | Explicit names file, separate from the Codex sessions root | no | [README.md](README.md), [codex-names.md](codex-names.md) |
+| `SESSIONDOCK_CODEX_INDEX` | `codex_index` | no (Option) | Names file; defaults beside the configured Codex sessions root | no | [README.md](README.md), [codex-names.md](codex-names.md) |
 | `SESSIONDOCK_PROC_ROOT` | `proc_root` | no (default) | Process table to scan; `/proc` by default and a synthetic tree in tests | no | [liveness.md](liveness.md), [validation.md](validation.md) |
 | `SESSIONDOCK_GROK_ACTIVE` | `grok_active` | no (Option) | Optional override for `~/.grok/active_sessions.json` | no | [liveness.md](liveness.md) |
 | `SESSIONDOCK_NODE_BIND` | `node_bind` | no (Option) | Second listener for Hub traffic; invalid SESSIONDOCK_NODE_BIND | node_auth.rs | [deploy-hub.md](deploy-hub.md), [deploy-macos.md](deploy-macos.md), [hub.md](hub.md), [security-model.md](security-model.md) |

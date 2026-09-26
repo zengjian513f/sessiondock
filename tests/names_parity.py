@@ -192,6 +192,9 @@ def browser_check(corpus, base, index, rows):
             expect(page.locator(".dtitle h2")).to_contain_text("SSE renamed title", timeout=10000)
             expect(item.locator(".t")).to_have_text("SSE renamed title")
             page.wait_for_function("window.__namePackets.some(p => p.meta?.title === 'SSE renamed title' && p.reset === false && p.messages.length === 0)")
+            page.reload(wait_until="networkidle")
+            item.click()
+            expect(page.locator(".dtitle h2")).to_contain_text("SSE renamed title")
             expect(page.locator("#msgs")).to_contain_text("standalone synthetic searchable message")
             index.write_bytes(b"{broken}\n")
             expect(page.locator(".dtitle h2")).to_contain_text("standalone synthetic searchable message", timeout=10000)
@@ -219,17 +222,21 @@ def main():
     parser.add_argument("--python-source", type=Path)
     parser.add_argument("--browser", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="sessiondock-names-") as temporary:
-        corpus, index, rows = build(Path(temporary))
-        before = {path: path.read_bytes() for path in corpus.paths.values()}
-        with server(corpus, args.binary, None) as (base, opener):
-            assert api(opener, base, corpus.uid("standalone"))["meta"]["title"] == "standalone synthetic searchable message"
-        with server(corpus, args.binary, index) as (base, opener):
-            parity(corpus, base, opener, index, rows, args.python_source)
-            if args.browser:
-                browser_check(corpus, base, index, rows)
-        assert all(path.read_bytes() == old for path, old in before.items()), "name reads changed native transcripts"
-    print("PASS synthetic Codex names: explicit-only, file-order/time/unicode, fork/agent titles, metadata-only cursor, search, corruption/recovery, native unchanged"
+    for explicit in (False, True):
+        with tempfile.TemporaryDirectory(prefix="sessiondock-names-") as temporary:
+            corpus, index, rows = build(Path(temporary))
+            if explicit:
+                override = index.with_name("override.jsonl")
+                index.rename(override)
+                write_index(index, [{"id": "root", "thread_name": "Must not override explicit names"}])
+                index = override
+            before = {path: path.read_bytes() for path in corpus.paths.values()}
+            with server(corpus, args.binary, index if explicit else None) as (base, opener):
+                parity(corpus, base, opener, index, rows, args.python_source)
+                if args.browser:
+                    browser_check(corpus, base, index, rows)
+            assert all(path.read_bytes() == old for path, old in before.items()), "name reads changed native transcripts"
+    print("PASS synthetic Codex names: default sibling/explicit override, file-order/time/unicode, fork/agent titles, metadata-only cursor, search, corruption/recovery, native unchanged"
           + (", Python adapter parity" if args.python_source else "") + (", desktop/mobile Chromium and SSE" if args.browser else ""))
 
 

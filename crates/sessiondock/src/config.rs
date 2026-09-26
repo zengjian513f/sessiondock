@@ -10,7 +10,7 @@ pub struct Config {
     pub bind: SocketAddr,
     pub web_dir: PathBuf,
     pub roots: SessionRoots,
-    /// Explicit names file, separate from the Codex sessions root. Never infer its parent.
+    /// Names file; defaults beside the configured Codex sessions root.
     pub codex_index: Option<PathBuf>,
     /// Opt-in isolated terminal transport. No implicit host discovery.
     pub ptyhost_dir: Option<PathBuf>,
@@ -370,9 +370,16 @@ impl Config {
         config.launcher_config = env::var_os("SESSIONDOCK_LAUNCHER_CONFIG").map(PathBuf::from);
         config.audit_dir = env::var_os("SESSIONDOCK_AUDIT_DIR").map(PathBuf::from);
         config.trash_dir = env::var_os("SESSIONDOCK_TRASH_DIR").map(PathBuf::from);
-        if let Some(path) = env::var_os("SESSIONDOCK_CODEX_INDEX") {
-            config.codex_index = Some(PathBuf::from(path));
-        }
+        config.codex_index = env::var_os("SESSIONDOCK_CODEX_INDEX")
+            .map(PathBuf::from)
+            .or_else(|| {
+                config
+                    .roots
+                    .codex
+                    .as_deref()
+                    .and_then(|root| root.parent())
+                    .map(|home| home.join("session_index.jsonl"))
+            });
         if let Some(path) = env::var_os("SESSIONDOCK_PROC_ROOT") {
             config.proc_root = PathBuf::from(path);
         }
