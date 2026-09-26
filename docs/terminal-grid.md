@@ -235,7 +235,7 @@ helper.
 | --- | --- |
 | `grid/wire.js` | `LineDecoder` (newline-delimited JSON, UTF-8-safe), `encodeResize`, grapheme `segmentText` (cache 256) |
 | `grid/model.js` | viewport, scrollback, cursor, modes, title, `seq`. Applies `snapshot`/`diff`. Materializes cells lazily. Default `scrollbackLimit` 100_000. **Does not reflow the viewport** (the host resends it) |
-| `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight * dpr) / dpr` (a whole device pixel, like the width) with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio`; the context is scaled by `dpr`. Every row is painted inside a clip of its own box: glyphs taller than the em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) cannot spill into the neighbouring rows, which only repaint when dirty. Fit floor: 2 columns, 1 row |
+| `grid/render.js` | Canvas 2D. Metrics: `"W"` advance (CJK `"中"` / 2 as fallback), `cellHeight = round(fontSize * lineHeight * dpr) / dpr` (a whole device pixel, like the width) with defaults 14 px and 1.2, baseline from `'M'.actualBoundingBoxAscent` plus vertical centering. Backing store is CSS × `devicePixelRatio` × effective ancestor CSS zoom; the context and cell alignment use that combined density. Zoom changes rebuild the backing store and repaint even when rows/columns stay unchanged or a keyboard prevents PTY resizing. Every row is painted inside a clip of its own box: glyphs taller than the em box (block elements, ❯, emoji, accented capitals, CJK fallbacks) cannot spill into the neighbouring rows, which only repaint when dirty. Fit floor: 2 columns, 1 row |
 | `grid/input.js` | `InputEncoder`: keys, paste (newlines → CR; bracketed `\x1b[200~…\x1b[201~` when that mode is on), focus (`\x1b[I` / `\x1b[O`), mouse (SGR / UTF-8 / X10, default X10 clamped at 223), alt-screen wheel-as-arrows (3 lines). `KeyCapture` holds a hidden textarea |
 | `grid.js` | claim, attach `mode=grid`, list, fit/resize, follow/scroll, selection, copy/paste, mouse reporting vs selection, IME, title, reconnect |
 
@@ -243,6 +243,11 @@ Scrollback reflow happens only in the model, on `reset: false` when
 `cols` changes and on an explicit `reflow`/`resize`. Wrapped runs are
 concatenated and rewrapped; a wide cell is never split. The viewport is
 replaced by the next snapshot/diff from the host.
+
+The main console's xterm renderer uses DOM text at interface scales other than
+100%, because its WebGL glyph atlas only accounts for window DPR. Existing
+WebGL views switch to DOM without reconnecting; they retain DOM until recreated.
+The default grid renderer keeps its Canvas 2D path at every scale.
 
 On narrow screens, a soft keyboard reduces the visible pane without resizing
 the PTY. Both console renderers move the screen only enough to show its last
