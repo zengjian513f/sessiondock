@@ -12,6 +12,13 @@ navigate to FileDock. An explicit `node` and absolute `path` need no conversatio
 lookup. Failed resolution stays on the adapter page with the actual error and a
 refresh action. The destination contains only `node` and `path`.
 
+A referenced bare filename resolves against the selected session's cwd first,
+even when history mentions a same-named file in another project. If that path
+does not exist (or cwd is unavailable), resolution falls back to recorded paths
+and immediate children of recorded directories. Multiple distinct fallback
+targets remain ambiguous and require an explicit path; directories are not
+searched recursively. Filesystem permission and access errors are preserved.
+
 The default file-service base is `/files/` on the current origin. A deployment may
 supply `filedock_url` in the capabilities declaration for a different origin.
 The authenticated public proxy routes `/sessiondock/` and `/files/` independently.
