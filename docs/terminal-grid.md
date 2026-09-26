@@ -391,6 +391,15 @@ attach URL and bypasses the SGR rewriting and 2026 hold in
 `writeTermOutput`; everything else (claim, lease, resize, revoke, exit,
 Codex side-thread scan through `buffer.active`) is unchanged.
 
+The main console's grid renderer reserves a 12-pixel right gutter for a vertical
+history scrollbar. Dragging the thumb or clicking the track changes the same
+local viewport as the wheel, without sending PTY input. When focused, the bar
+accepts arrows, PageUp/PageDown and Home/End. New output preserves a history
+position; returning to the bottom resumes following output. The bar is hidden
+on the alternate screen, where the application owns scrolling. The xterm
+renderer retains its own scrollbar. `tests/terminal_scrollback_browser.py`
+checks dragging, keyboard navigation, output anchoring and the resize gutter.
+
 ## Validation
 
 `cargo test -p ptyhost --test host_grid --locked` runs the Unix `/bin/sh`
