@@ -148,6 +148,12 @@ warns. Removing a staged file discards its private bytes once the draft is
 saved. Upload/SEND errors retain the current draft. Concurrent edits use CAS
 with rebase on conflict; a successful SEND clears only the submitted revision.
 
+An attachment network failure or HTTP 502/503/504 retries staging once with the
+same draft, upload ID and bytes. This also recovers a lost reply after the node
+saved the file. A second failure keeps the card and its manual retry; cancellation
+and other HTTP errors do not automatically retry. This recovery applies only to
+idempotent attachment staging, never to worker creation or CLI SEND.
+
 The report body adds `{draft_uid, draft_revision, request_id}` and attachment
 `{upload_id, number}` references. A stable report request ID freezes diagnostics
 once; a lost response returns the stored result, without another bundle or launch.
@@ -252,6 +258,9 @@ window's dates line by line (≤ 100 000 rows).
 
 ## Validation
 
+- `python3 tests/bug_report_upload_browser.py`: real Hub and authenticated Rust
+  node, 831 KiB image, lost upload replies after durable staging, bounded retries
+  and manual recovery, followed by one report with the exact published bytes.
 - `cargo test -p sessiondock --test bug_report_http --locked` (fake Claude:
   501 unconfigured, 503 for a source without a CLI, raw attachment upload, 202 shape, bundle
   files, `submitted` from the synthetic native record, second report sees the
