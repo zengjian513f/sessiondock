@@ -49,6 +49,9 @@ pub(super) struct Row {
     /// while both were alive; never rewritten.
     #[serde(skip_serializing_if = "Option::is_none")]
     spawned_by: Option<SpawnedBy>,
+    /// Historical inference disproved by native creation order; never displayed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invalid_spawned_by: Option<SpawnedBy>,
     /// Manual sidebar parent (`{source, sid}`), overriding `spawned_by`.
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<SpawnedBy>,
@@ -300,6 +303,22 @@ impl MetadataSnapshot {
                 let row = rows.entry(uid.to_owned()).or_default();
                 if row.spawned_by.is_none() {
                     row.spawned_by = Some(parent);
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn without_invalid_spawn_parents(
+        &self,
+        invalid: &[(String, SpawnedBy)],
+    ) -> Result<Self, MetadataError> {
+        self.change(|rows| {
+            for (uid, expected) in invalid {
+                if let Some(row) = rows.get_mut(uid)
+                    && row.spawned_by.as_ref() == Some(expected)
+                {
+                    row.invalid_spawned_by = row.spawned_by.take();
                 }
             }
             Ok(())

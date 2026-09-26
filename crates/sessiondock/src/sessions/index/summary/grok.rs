@@ -133,3 +133,30 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             .and_then(|end| input.data.as_ref().and_then(|data| cursor_head(data, end))),
     }
 }
+
+/// Native turn activity excludes background summary/memory refreshes. Read the
+/// same bounded, complete JSONL regions as other inventory summaries; absent or
+/// unknown event formats retain the summary fallback.
+pub(crate) fn activity_updated(data: &super::DataFile<'_>) -> Option<String> {
+    let records = Records::parse(data, CLAUDE_HEAD_LINES);
+    records
+        .all()
+        .filter(|record| {
+            matches!(
+                record.value["type"].as_str(),
+                Some(
+                    "turn_started"
+                        | "turn_ended"
+                        | "loop_started"
+                        | "first_token"
+                        | "phase_changed"
+                        | "tool_started"
+                        | "tool_completed"
+                        | "permission_requested"
+                        | "permission_resolved"
+                )
+            )
+        })
+        .filter_map(|record| norm_ts(&record.value["ts"]))
+        .max()
+}

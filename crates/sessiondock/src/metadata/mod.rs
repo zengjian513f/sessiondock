@@ -163,6 +163,16 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_nest_display(uid, parent, independent))
     }
 
+    pub fn invalidate_spawn_parents(
+        &self,
+        invalid: &[(String, SpawnedBy)],
+    ) -> Result<(), MetadataError> {
+        if !invalid.is_empty() {
+            self.update(|snapshot| snapshot.without_invalid_spawn_parents(invalid))?;
+        }
+        Ok(())
+    }
+
     /// Persist newly observed spawners, first
     /// relation wins; returns how many sessions were recorded this time.
     pub fn record_spawn_parents(

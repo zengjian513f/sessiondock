@@ -19,7 +19,7 @@ use std::{
 
 use indexmap::IndexMap;
 
-use super::procscan::{ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow};
+use super::procscan::{ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow, parse_created};
 use crate::metadata::{MetadataError, MetadataStore, SpawnedBy};
 
 /// Ten-second background tick.
@@ -81,6 +81,14 @@ fn spawn_candidates(
     found
 }
 
+// Process ancestry describes a launch/resume, not necessarily session creation.
+// In particular an inherited identity must never make a newer session the
+// creator of an older one. Unknown dates retain the existing discovery behavior.
+fn newer_than_child(parent: &SessionRow, child: &SessionRow) -> bool {
+    matches!((parse_created(&parent.created), parse_created(&child.created)),
+        (Some(parent), Some(child)) if parent > child)
+}
+
 /// `{uid: {source, sid}}` without a per-scan memo
 /// for every owned session whose chain names another listed session.
 pub fn spawn_parents(
@@ -127,6 +135,7 @@ pub fn spawn_parents(
         let Some(parent) = candidates
             .iter()
             .filter_map(|candidate| rows.get(candidate.as_str()))
+            .filter(|parent| !newer_than_child(parent, rows[uid.as_str()]))
             .max_by(|a, b| a.created.cmp(&b.created).then_with(|| a.uid.cmp(&b.uid)))
         else {
             continue;
@@ -196,6 +205,22 @@ impl SpawnWatcher {
         sessions: &[SessionRow],
         owned: &IndexMap<String, Vec<i64>>,
     ) -> Result<usize, MetadataError> {
+        // Repair only relationships disproved by native creation timestamps.
+        // Keep the rejected value on disk for diagnosis and preserve overrides.
+        let snapshot = self.metadata.snapshot()?;
+        let by_key: HashMap<_, _> = sessions
+            .iter()
+            .map(|row| ((row.source.as_str(), row.sid.as_str()), row))
+            .collect();
+        let invalid: Vec<_> = sessions
+            .iter()
+            .filter_map(|child| {
+                let parent = snapshot.spawned_by(&child.uid)?;
+                let row = by_key.get(&(parent.source.as_str(), parent.sid.as_str()))?;
+                newer_than_child(row, child).then(|| (child.uid.clone(), parent.clone()))
+            })
+            .collect();
+        self.metadata.invalidate_spawn_parents(&invalid)?;
         let found = self.parents(scan, sessions, owned);
         if found.is_empty() {
             return Ok(0);
