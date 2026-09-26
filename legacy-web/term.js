@@ -2514,13 +2514,14 @@ function ensureTerm(name) {
       if (claudeRewinds.has(name)) scheduleClaudeRewindSync(name);
     }
   });
-  // 专用 server 不让 tmux 接管滚动：外层不进 alternate screen，直接使用
-  // xterm 的正常 scrollback。改造前遗留在默认 server 的会话仍走旧兼容路径。
+  // ptyhost 没有服务端 copy-mode；滚轮交给 grid/xterm 的历史或应用鼠标处理。
+  // 改造前遗留在默认 tmux server 的会话仍走旧兼容路径。
   term.attachCustomWheelEventHandler(e => {
     if (T.name !== name) return true;
     // 录制回放和已退出的画面没有宿主 copy-mode；滚轮留给 xterm / 面板滚动条。
     if (view.replay || view.ended || view.revoked) return true;
-    if (T.list?.find(x => x.name === name)?.server === 'sessiondock') return true;
+    const server = T.list?.find(x => x.name === name)?.server;
+    if (server === 'ptyhost' || server === 'sessiondock') return true;
     wheelBy(e.deltaY);
     return false;
   });

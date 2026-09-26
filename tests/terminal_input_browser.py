@@ -2,9 +2,8 @@
 """Legacy console raw HTTP input under the Rust `terminal_input` capability.
 
 One isolated ptyhost runs a fixed free shell with synthetic native metadata.
-Desktop: while a wheel scroll request is still pending, xterm keystrokes take
-the legacy HTTP `term/send` path (raw text, no Enter semantics) and the shell's
-reply renders in the same xterm. Mobile 390px: the on-screen key bar sends
+Desktop: ptyhost wheel input stays in xterm and subsequent keystrokes use
+the WebSocket; the shell reply renders in the same xterm. Mobile 390px: the on-screen key bar sends
 named keys over HTTP. After the shell exits, the rendered tail stays, the key
 bar issues no request for the vanished instance and nothing reclaims it (HTTP
 403/409/410 refusals are covered by the Rust `terminal_input` suite). The
@@ -188,38 +187,17 @@ def main():
                 assert not page.evaluate("window.oscSocketWrites"), "OSC replies reached the PTY WebSocket"
                 assert len(sends) == before_osc_sends, "OSC replies reached term/send"
 
-                # ---- Desktop: keystrokes while a wheel request is pending go over HTTP.
-                held = []
-                page.route("**/api/term/scroll", lambda route: held.append(route))
+                # ---- Desktop: ptyhost scrolling never enters the legacy HTTP path.
                 box = page.locator("#xterm").bounding_box()
                 page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
                 page.mouse.wheel(0, -120)
-                deadline = time.monotonic() + 5
-                while not held and time.monotonic() < deadline:
-                    page.wait_for_timeout(25)
-                assert held, "the legacy wheel handler must request term/scroll for a ptyhost row"
                 keyboard.press_sequentially("ping")
                 keyboard.press("Enter")
-                assert not sends, "no send may fire before the pending scroll settles"
-                for route in held:
-                    route.continue_()
-                page.unroute("**/api/term/scroll")
                 xterm_contains(page, "RS_PING_OK")
-                typed = [body.get("data") for body in sends]
-                assert typed == ["p", "i", "n", "g", "\r"], typed
-                for body in sends:
-                    assert body["uid"] == uid and body["instance_id"] == instance and len(body["token"]) == 64, body
-                    assert "text" not in body and "keys" not in body and "enter" not in body, body
-                assert scrolls and scrolls[0]["name"] == page.evaluate("T.name") and scrolls[0]["up"] is True, scrolls
+                assert not scrolls, scrolls
+                assert not sends, sends
                 assert not dialogs, dialogs
-                # The wheel path is a legacy no-op for ptyhost: pos 0, xterm own buffer.
                 assert page.evaluate("[...T.views.values()][0].scrollPos") == 0
-                # Ordinary typing goes back to the WebSocket once nothing is pending.
-                before = len(sends)
-                keyboard.press_sequentially("ping")
-                keyboard.press("Enter")
-                page.wait_for_function("(" + XTERM_TEXT + ")().split('RS_PING_OK').length >= 3")
-                assert len(sends) == before, sends[before:]
 
                 # ---- Mobile 390px: the key bar sends named keys over HTTP.
                 page.set_viewport_size({"width": 390, "height": 844})
@@ -272,7 +250,7 @@ def main():
             finally:
                 browser.close()
     print("PASS terminal input browser: OSC 52 clipboard + Ctrl+V, terminal_input capability, "
-          "desktop HTTP text while scroll pending, mobile key bar HTTP keys, exact lease body, "
+          "desktop local wheel + WebSocket input, mobile key bar HTTP keys, exact lease body, "
           "no input/reclaim after exit, composer hidden, native fixture unchanged")
 
 
