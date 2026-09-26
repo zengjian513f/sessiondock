@@ -220,6 +220,81 @@ def main():
                     assert len(sends) == 1, sends
                     c.close()
 
+                    # Deployment notice: the real meta-check path marks this
+                    # page stale, but editing still saves with an old build ID.
+                    b.close()
+                    reload_uid = a.evaluate('S.sel')
+                    def obsolete_build(route):
+                        if route.request.method == 'POST':
+                            body = route.request.post_data_json
+                            body['_build'] = 'obsolete-browser-build'
+                            route.continue_(post_data=json.dumps(body))
+                        else:
+                            route.continue_()
+                    a.route('**/api/session/conversation', obsolete_build)
+                    def new_build(route):
+                        response = route.fetch()
+                        data = response.json()
+                        data['build'] = 'new-server-build'
+                        route.fulfill(response=response, json=data)
+                    a.route('**/api/meta', new_build)
+                    a.evaluate('checkServerBuild()')
+                    expect(a.locator('.version-stale')).to_contain_text('自动保存草稿')
+                    expect(a.locator('#csend')).to_be_disabled()
+                    a.fill('#cinput', 'typed after deployment')
+                    wait_server_text(context, base, uid, 'typed after deployment')
+                    a.press('#cinput', 'Enter')
+                    assert len(sends) == 1, sends
+
+                    # Failed save must warn on native refresh and cancel the
+                    # banner reload without discarding the editor.
+                    a.route('**/api/session/conversation', fail_draft)
+                    a.fill('#cinput', 'unsaved during outage')
+                    a.wait_for_function('!!composerDraft().storageError')
+                    expect(a.locator('.draft-save-error')).to_be_visible()
+                    assert a.evaluate('composerUnloadProtected')
+                    a.locator('.version-stale button').click()
+                    expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
+                    expect(a.locator('#cinput')).to_have_value('unsaved during outage')
+                    a.unroute('**/api/session/conversation', fail_draft)
+                    a.wait_for_function('!composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
+
+                    # Report drafts share the same save path. Failed upload
+                    # bytes must prevent reload even after metadata is saved.
+                    a.locator('[data-report-bug]:visible').first.click()
+                    expect(a.locator('#bug-report-description')).to_be_enabled()
+                    expect(a.locator('#bug-report-go')).to_be_disabled()
+                    a.fill('#bug-report-description', 'report after deployment')
+                    report_uid = a.evaluate('BUG_REPORT_DRAFT_UID')
+                    wait_server_text(context, base, report_uid, 'report after deployment')
+                    a.route('**/api/session/conversation/attachment?*', fail_draft)
+                    a.locator('#bug-report-file').set_input_files(
+                        [{'name': 'pending.txt', 'mimeType': 'text/plain', 'buffer': b'not uploaded'}])
+                    expect(a.locator('#bug-report-items .draft-card.failed')).to_be_visible()
+                    a.locator('#bug-report-dialog .modal-close').click()
+                    a.locator('.version-stale button').click()
+                    expect(a.locator('.version-stale')).to_contain_text('已取消重新加载')
+                    a.locator('[data-report-bug]:visible').first.click()
+                    a.locator('#bug-report-items .draft-remove').click()
+                    a.locator('#bug-report-dialog .modal-close').click()
+                    a.unroute('**/api/session/conversation/attachment?*', fail_draft)
+
+                    # Reload immediately after typing: the 150ms queued save
+                    # must finish before navigation, and survive the new page.
+                    a.unroute('**/api/meta', new_build)
+                    a.fill('#cinput', 'last keystrokes before reload')
+                    with a.expect_navigation(wait_until='networkidle'):
+                        a.locator('.version-stale button').click()
+                    open_session(a, reload_uid)
+                    expect(a.locator('#cinput')).to_have_value('last keystrokes before reload')
+                    wait_server_text(context, base, uid, 'last keystrokes before reload')
+                    assert len(sends) == 1, sends
+                    a.unroute('**/api/session/conversation', obsolete_build)
+                    a.locator('[data-report-bug]:visible').first.click()
+                    expect(a.locator('#bug-report-description')).to_have_value('report after deployment')
+                    a.locator('#bug-report-dialog .modal-close').click()
+                    print('PASS stale-build drafts: old-build save, Enter blocked, failed-save retry, report and upload protection, reload waits for latest text', flush=True)
+
                     # 5. A console (SSH/shell) command sent from the composer clears
                     #    the server draft; the exited console leaves no
                     #    "retained draft" row behind.

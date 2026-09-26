@@ -1041,7 +1041,7 @@ function closeBugReportAttachMenu() {
 function openBugReportDialog() {
   const dialog = $('#bug-report-dialog');
   $('#bug-report-error').textContent = '';
-  $('#bug-report-go').disabled = false;
+  $('#bug-report-go').disabled = typeof staleBuildShown !== 'undefined' && staleBuildShown;
   $('#bug-report-go').textContent = '发送';
   setSendButtonBusy($('#bug-report-go'), '');
   prepareBugReportNode();
@@ -4087,7 +4087,7 @@ function persistComposerDraft(uid = composerUid) {
   uid = composerDraftOwner(uid);
   const draft = composerDrafts.get(uid);
   if (!draft) return Promise.resolve(false);
-  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return Promise.resolve(false);
+  // Draft storage remains available across deployments; only SEND is build-gated.
   queueComposerSave(draft, uid);
   if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
   composerSaving.add(draft);
@@ -4157,6 +4157,15 @@ function syncComposerUnloadProtection() {
   composerUnloadProtected = pending;
   if (pending) window.addEventListener('beforeunload', composerUnloadWarning);
   else window.removeEventListener('beforeunload', composerUnloadWarning);
+}
+// Wait for every editor (including the report dialog), then recheck edits
+// made during the await. Never reload over unsaved text or local File bytes.
+async function prepareComposerReload() {
+  await Promise.all([...composerDrafts].map(([uid, draft]) =>
+    composerSaving.has(draft) ? composerSaveQueues.get(draft)
+      : draft.editVersion > draft.savedVersion ? persistComposerDraft(uid) : null));
+  syncComposerUnloadProtection();
+  return !composerUnloadProtected && !composerSending && !bugReportSending;
 }
 function renderSavedComposerInputs(box, draft) {
   const existing = box.querySelector(':scope > .draft-save-error[role="alert"]');
@@ -5183,6 +5192,7 @@ function composerAttachmentIdentity(uid) {
 
 let composerSending = false;
 async function submitComposer() {
+  if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return;
   if (!conversationSendEnabled() && !SessionDockCapabilities.allows('outbox')
       && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
     alert('此服务尚未启用会话发送，请更新服务后重试'); return;
