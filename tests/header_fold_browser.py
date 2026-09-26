@@ -7,7 +7,7 @@ whole sweep checks the fold order:
   header chrome, in this order as the page gets narrower: Agent/view/nest labels, then the
       hostname title, then machine chips into the picker (seeded here; hub does the same),
       then right-side buttons. Buttons that fold are a suffix of the priority list (settings ->
-      report -> trash -> rescan [-> new when terminal_create]); the menu keeps the inline order;
+      report -> trash -> page refresh [-> new when terminal_create]); the menu keeps the inline order;
       the filter bar is never squeezed unless everything folded; once folded, one more button
       would not fit; with nothing folded the ... button takes no room; within a tier narrower
       never unfolds chrome or buttons; all three tiers share one header height (no jump across
@@ -30,7 +30,7 @@ from playwright.sync_api import sync_playwright
 from history_parity import BINARY, Corpus, claude_row, isolated_server
 
 SID = "fold-sweep"
-HEADER_PRIORITY = ["new-session", "reload", "trash", "report-bug", "settings"]
+HEADER_PRIORITY = ["new-session", "page-reload", "trash", "report-bug", "settings"]
 ACTION_ORDER = ["a-star", "a-turns", "report-bug", "a-session-action"]
 # The branch is an API field the title bar no longer shows.
 META_PRIORITY = ["mcount-total", "size", "time", "meta-node", "cwd", "meta-source", "model", "session-id"]
@@ -44,7 +44,7 @@ HEADER_FOLD_JS = """() => {
     const s = getComputedStyle(el);
     return s.display !== 'none' && s.visibility !== 'hidden' && el.offsetWidth > 0;
   };
-  const ids = nodes => [...nodes].filter(b => !b.classList.contains('hidden'))
+  const ids = nodes => [...nodes].filter(b => !b.hidden && !b.classList.contains('hidden'))
     .map(b => b.id).filter(id => id && id !== 'header-more-btn');
   const picker = header.querySelector('#node-picker');
   const nodesPresent = !!(picker && !picker.hidden);
@@ -278,7 +278,7 @@ def run(page, uid):
     seed_header_nodes(page)
     first = page.evaluate(HEADER_FOLD_JS)
     header_actions = first["inline"] + first["menu"]
-    assert header_actions == [i for i in HEADER_PRIORITY if i in header_actions] and "reload" in header_actions, first
+    assert header_actions == [i for i in HEADER_PRIORITY if i in header_actions] and "trash" in header_actions, first
     assert first["labels"] and first["brand"] and first["nodes_present"] and not first["nodes_menu"], first
     head = page.evaluate(HEAD_STATE_JS)
     meta_order = head["brief"] + head["menu_meta"]
@@ -369,9 +369,37 @@ def main():
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(base, wait_until="networkidle")
                 page.wait_for_function("S.sessions.length && T.listLoaded")
+                assert page.locator("#reload").count() == 0
+                assert not page.locator("#page-reload").is_visible()
                 run(page, data.uid(SID))
-                assert not errors, errors
                 context.close()
+                for mode in ("standalone", "ios"):
+                    context = browser.new_context(viewport={"width": 390, "height": 844})
+                    if mode == "ios":
+                        context.add_init_script("Object.defineProperty(navigator, 'standalone', {value: true})")
+                    else:
+                        context.add_init_script("""const original = window.matchMedia.bind(window);
+                            window.matchMedia = query => query === '(display-mode: standalone)'
+                                ? Object.defineProperty(original(query), 'matches', {value: true}) : original(query);""")
+                    page = context.new_page()
+                    page.on("pageerror", lambda error: errors.append(str(error)))
+                    page.goto(base, wait_until="networkidle")
+                    page.wait_for_function("S.sessions.length && T.listLoaded")
+                    if not page.locator("#page-reload").is_visible():
+                        page.locator("#header-more-btn").click()
+                    assert page.locator("#page-reload").is_visible(), mode
+                    page.evaluate("window.beforeRefresh = true")
+                    with page.expect_navigation(wait_until="networkidle"):
+                        page.get_by_role("button", name="刷新页面", exact=True).or_(
+                            page.get_by_role("menuitem", name="刷新页面", exact=True)).click()
+                    page.wait_for_function("S.sessions.length && T.listLoaded")
+                    assert page.evaluate("window.beforeRefresh === undefined"), mode
+                    assert page.evaluate("performance.getEntriesByType('navigation')[0].type") == "reload"
+                    assert page.locator(f'#side .item[data-uid="{data.uid(SID)}"]').count() == 1
+                    if mode == "standalone":
+                        run(page, data.uid(SID))
+                    context.close()
+                assert not errors, errors
             finally:
                 browser.close()
     print("PASS header fold browser: fold order over N widths for the header and the title bar, plus divider drag", flush=True)
