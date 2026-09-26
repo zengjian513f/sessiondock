@@ -148,6 +148,60 @@ def run_source(page, context, base, source, work):
     else:
         passed(f"{source}: composer hidden (no retained input)")
 
+    if source == "codex":
+        page.wait_for_function("""() => {
+            const draft = composerDrafts.get(S.sel);
+            return draft && draft.savedVersion > 0 && draft.savedVersion === draft.editVersion;
+        }""")
+        # No native JSONL exists yet. Restore from the durable launch receipt,
+        # including when it arrives after the native catalog on reload.
+        for width in (1280, 390):
+            page.set_viewport_size({"width": width, "height": 900})
+            if width == 390:
+                page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
+            held = []
+            def hold_term_list(route):
+                held.append((route, route.fetch()))
+            page.route("**/api/term/list", hold_term_list)
+            scripts = []
+            def hold_term_script(route):
+                scripts.append((route, route.fetch()))
+            page.route("**/term.js?*", hold_term_script)
+            page.reload(wait_until="commit")
+            page.wait_for_function("typeof S !== 'undefined' && S.sig")
+            assert page.evaluate("typeof T") == "undefined"
+            assert scripts, "term.js was not requested"
+            for route, response in scripts:
+                route.fulfill(response=response)
+            page.unroute("**/term.js?*", hold_term_script)
+            page.wait_for_load_state("domcontentloaded")
+            page.wait_for_function("S.sig && typeof T !== 'undefined'")
+            page.wait_for_timeout(100)
+            assert page.evaluate("S.sel") is None
+            assert held, "term/list was not requested"
+            for route, response in held:
+                route.fulfill(response=response)
+            page.unroute("**/api/term/list", hold_term_list)
+            try:
+                page.wait_for_function("uid => S.sel === uid", arg=pending_uid, timeout=10000)
+            except Exception:
+                print(page.evaluate("() => ({sel:S.sel, saved:store.get('sel'), mobile:store.get('mobilePage'), pending:T.pending, error:T.listError})"), flush=True)
+                raise
+            expect(page.locator("#cinput")).to_have_value("审计下所有")
+            expect(page.locator("#a-term")).to_be_visible()
+            expect(page.locator("#termpane")).to_be_hidden()
+            assert page.evaluate("T.pending.find(row => 'tmux:' + row.name === S.sel).record_id") == receipt["record_id"]
+            passed(f"codex: reload restores pending receipt and draft at {width}px")
+        # Returning to the mobile list is a saved choice, not a request to
+        # reopen the last detail when the delayed receipt finally arrives.
+        page.locator("#detail .mobile-back").click()
+        page.reload(wait_until="networkidle")
+        assert page.evaluate("S.sel") is None
+        page.locator(f'#side .item[data-uid="{pending_uid}"]').click()
+        page.wait_for_function("uid => S.sel === uid", arg=pending_uid)
+        page.set_viewport_size({"width": 1280, "height": 900})
+        passed("codex: mobile list choice survives reload")
+
     native = wait_native(context, base, receipt.get("declared_sid"))
     native_uid = native["uid"] if native else None
     if native_uid:
@@ -239,7 +293,7 @@ def main():
     binary = args.binary.resolve()
     with tempfile.TemporaryDirectory(prefix="sessiondock-create-discard-") as tmp:
         root = Path(tmp).resolve()
-        for name in ("host", "work", "ledger", "bin", "claude", "codex", "grok", "state", "trash", "home"):
+        for name in ("host", "work", "ledger", "delivery", "bin", "claude", "codex", "grok", "state", "trash", "home"):
             (root / name).mkdir(mode=0o700)
         (root / "bin" / "stay").write_text(STAY)
         (root / "bin" / "stay").chmod(0o700)
@@ -278,10 +332,16 @@ def main():
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         if init.returncode:
             fail("initialize-lifecycle", init.stderr.decode() or init.stdout.decode())
+        init = subprocess.run(
+            [str(binary), "--initialize-delivery", str(root / "delivery")],
+            cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
+        if init.returncode:
+            fail("initialize-delivery", init.stderr.decode() or init.stdout.decode())
         corpus = Corpus(root)
         with isolated_server(
             corpus, binary, state_dir=root / "state", host_dir=root / "host",
             lifecycle_dir=root / "ledger", launcher_config=cfg, trash_dir=root / "trash",
+            delivery_dir=root / "delivery",
         ) as (base, _), sync_playwright() as playwright:
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):

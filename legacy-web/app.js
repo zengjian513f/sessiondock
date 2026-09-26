@@ -8755,7 +8755,7 @@ function agentOfDeepLink(spec) {
     .flatMap(s=>(s.agent_items || []).filter(a=>a.id===id).map(a=>({uid:s.uid,agent:a.id})));
   return matches.length===1 ? matches[0] : null;
 }
-loadSessions(false).then(ok => {
+loadSessions(false).then(async ok => {
   if (!ok) return;
   const deep = uidOfDeepLink(DEEP_SID);
   if (deep) { openSession(deep); return; }   // 深链优先于上次浏览位置
@@ -8766,5 +8766,25 @@ loadSessions(false).then(ok => {
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
   if (restoreDetail && last && S.sessions.some(s => s.uid === last)) {
     openSession(last, savedAgent?.uid === last ? savedAgent.id : null);
+  } else if (restoreDetail && last?.startsWith('tmux:')) {
+    // New launches have no native history yet. Their durable identity comes
+    // from term/list, which can arrive after the native catalog on reload.
+    // app.js can receive its catalog before the later deferred term.js runs.
+    if (typeof T === 'undefined') await new Promise(resolve =>
+      document.addEventListener('DOMContentLoaded', resolve, {once: true}));
+    let request = T.listRequest || loadTermList();
+    do {
+      await request;
+      // Live polling may supersede an earlier request before it completes.
+      request = T.listRequest;
+    } while (request);
+    // A slow list must not undo navigation performed while it was loading.
+    if (S.sel || store.get('sel', null) !== last
+        || (MOBILE.matches && store.get('mobilePage', 'list') !== 'detail')) return;
+    // Use the receipt even if its native binding just appeared: the normal
+    // pending opener follows that binding and migrates the saved draft.
+    const pending = T.pending.find(row => pendingUid(row.name) === last)
+      || pendingTmuxSessions().find(row => row.uid === last);
+    if (pending) await openPendingSession(pending);
   }
 });
