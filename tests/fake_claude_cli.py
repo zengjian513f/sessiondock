@@ -113,6 +113,18 @@ class Fake:
         self.write("\x1b[2J\x1b[H" + body + "\x1b7\r\n" + RULE
                    + ("\r\n" + footer if footer else "") + "\x1b8")
 
+    def slow_repaint(self):
+        """A busy CLI can take seconds to repaint a paste; input queued meanwhile
+        (Enter) is handled afterwards. `$SESSIONDOCK_TEST_PASTE_DELAY` names a
+        file holding that delay in milliseconds; absent means no delay."""
+        path = os.environ.get("SESSIONDOCK_TEST_PASTE_DELAY", "")
+        try:
+            delay = float(open(path).read()) / 1000.0 if path else 0.0
+        except (OSError, ValueError):
+            delay = 0.0
+        if delay > 0:
+            time.sleep(delay)
+
     def record(self, text):
         if not self.path:
             return
@@ -289,6 +301,7 @@ class Fake:
                         if self.options["collapse_paste"] and "\n" in pasted:
                             self.collapsed_paste = pasted.count("\n")
                         paste = None
+                        self.slow_repaint()
                         self.render()
                         continue
                     if pending.startswith(b"\x1b[200~"):
