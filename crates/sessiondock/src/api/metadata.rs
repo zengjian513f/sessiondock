@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::{
     error::ApiError,
-    metadata::{MetadataError, MetadataSnapshot, MetadataStore, SpawnedBy, fork_parent_uids},
+    metadata::{MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids},
     sessions::SessionStore,
     state::{AppState, JsonBytes},
 };
@@ -72,6 +72,8 @@ pub struct NestRequest {
     uid: String,
     #[serde(default)]
     parent_uid: Option<String>,
+    #[serde(default)]
+    remote_parent: Option<NestParent>,
     #[serde(default)]
     independent: bool,
     #[serde(flatten)]
@@ -241,6 +243,9 @@ fn display_parent_uid(uid: &str, rows: &[Value], snapshot: &MetadataSnapshot) ->
         return None;
     }
     if let Some(parent) = snapshot.nest_parent(uid) {
+        if parent.node_id.is_some() {
+            return None;
+        }
         return lookup_nest_parent(rows, uid, &parent.source, &parent.sid);
     }
     let spawned = snapshot.spawned_by(uid)?;
@@ -288,7 +293,14 @@ pub async fn nest(
         .map(str::trim)
         .filter(|uid| !uid.is_empty())
         .map(str::to_owned);
-    if body.independent && parent_uid.is_some() {
+    if body.remote_parent.is_some() && hub.is_none() {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "nest_remote_hub",
+            "跨机器附属需要通过 Hub 验证",
+        ));
+    }
+    if body.independent && (parent_uid.is_some() || body.remote_parent.is_some()) {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "nest_conflict",
@@ -305,7 +317,21 @@ pub async fn nest(
                 "会话不存在",
             ));
         }
-        let parent = if let Some(parent_uid) = parent_uid {
+        let parent = if let Some(remote) = body.remote_parent {
+            if parent_uid.is_some()
+                || !remote
+                    .node_id
+                    .as_deref()
+                    .is_some_and(crate::hub::identity::is_node_id)
+            {
+                return Err(ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "nest_conflict",
+                    "跨机器父会话信息无效",
+                ));
+            }
+            Some(remote)
+        } else if let Some(parent_uid) = parent_uid {
             if parent_uid == body.uid {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
@@ -346,7 +372,8 @@ pub async fn nest(
                     "不能附属到自己的子会话下面",
                 ));
             }
-            Some(SpawnedBy {
+            Some(NestParent {
+                node_id: None,
                 source: source.to_owned(),
                 sid: sid.to_owned(),
             })
@@ -354,9 +381,7 @@ pub async fn nest(
             None
         };
         let snapshot = metadata.set_nest_display(&body.uid, parent, body.independent)?;
-        let nest_parent = snapshot
-            .nest_parent(&body.uid)
-            .map(|parent| json!({"source": parent.source, "sid": parent.sid}));
+        let nest_parent = snapshot.nest_parent(&body.uid).map(|parent| json!(parent));
         Ok(json!({
             "ok": true,
             "uid": body.uid,

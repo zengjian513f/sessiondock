@@ -14,6 +14,7 @@ pub mod aggregate;
 pub mod client;
 pub mod identity;
 pub mod namespace;
+pub mod nest;
 pub mod proxy;
 pub mod registry;
 

@@ -54,7 +54,7 @@ pub(super) struct Row {
     invalid_spawned_by: Option<SpawnedBy>,
     /// Manual sidebar parent (`{source, sid}`), overriding `spawned_by`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    nest_parent: Option<SpawnedBy>,
+    nest_parent: Option<NestParent>,
     /// Ignore `spawned_by` in the sidebar tree and show this session as a root.
     #[serde(skip_serializing_if = "no")]
     nest_independent: bool,
@@ -66,6 +66,15 @@ pub(super) struct Row {
 pub struct SpawnedBy {
     pub source: String,
     pub sid: String,
+}
+
+/// Manual display parent; an absent node keeps the historical local meaning.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NestParent {
+    pub source: String,
+    pub sid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Final path of an uploaded file, recorded once per path per session.
@@ -325,7 +334,7 @@ impl MetadataSnapshot {
         })
     }
 
-    pub fn nest_parent(&self, uid: &str) -> Option<&SpawnedBy> {
+    pub fn nest_parent(&self, uid: &str) -> Option<&NestParent> {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
 
@@ -342,18 +351,20 @@ impl MetadataSnapshot {
     pub fn with_nest_display(
         &self,
         uid: &str,
-        parent: Option<SpawnedBy>,
+        parent: Option<NestParent>,
         independent: bool,
     ) -> Result<Self, MetadataError> {
         validate_uid(uid)?;
         let parent = if independent {
             None
         } else if let Some(parent) = parent {
-            let parent = SpawnedBy {
+            let parent = NestParent {
+                node_id: parent.node_id,
                 source: parent.source.trim().to_owned(),
                 sid: parent.sid.trim().to_owned(),
             };
-            validate_spawned_by(&parent)?;
+            field(&parent.source)?;
+            field(&parent.sid)?;
             Some(parent)
         } else {
             None
@@ -576,10 +587,7 @@ impl MetadataSnapshot {
             );
         }
         if let Some(parent) = saved.and_then(|row| row.nest_parent.as_ref()) {
-            object.insert(
-                "nest_parent".into(),
-                json!({"source": parent.source, "sid": parent.sid}),
-            );
+            object.insert("nest_parent".into(), json!(parent));
         }
         if saved.is_some_and(|row| row.nest_independent) {
             object.insert("nest_independent".into(), json!(true));
