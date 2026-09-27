@@ -9,13 +9,25 @@ const appSource = read('app.js');
 const disabled = {backend: 'rust', read_only: true, live: false,
   outbox: false, audit: false, search: false, files: false};
 
-test('literal search supports AND/OR, quoted phrases and safe per-term highlighting', () => {
+test('literal search supports AND/OR, quoted phrases and safe per-term highlighting', async () => {
   const S = {term: '部署 失败', opts: {mode: 'all', case: false, word: false, regex: false}};
-  const context = vm.createContext({S, esc: value => String(value)
+  class RegexWorker {
+    constructor() {
+      this.worker = vm.createContext({self: {postMessage: data => queueMicrotask(() => this.onmessage?.({data}))}});
+      vm.runInContext(read('regex-worker.js'), this.worker);
+    }
+    postMessage(data) { this.worker.self.onmessage({data}); }
+    terminate() { this.onmessage = null; }
+  }
+  const context = vm.createContext({S, Worker: RegexWorker, appUrl: path => path,
+    setTimeout, clearTimeout, renderSide() {}, MARK_MAX: 1000, esc: value => String(value)
     .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')});
   for (const name of ['searchTerms', 'literalSource', 'reTerm', 'hasTerm', 'matchesSearch', 'hl']) {
     loadFunction(context, name);
   }
+  vm.runInContext(appSource.slice(appSource.indexOf('let regexWorker ='),
+    appSource.indexOf('function resetRegexSearch')), context);
+  for (const name of ['resetRegexSearch', 'regexMatches', 'regexCached']) loadFunction(context, name);
   assert.equal(context.matchesSearch('失败\n部署'), true);
   assert.equal(context.matchesSearch('部署完成'), false);
   assert.equal(context.hasTerm('部署完成'), true, 'message previews match one term of a session AND');
@@ -46,11 +58,15 @@ test('literal search supports AND/OR, quoted phrases and safe per-term highlight
   S.opts.regex = true;
   S.opts.mode = 'any';
   S.term = 'foo bar';
+  await context.regexMatches('foo\nbar');
   assert.equal(context.matchesSearch('foo\nbar'), false, 'regex ignores boolean mode');
   S.term = 'foo|bar';
+  await context.regexMatches('bar');
   assert.equal(context.matchesSearch('bar'), true);
   S.term = '\\_';
+  await context.regexMatches('_');
   assert.equal(context.matchesSearch('_'), true, 'advanced regex retains legacy JS syntax');
+  context.resetRegexSearch();
 });
 
 function contextWithCapabilities(value, globals = {}) {
@@ -58,6 +74,8 @@ function contextWithCapabilities(value, globals = {}) {
     : {content: typeof value === 'string' ? value : JSON.stringify(value)};
   const context = vm.createContext({document: {querySelector: () => meta}, ...globals});
   vm.runInContext(capabilitiesSource, context);
+  vm.runInContext('let sessionIndexRows = null, sessionIndex = null;', context);
+  loadFunction(context, 'indexedSessions');
   return context;
 }
 
@@ -445,9 +463,9 @@ test('a fork parent lists its own branches, running first, then newest', () => {
   const S = {sessions: [parent, older, newer, elsewhere, grandchild], live: new Set(['codex:b'])};
   const context = contextWithCapabilities(disabled, {S});
   const children = loadFunction(context, 'forkChildren');
-  assert.deepEqual(children(parent).map(s => s.uid), ['codex:b', 'codex:c'], 'direct branches on this machine only');
+  assert.deepEqual(Array.from(children(parent), s => s.uid), ['codex:b', 'codex:c'], 'direct branches on this machine only');
   S.live.clear();
-  assert.deepEqual(children(parent).map(s => s.uid), ['codex:c', 'codex:b'], 'newest first once nothing runs');
+  assert.deepEqual(Array.from(children(parent), s => s.uid), ['codex:c', 'codex:b'], 'newest first once nothing runs');
   assert.equal(children(grandchild).length, 0);
   assert.equal(children({uid: 'tmux:x', source: 'codex'}).length, 0, 'a pending row without a sid has no branches');
 });
@@ -990,7 +1008,9 @@ test('file entry delegates to FileDock and console availability remains unchange
   const baselineHoverToast = "  if (button.matches(':hover') || document.activeElement === button) showConsoleToast(reason);\n";
   assert.ok(read('nodes.js').includes(hoverToast));
   const compatible = read('nodes.js').replace(rustGuard, '').replace(replayGuard, '').replace(exitGuard, '').replace(pendingGuard, '')
-    .replace(hoverToast, baselineHoverToast);
+    .replace(hoverToast, baselineHoverToast)
+    .replace("  if (typeof ensureTerminalAssets !== 'function'\n      && (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined'))",
+      "  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined')");
   // Availability stays compatible; the intentionally changed click handling is
   // exercised by hub_console_availability_browser.py and recorded in reference/README.md.
   const end = 'function bindConsoleButton';
