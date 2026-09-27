@@ -22,7 +22,7 @@ pub async fn prepare(
         return Ok(());
     };
     let uid = body.get("uid").and_then(Value::as_str).unwrap_or("");
-    let inventory = aggregate::sessions(registry, client, &vec![("force".into(), "1".into())])
+    let inventory = aggregate::sessions(registry, client, &[("force".into(), "1".into())])
         .await
         .map_err(|error| ProxyError::Invalid(error.message().into()))?;
     let rows = inventory["sessions"]
