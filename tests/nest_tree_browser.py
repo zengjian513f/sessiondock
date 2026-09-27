@@ -222,7 +222,7 @@ def check_page(page, uid, data, server, width):
     assert [r["depth"] for r in folded] == [0, 0, 0] and folded[0]["closed"], folded
     assert caret.get_attribute("aria-expanded") == "false"
     assert page.evaluate("[...S.nestClosed]") == [A]
-    page.evaluate("store.set('sel', null)")   # no auto-open (and no watch) after the reload
+    page.evaluate("store.set('sel', null); history.replaceState(null, '', location.pathname)")   # no saved selection or URL target after reload
     page.reload()
     page.wait_for_function("S.sessions.length === 5")
     assert page.evaluate("S.nest") and [r["depth"] for r in rows()] == [0, 0, 0], rows()

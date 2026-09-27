@@ -233,7 +233,7 @@ const DEBUG_RUN = /^[A-Za-z0-9_-]{1,64}$/.test(
 // 深链：?sid=<source>:<sid> 或 ?sid=<sid>，打开指定会话（labdesk 的会话台账用它跳过来）。
 // 用 CLI 原生会话号而不是 uid —— uid 是会话文件路径的散列，换目录就变。
 const DEEP_SID = (new URLSearchParams(location.search).get('sid') || '').trim().slice(0, 128);
-const DEEP_NODE = new URLSearchParams(location.search).get('node') || '';
+const deepNode = () => new URLSearchParams(location.search).get('node') || '';
 const appUrl = path => {
   const url = new URL(String(path).replace(/^\//, ''), APP_BASE);
   if (DEBUG_RUN && url.pathname.includes('/api/')) {
@@ -2745,7 +2745,7 @@ setInterval(pollSessions, LIST_MS);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSessions(); });
 
 function visible() {
-  let pool = (S.results || sidebarSessions()).filter(s => !sessionHidden(s)
+  let pool = (S.results || sidebarSessions()).filter(s => (!sessionHidden(s) || s.uid === S.sel)
     && !S.off.has(s.source) && nodeSelected(s));
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
@@ -4235,7 +4235,53 @@ async function followSelectedFork() {
   return true;
 }
 
-async function openSession(uid, agent = null, {exact = false} = {}) {
+/** One shareable route for sidebar navigation and external research links. */
+function sessionUrl(uid, agent = null) {
+  const row = S.sessions.find(s => s.uid === uid);
+  if (!row?.sid) return null;
+  const url = new URL(location.href);
+  url.searchParams.set('sid', `${row.source}:${row.sid}${agent ? '/agent:' + agent : ''}`);
+  if (row.node_id) url.searchParams.set('node', row.node_id);
+  else url.searchParams.delete('node');
+  return url;
+}
+function updateSessionUrl(uid, agent, mode) {
+  const url = sessionUrl(uid, agent);
+  if (!url || mode === 'none' || url.href === location.href) return;
+  const method = mode === 'replace' || !new URL(location.href).searchParams.has('sid') ? 'replaceState' : 'pushState';
+  history[method](history.state, '', url);
+}
+function revealSessionInSidebar(uid, agent) {
+  const row = S.sessions.find(s => s.uid === uid);
+  if (!row) return;
+  let changed = false;
+  if (!visible().some(s => s.uid === uid)) {
+    if (S.term || S.results) cancelSearch(true);
+    if (S.off.delete(row.source)) store.set('off', [...S.off]);
+    if (HUB_MODE && Nodes.off.delete(row.node_id)) store.set('nodesOff', [...Nodes.off]);
+    if (S.activeOnly) { S.activeOnly = false; store.set('activeOnly', false); }
+    changed = true;
+  }
+  if (agent && !S.nest) { S.nest = true; store.set('nest', true); changed = true; }
+  const byKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
+  const seen = new Set();
+  for (let current = row; current && !seen.has(current.uid); current = nestParentOf(current, byKey)) {
+    seen.add(current.uid);
+    if (S.nestClosed.delete(current.uid)) changed = true;
+  }
+  if (changed) store.set('nestClosed', [...S.nestClosed]);
+  for (const [key, rows] of groupBy(visible())) {
+    if (rows.some(r => r.s.uid === uid) && S.closed.delete(key)) {
+      store.set('closed', [...S.closed]); changed = true;
+    }
+  }
+  if (changed) { renderView(); renderChips(); if (HUB_MODE) renderNodes(); renderSide(); }
+  const target = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  target?.scrollIntoView({block: 'nearest'});
+}
+
+async function openSession(uid, agent = null, {exact = false, historyMode = 'push'} = {}) {
   const selectedAgent = agent || null;
   if (!selectedAgent) uid = followContinuedSession(uid);
   if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
@@ -4256,7 +4302,9 @@ async function openSession(uid, agent = null, {exact = false} = {}) {
   clearUnread(uid);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
+  revealSessionInSidebar(uid, selectedAgent);
   paintSidebarSelection(uid, selectedAgent);
+  updateSessionUrl(uid, selectedAgent, historyMode);
 
   const key = viewKey(uid, selectedAgent);
   const hit = cacheGet(key);
@@ -8737,7 +8785,7 @@ function uidOfDeepLink(spec) {
   const cut = spec.indexOf(':');
   const source = cut > 0 ? spec.slice(0, cut) : null;
   const sid = cut > 0 ? spec.slice(cut + 1) : spec;
-  const matches = S.sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!DEEP_NODE || s.node_id === DEEP_NODE));
+  const matches = S.sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!deepNode() || s.node_id === deepNode()));
   const hit = (matches.length === 1 ? matches[0] : null)
     || S.sessions.find(s => s.uid === spec);
   return hit ? hit.uid : null;
@@ -8747,16 +8795,29 @@ function agentOfDeepLink(spec) {
   const cut=spec.indexOf(':');
   const source=cut>0 ? spec.slice(0,cut) : null;
   const id=cut>0 ? spec.slice(cut+1) : spec;
-  const matches=S.sessions.filter(s=>(!source || s.source===source) && (!DEEP_NODE || s.node_id===DEEP_NODE))
+  const matches=S.sessions.filter(s=>(!source || s.source===source) && (!deepNode() || s.node_id===deepNode()))
     .flatMap(s=>(s.agent_items || []).filter(a=>a.id===id).map(a=>({uid:s.uid,agent:a.id})));
   return matches.length===1 ? matches[0] : null;
 }
+function routeSession(spec) {
+  const marker = spec.indexOf('/agent:');
+  if (marker >= 0) {
+    const uid = uidOfDeepLink(spec.slice(0, marker));
+    const id = spec.slice(marker + 7);
+    const item = S.sessions.find(s => s.uid === uid)?.agent_items?.find(a => a.id === id || a.id === 'agent-' + id);
+    return uid && item ? {uid, agent: item.id} : null;
+  }
+  const uid = uidOfDeepLink(spec);
+  return uid ? {uid, agent: null} : agentOfDeepLink(spec);
+}
+addEventListener('popstate', () => {
+  const route = routeSession(new URL(location.href).searchParams.get('sid') || '');
+  if (route) openSession(route.uid, route.agent, {exact: true, historyMode: 'none'});
+});
 loadSessions(false).then(async ok => {
   if (!ok) return;
-  const deep = uidOfDeepLink(DEEP_SID);
-  if (deep) { openSession(deep); return; }   // 深链优先于上次浏览位置
-  const child=agentOfDeepLink(DEEP_SID);
-  if (child) { openSession(child.uid,child.agent); return; }
+  const route = routeSession(DEEP_SID);
+  if (route) { openSession(route.uid, route.agent, {exact: true, historyMode: 'replace'}); return; }
   const last = store.get('sel', null);       // 恢复上次看的会话
   const savedAgent = store.get('agent', null);
   const restoreDetail = !MOBILE.matches || store.get('mobilePage', 'list') === 'detail';
