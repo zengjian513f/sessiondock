@@ -3511,8 +3511,8 @@ for (const host of [$('#node-chips'), $('#chips')]) {
 }
 
 /* ---------- 分层：发起关系 ---------- */
-// 会话由谁发起（spawned_by）是服务端从进程树看出来并记住的；这里只在同机器、
-// 同来源内按原生 sid 解析成列表里的那一行，和 forkAncestors 一个规矩。
+// spawned_by 来自本机进程树；手工 nest_parent 可显式指定另一台机器。
+// 都按机器、来源和原生 sid 解析，避免不同机器的同名会话串线。
 const spawnKey = (nodeId, source, sid) => JSON.stringify([nodeId || '', source, String(sid)]);
 
 /** 左栏实际用的父会话：手动附属优先，独立显示则没有父级，否则用 spawned_by。 */
@@ -3531,7 +3531,7 @@ function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
   [spawnKey(s.node_id, s.source, s.sid), s]))) {
   const spec = nestSpecParent(session);
   if (!spec) return null;
-  const key = spawnKey(session.node_id, spec.parent.source, spec.parent.sid);
+  const key = spawnKey(spec.parent.node_id || session.node_id, spec.parent.source, spec.parent.sid);
   let row = byKey.get(key) || allByKey.get(key);
   const seen = new Set([session.uid]);
   while (row && !seen.has(row.uid)) {
@@ -3654,10 +3654,6 @@ async function pickNestParent(target) {
   if (target.uid === uid) return;
   const child = sidebarSessions().find(session => session.uid === uid);
   if (!child) { setNestAttach(''); return; }
-  if ((child.node_id || '') !== (target.node_id || '')) {
-    alert('只能附属到同一台机器上的会话');
-    return;
-  }
   if (nestDescendantUids(uid).has(target.uid)) {
     alert('不能附属到自己的子会话下面');
     return;

@@ -137,7 +137,7 @@ dates are not repaired by guessing; later valid discovery can still set a parent
 `POST /api/session/nest` writes a display-only parent for the sidebar tree.
 It never rewrites `spawned_by`. The row carries:
 
-- `nest_parent: {source, sid}` — manual parent, same shape as `spawned_by`
+- `nest_parent: {source, sid, node_id?}` — manual parent; absent `node_id` means the child’s own node
 - `nest_independent: true` — ignore `spawned_by` and show the session as a root
 
 `{uid, parent_uid}` stores the listed target's `{source, sid}` and clears
@@ -145,9 +145,20 @@ independence. `{uid, independent: true}` (no `parent_uid`) makes the session
 independent. `{uid, independent: false}` clears both fields so `spawned_by`
 applies again. The handler rejects attaching to self (`400 nest_parent_self`),
 a missing target (`404 nest_parent_missing`), a descendant (`409 nest_parent_cycle`),
-a different `node_id` (`400 nest_parent_node`), or `independent` together with
+or `independent` together with
 `parent_uid` (`400 nest_conflict`). Without a state directory the route is
 `501 metadata_disabled`.
+
+The Hub also accepts a parent on another registered machine. It resolves both
+scoped UIDs against the fleet list, checks the complete displayed parent chain,
+and forwards a trusted `remote_parent: {node_id, source, sid}` descriptor to the
+child's node. The child's metadata owns the durable relation; Hub restart and
+browser reload preserve it. The descriptor is accepted only on the authenticated
+node listener, never from a local browser. Browser-supplied descriptors are removed
+by the Hub before resolution. Hub nest writes are serialized through validation
+and forwarding; a cyclic fleet edge returns HTTP 400. Direct node writes can only
+validate their local inventory. Missing/filtered/offline parent rows do not retarget
+the relation to a same-SID session on a different machine.
 
 The legacy sidebar offers these from the session context menu: 从父会话独立,
 取消独立 (restore `spawned_by`), and 附属到… (click the parent, with 取消).
@@ -161,7 +172,9 @@ Missing or filtered parents without a visible successor leave their children as
 roots. These display decisions never rewrite the stored relationship.
 
 Validation: `python3 tests/metadata_suite.py`,
-`python3 tests/nest_tree_browser.py`.
+`python3 tests/nest_tree_browser.py`, `python3 tests/hub_nest_browser.py`
+(two actual nodes and Hub, cross-machine click attach, same-SID isolation, cycle
+checks, node/Hub restart, detach/restore and local reattachment).
 
 ## Writer exclusion and durable publication
 

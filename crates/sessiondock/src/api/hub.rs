@@ -444,7 +444,7 @@ async fn handle(
         return aggregated(&state, &path, &pairs).await;
     }
     let attachment = ATTACHMENT_PATHS.contains(&path.as_str());
-    let (body, upload) = if method == Method::POST && !attachment {
+    let (mut body, upload) = if method == Method::POST && !attachment {
         (Some(read_body(request).await?), None)
     } else if method == Method::POST {
         (
@@ -456,6 +456,19 @@ async fn handle(
     } else {
         (None, None)
     };
+    let _nest_writer = if method == Method::POST && path == "/api/session/nest" {
+        Some(crate::hub::nest::WRITER.lock().await)
+    } else {
+        None
+    };
+    if path == "/api/session/nest"
+        && let Some(body) = body.as_mut()
+    {
+        body.remove("remote_parent");
+        if explicit.is_none() {
+            crate::hub::nest::prepare(registry, client, body).await?;
+        }
+    }
     if explicit.is_none() {
         if path == "/api/sessions/delete" {
             let value = Value::Object(body.unwrap_or_default());

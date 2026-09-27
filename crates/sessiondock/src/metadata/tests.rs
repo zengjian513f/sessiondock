@@ -680,7 +680,8 @@ fn nest_display_overrides_spawned_by_and_clears() {
     let attached = store
         .set_nest_display(
             "grok:child",
-            Some(SpawnedBy {
+            Some(NestParent {
+                node_id: None,
                 source: "codex".into(),
                 sid: "other".into(),
             }),
@@ -690,7 +691,8 @@ fn nest_display_overrides_spawned_by_and_clears() {
     assert_eq!(attached.revision(), 2);
     assert_eq!(
         attached.nest_parent("grok:child"),
-        Some(&SpawnedBy {
+        Some(&NestParent {
+            node_id: None,
             source: "codex".into(),
             sid: "other".into()
         })

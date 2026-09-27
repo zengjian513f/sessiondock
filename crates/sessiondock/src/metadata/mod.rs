@@ -10,8 +10,8 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, MetadataSnapshot, PendingRewind, SCHEMA_VERSION, SpawnedBy,
-    StopState, TimelinePin, fork_parent_uids,
+    ActivityStop, Attachment, MetadataSnapshot, NestParent, PendingRewind, SCHEMA_VERSION,
+    SpawnedBy, StopState, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
@@ -157,7 +157,7 @@ impl MetadataStore {
     pub fn set_nest_display(
         &self,
         uid: &str,
-        parent: Option<SpawnedBy>,
+        parent: Option<NestParent>,
         independent: bool,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
         self.update(|snapshot| snapshot.with_nest_display(uid, parent, independent))
