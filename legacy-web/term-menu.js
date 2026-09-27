@@ -31,33 +31,95 @@ function installTermMenu(view) {
     term.clearSelection();
   };
   const closeMenu = () => { menu.hidden = true; };
-  const closeSearch = () => { search.hidden = true; clearSelection(); term.focus(); };
-  const find = (direction, rebuild = false) => {
+  let searchEpoch = 0, searching = false;
+  let parsedVersion = 0, matchesRevision = null;
+  if (!view.grid) {
+    // These listeners belong to the terminal's event emitters and are released
+    // with that terminal. Parsing can trim scrollback without changing length.
+    term.onWriteParsed?.(() => { parsedVersion++; });
+    term.onResize?.(() => { parsedVersion++; });
+  }
+  const revision = () => ({model: view.grid ? term.model : null,
+    version: view.grid ? term.model.version : parsedVersion,
+    buffer: term.buffer.active, cols: term.cols, rows: term.rows});
+  const unchanged = before => {
+    if (!before) return false;
+    const now = revision();
+    return Object.keys(now).every(key => now[key] === before[key]);
+  };
+  const closeSearch = () => { ++searchEpoch; searching = false; search.hidden = true; clearSelection(); term.focus(); };
+  const find = async (direction, rebuild = false, retries = 0) => {
+    if (!rebuild && !searching && !unchanged(matchesRevision)) rebuild = true;
     if (rebuild) {
+      const epoch = ++searchEpoch;
+      const before = revision();
+      const valid = () => epoch === searchEpoch && active() && unchanged(before);
+      const interrupted = async () => {
+        if (epoch !== searchEpoch) return;
+        searching = false;
+        matches = []; matchesRevision = null; current = -1;
+        if (!active()) return;
+        clearSelection();
+        status.textContent = '输出已变化，请重试查找';
+        // A short burst may settle quickly. Do not restart indefinitely while
+        // output keeps arriving: the next search/navigation gesture retries.
+        if (retries < 1) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          if (epoch === searchEpoch && active()) return find(direction, true, retries + 1);
+        }
+      };
+      searching = true;
+      matchesRevision = null;
       matches = []; current = -1;
+      const found = [];
       const needle = query.value;
       if (needle) {
         // Map UTF-16 offsets back to terminal cells, including wide characters
         // and combining sequences. Join soft-wrapped rows before searching.
         let text = '', positions = [];
+        const positionAt = offset => {
+          let lo = 0, hi = positions.length;
+          while (lo + 1 < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (positions[mid].offset <= offset) lo = mid; else hi = mid;
+          }
+          const part = positions[lo];
+          if (!part) return null;
+          let at = part.offset, col = 0;
+          for (const cell of part.cells) {
+            const value = cell.text || ' ';
+            const width = cell.width === 2 ? 2 : 1;
+            if (offset < at + value.length) return {row: part.row, col, width};
+            at += value.length; col += width;
+          }
+          return null;
+        };
         const scan = () => {
           for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + Math.max(1, needle.length))) {
-            const start = positions[at], end = positions[at + needle.length - 1];
-            if (start && end) matches.push({start, end});
+            const start = positionAt(at), end = positionAt(at + needle.length - 1);
+            if (start && end) found.push({start, end});
           }
           text = ''; positions = [];
         };
         const buffer = term.buffer.active;
-        for (let row = 0; row < buffer.length; row++) {
+        const rowCount = buffer.length;
+        let deadline = performance.now() + 4;
+        for (let row = 0; row < rowCount; row++) {
+          if (performance.now() >= deadline) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (!valid()) return interrupted();
+            deadline = performance.now() + 4;
+          }
           const line = buffer.getLine(row);
           if (!line) continue;
           if (!view.grid && !line.isWrapped) scan();
-          const cells = view.grid ? term.model.cellsOf(term.model.rowAt(row)) : null;
-          let col = 0;
+          const raw = view.grid ? term.model.rowAt(row) : null;
+          const cells = raw ? term.model.readCells(raw) : null;
+          const rowCells = cells || [];
+          positions.push({row, offset: text.length, cells: rowCells});
           const add = (value, width) => {
+            if (!cells) rowCells.push({text: value, width});
             text += value;
-            for (let i = 0; i < value.length; i++) positions.push({row, col, width});
-            col += width;
           };
           if (cells) {
             for (const cell of cells) add(cell.text || ' ', cell.width === 2 ? 2 : 1);
@@ -72,7 +134,12 @@ function installTermMenu(view) {
         }
         scan();
       }
+      if (!valid()) return interrupted();
+      matches = found;
+      matchesRevision = before;
+      searching = false;
     }
+    if (searching) return;
     clearSelection();
     if (!matches.length) { status.textContent = query.value ? '无匹配' : ''; return; }
     current = (current + direction + matches.length) % matches.length;

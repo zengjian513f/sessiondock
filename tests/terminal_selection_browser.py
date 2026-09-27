@@ -23,6 +23,10 @@ while True:
   # Mouse reports from the previous check may precede the next command.
   mode = command.rsplit(b'mode:', 1)[-1].strip().decode()
   command = b''
+  if mode == 'flood':
+   for i in range(5000): os.write(1, ('HISTORY_%05d 中文 tail\r\n' % i).encode())
+   os.write(1, b'PERF_HISTORY_READY\r\n')
+   continue
   if mode not in ('none', '1000', '1002', '1003'): continue
   os.write(1, b'\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006h')
   if mode != 'none': os.write(1, ('\x1b[?' + mode + 'h').encode())
@@ -78,6 +82,16 @@ def check_surface(pw, surface, mobile=False):
                 };""")
                 keyboard = page.locator('#keys')
             else:
+                if surface == 'xterm' and not mobile:
+                    # A failed optional renderer must leave a visible reason
+                    # and allow the same button to retry without a reload.
+                    page.route('**/vendor/xterm.js*', lambda route: route.abort())
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    page.locator('#a-term').click()
+                    page.wait_for_function("document.querySelector('#console-toast').textContent.includes('控制台组件加载失败')")
+                    page.wait_for_function("document.querySelector('#termpane').classList.contains('hidden')")
+                    assert page.locator('#a-term').get_attribute('data-unavailable') == 'false'
+                    page.unroute('**/vendor/xterm.js*')
                 fixture.open_console(page, uid)
                 page.evaluate('window.selectionTerm = [...T.views.values()][0].term')
                 keyboard = page.locator('#termpane .xterm-helper-textarea')
@@ -188,9 +202,62 @@ def check_surface(pw, surface, mobile=False):
                 page.get_by_role('button', name='上一个', exact=True).click()
                 assert page.locator('.term-find [role=status]').inner_text() == f'1/{count}'
                 page.get_by_role('searchbox', name='查找终端输出').fill('absent-term-query')
-                assert page.locator('.term-find [role=status]').inner_text() == '无匹配'
+                page.wait_for_function("document.querySelector('.term-find [role=status]').textContent === '无匹配'")
                 page.get_by_role('searchbox', name='查找终端输出').press('Escape')
                 assert not page.locator('.term-find').is_visible()
+                if surface == 'grid':
+                    keyboard.focus()
+                    page.keyboard.type('mode:flood')
+                    page.keyboard.press('Enter')
+                    page.wait_for_function("selectionTerm.model.scrollback.length >= 4900")
+                    menu()
+                    page.get_by_role('menuitem', name='查找', exact=True).click()
+                    searchbox = page.get_by_role('searchbox', name='查找终端输出')
+                    # Deliver two synthetic cursor diffs precisely while the
+                    # real menu search yields. Neither stale pass may select
+                    # coordinates; continuous updates must stop retrying.
+                    page.evaluate("""() => {
+                      const model = selectionTerm.model, read = model.readCells;
+                      let pending = false;
+                      window.searchInvalidations = 0;
+                      window.restoreSearchRead = () => { model.readCells = read; };
+                      model.readCells = function(row) {
+                        if (!pending && searchInvalidations < 2) {
+                          pending = true;
+                          setTimeout(() => {
+                            searchInvalidations++;
+                            selectionTerm.write(JSON.stringify({t:'diff', cursor:{x:searchInvalidations, y:0}}) + '\\n');
+                            pending = false;
+                          }, 0);
+                        }
+                        return read.call(this, row);
+                      };
+                    }""")
+                    searchbox.fill('HISTORY_04999')
+                    page.wait_for_function("searchInvalidations === 2 && document.querySelector('.term-find [role=status]').textContent === '输出已变化，请重试查找'")
+                    assert page.evaluate('selectionTerm.getSelection()') == ''
+                    page.evaluate('restoreSearchRead()')
+                    page.get_by_role('button', name='下一个', exact=True).click()
+                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+                    searchbox.fill('HISTORY_')
+                    searchbox.fill('HISTORY_04999')
+                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_04999'")
+                    assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+                    searchbox.press('Escape')
+                    page.set_viewport_size({'width': 1000, 'height': 900})
+                    page.wait_for_timeout(250)
+                    page.set_viewport_size({'width': 1280, 'height': 900})
+                    page.wait_for_timeout(250)
+                    menu()
+                    page.get_by_role('menuitem', name='查找', exact=True).click()
+                    searchbox.fill('HISTORY_00000')
+                    page.wait_for_function("selectionTerm.getSelection() === 'HISTORY_00000'")
+                    assert page.evaluate('selectionTerm.model.scrollback.filter(row => row.cells).length') <= 512
+                    searchbox.press('Escape')
+                    keyboard.focus()
+                    page.keyboard.type('mode:none')
+                    page.keyboard.press('Enter')
+                    page.wait_for_function("selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY).translateToString(true).includes('SELECT_FIRST')")
                 page.evaluate("navigator.clipboard.writeText('PASTE_MENU_SENTINEL')")
                 before = (root / 'work/input.bin').read_bytes()
                 menu()

@@ -46,7 +46,9 @@ def main():
                 response = route.fetch()
                 body = re.sub(r'&quot;terminal_create&quot;\s*:\s*false', '&quot;terminal_create&quot;:true', response.text())
                 route.fulfill(response=response, body=body)
-            context.route(base + '/', document)
+            # Reload preserves ?sid=...; keep the same synthetic capability
+            # on that document too, rather than reverting to the disabled server.
+            context.route(re.compile(re.escape(base) + r'/(?:\?.*)?$'), document)
             context.route('**/api/term/list', lambda route: route.fulfill(json={
                 'enabled': True, 'sessions': [], 'pending': [], 'sources': {'claude': True}}))
             page = context.new_page()
@@ -68,6 +70,7 @@ def main():
             with page.expect_navigation(wait_until='networkidle'):
                 page.locator('#a-global-page-reload').click()
             expect(page.locator('#msgs')).to_contain_text('reply Sweep')
+            assert page.evaluate("SessionDockCapabilities.allows('terminal_create')")
             expect(page.locator('#left')).not_to_be_visible()
             dialogs(page)
             page.locator('#side-toggle').click()

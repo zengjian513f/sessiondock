@@ -40,7 +40,8 @@ function consoleUnavailableReason(uid, agent = null, lastError = true) {
   if (agent) return '子代理没有独立控制台，请切换到主会话后打开控制台。';
   if (typeof T === 'undefined' || typeof takeover !== 'function')
     return '控制台组件尚未加载完成或加载失败，请稍后重试；持续失败时请刷新页面。';
-  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined')
+  if (typeof ensureTerminalAssets !== 'function'
+      && (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined'))
     return '浏览器终端组件加载失败，无法显示控制台，请刷新页面重新加载。';
   if (ConsoleUI.busy.has(uid)) return '正在打开控制台，请等待当前连接请求完成。';
   if (T.listError) return T.listError;
@@ -257,8 +258,8 @@ function renderNodes() {
   let position = 0;
   const button = (id, text, on, click, title = '') => {
     const b = existing.get(id) || document.createElement('button');
-    b.type = 'button'; b.className = on ? 'on' : '';
-    b.textContent = text; b.title = title;
+    b.type = 'button'; b.classList.toggle('on', on);
+    b.title = title;
     b.setAttribute('aria-pressed', String(on)); b.onclick = click;
     if (host.children[position] !== b) host.insertBefore(b, host.children[position] || null);
     position++;
@@ -270,8 +271,10 @@ function renderNodes() {
     showSessionCount(sidebarSessions().filter(nodeSelected).length);
     if (S.results !== null) void runSearch();
   };
+  const counts = new Map();
+  for (const row of S.sessions) if (!sessionHidden(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
   for (const n of Nodes.list) {
-    const count = S.sessions.filter(s => s.node_id === n.id && !sessionHidden(s)).length;
+    const count = counts.get(n.id) || 0;
     const reason = nodeChipReason(n);
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
@@ -279,9 +282,12 @@ function renderNodes() {
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
       }, reason || '点击选择或取消；双击只选这台机器');
-    const countLabel = document.createElement('b');
-    countLabel.className = 'node-count'; countLabel.textContent = count;
-    item.replaceChildren(document.createTextNode(`${n.name} `), countLabel);
+    if (item.dataset.label !== n.name || item.dataset.count !== String(count)) {
+      const countLabel = document.createElement('b');
+      countLabel.className = 'node-count'; countLabel.textContent = count;
+      item.replaceChildren(document.createTextNode(`${n.name} `), countLabel);
+      item.dataset.label = n.name; item.dataset.count = count;
+    }
     item.dataset.node = n.id;
     item.dataset.nodeColor = n.color || '';
     item.classList.toggle('node-offline', n.online === false);
