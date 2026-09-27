@@ -298,9 +298,20 @@ def check_page(page, uid, data, server, width):
     assert [r["depth"] for r in folded] == [0, 0, 0] and folded[0]["closed"], folded
     assert caret.get_attribute("aria-expanded") == "false"
     assert page.evaluate("[...S.nestClosed]") == [A]
-    page.evaluate("store.set('sel', null); history.replaceState(null, '', location.pathname)")   # no saved selection or URL target after reload
+    # Selecting a folded parent opens the conversation without opening its
+    # children. Repeat through the cache, then reload the selected URL.
+    for _ in range(2):
+        page.locator(f'#side .item[data-uid="{A}"] .t').click()
+        opened(page, A)
+        page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Root A")')
+        to_list(page)
+        assert caret.get_attribute('aria-expanded') == 'false'
+        assert page.locator(f'#side .item[data-uid="{B}"]').count() == 0
+        assert page.evaluate('[...S.nestClosed]') == [A]
     page.reload()
     page.wait_for_function("S.sessions.length === 5")
+    opened(page, A)
+    to_list(page)
     assert page.evaluate("S.nest") and [r["depth"] for r in rows()] == [0, 0, 0], rows()
     page.locator(f'#side .item[data-uid="{A}"] .nest-caret').click()
     assert [r["depth"] for r in rows()] == [0, 1, 2, 1, 1, 0, 0], rows()
