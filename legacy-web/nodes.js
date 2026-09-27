@@ -336,7 +336,22 @@ function prepareNewNode() {
   document.querySelector('#new-node-label').hidden = false;
 }
 
-function refreshNewNodeFields() {
+// 切换机器时，输入框里的目录若在新机器上也存在就原样保留；只有不存在
+// （或无法确认）时才换成新机器的默认目录。用户在检查期间改了输入则不动。
+let newCwdCheck = 0;
+async function newNodeHasDir(path) {
+  const value = path.length > 1 ? path.replace(/\/+$/, '') : path;
+  if (value === '/' || value === '~') return true;
+  if (!canCompleteCwd(value)) return false;
+  try {
+    const params = new URLSearchParams({ path: value, limit: '50' });
+    const response = await fetch(appUrl(`api/term/complete-dir?${params}`), { cache: 'no-store' });
+    const data = await response.json();
+    return response.ok && Array.isArray(data.directories) && data.directories.includes(value + '/');
+  } catch { return false; }
+}
+
+function refreshNewNodeFields(keepCwd = '') {
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
@@ -344,8 +359,18 @@ function refreshNewNodeFields() {
   const checked = document.querySelector('input[name="new-source"]:checked');
   if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
   const selected = S.sessions.find(s => s.uid === S.sel && (!HUB_MODE || s.node_id === newNodeId()));
-  document.querySelector('#new-cwd').value = selected?.cwd || store.get(newDirsKey(), [])[0]
+  const fallback = selected?.cwd || store.get(newDirsKey(), [])[0]
     || cwdCompletion.common[0]?.cwd || cap.home || '';
+  const input = document.querySelector('#new-cwd');
+  const check = ++newCwdCheck;
+  if (keepCwd && keepCwd !== fallback && cap.enabled) {
+    input.value = keepCwd;
+    const node = newNodeId();
+    newNodeHasDir(keepCwd).then(exists => {
+      if (exists || check !== newCwdCheck || node !== newNodeId() || input.value.trim() !== keepCwd) return;
+      input.value = fallback;
+    });
+  } else input.value = fallback;
   document.querySelector('#new-session-error').textContent = '';
   document.querySelector('#new-session-go').disabled = !cap.enabled;
   renderCommonCwdOptions();
@@ -354,7 +379,8 @@ function refreshNewNodeFields() {
 document.addEventListener('DOMContentLoaded', () => {
   if (!HUB_MODE) return;
   document.querySelector('#new-node').onchange = () => {
-    store.set('newNode', newNodeId()); refreshNewNodeFields();
+    store.set('newNode', newNodeId());
+    refreshNewNodeFields(document.querySelector('#new-cwd').value.trim());
   };
   const pick = document.querySelector('#node-pick');
   if (pick) {
