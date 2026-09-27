@@ -93,6 +93,35 @@ def scenario(browser, hub, node, other):
     context.close()
 
 
+def node_switch_cwd(browser, hub, node, other):
+    """Switching machine keeps a typed directory that also exists on the new one."""
+    node.set(dirs=["/shared/proj"])
+    other.set(dirs=["/shared/proj", "/only-b/work"])
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
+    page.locator("#new-session").click()
+    cwd = page.locator("#new-cwd")
+    page.locator("#new-node").select_option(node.nid)
+    cwd.fill("/shared/proj")
+    with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and f"node={other.nid}" in r.url):
+        page.locator("#new-node").select_option(other.nid)
+    page.wait_for_timeout(200)
+    expect(cwd).to_have_value("/shared/proj")
+    cwd.fill("/only-b/work")
+    with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and f"node={node.nid}" in r.url):
+        page.locator("#new-node").select_option(node.nid)
+    expect(cwd).not_to_have_value("/only-b/work")
+    expect(cwd).not_to_have_value("")
+    assert not errors, errors
+    context.close()
+    node.pop("dirs")
+    other.pop("dirs")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", default=str(REPO / "target/release/sessiondock"))
@@ -117,6 +146,7 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    node_switch_cwd(browser, hub, *nodes)
                     scenario(browser, hub, *nodes)
                     browser.close()
             finally:
@@ -124,7 +154,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":
