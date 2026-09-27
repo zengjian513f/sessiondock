@@ -202,7 +202,7 @@ pub fn capabilities() -> Value {
         "terminal": false, "outbox": false, "audit": false, "files": false,
         "mutations": false, "hub": false, "trash": false, "timeline_pin": false,
         "bug_report": false,
-        "media": true, "media_remote": true, "media_lazy": true, "history_pages": true,
+        "media": true, "media_remote": true, "media_lazy": true, "history_pages": true, "unread_batch": true,
         "media_continuation": true,
         "history_semantics": "limited_native"
     })
