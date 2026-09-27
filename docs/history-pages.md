@@ -106,13 +106,20 @@ assistant·subagent, thinking, tool, tool_result and question events. Individual
 view failures return `{error,status}` without discarding the other entries.
 No message bodies, media grants or prompt probes are produced.
 
-The `unread_batch` capability enables this for uncached background views.
-Opened/cached views still fetch message increments. Hub browsers group by node
-and POST local UIDs to `/api/nodes/{nid}/api/sessions/unread`; the existing
-explicit-node authentication/proxy rules apply. Old nodes returning 404/405/501
-fall back to individual reads during rolling upgrades. Folding does not stop
-unread accounting. Opening a view while a summary is in flight makes its new
-cache authoritative, so the summary cannot rewind the loaded checkpoint.
+The `unread_batch` capability enables this for all background views, including
+previously opened views whose history remains cached. Background updates advance
+an independent unread checkpoint; cached message bodies stay unchanged until the
+user selects that view, when the normal incremental history read catches up.
+Hub browsers group by node and POST local UIDs to
+`/api/nodes/{nid}/api/sessions/unread`; the existing explicit-node
+authentication/proxy rules apply. Old nodes returning 404/405/501 show an unread
+indicator instead of downloading history in the background; exact counts are
+unavailable until those nodes support summaries. Folding does not stop unread
+accounting. Selecting a view or advancing its checkpoint while a summary is in
+flight makes that newer state authoritative, so the summary cannot rewind its
+checkpoint or reintroduce an unread badge. Cursor changes arriving during an
+in-flight summary retain the latest checkpoint and reconcile it after that
+request finishes, without requiring another event.
 
 ## Opening a session: on-demand views
 
