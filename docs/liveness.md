@@ -164,14 +164,31 @@ of spawners written by this call (`null` without a state directory, an
 `{error}` object when the metadata store refused). A failed scan keeps the
 managed answer, `partial: true` and `scan.status: "failed"`.
 
-Legacy reads only `uids`/`tmux_uids`/`started_at`; with `live: true` it polls
-`/api/live` on its own and treats an unlisted session as stopped — which is now
-correct.
+The frontend reads `uids`/`tmux_uids`/`started_at` and treats an unlisted
+session as stopped. With `ui_events: true`, one `/api/events` SSE connection
+notifies the page when live state, terminal metadata or list metadata changes.
+A healthy stream replaces the periodic `/api/live`, `/api/term/list` and
+`/api/sessions` browser polls. Initial connection and reconnect reconcile the
+metadata; unsupported or disconnected streams retain polling as a fallback.
+
+The event contains invalidation flags and changed session/agent cursors, never
+conversation bodies. Cursor-only growth does not invalidate the full list.
+Inactive views request only unread summaries, including previously cached
+views; opening one loads its detail. Only the selected conversation subscribes
+to the separate `/api/watch` body stream.
+
+The current server observer shares cached metadata reads every two seconds
+per debug view, irrespective of subscriber count, and stops when the last
+subscriber leaves. This is browser push, not a claim that external CLI files
+and processes already publish native lifecycle events. Changes are coalesced;
+unchanged snapshots produce no application event, with a 20-second SSE
+keepalive. Observation failure restores browser reconciliation until a fresh
+baseline succeeds.
 
 ## Response caches
 
-Every open tab polls `/api/live` and `/api/term/list` every 3 s, and their
-answers are pure functions of a few source snapshots that already have
+The shared observer and fallback browser polls read `/api/live` and
+`/api/term/list`; their answers are pure functions of source snapshots that have
 freshness windows of their own. Since 2026-09-15 both routes keep the
 assembled answer per debug-run view (`polls::PollCache`, at most eight views;
 the predecessor's `_live_views` / `_panes`) and a hot request only checks

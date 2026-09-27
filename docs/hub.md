@@ -232,6 +232,15 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   自己产生的值比较（切换时浏览器多刷一次整表）。
 - `search(registry, client, query)`：`progress` ≠ `1` 的 JSON 版，形状同上但无 sig。
 - `live`：`uids/tmux_uids` 只拼接答复成功的机器；`started_at` 合并。
+- `GET /api/events`：由 `ui_events` 能力声明的轻量 SSE。连接和重连先发
+  `change` 基线通知；随后只发语义变化的 `live/term/sessions` 标志与
+  `cursors:[{uid,agent,cursor}]`，不携带消息正文或历史。内容游标变化不等于
+  整个列表的结构变化。Hub 按 `debug_run` 视图共享一个后台观察器，每两秒
+  比较上述三种元数据聚合结果；浏览器数量不增加上游观察请求，没有订阅者时停止。
+  这是服务端共享观察加通知，不是节点原生事件流的转发。已知离线节点直接使用
+  注册表缓存，观察器不请求它们；恢复探测仍由原有健康监控负责。
+  健康检查时间戳等无语义变化的字段不会产生通知。浏览器按通知刷新需要的状态，
+  用户选中会话后才加载详细内容。
 - `term_list`：`enabled = any`（含过期缓存里的 `enabled:false`）、`home:""`、
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
   unavailable_reason: 失败文案或节点的, sources, home, backend, backends（失败为 []）}`、

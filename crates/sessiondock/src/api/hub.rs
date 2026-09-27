@@ -38,12 +38,14 @@ use crate::{
         },
     },
     hub_config::HubConfig,
+    ui_events::{EventBus, Snapshot},
 };
 
 /// Routes the hub answers itself (method, path); everything else is
 /// resolved to one machine. `tests/route_ledger.py` reads this table.
 pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/meta"),
+    ("GET", "/api/events"),
     ("GET", "/api/nodes"),
     ("POST", "/api/nodes/order"),
     ("POST", "/api/nodes/{nid}/display"),
@@ -79,7 +81,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 pub fn hub_capabilities() -> Value {
     json!({
         "backend": "rust", "hub": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
-        "history_pages": true, "unread_batch": true, "media_continuation": true,
+        "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true,
         "history_semantics": "limited_native"
     })
 }
@@ -134,6 +136,8 @@ pub struct HubState {
     pub shutdown: CancellationToken,
     /// `SESSIONDOCK_PUBLIC_HOSTS`: accepted besides loopback (same rule as the node).
     pub public_hosts: Arc<Vec<String>>,
+    /// One metadata observer per view, shared by all connected browsers.
+    pub ui_events: Arc<EventBus>,
 }
 
 /// The hub router: one gate, one dispatcher.
@@ -189,6 +193,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         audit,
         shutdown,
         public_hosts: Arc::new(config.public_hosts.clone()),
+        ui_events: Arc::new(EventBus::default()),
     };
     Ok(HubApp {
         router: hub_router(state),
@@ -415,6 +420,36 @@ async fn handle(
         return ok(
             &json!({"mode": "hub", "nodes": registry.public(), "machines": registry.machines()}),
         );
+    }
+    if method == Method::GET && path == "/api/events" {
+        let view: String = aggregate::first(&pairs, "debug_run")
+            .unwrap_or_default()
+            .chars()
+            .take(64)
+            .collect();
+        let params = if view.is_empty() {
+            Vec::new()
+        } else {
+            vec![("debug_run".to_string(), view.clone())]
+        };
+        let registry = state.registry.clone();
+        let client = state.client.clone();
+        let receiver = state.ui_events.subscribe(view, move || {
+            let registry = registry.clone();
+            let client = client.clone();
+            let params = params.clone();
+            async move {
+                // Registry::fetch returns cached state for known-offline nodes;
+                // only the existing health monitor probes them for recovery.
+                let (sessions, live, term) = tokio::join!(
+                    aggregate::sessions(&registry, &client, &params),
+                    aggregate::live(&registry, &client, &params),
+                    aggregate::term_list(&registry, &client, &params),
+                );
+                Some(Snapshot::new(sessions.ok()?, live.ok()?, term.ok()?))
+            }
+        });
+        return Ok(crate::ui_events::stream(receiver, state.shutdown.clone()));
     }
     if method == Method::POST && path == "/api/nodes/order" {
         let body = read_body(request).await?;

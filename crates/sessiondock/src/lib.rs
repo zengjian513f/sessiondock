@@ -33,6 +33,7 @@ pub mod sessions;
 mod state;
 pub mod terminal;
 pub mod trash;
+pub mod ui_events;
 
 use std::{io, sync::Arc};
 
@@ -578,6 +579,7 @@ fn build_app(
         bug_report,
         prompts,
         polls: Arc::new(polls::PollCache::default()),
+        ui_events: Arc::new(ui_events::EventBus::default()),
     };
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {
