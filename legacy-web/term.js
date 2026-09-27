@@ -3538,6 +3538,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
     }, null, {uid: T.uid || '', connectionId,
       severity: event.code === 1000 ? 'info' : 'warning'});
     view.ws = null;
+    view.inputLease = null;
     if (T.name === name) {
       T.ws = null;
     }
@@ -3655,6 +3656,7 @@ function armTermConnectTimeout(view, ws, uid, connectionId) {
     view.connectTimer = null;
     if (view.ws !== ws || ws.readyState !== 0) return;
     view.ws = null;                       // 先作废，随后 close 事件不能重复安排重连
+    view.inputLease = null;
     if (T.name === view.name) T.ws = null;
     const reason = '控制台连接建立超时；已中止本次连接并自动重试。';
     ConsoleUI.errors.set(uid, reason);
@@ -3676,6 +3678,9 @@ function dropTermSocket(view = currentTermViewObject()) {
   cancelTermHeartbeat(view);
   const ws = view.ws;
   view.ws = null;                        // 先失效引用，close 回调便不会误判成意外断线
+  // HTTP keys must not reuse the lease released with this socket. A hidden
+  // conversation may stay disconnected and use the verified instance path.
+  view.inputLease = null;
   if (T.name === view.name) T.ws = null;
   if (ws) { try { ws.close(); } catch {} }
 }
