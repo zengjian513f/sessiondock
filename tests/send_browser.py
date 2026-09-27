@@ -266,6 +266,13 @@ def main():
                     page.wait_for_function('composerUid && !composerDraft().loading')
                     assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
                     first=send('first busy input',check_width=True)
+                    # A successful write is not a visible native message yet.
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
+                    expect(page.locator('#csend')).to_have_attribute('aria-label','等待对话显示')
+                    expect(page.locator('#csend')).to_be_enabled()
+                    assert page.locator('#msgs .msg[data-role=user]').filter(has_text='first busy input').count()==0
+                    page.locator('#cinput').fill('second busy input')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
                     second=send('second busy input')
                     assert first['request_id']!=second['request_id']
                     replay=context.request.post(base+'/api/session/conversation/send',data=first)
@@ -279,6 +286,13 @@ def main():
                     assert users==['first busy input','second busy input'],users
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')",timeout=20000)
                     native=page.evaluate('S.sel')
+                    wait_history(page,'second busy input')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # Older identical history must not clear a new send's spinner.
+                    send('first busy input')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
+                    page.wait_for_function("() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('first busy input')).length === 2")
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     holder_context=browser.new_context(service_workers='block')
                     holder=watch(holder_context)
                     holder.locator(f'#side .item[data-uid="{native}"]').click()
@@ -334,7 +348,7 @@ def main():
                     deadline=time.monotonic()+10
                     while True:
                         users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
-                        if len(users)>=4:break
+                        if 'new follow-up after failed report' in users:break
                         assert time.monotonic()<deadline,users
                         time.sleep(.1)
                     assert users[-1]=='new follow-up after failed report',('follow-up replaced by stale report prompt',users[-1])
@@ -355,6 +369,13 @@ def main():
                     context.request.post(base+'/api/session/conversation',data={'uid':other,'revision':0,'value':{'text':'separate session'}})
                     assert context.request.get(base+'/api/session/conversation?uid='+other).json()['draft']['value']['text']=='separate session'
                     assert context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']['value']['text']=='draft survives refresh'
+                    send('spinner session isolation')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
+                    page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',other_receipt)
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    page.locator(f'#side .item[data-uid="{native}"]').click()
+                    wait_history(page,'spinner session isolation')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     # A lost HTTP reply is resolved by GET before any stale save or second SEND.
                     def lose_reply(route):
                         response=route.fetch()
@@ -369,6 +390,8 @@ def main():
                     page.locator('#csend').click();page.wait_for_function('!composerSending')
                     expect(page.locator('#cinput')).to_have_value('')
                     assert len(sends)==count # Lookup only: no duplicate SEND.
+                    wait_history(page,'lost HTTP reply')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     page.fill('#cinput','draft survives refresh');page.evaluate('async () => await composerDraftWrites')
                     # Selection stages the bytes at once in private staging; no agent file yet.
                     staging=root/'state/conversations/conversation-uploads'
@@ -417,6 +440,8 @@ def main():
                     published=list((root/'work/claude-area/sessiondock_attachments').glob('*/payload.txt'))
                     assert len(published)==1 and published[0].read_bytes()==b'private bytes'
                     assert not list(staging.iterdir()) # Published bytes leave staging.
+                    wait_history(page,'attachment send')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     # The same upload ID cannot overwrite another session's staging bytes.
                     for owner,content in [('report:a',b'a'),('report:b',b'b')]:
                         response=context.request.post(base+'/api/session/conversation/attachment?uid='+owner+'&id=same&name=x',data=content,headers={'Content-Type':'text/plain'})

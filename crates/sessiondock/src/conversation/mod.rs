@@ -626,7 +626,9 @@ impl Conversations {
                 .finish(&identity.key, &input.request_id, "error", value, None)?;
             return Err(error);
         }
-        let result = json!({"ok":true,"request_id":input.request_id,"state":"sent"});
+        // Match native history without archiving another copy of the prompt.
+        let result = json!({"ok":true,"request_id":input.request_id,"state":"sent",
+            "echo_hash":store::fingerprint(&json!(prompt.trim()))});
         self.store.finish(
             &identity.key,
             &input.request_id,

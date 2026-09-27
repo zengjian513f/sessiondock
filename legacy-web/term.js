@@ -3896,6 +3896,67 @@ function acceptComposerServerRevision(draft,row) {
     && JSON.stringify(value?.quotes || [])===JSON.stringify(draft.quotes);
   if (empty || same) draft.revision=row.revision;
 }
+// Only visual progress lives here. The server owns delivery and deduplication.
+const composerSendProgress = new WeakMap();
+const composerEchoHashes = new WeakMap();
+function prepareComposerSend(draft, id, uid) {
+  let state = composerSendProgress.get(draft);
+  if (!state) composerSendProgress.set(draft, state = {items:[], used:new Set()});
+  state.items = state.items.filter(item => item.hash || item.id === id);
+  if (!state.items.some(item => item.id === id)) {
+    state.items.push({id, afterTs:queuedAfterTimestamp(uid), hash:null});
+  }
+}
+function acceptComposerSend(draft, result) {
+  const item = composerSendProgress.get(draft)?.items.find(item => item.id === result?.request_id);
+  if (item && result.state === 'sent') item.hash = result.echo_hash || null;
+}
+function paintComposerSendProgress() {
+  if (composerSending) return; // Preserve upload/SEND progress labels.
+  const draft = composerDrafts.get(composerDraftOwner(composerUid));
+  const pending = composerSendProgress.get(draft)?.items.some(item => item.hash);
+  setSendButtonBusy($('#csend'), pending ? '等待对话显示' : '');
+}
+async function reconcileComposerSendProgress(uid) {
+  const draft = composerDrafts.get(composerDraftOwner(uid));
+  const state = composerSendProgress.get(draft);
+  if (!state || state.busy || !state.items.some(item => item.hash)) return;
+  state.busy = true;
+  try {
+    const messages = cache.get(viewKey(uid))?.msgs || [];
+    const occurrences = new Map();
+    for (const message of messages) {
+      if (!['user', 'command'].includes(message.role)) continue;
+      const recorded = Date.parse(message.ts || '');
+      if (!Number.isFinite(recorded)) continue;
+      if (!state.items.some(item => item.hash && (!item.afterTs || recorded > Date.parse(item.afterTs)))) continue;
+      let hashing = composerEchoHashes.get(message);
+      if (!hashing) {
+        const bytes = new TextEncoder().encode(JSON.stringify(String(message.text || '').trim()));
+        hashing = crypto.subtle.digest('SHA-256', bytes).then(buffer =>
+          Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join(''));
+        composerEchoHashes.set(message, hashing);
+      }
+      const hash = await hashing;
+      const key = `${message.ts}:${hash}`;
+      const occurrence = (occurrences.get(key) || 0) + 1;
+      occurrences.set(key, occurrence);
+      const identity = `${key}:${occurrence}`;
+      if (state.used.has(identity)) continue;
+      const at = state.items.findIndex(item => item.hash === hash
+        && (!item.afterTs || recorded > Date.parse(item.afterTs)));
+      if (at >= 0) {
+        state.items.splice(at, 1);
+        state.used.add(identity); // One native record completes one send only.
+      }
+    }
+  } catch { /* No guessed success if history or hashing is unavailable. */ }
+  finally {
+    state.busy = false;
+    if (!state.items.length) composerSendProgress.delete(draft);
+    paintComposerSendProgress();
+  }
+}
 async function consumeComposerSubmission(uid,text,attachments,quotes) {
   const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
   if (!draft) return;
@@ -4628,6 +4689,7 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         quotes:options.quotes || [], lease:termSendLease(name).lease || null,
       });
       if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
+      acceptComposerSend(draft, data);
       acceptComposerServerRevision(draft,data.draft);
       S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
       paintLive();
@@ -4848,6 +4910,8 @@ async function probeComposerInput(uid) {
 }
 
 function syncComposerSendState() {
+  paintComposerSendProgress();
+  void reconcileComposerSendProgress(composerUid);
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const blocked = composerUsesInputStatus()
     ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
@@ -4898,6 +4962,7 @@ async function reconcileComposerSubmission(uid) {
       || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
   // A later attachment may be saved as metadata while its bytes still live in
   // this page. A receipt refresh must preserve that File and its preview.
+  acceptComposerSend(draft, result);
   adoptServerDraft(draft,result.draft);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
@@ -5344,6 +5409,7 @@ async function submitComposer() {
     if (draft.requestId && (draft.requestText===priorPayload || (draft.report_prompt && draft.report_text===text))) {
       const previous=await priorComposerSubmission(uid,draft.requestId);
       if (previous?.state==='sent') {
+        acceptComposerSend(draft, previous);
         acceptComposerServerRevision(draft,previous.draft);
         await consumeComposerSubmission(uid,text,attachments,quotes);return;
       }
@@ -5365,6 +5431,7 @@ async function submitComposer() {
     if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
     const submittedRevision = draft.revision;
     setSendButtonBusy(button, '发送中');
+    prepareComposerSend(draft, draft.requestId, uid);
     const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
       draftRevision:submittedRevision, attachments:uploaded, quotes});
     if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);
