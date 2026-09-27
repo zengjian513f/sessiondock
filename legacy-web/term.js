@@ -3873,14 +3873,39 @@ async function consumeComposerSubmission(uid,text,attachments,quotes) {
   persistComposerDraft(owner);refreshComposerDraft(owner);
 }
 async function readServerComposerDraft(uid) {
+  const url = 'api/session/conversation?' + new URLSearchParams({uid});
+  const traceId = crypto.randomUUID();
+  const fields = {uid, traceId};
+  const started = performance.now(), timeoutMs = 12000;
+  let phase = 'headers', status = null, headersMs = null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  browserAuditEvent?.('http.request.started', {url, method:'GET'}, null, fields);
   try {
-    const response = await fetch(appUrl('api/session/conversation?' + new URLSearchParams({uid})),
-      {cache:'no-store', signal:controller.signal});
+    const response = await fetch(appUrl(url), {cache:'no-store', signal:controller.signal,
+      headers:{'X-SessionDock-Trace':traceId, 'X-SessionDock-Page':TERM_PAGE_ID,
+        'X-SessionDock-Build':BUILD_ID}});
+    status = response.status;
+    headersMs = Math.round(performance.now() - started);
+    phase = 'body';
+    browserAuditEvent?.('http.response.headers', {url, status, headers_ms:headersMs}, null, fields);
     const data = await response.json();
+    phase = 'response';
     if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    // Record transport metadata only: draft text and attachments stay private.
+    browserAuditEvent?.('http.response.received', {url, status, ok:true,
+      headers_ms:headersMs, duration_ms:Math.round(performance.now() - started)}, null, fields);
     return data.draft;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      error = new Error('草稿读取超时，连接恢复后会自动重试');
+      error.name = 'TimeoutError';
+    }
+    browserAuditEvent?.('http.request.failed', {url, error:String(error), phase, status,
+      headers_ms:headersMs, timeout_ms:timeoutMs, online:navigator.onLine,
+      visibility:document.visibilityState, duration_ms:Math.round(performance.now() - started)},
+    null, {...fields, severity:'warning'});
+    throw error;
   } finally { clearTimeout(timer); }
 }
 // Read old browser copies once; never write new input into browser storage.
