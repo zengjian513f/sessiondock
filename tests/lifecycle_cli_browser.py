@@ -310,7 +310,8 @@ def main():
                     expect(page.locator("#termpane")).to_be_visible()
                     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
                     xterm_includes(page, argv_lines("CODEX", ["--enable", "default_mode_request_user_input", "-c",
-                        "suppress_unstable_features_warning=true", "resume", CODEX_SID]))
+                        "suppress_unstable_features_warning=true", "resume", CODEX_SID,
+                        "-c", "check_for_update_on_startup=false"]))
                     xterm_includes(page, "FAKE_CODEX_SID_ENV []")
                     for expected in ["SERVICE_INHERITED [service-value]", "SERVICE_OVERRIDE [profile-value]",
                                      "SERVICE_REMOVE []", f"SERVICE_HOME [{root / 'work'}]",
@@ -359,7 +360,7 @@ def main():
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false")
                     page.locator("#a-term").click()
                     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
-                    xterm_includes(page, f"A4 [resume]\nA5 [{CODEX_SID}]\nFAKE_CODEX_ARGV_END 6")
+                    xterm_includes(page, f"A4 [resume]\nA5 [{CODEX_SID}]\nA6 [-c]\nA7 [check_for_update_on_startup=false]\nFAKE_CODEX_ARGV_END 8")
                     assert len(takeovers) == before, "linked console must not start another resume"
                     assert len([path for path in (root / "host").glob("*.json")]) == 3
                     assert not errors, errors

@@ -339,12 +339,11 @@ function applySize(sendIfOpen) {
 }
 
 function scheduleFit() {
-  if (fitPending) return;
-  fitPending = true;
-  requestAnimationFrame(() => {
-    fitPending = false;
+  clearTimeout(fitPending);
+  fitPending = setTimeout(() => {
+    fitPending = 0;
     applySize(true);
-  });
+  }, 100);
 }
 
 function send(str) {

@@ -242,6 +242,19 @@ need their own CLI args; the runner does not supply them.
 
 ## Adding a suite
 
+Frontend performance regressions also run as ordinary browser suites:
+
+- `conversation_performance_browser`: click to expand a lazy tool group,
+  append synthetic native history, cancel a backtracking regex and search again.
+- `render_assets_browser`: open ordinary/formula/code sessions, verify optional
+  libraries load on demand, expand 16,000 lines of code through worker highlighting,
+  and collapse it without accepting stale worker output.
+- `sidebar_select_scroll_browser` additionally checks unchanged DOM identity,
+  incremental membership, collapsed groups and overlapping list polls.
+- `terminal_selection_browser` additionally checks a 5,000-line synthetic PTY
+  history, cancellable lookup, bounded derived cell caching, resizing without
+  losing the oldest history, and recovery from an optional renderer load failure.
+
 `tests/run_validation.py` discovers suites after the fixed Rust checks:
 
 1. Every `tests/*_contract.mjs` is passed to one `node --test` suite named

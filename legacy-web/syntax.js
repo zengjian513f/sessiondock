@@ -214,9 +214,4 @@ function highlightSegments(source, rawPath = '') {
   return {html, language, languages: [...languages], detected: true, segmented: true};
 }
 
-window.sessiondockLanguageForPath = languageForPath;
-window.sessiondockHighlight = highlight;
-window.sessiondockHighlightSegments = highlightSegments;
-window.sessiondockHighlightShellCommand = shellCommandHighlight;
-
-dispatchEvent(new Event('sessiondock-highlight-ready'));
+export {languageForPath, highlight, highlightSegments, shellCommandHighlight};

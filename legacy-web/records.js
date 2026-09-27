@@ -107,9 +107,22 @@
   }
   function renderList() {
     const list = $('records');
-    list.replaceChildren();
+    const old = new Map([...list.children].map(item => [item.dataset.key, item]));
+    let position = 0;
     for (const row of visibleRecords()) {
+      const key = JSON.stringify([row.node || '', row.id]);
+      const signature = JSON.stringify(row);
+      const previous = old.get(key);
+      old.delete(key);
+      const place = item => {
+        if (list.children[position] !== item) list.insertBefore(item, list.children[position] || null);
+        position++;
+      };
+      if (previous?._signature === signature) { place(previous); continue; }
+      previous?.remove();
       const item = element('li');
+      item.dataset.key = key;
+      item._signature = signature;
       item.role = 'option';
       item.dataset.id = row.id;
       item.id = 'rec-' + row.id;
@@ -139,8 +152,9 @@
       gridLink.rel = 'noopener';
       gridLink.addEventListener('click', event => event.stopPropagation());
       item.append(gridLink);
-      list.append(item);
+      place(item);
     }
+    for (const item of old.values()) item.remove();
     highlight();
   }
   async function loadList() {

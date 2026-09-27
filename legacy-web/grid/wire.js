@@ -20,20 +20,27 @@ function toBytes(bytes) {
 export class LineDecoder {
   constructor() {
     this.dropped = 0;
-    this._tail = new Uint8Array(0);
+    this._parts = [];
+    this._length = 0;
     this._decoder = new TextDecoder('utf-8');
   }
 
   push(bytes) {
     const chunk = toBytes(bytes);
-    const merged = new Uint8Array(this._tail.length + chunk.length);
-    merged.set(this._tail, 0);
-    merged.set(chunk, this._tail.length);
     const messages = [];
     let offset = 0;
-    for (let i = 0; i < merged.length; i++) {
-      if (merged[i] !== 0x0A) continue;
-      const line = merged.subarray(offset, i);
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] !== 0x0A) continue;
+      let line = chunk.subarray(offset, i);
+      if (this._parts.length) {
+        const joined = new Uint8Array(this._length + line.length);
+        let at = 0;
+        for (const part of this._parts) { joined.set(part, at); at += part.length; }
+        joined.set(line, at);
+        line = joined;
+        this._parts = [];
+        this._length = 0;
+      }
       offset = i + 1;
       // Complete line: 0x0A is ASCII, so the slice is a whole UTF-8 sequence.
       const text = this._decoder.decode(line, {stream: true});
@@ -43,7 +50,11 @@ export class LineDecoder {
         this.dropped++;
       }
     }
-    this._tail = offset >= merged.length ? new Uint8Array(0) : merged.slice(offset);
+    if (offset < chunk.length) {
+      const part = chunk.slice(offset);
+      this._parts.push(part);
+      this._length += part.length;
+    }
     return messages;
   }
 }

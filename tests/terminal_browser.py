@@ -37,6 +37,7 @@ done
 INSTALL = """() => {
   window.__transport = {};
   window.__connectTransport = async (key, page, name, force = false) => {
+    await ensureTerminalAssets(false);
     const response = await fetch('/api/term/claim', {method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name,page,force,_page_id:page,_build:'synthetic',_trace_id:'synthetic'})});
