@@ -50,9 +50,12 @@ const A = 'a'.repeat(32), B = 'b'.repeat(32), TOKEN = '/api/media/' + A;
 const HUB = `/api/nodes/${A}/api/media/${B}`;
 const same = (actual, expected) => assert.equal(JSON.stringify(actual), JSON.stringify(expected));
 function ctx(globals = {}) {
-  return vm.createContext({URL, URLSearchParams, SessionDockCapabilities: {config: {}, allows: () => false},
+  const context = vm.createContext({URL, URLSearchParams, SessionDockCapabilities: {config: {}, allows: () => false},
     HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/'), DEBUG_RUN: '',
     selectedNodeIds: () => ['n1', 'n2'], newNodeId: () => 'nid', appUrl: x => x, el: element, ...globals});
+  vm.runInContext('let sessionIndexRows = null, sessionIndex = null;', context);
+  load(context, 'indexedSessions');
+  return context;
 }
 function fn(name, globals = {}, source = app) { return load(ctx(globals), name, source); }
 
