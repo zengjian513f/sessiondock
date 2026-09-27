@@ -17,3 +17,8 @@ Navigation reveals and selects its sidebar row, opening collapsed ancestors and
 removing filters that would hide the target. Related-session links use this route
 rather than a separate navigation scheme. Other query parameters and the proxy
 base path are preserved.
+
+Selecting an already displayed session row preserves its folded children; only
+the row's triangle expands or collapses that subtree. Restoring a selected parent
+after reload also preserves its own fold. Revealing a hidden link target opens
+only the ancestors needed to show the target row.

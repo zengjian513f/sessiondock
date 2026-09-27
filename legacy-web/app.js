@@ -4646,6 +4646,14 @@ function updateSessionUrl(uid, agent, mode) {
   history[method](history.state, '', url);
 }
 function revealSessionInSidebar(uid, agent) {
+  const target = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+    : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
+  // Selecting an existing row opens its conversation, not its descendants.
+  // In particular, do not clear a fold the user set with this row's caret.
+  if (target) {
+    target.scrollIntoView({block: 'nearest'});
+    return;
+  }
   const row = S.sessions.find(s => s.uid === uid);
   if (!row) return;
   let changed = false;
@@ -4661,7 +4669,8 @@ function revealSessionInSidebar(uid, agent) {
   const seen = new Set();
   for (let current = row; current && !seen.has(current.uid); current = nestParentOf(current, byKey)) {
     seen.add(current.uid);
-    if (S.nestClosed.delete(current.uid)) changed = true;
+    // A hidden link target needs its ancestors, but not its own children.
+    if ((current.uid !== uid || agent) && S.nestClosed.delete(current.uid)) changed = true;
   }
   if (changed) store.set('nestClosed', [...S.nestClosed]);
   const groups = groupBy(visible(), {skipClosed: true});
@@ -4674,9 +4683,9 @@ function revealSessionInSidebar(uid, agent) {
     }
   }
   if (changed) { renderView(); renderChips(); if (HUB_MODE) renderNodes(); renderSide(); }
-  const target = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
+  const revealed = agent ? $('#side').querySelector(`.item[data-owner="${CSS.escape(uid)}"][data-agent="${CSS.escape(agent)}"]`)
     : $('#side').querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);
-  target?.scrollIntoView({block: 'nearest'});
+  revealed?.scrollIntoView({block: 'nearest'});
 }
 
 async function openSession(uid, agent = null, {exact = false, historyMode = 'push'} = {}) {
