@@ -3835,18 +3835,42 @@ async function pickNestParent(target) {
 /** 一条会话连同它的子代理和它发起的会话，按活动时间倒序、还在跑的在前。 */
 function nestStamp(s, children, memo = new Map()) {
   if (memo.has(s.uid)) return memo.get(s.uid);
-  let stamp = +new Date(s.updated) || 0;
+  const times = memo.times ||= new Map();
+  const time = value => {
+    if (!times.has(value)) times.set(value, +new Date(value) || 0);
+    return times.get(value);
+  };
+  let stamp = time(s.updated);
   memo.set(s.uid, stamp);   // 先占位，环再深也只算一遍
-  for (const a of s.agent_items || []) stamp = Math.max(stamp, +new Date(a.updated) || 0);
+  for (const a of s.agent_items || []) stamp = Math.max(stamp, time(a.updated));
   for (const c of children.get(s.uid) || []) stamp = Math.max(stamp, nestStamp(c, children, memo));
   memo.set(s.uid, stamp);
   return stamp;
 }
 
-function expandRows(s, depth, children, out, seen, memo) {
+// Count the rows a branch would expose without sorting or allocating row objects.
+// A nested closed session contributes just its own row, matching expandRows.
+function nestSize(s, children, memo = new Map()) {
+  if (memo.has(s.uid)) return memo.get(s.uid);
+  const size = {rows: 1 + (s.agent_items || []).length, sessions: 1};
+  memo.set(s.uid, size);
+  for (const child of children.get(s.uid) || []) {
+    const sub = S.nestClosed.has(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
+    size.rows += sub.rows;
+    size.sessions += sub.sessions;
+  }
+  return size;
+}
+
+function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   const row = {s, agent: null, depth, kids: 0, closed: false};
   out.push(row);
   if (!S.nest) return;
+  if (S.nestClosed.has(s.uid)) {
+    row.kids = nestSize(s, children, sizes).rows - 1;
+    row.closed = row.kids > 0;
+    return;
+  }
   const when = v => +new Date(v) || 0;
   const kids = [
     ...(s.agent_items || []).map(agent => ({agent, running: agentRunning(s.uid, agent),
@@ -3860,49 +3884,69 @@ function expandRows(s, depth, children, out, seen, memo) {
     if (k.agent) out.push({s, agent: k.agent, depth: depth + 1});
     else if (!seen.has(k.session.uid)) {
       seen.add(k.session.uid);
-      expandRows(k.session, depth + 1, children, out, seen, memo);
+      expandRows(k.session, depth + 1, children, out, seen, memo, sizes);
     }
   }
-  // 三角上写的是收起后消失的整棵子树行数；收起时这些行只用来数数，不进列表
+  // 三角上写的是收起后消失的整棵子树行数。
   row.kids = out.length - start;
-  if (row.closed) out.length = start;
 }
 
 const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
 
 /** 左栏分组：[组键, 行数组]。行 = {s, agent, depth}；平铺模式下 depth 恒为 0 且没有子代理行。
  *  分层模式按整棵子树的最新活动排位和归组，发起的孩子刚有动静时父亲跟着浮上来。 */
-function groupBy(list) {
+function groupBy(list, {skipClosed = false} = {}) {
   const {children, nested} = nestTree(list);
   const memo = new Map();
   const stamp = s => S.nest ? nestStamp(s, children, memo) : (+new Date(s.updated) || 0);
-  const m = new Map();
+  const m = new Map(), latest = new Map(), dates = new Map();
   for (const s of list) {
     if (nested.has(s.uid)) continue;
+    const updated = stamp(s);
+    if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
     const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
-      : dayKey(new Date(stamp(s)).toISOString());
+      : dates.get(updated);
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(s);
+    latest.set(k, Math.max(latest.get(k) ?? -Infinity, updated));
   }
   const keys = [...m.keys()];
   if (S.view === 'date') keys.sort().reverse();
-  else keys.sort((a, b) => {
-    const ta = Math.max(...m.get(a).map(stamp));
-    const tb = Math.max(...m.get(b).map(stamp));
-    return tb - ta;
-  });
-  for (const k of keys) m.get(k).sort((a, b) =>
+  else keys.sort((a, b) => latest.get(b) - latest.get(a));
+  const compare = (a, b) =>
     // 项目树的顺序只表达真实活动时间，点星不应让会话突然跳位。
     // 时间轴才在同一日期内将收藏置前；收藏时间不参与排序。
     (S.view === 'date' ? Number(!!b.starred) - Number(!!a.starred) : 0)
-    || stamp(b) - stamp(a));
-  const seen = new Set();
+    || stamp(b) - stamp(a);
+  const seen = new Set(), sizes = new Map();
   const groups = keys.map(k => {
+    const roots = m.get(k);
+    if (skipClosed && S.closed.has(k)) {
+      // The heading needs a count and a representative, not sorted hidden rows.
+      // Pick membership is collected only while selection mode is actually on.
+      let first = roots[0], count = 0;
+      for (const s of roots) {
+        if (compare(s, first) < 0) first = s;
+        count += !S.nest || S.nestClosed.has(s.uid) ? 1 : nestSize(s, children, sizes).sessions;
+      }
+      const pickUids = [];
+      if (S.picking) {
+        const collect = s => {
+          if (sessionPickable(s)) pickUids.push(s.uid);
+          if (S.nest && !S.nestClosed.has(s.uid)) {
+            for (const child of children.get(s.uid) || []) collect(child);
+          }
+        };
+        roots.forEach(collect);
+      }
+      return [k, [], {first, count, pickUids, roots}];
+    }
+    roots.sort(compare);
     const rows = [];
-    for (const s of m.get(k)) {
+    for (const s of roots) {
       if (seen.has(s.uid)) continue;
       seen.add(s.uid);
-      expandRows(s, 0, children, rows, seen, memo);
+      expandRows(s, 0, children, rows, seen, memo, sizes);
     }
     return [k, rows];
   });
@@ -4182,24 +4226,26 @@ function renderSide(suppliedList = null) {
   let groupPosition = 0;
   const sessionSignatures = new Map();
   const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
-  const groups = groupBy(list);
+  const groups = groupBy(list, {skipClosed: true});
   side._nestTree = {children: groups.children, sessions: S.sessions, results: S.results,
     context: sidebarNestContext()};
-  for (const [key, rows] of groups) {
+  for (const [key, rows, summary] of groups) {
     const items = rows.filter(r => !r.agent).map(r => r.s);
+    const first = summary ? summary.first : items[0];
+    const count = summary ? summary.count : items.length;
     const g = oldGroups.get(key) || el('div', 'group');
     oldGroups.delete(key);
     g.classList.toggle('closed', S.closed.has(key));
     g.dataset.key = key;
-    const label = S.view === 'tree' ? nodeDirectory(items[0]) : key;   // 分组标题不缩写, 只换 ~
-    const groupUids = items.filter(sessionPickable).map(x => x.uid);
-    const headSignature = JSON.stringify([label, key, items.length, S.picking, S.view, items[0]?.node_name]);
+    const label = S.view === 'tree' ? nodeDirectory(first) : key;   // 分组标题不缩写, 只换 ~
+    const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
+    const headSignature = JSON.stringify([label, key, count, S.picking, S.view, first?.node_name]);
     const oldHead = g.querySelector(':scope > .ghead');
     const head = oldHead?._signature === headSignature ? oldHead : el('div', 'ghead',
       `${S.picking ? `<input type="checkbox" class="ghead-pick"
          aria-label="选中「${esc(label)}」下的全部会话">` : ''}
-       <span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(items[0]) : esc(label)}</span>
-       <span class="gcount">${items.length}</span>`);
+       <span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(first) : esc(label)}</span>
+       <span class="gcount">${count}</span>`);
     head.onclick = event => {
       if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
       S.closed.has(key) ? S.closed.delete(key) : S.closed.add(key);
@@ -4618,8 +4664,12 @@ function revealSessionInSidebar(uid, agent) {
     if (S.nestClosed.delete(current.uid)) changed = true;
   }
   if (changed) store.set('nestClosed', [...S.nestClosed]);
-  for (const [key, rows] of groupBy(visible())) {
-    if (rows.some(r => r.s.uid === uid) && S.closed.delete(key)) {
+  const groups = groupBy(visible(), {skipClosed: true});
+  const contains = session => session.uid === uid
+    || (groups.children.get(session.uid) || []).some(contains);
+  for (const [key, rows, summary] of groups) {
+    const found = summary ? summary.roots.some(contains) : rows.some(r => r.s.uid === uid);
+    if (found && S.closed.delete(key)) {
       store.set('closed', [...S.closed]); changed = true;
     }
   }
