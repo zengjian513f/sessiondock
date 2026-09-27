@@ -39,6 +39,7 @@ def main():
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
                     'SESSIONDOCK_TEST_ANIMATED_PADDING': '1',
+                    'SESSIONDOCK_TEST_BUSY_WARNING': '1',
                     'SESSIONDOCK_TEST_STARTUP_DELAY': '5',
                     'SESSIONDOCK_TEST_COLLAPSED_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
