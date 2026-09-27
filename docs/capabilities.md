@@ -26,6 +26,14 @@ only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
 
+Settings have Appearance, Features and Machines tabs. Features contains the
+existing history cache budget (`cacheMb`, default 256 MB; `0` means unlimited)
+and batch stop concurrency (`stopConcurrency`: 1, 2, 4, 6, 8, 12 or 16; default 6).
+Both use browser-local `sessiondock.*` preferences. Cache changes trim immediately
+while preserving pinned sessions; concurrency is sampled when the next batch
+starts, so changing it does not alter an already-running batch. Invalid saved
+concurrency values fall back to 6. The selected settings tab is also retained.
+
 Appearance settings store `interfaceScale` as an integer percentage (50–150,
 step 1; default 100), adjusted with a live slider, reset button, or a two-finger
 pinch on the main console. Older saved values of 30–49 apply as 50.

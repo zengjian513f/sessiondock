@@ -2763,7 +2763,10 @@ const sessionPickable = session => !session.fork_parent;
 let sessionDeleteBusy = false;
 let sessionStopBusy = false;
 let sessionStopProgress = null;
-const SESSION_STOP_CONCURRENCY = 6;
+function sessionStopConcurrency() {
+  const value = Number(store.get('stopConcurrency', 6));
+  return [1, 2, 4, 6, 8, 12, 16].includes(value) ? value : 6;
+}
 
 function pickedStopTargets() {
   return sidebarSessions().filter(s => pickedSessions.has(s.uid) && sessionPickable(s)
@@ -3037,7 +3040,7 @@ async function stopPickedSessions() {
     }
   };
   try {
-    await Promise.all(Array.from({length: Math.min(SESSION_STOP_CONCURRENCY, targets.length)}, stopNext));
+    await Promise.all(Array.from({length: Math.min(sessionStopConcurrency(), targets.length)}, stopNext));
     await refreshLive(true);
     if (typeof loadTermList === 'function') await loadTermList();
     paintLive();
@@ -8795,16 +8798,18 @@ async function chooseRenderer(target, select) {
 }
 
 function showSettingsTab(name) {
+  if (!['appearance', 'features', 'machines'].includes(name)) name = 'appearance';
   for (const tab of document.querySelectorAll('.settings-tab')) {
     const on = tab.dataset.tab === name;
     tab.classList.toggle('on', on);
     tab.ariaSelected = String(on);
   }
   $('#settings-appearance').hidden = name !== 'appearance';
+  $('#settings-features').hidden = name !== 'features';
   $('#settings-machines').hidden = name !== 'machines';
   $('#settings-sub').textContent = name === 'machines'
     ? '机器设置保存在中央服务端，所有浏览器一致'
-    : '界面偏好保存在浏览器';
+    : name === 'features' ? '功能偏好保存在此浏览器' : '界面偏好保存在浏览器';
   store.set('settingsTab', name);
   if (name === 'machines') renderMachineSettings();
 }
@@ -8819,6 +8824,7 @@ function openSettings() {
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
   $('#setting-cache').value = String(cacheLimitMb);
+  $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
   setMachineNote('');
   showSettingsTab(store.get('settingsTab', 'appearance'));
   $('#settings-dialog').showModal();
@@ -8858,6 +8864,7 @@ $('#setting-cache').onchange = e => {
   store.set('cacheMb', cacheLimitMb);
   trimCache();
 };
+$('#setting-stop-concurrency').onchange = e => store.set('stopConcurrency', Number(e.target.value));
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;

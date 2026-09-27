@@ -271,8 +271,14 @@ def main():
                     assert not errors, errors
                     page.locator("#side-pick-cancel").click()
 
+                    # Change concurrency through settings, then exercise the actual pool.
+                    page.locator("#settings").click()
+                    page.get_by_role("tab", name="功能", exact=True).click()
+                    expect(page.locator("#setting-stop-concurrency")).to_have_value("6")
+                    page.locator("#setting-stop-concurrency").select_option("4")
+                    page.locator("#settings-dialog .modal-close").click()
                     # Eight real hosts ignore EOF: independent EOF waits overlap,
-                    # and later requests fill the six browser slots as they free up.
+                    # and later requests fill the four configured slots as they free up.
                     for sid, uid in zip(SLOW_SIDS, slow_uids):
                         page.locator(f'#side .item[data-uid="{uid}"]').click()
                         with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
@@ -305,14 +311,14 @@ def main():
                     expect(bulk).to_have_text("已停止 8/8", timeout=15000)
                     page.wait_for_function("!sessionStopBusy")
                     elapsed = time.monotonic() - started
-                    assert len(stops) == before_stops + 8 and peak[0] == 6, (stops[before_stops:], peak)
+                    assert len(stops) == before_stops + 8 and peak[0] == 4, (stops[before_stops:], peak)
                     events = [list(map(float, (root / "events" / sid).read_text().splitlines())) for sid in SLOW_SIDS]
                     assert all(len(ticks) == 2 for ticks in events), events
                     # Other lifecycle writes remain barriers, so admission need
-                    # not start all six together; independent EOF waits must overlap.
+                    # not start all four together; independent EOF waits must overlap.
                     ordered = sorted(events, key=lambda ticks: ticks[0])
                     assert ordered[1][0] < ordered[0][1], events
-                    assert elapsed < 12, elapsed  # Serial escalation requires at least 8 * 2.4 seconds.
+                    assert elapsed < 16, elapsed  # Serial escalation requires at least 8 * 2.4 seconds.
                     expect(bulk).to_be_disabled()
                     expect(notice).to_be_hidden()
                     expect(page.locator("#side-stop-details")).to_be_hidden()
@@ -321,7 +327,7 @@ def main():
                     expect(bulk).to_have_text("停止")
                     context.remove_listener("request", on_stop_request)
                     context.remove_listener("response", on_stop_response)
-                    print(f"PASS parallel stop: 8 real hosts in {elapsed:.2f}s, peak 6 requests, overlapping EOF waits, inline progress", flush=True)
+                    print(f"PASS parallel stop: 8 real hosts in {elapsed:.2f}s, configured peak 4 requests, overlapping EOF waits, inline progress", flush=True)
                     page.locator("#side-pick-cancel").click()
 
                     # Two actual pages stopping the same instance must not
