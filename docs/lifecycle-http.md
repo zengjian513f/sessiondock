@@ -15,6 +15,14 @@ list must not override a newer selection or the mobile list view. Restoration
 uses the existing pending opener, including its saved terminal choice and
 confirmed native-binding transition.
 
+A partial hub terminal list is authoritative only for nodes that answered.
+For failed nodes the page retains its known receipts and console identities,
+including a create receipt newer than the hub cache. Missing rows or saved
+drafts on those nodes mean uncertain status, not exit or deletion. Confirmed
+exit/failure remains final; a successful later list replaces retained rows.
+`tests/hub_pending_state_browser.py` covers creation during a node outage,
+draft preservation across reload, recovery, and a subsequent confirmed exit.
+
 ## Explicit configuration and startup
 
 Set `SESSIONDOCK_LIFECYCLE_DIR` to an existing private receipt directory and
