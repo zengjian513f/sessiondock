@@ -213,6 +213,82 @@ def check_page(page, uid, data, server, width):
     assert page.evaluate("[S.sel, S.agent]") == [B, None]
     opened(page, B)
 
+    # A caret changes only its own visible branch. Nested folds preserve the
+    # selected descendant, ancestor counts and unrelated row/heading elements.
+    to_list(page)
+    page.evaluate("""async () => {
+      // Initial details add cursor anchors/warnings to list summaries. Publish
+      // that real metadata change before checking an unchanged repeated open.
+      await syncSession(S.sel, S.agent);
+      renderSide();
+    }""")
+    page.locator(f'#side .item[data-uid="{C}"]').click()
+    opened(page, C)
+    to_list(page)
+    page.evaluate("""async () => {
+      // The actual repeated click above reconciles cached details. Exact
+      // no-op metadata must preserve the already published tree snapshot.
+      await syncSession(S.sel, S.agent);
+      window.__nestCalls = {render: 0, group: 0};
+      window.__nestOutside = [];
+      window.__nestInside = false;
+      window.__nestRenderSide = renderSide;
+      window.__nestGroupBy = groupBy;
+      window.__nestToggle = toggleNestFold;
+      toggleNestFold = function(...args) {
+        __nestInside = true;
+        try { return __nestToggle(...args); } finally { __nestInside = false; }
+      };
+      // Cached-session synchronization and periodic list refreshes may finish
+      // between clicks. Count only work performed by the actual caret handler.
+      renderSide = function(...args) {
+        if (__nestInside) __nestCalls.render++;
+        else __nestOutside.push(new Error().stack);
+        return __nestRenderSide(...args);
+      };
+      groupBy = function(...args) {
+        if (__nestInside) __nestCalls.group++;
+        return __nestGroupBy(...args);
+      };
+    }""")
+    page.evaluate("""uid => {
+      window.__unrelatedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
+      window.__unrelatedNestHead = __unrelatedNestRow.closest('.group').querySelector('.ghead');
+    }""", E)
+    a_caret = page.locator(f'#side .item[data-uid="{A}"] .nest-caret')
+    b_caret = page.locator(f'#side .item[data-uid="{B}"] .nest-caret')
+    b_caret.click()
+    assert page.locator(f'#side .item[data-uid="{C}"]').count() == 0
+    assert "3 项" in a_caret.get_attribute('title')
+    assert page.locator(f'#side .item[data-uid="{A}"]').locator('..').locator('..').locator('.gcount').text_content() == '3'
+    a_caret.click()
+    assert page.locator(f'#side .item[data-uid="{B}"]').count() == 0
+    a_caret.click()
+    assert b_caret.get_attribute('aria-expanded') == 'false'
+    assert page.locator(f'#side .item[data-uid="{C}"]').count() == 0
+    b_caret.click()
+    assert "4 项" in a_caret.get_attribute('title')
+    assert 'sel' in page.locator(f'#side .item[data-uid="{C}"]').get_attribute('class').split()
+    assert page.evaluate('({row: __unrelatedNestRow.isConnected, head: __unrelatedNestHead.isConnected})') == {'row': True, 'head': True}
+    assert page.evaluate('__nestCalls') == {'render': 0, 'group': 0}, page.evaluate('({calls: __nestCalls, outside: __nestOutside})')
+    # Subsequent full polling must recognize rows inserted by the local path.
+    page.evaluate("""uid => {
+      window.__unfoldedNestRow = document.querySelector(`.item[data-uid="${uid}"]`);
+      renderSide = __nestRenderSide; groupBy = __nestGroupBy; toggleNestFold = __nestToggle;
+      renderSide();
+    }""", C)
+    assert page.evaluate('__unfoldedNestRow.isConnected')
+    page.evaluate('setPicking(true)')
+    b_caret.click()
+    group_pick = page.locator(f'#side .item[data-uid="{A}"]').locator('..').locator('..').locator('.ghead-pick')
+    group_pick.click()
+    assert C not in page.evaluate('[...pickedSessions]')
+    b_caret.click()
+    assert group_pick.evaluate('(node) => node.indeterminate')
+    group_pick.click()
+    assert C in page.evaluate('[...pickedSessions]')
+    page.locator('#side-pick-cancel').click()
+
     # Caret: fold A's whole subtree (4 items), persisted across a reload; click again to unfold.
     to_list(page)
     caret = page.locator(f'#side .item[data-uid="{A}"] .nest-caret')
@@ -237,9 +313,14 @@ def check_page(page, uid, data, server, width):
     assert page.evaluate(f"document.querySelector('#side .item[data-uid=\"{C}\"]').__mark") == 1
     assert [(r["key"], r["depth"]) for r in rows()] == [
         (A, 0), (B, 1), (C, 2), (A + "#y", 1), (A + "#x", 1), (D, 0), (E, 0)]
+    # Refresh while the branch is folded, then reveal the latest metadata.
+    page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
     data.put("nest-grandchild-c", "codex", grandchild_rows("Grandchild C"), [])
     pin_grandchild(data)
     poll(page, server, 'S.sessions.some(s => s.title === "Grandchild C")')
+    assert page.locator(f'#side .item[data-uid="{C}"]').count() == 0
+    page.locator(f'#side .item[data-uid="{B}"] .nest-caret').click()
+    assert page.locator(f'#side .item[data-uid="{C}"] .t').text_content() == 'Grandchild C'
 
     # compact/continue keeps only the newest session of the chain: the old file's row is hidden
     # (its spawned_by-recorded continuation is not its child), opening the old uid follows to the new one.
