@@ -362,6 +362,35 @@ impl ViewSnapshot {
         message_batch(self, query, None, None, None)
     }
 
+    /// Same append selection as messages, without serializing message bodies or
+    /// issuing media/file grants for conversations the browser has not opened.
+    pub(crate) fn unread_summary(&self, query: &MessageQuery) -> Result<Value, SessionError> {
+        validate_message_query(query)?;
+        let selection = select_batch(self, query, None)?;
+        let incoming = selection
+            .selected
+            .iter()
+            .filter(|selected| {
+                let message = &selected.event.message;
+                message["counted"] != false
+                    && matches!(
+                        message["role"].as_str(),
+                        Some(
+                            "assistant"
+                                | "assistant·subagent"
+                                | "thinking"
+                                | "tool"
+                                | "tool_result"
+                                | "question"
+                        )
+                    )
+            })
+            .count();
+        Ok(json!({"reset": selection.reset, "start": selection.start,
+            "end": self.view.parsed.committed, "version": {"head": self.head},
+            "anchor": self.anchor, "incoming": incoming}))
+    }
+
     /// HTTP-only media projection. Select the validated branch/window first;
     /// search and other text consumers never decode/register image payloads.
     /// Run on the same bounded blocking reader as ordinary message encoding.

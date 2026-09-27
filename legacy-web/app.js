@@ -905,16 +905,27 @@ function timelineDirectoryColors(rows) {
 
 /** Count directories, not sessions: a busy project must not change which parts
  *  identify a path. Keep the full pool even while filtering the sidebar. */
+let timelinePlanCache = {paths: new Set(), plans: new Map()};
 function timelinePathPlans(rows) {
-  const paths = [...new Set(rows.map(s => timelinePath(s.cwd)))];
+  const pathSet = new Set(rows.map(s => timelinePath(s.cwd)));
+  if (pathSet.size === timelinePlanCache.paths.size
+      && [...pathSet].every(path => timelinePlanCache.paths.has(path))) return timelinePlanCache.plans;
+  const paths = [...pathSet];
   const frequency = new Map(), peers = new Map();
   for (const path of paths) {
     const parts = path.split('/'), leaf = parts.at(-1);
     for (const part of new Set(parts)) frequency.set(part, (frequency.get(part) || 0) + 1);
-    if (!peers.has(leaf)) peers.set(leaf, []);
-    peers.get(leaf).push(path);
+    // Any matching abbreviation must contain every literal component. Index
+    // those components so same-basename temporary directories do not require
+    // an all-pairs regex scan (their distinguishing component is often unique).
+    if (!peers.has(leaf)) peers.set(leaf, new Map());
+    const components = peers.get(leaf);
+    for (const part of new Set(parts)) {
+      if (!components.has(part)) components.set(part, new Set());
+      components.get(part).add(path);
+    }
   }
-  return new Map(paths.map(path => {
+  const plans = new Map(paths.map(path => {
     const parts = path === '/' ? ['/'] : path.split('/');
     const leaf = parts.at(-1), hidden = new Set(), labels = [path];
     // Repeated ancestors carry less information. Ties favor keeping the deeper
@@ -927,9 +938,12 @@ function timelinePathPlans(rows) {
         ? (hidden.has(j - 1) ? [] : [null]) : [part]);
       // An ellipsis represents whole directories. If it could also stand for
       // another path with the same basename, retain the distinguishing ancestor.
-      const pattern = new RegExp('^' + tokens.map(token => token === null
-        ? '(?:[^/]+/)*[^/]+' : token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/') + '$');
-      if ((peers.get(leaf) || []).some(other => other !== path && pattern.test(other))) {
+      const components = peers.get(leaf);
+      const candidates = tokens.filter(token => token !== null)
+        .map(token => components.get(token)).reduce((a, b) => a.size <= b.size ? a : b);
+      const pattern = candidates.size > 1 ? new RegExp('^' + tokens.map(token => token === null
+        ? '(?:[^/]+/)*[^/]+' : token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('/') + '$') : null;
+      if (pattern && [...candidates].some(other => other !== path && pattern.test(other))) {
         hidden.delete(i);
         continue;
       }
@@ -938,6 +952,8 @@ function timelinePathPlans(rows) {
     }
     return [path, {leaf, labels}];
   }));
+  timelinePlanCache = {paths: pathSet, plans};
+  return plans;
 }
 
 function timelinePathMarkup(path, leaf) {
@@ -1587,11 +1603,27 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   entry.meta = meta;
   if (!agent) {
     const listed = indexedSessions().byUid.get(uid);
-    // Identical metadata must not invalidate the sidebar's resolved tree.
-    // Compare the complete row, including cursors, sizes and agent fields;
-    // any actual difference still takes the normal replacement/fallback path.
+    // Cursor/size updates do not change membership, ordering, nesting or
+    // filters. Keep the indexed row object used by the resolved sidebar tree;
+    // replace the array normally for every other kind of metadata change.
     if (listed && JSON.stringify(listed) !== JSON.stringify(meta)) {
-      S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
+      const local = Object.keys({...listed, ...meta}).every(field =>
+        field === 'cursor' || field === 'size'
+          || JSON.stringify(listed[field]) === JSON.stringify(meta[field]));
+      if (local) {
+        const sizeChanged = listed.size !== meta.size;
+        for (const field of ['cursor', 'size']) {
+          if (Object.hasOwn(meta, field)) listed[field] = meta[field];
+          else delete listed[field];
+        }
+        if (sizeChanged) {
+          const node = $('#side').querySelector(`.item:not(.agent)[data-uid="${CSS.escape(uid)}"]`);
+          if (node?._nestRow) {
+            node._signature = null;
+            if (!sidebarTextSelectionProtected()) patchSidebarRow(node, node._nestRow, node._highlightKey);
+          }
+        }
+      } else S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
     }
   }
   if (!changed) return;
@@ -2594,15 +2626,71 @@ function seedSidebarCursors(sessions) {
 
 const sidebarSyncing = new Set();
 
+// Batch only uncached background views. Opened views still need their actual
+// messages to keep cached history current. Explicit node routes carry local UIDs.
+const unreadBatches = new Map(), unreadBatchUnsupported = new Set();
+function fetchUnreadSummary(uid, opts) {
+  const node = nodeOf(uid);
+  if (!SessionDockCapabilities.config.unread_batch || unreadBatchUnsupported.has(node))
+    return fetchMessages(uid, opts);
+  return new Promise((resolve, reject) => {
+    let batch = unreadBatches.get(node);
+    if (!batch) {
+      batch = [];
+      unreadBatches.set(node, batch);
+      setTimeout(() => flushUnreadBatch(node, batch), 0);
+    }
+    batch.push({uid, opts, resolve, reject});
+  });
+}
+async function flushUnreadBatch(node, batch) {
+  unreadBatches.delete(node);
+  const path = node ? `api/nodes/${node}/api/sessions/unread` : 'api/sessions/unread';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SYNC_STALL_MS);
+  try {
+    const response = await fetch(appUrl(path), {method: 'POST', signal: controller.signal,
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({views: batch.map(({uid, opts}) => ({
+        uid: node ? uid.replace(`:${node}~`, ':') : uid, agent: opts.agent || '',
+        start: opts.start || 0, head: opts.head || '', anchor: opts.anchor || '',
+      }))})});
+    if ([404, 405, 501].includes(response.status)) {
+      await response.arrayBuffer();
+      unreadBatchUnsupported.add(node); // Old nodes during a rolling upgrade.
+      for (const item of batch) fetchMessages(item.uid, item.opts).then(item.resolve, item.reject);
+      return;
+    }
+    const payload = await response.json();
+    if (!response.ok || !Array.isArray(payload.results) || payload.results.length !== batch.length) {
+      const error = new Error(payload.error || 'Invalid unread summary response');
+      error.status = response.ok ? 502 : response.status;
+      throw error;
+    }
+    payload.results.forEach((data, i) => {
+      if (data.error) {
+        const error = new Error(data.error); error.status = data.status;
+        batch[i].reject(error);
+      } else batch[i].resolve({data, bytes: 0});
+    });
+  } catch (error) {
+    for (const item of batch) item.reject(error);
+  } finally { clearTimeout(timer); }
+}
+
 async function syncSidebarView(row, base, latest, attempt = 0) {
   const key = viewKey(row.uid, row.agent);
   if (sidebarSyncing.has(key)) return;
   sidebarSyncing.add(key);
   try {
-    const {data, bytes} = await fetchMessages(row.uid, {
+    const fetcher = cache.has(key) ? fetchMessages : fetchUnreadSummary;
+    const {data, bytes} = await fetcher(row.uid, {
       agent: row.agent, start: base.end, head: base.head, anchor: base.anchor,
       appendOnly: true,
     });
+    // A user may have opened this view while the summary was in flight. Its
+    // newly loaded cache/checkpoint is authoritative; do not rewind it.
+    if (!data.messages && cache.has(key)) return;
     if (data.reset) {
       cache.delete(key);                    // 历史被回滚/改写，旧缓存已不可信
       S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
@@ -2613,7 +2701,7 @@ async function syncSidebarView(row, base, latest, attempt = 0) {
     if (entry && entry.end === data.start) {
       await applyDiff(row.uid, data, bytes, row.agent);
     } else {
-      const incoming = incomingCount(data.messages);
+      const incoming = data.incoming ?? incomingCount(data.messages);
       if (incoming) addUnread(row.uid, incoming);
       S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
                                      anchor: data.anchor}) || latest);
@@ -4252,7 +4340,6 @@ function renderSide(suppliedList = null) {
       S.closed.has(key) ? S.closed.delete(key) : S.closed.add(key);
       store.set('closed', [...S.closed]);
       renderSide();
-      scheduleTimelineFit();
     };
     const groupBox = head.querySelector('.ghead-pick');
     if (groupBox) {

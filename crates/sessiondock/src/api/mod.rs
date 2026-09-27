@@ -59,6 +59,10 @@ pub fn router() -> Router<AppState> {
         .route("/nodes", get(nodes))
         .route("/sessions", get(read::list))
         .route("/sessions/titles", get(read::titles))
+        .route(
+            "/sessions/unread",
+            post(read::unread).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .route("/messages/{uid}", get(read::messages))
         .route("/messages/{uid}/page", get(read::history_page))
         .route("/messages/{uid}/media-page", get(read::media_page))
