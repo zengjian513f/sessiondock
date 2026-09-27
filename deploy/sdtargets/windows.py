@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import (SSH_BASE_OPTS, ProbeResult, Shell, ShellError, TargetHandler,
-                   VerifyResult, register)
+                   VerifyResult, failed_probe, register)
 
 TEMPLATES = Path(__file__).resolve().parent.parent / "windows"
 BUILD_TIMEOUT = 960.0
@@ -271,7 +271,9 @@ class WindowsNode(TargetHandler):
         try:
             rc, out = self.sh.run("ver", timeout=20)
         except ShellError as e:
-            return ProbeResult(reachable=False, detail=str(e).splitlines()[0])
+            return failed_probe(self.t, e.rc, e.out or str(e))
+        if rc != 0:
+            return failed_probe(self.t, rc, out.strip() or f"probe failed: rc={rc}")
         if rc != 0 or "Windows" not in out:
             return ProbeResult(reachable=False, detail=f"not a Windows host: rc={rc} {out.strip()[:120]}")
         self.service_pids_before = self._tasklist("sessiondock.exe")

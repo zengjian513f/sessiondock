@@ -28,7 +28,8 @@ Per target: probe -> plan -> stage -> backup -> swap -> restart -> verify ->
 write_marker -> prune_backups. Any failure after a successful backup rolls that
 target back (ROLLED_BACK); an unreachable target is SKIPPED; a kind without a
 working handler is UNSUPPORTED; a verified deploy whose marker/prune step failed is
-WARN. The exit code is 1 unless every target is OK (PLANNED for --dry-run).
+WARN. Offline/disabled targets stay SKIPPED and do not fail the command; they
+remain explicitly unmodified in the report. Other unsuccessful outcomes exit 1.
 """
 from __future__ import annotations
 
@@ -50,7 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sdtargets import Artifacts, DeployOptions, ProbeResult, Target, handler_for, load_targets  # noqa: E402
-from sdtargets.base import ShellError  # noqa: E402
+from sdtargets.base import ShellError, failed_probe  # noqa: E402
 import testplan  # noqa: E402
 from deployment_lock import DeploymentLock, repository_lock  # noqa: E402
 
@@ -59,7 +60,7 @@ DEPLOY_DIR = ROOT / "deploy"
 STAGE_ROOT = ROOT / "target" / "deploy"
 DIRTY_SCOPE = ["crates", "legacy-web", "Cargo.toml", "Cargo.lock"]
 WEB_EXCLUDES = ["node_modules", ".DS_Store", "*.swp"]
-GOOD = {"OK", "PLANNED"}
+GOOD = {"OK", "PLANNED", "SKIPPED"}
 COLUMNS = ("target", "kind", "result", "build", "sha256", "ptyhost", "s", "backup")
 PRINT_LOCK = threading.Lock()
 
@@ -425,11 +426,13 @@ def run_push(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path, ech
     h = cls(t, art, opts, log)
     try:
         before = h.probe()
+    except ShellError as e:
+        before = failed_probe(t, e.rc, e.out or str(e))
     except Exception as e:
-        return finish("SKIPPED", f"probe raised {type(e).__name__}: {e}")
+        return finish("FAILED", f"probe raised {type(e).__name__}: {e}")
     h.before = before
     if not before.reachable:
-        return finish("SKIPPED", before.detail or "unreachable")
+        return finish("SKIPPED" if before.offline else "FAILED", before.detail or "probe failed")
     fill(row, "before", before)
     try:
         row["plan"] = h.plan()
@@ -484,9 +487,12 @@ def run_rollback(t: Target, art: Artifacts, opts: DeployOptions, log_path: Path,
         return finish("UNSUPPORTED", f"{type(e).__name__}: {e}")
     h = cls(t, art, opts, log)
     try:
-        before = h.probe()
+        try:
+            before = h.probe()
+        except ShellError as e:
+            before = failed_probe(t, e.rc, e.out or str(e))
         if not before.reachable:
-            return finish("SKIPPED", before.detail or "unreachable")
+            return finish("SKIPPED" if before.offline else "FAILED", before.detail or "probe failed")
         fill(row, "before", before)
         if backup is None:
             found = h.list_backups()
@@ -680,7 +686,7 @@ def cmd_rollback(args) -> int:
                    chosen, args.parallel)
     print_table(rows, {t.name: t for t in targets})
     write_report(stage, "rollback", rows, args)
-    return 0 if all(r["result"] == "OK" for r in rows) else 1
+    return 0 if all(r["result"] in {"OK", "SKIPPED"} for r in rows) else 1
 
 
 def main(argv: list[str] | None = None) -> int:

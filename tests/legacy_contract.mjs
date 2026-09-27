@@ -331,10 +331,17 @@ test('the audit flush drains its response body', () => {
 });
 
 test('pending terminals attach before any synchronous WebGL initialization', () => {
-  const context = contextWithCapabilities(disabled, {T: {uid: 'tmux:pane'}});
+  let zoom = '1';
+  const context = contextWithCapabilities(disabled, {
+    T: {uid: 'tmux:pane'}, getComputedStyle: () => ({zoom}),
+  });
   const shouldUse = loadFunction(context, 'shouldUseTermWebgl', read('term.js'));
   assert.equal(shouldUse(), false);
   assert.equal(shouldUse('codex:native'), true);
+  zoom = '0.85';
+  assert.equal(shouldUse('codex:native'), false, 'scaled xterm uses DOM rendering');
+  zoom = '1.2';
+  assert.equal(shouldUse('codex:native'), false);
 });
 
 test('Codex side-thread detection reads only the live screen footer', () => {
@@ -1499,7 +1506,7 @@ test('SSH conversation shows a simple composer without leaving the PTY', () => {
 });
 
 
-test('an ended pending session hides the composer', () => {
+test('ended shells hide the composer while unbound AI launches retain drafts for restart', () => {
   const box = {classList: {hidden: false, toggle(name, on) { if (name === 'hidden') this.hidden = on; }}};
   const right = {classList: {toggle() {}}};
   const drafts = [];
@@ -1530,9 +1537,15 @@ test('an ended pending session hides the composer', () => {
 
   result = paint('tmux:claude', [{name: 'claude', source: 'claude', state: 'exited', running: false}],
     {takenOver: null});
-  assert.equal(result.hidden, true);
+  assert.equal(result.hidden, false);
+  assert.deepEqual(result.drafts, ['tmux:claude']);
 
   result = paint('tmux:codex', [{name: 'codex', source: 'codex', state: 'failed'}], {takenOver: null});
+  assert.equal(result.hidden, false);
+  assert.deepEqual(result.drafts, ['tmux:codex']);
+
+  result = paint('tmux:bound', [{name: 'bound', source: 'codex', state: 'exited',
+    binding: {state: 'confirmed'}}], {takenOver: null});
   assert.equal(result.hidden, true);
 
   result = paint('tmux:kept', [], {takenOver: null, pendingTmuxSessions: () => [
@@ -1721,6 +1734,7 @@ test('send buttons keep the idle label and mark aria-busy instead of growing tex
 
 
 test('stale build disables composer and report send', () => {
+  const audit = [];
   const buttons = {
     '#csend': {disabled: false},
     '#bug-report-go': {disabled: false},
@@ -1729,6 +1743,7 @@ test('stale build disables composer and report send', () => {
   };
   const context = vm.createContext({
     staleBuildShown: false,
+    browserAuditEvent: (kind, detail) => audit.push([kind, detail.server_build]),
     document: {body: {classList: {add() {}}, appendChild() {}}},
     el: () => ({setAttribute() {}, innerHTML: '', appendChild() {}, type: '', title: '', onclick: null}),
     $: sel => buttons[sel] || null,
@@ -1739,6 +1754,9 @@ test('stale build disables composer and report send', () => {
   assert.equal(buttons['#bug-report-go'].disabled, true);
   assert.equal(buttons['#cadd'].disabled, true);
   assert.equal(buttons['#bug-report-add'].disabled, true);
+  assert.deepEqual(audit, [['build.stale', 'abc']]);
+  context.markStaleBuild('abc');
+  assert.equal(audit.length, 1, 'only one update notice and audit event');
 });
 
 

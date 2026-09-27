@@ -21,7 +21,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .base import ProbeResult, ShellError, TargetHandler, VerifyResult, register
+from .base import ProbeResult, ShellError, TargetHandler, VerifyResult, failed_probe, register
 
 BUILD_TIMEOUT = 900.0
 TEST_TIMEOUT = 1800.0
@@ -155,7 +155,9 @@ class MacOSNode(TargetHandler):
         try:
             rc, out = self.sh.run("uname -s", timeout=20)
         except ShellError as e:
-            return ProbeResult(reachable=False, detail=str(e).splitlines()[0])
+            return failed_probe(self.t, e.rc, e.out or str(e))
+        if rc != 0:
+            return failed_probe(self.t, rc, out.strip() or f"probe failed: rc={rc}")
         if rc != 0 or "Darwin" not in out:
             return ProbeResult(reachable=False, detail=f"not a macOS host: rc={rc} {out.strip()[:120]}")
         active, pid = self._service()
