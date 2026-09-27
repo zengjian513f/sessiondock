@@ -39,6 +39,15 @@ def run(browser, root, config):
         page = context.new_page()
         attempts, errors = [], []
         fail_replies = 1
+        stalled_reads = []
+
+        def stall_draft(route):
+            # Leave the first GET unanswered until the real browser timeout.
+            # Recovery uses the real Hub/node, not a fabricated draft response.
+            if not stalled_reads:
+                stalled_reads.append(route)
+                return
+            route.continue_()
 
         def upload(route):
             nonlocal fail_replies
@@ -58,12 +67,35 @@ def run(browser, root, config):
                 route.fulfill(response=response)
 
         context.route('**/api/session/conversation/attachment?*', upload)
+        page.route('**/api/session/conversation?*', stall_draft)
         page.on('pageerror', lambda error: errors.append(str(error)))
         try:
             page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
+            page.evaluate('''() => {
+                window.draftReadAudit = [];
+                const original = browserAuditEvent;
+                browserAuditEvent = (event, data, content, fields) => {
+                    if (data?.url?.startsWith('api/session/conversation?'))
+                        draftReadAudit.push({event, data, content, fields});
+                    return original(event, data, content, fields);
+                };
+            }''')
             open_report(page)
-            page.wait_for_function('!bugReportDraftObject().loading')
+            page.wait_for_function('bugReportDraftObject().loadFailed', timeout=16000)
+            stalled_reads[0].abort()
+            expect(page.locator('#bug-report-items')).to_contain_text('草稿读取超时')
             page.fill('#bug-report-description', 'Recover report attachment reply')
+            page.wait_for_function('!bugReportDraftObject().loadFailed && !bugReportDraftObject().storageError && bugReportDraftObject().savedVersion === bugReportDraftObject().editVersion')
+            expect(page.locator('#bug-report-description')).to_have_value('Recover report attachment reply')
+            audit = page.evaluate('draftReadAudit')
+            failure = next(e for e in audit if e['event'] == 'http.request.failed')
+            assert failure['data']['phase'] == 'headers' and failure['data']['status'] is None, failure
+            assert failure['data']['timeout_ms'] == 12000 and 'TimeoutError' in failure['data']['error'], failure
+            assert any(e['event'] == 'http.response.received' for e in audit), audit
+            assert all(e['content'] is None for e in audit), audit
+            assert failure['fields']['traceId'] and failure['fields']['uid'].startswith('report:'), failure
+            assert not list((root / 'reports').glob('BUG-*'))
+            print('PASS draft read timeout: audited phase, retained input, automatic recovery without worker creation', flush=True)
             # Same size class as the reported phone image; valid PNG with padding.
             payload = PNG + b'\0' * (831 * 1024 - len(PNG))
             page.locator('#bug-report-file').set_input_files(
