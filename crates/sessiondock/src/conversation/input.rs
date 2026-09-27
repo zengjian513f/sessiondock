@@ -150,7 +150,11 @@ where
 
 /// A PTY write ack does not mean the CLI has consumed a bracketed paste.
 /// Wait for the visible Claude/Codex draft to change, show the end of this
-/// prompt, and remain unchanged for 200 ms before allowing Enter.
+/// prompt, and remain unchanged for 200 ms before allowing Enter. Like
+/// Python's `wait_paste_consumed`, this wait is best effort: when the CLI
+/// repaints slowly the deadline still lets Enter through. Refusing it left the
+/// pasted draft in the CLI and made every retry of the same submission fail
+/// (BUG-20260927-112827-5aa96e). Only a menu vetoes Enter.
 pub(super) async fn wait_for_pasted_editor<F, Fut>(
     source: &str,
     prompt: &str,
@@ -215,11 +219,7 @@ where
             None => stable = None,
         }
         if tokio::time::Instant::now() >= deadline {
-            return Err(Failure::new(
-                409,
-                "cli_pasting",
-                "未确认粘贴后的编辑区稳定；未发送回车，输入已保留",
-            ));
+            return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -321,6 +321,25 @@ mod tests {
         .await
         .unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn slow_paste_repaint_still_allows_enter_but_menu_does_not() {
+        use std::future::ready;
+        let rule = "─".repeat(40);
+        let before = frame(&format!("welcome\n{rule}\n❯\u{a0}\n{rule}\n"), (2, 2));
+        // The CLI has not repainted the paste yet (BUG-20260927-112827-5aa96e).
+        wait_for_pasted_editor("claude", "继续", &before, || ready(Ok(before.clone())))
+            .await
+            .unwrap();
+        let menu = frame(
+            "Trust this folder?\n❯ 1. Yes, proceed\n  2. No, exit\n\nEnter to confirm · Esc to cancel",
+            (0, 1),
+        );
+        let error = wait_for_pasted_editor("claude", "继续", &before, || ready(Ok(menu.clone())))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "cli_question");
     }
 
     #[test]

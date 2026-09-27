@@ -183,7 +183,8 @@ def main():
                  "resume_args": ["--resume", "{sid}"],
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
-                         "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace")}}]}))
+                         "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace"),
+                         "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:
@@ -292,6 +293,18 @@ def main():
                     send('first busy input')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
                     page.wait_for_function("() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('first busy input')).length === 2")
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # A CLI that repaints the paste after SEND's 3 s wait still
+                    # gets Enter, like Python; the draft must not be stranded in
+                    # the CLI editor behind a refusal (BUG-20260927-112827-5aa96e).
+                    (root/'paste-delay').write_text('3500')
+                    dialog_count=len(dialogs)
+                    send('继续')
+                    (root/'paste-delay').unlink()
+                    assert len(dialogs)==dialog_count,dialogs
+                    wait_history(page,'继续')
+                    users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
+                    assert users.count('继续')==1,users
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     holder_context=browser.new_context(service_workers='block')
                     holder=watch(holder_context)
