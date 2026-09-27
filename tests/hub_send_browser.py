@@ -139,7 +139,9 @@ def check_browser(browser, root, config):
                 p._sessiondock_responses = []
                 p.on("pageerror", lambda error: errors.append(str(error)))
                 p.on("dialog", lambda dialog: (p._sessiondock_dialogs.append(dialog.message),
-                     dialog.accept() if dialog.type == "beforeunload" else dialog.dismiss()))
+                     dialog.accept() if dialog.type == "beforeunload"
+                     or (dialog.type == "confirm" and getattr(p, "_sessiondock_claiming", False))
+                     else dialog.dismiss()))
                 p.on("response", lambda response: p._sessiondock_responses.append(
                     (response.status, urlsplit(response.url).path))
                     if "/api/" in response.url else None)
@@ -207,6 +209,48 @@ def check_browser(browser, root, config):
             assert response.status == 200, response.text()
             wait_history(page, "OK: after refresh hub send")
             print("PASS desktop: different hub/node builds send and survive refresh", flush=True)
+
+            # BUG-20260927-034648-a00708: a cached collapsed view must not
+            # reuse the input lease of a disconnected terminal for Esc.
+            for disconnect in ("background", "close"):
+                # A just-reloaded fixture can leave an unbound reservation;
+                # explicitly accept takeover only while opening this console.
+                page._sessiondock_claiming = True
+                if not page.evaluate("termPaneRenderable(currentTermViewObject())"):
+                    page.locator("#a-term").click()
+                try:
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN", timeout=10000)
+                except Exception:
+                    print("Esc fixture open diagnostics", page.evaluate("""() => ({name:T.name, mode:T.mode,
+                        views:[...T.views.values()].map(v=>({name:v.name,ws:v.ws?.readyState,revoked:v.revoked})),
+                        errors:[...ConsoleUI.errors],pane:document.querySelector('#termpane').className})"""),
+                        page._sessiondock_dialogs, page._sessiondock_responses[-10:], flush=True)
+                    raise
+                page.wait_for_function("!!T.views.get(T.name)?.inputLease?.token")
+                page._sessiondock_claiming = False
+                before_dialogs = len(page._sessiondock_dialogs)
+                page.locator("#a-term").click()
+                expect(page.locator("#composer")).to_be_visible()
+                page.locator("#cinput").fill("keep draft while cancelling")
+                if disconnect == "background":
+                    page.evaluate("backgroundTerm(); foregroundTerm()")
+                else:
+                    page.evaluate("T.ws.close()")
+                page.wait_for_function("!T.views.get(T.name)?.ws")
+                with page.expect_response(lambda r: urlsplit(r.url).path == "/api/term/send") as escaped:
+                    page.locator("#cesc").click()
+                response = escaped.value
+                assert response.status == 200, (disconnect, response.text())
+                body = response.request.post_data_json
+                assert body["token"] == "" and body["instance_id"] == receipt["instance_id"], body
+                assert body["keys"] == ["Escape"] and body["name"].startswith(node.nid + "~"), body
+                assert response.json()["acknowledged"] and response.json()["bytes"] == 1
+                assert not page.evaluate("T.views.get(T.name).inputLease")
+                assert page.evaluate("termSendLease(T.name)") == {}
+                expect(page.locator("#cinput")).to_have_value("keep draft while cancelling")
+                assert len(page._sessiondock_dialogs) == before_dialogs, page._sessiondock_dialogs
+                page.locator("#cinput").fill("")
+                print(f"PASS Esc: {disconnect} releases cached lease; hub forwards one acknowledged byte", flush=True)
 
             # A real new hub asset snapshot must still stop the old page.
             page.locator("#cinput").fill("keep draft across upgrade")
