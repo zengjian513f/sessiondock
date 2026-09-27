@@ -5006,11 +5006,24 @@ async function reconcileComposerSubmission(uid) {
   adoptServerDraft(draft,result.draft);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
+function scheduleComposerInputChecks(poll) {
+  setInterval(poll, 1500);
+  // Parent layout can hide the composer without changing its own classes.
+  // Resume immediately on terminal/split toggles that reveal the input.
+  let wasVisible = false;
+  const visibility = new ResizeObserver(() => {
+    const visible = !!$('#composer').getClientRects().length;
+    const resumed = visible && !wasVisible;
+    wasVisible = visible;
+    if (resumed) poll();
+  });
+  visibility.observe($('#composer'));
+}
 let composerInputProbeBusy=false;
-setInterval(async () => {
+scheduleComposerInputChecks(async () => {
   const uid=composerUid;
   if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
-      || $('#composer').classList.contains('hidden') || !takenOver(uid)) return;
+      || !$('#composer').getClientRects().length || !takenOver(uid)) return;
   composerInputProbeBusy=true;
   try {
     const data = await probeComposerInput(uid);
@@ -5020,7 +5033,7 @@ setInterval(async () => {
     try {await reconcileComposerSubmission(uid);} catch { /* A missing/in-progress receipt keeps the editor intact. */ }
     composerInputProbeBusy=false;
   }
-},1500);
+});
 
 function renderComposerItems() {
   const box = $('#compose-items');
