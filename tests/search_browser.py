@@ -7,6 +7,7 @@ an isolated loopback port. Tests drive the existing search box and flag buttons.
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -196,6 +197,66 @@ def main():
                 hits(2)
                 expect(page.locator("#stat")).not_to_have_class("err")
 
+                # Proxy-buffered NDJSON must not rebuild the entire sidebar
+                # for every match record (BUG-20260927-070141-5ebf14).
+                result = page.request.get(base + "/api/search?q=Needle").json()
+                burst = [
+                    {"type": "matches", "results": result["results"]},
+                    {"type": "progress", "done": 1, "total": 2},
+                ] * 1000
+                payload = "\n".join(json.dumps(event) for event in [
+                    *burst, {"type": "result", "data": result},
+                ]) + "\n"
+                page.route("**/api/search?**", lambda route: route.fulfill(
+                    status=200, content_type="application/x-ndjson", body=payload))
+                page.evaluate("""() => {
+                    window.searchPaints = 0;
+                    const original = showSearchMatches;
+                    showSearchMatches = rows => { window.searchPaints++; original(rows); };
+                }""")
+                search("Needle")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(2)
+                paints = page.evaluate("window.searchPaints")
+                assert 1 <= paints < 20, paints
+                page.unroute("**/api/search?**")
+
+                # Keep a synthetic stream open while the user hits Backspace.
+                # Its late result must not restore the canceled search.
+                page.evaluate(r"""result => {
+                    const original = window.fetch;
+                    window.fetch = (url, opts) => {
+                        if (!String(url).includes('api/search?')) return original(url, opts);
+                        const encoder = new TextEncoder();
+                        window.lateSearchResult = null;
+                        return Promise.resolve(new Response(new ReadableStream({
+                            start(controller) {
+                                controller.enqueue(encoder.encode(JSON.stringify({
+                                    type: 'matches', results: result.results
+                                }) + '\n'));
+                                window.lateSearchResult = () => {
+                                    controller.enqueue(encoder.encode(JSON.stringify({
+                                        type: 'result', data: result
+                                    }) + '\n'));
+                                    controller.close();
+                                };
+                            }
+                        }), {headers: {'Content-Type': 'application/x-ndjson'}}));
+                    };
+                    window.restoreSearchFetch = () => { window.fetch = original; };
+                }""", result)
+                page.locator("#q").fill("Needle")
+                page.locator("#q").press("Enter")
+                expect(page.locator("#side-search-count")).to_have_text("2 条")
+                page.locator("#q").press("Backspace")
+                expect(page.locator("#q")).to_have_value("Needl")
+                expect(page.locator("#search-progress")).not_to_be_visible()
+                expect(page.locator("#side-search-label")).to_have_text("筛选结果")
+                page.evaluate("window.lateSearchResult(); window.restoreSearchFetch()")
+                page.wait_for_timeout(100)
+                expect(page.locator("#side-search-label")).to_have_text("筛选结果")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(0)
+                print(f"PASS buffered search: 2000 NDJSON records, {paints} result paints; Backspace cancels late results")
+
                 # Reloading the page clears the search;
                 # the next search still uses the independently namespaced flags.
                 page.reload(wait_until="networkidle")
@@ -207,6 +268,8 @@ def main():
                 for width in (1280, 390):
                     page.set_viewport_size({'width': width, 'height': 700})
                     page.reload(wait_until='networkidle')
+                    if width < 600 and page.locator('.mobile-back').is_visible():
+                        page.locator('.mobile-back').click()
                     search('Needle')
                     banner = page.locator('#side-search-state')
                     expect(banner).to_be_visible()
