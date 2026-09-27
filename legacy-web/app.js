@@ -8131,22 +8131,56 @@ async function fetchSearch(params, signal) {
   }
   const reader = r.body.getReader(), dec = new TextDecoder();
   let buf = '', result = null, error = null;
-  for (;;) {
-    const { done, value } = await reader.read();
-    buf += dec.decode(value || new Uint8Array(), { stream: !done });
-    const lines = buf.split('\n');
-    buf = done ? '' : lines.pop();
-    for (const line of lines) {
-      if (!line) continue;
-      const event = JSON.parse(line);
-      if (signal.aborted) return { ok: false, data: {} };
-      if (event.type === 'progress') searchProgress(event.done, event.total, event.nodes,
-        event.total_known ?? Number.isFinite(event.total));
-      else if (event.type === 'matches') showSearchMatches(event.results || []);
-      else if (event.type === 'result') result = event.data;
-      else if (event.type === 'error') error = event.error;
+  let pendingRows = [], progress = null, paintTimer = null;
+  const paint = () => {
+    paintTimer = null;
+    if (signal.aborted) return;
+    if (progress) {
+      searchProgress(progress.done, progress.total, progress.nodes,
+        progress.total_known ?? Number.isFinite(progress.total));
+      progress = null;
     }
-    if (done) break;
+    if (pendingRows.length) {
+      showSearchMatches(pendingRows);
+      pendingRows = [];
+    }
+  };
+  const schedulePaint = () => {
+    // A proxy may coalesce hundreds of NDJSON records into one read. Paint
+    // the accumulated results once, not the entire sidebar for every record.
+    if (paintTimer === null) paintTimer = setTimeout(paint, 50);
+  };
+  let sliceStart = performance.now();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) return { ok: false, data: {} };
+      buf += dec.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buf.split('\n');
+      buf = done ? '' : lines.pop();
+      for (const line of lines) {
+        // Awaiting an already buffered read only yields to microtasks. Give
+        // keyboard input a task turn so Backspace/Escape can actually abort.
+        if (performance.now() - sliceStart >= 8) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          sliceStart = performance.now();
+        }
+        if (signal.aborted) return { ok: false, data: {} };
+        if (!line) continue;
+        const event = JSON.parse(line);
+        if (event.type === 'progress') { progress = event; schedulePaint(); }
+        else if (event.type === 'matches') {
+          for (const row of event.results || []) pendingRows.push(row);
+          schedulePaint();
+        } else if (event.type === 'result') result = event.data;
+        else if (event.type === 'error') error = event.error;
+      }
+      if (done) break;
+    }
+  } finally {
+    clearTimeout(paintTimer);
+    paint();
+    reader.releaseLock();
   }
   return error ? { ok: false, data: { error } }
     : result ? { ok: true, data: result }
