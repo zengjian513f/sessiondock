@@ -229,6 +229,13 @@ server's refusal (unmanaged/external explanation, unknown host state) is
 shown inline in `#session-stop-notice` instead of a bare alert, and a
 confirmed stop drops the UID from `S.live`.
 
+The sidebar multi-select toolbar also offers “停止”, with the count of selected
+stoppable sessions. One confirmation starts sequential stop requests; ended
+selections are skipped, and failures or uncertain outcomes are reported without
+preventing the remaining requests. Pending launches use their existing
+`term/kill` receipt and instance identity (plus node routing on the Hub).
+Stopping preserves records, drafts and selection for a later explicit delete.
+
 Validation: `cargo test -p sessiondock --test session_stop --locked`
 (temporary ptyhost + fake CLIs: graceful stop with `/api/live` exited,
 `already_exited`, replay, request conflict, external stop, 400/404, and a
