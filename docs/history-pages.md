@@ -63,7 +63,9 @@ file, never a full parse — with the persisted metadata applied and re-signed:
 - **Continuations.** A Claude main row whose tail holds a `continued-in`
   record carries `continued_in` = the uid of the listed Claude session with
   that sid (same source, this index; a self-reference or an unlisted sid
-  gives no field).
+  gives no field). An older Codex rollout generation (see *Codex rollout
+  rotation*) carries `continued_in` = the latest generation's uid once that
+  row's chain validates, so the list shows one row per native thread.
 - **List cursor rule.** A supported row (and each supported `agent_items`
   entry) carries `cursor: {end, head}` — the offset after the last complete
   JSONL line and the `rs-m2-1` hash of the committed prefix's first 4 KiB,
@@ -165,7 +167,9 @@ identity. The inherited prefix is resolved among older indexed files using the
 declared byte offset and the ordinal of the record immediately before it,
 excluding the requesting file. A genuinely
 ambiguous prefix still reports 409. The old tail beyond the cutoff is excluded.
-Both physical rows remain readable; agent ownership, point title lookup and
+Both physical rows remain readable by uid, but older generations carry
+`continued_in` naming the latest one, so the list shows a single row (the
+frontend's continuation hiding); agent ownership, point title lookup and
 runtime resume identity use the latest generation. Existing UID bindings remain
 aliases for that same native session once all generation chains validate.
 This is an intentional extension beyond the frozen Python oracle for a newer
