@@ -160,6 +160,36 @@ once; a lost response returns the stored result, without another bundle or launc
 A crash with an incomplete capture returns `report_result_unknown` and retains
 input for inspection.
 
+Draft GETs have a 12-second deadline covering headers and body. A timeout keeps
+the editor's input, explains that recovery retries automatically, and records
+the request trace, phase, HTTP status (if received), timing and connectivity in
+browser audit. Draft contents are not copied into those audit events. Recovery
+reads/saves the draft; it never creates a worker or triggers SEND.
+
+### Incident BUG-20260927-020547-dd0ff9
+
+The first observed transport failure began with the input-status request at
+02:04:15.597 UTC, which exceeded its five-second deadline. Repeated status
+checks then timed out in both the headers and body phases; message refreshes
+and the report draft read also failed. The screenshot's raw `signal is aborted
+without reason` came from the draft GET's local deadline. That GET previously
+had no request audit, preventing precise correlation of its failure phase.
+
+The native session completed at 01:02:53 UTC, matching the captured terminal
+and displayed answer. No new delivery for the selected session was found.
+Proxy access logs showed cancelled requests (499) and an empty 200 response
+from the affected Windows client during the failure window, while other
+clients continued receiving responses. Requests subsequently recovered and
+the report was submitted successfully. These observations establish an
+interrupted client request path, but do not distinguish browser, client network
+or intermediary transport failure; they do not establish a node outage.
+
+The fix makes the draft timeout explicit and adds missing transport evidence.
+It does not claim to fix the unlocalized interruption. The Hub/node Chromium
+acceptance test stalls the initial draft read through its real deadline, types
+after failure, verifies automatic recovery without creating a worker, and
+then submits once with exact attachment bytes.
+
 ## The bundle
 
 `<dir>/BUG-YYYYMMDD-HHMMSS-hex6/` (`0700`, files `0600`, every write is a
