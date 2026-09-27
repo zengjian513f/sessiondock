@@ -232,7 +232,8 @@ shown inline in `#session-stop-notice` instead of a bare alert, and a
 confirmed stop drops the UID from `S.live`.
 
 The sidebar multi-select toolbar also offers “停止”, with the count of selected
-stoppable sessions. One confirmation starts up to six concurrent stop requests;
+stoppable sessions. One confirmation starts concurrent stop requests using the
+browser's Settings → Features → stop concurrency preference (default six);
 ended selections are skipped. The button updates after each result as
 “已停止 3/44”; failures and uncertain outcomes do not increment the stopped count
 and appear in expandable details beside the button, without a bulk-stop toast.

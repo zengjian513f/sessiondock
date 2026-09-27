@@ -142,9 +142,17 @@ def check_compact_scale(page):
     assert page.evaluate("getComputedStyle(document.documentElement).zoom") == '0.5'
     def settings():
         page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-        if not page.locator("#settings").is_visible():
+        if page.locator("#settings").is_visible():
+            page.locator("#settings").click()
+        elif page.locator("#header-more-btn").is_visible():
             page.locator("#header-more-btn").click()
-        page.locator("#settings").click()
+            page.locator("#settings").click()
+        else:
+            # Reload may restore mobile detail, whose settings entry lives
+            # in the session toolbar while the global header is hidden.
+            if not page.locator("#a-global-settings").is_visible():
+                page.locator("#a-more").click()
+            page.locator("#a-global-settings").click()
 
     for width in (320, 390, 820, 1100, 1440):
         page.set_viewport_size({"width": width, "height": 900})
@@ -158,6 +166,8 @@ def check_compact_scale(page):
             page.locator('#settings-dialog .modal-close').click()
             box = page.locator("#app").bounding_box()
             assert abs(box["height"] - 900) <= 2 and abs(box["width"] - width) <= 2, (width, value, box)
+            if not page.locator("#q").is_visible():
+                page.locator("#detail .mobile-back").click()
             search = page.locator("#q")
             search.fill("unlikely-scale-search")
             expect(search).to_have_value("unlikely-scale-search")
@@ -256,6 +266,23 @@ def main():
                 page.wait_for_function("document.documentElement.dataset.theme === 'light'")
                 after = page.evaluate(LS_DUMP)
                 assert after["sessiondock.theme"] == '"light"', after
+                expect(page.locator("#setting-cache")).to_be_hidden()
+                page.get_by_role("tab", name="功能", exact=True).click()
+                expect(page.locator("#settings-features")).to_be_visible()
+                expect(page.locator("#settings-appearance")).to_be_hidden()
+                expect(page.get_by_role("tab", name="功能", exact=True)).to_have_attribute("aria-selected", "true")
+                expect(page.locator("#setting-cache")).to_have_value("64")
+                expect(page.locator("#setting-stop-concurrency")).to_have_value("6")
+                page.locator("#setting-cache").select_option("0")
+                assert page.evaluate("CACHE_MAX_BYTES === Infinity")
+                page.locator("#setting-cache").select_option("512")
+                page.locator("#setting-stop-concurrency").select_option("4")
+                assert page.evaluate("CACHE_MAX_BYTES") == 512 * 1024 * 1024
+                assert page.evaluate("sessionStopConcurrency()") == 4
+                after = page.evaluate(LS_DUMP)
+                assert after["sessiondock.cacheMb"] == "512"
+                assert after["sessiondock.stopConcurrency"] == "4"
+                assert after["sessiondock.settingsTab"] == '"features"'
                 page.keyboard.press("Escape")
                 assert all(k == "__prefs_seeded" or k.startswith("sessiondock.") for k in after), after
                 # A reload keeps the updated values.
@@ -263,6 +290,20 @@ def main():
                 page.wait_for_function("typeof S !== 'undefined' && Array.isArray(S.sessions) && S.sessions.length > 0")
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert page.evaluate("S.nest") is False
+                page.locator("#settings").click()
+                expect(page.locator("#settings-features")).to_be_visible()
+                expect(page.locator("#setting-cache")).to_have_value("512")
+                expect(page.locator("#setting-stop-concurrency")).to_have_value("4")
+                # The added tab and both controls also work on a narrow screen.
+                page.set_viewport_size({"width": 390, "height": 844})
+                page.get_by_role("tab", name="外观", exact=True).click()
+                expect(page.locator("#setting-cache")).to_be_hidden()
+                page.get_by_role("tab", name="功能", exact=True).click()
+                page.locator("#setting-stop-concurrency").select_option("1")
+                assert page.evaluate("sessionStopConcurrency()") == 1
+                for selector in ("#settings-dialog", "#setting-cache", "#setting-stop-concurrency"):
+                    bounds = page.locator(selector).bounding_box()
+                    assert bounds and bounds["x"] >= -1 and bounds["x"] + bounds["width"] <= 391, bounds
 
                 context.close()
 
@@ -277,6 +318,7 @@ def main():
                 assert page.evaluate("document.documentElement.dataset.theme") == "light"
                 assert "Ubuntu Sans Mono" in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--terminal-font')")
                 assert page.evaluate("({nest: S.nest, view: S.view, off: [...S.off], cache: cacheLimitMb})") == {"nest": False, "view": "tree", "off": [], "cache": 256}
+                assert page.evaluate("sessionStopConcurrency()") == 6
                 dump = page.evaluate(LS_DUMP)
                 assert all(k.startswith("sessiondock.") for k in dump), dump
                 # PWA identity: the shell is SessionDock and the manifest is served as such.

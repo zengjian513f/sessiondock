@@ -397,6 +397,8 @@
       <button type="button" class="settings-tab on" role="tab" aria-selected="true"
               aria-controls="settings-appearance" data-tab="appearance">外观</button>
       <button type="button" class="settings-tab" role="tab" aria-selected="false"
+              aria-controls="settings-features" data-tab="features">功能</button>
+      <button type="button" class="settings-tab" role="tab" aria-selected="false"
               aria-controls="settings-machines" data-tab="machines">机器</button>
     </div>
     <div id="settings-appearance" class="settings-pane" role="tabpanel">
@@ -433,6 +435,12 @@
       </select>
     </label>
     <a class="avatar-credits" href="avatars/credits.html" target="_blank" rel="noopener">头像来源与许可</a>
+    <div class="setting-row">
+      <span><b>桌面应用</b><small>安装后以独立窗口运行，不显示浏览器地址栏</small></span>
+      <button type="button" class="btn" data-pwa-install-button>安装到桌面</button>
+    </div>
+    </div>
+    <div id="settings-features" class="settings-pane" role="tabpanel" hidden>
     <label class="setting-row" for="setting-cache">
       <span><b>历史缓存</b><small>打开中的会话固定驻留，不计入此上限</small></span>
       <select id="setting-cache">
@@ -444,10 +452,18 @@
         <option value="0">不限制</option>
       </select>
     </label>
-    <div class="setting-row">
-      <span><b>桌面应用</b><small>安装后以独立窗口运行，不显示浏览器地址栏</small></span>
-      <button type="button" class="btn" data-pwa-install-button>安装到桌面</button>
-    </div>
+    <label class="setting-row" for="setting-stop-concurrency">
+      <span><b>停止并发数量</b><small>同时停止的会话数，下次批量停止生效</small></span>
+      <select id="setting-stop-concurrency">
+        <option value="1">1 个（串行）</option>
+        <option value="2">2 个</option>
+        <option value="4">4 个</option>
+        <option value="6">6 个（默认）</option>
+        <option value="8">8 个</option>
+        <option value="12">12 个</option>
+        <option value="16">16 个</option>
+      </select>
+    </label>
     </div>
     <div id="settings-machines" class="settings-pane" role="tabpanel" hidden>
       <p class="setting-group-title">机器<small>保存在中央服务端，所有浏览器一致。接入和移除机器仍在服务器上操作</small></p>
