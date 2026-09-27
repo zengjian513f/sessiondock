@@ -710,6 +710,9 @@ main { display: flex; flex: 1; min-height: 0; }
 .side-tools[hidden] { display: none; }   /* display:flex 会盖掉 hidden 的默认样式 */
 .side-tools #side-picked { min-width: 0; margin-right: auto; }
 .side-tools .btn { flex: none; padding: 3px 9px; font-size: 12px; }
+#side-stop-details { flex-basis: 100%; min-width: 0; color: var(--muted); }
+#side-stop-summary { cursor: pointer; }
+#side-stop-errors { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
 .ghead-pick {
   flex: none; width: 14px; height: 14px; margin: 0 1px 0 0;
   accent-color: var(--accent); cursor: pointer;

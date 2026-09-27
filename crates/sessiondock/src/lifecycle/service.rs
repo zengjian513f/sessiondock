@@ -3,7 +3,7 @@
 use futures_util::{StreamExt, stream};
 use ptyhost_client::{BoundTarget, ControlOp, HostClient, LaunchTarget, NativeBindingState};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     process::Child,
     sync::{
@@ -232,6 +232,14 @@ enum Command {
     Discard(String, String),
 }
 impl Command {
+    // Native and pending stop entry points share the physical instance key.
+    fn stop_instance(&self) -> Option<&str> {
+        match self {
+            Self::Stop(_, StopCandidate::Instance(target)) => Some(target.instance_id()),
+            Self::Cancel(_, instance) => Some(instance),
+            _ => None,
+        }
+    }
     /// Commands that may change what a receipt list or a host observation
     /// shows (a spawn, a kill, a binding, a tombstone), so the display
     /// caches keyed on [`LifecycleService::generation`] are invalidated
@@ -326,6 +334,7 @@ impl LifecycleService {
             children: BTreeMap::new(),
             targets: BTreeMap::new(),
             bindings: BTreeMap::new(),
+            touched: None,
             limits,
             stop: stop.clone(),
         };
@@ -521,31 +530,108 @@ async fn coordinate(
     done: watch::Sender<Option<Result<(), Error>>>,
     generation: Arc<AtomicU64>,
 ) {
+    let mut pending = VecDeque::<Request>::new();
+    let mut active = BTreeSet::<String>::new();
+    let mut workers = tokio::task::JoinSet::new();
+    let mut worker_failed = false;
     loop {
-        let request = tokio::select! { biased; _ = stop.cancelled() => break, request = rx.recv() => match request { Some(request) => request, None => break } };
-        let mutates = request.command.mutates();
-        let answer = core.execute(request.command).await;
-        if mutates {
-            generation.fetch_add(1, Ordering::AcqRel);
+        if stop.is_cancelled() {
+            break;
         }
-        let _ = request.reply.send(Response {
-            answer,
-            _permit: request.permit,
-        });
+        // Stops of independent instances may pass waiting reads. Other writes
+        // remain barriers, and a second stop of the same instance must wait.
+        let ready = if workers.is_empty() {
+            (!pending.is_empty()).then_some(0)
+        } else {
+            pending
+                .iter()
+                .enumerate()
+                .take_while(|(_, request)| {
+                    request.command.stop_instance().is_some() || !request.command.mutates()
+                })
+                .find_map(|(slot, request)| {
+                    request
+                        .command
+                        .stop_instance()
+                        .filter(|instance| !active.contains(*instance))
+                        .map(|_| slot)
+                })
+        };
+        if let Some(slot) = ready {
+            let request = pending.remove(slot).expect("ready request");
+            if let Some(instance) = request.command.stop_instance().map(str::to_owned) {
+                active.insert(instance.clone());
+                let mut worker = core.clone();
+                worker.touched = Some(BTreeSet::new());
+                let generation = generation.clone();
+                workers.spawn(async move {
+                    let answer = worker.execute(request.command).await;
+                    generation.fetch_add(1, Ordering::AcqRel);
+                    let _ = request.reply.send(Response {
+                        answer,
+                        _permit: request.permit,
+                    });
+                    (instance, worker)
+                });
+            } else {
+                let mutates = request.command.mutates();
+                let answer = core.execute(request.command).await;
+                if mutates {
+                    generation.fetch_add(1, Ordering::AcqRel);
+                }
+                let _ = request.reply.send(Response {
+                    answer,
+                    _permit: request.permit,
+                });
+            }
+            continue;
+        }
+        tokio::select! {
+            biased;
+            _ = stop.cancelled() => break,
+            completed = workers.join_next(), if !workers.is_empty() => {
+                match completed {
+                    Some(Ok((instance, worker))) => {
+                        active.remove(&instance);
+                        core.merge_stop_worker(worker);
+                    }
+                    _ => { worker_failed = true; stop.cancel(); break; }
+                }
+            }
+            request = rx.recv() => match request {
+                Some(request) => pending.push_back(request),
+                None => { stop.cancel(); break; }
+            }
+        }
     }
     admission.close();
     rx.close();
     while let Ok(request) = rx.try_recv() {
+        pending.push_back(request);
+    }
+    for request in pending {
         let _ = request.reply.send(Response {
             answer: Err(Error::Closed),
             _permit: request.permit,
         });
     }
+    // Do not abort admitted stops on shutdown or response drop: durable cancel
+    // intents and in-progress blocking writes must settle before store release.
+    while let Some(completed) = workers.join_next().await {
+        match completed {
+            Ok((_, worker)) => core.merge_stop_worker(worker),
+            Err(_) => worker_failed = true,
+        }
+    }
     // Core owns no Child. Reaper ownership survives coordinator/HTTP/runtime drops.
     let result = tokio::task::spawn_blocking(move || drop(core))
         .await
         .map_err(|_| Error::WorkerFailed);
-    let _ = done.send(Some(result));
+    let _ = done.send(Some(if worker_failed {
+        Err(Error::WorkerFailed)
+    } else {
+        result
+    }));
 }
 
 /// Host round trips a list refresh runs concurrently for live receipts.
@@ -559,6 +645,7 @@ enum RemoteProbe {
     Unavailable,
 }
 
+#[derive(Clone)]
 struct Core {
     store: Arc<Mutex<LifecycleStore>>,
     launcher: Arc<Launcher>,
@@ -567,6 +654,8 @@ struct Core {
     children: BTreeMap<String, watch::Receiver<ChildState>>,
     targets: BTreeMap<String, Arc<LaunchTarget>>,
     bindings: BTreeMap<String, NativeBindingState>,
+    // Worker-local cache changes only; the durable store remains shared and locked.
+    touched: Option<BTreeSet<String>>,
     limits: ServiceLimits,
     stop: CancellationToken,
 }
@@ -576,6 +665,21 @@ enum Created {
     Failed(Record),
 }
 impl Core {
+    fn merge_stop_worker(&mut self, mut worker: Core) {
+        for id in worker.touched.take().unwrap_or_default() {
+            self.targets.remove(&id);
+            if let Some(value) = worker.targets.remove(&id) {
+                self.targets.insert(id.clone(), value);
+            }
+            self.bindings.remove(&id);
+            if let Some(value) = worker.bindings.remove(&id) {
+                self.bindings.insert(id.clone(), value);
+            }
+            if let Some(value) = worker.children.remove(&id) {
+                self.children.insert(id, value);
+            }
+        }
+    }
     async fn work<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut LifecycleStore) -> Result<T, Error> + Send + 'static,
@@ -814,6 +918,9 @@ impl Core {
     /// Evidence that needs no host round trip: the owned child's exit state and
     /// the deadline. `Some` settles the receipt; `None` means ask the host.
     fn probe_local(&mut self, record: &Record, deadline: Instant) -> Option<Observation> {
+        if let Some(touched) = &mut self.touched {
+            touched.insert(record.record_id().into());
+        }
         self.bindings.remove(record.record_id());
         if !self.children.contains_key(record.record_id())
             && let Some(reaper) = REAPER.get().and_then(|result| result.as_ref().ok())

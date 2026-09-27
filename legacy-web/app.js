@@ -2762,6 +2762,8 @@ const pickedSessions = new Set();
 const sessionPickable = session => !session.fork_parent;
 let sessionDeleteBusy = false;
 let sessionStopBusy = false;
+let sessionStopProgress = null;
+const SESSION_STOP_CONCURRENCY = 6;
 
 function pickedStopTargets() {
   return sidebarSessions().filter(s => pickedSessions.has(s.uid) && sessionPickable(s)
@@ -2782,6 +2784,8 @@ function syncPickedSessions() {
 }
 
 function setPicking(on) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
   S.picking = !!on;
   if (!S.picking) pickedSessions.clear();
   if (S.picking) S.nestAttach = '';
@@ -2792,6 +2796,8 @@ function setPicking(on) {
 }
 
 function toggleSessionPick(uid) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
   pickedSessions.has(uid) ? pickedSessions.delete(uid) : pickedSessions.add(uid);
   const row = $(`#side .item[data-uid="${CSS.escape(uid)}"]`);
   if (row) {
@@ -2803,6 +2809,8 @@ function toggleSessionPick(uid) {
 
 /** 整组一起勾/取消：组内还有没选中的就补齐，已经全选才清空。 */
 function toggleGroupPick(uids, group) {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
   const all = uids.length && uids.every(uid => pickedSessions.has(uid));
   for (const uid of uids) all ? pickedSessions.delete(uid) : pickedSessions.add(uid);
   for (const row of group.querySelectorAll('.item[data-uid]')) paintItemPick(row);
@@ -2828,6 +2836,8 @@ function paintGroupPick(group) {
 }
 
 function pickAllVisible() {
+  if (sessionStopBusy) return;
+  sessionStopProgress = null;
   const rows = visible().filter(sessionPickable);
   const all = rows.length && rows.every(s => pickedSessions.has(s.uid));
   pickedSessions.clear();
@@ -2846,6 +2856,7 @@ function renderPickBar() {
   $('#side-pick-all').hidden = attaching;
   $('#side-pick-delete').hidden = attaching;
   $('#side-pick-stop').hidden = attaching;
+  $('#side-stop-details').hidden = attaching || !S.picking || !sessionStopProgress?.details.length;
   if (attaching) {
     const row = sidebarSessions().find(session => session.uid === S.nestAttach);
     $('#side-picked').textContent = row
@@ -2860,10 +2871,22 @@ function renderPickBar() {
   $('#side-pick-delete').textContent = picked ? `${action} (${picked})` : action;
   $('#side-pick-delete').disabled = !picked || sessionDeleteBusy || sessionStopBusy;
   const stoppable = S.picking ? pickedStopTargets().length : 0;
-  $('#side-pick-stop').textContent = sessionStopBusy ? '停止中…' : stoppable ? `停止 (${stoppable})` : '停止';
-  $('#side-pick-stop').disabled = !stoppable || sessionDeleteBusy || sessionStopBusy;
+  const progress = sessionStopProgress;
+  const stopButton = $('#side-pick-stop');
+  stopButton.textContent = progress ? `已停止 ${progress.stopped}/${progress.total}`
+    : stoppable ? `停止 (${stoppable})` : '停止';
+  stopButton.disabled = !stoppable || sessionDeleteBusy || sessionStopBusy;
+  stopButton.setAttribute('aria-busy', String(sessionStopBusy));
+  stopButton.title = progress ? `已返回 ${progress.settled}/${progress.total}，失败 ${progress.failed}，未确认 ${progress.uncertain}` : '停止选中的运行中会话';
+  if (progress) {
+    $('#side-stop-summary').textContent = [progress.failed ? `失败 ${progress.failed}` : '',
+      progress.uncertain ? `未确认 ${progress.uncertain}` : '', progress.refreshError ? '状态刷新失败' : '']
+      .filter(Boolean).join('，');
+    $('#side-stop-errors').textContent = progress.details.join('\n');
+  }
   const rows = S.picking ? visible().filter(sessionPickable) : [];
-  $('#side-pick-all').disabled = !rows.length;
+  $('#side-pick-all').disabled = !rows.length || sessionStopBusy;
+  $('#side-pick-cancel').disabled = sessionStopBusy;
   $('#side-pick-all').textContent =
     rows.length && rows.every(s => pickedSessions.has(s.uid)) ? '全不选' : '全选';
 }
@@ -2974,11 +2997,15 @@ async function stopPickedSessions() {
   const targets = pickedStopTargets();
   if (!targets.length || !confirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
   sessionStopBusy = true;
+  const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
+    failed: 0, uncertain: 0, details: [], refreshError: false};
+  showSessionStopNotice('');
+  $('#side-stop-details').open = false;
   renderPickBar();
-  const details = [];
-  let completed = 0;
-  try {
-    for (const target of targets) {
+  let next = 0;
+  const stopNext = async () => {
+    while (next < targets.length) {
+      const target = targets[next++];
       try {
         if (target.pending) {
           const result = await post('api/term/kill', { record_id: target.record_id,
@@ -2987,27 +3014,36 @@ async function stopPickedSessions() {
           const current = T.pending.find(row => row.record_id === target.record_id && row.node_id === target.node_id);
           if (current) Object.assign(current, result);
           if (!['exited', 'failed'].includes(result.state)) {
-            details.push(`「${target.title}」停止请求已发送，尚未确认退出`);
+            progress.uncertain++;
+            progress.details.push(`「${target.title}」停止请求已发送，尚未确认退出`);
             continue;
           }
         } else {
           const result = await requestSessionStop(target);
           if (result.stage === 'uncertain') {
-            details.push(`「${target.title}」${STOP_STAGE_TEXT.uncertain}`);
+            progress.uncertain++;
+            progress.details.push(`「${target.title}」${STOP_STAGE_TEXT.uncertain}`);
             continue;
           }
         }
-        completed++;
+        progress.stopped++;
       } catch (error) {
-        details.push(`「${target.title}」停止失败：${error.message || error}`);
+        progress.failed++;
+        progress.details.push(`「${target.title}」停止失败：${error.message || error}`);
+      } finally {
+        progress.settled++;
+        renderPickBar();
       }
     }
-    showSessionStopNotice(`已处理 ${completed}/${targets.length} 个停止请求。${details.join('；')}`, true);
+  };
+  try {
+    await Promise.all(Array.from({length: Math.min(SESSION_STOP_CONCURRENCY, targets.length)}, stopNext));
     await refreshLive(true);
     if (typeof loadTermList === 'function') await loadTermList();
     paintLive();
   } catch (error) {
-    showSessionStopNotice(`停止请求已处理，刷新状态失败：${error.message || error}`, true);
+    progress.refreshError = true;
+    progress.details.push(`停止请求已处理，刷新状态失败：${error.message || error}`);
   } finally {
     sessionStopBusy = false;
     renderPickBar();
@@ -5576,6 +5612,9 @@ function sessionStoppable(uid) {
 }
 let sessionStopNoticeTimer = 0;
 function showSessionStopNotice(text, sticky = false) {
+  // Batch progress owns stop feedback, including asynchronous terminal-exit
+  // notices that arrive after an individual HTTP response.
+  if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
   let notice = $('#session-stop-notice');
   if (!notice) {
     notice = el('div', 'bug-report-toast');

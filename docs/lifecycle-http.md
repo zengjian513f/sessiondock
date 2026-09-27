@@ -217,9 +217,11 @@ No operator flag is required — confirmation is the browser dialog.
 Browser leases: stop neither needs nor fails on a browser
 terminal lease. The EOF keys are server-originated host input; the WebSocket
 ends with the host's own exit marker, and the receipt path retires
-launch-derived leases exactly as `term/kill` does. A stop blocks the single
-lifecycle coordinator for at most ≈2 × (1 s + 1.2 s) + 3 s, like a slow
-cancel; `term/list` polls queue behind it.
+launch-derived leases exactly as `term/kill` does. Different instances stop
+concurrently within lifecycle admission capacity; the EOF and exit waits overlap.
+Stops and cancellations of the same instance stay serialized. Other lifecycle
+writes remain ordering barriers, and list refreshes wait for the active stops
+to finish so they cannot invalidate in-flight cancellation evidence.
 
 Legacy (`session_stop:true`): the header "停止会话"/"删除会话" action and the
 sidebar menu treat a session as stoppable when `S.live` has it **or** a
@@ -230,9 +232,12 @@ shown inline in `#session-stop-notice` instead of a bare alert, and a
 confirmed stop drops the UID from `S.live`.
 
 The sidebar multi-select toolbar also offers “停止”, with the count of selected
-stoppable sessions. One confirmation starts sequential stop requests; ended
-selections are skipped, and failures or uncertain outcomes are reported without
-preventing the remaining requests. Pending launches use their existing
+stoppable sessions. One confirmation starts up to six concurrent stop requests;
+ended selections are skipped. The button updates after each result as
+“已停止 3/44”; failures and uncertain outcomes do not increment the stopped count
+and appear in expandable details beside the button, without a bulk-stop toast.
+The completed progress stays until the selection changes. Selection controls
+are disabled while the batch runs. Pending launches use their existing
 `term/kill` receipt and instance identity (plus node routing on the Hub).
 Stopping preserves records, drafts and selection for a later explicit delete.
 

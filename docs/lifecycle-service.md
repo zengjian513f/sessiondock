@@ -59,16 +59,24 @@ output. HTTP handlers must distinguish unavailable/uncertain from empty or live.
 
 ## Admission, blocking work and cancellation ownership
 
-One coordinator serializes admitted commands. A bounded channel and semaphore
-allow eight total queued/working/unread-response requests by default; tests may
-choose one through eight. Full admission immediately returns Busy. The permit
+One coordinator schedules admitted commands. Stops/cancellations of different
+physical instances run concurrently; native stop and pending cancellation share
+the instance key, so duplicate requests for one instance remain serialized.
+Other writes remain ordering barriers. Waiting reads may be passed by independent
+stops but execute only after active stops settle, preserving cancellation revision
+checks. A bounded channel and semaphore allow eight total queued/working/unread-response
+requests by default. Full admission waits for a permit rather than rejecting valid work. The permit
 stays with the request and its oneshot response, including after the HTTP future
 is dropped. Cancelling a response cannot cancel a persistence operation, lose a
 spawn result, release its capacity early or release the store lock prematurely.
 
 All store reads, JSON encoding, recovery, fsync, launcher validation/spawn and
-final store destruction run off the Tokio reactor. Only one such task is active
-per coordinator. Opening work waits for its permit. The spawn/join operation is never timed out or aborted: after
+final store destruction run off the Tokio reactor. Stop workers share the locked
+store and retain independent host-observation caches; only cache entries touched
+by a finished worker are merged back, preserving unrelated cached identities.
+The store lock serializes persistence, while host waits overlap. Shutdown waits
+for admitted stop workers and blocking writes; dropping an HTTP response cannot
+abort them. Opening work waits for its permit. The spawn/join operation is never timed out or aborted: after
 a successful OS spawn there is no safe timeout that can discard its Child.
 
 The library permit ends when a public method returns its private Record or target.
