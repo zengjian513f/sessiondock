@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from hub_http_suite import REPO, FakeNode, Hub
 from hub_fake_node import PNG
@@ -262,6 +262,9 @@ def check_report_layout(page):
     page.evaluate("openBugReportDialog()")
     page.wait_for_selector("#bug-report-dialog[open]")
     page.wait_for_function("!document.querySelector('#bug-report-node-label').hidden")
+    # The picker says what the machine is for: it runs the handling session.
+    expect(page.locator("#bug-report-node-label > span")).to_have_text("处理节点")
+    expect(page.locator("#bug-report-node-label > span")).to_be_visible()
     wide = page.evaluate("""() => {
       const labels = [...document.querySelectorAll('#bug-report-source .src-label')];
       const hidden = labels.filter(el => !el.offsetWidth || getComputedStyle(el).display === 'none');

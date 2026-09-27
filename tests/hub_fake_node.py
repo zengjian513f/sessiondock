@@ -147,6 +147,9 @@ class NodeHandler(BaseHTTPRequestHandler):
                                "pending": s["pending"], "backend": current,
                                "backends": backends(current)})
         if u.path == "/api/term/complete-dir":
+            if "dirs" in s:
+                path = q.get("path", [""])[0]
+                return self._json({"directories": [d + "/" for d in s["dirs"] if d.startswith(path)]})
             return self._json({"directories": ["/home/" + s["name"] + "/work/"]})
         if u.path == "/api/term/new-status":
             return self._json({"waiting": True, "running": True})
