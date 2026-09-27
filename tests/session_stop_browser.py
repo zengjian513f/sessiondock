@@ -19,6 +19,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
+from pending_create_discard_browser import create_source
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
@@ -168,6 +169,68 @@ def main():
                     expect(notice).to_contain_text("停止请求已处理")
                     assert len(dialogs) == before + 1 and dialogs[-1][0] == "confirm", dialogs[before:]
                     assert not errors, errors
+                    # ---- Multi-select: real managed stop, a failed target, retry,
+                    # and ended selections retained without an extra stop request.
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
+                        page.locator("#a-term").click()
+                    wait_xterm(page, "RS_SHELL_READY")
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=codex_uid)
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click(button="right")
+                    page.locator('#item-menu [data-act="pick"]').click()
+                    page.locator(f'#side .item[data-uid="{other_uid}"]').click()
+                    bulk = page.locator("#side-pick-stop")
+                    expect(bulk).to_have_text("停止 (2)")
+                    before = len(dialogs)
+                    before_stops = len(stops)
+                    def fail_other(route):
+                        if route.request.post_data_json["uid"] == other_uid:
+                            route.fulfill(status=409, content_type="application/json",
+                                          body=json.dumps({"error": "synthetic unknown host state"}))
+                        else:
+                            route.continue_()
+                    context.route("**/api/session/stop", fail_other)
+                    bulk.click()
+                    expect(notice).to_contain_text("已处理 1/2 个停止请求")
+                    expect(notice).to_contain_text("synthetic unknown host state")
+                    page.wait_for_function("!sessionStopBusy")
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
+                    expect(bulk).to_be_enabled()
+                    assert len(dialogs) == before + 1, dialogs[before:]
+                    assert len(stops) == before_stops + 2, stops[before_stops:]
+                    assert len({entry["request_id"] for entry in stops[before_stops:]}) == 2
+                    expect(page.locator("#side-picked")).to_have_text("已选 2 项")
+                    context.unroute("**/api/session/stop", fail_other)
+                    # Exited session remains selected, but is skipped on retry.
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
+                    expect(bulk).to_have_text("停止 (1)")
+                    bulk.click()
+                    expect(notice).to_contain_text("已处理 1/1 个停止请求")
+                    assert len(stops) == before_stops + 3 and stops[-1]["uid"] == other_uid
+                    page.evaluate("() => { S.live.clear(); paintLive(); }")
+                    expect(bulk).to_be_disabled()
+                    expect(page.locator("#side-pick-delete")).to_be_enabled()
+                    page.locator("#side-pick-cancel").click()
+                    expect(page.locator("#side-tools")).to_be_hidden()
+                    assert not errors, errors
+                    # Pending shell receipts use instance identity and remain listed.
+                    receipt, pending_uid = create_source(page, "shell", root / "work")
+                    page.locator(f'#side .item[data-uid="{pending_uid}"]').click(button="right")
+                    page.locator('#item-menu [data-act="pick"]').click()
+                    expect(bulk).to_have_text("停止 (1)")
+                    before = len(dialogs)
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/kill") as killed:
+                        bulk.click()
+                    result = killed.value.json()
+                    assert killed.value.status == 200 and result["state"] == "exited", result
+                    assert result["record_id"] == receipt["record_id"] and result["instance_id"] == receipt["instance_id"]
+                    expect(notice).to_contain_text("已处理 1/1 个停止请求")
+                    page.wait_for_function("!sessionStopBusy")
+                    expect(bulk).to_be_disabled()
+                    expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_be_visible()
+                    assert len(dialogs) == before + 1
+                    assert not errors, errors
                     context.close()
 
                     # ---- Mobile: a fresh resume, stopped from the sidebar long-press menu.
@@ -201,6 +264,15 @@ def main():
                     expect(page.locator("#session-stop-notice")).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert not errors, errors
+                    # The multi-select stop action fits the mobile toolbar.
+                    item.click(button="right")
+                    page.locator('#item-menu [data-act="pick"]').click()
+                    expect(page.locator("#side-pick-stop")).to_be_visible()
+                    expect(page.locator("#side-pick-stop")).to_be_disabled()
+                    for selector in ("#side-pick-stop", "#side-pick-delete", "#side-pick-cancel"):
+                        bounds = page.locator(selector).bounding_box()
+                        assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
+                    page.locator("#side-pick-cancel").click()
                     mobile.close()
                     assert {name: path.read_bytes() for name, path in corpus.paths.items()} == native
             finally:
@@ -224,7 +296,8 @@ def main():
                     time.sleep(.05)
     print("PASS session stop browser: session_stop capability, desktop header action stops a resumed managed "
           "instance (graceful, request_id, exit explanation, action flips to delete, /api/live exited), "
-          "no-op for a session without a running instance, 390px long-press menu stop, native bytes unchanged")
+          "no-op, bulk partial failure/retry, ended targets skipped, pending shell retained, "
+          "390px long-press menu and toolbar, native bytes unchanged")
 
 
 if __name__ == "__main__":

@@ -2350,6 +2350,7 @@ function paintLive() {
   }
   renderSessionCounts();
   syncActiveOnlyList();
+  if (S.picking) renderPickBar();
 }
 
 /** 活动筛选开启时，进程启停会改变列表成员；集合没变就不动 DOM。 */
@@ -2755,11 +2756,19 @@ function visible() {
 // ---------------------------------------------------------------- 左栏
 const sessionStarred = uid => !!S.sessions.find(s => s.uid === uid)?.starred;
 
-/* ---------- 左栏多选删除 ---------- */
+/* ---------- 左栏多选操作 ---------- */
 // 已有记录移入回收站；未落盘的新建会话停止并丢弃，正式运行会话由服务端拒绝删除。
 const pickedSessions = new Set();
 const sessionPickable = session => !session.fork_parent;
 let sessionDeleteBusy = false;
+let sessionStopBusy = false;
+
+function pickedStopTargets() {
+  return sidebarSessions().filter(s => pickedSessions.has(s.uid) && sessionPickable(s)
+    && (s.pending ? sessionStopCapable() && !!s.record_id && !!s.instance_id
+      && !s.stale && !['exited', 'failed'].includes(s.state) && s.running !== false
+      : sessionStoppable(s.uid)));
+}
 
 /** 列表会被 SSE/轮询整份重画，选择集合里只保留仍然存在且可删的会话。 */
 function syncPickedSessions() {
@@ -2836,6 +2845,7 @@ function renderPickBar() {
   $('#side').classList.toggle('attaching', attaching);
   $('#side-pick-all').hidden = attaching;
   $('#side-pick-delete').hidden = attaching;
+  $('#side-pick-stop').hidden = attaching;
   if (attaching) {
     const row = sidebarSessions().find(session => session.uid === S.nestAttach);
     $('#side-picked').textContent = row
@@ -2848,7 +2858,10 @@ function renderPickBar() {
   const pending = pendingTmuxSessions().filter(s => pickedSessions.has(s.uid)).length;
   const action = pending ? (pending === picked ? '丢弃' : '删除 / 丢弃') : '删除';
   $('#side-pick-delete').textContent = picked ? `${action} (${picked})` : action;
-  $('#side-pick-delete').disabled = !picked || sessionDeleteBusy;
+  $('#side-pick-delete').disabled = !picked || sessionDeleteBusy || sessionStopBusy;
+  const stoppable = S.picking ? pickedStopTargets().length : 0;
+  $('#side-pick-stop').textContent = sessionStopBusy ? '停止中…' : stoppable ? `停止 (${stoppable})` : '停止';
+  $('#side-pick-stop').disabled = !stoppable || sessionDeleteBusy || sessionStopBusy;
   const rows = S.picking ? visible().filter(sessionPickable) : [];
   $('#side-pick-all').disabled = !rows.length;
   $('#side-pick-all').textContent =
@@ -2856,7 +2869,7 @@ function renderPickBar() {
 }
 
 async function deleteSessions(uids, button = null) {
-  if (!uids.length || sessionDeleteBusy) return null;
+  if (!uids.length || sessionDeleteBusy || sessionStopBusy) return null;
   const pending = pendingTmuxSessions().filter(s => uids.includes(s.uid));
   const pendingIds = new Set(pending.map(s => s.uid));
   const recorded = uids.filter(uid => !pendingIds.has(uid));
@@ -2956,9 +2969,55 @@ async function deletePickedSessions() {
   if (result.failed.length) { renderSide(); renderPickBar(); } else setPicking(false);
 }
 
+async function stopPickedSessions() {
+  if (sessionStopBusy || sessionDeleteBusy) return;
+  const targets = pickedStopTargets();
+  if (!targets.length || !confirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
+  sessionStopBusy = true;
+  renderPickBar();
+  const details = [];
+  let completed = 0;
+  try {
+    for (const target of targets) {
+      try {
+        if (target.pending) {
+          const result = await post('api/term/kill', { record_id: target.record_id,
+            instance_id: target.instance_id, ...(HUB_MODE ? { _node: target.node_id } : {}) });
+          if (result.error) throw new Error(result.error);
+          const current = T.pending.find(row => row.record_id === target.record_id && row.node_id === target.node_id);
+          if (current) Object.assign(current, result);
+          if (!['exited', 'failed'].includes(result.state)) {
+            details.push(`「${target.title}」停止请求已发送，尚未确认退出`);
+            continue;
+          }
+        } else {
+          const result = await requestSessionStop(target);
+          if (result.stage === 'uncertain') {
+            details.push(`「${target.title}」${STOP_STAGE_TEXT.uncertain}`);
+            continue;
+          }
+        }
+        completed++;
+      } catch (error) {
+        details.push(`「${target.title}」停止失败：${error.message || error}`);
+      }
+    }
+    showSessionStopNotice(`已处理 ${completed}/${targets.length} 个停止请求。${details.join('；')}`, true);
+    await refreshLive(true);
+    if (typeof loadTermList === 'function') await loadTermList();
+    paintLive();
+  } catch (error) {
+    showSessionStopNotice(`停止请求已处理，刷新状态失败：${error.message || error}`, true);
+  } finally {
+    sessionStopBusy = false;
+    renderPickBar();
+  }
+}
+
 $('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPicking(false);
 $('#side-pick-all').onclick = pickAllVisible;
 $('#side-pick-delete').onclick = deletePickedSessions;
+$('#side-pick-stop').onclick = stopPickedSessions;
 
 /* ---------- 会话行的右键 / 长按菜单 ---------- */
 // 删除入口不再常驻占位：右键（手机长按）某条会话，才给出删除和进入多选。
@@ -5540,31 +5599,34 @@ const STOP_STAGE_TEXT = {
   uncertain: '已发送 Ctrl-D 与宿主停止指令，但限时内未观察到退出；结果不确定，不会自动重试',
 };
 
+async function requestSessionStop(m) {
+  const body = { uid: m.uid };
+  if (sessionStopCapable()) body.request_id = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const response = await fetch(appUrl('api/session/stop'), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || response.status);
+  if (sessionStopCapable() && result.stopped) S.live.delete(m.uid);
+  return result;
+}
+
 async function stopSession(m, button = null) {
   if (!confirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
   if (button) button.disabled = true;
   try {
-    const body = { uid: m.uid };
-    if (sessionStopCapable()) body.request_id = globalThis.crypto?.randomUUID?.()
-      || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const r = await fetch(appUrl('api/session/stop'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (!r.ok) {
-      // Rust explains why nothing was stopped (unmanaged/external CLI, unknown
-      // host state) inline instead of a bare status; the request sent nothing.
-      if (sessionStopCapable()) return showSessionStopNotice('停止失败：' + (d.error || r.status), true);
-      return alert('停止失败: ' + (d.error || r.status));
-    }
+    const d = await requestSessionStop(m);
     if (sessionStopCapable()) {
-      if (d.stopped) S.live.delete(m.uid);
       showSessionStopNotice(`「${m.title}」${STOP_STAGE_TEXT[d.stage] || d.explanation || '停止请求已处理'}`);
     }
     await refreshLive(true);
     if (typeof loadTermList === 'function') await loadTermList();
     paintLive();
+  } catch (error) {
+    if (sessionStopCapable()) showSessionStopNotice(`停止失败：${error.message || error}`, true);
+    else alert(`停止失败：${error.message || error}`);
   } finally {
     if (button) button.disabled = false;
   }
