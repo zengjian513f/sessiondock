@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
@@ -23,11 +24,25 @@ from pending_create_discard_browser import create_source
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
+SLOW_SIDS = [f"00000000-0000-4000-8000-{index:012d}" for index in range(8)]
 FAKE_CODEX = """#!/bin/sh
+case "$2" in 00000000-0000-4000-8000-*) exec "$STOP_TEST_PYTHON" "$STOP_TEST_SCRIPT" "$@" ;; esac
 printf 'FAKE_CODEX_ARGV'
 for arg in "$@"; do printf ' [%s]' "$arg"; done
 printf '\\n'
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\\n"; while IFS= read -r line; do case "$line" in quit) exit 0 ;; *) printf "RS_INPUT_OK\\n" ;; esac; done'
+"""
+SLOW_CODEX = """import os, sys, time, tty
+from pathlib import Path
+tty.setraw(0)
+sid = sys.argv[2]
+events = Path(os.environ['STOP_TEST_EVENTS']) / sid
+os.write(1, ('STOP_READY_' + sid + '\\r\\n').encode())
+while True:
+    key = os.read(0, 1)
+    if key == b'\\x04':
+        with events.open('a') as stream:
+            stream.write(str(time.monotonic()) + '\\n')
 """
 def session_action(page):
     button = page.locator("#a-session-action")
@@ -49,7 +64,7 @@ def main():
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-session-stop-") as temporary:
         root = Path(temporary).resolve()
-        for name in ["host", "work", "work/codex-area", "ledger", "bin", "claude", "codex", "grok"]:
+        for name in ["host", "work", "work/codex-area", "ledger", "bin", "claude", "codex", "grok", "events"]:
             (root / name).mkdir(mode=0o700)
         corpus = Corpus(root)
         corpus.put(CODEX_SID, "codex", [codex_row("session_meta", {"id": CODEX_SID, "cwd": str(root / "work/codex-area")}),
@@ -57,18 +72,25 @@ def main():
         corpus.put("synthetic-unrelated-claude", "claude", [
             claude_row("synthetic-unrelated-claude", "user", "u0", None, "Synthetic session without instance"),
             claude_row("synthetic-unrelated-claude", "assistant", "a0", "u0", "Synthetic answer")], [])
+        for sid in SLOW_SIDS:
+            corpus.put(sid, "codex", [codex_row("session_meta", {"id": sid, "cwd": str(root / "work/codex-area")}),
+                codex_message("user", "Synthetic slow stop " + sid)], [])
+        slow_uids = [corpus.uid(sid) for sid in SLOW_SIDS]
         native = {name: path.read_bytes() for name, path in corpus.paths.items()}
         codex_uid = corpus.uid(CODEX_SID)
         other_uid = corpus.uid("synthetic-unrelated-claude")
         (root / "bin/fake-codex").write_text(FAKE_CODEX)
         (root / "bin/fake-codex").chmod(0o700)
+        (root / "bin/slow.py").write_text(SLOW_CODEX)
         configuration = root / "launcher.json"
         configuration.touch(mode=0o600)
         configuration.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
             "host_dir": str(root / "host"), "adapters": [], "profiles": [
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-codex"),
                  "args": [], "resume_args": ["resume", "{sid}"],
-                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))
+                 "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color",
+                         "STOP_TEST_PYTHON": sys.executable, "STOP_TEST_SCRIPT": str(root / "bin/slow.py"),
+                         "STOP_TEST_EVENTS": str(root / "events")}}]}))
         initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
@@ -192,8 +214,10 @@ def main():
                             route.continue_()
                     context.route("**/api/session/stop", fail_other)
                     bulk.click()
-                    expect(notice).to_contain_text("已处理 1/2 个停止请求")
-                    expect(notice).to_contain_text("synthetic unknown host state")
+                    expect(bulk).to_have_text("已停止 1/2")
+                    expect(notice).to_be_hidden()
+                    page.locator("#side-stop-summary").click()
+                    expect(page.locator("#side-stop-errors")).to_contain_text("synthetic unknown host state")
                     page.wait_for_function("!sessionStopBusy")
                     page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
                     expect(bulk).to_be_enabled()
@@ -204,10 +228,23 @@ def main():
                     context.unroute("**/api/session/stop", fail_other)
                     # Exited session remains selected, but is skipped on retry.
                     page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
-                    expect(bulk).to_have_text("停止 (1)")
+                    expect(bulk).to_have_text("已停止 1/2")
+                    def uncertain_stop(route):
+                        route.fulfill(status=200, content_type="application/json",
+                                      body=json.dumps({"ok": True, "stopped": False, "stage": "uncertain"}))
+                    context.route("**/api/session/stop", uncertain_stop)
                     bulk.click()
-                    expect(notice).to_contain_text("已处理 1/1 个停止请求")
-                    assert len(stops) == before_stops + 3 and stops[-1]["uid"] == other_uid
+                    expect(bulk).to_have_text("已停止 0/1")
+                    expect(page.locator("#side-stop-summary")).to_have_text("未确认 1")
+                    expect(notice).to_be_hidden()
+                    page.wait_for_function("!sessionStopBusy")
+                    assert len(stops) == before_stops + 3, "uncertain stop must not retry itself"
+                    context.unroute("**/api/session/stop", uncertain_stop)
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", other_uid)
+                    bulk.click()
+                    expect(bulk).to_have_text("已停止 1/1")
+                    expect(notice).to_be_hidden()
+                    assert len(stops) == before_stops + 4 and stops[-1]["uid"] == other_uid
                     page.evaluate("() => { S.live.clear(); paintLive(); }")
                     expect(bulk).to_be_disabled()
                     expect(page.locator("#side-pick-delete")).to_be_enabled()
@@ -225,12 +262,96 @@ def main():
                     result = killed.value.json()
                     assert killed.value.status == 200 and result["state"] == "exited", result
                     assert result["record_id"] == receipt["record_id"] and result["instance_id"] == receipt["instance_id"]
-                    expect(notice).to_contain_text("已处理 1/1 个停止请求")
+                    expect(bulk).to_have_text("已停止 1/1")
+                    expect(notice).to_be_hidden()
                     page.wait_for_function("!sessionStopBusy")
                     expect(bulk).to_be_disabled()
                     expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_be_visible()
                     assert len(dialogs) == before + 1
                     assert not errors, errors
+                    page.locator("#side-pick-cancel").click()
+
+                    # Eight real hosts ignore EOF: independent EOF waits overlap,
+                    # and later requests fill the six browser slots as they free up.
+                    for sid, uid in zip(SLOW_SIDS, slow_uids):
+                        page.locator(f'#side .item[data-uid="{uid}"]').click()
+                        with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
+                            page.locator("#a-term").click()
+                        wait_xterm(page, "STOP_READY_" + sid)
+                    page.wait_for_function("uids => uids.every(sessionStoppable)", arg=slow_uids)
+                    page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click(button="right")
+                    page.locator('#item-menu [data-act="pick"]').click()
+                    for uid in slow_uids[1:]:
+                        page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    expect(bulk).to_have_text("停止 (8)")
+                    before_stops = len(stops)
+                    outstanding, peak = set(), [0]
+                    def on_stop_request(request):
+                        if urlsplit(request.url).path == "/api/session/stop":
+                            outstanding.add(request)
+                            peak[0] = max(peak[0], len(outstanding))
+                    def on_stop_response(response):
+                        outstanding.discard(response.request)
+                    context.on("request", on_stop_request)
+                    context.on("response", on_stop_response)
+                    started = time.monotonic()
+                    bulk.click()
+                    expect(bulk).to_have_text("已停止 0/8")
+                    expect(bulk).to_have_attribute("aria-busy", "true")
+                    expect(page.locator("#side-pick-cancel")).to_be_disabled()
+                    expect(notice).to_be_hidden()
+                    page.wait_for_function("sessionStopProgress.stopped > 0 && sessionStopProgress.stopped < 8", timeout=15000)
+                    assert bulk.text_content() in [f"已停止 {count}/8" for count in range(1, 8)]
+                    expect(bulk).to_have_text("已停止 8/8", timeout=15000)
+                    page.wait_for_function("!sessionStopBusy")
+                    elapsed = time.monotonic() - started
+                    assert len(stops) == before_stops + 8 and peak[0] == 6, (stops[before_stops:], peak)
+                    events = [list(map(float, (root / "events" / sid).read_text().splitlines())) for sid in SLOW_SIDS]
+                    assert all(len(ticks) == 2 for ticks in events), events
+                    # Other lifecycle writes remain barriers, so admission need
+                    # not start all six together; independent EOF waits must overlap.
+                    ordered = sorted(events, key=lambda ticks: ticks[0])
+                    assert ordered[1][0] < ordered[0][1], events
+                    assert elapsed < 12, elapsed  # Serial escalation requires at least 8 * 2.4 seconds.
+                    expect(bulk).to_be_disabled()
+                    expect(notice).to_be_hidden()
+                    expect(page.locator("#side-stop-details")).to_be_hidden()
+                    expect(page.locator("#side-picked")).to_have_text("已选 8 项")
+                    page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()
+                    expect(bulk).to_have_text("停止")
+                    context.remove_listener("request", on_stop_request)
+                    context.remove_listener("response", on_stop_response)
+                    print(f"PASS parallel stop: 8 real hosts in {elapsed:.2f}s, peak 6 requests, overlapping EOF waits, inline progress", flush=True)
+                    page.locator("#side-pick-cancel").click()
+
+                    # Two actual pages stopping the same instance must not
+                    # duplicate its EOF sequence or escalate concurrently.
+                    page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()
+                    (root / "events" / SLOW_SIDS[0]).unlink()
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
+                        page.locator("#a-term").click()
+                    duplicate_target = taken.value.json()
+                    page.wait_for_function("""([name, text]) => {
+                      const b = T.views.get(name)?.term?.buffer?.active;
+                      return b && Array.from({length:b.length}, (_,i) => b.getLine(i)?.translateToString() || '').join('\\n').includes(text);
+                    }""", arg=[duplicate_target["name"], "STOP_READY_" + SLOW_SIDS[0]])
+                    other_page = context.new_page()
+                    other_page.on("dialog", lambda dialog: dialog.accept())
+                    other_page.on("pageerror", lambda error: errors.append(str(error)))
+                    other_page.goto(base, wait_until="networkidle")
+                    other_page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()
+                    other_page.wait_for_function("uid => sessionStoppable(uid)", arg=slow_uids[0])
+                    first_action, second_action = session_action(page), session_action(other_page)
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as first_stop, \
+                            other_page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as duplicate_stop:
+                        first_action.click()
+                        second_action.click()
+                    stages = sorted([first_stop.value.json()["stage"], duplicate_stop.value.json()["stage"]])
+                    assert stages == ["already_exited", "stopped"], stages
+                    assert len((root / "events" / SLOW_SIDS[0]).read_text().splitlines()) == 2
+                    other_page.close()
+                    assert not errors, errors
+                    print("PASS duplicate stop: two browser pages, one EOF/escalation sequence for the same instance", flush=True)
                     context.close()
 
                     # ---- Mobile: a fresh resume, stopped from the sidebar long-press menu.
@@ -269,6 +390,11 @@ def main():
                     page.locator('#item-menu [data-act="pick"]').click()
                     expect(page.locator("#side-pick-stop")).to_be_visible()
                     expect(page.locator("#side-pick-stop")).to_be_disabled()
+                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", codex_uid)
+                    page.locator("#side-pick-stop").click()
+                    expect(page.locator("#side-pick-stop")).to_have_text("已停止 1/1")
+                    page.wait_for_function("!sessionStopBusy")
+                    expect(page.locator("#session-stop-notice")).to_be_hidden()
                     for selector in ("#side-pick-stop", "#side-pick-delete", "#side-pick-cancel"):
                         bounds = page.locator(selector).bounding_box()
                         assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
@@ -296,7 +422,7 @@ def main():
                     time.sleep(.05)
     print("PASS session stop browser: session_stop capability, desktop header action stops a resumed managed "
           "instance (graceful, request_id, exit explanation, action flips to delete, /api/live exited), "
-          "no-op, bulk partial failure/retry, ended targets skipped, pending shell retained, "
+          "no-op, bulk partial failure/retry/uncertainty, concurrent stop and duplicate serialization, pending shell retained, "
           "390px long-press menu and toolbar, native bytes unchanged")
 
 
