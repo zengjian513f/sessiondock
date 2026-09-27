@@ -77,7 +77,8 @@
   ≤ 1 s、热列表仍只 `stat`；文件变短或 inode 变化则从头重扫。Claude 主会话尾部的
   `continued-in` 记录（`continuedInSessionId`）在同源主会话里按 sid 解析成
   `continued_in` uid（按路径序最后一个同 sid 行胜出，
-  指向自身丢弃），解析不到则不出字段。
+  指向自身丢弃），解析不到则不出字段。Codex 同线程轮转的旧代 rollout 行同样
+  带 `continued_in` = 最新一代 uid（最新一代链校验通过时），列表只显示一行。
 - **刷新节奏**：500 ms TTL 内复用上一份行；`force=1` 立即重扫；扫描在有界
   阻塞线程池并行（默认 16 路）。
 - **签名**：`sig` = 行序列化的散列，`built_at` = 发布时刻；两者只由摘要与持久元数据
