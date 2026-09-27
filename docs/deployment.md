@@ -46,7 +46,8 @@ python3 deploy/deploy.py rollback --targets X [--backup DIR]
   路径与包名；`sessiondock-hub` 是 `sessiondock` 包里的第二个 bin，工具用 `cargo metadata` 解析。
   `--test`（默认 `none`，build 常用来做 dry run）在构建完成后按[测试门](#测试门build--test--push)跑测试。
 - `push`：默认取 `target/deploy/` 下最新的 stage，默认并行 4、保留 5 份备份（`0` = 不清理）、健康
-  超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。任一目标不是 OK 就退出 1。
+  超时 45 s。`--dry-run` 只做 probe 并打印每台的计划，什么都不上传。离线或禁用的目标记为
+  `SKIPPED`（未更新），不使命令失败；真实部署失败仍退出 1。全离线也会逐项报告跳过，不声称已部署。
   `push` 在构建机上**从不跑测试**（它只是把已构建的 stage 发出去），但会先打印这个 stage 是按哪种模式
   验证过的（`stage tests: mode=… result=… base=… suites=…`）。
 - `deploy`：build → test → push。`--test` 默认 `affected`；任一套件失败就退出 1，**什么都不上传**。
@@ -152,8 +153,12 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 
 顺序固定为 `probe → plan → stage → backup → swap → restart → verify → write_marker → prune_backups`
 （`deploy/sdtargets/base.py` 是合同，每个 kind 一个模块实现这些步骤）。`backup` 成功之后任何一步失败：
-`rollback(backup_dir) → restart → 再 probe`，结果记 `ROLLED_BACK`（仍算失败）；不可达记 `SKIPPED`；
+`rollback(backup_dir) → restart → 再 probe`，结果记 `ROLLED_BACK`（仍算失败）；SSH 连接超时、拒绝、
+断开或网络不可达记 `SKIPPED`，不计测试或部署失败；身份不匹配、认证失败、目录缺失、探测程序异常
+仍记 `FAILED`。开始部署后的上传、构建、重启或健康检查失败仍按失败和回滚处理。回滚命令也会跳过离线节点。
 kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
+
+测试使用临时清单、模拟 SSH 或回环服务，不连接真实舰队节点；测试结果不依赖节点在线状态。
 
 每个处理器都必须遵守（摘自 `base.py`）：
 

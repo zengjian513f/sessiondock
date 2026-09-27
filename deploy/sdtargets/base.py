@@ -97,6 +97,18 @@ class ProbeResult:
     ptyhost_pids: list[int] = field(default_factory=list)
     host_records: int | None = None
     deployed_commit: str | None = None   # <prefix>/etc/deployed-commit if present
+    offline: bool = False               # transport unavailable, not a target/config error
+
+
+def failed_probe(target: Target, rc: int, detail: str) -> ProbeResult:
+    """Only transport failures are skippable; auth/identity/config errors still fail."""
+    network_errors = ("connection timed out", "operation timed out", "connection refused",
+                      "no route to host", "network is unreachable", "connection reset",
+                      "connection closed", "could not resolve hostname",
+                      "temporary failure in name resolution")
+    offline = bool(target.ssh) and (rc == 124 or
+        (rc == 255 and any(message in detail.lower() for message in network_errors)))
+    return ProbeResult(False, detail, offline=offline)
 
 
 @dataclass

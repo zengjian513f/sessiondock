@@ -16,7 +16,7 @@ import shlex
 import time
 from datetime import datetime, timezone
 
-from .base import ProbeResult, ShellError, TargetHandler, VerifyResult, register
+from .base import ProbeResult, ShellError, TargetHandler, VerifyResult, failed_probe, register
 
 BACKUP_RE = re.compile(r"^backup-deploy-[0-9a-f]+-[0-9]{8}-[0-9]{6}$")
 PTYHOST = "ptyhost"
@@ -104,10 +104,10 @@ class LinuxNodeHandler(TargetHandler):
         try:
             rc, out = self.sh.run(self._probe_script(), timeout=60)
         except ShellError as e:
-            return ProbeResult(False, f"unreachable: {e.out.strip().splitlines()[-1] if e.out.strip() else e}"), {}
+            return failed_probe(self.t, e.rc, e.out or str(e)), {}
         if rc == 255 or "layout=" not in out:
             tail = out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"
-            return ProbeResult(False, f"unreachable: {tail}"), {}
+            return failed_probe(self.t, rc, f"probe failed: {tail}"), {}
         facts = self._parse_probe(out)
         expected = self.t.extra.get("expected_hostname")
         if expected and facts.get("hostname") != expected:

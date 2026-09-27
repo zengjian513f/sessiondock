@@ -3,7 +3,7 @@
 
 Pins the web-only build stage, SKIPPED / UNSUPPORTED / PLANNED outcomes,
 and the JSON report without touching a real machine. Every fixture target
-uses ssh=null and a temporary prefix under /tmp. PASS when the dry-run
+uses ssh=null or a fake SSH executable and a temporary prefix under /tmp. PASS when the dry-run
 plan, table rows and report match.
 """
 # run_validation: skip
@@ -148,10 +148,10 @@ class DeployDryRunTest(unittest.TestCase):
             return
         shutil.rmtree(stage, ignore_errors=True)
 
-    def cli(self, argv: list[str]) -> subprocess.CompletedProcess:
+    def cli(self, argv: list[str], env: dict | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             [sys.executable, str(self.source / "deploy" / "deploy.py"), *argv],
-            cwd=self.source, capture_output=True, text=True, timeout=CLI_TIMEOUT,
+            cwd=self.source, capture_output=True, text=True, timeout=CLI_TIMEOUT, env=env,
         )
 
     def remember_stage(self, stdout: str) -> Path | None:
@@ -201,14 +201,14 @@ class DeployDryRunTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, combined(proc))
         rows = table_results(proc.stdout)
         self.assertEqual(rows.get("local"), "PLANNED", proc.stdout)
-        self.assertEqual(rows.get("missing"), "SKIPPED", proc.stdout)
+        self.assertEqual(rows.get("missing"), "FAILED", proc.stdout)
         self.assertEqual(rows.get("weird"), "UNSUPPORTED", proc.stdout)
         self.assertEqual(rows.get("off"), "SKIPPED", proc.stdout)
         report = self.latest_report(stage)
         by_name = {row["target"]: row for row in report["rows"]}
         self.assertEqual(set(by_name), {"local", "missing", "weird", "off"})
         self.assertEqual(by_name["local"]["result"], "PLANNED")
-        self.assertEqual(by_name["missing"]["result"], "SKIPPED")
+        self.assertEqual(by_name["missing"]["result"], "FAILED")
         self.assertIn("prefix layout missing", by_name["missing"].get("detail") or "")
         self.assertEqual(by_name["weird"]["result"], "UNSUPPORTED")
         self.assertEqual(by_name["off"]["result"], "SKIPPED")
@@ -237,6 +237,52 @@ class DeployDryRunTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, combined(proc))
         report = self.latest_report(self.require_stage())
         self.assertIn('target identity mismatch', report['rows'][0]['detail'])
+        self.assert_prefix_unchanged()
+
+    def test_c_offline_nodes_skip_without_failing_the_command(self) -> None:
+        # Exercise the CLI and all three platform probes without a real network.
+        bin_dir = Path(self.root) / "fake-bin"
+        bin_dir.mkdir()
+        ssh = bin_dir / "ssh"
+        ssh.write_text('#!/bin/sh\nprintf "%s\\n" "$FIXTURE_SSH_ERROR" >&2\nexit 255\n')
+        ssh.chmod(0o700)
+        env = {**os.environ, "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+               "FIXTURE_SSH_ERROR": "ssh: connect to host fixture.invalid port 22: Connection timed out"}
+        doc = json.loads(self.targets.read_text())
+        local = doc["targets"][0]
+        offline = [dict(local, name=kind, kind=kind, ssh="fixture.invalid")
+                   for kind in ("linux-node", "macos-node", "windows-node")]
+        doc["targets"] = [local, *offline, dict(local, name="off", enabled=False)]
+        self.targets.write_text(json.dumps(doc))
+        stage = self.require_stage()
+        args = ["push", "--dry-run", "--all", "--web-only", "--stage", str(stage),
+                "--targets-file", str(self.targets)]
+        proc = self.cli(args, env)
+        self.assertEqual(proc.returncode, 0, combined(proc))
+        self.assertEqual(table_results(proc.stdout), {"local": "PLANNED", "off": "SKIPPED",
+                         **{t["name"]: "SKIPPED" for t in offline}})
+        for row in self.latest_report(stage)["rows"]:
+            if row["target"] in {t["name"] for t in offline}:
+                self.assertIn("Connection timed out", row["detail"])
+                self.assertFalse(row["plan"])
+                self.assertFalse(row["backup"])
+
+        # All-offline is explicitly skipped, including rollback; never reported OK.
+        doc["targets"] = offline
+        self.targets.write_text(json.dumps(doc))
+        proc = self.cli(args, env)
+        self.assertEqual(proc.returncode, 0, combined(proc))
+        self.assertEqual(set(table_results(proc.stdout).values()), {"SKIPPED"})
+        proc = self.cli(["rollback", "--targets", ",".join(t["name"] for t in offline), "--stage", str(stage),
+                         "--targets-file", str(self.targets)], env)
+        self.assertEqual(proc.returncode, 0, combined(proc))
+        self.assertEqual(set(table_results(proc.stdout).values()), {"SKIPPED"})
+
+        # SSH authentication failures must not be mislabeled as offline.
+        env["FIXTURE_SSH_ERROR"] = "fixture.invalid: Permission denied (publickey)."
+        proc = self.cli(args, env)
+        self.assertEqual(proc.returncode, 1, combined(proc))
+        self.assertEqual(set(table_results(proc.stdout).values()), {"FAILED"})
         self.assert_prefix_unchanged()
 
     def test_d_unknown_target(self) -> None:

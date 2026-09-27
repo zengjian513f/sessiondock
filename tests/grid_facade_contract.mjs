@@ -167,19 +167,20 @@ test('dropped counts a bad line', () => {
   assert.equal(term.dropped, 2);
 });
 
-test('proposeGridDimensions is a floor division of cell metrics', () => {
+test('proposeGridDimensions reserves the 12px history scrollbar before fitting cells', () => {
   const term = new GridTerm({});
   const {cellWidth, cellHeight} = term.renderer;
   assert.ok(cellWidth > 0);
   assert.ok(cellHeight > 0);
-  const width = cellWidth * 40 + cellWidth / 2;
+  const width = 12 + cellWidth * 40 + cellWidth / 2;
   const height = cellHeight * 12 + cellHeight / 3;
   const expected = {
-    cols: Math.max(2, Math.floor(width / cellWidth)),
+    cols: 40,
     rows: Math.max(1, Math.floor(height / cellHeight)),
   };
   assert.deepEqual(proposeGridDimensions(term, width, height), expected);
   assert.deepEqual(term.proposeDimensions(width, height), expected);
+  assert.deepEqual(proposeGridDimensions(term, 8, 0), {cols: 2, rows: 1});
 });
 
 test('renderer methods do not throw without a canvas', () => {
