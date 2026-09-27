@@ -1018,6 +1018,26 @@ const PENDING_RECONCILE_MS = 5000; // 只在有服务端 pending 时巡检小账
 // SSE/对账从同一游标重试。用 let 是为了浏览器 E2E 能把分钟级故障压缩到毫秒。
 let SYNC_STALL_MS = 12000;
 const cache = new Map();          // viewKey → {meta, msgs, version, end, bytes}
+const messageIndexes = new WeakMap();
+function messageIndex(messages) {
+  let index = messageIndexes.get(messages);
+  if (!index) {
+    index = {length: 0, questions: new Set(), turnStart: -1, tailHasFinal: false};
+    messageIndexes.set(messages, index);
+  }
+  for (let i = index.length; i < messages.length; i++) {
+    const message = messages[i];
+    if (message.role === 'question' && message.call_id) index.questions.add(message.call_id);
+    if (isTurnStart(message) && !(i > 0 && isTurnStart(messages[i - 1])
+        && sameNativeTurn(messages[i - 1], message))) {
+      index.turnStart = i;
+      index.tailHasFinal = false;
+    }
+    if (isFinalAssistant(message)) index.tailHasFinal = true;
+  }
+  index.length = messages.length;
+  return index;
+}
 // 多题题卡会被 SSE、兜底对账和完整重绘反复替换 DOM。未提交选择必须独立于
 // 节点保存，否则下一次后台刷新就会让用户刚点的答案消失。
 const questionFormDrafts = new Map(); // `${uid}\0${tool id}` → option index[]
@@ -1648,8 +1668,10 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     // 本批没有带来匹配正文；主动补读，但补读期间仍保留占位。
     scheduleDiffRecovery(uid, agent);
   }
-  const questionCalls = new Set([...e.msgs, ...(data.messages || [])]
-    .filter(m => m.role === 'question' && m.call_id).map(m => m.call_id));
+  const questionCalls = data.reset ? new Set() : messageIndex(e.msgs).questions;
+  for (const message of data.messages || []) {
+    if (message.role === 'question' && message.call_id) questionCalls.add(message.call_id);
+  }
   data.messages = (data.messages || []).map(m => {
     if (m.role !== 'tool_result' || !questionCalls.has(m.call_id)) return m;
     return { ...m, role: 'answer', name: m.name || 'AskUserQuestion',
@@ -1704,7 +1726,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     return 0;
   }
   e.total = entryTotal(e) + messageCount(data.messages);
-  e.msgs = e.msgs.concat(data.messages);
+  for (const message of data.messages) e.msgs.push(message);
   const incoming = incomingCount(data.messages);
   const detailVisible = S.sel === uid && S.agent === agent
     && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
@@ -2357,7 +2379,7 @@ function paintLive() {
 function syncActiveOnlyList() {
   if (!S.activeOnly) return;
   const wanted = new Set(visible().map(s => s.uid));
-  const shown = new Set([...document.querySelectorAll('#side .item[data-uid]')].map(n => n.dataset.uid));
+  const shown = $('#side')?._sessionUids || new Set();
   if (wanted.size === shown.size && [...wanted].every(uid => shown.has(uid))) return;
   const side = $('#side'), top = side?.scrollTop || 0;
   renderSide();
@@ -2452,8 +2474,7 @@ function pendingTmuxSessions() {
     // A receipt whose binding the server confirmed is represented by
     // the native row it binds, exactly like a declared Claude identity.
     const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
-    if (!SOURCES[t.source] || (declared && S.sessions.some(s =>
-      s.source === t.source && s.node_id === t.node_id && String(s.sid) === String(declared)))) return [];
+    if (!SOURCES[t.source] || (declared && indexedSessions().byNative.has(JSON.stringify([t.node_id || '', t.source, String(declared)])))) return [];
     const source = t.source;
     return [{
       node_id: t.node_id, node_name: t.node_name, stale: t.stale,
@@ -2470,8 +2491,27 @@ function pendingTmuxSessions() {
   });
 }
 
+let sessionIndexRows = null, sessionIndex = null;
+function indexedSessions() {
+  if (sessionIndexRows !== S.sessions) {
+    sessionIndexRows = S.sessions;
+    const byUid = new Map(), byNative = new Map(), forkChildren = new Map();
+    for (const row of S.sessions) {
+      byUid.set(row.uid, row);
+      const key = JSON.stringify([row.node_id || '', row.source, String(row.sid)]);
+      if (!byNative.has(key)) byNative.set(key, row);
+      if (row.sid && row.forked_from_id) {
+        const parent = JSON.stringify([row.node_id || '', row.source, String(row.forked_from_id)]);
+        if (!forkChildren.has(parent)) forkChildren.set(parent, []);
+        forkChildren.get(parent).push(row);
+      }
+    }
+    sessionIndex = {byUid, byNative, forkChildren};
+  }
+  return sessionIndex;
+}
 const sessionContinued = session =>
-  !!(session?.continued_in && S.sessions.some(s => s.uid === session.continued_in));
+  !!(session?.continued_in && indexedSessions().byUid.has(session.continued_in));
 const hiddenForkParent = session => !!session?.fork_parent && !session.fork_parent_visible;
 const sessionHidden = session => hiddenForkParent(session) || sessionContinued(session);
 // 沿 forked_from_id 往上追整条父会话链（近的在前）。只在同来源、同机器内按
@@ -2482,8 +2522,7 @@ function forkAncestors(session) {
   let sid = String(session?.forked_from_id || '');
   while (sid && !seen.has(sid)) {
     seen.add(sid);
-    const row = S.sessions.find(s => s.source === session.source
-      && (s.node_id || '') === (session.node_id || '') && String(s.sid) === sid);
+    const row = indexedSessions().byNative.get(JSON.stringify([session.node_id || '', session.source, sid]));
     chain.push({ sid, row: row || null });
     sid = String(row?.forked_from_id || '');
   }
@@ -2495,9 +2534,7 @@ function forkAncestors(session) {
 // 在前，其余按创建时间新的在前。
 function forkChildren(session) {
   if (!session?.sid) return [];
-  return S.sessions.filter(s => s.source === session.source
-    && (s.node_id || '') === (session.node_id || '') && s.sid
-    && String(s.forked_from_id || '') === String(session.sid))
+  return [...(indexedSessions().forkChildren.get(JSON.stringify([session.node_id || '', session.source, String(session.sid)])) || [])]
     .sort((a, b) => (S.live.has(b.uid) - S.live.has(a.uid))
       || String(b.created || '').localeCompare(String(a.created || '')));
 }
@@ -2622,6 +2659,7 @@ function mergeSessionMetaEvent(entry, session) {
   };
   const at = entry.msgs.findIndex(m => m.ts && m.ts > event.ts);
   entry.msgs.splice(at < 0 ? entry.msgs.length : at, 0, event);
+  messageIndexes.delete(entry.msgs);
   return true;
 }
 
@@ -2635,9 +2673,9 @@ function refreshSessionMeta() {
   const before = cache.get(viewKey(S.sel, S.agent));
   const beforeKey = before ? headerKey(before.meta) : '';
   let currentEventAdded = false;
-  for (const s of S.sessions) {
-    for (const e of cache.values()) {
-      if (e.meta.uid !== s.uid) continue;
+  for (const e of cache.values()) {
+    const s = indexedSessions().byUid.get(e.meta.uid);
+    if (s) {
       const agent = e.meta.agent_id;
       if (!agent) {
         e.meta = { ...e.meta, ...s };
@@ -2669,9 +2707,12 @@ function refreshSessionMeta() {
 
 let sessionLoadRun = 0;
 let sessionLoadRetry = null;
+let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0;
 
 async function loadSessions(force) {
   const run = ++sessionLoadRun;
+  sessionLoadActive = run;
+  sessionPollController?.abort();
   clearTimeout(sessionLoadRetry);
   $('#stat').textContent = force ? ' 重新扫描…' : ' 加载中…';
   const ac = new AbortController();
@@ -2693,6 +2734,7 @@ async function loadSessions(force) {
     return false;
   } finally {
     clearTimeout(timeout);
+    if (sessionLoadActive === run) sessionLoadActive = 0;
   }
   if (run !== sessionLoadRun) return false;
   $('#stat').classList.remove('err');
@@ -2711,10 +2753,22 @@ async function loadSessions(force) {
 }
 
 /** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
-async function pollSessions() {
-  if (document.hidden || !S.sig) return;
+function pollSessions() {
+  if (document.hidden || !S.sig || sessionLoadActive) return Promise.resolve();
+  if (sessionPollRequest) return sessionPollRequest;
+  sessionPollRequest = runSessionPoll().finally(() => { sessionPollRequest = null; });
+  return sessionPollRequest;
+}
+async function runSessionPoll() {
+  const run = sessionLoadRun, sig = S.sig;
+  const ac = new AbortController();
+  sessionPollController = ac;
+  const timeout = setTimeout(() => ac.abort(), 15000);
   try {
-    const d = await (await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(S.sig)))).json();
+    const response = await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(sig)), {signal: ac.signal});
+    if (!response.ok) return;
+    const d = await response.json();
+    if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return;
     applyNodeState(d, 'sessions');
     if (d.unchanged || !d.sessions) return;
     const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
@@ -2740,6 +2794,10 @@ async function pollSessions() {
     side.scrollTop = top;               // 别打断正在看的位置
     paintLive();
   } catch { /* 下轮再说 */ }
+  finally {
+    clearTimeout(timeout);
+    if (sessionPollController === ac) sessionPollController = null;
+  }
 }
 
 setInterval(pollSessions, LIST_MS);
@@ -2754,7 +2812,7 @@ function visible() {
 }
 
 // ---------------------------------------------------------------- 左栏
-const sessionStarred = uid => !!S.sessions.find(s => s.uid === uid)?.starred;
+const sessionStarred = uid => !!indexedSessions().byUid.get(uid)?.starred;
 
 /* ---------- 左栏多选操作 ---------- */
 // 已有记录移入回收站；未落盘的新建会话停止并丢弃，正式运行会话由服务端拒绝删除。
@@ -2831,9 +2889,8 @@ function paintItemPick(row) {
 function paintGroupPick(group) {
   const box = group?.querySelector('.ghead-pick');
   if (!box) return;
-  const rows = [...group.querySelectorAll('.item[data-uid]')]
-    .filter(row => row.querySelector('.item-pick'));
-  const picked = rows.filter(row => pickedSessions.has(row.dataset.uid)).length;
+  const rows = group._pickUids || [];
+  const picked = rows.filter(uid => pickedSessions.has(uid)).length;
   box.checked = !!rows.length && picked === rows.length;
   box.indeterminate = picked > 0 && picked < rows.length;
 }
@@ -3280,11 +3337,12 @@ function starButtonMarkup(uid, starred, cls = '', id = '') {
 function paintStarButton(button, starred, busy = false) {
   if (!button) return;
   const label = starred ? '取消星标' : '标为星标';
+  const changed = button.classList.contains('on') !== starred;
   button.classList.toggle('on', starred);
   button.title = button.ariaLabel = label;
   button.setAttribute('aria-pressed', String(starred));
   button.disabled = busy;
-  button.innerHTML = uiIcon(starred ? 'star-filled' : 'star');
+  if (changed) button.innerHTML = uiIcon(starred ? 'star-filled' : 'star');
   labelSessionAction(button);
 }
 
@@ -3504,8 +3562,10 @@ function renderChips() {
   for (const old of box.querySelectorAll(':scope > .chip[data-source]')) {
     if (!wanted.has(old.dataset.source)) old.remove();
   }
+  const counts = new Map();
+  for (const row of sidebarSessions()) if (nodeSelected(row)) counts.set(row.source, (counts.get(row.source) || 0) + 1);
   for (const [k, v] of Object.entries(SOURCES)) {
-    const n = sidebarSessions().filter(s => s.source === k && nodeSelected(s)).length;
+    const n = counts.get(k) || 0;
     let c = box.querySelector(`:scope > .chip[data-source="${CSS.escape(k)}"]`);
     if (c && c.tagName !== 'BUTTON') { c.remove(); c = null; }
     if (!c) {
@@ -3639,7 +3699,7 @@ function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
     // 回退/续写隐藏旧父会话时，附属会话跟随它的可见后继；不改写历史发起关系。
     // 普通筛选或删除不意味着续写，找不到可见后继仍按孤立会话处理。
     if (sessionContinued(row)) {
-      const next = S.sessions.find(s => s.uid === row.continued_in);
+      const next = indexedSessions().byUid.get(row.continued_in);
       row = next?.source === row.source && (next.node_id || '') === (row.node_id || '') ? next : null;
     } else if (hiddenForkParent(row)) {
       row = forkChildren(row)[0];
@@ -3771,7 +3831,7 @@ function nestStamp(s, children, memo = new Map()) {
   return stamp;
 }
 
-function expandRows(s, depth, children, out, seen) {
+function expandRows(s, depth, children, out, seen, memo) {
   const row = {s, agent: null, depth, kids: 0, closed: false};
   out.push(row);
   if (!S.nest) return;
@@ -3780,7 +3840,7 @@ function expandRows(s, depth, children, out, seen) {
     ...(s.agent_items || []).map(agent => ({agent, running: agentRunning(s.uid, agent),
       when: when(agent.updated)})),
     ...(children.get(s.uid) || []).map(c => ({session: c, running: S.live.has(c.uid),
-      when: nestStamp(c, children)})),
+      when: nestStamp(c, children, memo)})),
   ].sort((a, b) => (b.running - a.running) || (b.when - a.when));
   row.closed = kids.length > 0 && S.nestClosed.has(s.uid);
   const start = out.length;
@@ -3788,7 +3848,7 @@ function expandRows(s, depth, children, out, seen) {
     if (k.agent) out.push({s, agent: k.agent, depth: depth + 1});
     else if (!seen.has(k.session.uid)) {
       seen.add(k.session.uid);
-      expandRows(k.session, depth + 1, children, out, seen);
+      expandRows(k.session, depth + 1, children, out, seen, memo);
     }
   }
   // 三角上写的是收起后消失的整棵子树行数；收起时这些行只用来数数，不进列表
@@ -3830,7 +3890,7 @@ function groupBy(list) {
     for (const s of m.get(k)) {
       if (seen.has(s.uid)) continue;
       seen.add(s.uid);
-      expandRows(s, 0, children, rows, seen);
+      expandRows(s, 0, children, rows, seen, memo);
     }
     return [k, rows];
   });
@@ -3847,57 +3907,9 @@ const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') 
                        s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
                       .filter(Boolean).join(' · '));
 
-/** 就地更新左栏, 成功返回 true。
- *
- *  只要分组和成员没变, 就复用现有节点: 顺序变了就把节点挪一挪, 文字变了就改文字。
- *  这一步很要紧 —— 活跃会话每隔几秒就更新一次 updated, 排序跟着来回换,
- *  每次都重建整棵子树的话, 看起来就是列表一直在闪。
- *  只有真的多了/少了会话(或分组变了)才回去整体重渲染。 */
+/** Share keyed reconciliation for explicit renders and background list updates. */
 function patchSide(list) {
-  paintSearchMode(list);
-  if (sidebarTextSelectionProtected()) {
-    sidebarRenderDeferred = true;
-    return true;
-  }
-  const side = $('#side');
-  const groups = groupBy(list);
-  const have = new Map([...side.querySelectorAll(':scope > .group')].map(g => [g.dataset.key, g]));
-  if (have.size !== groups.length || groups.some(([k]) => !have.has(k))) return false;
-
-  for (const [key, rows] of groups) {
-    const g = have.get(key);
-    const ul = g.querySelector('.glist');
-    if (!ul) return false;
-    const nodes = new Map([...ul.children].map(n => [n.dataset.key, n]));
-    if (nodes.size !== rows.length || rows.some(r => !nodes.has(rowKey(r)))) return false;
-    for (const r of rows) {
-      const n = nodes.get(rowKey(r));
-      if (n.dataset.depth !== String(r.depth)) return false;   // 挂到别人下面去了，整体重画
-      ul.appendChild(n);                     // 按新顺序挪位置, 节点本身不动
-      if (r.agent) { patchAgentRow(n, r); continue; }
-      if (!!n.querySelector('.nest-caret') !== r.kids > 0) return false;
-      const s = r.s;
-      const m = n.querySelector('.m');
-      const t = itemMeta(s);
-      if (m && m.textContent !== t) m.textContent = t;
-      const title = n.querySelector('.t');
-      if (title && title.textContent !== s.title) {
-        title.title = s.title;
-        title.innerHTML = hl(s.title);
-      }
-      paintStarButton(n.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
-      const cwd = n.querySelector('.cwd');
-      if (cwd && (cwd.title !== (s.cwd || '') || cwd.dataset.nodeName !== (s.node_name || ''))) {
-        cwd.title = s.cwd || '';
-        cwd.dataset.nodeName = s.node_name || '';
-        cwd.innerHTML = timelineDirectoryMarkup(s);
-      }
-    }
-    const count = rows.filter(r => !r.agent).length;
-    const c = g.querySelector('.gcount');
-    if (c && c.textContent !== String(count)) c.textContent = count;
-  }
-  fitTimelineDirectories();
+  renderSide(list);
   return true;
 }
 
@@ -3948,7 +3960,7 @@ function patchAgentRow(node, row) {
 /** 子代理行的绿点和选中态：跑没跑由服务端按 transcript 判断，父进程不在则一律不算。 */
 function paintAgentStatus(node) {
   const uid = node.dataset.owner, id = node.dataset.agent;
-  const item = (S.sessions.find(s => s.uid === uid)?.agent_items || []).find(a => a.id === id);
+  const item = (indexedSessions().byUid.get(uid)?.agent_items || []).find(a => a.id === id);
   const running = !!item && agentRunning(uid, item);
   node.classList.toggle('live', running);
   node.classList.toggle('sel', S.sel === uid && S.agent === id);
@@ -3994,7 +4006,64 @@ function paintSearchMode(list) {
   $('#side-search-count').textContent = `${list.length} 条`;
 }
 
-function renderSide() {
+/** Update a row without discarding selection, focus or its existing elements. */
+function patchSidebarRow(node, row, highlightKey) {
+  const s = row.s, agent = row.agent;
+  const titleText = agent ? agent.title : s.title;
+  const title = node.querySelector('.t');
+  if (title && (title.title !== titleText || node._highlightKey !== highlightKey)) {
+    title.title = titleText;
+    title.innerHTML = hl(titleText);
+  }
+  const meta = node.querySelector('.m');
+  const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
+  if (meta && meta.textContent !== metaText) meta.textContent = metaText;
+  if (agent) {
+    paintAgentStatus(node);
+    return;
+  }
+  const pickable = S.picking && sessionPickable(s);
+  const selected = S.sel === s.uid && !(S.nest && S.agent);
+  const className = 'item' + (S.nest ? ' tree' : '') + (selected ? ' sel' : '')
+    + (row.closed ? ' nest-closed' : '')
+    + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
+    + (!s.pending && S.live.has(s.uid) ? ' live' : '')
+    + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
+    + (pickable && pickedSessions.has(s.uid) ? ' picked' : '')
+    + (S.nestAttach === s.uid ? ' nest-source' : '');
+  if (node.className !== className) node.className = className;
+  const cwd = node.querySelector('.cwd');
+  if (cwd && (cwd.title !== (s.cwd || '') || cwd.dataset.nodeName !== (s.node_name || ''))) {
+    cwd.title = s.cwd || '';
+    cwd.dataset.nodeName = s.node_name || '';
+    cwd.innerHTML = timelineDirectoryMarkup(s);
+  }
+  const snippet = node.querySelector('.snip');
+  if (snippet && (snippet.textContent !== s.snippet || node._highlightKey !== highlightKey)) snippet.innerHTML = hl(s.snippet);
+  paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
+  const checkbox = node.querySelector('.item-pick');
+  if (checkbox) {
+    checkbox.checked = pickedSessions.has(s.uid);
+    checkbox.ariaLabel = `选中「${s.title}」`;
+  }
+  const caret = node.querySelector('.nest-caret');
+  if (caret) {
+    caret.setAttribute('aria-expanded', String(!row.closed));
+    caret.title = `${row.closed ? '展开' : '收起'} ${row.kids} 项`;
+    caret.ariaLabel = `${row.closed ? '展开' : '收起'}「${s.title}」下的 ${row.kids} 项`;
+  }
+  if (s.pending) node.dataset.tmuxName = s.tmuxName;
+  node.onclick = event => {
+    if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+    if (S.nestAttach) { void pickNestParent(s); return; }
+    if (pickable) return toggleSessionPick(s.uid);
+    if (S.picking) return;
+    s.pending ? openPendingSession(s) : openSession(s.uid);
+  };
+  paintItemStatus(node);
+}
+
+function renderSide(suppliedList = null) {
   if (sidebarTextSelectionProtected()) {
     sidebarRenderDeferred = true;
     return;
@@ -4003,12 +4072,15 @@ function renderSide() {
   renderSessionCounts();
   const side = $('#side');
   const top = side.scrollTop;
-  side.innerHTML = '';
-  const list = visible();
+  const list = suppliedList || visible();
+  side._sessionUids = new Set(list.map(row => row.uid));
+  const oldGroups = new Map([...side.querySelectorAll(':scope > .group')].map(group => [group.dataset.key, group]));
+  for (const child of [...side.children]) if (!child.classList.contains('group')) child.remove();
   paintSearchMode(list);
   const picked = syncPickedSessions();
   renderPickBar();
   if (!list.length) {
+    side.replaceChildren();
     if (S.term) {
       const empty = el('div', 'empty search-empty', '当前搜索无匹配会话');
       const back = el('button', 'btn', '返回全部会话');
@@ -4026,13 +4098,20 @@ function renderSide() {
     side.scrollTop = top;
     return;
   }
+  let groupPosition = 0;
+  const sessionSignatures = new Map();
+  const highlightKey = JSON.stringify([S.term, S.opts, S.opts.regex ? regexResultRevision : 0]);
   for (const [key, rows] of groupBy(list)) {
     const items = rows.filter(r => !r.agent).map(r => r.s);
-    const g = el('div', 'group' + (S.closed.has(key) ? ' closed' : ''));
+    const g = oldGroups.get(key) || el('div', 'group');
+    oldGroups.delete(key);
+    g.classList.toggle('closed', S.closed.has(key));
     g.dataset.key = key;
     const label = S.view === 'tree' ? nodeDirectory(items[0]) : key;   // 分组标题不缩写, 只换 ~
     const groupUids = items.filter(sessionPickable).map(x => x.uid);
-    const head = el('div', 'ghead',
+    const headSignature = JSON.stringify([label, key, items.length, S.picking, S.view, items[0]?.node_name]);
+    const oldHead = g.querySelector(':scope > .ghead');
+    const head = oldHead?._signature === headSignature ? oldHead : el('div', 'ghead',
       `${S.picking ? `<input type="checkbox" class="ghead-pick"
          aria-label="选中「${esc(label)}」下的全部会话">` : ''}
        <span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(items[0]) : esc(label)}</span>
@@ -4041,7 +4120,7 @@ function renderSide() {
       if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
       S.closed.has(key) ? S.closed.delete(key) : S.closed.add(key);
       store.set('closed', [...S.closed]);
-      g.classList.toggle('closed');
+      renderSide();
       scheduleTimelineFit();
     };
     const groupBox = head.querySelector('.ghead-pick');
@@ -4051,10 +4130,42 @@ function renderSide() {
         toggleGroupPick(groupUids, g);
       };
     }
-    g.appendChild(head);
-    const ul = el('div', 'glist');
-    for (const r of rows) {
-      if (r.agent) { ul.appendChild(agentRow(r.s, r.agent, r.depth)); continue; }
+    head._signature = headSignature;
+    if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
+    g._pickUids = groupUids;
+    const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
+    const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
+    let rowPosition = 0;
+    for (const r of (S.closed.has(key) ? [] : rows)) {
+      if (!sessionSignatures.has(r.s.uid)) {
+        const {agent_items, cursor, ...fields} = r.s;
+        sessionSignatures.set(r.s.uid, JSON.stringify(fields));
+      }
+      const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
+        r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
+        S.view, S.nest, S.picking, S.nestAttach === r.s.uid, S.term, S.opts,
+        S.opts.regex ? regexResultRevision : 0,
+        S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !(S.nest && S.agent)),
+        picked.has(r.s.uid), S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
+      const structure = JSON.stringify([!!r.agent, S.view, S.nest,
+        S.picking && sessionPickable(r.s), r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
+      const old = previous.get(rowKey(r));
+      previous.delete(rowKey(r));
+      const place = node => {
+        node._signature = signature;
+        node._structure = structure;
+        node._highlightKey = highlightKey;
+        if (ul.children[rowPosition] !== node) ul.insertBefore(node, ul.children[rowPosition] || null);
+        rowPosition++;
+      };
+      if (old?._signature === signature) { place(old); continue; }
+      if (old?._structure === structure) {
+        patchSidebarRow(old, r, highlightKey);
+        place(old);
+        continue;
+      }
+      old?.remove();
+      if (r.agent) { place(agentRow(r.s, r.agent, r.depth)); continue; }
       const s = r.s;
       const meta = itemMeta(s);
       const pickable = S.picking && sessionPickable(s);
@@ -4100,12 +4211,15 @@ function renderSide() {
         toggleNestFold(s.uid);
       };
       paintItemStatus(it);
-      ul.appendChild(it);
+      place(it);
     }
-    g.appendChild(ul);
-    side.appendChild(g);
+    for (const old of previous.values()) old.remove();
+    if (ul.parentElement !== g) g.appendChild(ul);
+    if (side.children[groupPosition] !== g) side.insertBefore(g, side.children[groupPosition] || null);
+    groupPosition++;
     if (groupBox) paintGroupPick(g);
   }
+  for (const old of oldGroups.values()) old.remove();
   fitTimelineDirectories();
   side.scrollTop = top;
 }
@@ -4162,6 +4276,66 @@ function reTerm(global) {
   }
 }
 
+let regexWorker = null, regexGeneration = '', regexRequest = 0, regexPaintTimer = null;
+let regexResultRevision = 0, searchInputTimer = null;
+const regexResults = new Map(), regexPending = new Map(), regexByText = new Map();
+function resetRegexSearch() {
+  regexWorker?.terminate();
+  regexWorker = null;
+  regexGeneration = '';
+  regexResults.clear();
+  for (const job of regexPending.values()) job.resolve([]);
+  regexPending.clear();
+  regexByText.clear();
+  clearTimeout(regexPaintTimer);
+  regexPaintTimer = null;
+}
+
+function regexMatches(text) {
+  const re = reTerm(true);
+  if (!re) return Promise.resolve([]);
+  const generation = `${re.source}\0${re.flags}`;
+  if (regexGeneration !== generation) {
+    resetRegexSearch();
+    regexGeneration = generation;
+  }
+  text = String(text ?? '');
+  if (regexResults.has(text)) return Promise.resolve(regexResults.get(text));
+  if (regexByText.has(text)) return regexByText.get(text);
+  if (!regexWorker) {
+    regexWorker = new Worker(appUrl('regex-worker.js'));
+    regexWorker.onmessage = ({data}) => {
+      const job = regexPending.get(data.id);
+      if (!job) return;
+      regexPending.delete(data.id);
+      regexByText.delete(job.text);
+      data.ranges.matched = !!data.matched;
+      regexResults.set(job.text, data.ranges);
+      job.resolve(data.ranges);
+      if (regexPaintTimer === null) regexPaintTimer = setTimeout(() => {
+        regexPaintTimer = null;
+        regexResultRevision++;
+        renderSide();
+      }, 50);
+    };
+    regexWorker.onerror = () => resetRegexSearch();
+  }
+  const id = ++regexRequest;
+  let resolve;
+  const promise = new Promise(done => { resolve = done; });
+  regexPending.set(id, {text, promise, resolve});
+  regexByText.set(text, promise);
+  regexWorker.postMessage({id, text, source: re.source, flags: re.flags, limit: MARK_MAX});
+  return promise;
+}
+
+function regexCached(text) {
+  if (!reTerm(true)) return [];
+  // Starting a request also invalidates results from a changed query/options.
+  regexMatches(text);
+  return regexResults.get(String(text ?? '')) || [];
+}
+
 function matchesSearch(text) {
   if (S.opts.regex) return hasTerm(text);
   const terms = searchTerms(S.term);
@@ -4171,12 +4345,21 @@ function matchesSearch(text) {
 
 function hasTerm(t) {
   if (!S.term) return false;
+  if (S.opts.regex) return !!regexCached(t).matched;
   const re = reTerm(false);
   return re ? re.test(t) : false;
 }
 
 function hl(text) {
   text = String(text);
+  if (S.term && S.opts.regex) {
+    let html = '', last = 0;
+    for (const [start, end] of regexCached(text)) {
+      html += esc(text.slice(last, start)) + `<mark>${esc(text.slice(start, end))}</mark>`;
+      last = end;
+    }
+    return html + esc(text.slice(last));
+  }
   const re = S.term && reTerm(true);
   if (!re) return esc(text);
   let html = '', last = 0;
@@ -4191,6 +4374,7 @@ function hl(text) {
 /** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
 function markMatches(root) {
   if (!S.term) return 0;
+  if (S.opts.regex) { markRegexMatches(root); return 0; }
   const re = reTerm(true);
   if (!re) return 0;
   const messageBox = $('#msgs');
@@ -4230,6 +4414,42 @@ function markMatches(root) {
     t.parentNode.replaceChild(frag, t);
   }
   return count;
+}
+
+async function markRegexMatches(root) {
+  for (const node of [root, ...root.querySelectorAll('.msg')]) node._applyRegexMatch?.();
+  const generation = `${S.term}\0${JSON.stringify(S.opts)}`;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const msg = n.parentElement?.closest('.msg');
+      return n.parentElement?.closest('mark, .fold-preview, .katex')
+        || !msg || !SEARCH_ROLES.has(msg.dataset.role)
+        ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets = [];
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) targets.push(node);
+  for (const node of targets) {
+    const text = node.nodeValue;
+    const ranges = await regexMatches(text);
+    if (generation !== `${S.term}\0${JSON.stringify(S.opts)}` || !root.isConnected) return;
+    if (!node.isConnected || node.nodeValue !== text || node.parentElement.closest('mark')) continue;
+    const budget = MARK_MAX - ($('#msgs')?.querySelectorAll('mark').length || 0);
+    if (budget <= 0) { S.markCapped = true; break; }
+    if (!ranges.length) continue;
+    const fragment = document.createDocumentFragment();
+    let last = 0;
+    for (const [start, end] of ranges.slice(0, budget)) {
+      fragment.append(text.slice(last, start));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(start, end);
+      fragment.append(mark);
+      last = end;
+    }
+    fragment.append(text.slice(last));
+    node.replaceWith(fragment);
+  }
+  updateMatchNav();
 }
 
 function jumpMark(delta) {
@@ -4391,6 +4611,9 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   inflight?.abort();            // 连点列表时, 放弃上一个还没回来的请求
   const ac = inflight = new AbortController();
   closeWatch();
+  ++renderSeq;                 // Cancel detached render batches before the next fetch completes.
+  syntaxQueue.clear();
+  formulaRoots.clear();
   if (typeof T !== 'undefined') {
     if (T.uid && (T.uid !== uid || selectedAgent)) closeTermPane(true);
     $('#composer').classList.add('hidden');    // 先收起, 渲染完再按新会话的状态决定
@@ -4514,6 +4737,11 @@ function jumpWithinConversation(target, block = 'center') {
   target.scrollIntoView({block, behavior: 'smooth'});
 }
 
+function disposeMessageObservers(box) {
+  box?._ro?.disconnect();
+  box?._mo?.disconnect();
+}
+
 function watchBottom(box) {
   _stick = true;
   _lastTop = box.scrollTop;
@@ -4539,26 +4767,35 @@ function watchBottom(box) {
   });
   // 内容高度变化 (展开消息、渲染完成、字体加载…) 时跟随
   if (window.ResizeObserver) {
+    disposeMessageObservers(box);
     const ro = new ResizeObserver(() => settle(box));
     ro.observe(box);
     // 普通消息只盯底部 30 条，避免上万节点的观察成本；但图片、公式、表格即使
     // 位于很早的消息里，加载或窄屏重排也会改变总高度，必须额外观察。
+    const rich = new Set(), ordinary = new Set();
     const observeRich = root => {
-      if (root.matches?.('img, .katex, .tw')) ro.observe(root);
-      root.querySelectorAll?.('img, .katex, .tw').forEach(n => ro.observe(n));
+      const observe = node => { rich.add(node); ro.observe(node); };
+      if (root.matches?.('img, .katex, .tw')) observe(root);
+      root.querySelectorAll?.('img, .katex, .tw').forEach(observe);
     };
-    for (const c of [...box.children].slice(-30)) ro.observe(c);
+    const syncTail = () => {
+      const tail = new Set();
+      for (let node = box.lastElementChild; node && tail.size < 30; node = node.previousElementSibling) tail.add(node);
+      for (const node of ordinary) if (!tail.has(node)) { ordinary.delete(node); if (!rich.has(node)) ro.unobserve(node); }
+      for (const node of tail) if (!ordinary.has(node)) { ordinary.add(node); ro.observe(node); }
+      for (const node of rich) if (!box.contains(node)) { rich.delete(node); ro.unobserve(node); }
+    };
+    syncTail();
     observeRich(box);
-    box._ro?.disconnect();
     box._ro = ro;
     const mo = new MutationObserver(ms => {
       for (const m of ms) for (const n of m.addedNodes) {
-        if (n.nodeType === 1) { ro.observe(n); observeRich(n); }
+        if (n.nodeType === 1) observeRich(n);
       }
+      syncTail();
       settle(box);
     });
-    mo.observe(box, { childList: true });
-    box._mo?.disconnect();
+    mo.observe(box, { childList: true, subtree: true });
     box._mo = mo;
   }
 }
@@ -4852,7 +5089,9 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   const uid = meta.uid;
   const agent = meta.agent_id || null;
   if (S.sel !== uid || S.agent !== agent) return;
+  const renderedLength = msgs.length;
   const d = $('#detail');
+  disposeMessageObservers($('#msgs'));
   d.innerHTML = '';
   const entry = cache.get(viewKey(uid, agent));
   if (!agent) reconcileQueuedMessages(uid, msgs);
@@ -4894,8 +5133,8 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
     box.replaceChildren(frag);
     const latest = cache.get(viewKey(uid, agent));
     if (latest === historyPageEntry) {
-      if (latest.msgs !== msgs) {
-        appendMessages(box, latest.msgs.slice(msgs.length), null,
+      if (latest.msgs !== msgs || latest.msgs.length !== renderedLength) {
+        appendMessages(box, latest.msgs.slice(renderedLength), null,
           {openTail: latest.activity?.state === 'working'});
       }
       // Activity-only packets can mark the last assistant interrupted in-place;
@@ -4908,6 +5147,7 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
       if (activity?.state !== 'working') sealTurnTail(box, latest, {defer: false});
     }
   } else box.appendChild(frag);
+  scheduleSyntax();            // Resume jobs held while this fragment was detached.
   renderConversationTail(activity, uid);
   stickBottom(box, true);                // 默认停在最新的一条
   watchBottom(box);
@@ -5995,10 +6235,19 @@ function messageTimeDivider(value) {
  *  “相邻”判断，不中断 20 分钟周期；隐藏的协议消息不参与。 */
 function refreshMessageTimeDividers(box = $('#msgs')) {
   if (!box) return;
-  box.querySelectorAll(':scope > .message-time-divider').forEach(node => node.remove());
-  let previousEnd = null;
-  let lastShownAt = null;
-  for (const node of [...box.children]) {
+  const saved = box._timeDividerTail;
+  const resume = saved?.node?.parentElement === box;
+  let previousEnd = resume ? saved.previousEnd : null;
+  let lastShownAt = resume ? saved.lastShownAt : null;
+  let first = resume ? saved.node : box.firstElementChild;
+  if (resume && first.previousElementSibling?.classList.contains('message-time-divider')) {
+    first.previousElementSibling.remove();
+  }
+  if (!resume) box._timeDividerTail = null;
+  const nodes = [];
+  for (let node = first; node; node = node.nextElementSibling) nodes.push(node);
+  for (const node of nodes) {
+    if (node.matches('.message-time-divider')) { node.remove(); continue; }
     if (node.matches('.silent-tool-result, .question-live-shadowed') || node.hidden) continue;
     if (!node.matches('.msg')) {
       previousEnd = null;
@@ -6007,6 +6256,9 @@ function refreshMessageTimeDividers(box = $('#msgs')) {
     }
     const start = Number(node.dataset.timeStart);
     const end = Number(node.dataset.timeEnd);
+    if (!node.matches('.client-outbox, .live-question')) {
+      box._timeDividerTail = {node, previousEnd, lastShownAt};
+    }
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
       previousEnd = null;
       lastShownAt = null;
@@ -6123,13 +6375,7 @@ function sealToolTail(box) {
 }
 
 function lastRawTurn(messages) {
-  let start = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (!isTurnStart(messages[i])) continue;
-    if (i > 0 && isTurnStart(messages[i - 1])
-        && sameNativeTurn(messages[i - 1], messages[i])) continue;
-    start = i;
-  }
+  const start = messageIndex(messages).turnStart;
   return start < 0 ? [] : messages.slice(start);
 }
 
@@ -6166,6 +6412,8 @@ const isConversationTailNode = node => node?.id === 'activity'
  *  用户正在上翻时延迟封口，避免阅读中的内容突然从脚下消失。 */
 function sealTurnTail(box, entry, {defer = true} = {}) {
   if (!box || !entry?.msgs?.length) return false;
+  const index = messageIndex(entry.msgs);
+  if (['working', 'waiting'].includes(entry.activity?.state) && !index.tailHasFinal) return false;
   const raw = lastRawTurn(entry.msgs);
   if (!raw.length) {
     if (entry.activity?.state !== 'working') sealToolTail(box);
@@ -6658,9 +6906,21 @@ function turnProcessNode(turn, initiallyOpen = false) {
   let materialized = false;
   const materialize = () => {
     if (materialized) return false;
-    buildPlan(body, turn.plan || planMessages(items), null);
-    refreshMessageTimeDividers(body);
     materialized = true;
+    const plan = turn.plan || planMessages(items), generation = renderSeq;
+    let offset = 0;
+    const paint = () => {
+      if (generation !== renderSeq && !n.isConnected) return;
+      const started = performance.now(), fragment = document.createDocumentFragment();
+      while (offset < plan.length && performance.now() - started < 8) {
+        buildPlan(fragment, [plan[offset++]], null);
+      }
+      body.appendChild(fragment);
+      refreshMessageTimeDividers(body);
+      if (S.term && n.isConnected) { markMatches(body); updateMatchNav(); }
+      if (offset < plan.length) setTimeout(paint, 0);
+    };
+    paint();
     return true;
   };
   const fold = () => {
@@ -6701,6 +6961,19 @@ function turnProcessNode(turn, initiallyOpen = false) {
   if (found && S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
   if (initiallyOpen || (found && S.autoOpen < AUTO_OPEN_MAX)) open();
   else fold();
+  if (S.term && S.opts.regex && !found) {
+    const generation = regexGeneration;
+    Promise.all(items.filter(m => SEARCH_ROLES.has(m.role)).map(m => regexMatches(m.text))).then(results => {
+      n._applyRegexMatch = () => {
+        if (!n.isConnected) return;
+        n._applyRegexMatch = null;
+        if (generation !== regexGeneration || !results.some(r => r.matched)) return;
+        if (S.autoOpen >= AUTO_OPEN_MAX) n.classList.add('hashit');
+        else open();
+      };
+      n._applyRegexMatch();
+    });
+  }
   return n;
 }
 
@@ -6728,7 +7001,14 @@ function paintGroupPreview(peek, items) {
 
 /** 同一组继续增长时复用现有 DOM，避免拆掉重建把用户展开和内部“展开全文”冲掉。 */
 function syncGroupNode(n, items) {
-  const old = n._toolItems || [];
+  if (n._toolsBuilding) { n._pendingToolItems = items; n._toolItems = items; return; }
+  if (!n._toolsMaterialized) {
+    n._toolItems = items;
+    const peek = n.querySelector(':scope > .fold-preview .group-peek');
+    if (peek) paintGroupPreview(peek, items);
+    return;
+  }
+  const old = n._renderedToolItems || n._toolItems || [];
   const entries = [...n.querySelectorAll(':scope > .tool-entry')];
   const byId = new Map();
   old.forEach((m, i) => {
@@ -6751,8 +7031,14 @@ function syncGroupNode(n, items) {
     }
   });
   entries.forEach(entry => { if (!reused.has(entry)) entry.remove(); });
-  next.forEach(entry => n.insertBefore(entry, action));
+  let anchor = action;
+  for (let i = next.length - 1; i >= 0; i--) {
+    const entry = next[i];
+    if (entry.parentElement !== n || entry.nextElementSibling !== anchor) n.insertBefore(entry, anchor);
+    anchor = entry;
+  }
   n._toolItems = items;
+  n._renderedToolItems = items;
   const peek = n.querySelector(':scope > .fold-preview .group-peek');
   if (peek) paintGroupPreview(peek, items);
 }
@@ -6768,7 +7054,7 @@ function groupNode(items, initiallyOpen = false) {
   const peek = preview.querySelector('.peek');
   peek.classList.add('group-peek');
   paintGroupPreview(peek, items);
-  items.forEach(m => n.appendChild(toolEntry(m))); // 直接铺在组内，不再套 grp-body + 内层 msg
+  n._toolsMaterialized = false;
   const setAction = addAction(n);
   const fold = () => {
     n.classList.add('folded');
@@ -6776,6 +7062,34 @@ function groupNode(items, initiallyOpen = false) {
     setAction();
   };
   const open = () => {
+    if (!n._toolsMaterialized) {
+      n._toolsMaterialized = true;
+      n._toolsBuilding = true;
+      const generation = renderSeq;
+      const action = n.querySelector(':scope > .disclosure');
+      const pending = n._toolItems;
+      let offset = 0;
+      const paint = () => {
+        if (generation !== renderSeq && !n.isConnected) return;
+        const started = performance.now();
+        const fragment = document.createDocumentFragment();
+        while (offset < pending.length && performance.now() - started < 8) {
+          fragment.appendChild(toolEntry(pending[offset++]));
+        }
+        n.insertBefore(fragment, action);
+        if (offset < pending.length) setTimeout(paint, 0);
+        else {
+          n._toolsBuilding = false;
+          n._renderedToolItems = pending;
+          if (n._pendingToolItems) {
+            const latest = n._pendingToolItems;
+            n._pendingToolItems = null;
+            syncGroupNode(n, latest);
+          }
+        }
+      };
+      paint();
+    }
     n.classList.remove('folded');
     toggle.setAttribute('aria-expanded', 'true');
     setAction('收起', () => {
@@ -7121,8 +7435,29 @@ document.addEventListener('click', event => {
   loadMediaContinuation(S.sel, S.agent, button.dataset.mediaCursor, button);
 });
 
+let formulaLoading = null;
+const formulaRoots = new Set();
 function renderFormulae(root) {
-  if (typeof renderMathInElement !== 'function') return;
+  if (!/\$|\\[([]/.test(root.textContent || '')) return;
+  if (typeof renderMathInElement !== 'function') {
+    formulaRoots.add(root);
+    if (!formulaLoading) {
+      formulaLoading = Promise.all([
+        SessionDockAssets.style('vendor/katex/katex.min.css'),
+        SessionDockAssets.script('vendor/katex/katex.min.js'),
+      ]).then(() => SessionDockAssets.script('vendor/katex/auto-render.min.js'))
+        .then(() => {
+          const roots = [...formulaRoots];
+          formulaRoots.clear();
+          for (const pending of roots) {
+            if (pending.isConnected || pending.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE)
+              renderFormulae(pending);
+          }
+        }).catch(() => { formulaRoots.clear(); })
+        .finally(() => { formulaLoading = null; });
+    }
+    return;
+  }
   try {
     renderMathInElement(root, {
       delimiters: [
@@ -7180,7 +7515,6 @@ function msgNode(m) {
   const paint = full => {
     body.innerHTML = render(full); renderFormulae(body); paintSyntax(body);
   };
-  paint(hit);
   n.appendChild(body);
   const setAction = addAction(n);
   const long = m.text.length > CLIP;
@@ -7193,6 +7527,22 @@ function msgNode(m) {
     setAction(`展开全文 (${m.text.length.toLocaleString()} 字符)`, full, false);
   };
   if (long) hit ? full() : clipped();
+  else paint(hit);
+  if (S.term && S.opts.regex && !found && SEARCH_ROLES.has(m.role)) {
+    const generation = regexGeneration;
+    regexMatches(m.text).then(ranges => {
+      n._applyRegexMatch = () => {
+        if (!n.isConnected) return;
+        n._applyRegexMatch = null;
+        if (generation !== regexGeneration || !ranges.matched) return;
+        if (S.autoOpen >= AUTO_OPEN_MAX) { n.classList.add('hashit'); return; }
+        S.autoOpen++;
+        if (long) full();
+        markMatches(n);
+      };
+      n._applyRegexMatch();
+    });
+  }
   if (m.interrupted) {
     n.classList.add('native-interrupted');
     const state = el('small', 'native-message-state', '已中断');
@@ -7534,15 +7884,71 @@ const AUTO_OPEN_MAX = 40;    // 最多自动展开这么多条命中消息, 其�
 const MARK_MAX = 3000;       // 单页高亮节点上限
 const clipText = t => t.length > CLIP ? t.slice(0, CLIP) + '\n… (点下方按钮展开全文)' : t;
 
-let syntaxLoading = false;
-function ensureSyntax() {
-  if (syntaxLoading || window.sessiondockHighlight) return;
-  syntaxLoading = true;
-  const script = document.createElement('script');
-  script.type = 'module';
-  script.src = appUrl('syntax.js');
-  script.onerror = () => { syntaxLoading = false; script.remove(); };
-  document.head.appendChild(script);
+let syntaxWorker = null, syntaxBusy = false, syntaxFrame = null;
+const syntaxQueue = new Set();
+const syntaxGenerations = new WeakMap();
+
+function scheduleSyntax() {
+  if (syntaxBusy || syntaxFrame !== null || !syntaxQueue.size) return;
+  syntaxFrame = requestAnimationFrame(() => {
+    syntaxFrame = null;
+    let code;
+    const waiting = [];
+    for (const candidate of syntaxQueue) {
+      syntaxQueue.delete(candidate);
+      if (candidate.isConnected && !candidate.dataset.syntaxDone) { code = candidate; break; }
+      // Large histories yield while their nodes still live in a fragment.
+      // Keep those jobs until publication, but discard abandoned render plans.
+      if (!candidate.dataset.syntaxDone && syntaxGenerations.get(candidate) === renderSeq
+          && candidate.getRootNode().nodeType === Node.DOCUMENT_FRAGMENT_NODE) waiting.push(candidate);
+    }
+    for (const candidate of waiting) syntaxQueue.add(candidate);
+    if (!code) return;         // Fragment publication schedules us; do not spin every frame.
+    syntaxBusy = true;
+    const source = code.textContent;
+    const language = code.dataset.codeLang || '', path = code.dataset.codePath || '';
+    const kind = code.matches('code.tool-command') ? 'command'
+      : code.matches('pre.tool-out') ? 'tool' : 'code';
+    let timer;
+    const finish = result => {
+      clearTimeout(timer);
+      // An expanded/replaced preview must never receive an older worker reply.
+      if (code.isConnected && code.textContent === source
+          && (code.dataset.codeLang || '') === language && (code.dataset.codePath || '') === path) {
+        code.dataset.syntaxDone = '1';
+        if (result?.html) {
+          code.innerHTML = result.html;
+          code.classList.add('hljs');
+          if (result.language) code.classList.add(`language-${result.language}`);
+          if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
+          if (result.detected) code.dataset.detected = result.language;
+          const host = code.tagName === 'PRE' ? code
+            : (code.classList.contains('code-block') && code.parentElement?.tagName === 'PRE'
+                ? code.parentElement : null);
+          if (result.language && host) host.dataset.codeLanguage = result.language;
+          // Syntax arrives after message search decoration now. Reapply the
+          // current query to the new text nodes instead of losing its marks.
+          if (S.term) { markMatches(code); updateMatchNav(); }
+        }
+      }
+      syntaxBusy = false;
+      scheduleSyntax();
+    };
+    const failed = () => {
+      syntaxWorker?.terminate();
+      syntaxWorker = null;
+      finish(null);
+    };
+    try {
+      syntaxWorker ||= new Worker(SessionDockAssets.url('syntax-worker.js'), {type: 'module'});
+      syntaxWorker.onmessage = event => finish(event.data);
+      syntaxWorker.onerror = failed;
+      // Optional decoration must not hold up other blocks indefinitely. The
+      // complete original text stays readable even when a grammar stalls.
+      timer = setTimeout(failed, 5000);
+      syntaxWorker.postMessage({source, kind, language, path});
+    } catch { failed(); }
+  });
 }
 
 function paintSyntax(root = document) {
@@ -7559,30 +7965,12 @@ function paintSyntax(root = document) {
     + '.tool-diff-line > code[data-code-path]:not([data-syntax-done])');
   const nodes = [...new Set([...blocks, ...summaries, ...tools, ...diffLines])];
   if (!nodes.length) return;
-  if (!window.sessiondockHighlight) { ensureSyntax(); return; }
   for (const code of nodes) {
-    code.dataset.syntaxDone = '1';
-    const result = code.matches('code.tool-command') && window.sessiondockHighlightShellCommand
-      ? window.sessiondockHighlightShellCommand(code.textContent)
-      : (code.matches('pre.tool-out') && window.sessiondockHighlightSegments
-          ? window.sessiondockHighlightSegments(code.textContent, code.dataset.codePath || '')
-          : window.sessiondockHighlight(code.textContent, code.dataset.codeLang || '', code.dataset.codePath || ''));
-    if (!result?.html) continue;
-    code.innerHTML = result.html;
-    code.classList.add('hljs');
-    if (result.language) code.classList.add(`language-${result.language}`);
-    if (result.languages?.length) code.dataset.syntaxLanguages = result.languages.join(',');
-    if (result.detected) code.dataset.detected = result.language;
-    const host = code.tagName === 'PRE' ? code
-      : (code.classList.contains('code-block') && code.parentElement?.tagName === 'PRE'
-          ? code.parentElement : null);
-    if (result.language && host) {
-      host.dataset.codeLanguage = result.language;
-    }
+    syntaxQueue.add(code);
+    syntaxGenerations.set(code, renderSeq);
   }
+  scheduleSyntax();
 }
-
-addEventListener('sessiondock-highlight-ready', () => paintSyntax(document));
 
 // 轻量 markdown: 代码块 / 表格 / 列表 / 引用 / 标题 / 行内标记
 function md(text, full, media = [], context = {}) {
@@ -8058,7 +8446,7 @@ MOBILE.addEventListener?.('change', e => {
 $('#q').oninput = e => {
   cancelSearch();
   S.term = e.target.value.trim();
-  renderSide();
+  searchInputTimer = setTimeout(() => { searchInputTimer = null; renderSide(); }, 120);
 };
 
 $('#q').onkeydown = async e => {
@@ -8070,6 +8458,9 @@ $('#q').onkeydown = async e => {
 let searchSeq = 0, searchRun = 0, searchAbort = null;
 
 function cancelSearch(clearQuery = false) {
+  clearTimeout(searchInputTimer);
+  searchInputTimer = null;
+  resetRegexSearch();
   ++searchRun;
   searchAbort?.abort();
   searchAbort = null;

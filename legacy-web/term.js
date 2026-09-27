@@ -330,7 +330,7 @@ async function refreshTerminalPreferences(redraw = false) {
       redrawNames.push(view.name);
     }
   }
-  for (const name of redrawNames) attachTerm(name);
+  for (const name of redrawNames) void attachTerm(name, true);
   setTimeout(() => { fitTerm(); }, 0);
 }
 
@@ -2619,8 +2619,13 @@ function scheduleCodexSideThreadScan(view) {
 
 function writeParsedTermOutput(view, chunk) {
   view.term.write(chunk, () => {
-    scheduleCodexSideThreadScan(view);
-    positionTermViewport(view);
+    if (view.outputLayoutFrame) return;
+    view.outputLayoutFrame = requestAnimationFrame(() => {
+      view.outputLayoutFrame = null;
+      if (T.views.get(view.name) !== view) return;
+      scheduleCodexSideThreadScan(view);
+      positionTermViewport(view);
+    });
   });
 }
 
@@ -2758,18 +2763,18 @@ function refreshTerminalScale(settled = false) {
 function fitTerm(immediate = false, forceSync = false) {
   const view = currentTermViewObject();
   if (!termPaneRenderable(view)) return;
-  if (view.fitFrame) cancelAnimationFrame(view.fitFrame);
+  if (view.fitFrame) clearTimeout(view.fitFrame);
   view.fitFrame = null;
   if (immediate) {
     performTermFit(view, forceSync);
     return;
   }
-  // 浏览器最大化、拖边界会连续发 resize；每个动画帧最多 fit 一次。
+  // Wait for a brief pause in boundary dragging before reflowing scrollback.
   // 软键盘只改网页可视高度，performTermFit 会拒绝随之 SIGWINCH。
-  view.fitFrame = requestAnimationFrame(() => {
+  view.fitFrame = setTimeout(() => {
     view.fitFrame = null;
     performTermFit(view, forceSync);
-  });
+  }, 100);
 }
 
 function settleActivatedTermView(view) {
@@ -2843,6 +2848,21 @@ function restoreTermPane(uid, agent = null) {
   openTermPane(name, false, null, true);
 }
 
+async function loadTerminalRenderer(name) {
+  try {
+    await window.ensureTerminalAssets?.(consoleRendererIsGrid(name));
+    return true;
+  } catch (error) {
+    const uid = T.views.get(name)?.bindingUid
+      || T.list?.find(row => row.name === name)?.uid || T.uid || S.sel;
+    const message = '控制台组件加载失败，请再次打开终端重试：' + (error.message || error);
+    ConsoleUI.errors.set(uid, message);
+    renderTakeoverBtn();
+    if (typeof showConsoleToast === 'function' && uid === S.sel) showConsoleToast(message);
+    return false;
+  }
+}
+
 async function openTermPane(name, autoFocus = true, requestedMode = null, auto = false, directClaim = false) {
   // An explicit switch to the terminal acknowledges the question already on
   // the conversation page. A later list refresh must not reveal it again and
@@ -2881,6 +2901,14 @@ async function openTermPane(name, autoFocus = true, requestedMode = null, auto =
   layoutTermPane();
   renderTakeoverBtn();
   try { await terminalFontReady; } catch { /* 字体失败时继续用 Consola/monospace */ }
+  if (!await loadTerminalRenderer(name)) {
+    if (openEpoch === termOpenEpoch) {
+      pane.classList.add('hidden');
+      $('#right').classList.remove('term-full');
+      renderTakeoverBtn();
+    }
+    return false;
+  }
   if (openEpoch !== termOpenEpoch || pane.classList.contains('hidden')) return false;
   const view = ensureTerm(name);
   if (autoFocus) requestTermFocus(view, focusSource);
@@ -3348,7 +3376,12 @@ function attachRecordingReplay(view, row, uid) {
   return true;
 }
 
-function attachTerm(name, auto = false, directClaim = false) {
+async function attachTerm(name, auto = false, directClaim = false) {
+  const existing = T.views.get(name);
+  if (!await loadTerminalRenderer(name)) return false;
+  // Loading assets yields: a replaced/disposed host must not be recreated by
+  // an old reconnect or theme refresh after the user's next action.
+  if (existing && T.views.get(name) !== existing) return false;
   const view = ensureTerm(name);
   if (view.attachPromise) return view.attachPromise;
   const job = attachOwnedTerm(view, true, auto, directClaim).catch(error => {
@@ -3768,6 +3801,8 @@ function deactivateTermView() {
 function disposeTermView(name) {
   const view = T.views.get(name);
   if (!view) return;
+  clearTimeout(view.fitFrame);
+  if (view.outputLayoutFrame) cancelAnimationFrame(view.outputLayoutFrame);
   const active = T.name === name;
   setCodexSideThreadState(view, false);
   cancelTermReconnect(view);

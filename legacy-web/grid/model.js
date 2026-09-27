@@ -82,6 +82,7 @@ export class GridModel {
     this.rows = 0;
     this.viewport = [];
     this.scrollback = [];
+    this._cellCache = new Set();
     this.cursor = {x: 0, y: 0, visible: true};
     this.modes = {...DEFAULT_MODES};
     this.title = '';
@@ -139,7 +140,21 @@ export class GridModel {
       if (used === cols) return row.cells;
     }
     row.cells = this._materialize(row.spans, cols);
+    this._cellCache.delete(row);
+    this._cellCache.add(row);
+    if (this._cellCache.size > 512) {
+      const oldest = this._cellCache.values().next().value;
+      oldest.cells = null;
+      this._cellCache.delete(oldest);
+    }
     return row.cells;
+  }
+
+  // Searching/reflowing history must not turn every stored span into a
+  // permanently cached array of cell objects.
+  readCells(row) {
+    if (!row) return [];
+    return this._materialize(row.spans, this.cols);
   }
 
   textOf(row, from = 0, to = Infinity) {
@@ -331,9 +346,15 @@ export class GridModel {
     let group = [];
     const flush = () => {
       if (!group.length) return;
+      if (group.length === 1 && !group[0].wrapped && newCols >= this.cols) {
+        group[0].cells = null;
+        rebuilt.push(group[0]);
+        group = [];
+        return;
+      }
       const cells = [];
       for (const row of group) {
-        for (const cell of this.cellsOf(row)) cells.push(cell);
+        for (const cell of this.readCells(row)) cells.push(cell);
       }
       trimTrailingBlanks(cells);
       for (const row of this._wrap(cells, newCols)) rebuilt.push(row);

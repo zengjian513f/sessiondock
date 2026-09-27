@@ -115,6 +115,69 @@ def run(page):
     assert after["visible"], after
 
 
+
+def check_reconciliation(page):
+    # The selected row was changed by the preceding click. Establish its new
+    # presentation, then an unchanged refresh must leave every row in place.
+    page.evaluate("""() => {
+      renderSide();
+      window.__sideRows = [...document.querySelectorAll('#side .item')];
+      const side = document.querySelector('#side');
+      const observer = new MutationObserver(() => {});
+      observer.observe(side, {childList: true, subtree: true});
+      renderSide();
+      window.__sideMutations = observer.takeRecords().length;
+      observer.disconnect();
+    }""")
+    assert page.evaluate("__sideMutations") == 0
+    assert page.evaluate("__sideRows.every(row => row.isConnected)")
+    page.evaluate("""() => {
+      const base = S.sessions[0];
+      S.sessions = [...S.sessions, {...base, uid: 'synthetic-extra', sid: 'synthetic-extra', title: 'Added row'}];
+      renderSide();
+    }""")
+    assert page.locator('#side .item[data-uid="synthetic-extra"]').count() == 1
+    assert page.evaluate("__sideRows.every(row => row.isConnected)")
+    page.evaluate("""() => {
+      S.sessions = S.sessions.filter(row => row.uid !== 'synthetic-extra');
+      renderSide();
+    }""")
+    assert page.evaluate("__sideRows.every(row => row.isConnected)")
+    group = page.locator('#side > .group').first
+    group.locator('.ghead').click()
+    assert group.locator('.item').count() == 0
+    assert 'closed' in group.get_attribute('class')
+    group.locator('.ghead').click()
+    assert group.locator('.item').count() > 0
+    assert 'closed' not in group.get_attribute('class')
+
+    # A stalled list read is shared; a subsequent explicit refresh wins even
+    # if that old transport ignores cancellation and eventually returns data.
+    page.evaluate("""() => {
+      window.__nativeFetch = fetch;
+      window.__pollCalls = 0;
+      window.fetch = (url, options) => {
+        if (String(url).includes('api/sessions?sig=')) {
+          __pollCalls++;
+          return new Promise(resolve => { window.__finishPoll = resolve; });
+        }
+        return __nativeFetch(url, options);
+      };
+      window.__pollPromise = pollSessions();
+      pollSessions(); pollSessions();
+    }""")
+    assert page.evaluate('__pollCalls') == 1
+    page.evaluate("() => loadSessions(false)")
+    page.evaluate("""async () => {
+      __finishPoll(new Response(JSON.stringify({sig: 'stale', sessions: []}),
+        {headers: {'Content-Type': 'application/json'}}));
+      await __pollPromise;
+      window.fetch = __nativeFetch;
+    }""")
+    assert page.evaluate('S.sessions.length') == COUNT
+    assert page.evaluate('S.sig') != 'stale'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -132,6 +195,7 @@ def main():
                 page = context.new_page()
                 page.goto(base, wait_until="networkidle")
                 run(page)
+                check_reconciliation(page)
                 context.close()
             finally:
                 browser.close()

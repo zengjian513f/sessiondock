@@ -132,7 +132,7 @@ export class GridTerm {
     this._firstPaint = false;
     this._parseErrorReported = false;
     this.dropped = 0;
-    this._pending = '';
+    this._pending = [];
     this._decoder = new TextDecoder('utf-8');
     this._viewportTop = 0;
     this._following = true;
@@ -436,11 +436,13 @@ export class GridTerm {
       if (typeof callback === 'function') callback();
       return;
     }
-    this._pending += decodeChunk(this._decoder, data);
-    let nl;
-    while ((nl = this._pending.indexOf('\n')) >= 0) {
-      const line = this._pending.slice(0, nl);
-      this._pending = this._pending.slice(nl + 1);
+    const chunk = decodeChunk(this._decoder, data);
+    let offset = 0, nl;
+    while ((nl = chunk.indexOf('\n', offset)) >= 0) {
+      this._pending.push(chunk.slice(offset, nl));
+      const line = this._pending.join('');
+      this._pending = [];
+      offset = nl + 1;
       let msg;
       try {
         msg = JSON.parse(line);
@@ -470,6 +472,7 @@ export class GridTerm {
         emit(this._clipboardListeners, msg.text);
       }
     }
+    if (offset < chunk.length) this._pending.push(chunk.slice(offset));
     this._resetBlink();
     this._stickFollow();
     this._scheduleRender(callback);
@@ -506,7 +509,7 @@ export class GridTerm {
       history: [],
       cursor: {x: 0, y: 0, visible: true},
     });
-    this._pending = '';
+    this._pending = [];
     this._viewportTop = 0;
     this._following = true;
     this._clearSelection();
@@ -804,6 +807,10 @@ export class GridTerm {
 
   _paint() {
     if (this._disposed) return;
+    if (this._host?.hidden || (this._canvas && !this._canvas.getClientRects().length)) {
+      this.renderer.invalidate();
+      return;
+    }
     this._stickFollow();
     this._syncScrollbar();
     this.renderer.render(this.model, {

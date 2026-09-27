@@ -83,13 +83,15 @@ EVAL = """() => {
   appendMessages(media, [{role:'tool_result', call_id:'call-12', text:'done 12',
     media:[{src:'/api/media/' + 'a'.repeat(32), alt:'图', width:4, height:4}],
     media_more:{remaining:2, total:3, cursor:'b'.repeat(32)}}], null, {openTail:false});
+  const foldedMediaIsLazy = media.querySelectorAll('.tool-entry').length === 0;
+  media.querySelector('.fold-toggle').click();
   const resultMediaKept = media.querySelectorAll('.tool-entry .media-gallery img').length === 1
     && media.querySelectorAll('.tool-entry .media-more[data-media-cursor]').length
       === (SessionDockCapabilities.config.media_continuation === true ? 1 : 0);
   return {firstIsSingle, twoBecomeOpenGroup, nextBatchJoinsTail,
           nonToolSealsGroup, openBeforeIdle, idleSealsGroup,
           foldedAtRest, openedByUser, staysOpenOnAppend, innerKept,
-          sealRespectsUser, userCanRefold, resultKeepsUserOpen, resultMediaKept};
+          sealRespectsUser, userCanRefold, resultKeepsUserOpen, resultMediaKept, foldedMediaIsLazy};
 }"""
 
 
