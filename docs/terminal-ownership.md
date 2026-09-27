@@ -15,6 +15,13 @@ creates a 15-second reservation. `bind` consumes it once and returns a
 and `owner` exposes only display IP/time. Restarting the Web service drops browser
 leases without stopping the independent ptyhost process.
 
+The browser clears its cached HTTP input lease when it drops the socket,
+receives its close event, or abandons an attach handshake. A collapsed
+conversation can remain disconnected: Esc then uses the pinned instance path,
+not the released socket token. The close handler for an older socket cannot
+clear a replacement socket's lease. `tests/hub_send_browser.py` covers Esc after
+background suspension and socket closure through the hub and authenticated node.
+
 ## Who holds the terminal (display only)
 
 Codex may switch to an unrelated thread inside the same TUI. The terminal list
