@@ -123,11 +123,14 @@ def run(browser, root, config):
             expect(page.locator('#bug-report-dialog')).not_to_be_visible()
             bundles = list((root / 'reports').glob('BUG-*'))
             assert len(bundles) == 1, bundles
+            # The worker brief defers validation to AGENTS.md: no unit-test step.
+            brief = (bundles[0] / 'worker-prompt.md').read_text()
+            assert 'AGENTS.md' in brief and 'cargo test' not in brief, brief
             files = sorted((root / 'work/sessiondock_attachments').rglob('*.png'))
             assert len(files) == 2, files
             assert {p.name: p.read_bytes() for p in files} == {'capture.png': payload, 'second.png': PNG}
             assert not errors, errors
-            print('PASS report submit: one bundle, two exact attachments, one worker response', flush=True)
+            print('PASS report submit: one bundle, AGENTS.md-only worker brief, two exact attachments, one worker response', flush=True)
         finally:
             context.close()
             hub.stop()
