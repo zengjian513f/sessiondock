@@ -4326,26 +4326,50 @@ function renderSavedComposerInputs(box, draft) {
 }
 const composerDraftRecoveryReady = Promise.resolve();
 
-let composerServerRecovery;
+// Discovery is once per node, not once per all-node batch. An unavailable
+// peer must not make every successful peer re-read its drafts on each poll.
+const composerServerRecoveries = new Map();
 function recoverServerComposerDrafts() {
-  if (!conversationSendEnabled()) return Promise.resolve();
-  if (composerServerRecovery) return composerServerRecovery;
-  const task=(async () => {
-    const nodes=HUB_MODE ? Nodes.list.map(n=>n.id) : [''];
-    const results=await Promise.allSettled(nodes.map(async node=> {
-      const url=appUrl('api/session/conversation/drafts' + (node?'?node='+node:''));
-      const response=await fetch(url,{cache:'no-store'}),data=await response.json();
-      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-      for (const row of data.drafts || []) {
-        if (!row.uid || row.uid.startsWith('report:') || composerDrafts.has(row.uid)) continue;
-        const draft=restoreComposerDraftRecord(row.draft.value);draft.revision=row.draft.revision;
-        composerDrafts.set(row.uid,draft);
-      }
-    }));
-    if (results.some(result=>result.status==='rejected')) composerServerRecovery=null;
-    if (S.sig && typeof renderSide==='function') renderSide();
-  })();
-  composerServerRecovery=task;return task;
+  if (!conversationSendEnabled() || document.hidden) return Promise.resolve();
+  const nodes = HUB_MODE ? Nodes.list : [{id: '', online: true}];
+  const tasks = [];
+  for (const node of nodes) {
+    let state = composerServerRecoveries.get(node.id);
+    if (!state) {
+      state = {done: false, request: null, failures: 0, retryAt: 0, online: node.online};
+      composerServerRecoveries.set(node.id, state);
+    }
+    if (state.online === false && node.online === true) state.retryAt = 0;
+    state.online = node.online;
+    if (state.request) { tasks.push(state.request); continue; }
+    if (state.done || node.online === false || Date.now() < state.retryAt) continue;
+    state.request = recoverServerComposerNode(node.id, state).finally(() => { state.request = null; });
+    tasks.push(state.request);
+  }
+  return Promise.all(tasks);
+}
+async function recoverServerComposerNode(node, state) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const url = appUrl('api/session/conversation/drafts' + (node ? '?node=' + node : ''));
+    const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    let changed = false;
+    for (const row of data.drafts || []) {
+      if (!row.uid || row.uid.startsWith('report:') || composerDrafts.has(row.uid)) continue;
+      const draft = restoreComposerDraftRecord(row.draft.value); draft.revision = row.draft.revision;
+      composerDrafts.set(row.uid, draft);
+      changed = true;
+    }
+    state.done = true;
+    state.failures = 0;
+    // Apply successful peers immediately, without waiting for an offline peer.
+    if (changed && S.sig && typeof renderSide === 'function') renderSide();
+  } catch {
+    state.retryAt = Date.now() + Math.min(300000, 30000 * 2 ** Math.min(state.failures++, 4));
+  } finally { clearTimeout(timer); }
 }
 
 function deleteComposerDraftStorage(uid) {
