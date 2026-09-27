@@ -136,6 +136,8 @@ class NodeHandler(BaseHTTPRequestHandler):
         if u.path == "/api/search":
             return self.search(q)
         if u.path == "/api/term/list":
+            if s.get("term_error"):
+                return self._json({"error": "terminal list temporarily unavailable"}, 503)
             time.sleep(s.get("term_delay", 0))
             current = s.get("backend", "tmux")
             return self._json({"enabled": s.get("term_enabled", True),
@@ -148,6 +150,12 @@ class NodeHandler(BaseHTTPRequestHandler):
             return self._json({"directories": ["/home/" + s["name"] + "/work/"]})
         if u.path == "/api/term/new-status":
             return self._json({"waiting": True, "running": True})
+        if u.path == "/api/session/conversation":
+            draft = s.get("drafts", {}).get(q["uid"][0], {"revision": 0, "value": None})
+            return self._json({"draft": draft})
+        if u.path == "/api/session/conversation/drafts":
+            return self._json({"drafts": [{"uid": uid, "draft": draft}
+                for uid, draft in s.get("drafts", {}).items()]})
         if u.path == "/api/session/outbox":
             return self._json({"outbox": [], "outbox_version": {"epoch": "same-epoch", "revision": 0}})
         if u.path == "/api/session/input-history":
@@ -284,9 +292,22 @@ class NodeHandler(BaseHTTPRequestHandler):
                                "media": {"src": "/api/media/dddddddddddddddddddddddddddddddd"}})
         body = json.loads(raw or b"{}")
         s["writes"].append((u.path, body))
+        if u.path == "/api/session/conversation":
+            draft = {"revision": body.get("revision", 0) + 1, "value": body["value"]}
+            session = draft["value"].get("session")
+            if session and body["uid"].startswith("tmux:"):
+                # Like the node's normalize_draft, save local identity; the hub
+                # qualifies it once when returning the draft to the browser.
+                session["uid"] = body["uid"]
+                session["name"] = body["uid"][5:]
+                session.pop("node_id", None)
+                session.pop("node_name", None)
+            s.setdefault("drafts", {})[body["uid"]] = draft
+            return self._json({"ok": True, "draft": draft})
         if u.path == "/api/term/create":
             info = {"name": "same-terminal", "source": body["source"], "sid": "new-sid",
                     "cwd": body["cwd"], "token": "fixture-lease", "started": time.time()}
+            info.update(s.get("create_info", {}))
             s["pending"].append(info)
             return self._json(info)
         if u.path == "/api/term/backend":

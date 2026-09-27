@@ -2478,7 +2478,8 @@ function pendingTmuxSessions() {
     for (const [uid, draft] of composerDrafts) {
       if (!uid.startsWith('tmux:') || !draft.session || names.has(draft.session.name)
           || (!draft.text && !draft.attachments.length && !draft.quotes.length)) continue;
-      pending.push({ ...draft.session, stale: true, running: false, state: 'exited',
+      pending.push({ ...draft.session, stale: true, running: false,
+        state: terminalListUncertain(uid) ? 'uncertain' : 'exited',
         started: pendingDraftStartedAt(uid, draft.session), unavailable_reason: '会话草稿已保留' });
     }
   }

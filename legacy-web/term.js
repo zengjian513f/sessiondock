@@ -339,6 +339,21 @@ let terminalFontReady = prepareTerminalFont();
 addEventListener('resize', () => { layoutTermPane(); fitTerm(); });
 
 let termListRequestSeq = 0;
+function terminalListUncertain(uid) {
+  return !T.listLoaded || !!T.listError
+    || (HUB_MODE && !!Nodes.errors.get('term')?.some(error => error.node_id === nodeOf(uid)));
+}
+
+function mergeUnavailableTermRows(rows, previous, errors) {
+  if (SessionDockCapabilities.config.backend !== 'rust' || !HUB_MODE) return rows;
+  const failed = new Set((errors || []).map(error => error.node_id));
+  const retained = (previous || []).filter(row => failed.has(row.node_id || nodeOf(pendingUid(row.name))));
+  const names = new Set(retained.map(row => row.name));
+  // A partial hub response cannot revoke a newer create receipt or open view.
+  // Keep its identity, but mark the observation stale until that node answers.
+  return [...rows.filter(row => !names.has(row.name)), ...retained.map(row => ({...row, stale:true}))];
+}
+
 function loadTermList() {
   const request = fetchTermList().finally(() => { if (T.listRequest === request) T.listRequest = null; });
   T.listRequest = request;
@@ -349,7 +364,7 @@ async function fetchTermList() {
   const openEpoch = termOpenEpoch;
   const fingerprint = () => [
     ...(T.list || []).map(x => `${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.uid}\t${x.instance_id}\t${x.current_uid || ''}` : '')),
-    ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}` : '')),
+    ...(T.pending || []).map(x => `pending\t${x.name}\t${x.cwd}` + (SessionDockCapabilities.config.backend === 'rust' ? `\t${x.record_id}\t${x.instance_id}\t${x.state}\t${pendingPhase(x)}` : '')),
   ].join('\n');
   const before = fingerprint();
   let loaded = false;
@@ -385,7 +400,7 @@ async function fetchTermList() {
     applyNodeState(data, 'term');
     T.enabled = !!data.enabled;
     T.unavailable_reason = data.unavailable_reason || '';
-    T.list = data.sessions || [];
+    T.list = mergeUnavailableTermRows(data.sessions || [], T.list, data.errors);
     T.sources = data.sources || {};
     T.resume_sources = data.resume_sources || {};
     T.home = data.home || '';
@@ -393,7 +408,7 @@ async function fetchTermList() {
     T.backends = data.backends || [];
     const hadSelected = String(S.sel || '').startsWith('tmux:')
       && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
-    T.pending = data.pending || [];
+    T.pending = mergeUnavailableTermRows(data.pending || [], T.pending, data.errors);
     if (hadSelected && !T.pending.some(row => pendingUid(row.name) === S.sel)
         && !T.discarding.has(String(S.sel).slice(5))
         && !(typeof pendingTmuxSessions === 'function' && pendingTmuxSessions().some(row => row.uid === S.sel)))
@@ -1658,6 +1673,7 @@ function pendingPhase(row) {
   if (ended && (!row.instance_id || ended.instanceId === row.instance_id)) return 'exited';
   if (row.state === 'exited') return 'exited';
   if (row.state === 'failed') return 'failed';
+  if (terminalListUncertain(pendingUid(row.name))) return 'uncertain';
   if (row.state === 'cancel_requested') return 'stopping';
   if (row.state === 'uncertain') return 'uncertain';
   if (row.state === 'prepared' || row.state === 'starting') return 'starting';
@@ -4617,7 +4633,7 @@ function sessionComposerEnded(uid = S.sel) {
   ];
   const row = rows.find(item => item.uid === uid
     || (typeof pendingUid === 'function' && pendingUid(item.name) === uid));
-  return !!row && (row.state === 'exited' || row.state === 'failed' || row.stale);
+  return !!row && ['exited', 'failed', 'stopping'].includes(pendingPhase(row));
 }
 
 function renderComposer() {
