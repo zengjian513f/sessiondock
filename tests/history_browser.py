@@ -119,7 +119,13 @@ def main():
                 rotated = next(row for row in rows if row["uid"] == corpus.uid("rotation-new"))
                 assert rotated["supported"] and {a["id"] for a in rotated["agent_items"]} == {"rotation-agent"}
                 agent("rotation-agent", "Rotation attached agent answer")
-                select("rotation-old", "Rotation excluded old tail")
+                # One native thread is one list entry: the older generation
+                # names its successor and stays readable by uid only.
+                previous = next(row for row in rows if row["uid"] == corpus.uid("rotation-old"))
+                assert previous["continued_in"] == corpus.uid("rotation-new"), previous
+                expect(page.locator(f'#side .item[data-uid="{corpus.uid("rotation-old")}"]')).to_have_count(0)
+                old_wire = get_json(opener, base, "/api/messages/" + corpus.uid("rotation-old"))
+                assert any("Rotation excluded old tail" in m.get("text", "") for m in old_wire["messages"])
                 select("rotation-new", "Rotation continued question")
                 with corpus.paths["rotation-new"].open("ab") as stream:
                     stream.write(encoded(codex_message("assistant", "Rotation live appended answer", 15)))
@@ -145,10 +151,12 @@ def main():
                     codex_message("user", "Rotation second continuation", 17)], [])
                 page.reload(wait_until="networkidle")
                 select("rotation-next", "Rotation second continuation")
+                expect(page.locator(f'#side .item[data-uid="{corpus.uid("rotation-new")}"]')).to_have_count(0)
+                expect(page.locator(f'#side .item[data-uid="{corpus.uid("rotation-old")}"]')).to_have_count(0)
                 expect(page.locator("#msgs")).to_contain_text("Rotation inherited answer")
                 expect(page.locator("#msgs")).to_contain_text("Rotation live appended answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
-                print("PASS Codex same-ID rollout rotation: inherited prefix, excluded old tail, agent ownership, live append, titles, duplicate conflict and recovery")
+                print("PASS Codex same-ID rollout rotation: one list row, inherited prefix, excluded old tail, agent ownership, live append, titles, duplicate conflict and recovery")
                 select("claude-pasted", "Pasted needle 正文")
                 # Assert the wire result too: a renderer-only fix is insufficient.
                 wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))

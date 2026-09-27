@@ -530,8 +530,33 @@ impl<'a> Graph<'a> {
             {
                 row["continued_in"] = json!(target);
             }
+            if let Some(latest) = self.later_generation(uid) {
+                row["continued_in"] = json!(latest);
+            }
         }
         row
+    }
+
+    /// A rotated Codex rollout is one native thread: an older generation
+    /// row names the latest generation as `continued_in` (the list shows
+    /// that one only) once the latest row's own chain validates. Subagent
+    /// rollouts declare the same session id and are not generations.
+    fn later_generation(&self, uid: &str) -> Option<&str> {
+        let entry = &self.entries[uid];
+        let ids = self.sids.get(&("codex", entry.summary.sid.as_str()))?;
+        let mains = ids
+            .iter()
+            .map(|id| &self.entries[id])
+            .filter(|entry| entry.summary.agent.is_none())
+            .collect();
+        let latest = generations(mains)?
+            .last()?
+            .uid
+            .as_str();
+        (latest != uid
+            && self.entries[latest].summary.unsupported.is_none()
+            && self.chain(latest).is_ok())
+        .then_some(latest)
     }
 
     /// A Codex subagent's own turn state; a
