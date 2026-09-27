@@ -2356,7 +2356,15 @@ setInterval(tickSync, TICK_MS);
 // ---- 活跃会话 ----
 async function refreshLive(force = false) {
   if (!SessionDockCapabilities.allows('live')) return;
-  const d = await (await fetch(appUrl('api/live' + (force ? '?force=1' : '')))).json();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+  let d;
+  try {
+    const response = await fetch(appUrl('api/live' + (force ? '?force=1' : '')), {signal:controller.signal});
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    d = await response.json();
+  } finally { clearTimeout(timeout); }
+  if (!Array.isArray(d.uids)) throw new Error('运行状态格式错误');
   applyNodeState(d, 'live');
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
@@ -2470,7 +2478,7 @@ $('#session-scope').onkeydown = e => {
   $(active ? '#livecount' : '#allcount').focus();
 };
 
-setInterval(pollLive, LIVE_MS);
+setInterval(() => { if (!uiEventsReady) pollLive(); }, LIVE_MS);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { closeWatch(); return; }
   pollLive();
@@ -2644,15 +2652,15 @@ function seedSidebarCursors(sessions) {
   }
 }
 
-const sidebarSyncing = new Set();
+const sidebarSyncing = new Set(), sidebarPendingCursors = new Map();
 
-// Batch only uncached background views. Opened views still need their actual
-// messages to keep cached history current. Explicit node routes carry local UIDs.
+// Background views only need unread counts, even when their old history is cached.
+// Message bodies are refreshed on selection. Explicit node routes carry local UIDs.
 const unreadBatches = new Map(), unreadBatchUnsupported = new Set();
 function fetchUnreadSummary(uid, opts) {
   const node = nodeOf(uid);
   if (!SessionDockCapabilities.config.unread_batch || unreadBatchUnsupported.has(node))
-    return fetchMessages(uid, opts);
+    return Promise.resolve({data: {unsupported: true}});
   return new Promise((resolve, reject) => {
     let batch = unreadBatches.get(node);
     if (!batch) {
@@ -2678,7 +2686,7 @@ async function flushUnreadBatch(node, batch) {
     if ([404, 405, 501].includes(response.status)) {
       await response.arrayBuffer();
       unreadBatchUnsupported.add(node); // Old nodes during a rolling upgrade.
-      for (const item of batch) fetchMessages(item.uid, item.opts).then(item.resolve, item.reject);
+      for (const item of batch) item.resolve({data: {unsupported: true}});
       return;
     }
     const payload = await response.json();
@@ -2700,32 +2708,39 @@ async function flushUnreadBatch(node, batch) {
 
 async function syncSidebarView(row, base, latest, attempt = 0) {
   const key = viewKey(row.uid, row.agent);
-  if (sidebarSyncing.has(key)) return;
+  if (sidebarSyncing.has(key)) {
+    sidebarPendingCursors.set(key, row.agent
+      ? {uid: row.uid, agent_items: [{id: row.agent, cursor: latest}]}
+      : {uid: row.uid, cursor: latest});
+    return;
+  }
   sidebarSyncing.add(key);
   try {
-    const fetcher = cache.has(key) ? fetchMessages : fetchUnreadSummary;
-    const {data, bytes} = await fetcher(row.uid, {
+    const sameCheckpoint = () => {
+      const current = cleanCursor(S.cursors.get(key));
+      return current && current.end === base.end && current.head === base.head
+        && current.anchor === base.anchor;
+    };
+    if (!sameCheckpoint()) return;
+    const {data} = await fetchUnreadSummary(row.uid, {
       agent: row.agent, start: base.end, head: base.head, anchor: base.anchor,
       appendOnly: true,
     });
-    // A user may have opened this view while the summary was in flight. Its
-    // newly loaded cache/checkpoint is authoritative; do not rewind it.
-    if (!data.messages && cache.has(key)) return;
-    if (data.reset) {
-      cache.delete(key);                    // 历史被回滚/改写，旧缓存已不可信
-      S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
-                                     anchor: data.anchor}) || latest);
+    // Selection or another accepted update owns the newer checkpoint. A delayed
+    // summary must neither reintroduce unread badges nor rewind that checkpoint.
+    if (!sameCheckpoint() || (S.sel === row.uid && S.agent === row.agent
+        && (!MOBILE.matches || document.body.classList.contains('mobile-detail')))) return;
+    if (data.unsupported) {
+      // Old nodes cannot give an exact count without downloading history. Show
+      // at least one unread item and defer the actual content until selection.
+      if (!unreadRow(row.uid).count) addUnread(row.uid, 1);
+      S.cursors.set(key, latest);
       return;
     }
-    const entry = cache.get(key);
-    if (entry && entry.end === data.start) {
-      await applyDiff(row.uid, data, bytes, row.agent);
-    } else {
-      const incoming = data.incoming ?? incomingCount(data.messages);
-      if (incoming) addUnread(row.uid, incoming);
-      S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
-                                     anchor: data.anchor}) || latest);
-    }
+    if (data.reset) cache.delete(key);
+    else if (data.incoming) addUnread(row.uid, data.incoming);
+    S.cursors.set(key, cleanCursor({end: data.end, head: data.version.head,
+                                   anchor: data.anchor}) || latest);
   } catch (error) {
     // 列表签名可能不会再变化；瞬时失败（断网、503）按退避补三次（1.5/3/6 s），
     // 仍不影响其他会话；4xx 这类请求本身不成立的失败不重试。
@@ -2733,7 +2748,12 @@ async function syncSidebarView(row, base, latest, attempt = 0) {
       setTimeout(() => syncSidebarView(row, base, latest, attempt + 1), retryDelay(attempt));
     }
   }
-  finally { sidebarSyncing.delete(key); }
+  finally {
+    sidebarSyncing.delete(key);
+    const pending = sidebarPendingCursors.get(key);
+    sidebarPendingCursors.delete(key);
+    if (pending) syncSidebarUpdates([pending]);
+  }
 }
 
 /** 列表发现其他会话文件增长时，只读取追加区间并累加左栏未读数。 */
@@ -2743,10 +2763,11 @@ function syncSidebarUpdates(sessions) {
     const latest = cleanCursor(row.cursor);
     if (!latest) continue;
     const entry = cache.get(key);
-    const base = entry
+    const base = cleanCursor(S.cursors.get(key)) || (entry
       ? cleanCursor({end: entry.end, head: entry.version?.head, anchor: entry.anchor})
-      : cleanCursor(S.cursors.get(key));
+      : null);
     if (!base) { S.cursors.set(key, latest); continue; }
+    if (!S.cursors.has(key)) S.cursors.set(key, base);
     // Rust 列表行的 cursor 只带物理部分 {end, head}；语义 anchor 只在该会话已被
     // 打开（服务端缓存有视图）时出现。两边都有 anchor 才比较它，缺失时以
     // 已有的 anchor 为准（docs/history-pages.md "列表 cursor"）。
@@ -2875,7 +2896,8 @@ async function loadSessions(force) {
 
 /** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
 function pollSessions() {
-  if (document.hidden || !S.sig || sessionLoadActive) return Promise.resolve();
+  if (document.hidden) return Promise.resolve();
+  if (!S.sig || sessionLoadActive) return Promise.resolve(false);
   if (sessionPollRequest) return sessionPollRequest;
   sessionPollRequest = runSessionPoll().finally(() => { sessionPollRequest = null; });
   return sessionPollRequest;
@@ -2887,11 +2909,11 @@ async function runSessionPoll() {
   const timeout = setTimeout(() => ac.abort(), 15000);
   try {
     const response = await fetch(appUrl('api/sessions?sig=' + encodeURIComponent(sig)), {signal: ac.signal});
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const d = await response.json();
-    if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return;
+    if (ac.signal.aborted || run !== sessionLoadRun || sig !== S.sig) return false;
     applyNodeState(d, 'sessions');
-    if (d.unchanged || !d.sessions) return;
+    if (d.unchanged || !d.sessions) return true;
     const wasListed = !hiddenForkParent(S.sessions.find(s => s.uid === S.sel));
     S.sig = d.sig;
     S.sessions = d.sessions;
@@ -2905,24 +2927,113 @@ async function runSessionPoll() {
       const fresh = new Map(S.sessions.map(s => [s.uid, s]));
       S.results = S.results.map(r => fresh.has(r.uid) ? { ...r, ...fresh.get(r.uid) } : r);
       if (!patchSide(visible())) renderSide();
-      return;
+      return true;
     }
     showSessionCount(sidebarSessions().length);
-    if (patchSide(visible())) return;   // 能就地更新就不重建, 否则会一直闪
+    if (patchSide(visible())) return true;   // 能就地更新就不重建, 否则会一直闪
     const side = $('#side');
     const top = side.scrollTop;
     renderSide();                       // 选中态由 S.sel 恢复
     side.scrollTop = top;               // 别打断正在看的位置
     paintLive();
-  } catch { /* 下轮再说 */ }
+    return true;
+  } catch { return false; }
   finally {
     clearTimeout(timeout);
     if (sessionPollController === ac) sessionPollController = null;
   }
 }
 
-setInterval(pollSessions, LIST_MS);
+setInterval(() => { if (!uiEventsReady) pollSessions(); }, LIST_MS);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pollSessions(); });
+
+// A single lightweight stream invalidates list state. Only the selected
+// conversation has a separate body subscription; other views stay lazy.
+let uiEvents = null, uiEventsReady = false, uiEventsRetry = 0;
+let uiEventPending = null, uiEventApplying = false;
+function queueUiChange(change) {
+  if (!uiEventPending) uiEventPending = {live:false, term:false, sessions:false, cursors:new Map()};
+  const pending = uiEventPending;
+  for (const key of ['live', 'term', 'sessions']) pending[key] ||= !!(change.initial || change[key]);
+  for (const row of change.cursors || []) pending.cursors.set(viewKey(row.uid, row.agent), row);
+  void applyUiChanges();
+}
+async function applyUiChanges() {
+  if (uiEventApplying) return;
+  uiEventApplying = true;
+  try {
+    while (uiEventPending && !document.hidden) {
+      const change = uiEventPending; uiEventPending = null;
+      // An earlier poll may predate this invalidation. Wait for it, then
+      // reconcile once more so its old response cannot consume the event.
+      if (change.sessions && sessionPollRequest) await sessionPollRequest;
+      const results = await Promise.allSettled([
+        change.live ? refreshLive() : null,
+        change.term && typeof loadTermList === 'function'
+          ? loadTermList().then(() => !T.listError) : null,
+        change.sessions ? pollSessions() : null,
+      ]);
+      if (results.some(result => result.status === 'rejected' || result.value === false)) {
+        // A delivered event is not an acknowledgement of a successful read.
+        // Reconnect obtains a new baseline even if nothing changes afterward.
+        closeUiEvents();
+        if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+      }
+      // A full list read already supplied newer cursors and synchronized
+      // unread state. Do not overwrite it with the preceding event snapshot.
+      if (change.sessions) continue;
+      const rows = [];
+      const sessions = new Map(S.sessions.map(row => [row.uid, row]));
+      for (const update of change.cursors.values()) {
+        const session = sessions.get(update.uid);
+        if (!session) continue; // A later list invalidation introduces new rows.
+        if (update.agent) {
+          const agent = session.agent_items?.find(row => row.id === update.agent);
+          if (agent) agent.cursor = update.cursor;
+          rows.push({uid:update.uid, agent_items:[{id:update.agent,cursor:update.cursor}]});
+        } else {
+          session.cursor = update.cursor;
+          rows.push({uid:update.uid,cursor:update.cursor});
+        }
+      }
+      if (rows.length) syncSidebarUpdates(rows);
+    }
+  } finally { uiEventApplying = false; }
+}
+function closeUiEvents() {
+  clearTimeout(uiEventsRetry);
+  uiEvents?.close(); uiEvents = null; uiEventsReady = false;
+}
+function startUiEvents() {
+  if (!SessionDockCapabilities.config.ui_events || !window.EventSource || document.hidden || uiEvents) return;
+  clearTimeout(uiEventsRetry);
+  const stream = new EventSource(appUrl('api/events'));
+  uiEvents = stream;
+  stream.addEventListener('change', event => {
+    if (uiEvents !== stream) return;
+    try {
+      const change = JSON.parse(event.data);
+      uiEventsReady = !change.retry;
+      if (!change.retry) queueUiChange(change);
+    } catch {
+      closeUiEvents();
+      if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+    }
+  });
+  stream.onerror = () => {
+    if (uiEvents !== stream) return;
+    closeUiEvents();
+    // Polling is a disconnected/old-server fallback, never parallel upkeep
+    // of a healthy push connection. Reconnect sends a fresh baseline.
+    if (!document.hidden) uiEventsRetry = setTimeout(startUiEvents, 3000);
+  };
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) closeUiEvents(); else startUiEvents();
+});
+addEventListener('pagehide', closeUiEvents);
+addEventListener('pageshow', startUiEvents);
+setTimeout(startUiEvents, 0);
 
 function visible() {
   let pool = (S.results || sidebarSessions()).filter(s => (!sessionHidden(s) || s.uid === S.sel)

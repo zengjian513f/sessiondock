@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Uncached background views use one read-only summary request, including through a hub."""
+"""Inactive views use unread summaries without fetching cached message bodies, node and hub."""
 import argparse
 from contextlib import ExitStack
 import json
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import unquote
 from playwright.sync_api import sync_playwright
 from history_parity import BINARY, Corpus, claude_row, encoded, isolated_server
 from hub_http_suite import Hub, free_port
@@ -94,7 +95,65 @@ def main():
                 page.wait_for_function('sidebarSyncing.size===0')
                 assert page.evaluate('uid=>S.cursors.get(uid)',race_uid)==before
                 assert page.evaluate('uid=>!S.unread.has(uid)',race_uid)
-                # Old-node fallback keeps unread counts during rolling upgrades.
+                # Previously opened history stays cached but receives no background
+                # body reads. Repeated updates count from the unread checkpoint,
+                # not the deliberately stale cache end.
+                def uid_for(sid):
+                    uid=data.uid(sid)
+                    return uid.replace(':',f':{nid}~',1) if hub_mode else uid
+                cached_uid=uid_for('unread-0');other_uid=uid_for('unread-1')
+                page.locator(f'#side .item[data-uid="{cached_uid}"] .t').click()
+                page.wait_for_function('uid=>S.sel===uid && cache.has(uid)',arg=cached_uid)
+                page.locator(f'#side .item[data-uid="{other_uid}"] .t').click()
+                page.wait_for_function('uid=>S.sel===uid && cache.has(uid)',arg=other_uid)
+                old_end=page.evaluate('uid=>cache.get(uid).end',cached_uid)
+                requests.clear()
+                for n in (1,2):
+                    with data.paths['unread-0'].open('ab') as f:
+                        f.write(encoded(claude_row('unread-0','assistant',f'lazy-{n}',
+                            'a1' if n==1 else 'lazy-1',f'Lazy cached reply {n}')))
+                    context.request.get(url+'/api/sessions?force=1');page.evaluate('pollSessions()')
+                    page.wait_for_function('arg=>S.unread.get(arg.uid)?.count===arg.n',arg={'uid':cached_uid,'n':n})
+                    page.evaluate('syncSidebarUpdates(S.sessions)')
+                    page.wait_for_function('sidebarSyncing.size===0')
+                    assert page.evaluate('uid=>S.unread.get(uid).count',cached_uid)==n
+                    assert page.evaluate('uid=>cache.get(uid).end',cached_uid)==old_end
+                assert not any('/api/messages/'+cached_uid in unquote(u) for _,u in requests),requests
+                page.locator(f'#side .item[data-uid="{cached_uid}"] .t').click()
+                page.wait_for_function("document.querySelector('#msgs').innerText.includes('Lazy cached reply 2')")
+                assert any('/api/messages/'+cached_uid in unquote(u) for _,u in requests),requests
+                assert page.evaluate('uid=>!S.unread.has(uid)',cached_uid)
+                # A second event can arrive while the first summary is in flight.
+                # Capture the first response before appending again; releasing it
+                # must drain the pending cursor without needing a third event.
+                pending_uid=uid_for('unread-2')
+                page.evaluate('uid=>{closeUiEvents();clearUnread(uid)}',pending_uid)
+                first_summary=[]
+                def hold_first_summary(route):
+                    if not first_summary:
+                        first_summary.append((route,route.fetch()))
+                    else:
+                        route.continue_()
+                page.route('**/api/sessions/unread',hold_first_summary)
+                with data.paths['unread-2'].open('ab') as f:
+                    f.write(encoded(claude_row('unread-2','assistant','pending-1','a1','Pending first')))
+                context.request.get(url+'/api/sessions?force=1');page.evaluate('pollSessions()')
+                for _ in range(100):
+                    if first_summary:break
+                    page.wait_for_timeout(20)
+                assert first_summary
+                with data.paths['unread-2'].open('ab') as f:
+                    f.write(encoded(claude_row('unread-2','assistant','pending-2','pending-1','Pending second')))
+                update=context.request.get(url+'/api/sessions?force=1').json()
+                row=next(row for row in update['sessions'] if row['uid']==pending_uid)
+                page.evaluate('row=>syncSidebarUpdates([row])',row)
+                assert page.evaluate('uid=>sidebarPendingCursors.has(uid)',pending_uid)
+                route,response=first_summary[0];route.fulfill(response=response)
+                page.wait_for_function('uid=>S.unread.get(uid)?.count===2 && !sidebarSyncing.has(uid)',arg=pending_uid)
+                assert page.evaluate('uid=>!sidebarPendingCursors.has(uid)',pending_uid)
+                page.unroute('**/api/sessions/unread',hold_first_summary)
+                page.evaluate('startUiEvents()')
+                # Old-node fallback never downloads inactive message bodies.
                 page.route('**/api/sessions/unread',lambda r:r.fulfill(status=404,json={'error':'old node'}))
                 fallback_sid='unread-4'
                 with data.paths[fallback_sid].open('ab') as f:
@@ -102,15 +161,16 @@ def main():
                 fallback_uid=data.uid(fallback_sid)
                 if hub_mode: fallback_uid=fallback_uid.replace(':',f':{nid}~',1)
                 context.request.get(url+'/api/sessions?force=1');page.evaluate('pollSessions()')
-                page.wait_for_function('uid=>S.unread.get(uid)?.count===2',arg=fallback_uid)
-                assert any('/api/messages/'+fallback_uid.replace(':','%3A').replace('~','~') in u for _,u in requests),requests
+                page.wait_for_function('unreadBatchUnsupported.size===1 && sidebarSyncing.size===0')
+                assert page.evaluate('uid=>S.unread.get(uid)?.count',fallback_uid)==1
+                assert not any('/api/messages/'+fallback_uid in unquote(u) for _,u in requests),requests
                 # A normal user click still opens full history after summary sync.
                 page.locator(f'#side .item[data-uid="{fallback_uid}"] .t').click()
-                page.wait_for_function('!!S.sel && cache.has(S.sel)')
-                assert 'New reply' in page.locator('#msgs').inner_text()
+                page.wait_for_function('uid=>S.sel===uid && cache.has(uid)',arg=fallback_uid)
+                assert 'Fallback reply' in page.locator('#msgs').inner_text()
                 assert not errors,errors
                 context.close()
-        print('PASS sidebar unread: 20 folded views -> one summary, node+hub, reset/error isolation and history click')
+        print('PASS sidebar unread: node+hub; 20 folded views -> one summary; cached inactive history stays lazy; reopen catches up; race/reset/old-node fallback')
 
 
 if __name__=='__main__':main()

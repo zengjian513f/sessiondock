@@ -81,6 +81,7 @@ pub struct AppState {
     /// Assembled `/api/live` and `/api/term/list` answers keyed on the
     /// source snapshots they came from (docs/liveness.md "Response caches").
     pub polls: Arc<crate::polls::PollCache>,
+    pub ui_events: Arc<crate::ui_events::EventBus>,
 }
 
 #[derive(Clone)]
@@ -202,7 +203,7 @@ pub fn capabilities() -> Value {
         "terminal": false, "outbox": false, "audit": false, "files": false,
         "mutations": false, "hub": false, "trash": false, "timeline_pin": false,
         "bug_report": false,
-        "media": true, "media_remote": true, "media_lazy": true, "history_pages": true, "unread_batch": true,
+        "media": true, "media_remote": true, "media_lazy": true, "history_pages": true, "unread_batch": true, "ui_events": true,
         "media_continuation": true,
         "history_semantics": "limited_native"
     })

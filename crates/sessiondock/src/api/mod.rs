@@ -8,6 +8,7 @@ mod audit;
 mod bug_report;
 mod conversation;
 mod delivery;
+mod events;
 mod files;
 mod health;
 pub mod hub;
@@ -58,6 +59,7 @@ pub fn router() -> Router<AppState> {
         .route("/meta", get(meta))
         .route("/nodes", get(nodes))
         .route("/sessions", get(read::list))
+        .route("/events", get(events::events))
         .route("/sessions/titles", get(read::titles))
         .route(
             "/sessions/unread",
