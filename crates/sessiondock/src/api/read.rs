@@ -85,6 +85,47 @@ pub async fn titles(
         .await
 }
 
+#[derive(Deserialize)]
+pub struct UnreadBatch {
+    views: Vec<UnreadView>,
+}
+
+#[derive(Deserialize)]
+struct UnreadView {
+    uid: String,
+    #[serde(flatten)]
+    query: MessageQuery,
+}
+
+/// Read-only POST so a changing set of background cursors fits in one request.
+/// Results retain input order; one invalid view does not discard other counts.
+pub async fn unread(
+    State(state): State<AppState>,
+    axum::Json(batch): axum::Json<UnreadBatch>,
+) -> Result<axum::Json<Value>, ApiError> {
+    state
+        .reader
+        .run(move |store| {
+            let results: Vec<Value> = batch
+                .views
+                .into_iter()
+                .map(|mut view| {
+                    view.query.append = "1".into();
+                    view.query.window.clear();
+                    match store
+                        .snapshot(&view.uid, &view.query.agent)
+                        .and_then(|snapshot| snapshot.unread_summary(&view.query))
+                    {
+                        Ok(summary) => summary,
+                        Err(error) => json!({"error": error.message, "status": error.status}),
+                    }
+                })
+                .collect();
+            Ok(axum::Json(json!({"results": results})))
+        })
+        .await
+}
+
 pub async fn messages(
     State(state): State<AppState>,
     Path(uid): Path<String>,

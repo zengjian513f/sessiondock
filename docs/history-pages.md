@@ -95,6 +95,25 @@ unknown-kind warning counts on files larger than 512 KiB come from the head
 and tail only. There is no fixed file/record/checkpoint/event count quota on
 open, nor a session count, total-byte or directory-entry cap on the list.
 
+## Background unread summaries
+
+`POST /api/sessions/unread` accepts `{views:[{uid,agent,start,head,anchor}]}`
+and returns `{results:[{reset,start,end,version:{head},anchor,incoming}]}` in
+input order. This is a read-only batch. Each entry uses the same validated
+append-only selection as `/api/messages?append=1`: invalid checkpoints reset
+with zero incoming messages. `incoming` counts non-`counted:false` assistant,
+assistant·subagent, thinking, tool, tool_result and question events. Individual
+view failures return `{error,status}` without discarding the other entries.
+No message bodies, media grants or prompt probes are produced.
+
+The `unread_batch` capability enables this for uncached background views.
+Opened/cached views still fetch message increments. Hub browsers group by node
+and POST local UIDs to `/api/nodes/{nid}/api/sessions/unread`; the existing
+explicit-node authentication/proxy rules apply. Old nodes returning 404/405/501
+fall back to individual reads during rolling upgrades. Folding does not stop
+unread accounting. Opening a view while a summary is in flight makes its new
+cache authoritative, so the summary cannot rewind the loaded checkpoint.
+
 ## Opening a session: on-demand views
 
 `GET /api/messages/{uid}?agent=&start=&head=&anchor=&append=&window=` opens

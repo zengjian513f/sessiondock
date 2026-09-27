@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Uncached background views use one read-only summary request, including through a hub."""
+import argparse
+from contextlib import ExitStack
+import json
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+from playwright.sync_api import sync_playwright
+from history_parity import BINARY, Corpus, claude_row, encoded, isolated_server
+from hub_http_suite import Hub, free_port
+from node_auth_suite import node_env, TOKEN
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--binary',type=Path,default=BINARY)
+    args=parser.parse_args()
+    with tempfile.TemporaryDirectory(prefix='sessiondock-unread-') as tmp, sync_playwright() as pw:
+        root=Path(tmp);data=Corpus(root/'node');rows={}
+        for src in ('claude','codex','grok'):(data.root/src).mkdir(parents=True)
+        for i in range(20):
+            sid=f'unread-{i}'
+            rows[sid]=[claude_row(sid,'user','u0',None,f'Session {i}'),
+                       claude_row(sid,'assistant','a0','u0','Initial reply')]
+            data.put(sid,'claude',rows[sid],[])
+        nid='a'*32;ids=data.root/'ids';ids.mkdir();(ids/'node-id').write_text(nid+'\n')
+        node=SimpleNamespace(name='synthetic',nid=nid,port=free_port(),token=TOKEN)
+        hubroot=root/'hub';hubroot.mkdir()
+        with ExitStack() as stack:
+            base,_=stack.enter_context(isolated_server(data,args.binary,extra_env=node_env(data.root,node.port,'127.0.0.0/8')))
+            hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node])
+            hub.start();stack.callback(hub.stop)
+            browser=pw.chromium.launch(headless=True);stack.callback(browser.close)
+            for hub_mode in (False,True):
+                for sid,path in data.paths.items():path.write_bytes(b''.join(encoded(row) for row in rows[sid]))
+                context=browser.new_context();page=context.new_page();errors=[]
+                page.on('pageerror',lambda e:errors.append(str(e)))
+                url=f'http://127.0.0.1:{hub.port}' if hub_mode else base
+                page.goto(url,wait_until='networkidle');page.wait_for_function('S.sessions.length===20 && T.listLoaded')
+                # Warm native anchors without putting messages in the browser cache.
+                checkpoints={}
+                for sid in rows:
+                    uid=data.uid(sid)
+                    if hub_mode:uid=uid.replace(':',f':{nid}~',1)
+                    result=context.request.get(url+'/api/messages/'+uid).json()
+                    checkpoints[uid]={'end':result['end'],'head':result['version']['head'],'anchor':result['anchor']}
+                page.evaluate('''points=>{S.unread.clear();cache.clear();S.cursors=new Map(Object.entries(points));
+                  S.view='date';S.nest=true;S.closed.clear();renderView();renderSide()}''',checkpoints)
+                page.locator('#side>.group>.ghead').first.click()
+                requests=[]
+                page.on('request',lambda r:requests.append((r.method,r.url)))
+                ordinal=1
+                for sid,path in data.paths.items():
+                    with path.open('ab') as f:f.write(encoded(claude_row(sid,'assistant',f'a{ordinal}',f'a{ordinal-1}','New reply')))
+                context.request.get(url+'/api/sessions?force=1')
+                page.evaluate('pollSessions()')
+                page.wait_for_function('S.unread.size===20 && [...S.unread.values()].every(r=>r.count===1)')
+                batches=[u for method,u in requests if '/api/sessions/unread' in u]
+                assert len(batches)==1,requests
+                assert not any('/api/messages/' in u for _,u in requests),requests
+                page.locator('#side>.group>.ghead').first.click()
+                assert page.locator('#side .item-status.counted').count()==20
+                # Broken checkpoints reset individually; another unknown UID
+                # must not suppress a valid entry in the same batch.
+                endpoint=url+(f'/api/nodes/{nid}' if hub_mode else '')+'/api/sessions/unread'
+                checkpoint=checkpoints[next(u for u in checkpoints if u.endswith(data.uid('unread-1').split(':',1)[1]))]
+                result=context.request.post(endpoint,data={'views':[
+                    {'uid':data.uid('unread-0'),'start':999999,'head':'bad'},
+                    {'uid':'claude:missing'},
+                    {'uid':data.uid('unread-1'),'start':checkpoint['end'],'head':checkpoint['head'],'anchor':checkpoint['anchor']}]}).json()['results']
+                assert result[0]['reset'] and result[0]['incoming']==0,result
+                assert result[1]['status']==404,result
+                assert not result[2]['reset'] and result[2]['incoming']==1,result
+                # Hold a background summary while a real click opens that view.
+                held=[]
+                def hold(route): held.append(route)
+                page.route('**/api/sessions/unread',hold)
+                race_sid='unread-3'
+                with data.paths[race_sid].open('ab') as f:
+                    f.write(encoded(claude_row(race_sid,'assistant',f'race-{ordinal}',f'a{ordinal}','Race reply')))
+                context.request.get(url+'/api/sessions?force=1');page.evaluate('pollSessions()')
+                for _ in range(100):
+                    if held: break
+                    page.wait_for_timeout(20)
+                assert held
+                race_uid=data.uid(race_sid)
+                if hub_mode: race_uid=race_uid.replace(':',f':{nid}~',1)
+                page.locator(f'#side .item[data-uid="{race_uid}"] .t').click()
+                page.wait_for_function('uid=>S.sel===uid && cache.has(uid)',arg=race_uid)
+                before=page.evaluate('uid=>S.cursors.get(uid)',race_uid)
+                for route in held: route.fulfill(response=route.fetch())
+                page.unroute('**/api/sessions/unread',hold)
+                page.wait_for_function('sidebarSyncing.size===0')
+                assert page.evaluate('uid=>S.cursors.get(uid)',race_uid)==before
+                assert page.evaluate('uid=>!S.unread.has(uid)',race_uid)
+                # Old-node fallback keeps unread counts during rolling upgrades.
+                page.route('**/api/sessions/unread',lambda r:r.fulfill(status=404,json={'error':'old node'}))
+                fallback_sid='unread-4'
+                with data.paths[fallback_sid].open('ab') as f:
+                    f.write(encoded(claude_row(fallback_sid,'assistant',f'fallback-{ordinal}',f'a{ordinal}','Fallback reply')))
+                fallback_uid=data.uid(fallback_sid)
+                if hub_mode: fallback_uid=fallback_uid.replace(':',f':{nid}~',1)
+                context.request.get(url+'/api/sessions?force=1');page.evaluate('pollSessions()')
+                page.wait_for_function('uid=>S.unread.get(uid)?.count===2',arg=fallback_uid)
+                assert any('/api/messages/'+fallback_uid.replace(':','%3A').replace('~','~') in u for _,u in requests),requests
+                # A normal user click still opens full history after summary sync.
+                page.locator(f'#side .item[data-uid="{fallback_uid}"] .t').click()
+                page.wait_for_function('!!S.sel && cache.has(S.sel)')
+                assert 'New reply' in page.locator('#msgs').inner_text()
+                assert not errors,errors
+                context.close()
+        print('PASS sidebar unread: 20 folded views -> one summary, node+hub, reset/error isolation and history click')
+
+
+if __name__=='__main__':main()
