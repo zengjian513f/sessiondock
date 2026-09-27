@@ -114,6 +114,46 @@ def main():
                     seen = wait_for_events(page, audit, {"browser.page.loaded", "browser.session.opened",
                                                    "browser.http.response.parsed", "browser.dom.snapshot",
                                                    "browser.sse.opened"})
+                    # Continuous ordinary receipts must not cause one request
+                    # per polling tick. Rust never retains these content bodies.
+                    await_idle = "() => !browserAuditSending && browserAuditQueue.length === 0"
+                    page.wait_for_function(await_idle)
+                    cadence_posts = []
+                    page.on("request", lambda request: cadence_posts.append(request.post_data_json)
+                            if request.url == base + AUDIT_ROUTE else None)
+                    page.evaluate("""() => {
+                      window.__cadenceN=0;
+                      window.__cadenceTimer=setInterval(()=>browserAuditEvent('probe.cadence',
+                        {n:++__cadenceN},'x'.repeat(64000)),200);
+                    }""")
+                    page.wait_for_timeout(11000)
+                    page.evaluate("clearInterval(__cadenceTimer)")
+                    assert 1 <= len(cadence_posts) <= 3, len(cadence_posts)
+                    assert all(not event.get('content') for payload in cadence_posts
+                               for event in payload['events'])
+                    # Error priority advances the timer even if ordinary events
+                    # already scheduled a later flush.
+                    page.evaluate("browserAuditEvent('probe.urgent', {}, null, {severity:'error'})")
+                    wait_for_events(page, audit, {'browser.probe.urgent'}, timeout=2)
+                    page.wait_for_function(await_idle)
+                    # A full batch flushes without waiting for the 5-second timer.
+                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.full',{i})")
+                    wait_for_events(page, audit, {'browser.probe.full'}, timeout=2)
+                    page.wait_for_function(await_idle)
+                    # A full queue must not bypass retry backoff on an outage.
+                    failed_posts = []
+                    def fail_audit(route):
+                        failed_posts.append(route.request.url)
+                        route.fulfill(status=503, json={'error': 'synthetic outage'})
+                    page.route(base + AUDIT_ROUTE, fail_audit)
+                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.retry',{i})")
+                    page.wait_for_function("browserAuditFailCount === 1 && !browserAuditSending")
+                    page.evaluate("for(let i=0;i<100;i++) browserAuditEvent('probe.retry_more',{i})")
+                    page.wait_for_timeout(600)
+                    assert len(failed_posts) == 1, failed_posts
+                    page.unroute(base + AUDIT_ROUTE, fail_audit)
+                    wait_for_events(page, audit, {'browser.probe.retry', 'browser.probe.retry_more'})
+                    page.wait_for_function(await_idle)
                     # A ≥1 s main-thread frame is attributed by the browser and beaconed at once.
                     assert page.evaluate("PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')")
                     page.evaluate("setTimeout(() => { const t = performance.now(); while (performance.now() - t < 1300) {} }, 0)")
@@ -128,7 +168,8 @@ def main():
                     page.goto(base + "/?second=1", wait_until="networkidle")
                     seen |= wait_for_events(page, audit, {"browser.page.hidden"})
                     assert posts, "the page never posted"
-                    assert all(status == 202 and method == "POST" for status, _, method in posts), posts
+                    assert sum(status == 503 for status, _, _ in posts) == len(failed_posts), posts
+                    assert all(status in (202, 503) and method == "POST" for status, _, method in posts), posts
                     assert all(content_type.startswith("application/json") for _, content_type, _ in posts), posts
                     assert not errors, errors
                     health = wait_for_quiescence(page, opener, base)
@@ -197,7 +238,7 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     page.locator(f'#side .item[data-uid="{corpus.uid("claude-branch")}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
-                    page.wait_for_timeout(2500)  # past the 750 ms flush and the 1.5 s retry timer
+                    page.wait_for_timeout(5500)  # past the ordinary batch deadline
                     page.goto(base + "/?second=1", wait_until="networkidle")
                     page.wait_for_timeout(1000)
                     assert not any(AUDIT_ROUTE in url for url in requests), [url for url in requests if "audit" in url]

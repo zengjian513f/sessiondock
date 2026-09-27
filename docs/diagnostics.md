@@ -28,6 +28,21 @@ the 14-day retention window are deleted.
 counters. Shutdown closes admission and drains queued records within the
 configured shutdown deadline.
 
+## Browser request cadence
+
+Ordinary receipts are batched for up to 5 seconds, with up to 100 events and
+48 KiB per HTTP batch. Reaching 100 queued events triggers an earlier flush;
+error receipts bring the pending flush forward to 100 ms. New ordinary events
+do not postpone the existing deadline. Failed requests wait at least 5 seconds
+before retrying, including when new events fill the queue. Page hiding/unloading still flushes via
+beacon, and long-frame beacons remain immediate.
+
+Rust pages omit the `content` body before sizing/queueing receipts: the intake
+only persists structured metadata, so transferring DOM/message/terminal
+snapshots would add bandwidth and fragment batches without retaining evidence.
+The trace IDs, timestamps, status, latency and other `data` fields remain.
+This batching does not slow input readiness checks or conversation updates.
+
 ## Main-thread long frames
 
 The page reports every main-thread frame of 1 s or longer as
