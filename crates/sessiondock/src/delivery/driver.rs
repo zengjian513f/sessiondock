@@ -219,6 +219,12 @@ static CODEX_MODEL_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
 static CODEX_REWIND_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*esc again to edit previous message\s*$").expect("codex rewind")
 });
+static CODEX_HELP_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^\s*(?:\?\s+for shortcuts\s*)?(?:(?:⚠\u{fe0f}?\s*)?\d+\s+warnings?\s*[·•]\s*f2\s+to\s+view)?\s*$",
+    )
+    .expect("codex help footer")
+});
 
 /// Which CLI's composer model applies to a capture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -493,7 +499,14 @@ fn locate_codex(
             at -= 1;
         }
         footer = Some(at);
-    } else if let Some(candidate) = clean_lines.iter().rposition(|line| nonblank(line)) {
+    } else if let Some(candidate) = clean_lines
+        .iter()
+        .rposition(|line| nonblank(line) && !CODEX_HELP_FOOTER.is_match(line))
+    {
+        // Codex's Working status bar may be followed by shortcut/warning
+        // hints, with a hidden cursor parked outside the editor. Those hints
+        // do not hide the model footer or become part of the draft. Skip only
+        // known hints: arbitrary output must not revive a transcript prompt.
         if CODEX_MODEL_FOOTER.is_match(&clean_lines[candidate])
             || CODEX_CONTEXT_LEFT_FOOTER.is_match(&clean_lines[candidate])
         {

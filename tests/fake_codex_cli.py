@@ -187,7 +187,8 @@ class Fake:
             lines.append("> " + parts[0])
             lines.extend("  " + part for part in parts[1:])
         lines.append("")
-        if working:
+        busy_warning = os.environ.get('SESSIONDOCK_TEST_BUSY_WARNING')
+        if working or busy_warning:
             lines.append("• Working (1s • esc to interrupt)")
         lines.append(self.particles())
         prompt_row = len(lines) + 1
@@ -208,10 +209,18 @@ class Fake:
             lines.append("› " + DIM + PLACEHOLDER + RESET + "   " + GREY + "⠁⠂" + RESET)
         lines.append(self.particles())
         lines.append("")
-        lines.append("%s low · %s" % (self.options["model"], os.getcwd()))
+        if busy_warning:
+            lines.append("%s low · /test · Context 27%% used · Working · Full Access" % self.options['model'])
+            lines.append("  ? for shortcuts                         1 warning · f2 to view")
+        else:
+            lines.append("%s low · %s" % (self.options["model"], os.getcwd()))
         self.write("\x1b[2J\x1b[H" + "\r\n".join(lines))
         column = 3 + len(parts[-1])
         self.write("\x1b[%d;%dH" % (prompt_row + len(parts) - 1, column))
+        if busy_warning and not self.buffer:
+            # During a busy redraw the hidden cursor can be parked in the
+            # padding above the editor. The status bar still anchors it.
+            self.write("\x1b[?25l\x1b[%d;1H" % (prompt_row - 1))
 
     def stamp(self):
         return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % int((time.time() % 1) * 1000)
