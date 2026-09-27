@@ -255,10 +255,13 @@ window.__sessiondockPageId = AUDIT_PAGE_ID;
 
 let browserAuditQueue = [];
 let browserAuditTimer = 0;
+let browserAuditDue = 0;
+let browserAuditRetryAt = 0;
 let browserAuditSending = false;
 let browserAuditFailCount = 0;
 const AUDIT_BATCH_BYTES = 48 * 1024;
-const AUDIT_BATCH_COUNT = 20;
+const AUDIT_BATCH_COUNT = 100;
+const AUDIT_FLUSH_MS = 5000;
 const AUDIT_CONTENT_LIMIT = 32 * 1024;
 
 // 按 UTF-8 字节算：sendBeacon 的 64 KB 配额是字节数，中文一个字占 3 字节
@@ -285,14 +288,27 @@ function capAuditQueue() {
   if (browserAuditQueue.length > 500) browserAuditQueue.splice(0, browserAuditQueue.length - 500);
 }
 
+// Ordinary diagnostics share a batch across several polling cycles. Full
+// batches and failures flush sooner; another info event never postpones a flush.
+function scheduleBrowserAudit(delay = AUDIT_FLUSH_MS) {
+  delay = Math.max(delay, browserAuditRetryAt - performance.now());
+  const due = performance.now() + delay;
+  if (browserAuditTimer && browserAuditDue <= due) return;
+  clearTimeout(browserAuditTimer);
+  browserAuditDue = due;
+  browserAuditTimer = setTimeout(flushBrowserAudit, delay);
+}
+
 function browserAuditEvent(event, data = {}, content = null, fields = {}) {
   if (!SessionDockCapabilities.allows('audit')) return;
   try {
-    let auditContent = content;
+    // Rust stores metadata only; sending message/DOM/terminal bodies here
+    // wastes bandwidth and prematurely fills the byte-limited audit batches.
+    let auditContent = SessionDockCapabilities.config.backend === 'rust' ? null : content;
     let auditData = data;
     try {
-      if (content != null) {
-        const serialized = JSON.stringify(content);
+      if (auditContent != null) {
+        const serialized = JSON.stringify(auditContent);
         if (serialized.length > AUDIT_CONTENT_LIMIT) {
           auditContent = {truncated: true, bytes: serialized.length,
             head: serialized.slice(0, 8 * 1024)};
@@ -309,7 +325,8 @@ function browserAuditEvent(event, data = {}, content = null, fields = {}) {
       data: auditData, content: auditContent,
     });
     capAuditQueue();
-    if (!browserAuditTimer) browserAuditTimer = setTimeout(flushBrowserAudit, 750);
+    scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0
+      : fields.severity === 'error' ? 100 : AUDIT_FLUSH_MS);
   } catch { /* diagnostics never change UI behavior */ }
 }
 
@@ -324,6 +341,7 @@ async function flushBrowserAudit() {
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
   if (browserAuditSending || !browserAuditQueue.length) return;
+  if (performance.now() < browserAuditRetryAt) { scheduleBrowserAudit(); return; }
   const events = spliceAuditBatch(browserAuditQueue);
   if (!events.length) return;
   browserAuditSending = true;
@@ -342,7 +360,9 @@ async function flushBrowserAudit() {
     await response.arrayBuffer().catch(() => {});
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     browserAuditFailCount = 0;
+    browserAuditRetryAt = 0;
   } catch (error) {
+    browserAuditRetryAt = performance.now() + AUDIT_FLUSH_MS;
     // 断网期间只是攒着，不算失败次数；连续三次在线失败才认定这一批本身有问题
     if (navigator.onLine) browserAuditFailCount += 1;
     if (browserAuditFailCount >= 3) {
@@ -363,7 +383,7 @@ async function flushBrowserAudit() {
   } finally {
     browserAuditSending = false;
     if (browserAuditQueue.length && !browserAuditTimer) {
-      browserAuditTimer = setTimeout(flushBrowserAudit, 1500);
+      scheduleBrowserAudit(browserAuditQueue.length >= AUDIT_BATCH_COUNT ? 0 : AUDIT_FLUSH_MS);
     }
   }
 }
