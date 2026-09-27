@@ -35,14 +35,14 @@ def main():
     context.route('**/api/meta',meta)
     def destination(route):
      destinations.append(parse_qs(urlsplit(route.request.url).query));route.fulfill(content_type='text/html',body='<h1>FileDock destination</h1>')
-    context.route('**/files/file.html?*',destination)
+    context.route('**/files/?*',destination)
     page=context.new_page();page.goto(base);page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]').click()
     with context.expect_page() as opened:page.locator(f'#msgs a[data-file-ref={json.dumps(str(file),ensure_ascii=False)}]').click()
     preview=opened.value;expect(preview.locator('h1')).to_have_text('FileDock destination')
     assert destinations[-1]=={'node':[NODE],'path':[str(file)]},destinations
     with context.expect_page() as opened:page.locator('#msgs a[data-file-ref="missing.txt"]').click()
     missing=opened.value;expect(missing.locator('#file-retry')).to_be_visible();assert 'FileDock destination' not in missing.locator('body').inner_text()
-    direct=context.new_page();direct.goto(base+'/files.html?'+urlencode({'node':NODE,'path':str(directory)}));expect(direct.locator('h1')).to_have_text('FileDock destination');assert destinations[-1]['path']==[str(directory)]
+    direct=context.new_page();direct.goto(base+'/file.html?'+urlencode({'node':NODE,'path':str(directory)}));expect(direct.locator('h1')).to_have_text('FileDock destination');assert destinations[-1]['path']==[str(directory)]
     if width<600:page.locator('.mobile-back').click()
     page.locator(f'#side .item[data-uid="{corpus.uid(regression)}"]').click()
     for ref,target in [('SCREENING.md',current),('other/SCREENING.md',other/current.name),('fallback.md',fallback)]:

@@ -27,7 +27,7 @@
     }
     const service=new URL(SessionDockCapabilities.config.filedock_url || '/files/',location.href);
     if(!service.pathname.endsWith('/')) service.pathname+='/';
-    const destination=new URL('file.html',service);
+    const destination=new URL('./',service);
     destination.search=new URLSearchParams({node,path});destination.hash=location.hash;
     location.replace(destination);
   } catch(error){
