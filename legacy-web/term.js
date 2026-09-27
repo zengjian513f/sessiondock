@@ -3920,8 +3920,17 @@ function prepareComposerSend(draft, id, uid) {
   if (!state) composerSendProgress.set(draft, state = {items:[], used:new Set()});
   state.items = state.items.filter(item => item.hash || item.id === id);
   if (!state.items.some(item => item.id === id)) {
-    state.items.push({id, afterTs:queuedAfterTimestamp(uid), hash:null});
+    state.items.push({id, afterTs:queuedAfterTimestamp(uid),
+      afterCount:(cache.get(viewKey(uid))?.msgs || []).length, hash:null});
   }
+}
+function composerEchoReady(item, recorded, index) {
+  if (!item?.hash) return false;
+  // Claude/Codex records carry a timestamp, so an older identical line cannot
+  // retire a later send. Grok chat_history lines do not; the cache length at
+  // prepare time is the same fence.
+  if (Number.isFinite(recorded)) return !item.afterTs || recorded > Date.parse(item.afterTs);
+  return Number.isInteger(item.afterCount) && index >= item.afterCount;
 }
 function acceptComposerSend(draft, result) {
   const item = composerSendProgress.get(draft)?.items.find(item => item.id === result?.request_id);
@@ -3941,11 +3950,11 @@ async function reconcileComposerSendProgress(uid) {
   try {
     const messages = cache.get(viewKey(uid))?.msgs || [];
     const occurrences = new Map();
-    for (const message of messages) {
+    for (let index = 0; index < messages.length; index++) {
+      const message = messages[index];
       if (!['user', 'command'].includes(message.role)) continue;
       const recorded = Date.parse(message.ts || '');
-      if (!Number.isFinite(recorded)) continue;
-      if (!state.items.some(item => item.hash && (!item.afterTs || recorded > Date.parse(item.afterTs)))) continue;
+      if (!state.items.some(item => composerEchoReady(item, recorded, index))) continue;
       let hashing = composerEchoHashes.get(message);
       if (!hashing) {
         const bytes = new TextEncoder().encode(JSON.stringify(String(message.text || '').trim()));
@@ -3960,7 +3969,7 @@ async function reconcileComposerSendProgress(uid) {
       const identity = `${key}:${occurrence}`;
       if (state.used.has(identity)) continue;
       const at = state.items.findIndex(item => item.hash === hash
-        && (!item.afterTs || recorded > Date.parse(item.afterTs)));
+        && composerEchoReady(item, recorded, index));
       if (at >= 0) {
         state.items.splice(at, 1);
         state.used.add(identity); // One native record completes one send only.
