@@ -9,3 +9,11 @@ nested-child navigation on desktop/mobile with synthetic native histories.
 
 File links resolve to FileDock's machine-and-path entry; see [files](files.md).
 The independent file service owns directory navigation and standalone previews.
+
+Opening a session updates the address bar to this same shareable URL. A subagent
+uses `?sid=<source>:<owner-native-id>/agent:<agent-id>`; standalone native subagent
+IDs remain accepted. Refresh and browser Back/Forward restore the selected view.
+Navigation reveals and selects its sidebar row, opening collapsed ancestors and
+removing filters that would hide the target. Related-session links use this route
+rather than a separate navigation scheme. Other query parameters and the proxy
+base path are preserved.
