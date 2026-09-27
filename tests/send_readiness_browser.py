@@ -416,6 +416,22 @@ def main():
                     expect(page_two.locator('#cinput')).to_have_value('draft after takeover')
                     page_two.locator('#a-term').click()
                     page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=10000)
+                    # Pure terminal CSS hides the composer via its parent.
+                    checks=[]
+                    page_two.on('request', lambda request: checks.append(request.url)
+                        if urlsplit(request.url).path == '/api/session/conversation/check' else None)
+                    page_two.locator('#a-term').click()
+                    expect(page_two.locator('#cinput')).not_to_be_visible()
+                    page_two.wait_for_function('!composerInputProbeBusy')
+                    before=len(checks)
+                    page_two.wait_for_timeout(6200)
+                    assert len(checks)==before, f'hidden composer sent {len(checks)-before} CHECKs'
+                    with page_two.expect_request(lambda request:
+                            urlsplit(request.url).path == '/api/session/conversation/check', timeout=1400):
+                        page_two.locator('#a-term').click()
+                    expect(page_two.locator('#cinput')).to_be_visible()
+                    page_two.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                    print('PASS hidden composer: 0 CHECKs over 6.2s, immediate check on return')
                     stale = page_two.evaluate('''() => {
                         const status=document.querySelector('#composer-input-status');
                         updateComposerInputStatus(composerUid, {ok:false,

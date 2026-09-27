@@ -33,6 +33,8 @@ SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 re
 
 窄屏软键盘只压缩网页可视区域（`interactive-widget=resizes-content` 与 `--visual-viewport-height`），不改变 PTY 行列。把键盘高度 SIGWINCH 进 CLI 会挤掉编辑区，CHECK/SEND 变成 `cli_not_ready`；收起键盘后画面恢复只是又一次重排。
 
+纯终端布局或父容器隐藏输入框时停止 CHECK，切回可见输入框立即再检；草稿保存队列仍照常完成。
+
 ## 再检与写入
 
 在附件发布到会话 cwd 之前、粘贴之前、以及发出 Enter 之前，必须再检。粘贴出错后，不得对结果不明的写入自动重试（父合同 `send_result_unknown`）。
