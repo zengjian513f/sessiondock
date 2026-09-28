@@ -3,7 +3,8 @@
 //! `user` rows carry the prompt (the mirror moves inline images into a
 //! `content` array); `assistant` rows carry ordered `reasoning`, `text` and
 //! `tool` items, a tool's call and result together in `state`. `synthetic`,
-//! `idle`, `model-switched` and `compaction` rows are OpenCode bookkeeping.
+//! `idle`, `model-switched`, `agent-switched`, `location-switched` and
+//! `compaction` rows are OpenCode bookkeeping.
 
 use std::path::Path;
 
@@ -97,8 +98,23 @@ impl Parser<'_> {
                         other => self.skipped.note("OpenCode 内容类型", other),
                     }
                 }
-                // A provider failure ends the turn with no content; an
-                // interruption the user chose is not an error to show.
+                // A user interruption keeps what was said so far as the
+                // turn's last progress, marked interrupted (like Codex's
+                // `turn_aborted`); it is not an error to show.
+                if data["finish"] == "error" && data["error"]["type"] == "aborted" {
+                    for event in self.events.iter_mut().rev() {
+                        if event.message["role"] == "assistant"
+                            && event.message["turn_id"] == self.turn
+                        {
+                            if event.message["phase"] != "final" {
+                                event.message["interrupted"] = json!(true);
+                                event.message["interrupt_reason"] = json!("本轮在最终答复前被中断");
+                            }
+                            break;
+                        }
+                    }
+                }
+                // A provider failure ends the turn with no content.
                 if data["finish"] == "error"
                     && data["error"]["type"] != "aborted"
                     && let Some(message) = data["error"]["message"].as_str()
@@ -130,7 +146,8 @@ impl Parser<'_> {
                     json!({"phase": "final"}),
                 )
             }
-            "synthetic" | "idle" | "model-switched" | "compaction" => {}
+            "synthetic" | "idle" | "model-switched" | "agent-switched" | "location-switched"
+            | "compaction" => {}
             other => self.skipped.note("OpenCode 记录类型", other),
         }
         Ok(())

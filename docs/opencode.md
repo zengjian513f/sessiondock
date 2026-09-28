@@ -52,8 +52,15 @@ their images, `reasoning` as thinking, `text` as assistant output (`final`
 on the last text of a `stop` turn), and each `tool` item as a call with its
 result or error. A provider failure (`finish: error`, except a user
 interruption) and a turn that failed without any reply (`idle` with
-`outcome: failed`) show one `[OpenCode …]` notice. `synthetic`,
-`model-switched` and `compaction` rows are bookkeeping.
+`outcome: failed`) show one `[OpenCode …]` notice. A turn the user
+interrupted (`error.type: aborted`) keeps its partial reply as the turn's
+last progress, marked interrupted, like a Codex `turn_aborted`.
+`synthetic`, `model-switched`, `agent-switched`, `location-switched` and
+`compaction` rows are bookkeeping.
+
+A subagent runs in its own child session (`parent_id`), mirrored and listed
+as a row of its own; the parent shows the `subagent` tool call with the
+child's session id and answer.
 
 ## Launch, resume, send
 
@@ -66,7 +73,8 @@ creates one with the first prompt, so this is what makes the identity known
 at launch; the mirrored row appears right away and the page moves to it.
 Resume uses `--session <sid>`. The composer recognizes OpenCode's prompt
 ([composer input](composer-input.md)) and SEND waits for the native user
-record like the other CLIs.
+record like the other CLIs. Its question form and permission prompt block
+SEND as CLI questions; they are answered in the terminal.
 
 ## Delete
 

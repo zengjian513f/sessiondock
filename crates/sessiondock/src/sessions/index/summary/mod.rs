@@ -837,7 +837,8 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                 other => skipped.note("Codex 记录类型", other),
             },
             "opencode" => match kind {
-                "user" | "assistant" | "synthetic" | "idle" | "model-switched" | "compaction" => {}
+                "user" | "assistant" | "synthetic" | "idle" | "model-switched"
+                | "agent-switched" | "location-switched" | "compaction" => {}
                 other => skipped.note("OpenCode 记录类型", other),
             },
             _ => match kind {
