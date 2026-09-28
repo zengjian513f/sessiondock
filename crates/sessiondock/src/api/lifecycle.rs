@@ -325,6 +325,11 @@ pub struct CreateRequest {
     resume_uid: Option<String>,
     #[serde(default)]
     create_cwd: bool,
+    /// Picker model and effort for a new session; empty is the CLI default.
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
     #[serde(default)]
     cols: Option<u16>,
     #[serde(default)]
@@ -663,7 +668,26 @@ pub async fn create(
             return Ok(reply);
         }
     };
+    let new = resume.is_none() && entry.profile && entry.source != Source::Shell;
     let spec = build_spec(&entry, &cwd, resume)?;
+    let spec = if new {
+        let chosen = |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        let (model, effort) = (chosen(body.model), chosen(body.effort));
+        let effort = effort.filter(|_| crate::lifecycle::models::supports_effort(entry.source));
+        if ![&model, &effort]
+            .into_iter()
+            .all(|value| value.as_deref().is_none_or(crate::lifecycle::models::valid_choice))
+        {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "launch_model",
+                "模型或推理强度名称无效",
+            ));
+        }
+        spec.with_choice(model, effort).map_err(|_| invalid())?
+    } else {
+        spec
+    };
     let record = service.create(request_id, spec).await.map_err(failure)?;
     response(project(&record), permit).await
 }
@@ -817,6 +841,27 @@ pub async fn complete_dir(
             other => failure(other),
         })?;
     response(json!({"directories":directories}), permit).await
+}
+
+#[derive(Deserialize)]
+pub struct ModelsQuery {
+    source: Source,
+    /// `debug_run`: the page's view selector, appended to every `/api/`
+    /// URL by the frontend; accepted and ignored here.
+    #[serde(default)]
+    #[allow(dead_code)]
+    debug_run: String,
+}
+/// The new-session picker's model and effort choices for one source's CLI.
+pub async fn models(
+    State(state): State<AppState>,
+    query: Result<Query<ModelsQuery>, QueryRejection>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&state)?;
+    let permit = admit(&state).await?;
+    let Query(query) = query.map_err(|_| invalid())?;
+    let catalog = service.models(query.source).await.map_err(failure)?;
+    response(json!(catalog), permit).await
 }
 
 #[derive(Deserialize)]

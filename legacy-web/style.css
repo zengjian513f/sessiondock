@@ -482,7 +482,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
   flex: none; margin: 0; padding: 0; border: 0;
 }
-#new-session-dialog { width: min(560px, calc(100vw - 28px)); }
+#new-session-dialog { width: min(640px, calc(100vw - 28px)); }
 #new-session-form .new-source {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   /* 自身宽度决定是否只显示图标：中央站模式下同一行还有机器下拉。 */
@@ -509,6 +509,63 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
 }
 #new-session-form .new-source input:focus-visible + span { outline-offset: -2px; }
+/* 一行放下机器、Agent、模型、强度：Agent 只留图标（悬停看名字），机器框收窄；
+   宽度不够时模型和强度一起换到下一行。 */
+#new-session-form .new-source { flex: 0 1 212px; min-width: 172px; }
+#new-session-form .new-source label { flex: 1 1 42px; min-width: 34px; }
+#new-session-form .new-source .src-label {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+#new-session-form .node-select:not([hidden]) { flex: 0 1 132px; min-width: 88px; padding-left: 8px; }
+/* 下拉菜单以模型+强度这一组为宽度，窄屏换行后也不会伸出对话框。 */
+.new-choice { position: relative; display: flex; gap: 7px; flex: 1 1 220px; min-width: 0; }
+.new-model { flex: 1 1 auto; min-width: 0; }
+.new-pick {
+  display: flex; align-items: center; gap: 6px; width: 100%; height: 39px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+  color: var(--text); font: 13px/1 var(--sans); cursor: pointer;
+}
+.new-pick > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.new-pick > span.default { color: var(--muted); }
+.new-pick > i { flex: none; color: var(--muted); font-style: normal; }
+.new-pick:hover:not(:disabled) { background: var(--hover); }
+.new-pick[aria-expanded="true"] { border-color: var(--accent); }
+.new-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.new-pick:disabled { opacity: .45; cursor: not-allowed; }
+#new-model-menu {
+  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0;
+  display: flex; flex-direction: column; gap: 4px; padding: 4px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .22);
+}
+#new-model-menu[hidden] { display: none; }
+#new-model-search {
+  height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--panel-2); color: var(--text); font: 12.5px/1 var(--sans); outline: none;
+}
+#new-model-search:focus { border-color: var(--accent); }
+#new-model-search[hidden] { display: none; }
+#new-model-options { max-height: 240px; overflow: auto; }
+.new-model-option {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+  padding: 6px 8px; border: 0; border-radius: 5px;
+  background: transparent; color: var(--text); text-align: left; font: 12.5px/1.4 var(--sans); cursor: pointer;
+}
+.new-model-option > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.new-model-option > small { flex: none; margin-left: auto; color: var(--muted); font: 11px/1.4 var(--terminal-font); }
+.new-model-option:is(:hover, .active) { background: var(--hover); }
+.new-model-option[aria-selected="true"] { color: var(--accent); font-weight: 600; }
+.new-model-empty { padding: 12px 8px; color: var(--muted); font-size: 12px; text-align: center; }
+.new-effort {
+  display: flex; align-items: center; flex: 0 0 104px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
+}
+.new-effort > select {
+  flex: 1; min-width: 0; height: 37px; padding: 0 6px; border: 0; border-radius: 8px;
+  background: var(--panel-2); color: var(--text); font: 13px/1 var(--sans); cursor: pointer;
+}
+.new-effort > select:disabled { opacity: .45; cursor: not-allowed; }
+.new-effort > select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .new-source .src-label { font-style: normal; }
 @container (max-width: 510px) {
   #new-session-form .src-label { display: none; }

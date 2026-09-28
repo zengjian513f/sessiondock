@@ -112,10 +112,15 @@ def node_source_picker(browser, hub, node, other):
     expect(opencode).to_be_enabled()
     page.locator('#new-session-form label:has(input[value="opencode"])').click()
     expect(opencode).to_be_checked()
+    # The model list comes from the selected machine's own CLI.
+    expect(page.locator("#new-model-label")).to_have_text("默认模型")
+    page.locator("#new-model").click()
+    expect(page.locator("#new-model-options [role=option]", has_text=f"{other.name}-opencode")).to_be_visible()
+    page.keyboard.press("Escape")
     for width in (1280, 390):
         page.set_viewport_size({"width": width, "height": 900})
         dialog = page.locator("#new-session-dialog").bounding_box()
-        for item in page.locator("#new-session-form .new-row > *:not([hidden]), #new-session-form .new-source label").all():
+        for item in page.locator("#new-session-form .new-row > *:not([hidden]), #new-session-form .new-source label, #new-model, .new-effort").all():
             box = item.bounding_box()
             assert box and box["x"] >= dialog["x"] and box["x"] + box["width"] <= dialog["x"] + dialog["width"] + 0.5, (width, box, dialog)
         rows = page.evaluate("""() => new Set([...document.querySelectorAll('#new-session-form .new-source label')]
