@@ -12,6 +12,7 @@ pub enum Source {
     Codex,
     Grok,
     Shell,
+    Opencode,
 }
 
 impl Source {
@@ -21,6 +22,7 @@ impl Source {
             "codex" => Some(Self::Codex),
             "grok" => Some(Self::Grok),
             "shell" => Some(Self::Shell),
+            "opencode" => Some(Self::Opencode),
             _ => None,
         }
     }
@@ -31,6 +33,7 @@ impl Source {
             Self::Codex => "codex",
             Self::Grok => "grok",
             Self::Shell => "shell",
+            Self::Opencode => "opencode",
         }
     }
 }

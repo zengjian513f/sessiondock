@@ -1007,6 +1007,7 @@ pub async fn list(
             crate::lifecycle::model::Source::Claude,
             crate::lifecycle::model::Source::Codex,
             crate::lifecycle::model::Source::Grok,
+            crate::lifecycle::model::Source::Opencode,
             crate::lifecycle::model::Source::Shell,
         ];
         for source in sources {

@@ -16,6 +16,7 @@ mod index;
 mod native_input;
 mod native_media;
 mod native_tail;
+pub mod opencode;
 pub use native_tail::{NativeCheckpoint, NativeTail, TailError, TailRecord};
 mod pages;
 mod views;
@@ -171,6 +172,9 @@ pub struct SessionRoots {
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
     pub grok: Option<PathBuf>,
+    /// SessionDock's OpenCode mirror (`sessions::opencode`), not OpenCode's
+    /// own data directory.
+    pub opencode: Option<PathBuf>,
 }
 
 /// Identity proven by native records and inventory ownership, independent of
@@ -288,7 +292,10 @@ impl Candidate {
     /// [summary] represents that absence, while [chat, summary] represents a
     /// present chat (including a zero-byte file). Other providers keep [data].
     pub(crate) fn data_stamp(&self) -> Option<&FileStamp> {
-        if self.source == "grok" && self.summary.is_some() && self.stamps.len() == 1 {
+        if matches!(self.source, "grok" | "opencode")
+            && self.summary.is_some()
+            && self.stamps.len() == 1
+        {
             None
         } else {
             self.stamps.first()
@@ -1216,7 +1223,7 @@ fn index_cursor(entry: &CandidateRef) -> Option<Value> {
     match (entry.committed(), entry.cursor_head()) {
         (Some(end), Some(head)) => Some(json!({"end": end, "head": head})),
         // A Grok session without a chat file projects to an empty history.
-        _ if entry.source == "grok" && entry.stamp.is_none() => {
+        _ if matches!(entry.source, "grok" | "opencode") && entry.stamp.is_none() => {
             Some(json!({"end": 0, "head": views::head(&[], 0)}))
         }
         _ => None,
@@ -1449,7 +1456,7 @@ pub(crate) fn trusted_path(root: &Path, path: &Path) -> Result<(), SessionError>
 pub(crate) fn restamp(candidate: &Candidate) -> Result<Candidate, SessionError> {
     let mut next = candidate.clone();
     next.stamps.clear();
-    let has_data = if candidate.source == "grok" {
+    let has_data = if matches!(candidate.source, "grok" | "opencode") {
         trusted_path(&candidate.root, &candidate.path)?;
         fs::metadata(&candidate.data).is_ok_and(|metadata| metadata.is_file())
     } else {

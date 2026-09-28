@@ -116,6 +116,7 @@ impl Corpus {
             claude: Some(self.root.join("claude")),
             codex: Some(self.root.join("codex")),
             grok: Some(self.root.join("grok")),
+            opencode: None,
         }
     }
 }
@@ -1098,6 +1099,7 @@ fn discovery_follows_python_file_and_project_aliases_and_skips_unrelated_files()
             claude: Some(claude.clone()),
             codex: Some(codex.clone()),
             grok: Some(grok.clone()),
+            opencode: None,
         },
         None,
     );
@@ -1997,6 +1999,7 @@ fn benchmark_cold_and_warm_list_of_2000_sessions() {
         claude: Some(root.join("claude")),
         codex: Some(root.join("codex")),
         grok: Some(root.join("grok")),
+        opencode: None,
     };
     let index = Index::new(roots, None);
     let cold = Instant::now();
@@ -2199,6 +2202,7 @@ print(json.dumps(rows, ensure_ascii=False, default=str))
             claude: Some(root.join("claude")),
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
+            opencode: None,
         },
         None,
     );
@@ -2302,6 +2306,7 @@ impl AgentCorpus {
             claude: Some(self.root.join("claude")),
             codex: Some(self.root.join("codex")),
             grok: Some(self.root.join("grok")),
+            opencode: None,
         }
     }
 
@@ -2819,6 +2824,7 @@ fn codex_subagent_items_carry_turn_state_and_last_record_time() {
             claude: Some(root.join("claude")),
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
+            opencode: None,
         },
         None,
     );
@@ -2936,6 +2942,7 @@ fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
             claude: Some(root.join("claude")),
             codex: Some(root.join("codex")),
             grok: Some(root.join("grok")),
+            opencode: None,
         },
         None,
     );
@@ -2965,6 +2972,7 @@ fn claude_continued_in_resolves_to_the_uid_of_the_indexed_continuation() {
         claude: Some(root.join("claude")),
         codex: Some(root.join("codex")),
         grok: Some(root.join("grok")),
+        opencode: None,
     });
     let listed = store.list(true).unwrap();
     let published = by_uid(listed["sessions"].as_array().unwrap());

@@ -35,7 +35,7 @@ can supply only the reviewed association fields, for example:
 }
 ```
 
-`source` must be exactly `claude`, `codex`, or `grok`; at least one of full `sid`
+`source` must be exactly `claude`, `codex`, `grok`, or `opencode`; at least one of full `sid`
 or full `uid` is required. IDs are case-sensitive, at most 256 ASCII identifier
 characters (`A-Z a-z 0-9 _ - . :`), without whitespace or path separators. A UID
 must start with the declared source and a colon. There is no trimming, prefix

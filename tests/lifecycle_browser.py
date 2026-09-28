@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Opt-in isolated launch pipeline acceptance: fixed free shell, never model CLI."""
+"""Opt-in isolated launch pipeline acceptance: fixed free shell, never model CLI.
+
+OpenCode launches (pre-created session, native row) are `opencode_browser.py`."""
 import json
 import shutil
 import os
@@ -51,11 +53,11 @@ def main(bind_native=False, bare_shell=False):
         native_uid=corpus.uid("fixture")
         configuration=root/"launcher.json"
         configuration.touch(mode=0o600)
-        configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
-            "host_dir":str(root/"host"),"adapters":[{
-                "id":"synthetic-shell-v1","source":source,"executable":str(Path("/bin/sh").resolve()),
+        entry={"id":"synthetic-shell-v1","source":source,"executable":str(Path("/bin/sh").resolve()),
                 "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$SESSIONDOCK_TEST_START_LOG"\n'+SHELL_SCRIPT],
-                "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","SESSIONDOCK_TEST_START_LOG":str(root/"work/starts")}}]}))
+                "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","SESSIONDOCK_TEST_START_LOG":str(root/"work/starts")}}
+        configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
+            "host_dir":str(root/"host"),"adapters":[entry]}))
         initialized=subprocess.run([str(BINARY),"--initialize-lifecycle",str(root/"ledger")],
             cwd=REPO,env={"PATH":"/usr/bin:/bin"},capture_output=True,timeout=15)
         assert initialized.returncode==0,initialized.stderr.decode()
@@ -132,6 +134,8 @@ def main(bind_native=False, bare_shell=False):
                             # exited; the exited row stays listed with its recording).
                             expect(page.locator(".new-session-wait")).to_have_text("")
                             expect(page.locator(".new-session-wait")).to_be_hidden()
+                            # Back from the phone width, the header returns its global buttons.
+                            expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
                             assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
                             expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话" if source == "shell" else "删除会话")
                             if bare_shell:

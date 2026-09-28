@@ -1693,7 +1693,8 @@ function pendingStateLabel(s) {
     case 'stopping': return '正在停止';
     case 'uncertain': return '运行状态不确定';
     case 'starting': return '正在启动';
-    default: return s.source === 'shell' ? '交互式终端' : '等待首条消息';
+    default: return s.source === 'shell' ? '交互式终端'
+      : sessiondockCli(s.source)?.nativeHistory === false ? '在控制台查看回复' : '等待首条消息';
   }
 }
 
@@ -1714,7 +1715,8 @@ function pendingStageMessage(info) {
     default: break;
   }
   if (info.binding?.state === 'confirmed') return '正在打开会话…';
-  if (info.source !== 'shell' && !info.declared_sid && pendingRecordMissing(info))
+  if (info.source !== 'shell' && sessiondockCli(info.source)?.nativeHistory !== false
+      && !info.declared_sid && pendingRecordMissing(info))
     return '会话在运行，但还没找到它的记录，终端可以继续用。';
   return '';
 }
@@ -1865,6 +1867,19 @@ function sessionIsPtyOnly(uid = S.sel) {
   return typeof sessionTermMeta === 'function' && sessionTermMeta(uid)?.source === 'shell';
 }
 
+/** A CLI whose conversation SessionDock cannot read yet (OpenCode) shows its
+ *  replies only in the PTY: the console leads the page like SSH, while the
+ *  composer keeps the CLI's own send path and input checks. */
+function sessionTerminalFirst(uid = S.sel) {
+  if (sessionIsPtyOnly(uid)) return true;
+  if (!uid) return false;
+  const row = [...(T.pending || []), ...(T.list || [])]
+    .find(item => item.uid === uid || pendingUid(item.name) === uid);
+  const source = row?.source || (typeof sessionTermMeta === 'function' && sessionTermMeta(uid)?.source)
+    || String(uid).split(':')[0];
+  return sessiondockCli(source)?.nativeHistory === false;
+}
+
 async function openPendingSession(info) {
   const pending = { ...info, name: info.tmuxName || info.name };
   showNewSessionStage(pending);
@@ -1876,7 +1891,8 @@ async function openPendingSession(info) {
   const remembered = T.openViews.has(pending.name) && running;
   const replay = pending.source === 'shell' && pending.recording && !running;
   // 已结束但有录制的 SSH 会话：控制台面板里只读回放它的录制。
-  if (pending.source === 'shell' && (running || retained || pending.recording))
+  if ((pending.source === 'shell' || sessiondockCli(pending.source)?.nativeHistory === false)
+      && (running || retained || pending.recording))
     await openTermPane(pending.name, true, remembered ? null : (replay ? 'full' : 'collapsed'));
   else if (remembered)
     await openTermPane(pending.name);
@@ -2137,7 +2153,7 @@ function renderTakeoverBtn() {
   const replacement = name ? null
     : linkedTermSession(S.sel, { followReplacement: true });
   const paneOpen = !!name && !$('#termpane').classList.contains('hidden');
-  const ptyOnly = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
+  const ptyOnly = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
   const switchToChat = paneOpen && (ptyOnly ? T.mode === 'full' : (MOBILE.matches || T.mode === 'full'));
   const terminalVisible = paneOpen && (ptyOnly || MOBILE.matches || T.mode !== 'collapsed');
   const label = replacement ? '切换到当前会话终端'
@@ -2683,7 +2699,7 @@ function termPaneRenderable(view = currentTermViewObject()) {
   if (!view || view !== currentTermViewObject()) return false;
   const pane = $('#termpane');
   if (pane.classList.contains('hidden')) return false;
-  if (!MOBILE.matches && T.mode === 'collapsed' && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly()))
+  if (!MOBILE.matches && T.mode === 'collapsed' && !(typeof sessionTerminalFirst === 'function' && sessionTerminalFirst()))
     return false;
   if (pane.classList.contains('term-collapsed')) return false;
   // 手机从桌面布局切回会话列表时，#right 会由祖先的 display:none 隐藏，
@@ -2948,7 +2964,7 @@ function toggleTermPane(name) {
   if (pane.classList.contains('hidden')) {
     return openTermPane(name, true, MOBILE.matches ? null : 'full');
   }
-  if (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly()) {
+  if (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst()) {
     T.mode = T.mode === 'full' ? 'collapsed' : 'full';
     store.set('termmode', T.mode);
     rememberTermLayout(name);
@@ -3023,8 +3039,9 @@ function layoutTermPane() {
   const right = $('#right');
   const desktop = !MOBILE.matches;
   const paneOpen = !pane.classList.contains('hidden');
-  const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly();
-  right.classList.toggle('shell-session', shell);
+  const shell = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst();
+  right.classList.toggle('shell-session', typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly());
+  right.classList.toggle('terminal-first', shell);
   right.classList.toggle('term-full', paneOpen && T.mode === 'full' && (desktop || shell));
   if (shell && paneOpen && T.mode !== 'full') {
     pane.classList.remove('term-collapsed');
@@ -3126,7 +3143,7 @@ function recordHostExit(view, uid, event) {
     : '终端进程已退出，已保留收到的输出。';
   const pendingRow = (T.pending || []).find(item => item.name === view.name);
   const shell = pendingRow?.source === 'shell'
-    || (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid));
+    || (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid));
   const keepPane = shell && T.name === view.name;
   view.ended = true;
   view.revoked = true; // An explicitly exited instance must never be auto-claimed.
@@ -3609,7 +3626,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       // retires the lease before the exit is observed: AI sessions close the
       // pane like a host exit; SSH/shell keeps the retained PTY.
       view.keepOutput = true;
-      if (T.name === name && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid)))
+      if (T.name === name && !(typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid)))
         closeTermPane(true);
       const stopNotice = document.querySelector('#session-stop-notice');
       if (uid === S.sel && typeof showSessionStopNotice === 'function'
@@ -4681,10 +4698,12 @@ function renderComposer() {
   const show = restartable || (!sessionComposerEnded(S.sel) && !!(name || pending));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);
+  const first = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
   $('#right')?.classList.toggle('shell-session', !!shell);
+  $('#right')?.classList.toggle('terminal-first', !!first);
   switchComposerDraft(show ? S.sel : null);
   if (show) syncComposerMode();
-  if (shell && typeof layoutTermPane === 'function') layoutTermPane();
+  if (first && typeof layoutTermPane === 'function') layoutTermPane();
 }
 
 function autoGrow(ta) {
@@ -4978,6 +4997,12 @@ function composerInputNotice(status) {
     cli_question: '检测到终端选择界面，请切换到 PTY（终端）处理；输入已保留',
     cli_not_ready: '暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留',
   };
+  // 终端优先的页面里终端已在上方，不再让用户"切换"过去。
+  if (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(composerUid)
+      && ['cli_question', 'cli_not_ready'].includes(status.code))
+    return status.code === 'cli_question'
+      ? '终端正在等待选择，请在上方终端处理；输入已保留'
+      : '暂未识别到终端消息编辑区，请先在上方终端关闭菜单或对话框；输入已保留';
   return messages[status.code] || status.message;
 }
 

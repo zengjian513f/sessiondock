@@ -214,6 +214,7 @@ impl Fixture {
                 claude: Some(self.root.join("claude")),
                 codex: Some(self.root.join("codex")),
                 grok: Some(self.root.join("grok")),
+                opencode: None,
             },
             file_roots: vec![self.root.join("files")],
             ..Config::default()

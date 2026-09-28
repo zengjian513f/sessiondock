@@ -291,6 +291,10 @@ impl LifecycleStore {
         // A Claude `--session-id` is minted exactly once, durably with the
         // intent, so replay and restart repeat the same command line.
         let session_id = match spec.launch() {
+            Launch::NewAssigned if spec.source() == super::model::Source::Opencode => Some(
+                crate::sessions::opencode::new_session_id()
+                    .map_err(|_| Error::RandomUnavailable)?,
+            ),
             Launch::NewAssigned => Some(uuid_v4()?),
             _ => None,
         };

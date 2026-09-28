@@ -28,7 +28,7 @@ Existing socket/token authentication runs first. Unix permits an omitted token;
 Windows requires the existing token. An included token must be a string. All
 three expected identity values must exactly match the receiving Session's
 immutable spawn metadata. Instance/launch IDs use the existing 16–128 ASCII
-identifier rule; source is exactly `claude`, `codex`, or `grok`. SID and UID each
+identifier rule; source is exactly `claude`, `codex`, `grok`, or `opencode`. SID and UID each
 require 1–256 ASCII letters/digits or `_ . : -`; UID must begin with the source
 and a colon followed by a nonempty suffix. Both native fields are required.
 Unrecognized fields at either request level, mixed envelopes, malformed values,

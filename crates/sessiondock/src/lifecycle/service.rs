@@ -133,6 +133,7 @@ impl VerifiedNativeBinding {
             "claude" => Source::Claude,
             "codex" => Source::Codex,
             "grok" => Source::Grok,
+            "opencode" => Source::Opencode,
             _ => return Err(Error::InvalidBinding),
         };
         if source != receipt.spec().source()
@@ -361,6 +362,15 @@ impl LifecycleService {
         self.generation.load(Ordering::Acquire)
     }
     /// Configured adapter/profile IDs with their source and capabilities.
+    /// Delete an OpenCode session through OpenCode's API (irreversible).
+    pub async fn opencode_remove(&self, sid: String, cwd: PathBuf) -> Result<(), Error> {
+        let launcher = self.launcher.clone();
+        tokio::task::spawn_blocking(move || launcher.opencode_remove(&sid, &cwd))
+            .await
+            .map_err(|_| Error::Launcher(launcher::Error::PrepareFailed))?
+            .map_err(Error::Launcher)
+    }
+
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
     }
@@ -1528,6 +1538,7 @@ fn host_source(source: Source) -> ptyhost_client::Source {
         Source::Claude => ptyhost_client::Source::Claude,
         Source::Codex => ptyhost_client::Source::Codex,
         Source::Grok => ptyhost_client::Source::Grok,
+        Source::Opencode => ptyhost_client::Source::Opencode,
         Source::Shell => ptyhost_client::Source::Shell,
     }
 }

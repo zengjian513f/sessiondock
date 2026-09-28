@@ -66,6 +66,7 @@ impl Fixture {
                 claude: Some(self.root.join("claude")),
                 codex: Some(self.root.join("codex")),
                 grok: None,
+                opencode: None,
             },
             // The default page is 2000 events and pools queue
             // for up to 10 s; this suite walks 200-event pages against the

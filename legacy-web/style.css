@@ -14,6 +14,7 @@
   --claude: #d97757;
   --codex: #10a37f;
   --grok: #8b5cf6;
+  --opencode: #4b5563;
   --tool: #b7791f;
   --terminal-bg: #f4f6f8;
   --terminal-fg: #252a32;
@@ -55,6 +56,7 @@
     --border: #2e333d;
     --text: #dfe3ea;
     --muted: #8b93a1;
+    --opencode: #aab2bf;
     --accent: #6d95ff;
     --brand-a: #8fb2ff;
     --brand-b: #d49aff;
@@ -482,9 +484,15 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
   flex: none; margin: 0; padding: 0; border: 0;
 }
-#new-session-form .new-source { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#new-session-dialog { width: min(560px, calc(100vw - 28px)); }
+#new-session-form .new-source {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* 自身宽度决定是否只显示图标：中央站模式下同一行还有机器下拉。 */
+  flex: 1 1 0; min-width: min(100%, 228px); container-type: inline-size;
+}
+#new-session-form .new-row { flex-wrap: wrap; }
 .new-source .src-label { font-style: normal; }
-@container (max-width: 470px) {
+@container (max-width: 510px) {
   #new-session-form .src-label { display: none; }
   #new-session-form .new-source span { min-width: 44px; padding: 6px 8px; }
 }
@@ -523,6 +531,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-source input[value="claude"] + span .ico { color: var(--claude); }
 .new-source input[value="codex"] + span .ico { color: var(--codex); }
 .new-source input[value="grok"] + span .ico { color: var(--grok); }
+.new-source input[value="opencode"] + span .ico { color: var(--opencode); }
 .new-cwd-combobox { min-width: 0; }
 .new-cwd-field {
   display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px;
@@ -1728,6 +1737,8 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #composer-input-status .btn { flex: none; }
 #composer-input-status.blocked { color: var(--danger); }
 #right.shell-session #composer-input-status { display: none; }
+/* 终端优先的页面里提示不能盖住终端底部（手机上是快捷键栏），放进输入区。 */
+#right.terminal-first #composer-input-status { position: static; box-shadow: none; }
 body.stale-build #composer-input-status { display: none; }
 .draft-card {
   position: relative; display: flex; align-items: center; gap: 8px;
@@ -1818,17 +1829,17 @@ body.stale-build #composer-input-status { display: none; }
   #right.term-full > #composer { display: none !important; }
 }
 /* SSH：PTY 在输入框上方，输入框只有文字和发送；控制台纯 PTY。 */
-#right.shell-session > #detail { flex: none; }
-#right.shell-session > #detail > .msgs { display: none; }
-#right.shell-session > #termpane { order: 1; }
-#right.shell-session > #composer { order: 2; }
-#right.shell-session:not(.term-full) > #termpane { flex: 1; min-height: 0; }
-#right.shell-session .term-resizer { display: none; }
+#right.terminal-first > #detail { flex: none; }
+#right.terminal-first > #detail > .msgs { display: none; }
+#right.terminal-first > #termpane { order: 1; }
+#right.terminal-first > #composer { order: 2; }
+#right.terminal-first:not(.term-full) > #termpane { flex: 1; min-height: 0; }
+#right.terminal-first .term-resizer { display: none; }
 #right.shell-session .attach-picker,
 #right.shell-session #cesc { display: none !important; }
-#right.shell-session.term-full > #detail { flex: none; }
-#right.shell-session.term-full > #detail > .msgs,
-#right.shell-session.term-full > #composer { display: none !important; }
+#right.terminal-first.term-full > #detail { flex: none; }
+#right.terminal-first.term-full > #detail > .msgs,
+#right.terminal-first.term-full > #composer { display: none !important; }
 .term-resizer {
   /* #termpane 会裁切溢出内容，拖动区不能放在 top:-9px（那样实际只剩
      1px 能命中）。把透明热区放在终端内部，边界本身仍贴着最上沿。 */
@@ -1948,6 +1959,9 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   background-repeat: no-repeat;
 }
 :root[data-tool-icons="boss"] .source-icon > use { visibility: hidden; }
+/* 没有头像的来源在头像模式下仍显示图标。 */
+:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] { border-radius: 0; background-image: none; }
+:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] > use { visibility: visible; }
 #side .item > .ico { width: 30px; height: 30px; }
 #side .item > .ico > .source-icon { width: 26px; height: 26px; }
 #side .item-status, .dtitle h2 .item-status { right: -4px; }
@@ -2076,7 +2090,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     right: 0; bottom: 0; left: 0; width: 100%; height: auto !important;
     max-width: none; max-height: none; border-top: 0;
   }
-  #right.shell-session:not(.term-full) > #termpane {
+  #right.terminal-first:not(.term-full) > #termpane {
     position: relative; z-index: 0; top: auto; right: auto; bottom: auto; left: auto;
     height: auto !important; border-top: 1px solid var(--border);
   }
@@ -2088,7 +2102,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     padding: 4px max(8px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     border-top: 1px solid var(--border); background: var(--panel);
   }
-  #right.shell-session:not(.term-full) .term-keys {
+  #right.terminal-first:not(.term-full) .term-keys {
     padding-bottom: 4px;
   }
   .term-keys::-webkit-scrollbar { display: none; }

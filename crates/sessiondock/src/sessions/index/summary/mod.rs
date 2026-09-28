@@ -16,6 +16,7 @@
 pub(super) mod claude;
 pub(super) mod codex;
 pub(super) mod grok;
+pub(crate) mod opencode;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -187,6 +188,7 @@ pub fn summarize(input: &Input<'_>) -> RowSummary {
     match input.source {
         "claude" => claude::summarize(input),
         "codex" => codex::summarize(input),
+        "opencode" => opencode::summarize(input),
         _ => grok::summarize(input),
     }
 }
@@ -833,6 +835,10 @@ pub fn skipped_warnings(source: &str, records: &Records) -> Vec<String> {
                     other => skipped.note("Codex response_item", other),
                 },
                 other => skipped.note("Codex 记录类型", other),
+            },
+            "opencode" => match kind {
+                "user" | "assistant" | "synthetic" | "idle" | "model-switched" | "compaction" => {}
+                other => skipped.note("OpenCode 记录类型", other),
             },
             _ => match kind {
                 "reasoning" | "tool_result" | "user" | "assistant" | "system" => {}

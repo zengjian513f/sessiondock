@@ -37,6 +37,25 @@ pub(super) fn grok_native_identity(
     }
 }
 
+/// OpenCode records carry no session id; the mirrored session row does.
+pub(super) fn summary_native_identity(
+    id: Option<&Value>,
+) -> (Result<String, SessionError>, Vec<String>) {
+    match id
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+    {
+        Some(id) => (Ok(id.to_owned()), vec![id.to_owned()]),
+        None => (
+            Err(SessionError::new(
+                501,
+                "原生记录缺少明确会话 ID，不能用文件名或显示名称推断",
+            )),
+            Vec::new(),
+        ),
+    }
+}
+
 pub(super) fn native_identity(
     source: &str,
     records: &[(Value, u64)],
