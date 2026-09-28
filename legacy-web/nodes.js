@@ -355,7 +355,11 @@ function refreshNewNodeFields(keepCwd = '') {
   closeCwdPicker();
   const cap = newNodeCapabilities();
   cwdCompletion.common = commonSessionDirs();
-  for (const input of document.querySelectorAll('input[name="new-source"]')) input.disabled = !cap.sources?.[input.value];
+  for (const input of document.querySelectorAll('input[name="new-source"]')) {
+    input.disabled = !cap.sources?.[input.value];
+    const name = SOURCES[input.value]?.name || (input.value === 'shell' ? 'SSH' : input.value);
+    input.closest('label').title = input.disabled ? `${name}：此机器未安装或未配置该客户端` : name;
+  }
   const checked = document.querySelector('input[name="new-source"]:checked');
   if (!checked || checked.disabled) document.querySelector('input[name="new-source"]:not(:disabled)')?.click();
   const selected = S.sessions.find(s => s.uid === S.sel && (!HUB_MODE || s.node_id === newNodeId()));

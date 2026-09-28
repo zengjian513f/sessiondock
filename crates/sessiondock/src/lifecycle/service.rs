@@ -347,6 +347,7 @@ impl LifecycleService {
             done_tx,
             generation.clone(),
         ));
+        tokio::spawn(probe_clis(launcher.clone(), stop.clone()));
         Ok(Self {
             tx,
             admission,
@@ -373,6 +374,11 @@ impl LifecycleService {
 
     pub fn entries(&self) -> &[launcher::Entry] {
         self.launcher.entries()
+    }
+    /// Whether the source's CLI is configured but not installed on this
+    /// machine (last periodic probe); the picker disables such a source.
+    pub fn cli_missing(&self, source: Source) -> bool {
+        self.launcher.cli_missing(source)
     }
     /// Fixed source table: the one configured CLI of `source`
     /// (resume-capable when `resume`), `None` when the source has none or
@@ -1697,3 +1703,18 @@ impl Reaper {
 #[cfg(all(test, unix))]
 #[path = "service_tests.rs"]
 mod tests;
+
+/// How often the installed CLIs are probed again, so installing or removing
+/// one shows up in the picker without a restart.
+const CLI_PROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+
+async fn probe_clis(launcher: Arc<Launcher>, stop: CancellationToken) {
+    loop {
+        let probe = launcher.clone();
+        let _ = tokio::task::spawn_blocking(move || probe.probe_clis()).await;
+        tokio::select! {
+            _ = stop.cancelled() => return,
+            _ = tokio::time::sleep(CLI_PROBE_INTERVAL) => {}
+        }
+    }
+}

@@ -66,7 +66,7 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` together with the input the conversation service retained for it (a draft shared with a native session still in the catalog stays; an alias to a trashed UID does not keep it). A `new_assigned` launch also moves the matching empty native session into trash, so Grok's startup `summary.json` cannot rebuild the row; a shell receipt's recordings are deleted with it; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
 | POST `/api/session/stop` | `uid` | Stop a managed instance through guarded host control or terminate process IDs attributed to this exact external native session; an already-stopped session succeeds with `stopped:false` |
 | POST `/api/term/bind` | `record_id`, `instance_id`, `uid`, `operator_confirmed: true` | Validate a real main-session scope, persist one immutable intent, bind and observe |
-| GET `/api/term/list` | optional `force=1` | Native-bound sessions plus separate launch-only pending receipts, `resume_sources{claude,codex,grok}` and `backends`; served from a 2 s per-view response cache that every mutation above drops at once, `force=1` bypasses it ([liveness.md](liveness.md#response-caches)) |
+| GET `/api/term/list` | optional `force=1` | Native-bound sessions plus separate launch-only pending receipts, `sources` and `resume_sources` per source (false when the source has no unique CLI or its CLI is not installed, [below](#installed-clis)) and `backends`; served from a 2 s per-view response cache that every mutation above drops at once, `force=1` bypasses it ([liveness.md](liveness.md#response-caches)) |
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
 | GET `/api/term/complete-dir` | `path`, optional `limit` | Absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
 | GET `/api/term/models` | `source` | The source's one CLI profile's model catalog for the new-session picker: `{models:[{id,name,efforts,default_effort?}], efforts, default_model?}`; empty when the source has no unique profile or the CLI keeps no list ([below](#model-and-effort)) |
@@ -78,6 +78,19 @@ hints; the terminal's attach/resize owns its actual size. They do not change the
 immutable launch specification. Missing working directories return
 `needs_create`; `create_cwd:true` creates the confirmed absolute path. Executable,
 argv, environment, SID, and legacy adapter fields cannot choose the command.
+
+### Installed CLIs
+
+A configured profile does not prove its CLI exists: nodes launch through a
+shell wrapper (`with-zshrc grok`) whose command resolves only after the rc
+file sets `PATH`. The service therefore runs every agent profile once with
+`--version` at startup and again every 5 minutes, in parallel, each bounded to
+10 s. Only positive evidence of absence counts: the executable cannot be
+started, or it exits 127/126 (a shell's "command not found" / "not
+executable"). A timeout, any other exit status or a probe not yet answered
+leaves the source available. An absent CLI turns that source's `sources` and
+`resume_sources` false, so the new-session picker, console takeover and the
+bug-report dialog disable it with a reason instead of failing at launch.
 
 ### Model and effort
 
