@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in isolated launch pipeline acceptance: fixed free shell, never model CLI.
 
-The OpenCode run configures the synthetic shell as an `opencode` CLI profile,
-so the page launches it as a new pending agent session (OpenCode, like Codex,
-generates its own session id) without running the real CLI."""
+OpenCode launches (pre-created session, native row) are `opencode_browser.py`."""
 import json
 import shutil
 import os
@@ -40,8 +38,8 @@ def seed_archived_receipts(root):
     path.write_text(json.dumps(ledger))
 
 
-def main(bind_native=False, bare_shell=False, agent_source="codex"):
-    source = "shell" if bare_shell else agent_source
+def main(bind_native=False, bare_shell=False):
+    source = "shell" if bare_shell else "codex"
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-ui-") as temporary:
@@ -58,10 +56,8 @@ def main(bind_native=False, bare_shell=False, agent_source="codex"):
         entry={"id":"synthetic-shell-v1","source":source,"executable":str(Path("/bin/sh").resolve()),
                 "args":["-c",('trap "" HUP\n' if bind_native else '')+'printf "START\\n" >> "$SESSIONDOCK_TEST_START_LOG"\n'+SHELL_SCRIPT],
                 "env":{"PATH":"/usr/bin:/bin","TERM":"xterm-256color","SESSIONDOCK_TEST_START_LOG":str(root/"work/starts")}}
-        # OpenCode is configured like the real nodes: a CLI profile, not a fixed adapter.
-        kind="profiles" if source=="opencode" else "adapters"
         configuration.write_text(json.dumps({"host_binary":str(REPO/"target/debug/ptyhost"),
-            "host_dir":str(root/"host"),kind:[entry]}))
+            "host_dir":str(root/"host"),"adapters":[entry]}))
         initialized=subprocess.run([str(BINARY),"--initialize-lifecycle",str(root/"ledger")],
             cwd=REPO,env={"PATH":"/usr/bin:/bin"},capture_output=True,timeout=15)
         assert initialized.returncode==0,initialized.stderr.decode()
@@ -127,13 +123,6 @@ def main(bind_native=False, bare_shell=False, agent_source="codex"):
                             page.evaluate("loadTermList()")
                             assert page.evaluate("S.sel") == "tmux:" + receipt["name"]
                             expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]')).to_have_count(1)
-                            if source == "opencode":
-                                assert receipt["source"] == "opencode" and receipt["launch_kind"] == "new_pending", receipt
-                                assert not receipt.get("declared_sid"), receipt
-                                listed = context.request.get(base+"/api/term/list?force=1").json()
-                                assert listed["sources"]["opencode"] is True and listed["resume_sources"]["opencode"] is True, listed
-                                expect(page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"] use[href="#i-opencode"]')).to_have_count(1)
-                                expect(page.locator("#detail .meta-source")).to_have_text("OpenCode")
                             if bare_shell:
                                 page.set_viewport_size({"width":1280,"height":900})
                             assert receipt["running"] and receipt["native_binding"]=="unbound",receipt
@@ -169,14 +158,11 @@ def main(bind_native=False, bare_shell=False, agent_source="codex"):
                         else:
                             page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]').click()
                         if not (bind_native and restarted):
-                            if bare_shell or source == "opencode":
-                                # SSH and OpenCode (history not read yet) lead with the console.
+                            if bare_shell:
                                 expect(page.locator("#termpane")).to_be_visible()
-                                # Without conversation send an agent row has no composer.
-                                if bare_shell:
-                                    expect(page.locator("#composer")).to_be_visible()
-                                    expect(page.locator("#cadd")).to_be_hidden()
-                                    expect(page.locator("#cesc")).to_be_hidden()
+                                expect(page.locator("#composer")).to_be_visible()
+                                expect(page.locator("#cadd")).to_be_hidden()
+                                expect(page.locator("#cesc")).to_be_hidden()
                                 page.locator("#a-term").click()
                             else:
                                 expect(page.locator("#termpane")).to_be_hidden()
@@ -410,5 +396,4 @@ if __name__=="__main__":
     args = parser.parse_args()
     main(args.native_binding)
     if not args.native_binding:
-        main(agent_source="opencode")
         main(bare_shell=True)

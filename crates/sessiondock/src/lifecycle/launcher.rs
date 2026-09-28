@@ -96,6 +96,58 @@ pub struct Entry {
     pub profile: bool,
     pub resume: bool,
 }
+/// Upper bound on OpenCode's pre-launch session creation, which may first
+/// start its background service.
+const OPENCODE_PREPARE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// `opencode api <operation…>` with the profile's executable, fixed
+/// arguments and environment, in `cwd`, bounded by
+/// [`OPENCODE_PREPARE_TIMEOUT`]. Returns whether it succeeded and a clipped
+/// copy of its output for the service log.
+fn opencode_api(
+    profile: &CliProfile,
+    cwd: &Path,
+    operation: &[&str],
+) -> Result<(bool, String), Error> {
+    let mut command = Command::new(current_executable(&profile.executable)?);
+    command.args(&profile.args).arg("api").args(operation);
+    for name in &profile.env_remove {
+        command.env_remove(name);
+    }
+    command.envs(&profile.env);
+    for name in DENIED_ENV {
+        command.env_remove(name);
+    }
+    command
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| Error::SpawnFailed(error.kind()))?;
+    let deadline = std::time::Instant::now() + OPENCODE_PREPARE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok((false, "timed out".into()));
+            }
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| Error::SpawnFailed(error.kind()))?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    Ok((output.status.success(), text.chars().take(400).collect()))
+}
+
 pub fn entries(config: &Config) -> Vec<Entry> {
     config
         .adapters
@@ -137,6 +189,8 @@ pub enum Error {
     EndpointOccupied,
     UnsupportedPlatform,
     SpawnFailed(std::io::ErrorKind),
+    /// OpenCode could not create the assigned session before launch.
+    PrepareFailed,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -322,7 +376,11 @@ impl Launcher {
                 Launch::NewPending => (&profile.new_args, &[], SESSION_ID_PLACEHOLDER, None),
                 Launch::NewAssigned => (
                     &profile.new_args,
-                    &["--session-id", SESSION_ID_PLACEHOLDER],
+                    if spec.source() == Source::Opencode {
+                        &["--session", SESSION_ID_PLACEHOLDER]
+                    } else {
+                        &["--session-id", SESSION_ID_PLACEHOLDER]
+                    },
                     SESSION_ID_PLACEHOLDER,
                     Some(record.session_id().ok_or(Error::InvalidSpec)?),
                 ),
@@ -475,6 +533,12 @@ impl Launcher {
             Ok(argv) => argv,
             Err(error) => return Err(LaunchFailure { authority, error }),
         };
+        if record.spec().source() == Source::Opencode
+            && *record.spec().launch() == Launch::NewAssigned
+            && let Err(error) = self.opencode_create(record)
+        {
+            return Err(LaunchFailure { authority, error });
+        }
         let host_binary = match current_executable(&self.host_binary) {
             Ok(host_binary) => host_binary,
             Err(error) => return Err(LaunchFailure { authority, error }),
@@ -488,6 +552,66 @@ impl Launcher {
                 error: Error::SpawnFailed(error.kind()),
             }),
         }
+    }
+
+    /// OpenCode 2 only opens an existing `--session`, and creates a session
+    /// only with its first prompt. Create the assigned id first through
+    /// OpenCode's own API, with the profile's executable, arguments and
+    /// environment in the launch directory. A session that already exists
+    /// (a replayed launch) is accepted. Bounded; the CLI is killed on timeout.
+    fn opencode_create(&self, record: &Record) -> Result<(), Error> {
+        let profile = self
+            .profiles
+            .get(record.spec().adapter_id())
+            .ok_or(Error::AdapterUnavailable)?;
+        let sid = record.session_id().ok_or(Error::InvalidSpec)?;
+        let cwd = record.spec().cwd();
+        let body = serde_json::json!({"id": sid, "location": {"directory": cwd}});
+        let (created, detail) = opencode_api(
+            profile,
+            cwd,
+            &["session.create", "--data", &body.to_string()],
+        )?;
+        if created {
+            return Ok(());
+        }
+        let (exists, _) = opencode_api(
+            profile,
+            cwd,
+            &["session.get", "--param", &format!("sessionID={sid}")],
+        )?;
+        if exists {
+            return Ok(());
+        }
+        eprintln!("lifecycle launcher: OpenCode session create failed: {detail}");
+        Err(Error::PrepareFailed)
+    }
+
+    /// Delete one OpenCode session (and its child sessions) through
+    /// OpenCode's own API with the configured OpenCode profile. OpenCode keeps
+    /// no recycle bin, so this cannot be undone.
+    pub fn opencode_remove(&self, sid: &str, cwd: &Path) -> Result<(), Error> {
+        if !crate::sessions::opencode::safe_id(sid) {
+            return Err(Error::InvalidSpec);
+        }
+        let mut profiles = self
+            .profiles
+            .values()
+            .filter(|profile| profile.source == Source::Opencode);
+        let (Some(profile), None) = (profiles.next(), profiles.next()) else {
+            return Err(Error::AdapterUnavailable);
+        };
+        let cwd = if cwd.is_dir() { cwd } else { Path::new("/") };
+        let (removed, detail) = opencode_api(
+            profile,
+            cwd,
+            &["session.remove", "--param", &format!("sessionID={sid}")],
+        )?;
+        if removed {
+            return Ok(());
+        }
+        eprintln!("lifecycle launcher: OpenCode session remove failed: {detail}");
+        Err(Error::PrepareFailed)
     }
 
     /// The platform-independent host command line: inherited service environment

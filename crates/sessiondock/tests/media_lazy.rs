@@ -52,6 +52,7 @@ impl Fixture {
                 claude: None,
                 codex: Some(native),
                 grok: None,
+                opencode: None,
             },
             // The 1500-row fixture expects a 200-event page after the
             // 600-event window (the default page is 2000).

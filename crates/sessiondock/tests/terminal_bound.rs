@@ -198,6 +198,7 @@ impl Harness {
                     claude: None,
                     codex: Some(native),
                     grok: None,
+                    opencode: None,
                 },
                 ptyhost_dir: Some(hosts.clone()),
                 ..Default::default()

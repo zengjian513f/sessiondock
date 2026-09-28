@@ -156,6 +156,7 @@ impl Fixture {
             claude: Some(self.temp.path().join("claude")),
             codex: Some(self.temp.path().join("codex")),
             grok: Some(self.temp.path().join("grok")),
+            opencode: None,
         }
     }
 

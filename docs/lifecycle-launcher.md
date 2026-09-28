@@ -54,23 +54,22 @@ missing identity templates no longer disable a source:
 - Claude new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - Codex new: no assigned SID; resume: `resume <sid>`.
 - Grok new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
-- OpenCode new: no assigned SID (it generates its own `ses_…` id);
-  resume: `--session <sid>`.
+- OpenCode new: `--session <assigned ses_… id>`, after creating that session
+  through `opencode api session.create` ([OpenCode](opencode.md)); resume:
+  `--session <sid>`.
 
 When a configured template contains an exact `{session_id}` or `{sid}` argument,
 the launcher substitutes it. Otherwise it appends the command above.
 Fixed profile arguments stay before those identity arguments.
 
-OpenCode is an AI CLI source like the others: native UID `opencode:<sid>`,
-`new_pending` launches, a resume profile, and no terminal recording. Its
-conversations live in OpenCode's own SQLite database, which the session
-index does not read yet, so no OpenCode catalog row exists: a launch stays
-pending (unbound), is never resumed from a list row, and has no conversation
-view. The page leads with its console like an SSH row, while the composer keeps
-the CLI send path ([composer input](composer-input.md)). A node offers OpenCode only
-when its launcher configuration names exactly one `opencode` profile, for
-example `{"id": "opencode-cli-v1", "source": "opencode", "executable":
-"<absolute path>", "args": ["opencode"], "resume_args": ["--session", "{sid}"]}`.
+OpenCode is an AI CLI source like the others: native UID `opencode:<hash>`,
+`new_assigned` launches whose id the launcher creates in OpenCode first,
+a resume profile, and no terminal recording. Its sessions come from
+OpenCode's SQLite store through SessionDock's mirror ([OpenCode](opencode.md)).
+A node offers OpenCode only when its launcher configuration names exactly one
+`opencode` profile, for example `{"id": "opencode-cli-v1", "source":
+"opencode", "executable": "<absolute path>", "args": ["opencode"],
+"resume_args": ["--session", "{sid}"]}`.
 
 Managed Codex profiles append `-c check_for_update_on_startup=false` for new,
 resume and report-worker launches. An interactive startup update exits Codex

@@ -284,15 +284,10 @@ class GrokCli extends SessionDockCli {
   }
 }
 
-// OpenCode 目前只接入启动：会话记录存在它自己的 SQLite 里，尚未读取，
-// 所以没有原生消息可对账，排队与确认都沿用基类。
+// OpenCode 的会话由服务端从它的 SQLite 镜像成原生记录；排队与确认沿用基类。
 class OpencodeCli extends SessionDockCli {
   constructor() {
     super('opencode', 'OpenCode', 'i-opencode', 'var(--opencode)');
-  }
-
-  get nativeHistory() {
-    return false;
   }
 }
 

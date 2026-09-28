@@ -112,7 +112,7 @@ impl PreparedImage {
     ) -> Result<Self, MediaError> {
         image.native_span().ok_or(MediaError::Unsupported)?;
         let (source, id) = uid.split_once(':').ok_or(MediaError::Invalid)?;
-        if !matches!(source, "claude" | "codex" | "grok")
+        if !matches!(source, "claude" | "codex" | "grok" | "opencode")
             || id.len() != 16
             || !id
                 .bytes()

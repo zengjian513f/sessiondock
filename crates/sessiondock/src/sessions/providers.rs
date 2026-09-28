@@ -7,6 +7,7 @@ mod grok;
 mod image_content;
 #[cfg(test)]
 mod media_tests;
+mod opencode;
 #[cfg(test)]
 mod tests;
 mod tools;
@@ -334,6 +335,7 @@ fn parse_context<'a>(
             "claude" => claude::record(&mut parser, record, *end, options.agent, branch),
             "codex" => parser.codex(record, *end),
             "grok" => parser.grok(record, *end),
+            "opencode" => parser.opencode(record, *end),
             _ => Err("未知原生数据源".to_owned()),
         };
         if let Err(reason) = result {
@@ -562,6 +564,9 @@ fn metadata(
 ) -> Value {
     if source == "grok" {
         return grok::metadata(path, summary.unwrap_or(&Value::Null), fallback);
+    }
+    if source == "opencode" {
+        return opencode::metadata(path, summary.unwrap_or(&Value::Null), records, fallback);
     }
     let filename = path
         .file_stem()

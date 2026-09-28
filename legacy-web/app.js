@@ -3192,12 +3192,17 @@ async function deleteSessions(uids, button = null) {
   const only = uids.length === 1
     ? (sidebarSessions().find(x => x.uid === uids[0])?.title || '') : '';
   const running = recorded.filter(uid => S.live.has(uid)).length;
+  // OpenCode keeps sessions in its own database: they are deleted there,
+  // with their child sessions, and never reach the recycle bin.
+  const opencode = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'opencode');
   // Unpersisted launches discard immediately. Recorded sessions still confirm
   // because they move into the recycle bin.
   if (recorded.length && !confirm((uids.length === 1
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
     + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
-    + trashLocationNote()
+    + (opencode.length < recorded.length ? trashLocationNote() : '')
+    + (opencode.length ? (opencode.length === recorded.length ? '' : '\n')
+      + (opencode.length === 1 && uids.length === 1 ? '' : `其中 ${opencode.length} 个 `) + opencodeDeleteNote() : '')
     + (running ? `\n其中 ${running} 个还在运行，会被跳过，需要先停止。` : '')))
     return null;
   sessionDeleteBusy = true;
@@ -3255,9 +3260,11 @@ async function deleteSessions(uids, button = null) {
     if (gone.has(S.sel)) {
       S.sel = null;
       store.set('sel', null);
-      $('#detail').innerHTML = '<div class="empty">已移入回收站'
-        + '<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>';
-      $('#detail-open-trash').onclick = openTrash;
+      const trashed = !opencode.includes(watched || '');
+      $('#detail').innerHTML = trashed ? '<div class="empty">已移入回收站'
+        + '<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>'
+        : '<div class="empty">会话已从 OpenCode 删除</div>';
+      if (trashed) $('#detail-open-trash').onclick = openTrash;
       ensureConsolePlaceholder();
       auditDetailRendered('trashed');
       showMobileList();
@@ -6239,8 +6246,12 @@ async function requestSessionDelete(uid, force = false) {
   return { response, data: await response.json().catch(() => ({})) };
 }
 
+// OpenCode 会话在它自己的数据库里：直接删除（连同子会话），不进回收站。
+const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（连同子会话），不进回收站，无法恢复。';
+
 async function del(m) {
-  if (!confirm(`删除会话「${m.title}」?\n\n${trashLocationNote()}`)) return;
+  const opencode = m.source === 'opencode';
+  if (!confirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   let { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok && trashCapable() && data.code === 'run_state_unknown' && data.needs_force
@@ -6256,9 +6267,13 @@ async function del(m) {
   S.sel = null;
   store.set('sel', null);
   renderChips(); renderSide();
-  $('#detail').innerHTML = `<div class="empty">已移入回收站<br><code>${esc(data.trash)}</code>`
-    + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
-  $('#detail-open-trash').onclick = openTrash;
+  if (opencode) {
+    $('#detail').innerHTML = '<div class="empty">会话已从 OpenCode 删除</div>';
+  } else {
+    $('#detail').innerHTML = `<div class="empty">已移入回收站<br><code>${esc(data.trash)}</code>`
+      + `<br><button type="button" class="btn" id="detail-open-trash">打开回收站</button></div>`;
+    $('#detail-open-trash').onclick = openTrash;
+  }
   ensureConsolePlaceholder();
   auditDetailRendered('trashed');
   showMobileList();

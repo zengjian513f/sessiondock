@@ -16,7 +16,10 @@ use crate::{
     lifecycle::model::{BindingState, State as LaunchState},
     runtime::{ExitReceipt, RuntimeSnapshot},
     state::AppState,
-    trash::{DeleteOutcome, LIST_DEFAULT, Liveness, TrashError, TrashService},
+    trash::{
+        DeleteOutcome, Deleted, LIST_DEFAULT, Liveness, Refused, RunState, TrashError,
+        TrashService, manifest::RunStateNote,
+    },
 };
 
 impl From<TrashError> for ApiError {
@@ -139,15 +142,24 @@ async fn run_delete(
 ) -> Result<DeleteOutcome, ApiError> {
     let (rows, liveness) = frozen_liveness(state).await?;
     let catalog = rows.clone();
+    // OpenCode sessions live in OpenCode's database, not in files the
+    // recycle bin can move: they are deleted through OpenCode's API.
+    let (opencode, uids): (Vec<String>, Vec<String>) = uids
+        .into_iter()
+        .partition(|uid| uid.starts_with("opencode:"));
+    let removed = delete_opencode(state, &rows, &liveness, opencode).await;
     let outcome = state
         .reader
         .run_wait(&state.shutdown, move |store| {
-            let outcome = trash.delete(&rows, &liveness, &uids, force);
-            if !outcome.deleted.is_empty() {
+            let mut outcome = trash.delete(&rows, &liveness, &uids, force);
+            if !outcome.deleted.is_empty() || !removed.deleted.is_empty() {
                 // Files moved: the published inventory must not keep listing
                 // them. A transient refresh failure is retried by the next list.
                 let _ = store.list(true);
             }
+            outcome.deleted.extend(removed.deleted);
+            outcome.skipped.extend(removed.skipped);
+            outcome.failed.extend(removed.failed);
             Ok(outcome)
         })
         .await?;
@@ -155,6 +167,103 @@ async fn run_delete(
         retire_deleted_launches(state, &outcome.deleted, &catalog).await;
     }
     Ok(outcome)
+}
+
+/// Delete OpenCode sessions through OpenCode's API with the configured
+/// OpenCode launch profile, then drop their mirror directories at once so
+/// the next list no longer shows them. A running session is refused like any
+/// other; there is no recycle-bin entry (`entry_id` empty) and no undo.
+async fn delete_opencode(
+    state: &AppState,
+    rows: &[Value],
+    liveness: &Liveness,
+    uids: Vec<String>,
+) -> DeleteOutcome {
+    let mut outcome = DeleteOutcome::default();
+    let mut seen = HashSet::new();
+    for uid in uids {
+        if !seen.insert(uid.clone()) {
+            continue;
+        }
+        let row = rows.iter().find(|row| row["uid"].as_str() == Some(&uid));
+        let title = row
+            .and_then(|row| row["title"].as_str())
+            .unwrap_or("")
+            .to_owned();
+        let refused = |code, error: &str, run_state| Refused {
+            uid: uid.clone(),
+            title: title.clone(),
+            code,
+            error: error.to_owned(),
+            needs_force: false,
+            run_state,
+        };
+        let Some(row) = row else {
+            outcome
+                .failed
+                .push(refused("not_found", "会话不存在", None));
+            continue;
+        };
+        let note = match liveness.state(&uid) {
+            RunState::Running(detail) => {
+                outcome.skipped.push(refused(
+                    "session_running",
+                    "会话仍在运行，请先停止",
+                    Some(RunStateNote {
+                        state: "running".into(),
+                        detail,
+                    }),
+                ));
+                continue;
+            }
+            RunState::Exited(detail) => RunStateNote {
+                state: "exited".into(),
+                detail,
+            },
+            RunState::Unknown(detail) => RunStateNote {
+                state: "unknown".into(),
+                detail,
+            },
+        };
+        let (Some(lifecycle), Some(sid)) = (&state.lifecycle, row["sid"].as_str()) else {
+            outcome.failed.push(refused(
+                "root_unconfigured",
+                "删除 OpenCode 会话需要本机配置的 OpenCode 启动项",
+                Some(note),
+            ));
+            continue;
+        };
+        let cwd = std::path::PathBuf::from(row["cwd"].as_str().unwrap_or("/"));
+        if lifecycle
+            .opencode_remove(sid.to_owned(), cwd)
+            .await
+            .is_err()
+        {
+            outcome.failed.push(refused(
+                "opencode_remove_failed",
+                "OpenCode 删除会话失败，请查看服务日志",
+                Some(note),
+            ));
+            continue;
+        }
+        if let (Some(root), Some(path)) = (&state.opencode_root, row["path"].as_str()) {
+            let path = std::path::Path::new(path);
+            if path.starts_with(root) && path != root.as_path() {
+                let _ = std::fs::remove_dir_all(path);
+            }
+        }
+        outcome.deleted.push(Deleted {
+            uid: uid.clone(),
+            title: title.clone(),
+            entry_id: String::new(),
+            trash: String::new(),
+            files: 0,
+            bytes: 0,
+            run_state: note,
+            forced: false,
+        });
+    }
+    outcome
 }
 
 /// A native session that came from a SessionDock launch leaves its finished

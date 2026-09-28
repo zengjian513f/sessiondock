@@ -50,6 +50,9 @@ mime_guess.workspace = true
 async-stream.workspace = true
 tokio-util.workspace = true
 native-tls = "0.2"
+# Read-only access to the OpenCode session store (`sessions::opencode`); the
+# bundled SQLite builds with the C toolchain every node already has.
+rusqlite = { version = "0.37", features = ["bundled"] }
 tokio-native-tls = "0.3"
 
 # Process identity on Windows (OpenProcess + GetProcessTimes,

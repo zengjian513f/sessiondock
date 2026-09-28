@@ -363,7 +363,7 @@ fn launch_for(entry: &Entry, resume: Option<(String, String)>) -> Launch {
     match resume {
         Some((sid, uid)) => Launch::Resume { sid, uid },
         None if !entry.profile || entry.source == Source::Shell => Launch::Fixed,
-        None if !matches!(entry.source, Source::Codex | Source::Opencode) => Launch::NewAssigned,
+        None if entry.source != Source::Codex => Launch::NewAssigned,
         None => Launch::NewPending,
     }
 }
