@@ -2127,7 +2127,7 @@ async function resolveNewSession(info) {
         disposeTermView(current.name);
       }
       T.uid = linked.uid;
-      await openSession(linked.uid);
+      await openSession(linked.uid, null, {follow: true, historyMode: 'replace'});
       if (S.sel === linked.uid && !S.agent && reopen && terminalLinked) await openTermPane(current.name);
       T.pendingModes.delete(info.name);
       paintLive();

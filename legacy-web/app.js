@@ -4393,7 +4393,10 @@ function revealSessionInSidebar(uid, agent) {
   revealed?.scrollIntoView({block: 'nearest'});
 }
 
-async function openSession(uid, agent = null, {exact = false, historyMode = 'push'} = {}) {
+/** `follow` continues the page already on screen (a new launch reaching its
+ *  native history): keep the composer and its focus, and leave the launch
+ *  stage up until the conversation replaces it instead of flashing a spinner. */
+async function openSession(uid, agent = null, {exact = false, historyMode = 'push', follow = false} = {}) {
   const selectedAgent = agent || null;
   if (!selectedAgent) uid = followContinuedSession(uid);
   if (!selectedAgent && !exact && hiddenForkParent(S.sessions.find(s => s.uid === uid))) {
@@ -4410,7 +4413,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   formulaRoots.clear();
   if (typeof T !== 'undefined') {
     if (T.uid && (T.uid !== uid || selectedAgent)) closeTermPane(true);
-    $('#composer').classList.add('hidden');    // 先收起, 渲染完再按新会话的状态决定
+    if (!follow) $('#composer').classList.add('hidden');    // 先收起, 渲染完再按新会话的状态决定
   }
   S.sel = uid;
   S.agent = selectedAgent;
@@ -4434,9 +4437,11 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
     return;
   }
 
-  $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
-  ensureConsolePlaceholder();
-  auditDetailRendered('loading');
+  if (!follow) {
+    $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+    ensureConsolePlaceholder();
+    auditDetailRendered('loading');
+  }
   progress(0, 0, '下载');
   let res;
   try {
