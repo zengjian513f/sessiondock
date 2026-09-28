@@ -152,18 +152,11 @@ const SessionDockGestures = (() => {
   return {isTouchEvent, get pinching() { return pinch !== null; }};
 })();
 
-function applyToolIcons(choice = store.get('toolIcons', 'brand'), persist = false) {
-  if (!['brand', 'boss'].includes(choice)) choice = 'brand';
-  if (persist) store.set('toolIcons', choice);
-  document.documentElement.dataset.toolIcons = choice;
-}
-
 themeMedia.addEventListener('change', () => {
   if (store.get('theme', 'system') === 'system') applyTheme('system');
 });
 applyTheme();
 applyFont();
-applyToolIcons();
 
 const S = {
   sessions: [],
@@ -9048,7 +9041,6 @@ function openSettings() {
   applyInterfaceScale();
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');
-  $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
   $('#setting-cache').value = String(cacheLimitMb);
   $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
   $('#setting-console-paste-files').checked = consolePasteFilesEnabled();
@@ -9084,7 +9076,6 @@ $('#setting-scale-reset').onclick = () => {
 };
 $('#setting-font').onchange = e => applyFont(e.target.value, true);
 $('#setting-theme').onchange = e => applyTheme(e.target.value, true);
-$('#setting-tool-icons').onchange = e => applyToolIcons(e.target.value, true);
 $('#setting-cache').onchange = e => {
   cacheLimitMb = Math.max(0, +e.target.value || 0);
   CACHE_MAX_BYTES = cacheLimitMb ? cacheLimitMb * 1024 * 1024 : Infinity;
