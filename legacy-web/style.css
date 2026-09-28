@@ -471,7 +471,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   background: transparent; color: var(--muted); font: 21px/1 sans-serif; cursor: pointer;
 }
 .modal-close:hover { background: var(--hover); color: var(--text); }
-/* 新建会话与报告问题共用一行：机器、Agent、模型、强度。Agent 和顶栏筛选一样连成
+/* 报告问题一行放机器、Agent、模型、强度；新建会话的机器在启动目录那一行。Agent 和顶栏筛选一样连成
    一排、只留图标（悬停看名字），机器框收窄；宽度不够时模型和强度一起换到下一行。 */
 .new-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 2px; container-type: inline-size; }
 .new-source {
@@ -590,7 +590,10 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-source input[value="grok"] + span .ico { color: var(--grok); }
 .new-source input[value="opencode"] + span .ico { color: var(--opencode); }
 .new-cwd-combobox { min-width: 0; }
+/* 新建会话的机器下拉与启动目录同一行：目录随机器而变，也给上一行的 Agent、模型、强度腾出宽度。 */
+.new-where { display: flex; gap: 7px; min-width: 0; }
 .new-cwd-field {
+  flex: 1 1 auto;
   display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2);
 }
