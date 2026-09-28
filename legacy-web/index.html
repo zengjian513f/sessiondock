@@ -302,15 +302,27 @@
       <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
     </div>
     <div class="new-row">
-      <label id="new-node-label" class="node-select" hidden><span>机器</span><select id="new-node"></select></label>
+      <label id="new-node-label" class="node-select" hidden title="机器"><span class="visually-hidden">机器</span><select id="new-node"></select></label>
       <fieldset class="new-source">
         <legend class="visually-hidden">会话类型</legend>
-        <label><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
-        <label><input type="radio" name="new-source" value="codex"><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
-        <label><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
-        <label><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
-        <label><input type="radio" name="new-source" value="shell"><span><svg class="ico source-icon" data-source="shell" aria-hidden="true"><use href="#i-terminal"/></svg><em class="src-label">SSH</em></span></label>
+        <label title="Claude"><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
+        <label title="Codex"><input type="radio" name="new-source" value="codex"><span><svg class="ico source-icon" data-source="codex" aria-hidden="true"><use href="#i-codex"/></svg><em class="src-label">Codex</em></span></label>
+        <label title="Grok"><input type="radio" name="new-source" value="grok"><span><svg class="ico source-icon" data-source="grok" aria-hidden="true"><use href="#i-grok"/></svg><em class="src-label">Grok</em></span></label>
+        <label title="OpenCode"><input type="radio" name="new-source" value="opencode"><span><svg class="ico source-icon" data-source="opencode" aria-hidden="true"><use href="#i-opencode"/></svg><em class="src-label">OpenCode</em></span></label>
+        <label title="SSH"><input type="radio" name="new-source" value="shell"><span><svg class="ico source-icon" data-source="shell" aria-hidden="true"><use href="#i-terminal"/></svg><em class="src-label">SSH</em></span></label>
       </fieldset>
+      <div class="new-choice">
+        <div class="new-model">
+          <button type="button" id="new-model" class="new-pick" title="模型" aria-haspopup="listbox"
+            aria-expanded="false" aria-controls="new-model-menu"><span id="new-model-label">默认模型</span><i aria-hidden="true">⌄</i></button>
+          <div id="new-model-menu" hidden>
+            <input id="new-model-search" type="search" placeholder="搜索模型" aria-label="搜索模型"
+              autocomplete="off" spellcheck="false" aria-controls="new-model-options" hidden>
+            <div id="new-model-options" role="listbox" aria-label="模型" tabindex="-1"></div>
+          </div>
+        </div>
+        <label class="new-effort" title="推理强度"><span class="visually-hidden">推理强度</span><select id="new-effort"></select></label>
+      </div>
     </div>
     <div class="new-cwd-combobox">
       <div class="new-cwd-field">

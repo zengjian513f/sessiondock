@@ -148,6 +148,42 @@ fn opencode_api(
     Ok((output.status.success(), text.chars().take(400).collect()))
 }
 
+/// The picker's model and effort in each CLI's own option spelling, for a
+/// new session only (the spec admits them nowhere else). OpenCode takes its
+/// model through the pre-created session instead.
+fn choice_args(spec: &LaunchSpec) -> Vec<String> {
+    let mut args = Vec::new();
+    let (model, effort) = (spec.model(), spec.effort());
+    match spec.source() {
+        Source::Claude => {
+            if let Some(model) = model {
+                args.extend(["--model".into(), model.into()]);
+            }
+            if let Some(effort) = effort {
+                args.extend(["--effort".into(), effort.into()]);
+            }
+        }
+        Source::Codex => {
+            if let Some(model) = model {
+                args.extend(["-m".into(), model.into()]);
+            }
+            if let Some(effort) = effort {
+                args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
+            }
+        }
+        Source::Grok => {
+            if let Some(model) = model {
+                args.extend(["-m".into(), model.into()]);
+            }
+            if let Some(effort) = effort {
+                args.extend(["--reasoning-effort".into(), effort.into()]);
+            }
+        }
+        Source::Opencode | Source::Shell => {}
+    }
+    args
+}
+
 pub fn entries(config: &Config) -> Vec<Entry> {
     config
         .adapters
@@ -304,6 +340,15 @@ impl Launcher {
     pub fn host_dir(&self) -> &Path {
         &self.host_directory.path
     }
+    /// The model catalog of the source's one CLI profile; empty when the
+    /// source has no unique profile.
+    pub fn models(&self, source: Source) -> super::models::Catalog {
+        let mut profiles = self.profiles.values().filter(|profile| profile.source == source);
+        match (profiles.next(), profiles.next()) {
+            (Some(profile), None) => super::models::catalog(profile),
+            _ => super::models::Catalog::default(),
+        }
+    }
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
@@ -422,6 +467,7 @@ impl Launcher {
                 OsString::from("check_for_update_on_startup=false"),
             ]);
         }
+        argv.extend(choice_args(spec).into_iter().map(OsString::from));
         Ok(argv)
     }
 
@@ -566,7 +612,11 @@ impl Launcher {
             .ok_or(Error::AdapterUnavailable)?;
         let sid = record.session_id().ok_or(Error::InvalidSpec)?;
         let cwd = record.spec().cwd();
-        let body = serde_json::json!({"id": sid, "location": {"directory": cwd}});
+        let mut body = serde_json::json!({"id": sid, "location": {"directory": cwd}});
+        // OpenCode's TUI has no model option; the session carries it.
+        if let Some((provider, model)) = record.spec().model().and_then(|model| model.split_once('/')) {
+            body["model"] = serde_json::json!({"providerID": provider, "id": model});
+        }
         let (created, detail) = opencode_api(
             profile,
             cwd,
@@ -814,7 +864,7 @@ fn resolved_executable(path: &Path) -> Result<PathBuf, Error> {
 /// that updated itself since the service started (Windows rewrites `claude.exe`
 /// in place, Unix re-targets `~/.local/bin/claude`) launches its current file;
 /// only a path that no longer names a usable executable is refused.
-fn current_executable(configured: &Path) -> Result<PathBuf, Error> {
+pub(super) fn current_executable(configured: &Path) -> Result<PathBuf, Error> {
     let resolved = resolved_executable(configured)?;
     check_executable(&resolved)?;
     Ok(resolved)
