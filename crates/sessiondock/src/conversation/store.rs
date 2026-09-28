@@ -33,6 +33,10 @@ pub struct QueuedSend {
     pub echo_hash: String,
     pub sent_at: f64,
     pub state: String,
+    /// Record time of the native entry showing the CLI holds the text in its
+    /// own input queue (Claude `queue-operation` enqueue); `null` until seen.
+    #[serde(default)]
+    pub cli_queued_at: Option<f64>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Draft {
@@ -433,6 +437,33 @@ impl Store {
                 rows.retain(|row| !request_ids.contains(&row.request_id));
                 if rows.is_empty() {
                     doc.queued.remove(key);
+                }
+            }
+            Ok(true)
+        })
+    }
+    /// Records when the CLI put the named sends into its own input queue;
+    /// sends already marked keep their first time.
+    pub fn mark_cli_queued(&self, key: &str, marks: &[(String, f64)]) -> Result<bool> {
+        let pending = |row: &QueuedSend| {
+            row.cli_queued_at.is_none() && marks.iter().any(|(id, _)| *id == row.request_id)
+        };
+        let present = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queued
+            .get(key)
+            .is_some_and(|rows| rows.iter().any(pending));
+        if !present {
+            return Ok(false);
+        }
+        self.update(|doc| {
+            for row in doc.queued.get_mut(key).into_iter().flatten() {
+                if row.cli_queued_at.is_none()
+                    && let Some((_, at)) = marks.iter().find(|(id, _)| *id == row.request_id)
+                {
+                    row.cli_queued_at = Some(*at);
                 }
             }
             Ok(true)

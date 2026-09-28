@@ -465,7 +465,11 @@ async fn observe_cli(state: &AppState, uid: &str) -> Option<Value> {
 /// Retires queued sends echoed by a batch's user/command records. A session
 /// nothing has identified yet (a page opening the native view of a launch)
 /// is resolved first when the ledger holds queued sends.
-async fn retire_echo_list(state: &AppState, uid: &str, echoes: &[(String, Option<f64>)]) -> bool {
+async fn retire_echo_list(
+    state: &AppState,
+    uid: &str,
+    echoes: &[crate::conversation::cli_state::Echo],
+) -> bool {
     let Some(service) = state.conversations.as_ref() else {
         return false;
     };
