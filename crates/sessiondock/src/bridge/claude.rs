@@ -273,9 +273,18 @@ impl PromptStore {
         };
         let event = data.get("hook_event_name").map(text).unwrap_or_default();
         let tool_use_id = data.get("tool_use_id").map(text).unwrap_or_default();
+        // Only the main thread can open the TUI dialog: Claude denies
+        // AskUserQuestion to every agent, yet its forks (prompt suggestion
+        // and the like, `agent_id` set) still fire PreToolUse for it and are
+        // then refused with no Post hook, which would strand a card no
+        // terminal shows.
+        let main_thread = data
+            .get("agent_id")
+            .is_none_or(|agent| text(agent).is_empty());
         match event.as_str() {
             "PreToolUse"
-                if data.get("tool_name").map(text).as_deref() == Some("AskUserQuestion") =>
+                if main_thread
+                    && data.get("tool_name").map(text).as_deref() == Some("AskUserQuestion") =>
             {
                 let questions = questions(data.get("tool_input").unwrap_or(&Value::Null));
                 if !questions.is_empty() {

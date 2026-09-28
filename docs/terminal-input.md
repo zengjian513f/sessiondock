@@ -140,7 +140,10 @@ submit semantics, tmux copy-mode.
 
 Claude question cards come from `sessiondock claude-hook`; Codex approvals come
 from the managed TUI screen. Main-session message and watch responses expose
-them as `prompt`. A native answer clears the card.
+them as `prompt`. A native answer clears the card. Only the main thread's
+`AskUserQuestion` records a card: Claude denies the tool to every agent, so a
+payload carrying `agent_id` (a post-turn fork such as prompt suggestion) never
+opens a dialog and is ignored.
 
 The page answers through `/api/term/send` under its console lease. The bridge
 never writes to the CLI, takes a lease or acknowledges delivery. Hook files and
