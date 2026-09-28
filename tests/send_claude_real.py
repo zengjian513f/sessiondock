@@ -9,8 +9,8 @@ credential file read-only so the real config is not mutated), a throwaway
 working directory, and deletes everything it creates. It launches the real
 `claude` binary through the lifecycle launcher profile (schema 2,
 `--session-id {session_id}`), creates a session via `/api/term/create`, sends
-ONE prompt via `POST /api/session/send`, verifies the receipt goes
-persisted → injected → confirmed from the real native JSONL `user` record,
+ONE prompt via `POST /api/session/conversation/send`, waits for the real
+native JSONL `user` record,
 sees the assistant reply via `/api/messages`, asserts the model flag reached
 the CLI (the JSONL assistant records carry exactly that model ID), then kills
 the instance. Proxy variables (HTTP(S)_PROXY, ALL_PROXY, NO_PROXY) are passed
@@ -153,7 +153,8 @@ def main():
         ledger = tmp / "ledger"
         delivery = tmp / "delivery"
         web = tmp / "web"
-        for path in (work, area, host, ledger, delivery, web):
+        state = tmp / "state"
+        for path in (work, area, host, ledger, delivery, web, state):
             path.mkdir(mode=0o700, parents=True)
         (web / "index.html").write_text(
             '<!doctype html><meta name="sessiondock-mode" content="local"><title>x</title>')
@@ -210,9 +211,10 @@ def main():
         if session_file() is None:
             skip(f"the one-shot did not create {sid}.jsonl under the isolated projects dir")
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger,
-                             launcher_config=launcher, delivery_dir=delivery) as (base, opener):
+                             launcher_config=launcher, delivery_dir=delivery, state_dir=state,
+                             file_roots=(area,), file_write_roots=(area,)) as (base, opener):
             status, meta = request(opener, base, "GET", "/api/meta")
-            assert status == 200 and meta["capabilities"]["outbox"] is True, meta
+            assert status == 200 and meta["capabilities"]["conversation_send"] is True, meta
             build = meta["build"]
 
             # The one-shot's session is in the frozen inventory; resume it in a
@@ -248,19 +250,30 @@ def main():
             if not associated:
                 skip("the resumed real CLI never became an associated managed instance "
                      "(TUI startup differs); auth and one-shot verified above")
-            time.sleep(2.0)  # let the resumed TUI paint its composer
+            # The resumed TUI must show a writable composer before SEND.
+            probe = {}
+            while time.monotonic() < deadline:
+                status, probe = request(opener, base, "POST", "/api/session/conversation/check",
+                                        {"uid": uid, "name": name, "_build": build})
+                if status == 200 and probe.get("ok") is True:
+                    break
+                time.sleep(1.0)
+            if probe.get("ok") is not True:
+                skip(f"the real Claude composer never read as ready: {probe}")
 
-            status, sent = request(opener, base, "POST", "/api/session/send",
-                {"uid": uid, "name": name, "text": SECOND, "media": [],
-                 "request_id": "real-send-0001", "_build": build})
-            assert status == 200 and sent["item"]["state"] in ("ambiguous", "persisted"), sent
-            print(f"send accepted: {sent['item']['state']}", flush=True)
+            status, sent = request(opener, base, "POST", "/api/session/conversation/send",
+                {"uid": uid, "name": name, "text": SECOND, "request_id": "real-send-0001", "_build": build})
+            assert status == 200 and sent.get("ok") is True, sent
+            print(f"send accepted: {sent.get('state')}", flush=True)
 
+            def recorded():
+                path = session_file()
+                rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path else []
+                return any(r.get("type") == "user" and isinstance(r.get("message", {}).get("content"), str)
+                           and SECOND.strip() in r["message"]["content"] for r in rows)
             confirmed = False
             while time.monotonic() < deadline:
-                status, box = request(opener, base, "GET",
-                    "/api/session/outbox?uid=" + quote(uid, safe=":"))
-                if status == 200 and not any(r["id"] == "real-send-0001" for r in box["outbox"]):
+                if recorded():
                     confirmed = True
                     break
                 time.sleep(1.0)
@@ -294,8 +307,8 @@ def main():
                 {"record_id": record["record_id"], "instance_id": record["instance_id"]})
             assert status == 200, killed
         print("PASS send_claude_real: real Claude (claude-haiku-4-5-20251001, effort low) launched via the launcher "
-              "profile (one-shot created the session, the TUI resumed it), one prompt sent through /api/session/send, receipt persisted then injected "
-              "then confirmed from the real native JSONL user record, assistant reply visible in "
+              "profile (one-shot created the session, the TUI resumed it), one prompt sent through /api/session/conversation/send "
+              "and confirmed from the real native JSONL user record, assistant reply visible in "
               "/api/messages, model flag reached the CLI (exact ID in JSONL), instance killed; isolated config "
               "reused read-only, temp dirs removed")
 

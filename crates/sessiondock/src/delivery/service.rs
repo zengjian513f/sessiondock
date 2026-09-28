@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     claude,
-    engine::{self, DeliveryEngine, Provider},
+    engine::{self, DeliveryEngine},
 };
 
 // Also bound concurrent blocking opens process-wide, including opens whose
@@ -73,22 +73,7 @@ enum Query {
         agent_id: Option<String>,
     },
     ClaudeOutbox(claude::Scope),
-    Receipts {
-        provider: Provider,
-        offset: usize,
-        limit: usize,
-    },
-    Logs {
-        after_sequence: u64,
-        limit: usize,
-    },
-    /// Executor hook: one trusted closure with exclusive engine
-    /// access on the same single blocking worker, under the same admission
-    /// and shutdown rules as a read. It replies through its own channel; the
-    /// empty JSON reply only carries the permit until the caller drops it.
-    Exec(ExecJob),
 }
-type ExecJob = Box<dyn FnOnce(&mut DeliveryEngine) + Send + 'static>;
 struct Request {
     query: Query,
     reply: oneshot::Sender<Result<EncodedJson, Error>>,
@@ -157,44 +142,6 @@ impl DeliveryService {
     }
     pub async fn claude_outbox(&self, scope: claude::Scope) -> Result<EncodedJson, Error> {
         self.request(Query::ClaudeOutbox(scope)).await
-    }
-    pub async fn receipts(
-        &self,
-        provider: Provider,
-        offset: usize,
-        limit: usize,
-    ) -> Result<EncodedJson, Error> {
-        self.request(Query::Receipts {
-            provider,
-            offset,
-            limit,
-        })
-        .await
-    }
-    pub async fn logs(&self, after_sequence: u64, limit: usize) -> Result<EncodedJson, Error> {
-        self.request(Query::Logs {
-            after_sequence,
-            limit,
-        })
-        .await
-    }
-    /// Trusted in-process executor access. The closure runs on the
-    /// coordinator's blocking worker with exclusive `&mut DeliveryEngine`; it
-    /// is serialized with every read, admitted through the same capacity, and
-    /// refused after shutdown. Nothing here performs terminal or native I/O;
-    /// the executor claims any returned `DispatchBatch` outside the closure.
-    pub async fn with_engine<T, F>(&self, work: F) -> Result<T, Error>
-    where
-        T: Send + 'static,
-        F: FnOnce(&mut DeliveryEngine) -> T + Send + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        let job: ExecJob = Box::new(move |engine| {
-            let _ = tx.send(work(engine));
-        });
-        let done = self.request(Query::Exec(job)).await?;
-        drop(done);
-        rx.await.map_err(|_| Error::WorkerFailed)
     }
     async fn request(&self, query: Query) -> Result<EncodedJson, Error> {
         let response = self.admit(query).await?;
@@ -315,23 +262,6 @@ fn query_json(engine: &mut DeliveryEngine, query: Query) -> Result<EncodedJson, 
                 .map_err(Error::Engine)?,
         ),
         Query::ClaudeOutbox(scope) => encode(&engine.claude_outbox(&scope).map_err(Error::Engine)?),
-        Query::Receipts {
-            provider,
-            offset,
-            limit,
-        } => encode(
-            &engine
-                .receipts(provider, offset, limit)
-                .map_err(Error::Engine)?,
-        ),
-        Query::Logs {
-            after_sequence,
-            limit,
-        } => encode(&engine.logs(after_sequence, limit).map_err(Error::Engine)?),
-        Query::Exec(job) => {
-            job(engine);
-            Ok(EncodedJson { bytes: Vec::new() })
-        }
     }
 }
 

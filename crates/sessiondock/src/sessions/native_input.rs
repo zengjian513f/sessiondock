@@ -226,17 +226,6 @@ impl RawIndex {
     pub(super) fn probe_digest(&self) -> Option<Digest> {
         self.probe_digest
     }
-    /// Physical start of the record that ends at `end`: the previous LF
-    /// checkpoint, or zero for the first line (delivery evidence).
-    pub(super) fn record_start(&self, end: u64) -> u64 {
-        match self
-            .checkpoints
-            .binary_search_by_key(&end, |entry| entry.end)
-        {
-            Ok(0) | Err(0) => 0,
-            Ok(index) | Err(index) => self.checkpoints[index - 1].end,
-        }
-    }
     pub(super) fn is_checkpoint(&self, end: u64) -> bool {
         end == 0
             || self

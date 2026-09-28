@@ -3,8 +3,7 @@
 /**
  * 前端 CLI 行为的公共基类。
  *
- * app.js 只保存和渲染乐观消息；某条原生记录是否能确认/结束排队、
- * 旧状态如何迁移、特殊键是否取消队列，都由具体 CLI 实现决定。
+ * 选择题按键、取消键和连按 Esc 的含义由具体 CLI 实现决定。
  */
 class SessionDockCli {
   constructor(source, name, icon, color) {
@@ -17,36 +16,6 @@ class SessionDockCli {
   // SessionDock 能读取它的原生对话记录；否则控制台就是看回复的地方。
   get nativeHistory() {
     return true;
-  }
-
-  migrateQueuedMessages(items, _fromVersion, _toVersion) {
-    return Array.isArray(items) ? items : [];
-  }
-
-  createQueuedMessage(fields) {
-    return { ...fields, state: 'queued' };
-  }
-
-  queueAction(message) {
-    return ['user', 'command'].includes(message?.role)
-      ? { type: 'remove', text: String(message.text || '') } : null;
-  }
-
-  normalizeQueuedText(value) {
-    return String(value ?? '');
-  }
-
-  queuedTextMatches(pending, native) {
-    return this.normalizeQueuedText(pending) === this.normalizeQueuedText(native);
-  }
-
-  settleQueuedMessage(item, _now, _hasNativeHistory) {
-    return item;
-  }
-
-  queuedMessageLabel(item) {
-    if (item?.state === 'failed') return '发送未确认';
-    return item?.state === 'sending' ? '发送中' : '排队中';
   }
 
   questionAnswerKeys(_prompt, _optionIndex) {
@@ -73,68 +42,6 @@ class SessionDockCli {
 class ClaudeCli extends SessionDockCli {
   constructor() {
     super('claude', 'Claude', 'i-claude', 'var(--claude)');
-  }
-
-  migrateQueuedMessages(items, fromVersion, _toVersion) {
-    // v5 起正式 Claude 会话由服务端发送账本管理。旧浏览器副本既没有
-    // request id 也没有交付凭据，保留只会再次制造“假失败/盲目重试”。
-    if (fromVersion < 5) return [];
-    return super.migrateQueuedMessages(items);
-  }
-
-  createQueuedMessage(fields) {
-    return {
-      ...fields,
-      state: 'sending',
-      // Claude 的 user/enqueue 记录实测会立即落盘。超时仍没有任何
-      // 原生回执，只能说明 tmux 收到了按键，不能继续声称“排队中”。
-      expiresAt: fields.created + 8000,
-    };
-  }
-
-  normalizeQueuedText(value) {
-    // Claude 的原生 user/command 和服务端账本都按编辑器提交语义去掉首尾空白。
-    return String(value ?? '').trim();
-  }
-
-  queueAction(message) {
-    const normal = super.queueAction(message);
-    if (normal !== null) return normal;
-    if (message?.role !== 'queue_operation') return null;
-    if (message.operation === 'enqueue') {
-      return { type: 'confirm', text: String(message.text || '') };
-    }
-    if (message.operation === 'remove') {
-      return { type: 'remove', text: String(message.text || '') };
-    }
-    // Claude 2.1.226 在当前回合结束/中断后，为每条即将提升成正式 user
-    // 消息的输入写一个无正文 dequeue；旧版本使用带正文的 popAll。
-    if (message.operation === 'dequeue') return { type: 'promote-first' };
-    if (message.operation === 'popAll') return { type: 'promote-all' };
-    return null;
-  }
-
-  settleQueuedMessage(item, now, _hasNativeHistory) {
-    if (item?.server) return item;
-    if (item?.state !== 'sending' || !Number.isFinite(+item.expiresAt)
-        || now < +item.expiresAt) return item;
-    const settled = {
-      ...item,
-      state: 'failed',
-      error: 'Claude 未在会话记录中确认接收',
-    };
-    delete settled.expiresAt;
-    return settled;
-  }
-
-  queuedMessageLabel(item) {
-    if (!item?.server) return super.queuedMessageLabel(item);
-    if (item.state === 'restored') return '已中断，正文在终端草稿中';
-    if (item.state === 'aborted') return '已中断';
-    if (item.state === 'native_queued') return 'Claude 已排队';
-    if (item.state === 'ambiguous' || item.state === 'injecting') return '状态待核对';
-    if (item.state === 'persisted') return '等待提交';
-    return '已送达终端，等待 Claude 确认';
   }
 
   // Claude Code 2.1.28x 的问题菜单：选项后追加 "Type something." 与
@@ -196,28 +103,6 @@ class CodexCli extends SessionDockCli {
     super('codex', 'Codex', 'i-codex', 'var(--codex)');
   }
 
-  migrateQueuedMessages(items, fromVersion, _toVersion) {
-    // v4 起 Codex 终端提交回执归服务端管理。浏览器旧副本没有交付凭据，
-    // 全部丢弃；真实回执会随 /api/messages 或 SSE 重新同步回来。
-    return fromVersion < 4 ? [] : super.migrateQueuedMessages(items);
-  }
-
-  normalizeQueuedText(value) {
-    // Codex TUI 写 rollout 前会裁掉 prompt 首尾空白；内部空格和换行仍须精确。
-    return String(value ?? '').trim();
-  }
-
-  queuedMessageLabel(item) {
-    if (item?.state === 'aborted') return '已中断';
-    if (item?.state === 'injecting' || item?.state === 'delivering') {
-      return '正在写入终端';
-    }
-    if (item?.state === 'confirming') return '已送达终端';
-    if (item?.state === 'failed' && +item?.attempts > 0) return '终端写入待核对';
-    if (item?.state === 'failed') return '未写入终端';
-    return '等待终端确认';
-  }
-
   questionAnswerKeys(prompt, optionIndex) {
     const options = prompt?.questions?.[0]?.options || [];
     if (!options[optionIndex] || optionIndex >= 9) return null;
@@ -252,30 +137,9 @@ class GrokCli extends SessionDockCli {
     super('grok', 'Grok', 'i-grok', 'var(--grok)');
   }
 
-  // Grok 暂无已验证的内存队列控制事件：只使用基类的正式消息对账，
-  // 不把 Claude/Codex 的 Esc 假设套过来。
-  queueAction(message) {
-    return super.queueAction(message);
-  }
-
-  normalizeQueuedText(value) {
-    return String(value ?? '').trim();
-  }
-
-  queuedTextMatches(pending, native) {
-    const left = this.normalizeQueuedText(pending);
-    const right = this.normalizeQueuedText(native);
-    if (!left || !right) return false;
-    if (left === right) return true;
-    // Grok 走 /api/term/send 粘贴进 TUI。输入框里若有残留草稿，原生
-    // user 记录会变成「残留前缀 + 网页正文」。精确相等会留下第二条
-    // 排队气泡；只允许原生以网页正文为后缀，避免把中间碰巧相同的
-    // 短句当成回执。
-    return right.endsWith(left) && right.length > left.length;
-  }
 }
 
-// OpenCode 的会话由服务端从它的 SQLite 镜像成原生记录；排队与确认沿用基类。
+// OpenCode 的会话由服务端从它的 SQLite 镜像成原生记录；按键行为沿用基类。
 class OpencodeCli extends SessionDockCli {
   constructor() {
     super('opencode', 'OpenCode', 'i-opencode', 'var(--opencode)');

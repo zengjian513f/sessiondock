@@ -11,8 +11,31 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 from history_parity import REPO, BINARY, Corpus, codex_message, codex_row, isolated_server
 from send_browser import initialize, xterm_includes
-from send_codex_browser import CODEX_SID, resume_codex, user_records
 from hub_send_browser import cleanup_hosts
+
+CODEX_SID = "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
+
+
+def resume_codex(page, uid):
+    page.locator(f'#side .item[data-uid="{uid}"]').click()
+    page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)
+    expect(page.locator("#msgs")).to_contain_text("Synthetic codex prompt")
+    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
+        page.locator("#a-term").click()
+    resumed = taken.value.json()
+    assert taken.value.status == 200 and resumed["launch_kind"] == "resume", resumed
+    expect(page.locator("#termpane")).to_be_visible()
+    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+    xterm_includes(page, "FAKE_CODEX_TUI sid=[%s]" % CODEX_SID)
+    page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=uid, timeout=15000)
+    return resumed
+
+
+def user_records(path):
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [row["payload"] for row in rows
+            if row.get("type") == "response_item" and row["payload"].get("type") == "message"
+            and row["payload"].get("role") == "user"]
 
 
 def main():

@@ -92,11 +92,11 @@ def main():
                         handle.write(user_line(text, prompt_index))
 
                 def user_count(text):
-                    return page.locator('#msgs .msg[data-role=user]:not(.client-outbox)').filter(has_text=text).count()
+                    return page.locator('#msgs .msg[data-role=user]').filter(has_text=text).count()
 
                 append('claude我已经卸载。cygnus上有', 0)
                 page.wait_for_function(
-                    "text => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.client-outbox)')].some(n => n.textContent.includes(text))",
+                    "text => [...document.querySelectorAll('#msgs .msg[data-role=user]')].some(n => n.textContent.includes(text))",
                     arg='claude我已经卸载。cygnus上有', timeout=15000)
                 stamps = page.evaluate("() => (cache.get(S.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)")
                 assert stamps == [None], stamps
@@ -115,7 +115,7 @@ def main():
                 assert user_count('新的一句') == 0
                 append('新的一句', 1)
                 page.wait_for_function(
-                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.client-outbox)')].filter(n => n.textContent.includes('新的一句')).length === 1",
+                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('新的一句')).length === 1",
                     timeout=15000)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
 
@@ -124,7 +124,7 @@ def main():
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'true')
                 append('claude我已经卸载。cygnus上有', 2)
                 page.wait_for_function(
-                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.client-outbox)')].filter(n => n.textContent.includes('claude我已经卸载。cygnus上有')).length === 2",
+                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('claude我已经卸载。cygnus上有')).length === 2",
                     timeout=15000)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
                 assert not dialogs, dialogs

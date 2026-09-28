@@ -125,7 +125,7 @@
 实测见 [performance.md](performance.md#大文件-2026-09-15)。仍未做的：不读中间
 字节的"真正局部解析"需要把物理索引与浅投影落盘（按文件版本），留作下一步。
 - 每视图契约不变：游标 schema `rs-m2-1`、前缀散列、语义锚点、时间线 pin、
-  `valid_checkpoint`、`native_checkpoint`/`native_tail`、`claude_native_inputs`、
+  `valid_checkpoint`、
   分页/媒体授权、`message_total`/`partial`/`activity`。见
   [history-pages.md](history-pages.md)、[native-input.md](native-input.md)、
   [media.md](media.md)。

@@ -51,12 +51,10 @@ pub const ATTACHMENT_PATHS: [&str; 3] = [
     "/api/session/conversation/attachment",
 ];
 /// Writes that must carry the page's build (`_build`) or answer 409.
-pub const BUILD_CHECKED_PATHS: [&str; 7] = [
+pub const BUILD_CHECKED_PATHS: [&str; 5] = [
     "/api/session/conversation/send",
     "/api/session/conversation/check",
     "/api/session/conversation/restart",
-    "/api/session/send",
-    "/api/session/outbox/retry",
     "/api/term/send",
     "/api/term/create",
 ];
@@ -325,9 +323,7 @@ pub fn resolve(
                         || path.starts_with("/api/term/")
                         || matches!(
                             path.as_str(),
-                            "/api/session/draft-status"
-                                | "/api/session/rewind"
-                                | "/api/session/send"
+                            "/api/session/rewind"
                                 | "/api/session/conversation/send"
                                 | "/api/session/conversation/check"
                         ))

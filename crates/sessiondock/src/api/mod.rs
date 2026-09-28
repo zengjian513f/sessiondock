@@ -104,32 +104,6 @@ pub fn router() -> Router<AppState> {
             )),
         )
         .route("/session/conversation/drafts", get(conversation::drafts))
-        // Claude reliable send on managed instances; 501 until both
-        // the delivery ledger and the terminal transport are configured.
-        .route(
-            "/session/send",
-            post(delivery::send).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/send",
-            ))),
-        )
-        .route(
-            "/session/draft-status",
-            post(delivery::draft_status).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/session/draft-status"),
-            )),
-        )
-        .route(
-            "/session/outbox/retry",
-            post(delivery::retry).layer(axum::extract::DefaultBodyLimit::max(request_body_limit(
-                "/api/session/outbox/retry",
-            ))),
-        )
-        .route(
-            "/session/outbox/discard",
-            post(delivery::discard).layer(axum::extract::DefaultBodyLimit::max(
-                request_body_limit("/api/session/outbox/discard"),
-            )),
-        )
         .route("/watch", get(read::watch))
         .route("/search", get(search::get))
         .route(

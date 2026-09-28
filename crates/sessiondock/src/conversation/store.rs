@@ -1,5 +1,5 @@
 //! Session-owned drafts and one-shot submission identities. No CLI acknowledgment queue.
-use crate::delivery::executor::Failure;
+use crate::delivery::target::Failure;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{

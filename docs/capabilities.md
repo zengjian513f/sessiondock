@@ -80,7 +80,7 @@ this routing; it does not establish mobile Edge device compatibility.
 | `terminal_takeover` | same as `terminal_create` | resume via `resume_sources`, never name-guess | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
 | `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
-| `outbox` | true when `SESSIONDOCK_DELIVERY_DIR` opens the ledger **and** `SESSIONDOCK_PTYHOST_DIR` configures the terminal transport | enables the legacy composer/outbox and the four send routes (supported managed CLI instances) | [delivery-executor.md](delivery-executor.md) |
+| `outbox` | always false (the legacy send routes and browser outbox are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [delivery.md](delivery.md) |
 | `outbox_read` | true when `SESSIONDOCK_DELIVERY_DIR` opens DeliveryService | no `config`/`allows` gate (does not enable `outbox`) | [delivery-http.md](delivery-http.md) |
 | `audit` | true when `SESSIONDOCK_AUDIT_DIR` is configured | queues `POST /api/audit/browser`; else no posts | [diagnostics.md](diagnostics.md) |
 | `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |

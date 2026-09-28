@@ -4,7 +4,6 @@ Covers busy sends, lost responses, session isolation, uploads, cancellation,
 and startup choice refusal/recovery without browser message persistence.
 Older helper functions remain available to the terminal ownership suites.
 """
-import base64
 import hashlib
 import json
 import os
@@ -18,7 +17,6 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
-from media_browser import PNG
 
 FAKE_CLI = REPO / "tests/fake_claude_cli.py"
 SETTINGS = "/synthetic/bridge-settings.json"
@@ -77,89 +75,14 @@ def create_claude(page, base, work, *, open_terminal=True):
     return receipt
 
 
-def outbox_labels(page):
-    return page.evaluate("() => [...document.querySelectorAll('#msgs .client-outbox .client-pending-state')].map(n => n.textContent)")
-
-
-def user_messages(page):
-    return page.evaluate("() => [...document.querySelectorAll('#msgs .msg.user:not(.client-outbox) .text, #msgs .msg.user:not(.client-outbox) .body')].map(n => n.textContent.trim())")
-
-
 def wait_history(page, text, timeout=20000):
     try:
         page.wait_for_function(
-            "text => [...document.querySelectorAll('#msgs .msg:not(.client-outbox)')].some(n => n.textContent.includes(text))"
-            " && !document.querySelector('#msgs .client-outbox')",
+            "text => [...document.querySelectorAll('#msgs .msg')].some(n => n.textContent.includes(text))",
             arg=text, timeout=timeout)
     except Exception:
-        print("history timeout:", page.evaluate("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText, outbox: [...document.querySelectorAll('.client-pending-state')].map(n => n.textContent)})"), flush=True)
+        print("history timeout:", page.evaluate("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText})"), flush=True)
         raise
-
-
-def send_from_composer(page, text):
-    ta = page.locator("#cinput")
-    expect(ta).to_be_visible()
-    ta.fill(text)
-    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/send", timeout=20000) as sent:
-        ta.press("Enter")
-    return sent.value
-
-
-def send_attachments(page, root, label, sends, *, fail_first=False):
-    """Real chooser, raw uploads and delivery, with a recoverable upload error."""
-    payloads = [
-        {"name": f"{label} 数据.json", "mimeType": "application/json", "buffer": b'{"data":"' + b'x' * 20000 + b'"}'},
-        {"name": f"{label} 截图.png", "mimeType": "image/png", "buffer": base64.b64decode(PNG)},
-    ]
-    page.locator("#cadd").click()
-    with page.expect_file_chooser() as chooser:
-        page.locator('#attach-menu [data-attach="file"]').click()
-    chooser.value.set_files(payloads)
-    expect(page.locator("#compose-items .draft-card")).to_have_count(2)
-    page.locator("#cinput").fill(label)
-    if fail_first:
-        def unavailable(route):
-            route.fulfill(status=503, content_type="application/json", body='{"error":"synthetic upload unavailable"}')
-        page.route("**/api/session/attachment?*", unavailable)
-        count = len(sends)
-        page.locator("#csend").click()
-        expect(page.locator("#compose-items .draft-card.failed")).to_contain_text("synthetic upload unavailable")
-        expect(page.locator("#cinput")).to_have_value(label)
-        assert len(sends) == count, sends
-        page.unroute("**/api/session/attachment?*", unavailable)
-    with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/attachment") as uploaded:
-        with page.expect_response(lambda r: urlsplit(r.url).path == "/api/session/send", timeout=20000) as sent:
-            page.locator("#csend").click()
-    assert uploaded.value.status == 200, uploaded.value.text()
-    assert sent.value.status == 200, sent.value.text()
-    batch = uploaded.value.json()["attachment_id"]
-    expected = label + "\n\n" + "\n".join(
-        f"附件{i}: ./sessiondock_attachments/{batch}/{payload['name']}"
-        for i, payload in enumerate(payloads, 1))
-    assert sends[-1]["text"] == expected, sends[-1]
-    for payload in payloads:
-        path = root / "work/claude-area/sessiondock_attachments" / batch / payload["name"]
-        assert path.read_bytes() == payload["buffer"]
-    # The renderer replaces attachment path lines with file/image cards.
-    wait_history(page, label)
-    native_users = [json.loads(line)["message"]["content"]
-        for history in (root / "claude/project-history").glob("*.jsonl")
-        for line in history.read_text().splitlines() if json.loads(line)["type"] == "user"]
-    assert expected in native_users, native_users
-    for payload in payloads:
-        expect(page.locator("#msgs")).to_contain_text(payload["name"])
-    expect(page.locator("#compose-items .draft-card")).to_have_count(0)
-    expect(page.locator("#cinput")).to_have_value("")
-
-
-def wait_server_outbox_empty(context, base, uid, timeout=15.0):
-    deadline = time.monotonic() + timeout
-    while True:
-        listed = context.request.get(base + "/api/session/outbox?uid=" + uid).json()
-        if not listed["outbox"]:
-            return listed
-        assert time.monotonic() < deadline, ("server outbox never emptied", listed)
-        time.sleep(0.2)
 
 
 def main():
@@ -246,7 +169,6 @@ def main():
                         assert sent.status==200,sent.text()
                         assert sent.json()['state']=='sent'
                         expect(page.locator('#cinput')).to_have_value('')
-                        assert not page.locator('.client-outbox,.draft-saved').count()
                         return sends[-1]
                     # Empty legacy evidence must not inject text. Launch may already
                     # have bound the pending session identity into an empty draft.

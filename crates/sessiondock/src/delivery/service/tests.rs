@@ -173,14 +173,6 @@ async fn reads_existing_wire_retains_tombstones_and_never_writes_after_open() {
     let claude = value(service.claude_outbox(scope()).await.unwrap());
     assert_eq!(claude["outbox"].as_array().unwrap().len(), 1);
     assert_eq!(claude["outbox"][0]["state"], "persisted");
-    let receipts = value(service.receipts(Provider::Claude, 0, 128).await.unwrap());
-    assert_eq!(receipts.as_array().unwrap().len(), 2);
-    assert!(!receipts.to_string().contains("private fixture prompt"));
-    assert!(
-        !value(service.logs(0, 128).await.unwrap())
-            .to_string()
-            .contains("private fixture prompt")
-    );
     service.shutdown().await.unwrap();
     service.shutdown().await.unwrap();
     assert_eq!(fs::read(ledger).unwrap(), baseline);
@@ -208,7 +200,6 @@ async fn exact_scope_passes_through_and_child_codex_is_rejected() {
             .await
             .is_ok()
     );
-    assert!(service.receipts(Provider::Claude, 0, 129).await.is_ok());
     service.shutdown().await.unwrap();
 }
 
@@ -220,13 +211,7 @@ async fn slow_read_and_dropped_http_response_retain_the_worker() {
     let service = open_paused(&dir, 2, pause.clone()).await;
     let response = service.admit(codex_query()).await.unwrap();
     pause.started.notified().await;
-    let queued = service
-        .admit(Query::Logs {
-            after_sequence: 0,
-            limit: 1,
-        })
-        .await
-        .unwrap();
+    let queued = service.admit(Query::ClaudeOutbox(scope())).await.unwrap();
     drop(response);
     // A single-thread Tokio test still advances while the worker is parked.
     tokio::time::timeout(
@@ -333,8 +318,6 @@ async fn external_syntactic_change_reloads_without_freezing_the_service() {
     );
     assert_eq!(reloaded, old);
     assert!(service.claude_outbox(scope()).await.is_ok());
-    let logs = value(service.logs(0, 128).await.unwrap());
-    assert!(logs.as_array().unwrap().is_empty());
     assert_eq!(fs::read(&path).unwrap(), bytes);
     service.shutdown().await.unwrap();
     let reopened = open(&dir).await;
@@ -436,10 +419,10 @@ async fn completed_response_does_not_block_another_read() {
         .codex_outbox("codex:synthetic".into(), None)
         .await
         .unwrap();
-    assert!(service.logs(0, 1).await.is_ok());
+    assert!(service.claude_outbox(scope()).await.is_ok());
     let bytes = response.into_bytes();
     assert!(!bytes.is_empty());
-    assert!(service.logs(0, 1).await.is_ok());
+    assert!(service.claude_outbox(scope()).await.is_ok());
     // Shutdown waits for workers, not a caller still holding response bytes.
     service.shutdown().await.unwrap();
     let reopened = open(&dir).await;

@@ -129,11 +129,12 @@ def main():
 
         deadline = time.monotonic() + 180
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger, launcher_config=launcher,
-                             delivery_dir=delivery, state_dir=state) as (base, opener):
+                             delivery_dir=delivery, state_dir=state, file_roots=(area,),
+                             file_write_roots=(area,)) as (base, opener):
             hostname, port = base.replace("http://", "").split(":")
             port = int(port)
             status, meta = request(opener, base, "GET", "/api/meta")
-            assert status == 200 and meta["capabilities"]["outbox"] is True, meta
+            assert status == 200 and meta["capabilities"]["conversation_send"] is True, meta
             build = meta["build"]
             status, listed = request(opener, base, "GET", "/api/sessions?force=1")
             row = next((r for r in listed.get("sessions", []) if r.get("source") == "codex" and r.get("sid") == sid), None)
@@ -165,28 +166,24 @@ def main():
                 if instance is None:
                     skip("the resumed real Codex never became an associated managed instance")
                 note(timeline, "instance_associated", instance_id=instance["instance_id"])
-                # Like send_codex_real: the resumed TUI must read as an empty composer first.
+                # The resumed TUI must show a writable composer first.
                 probe = {}
                 while time.monotonic() < deadline:
-                    status, probe = request(opener, base, "POST", "/api/session/draft-status", {"uid": uid, "name": name})
-                    if status == 200 and probe.get("draft_state") == "empty":
+                    status, probe = request(opener, base, "POST", "/api/session/conversation/check",
+                                            {"uid": uid, "name": name, "_build": build})
+                    if status == 200 and probe.get("ok") is True:
                         break
                     time.sleep(1.0)
-                if probe.get("draft_state") != "empty":
-                    skip(f"the real Codex composer never read as empty: {probe}")
+                if probe.get("ok") is not True:
+                    skip(f"the real Codex composer never read as ready: {probe}")
 
                 ask = (f"Run exactly this shell command now: touch {PROBE} . The sandbox is read-only, so "
                        "request approval to run it outside the sandbox instead of giving up or asking me "
                        "anything else. After it ran, reply with the single word DONE.")
-                status, sent = request(opener, base, "POST", "/api/session/send",
-                    {"uid": uid, "name": name, "text": ask, "media": [], "request_id": "real-ask-0001", "_build": build})
-                assert status == 200, sent
-                item = sent["item"]
-                if item["state"] == "failed" and int(item.get("attempts") or 0) == 0:
-                    skip(f"the executor refused to paste (pre-write failure): {item}")
-                # Codex receipts read `failed`/attempts 1 until the rollout confirms them (send_codex_real).
-                assert item["state"] == "failed" and int(item.get("attempts") or 0) == 1, item
-                note(timeline, "prompt_sent", state=item["state"], attempts=item.get("attempts"))
+                status, sent = request(opener, base, "POST", "/api/session/conversation/send",
+                    {"uid": uid, "name": name, "text": ask, "request_id": "real-ask-0001", "_build": build})
+                assert status == 200 and sent.get("ok") is True, sent
+                note(timeline, "prompt_sent", state=sent.get("state"))
 
                 card = None
                 while time.monotonic() < deadline:
