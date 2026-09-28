@@ -77,6 +77,13 @@ def seed(db, work):
                        'content': [{'type': 'reasoning', 'text': '逐个列出'},
                                    {'type': 'text', 'text': '苹果、香蕉、樱桃，写到这里'}]}),
         ('idle', {'time': {'created': t + 16}, 'outcome': 'interrupted'}),
+        # One reasoning part plus the reply: the reasoning still folds into the turn process.
+        ('user', {'time': {'created': t + 17}, 'text': '能说话吗', 'files': [], 'agents': []}),
+        ('assistant', {'time': {'created': t + 18, 'completed': t + 19}, 'agent': 'build',
+                       'model': fake.MODEL, 'finish': 'stop',
+                       'content': [{'type': 'reasoning', 'text': '单段思考 quokkaridge'},
+                                   {'type': 'text', 'text': '能，链路是通的。'}]}),
+        ('idle', {'time': {'created': t + 20}, 'outcome': 'succeeded'}),
     ]
     for seq, (kind, data) in enumerate(rows, 1):
         connection.execute('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -187,6 +194,14 @@ def main():
                 expect(page.locator('#msgs .msg[data-role=user] img')).to_have_count(1)
                 roles = page.evaluate("[...new Set([...document.querySelectorAll('#msgs .msg')].map(m => m.dataset.role))]")
                 assert {'user', 'assistant'} <= set(roles) and ('process' in roles or 'toolgroup' in roles), roles
+                # A lone reasoning block is folded with its turn, not left on the main line.
+                expect(page.locator('#msgs > .msg[data-role=assistant]').filter(has_text='能，链路是通的。')).to_have_count(1)
+                expect(page.locator('#msgs > .msg[data-role=thinking]')).to_have_count(0)
+                lone = page.locator('#msgs > .turn-process').filter(has_text='1 段思考').last
+                expect(lone).to_have_class('msg turn-process folded')
+                expect(lone.locator('.turn-process-body')).to_be_hidden()
+                lone.locator('.fold-toggle').click()
+                expect(lone.locator('.msg[data-role=thinking]')).to_contain_text('单段思考 quokkaridge')
                 expect(page.locator('#detail .msgs')).to_be_visible()
                 shot('seeded')
                 old = page.locator('#stat').get_attribute('data-seq') or ''
