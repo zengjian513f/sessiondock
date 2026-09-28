@@ -197,6 +197,15 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
     }
 }
 
+/// A native record that answers a queued send: a user/command message
+/// (`enqueue == false`) or the CLI's own enqueue entry for the same text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Echo {
+    pub hash: String,
+    pub ts: Option<f64>,
+    pub enqueue: bool,
+}
+
 /// SHA-256 of the JSON string of the trimmed text: the frontend and the
 /// SEND receipt (`echo_hash`) use the same digest.
 pub fn echo_hash(text: &str) -> String {

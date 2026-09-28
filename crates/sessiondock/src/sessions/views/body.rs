@@ -43,9 +43,10 @@ impl MessageBody {
         self.open.push(b'}');
         self.open
     }
-    /// `(echo digest, record time)` of the batch's user/command messages, in
-    /// order, for retiring queued sends (`conversation::cli_state`).
-    pub fn echoes(&self, snapshot: &ViewSnapshot) -> Vec<(String, Option<f64>)> {
+    /// Echo digests and record times of the batch's user/command messages
+    /// and Claude enqueue entries, in order, for queued sends
+    /// (`conversation::cli_state`).
+    pub fn echoes(&self, snapshot: &ViewSnapshot) -> Vec<crate::conversation::cli_state::Echo> {
         let mut events = snapshot
             .view
             .events()
@@ -58,15 +59,21 @@ impl MessageBody {
             };
             position = wanted + 1;
             let message = &event.message;
-            if !matches!(message["role"].as_str(), Some("user" | "command")) {
-                continue;
-            }
+            let enqueue = match message["role"].as_str() {
+                Some("user" | "command") => false,
+                Some("queue_operation") if message["operation"] == "enqueue" => true,
+                _ => continue,
+            };
             let text = message["text"].as_str().unwrap_or("");
             let ts = message["ts"]
                 .as_str()
                 .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
                 .map(|at| at.timestamp_millis() as f64 / 1000.0);
-            found.push((crate::conversation::cli_state::echo_hash(text), ts));
+            found.push(crate::conversation::cli_state::Echo {
+                hash: crate::conversation::cli_state::echo_hash(text),
+                ts,
+                enqueue,
+            });
         }
         found
     }

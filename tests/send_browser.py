@@ -107,7 +107,8 @@ def main():
                  "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
                          "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace"),
-                         "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay")}}]}))
+                         "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay"),
+                         "SESSIONDOCK_TEST_CLAUDE_QUEUE":str(root / "claude-queue")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         with sync_playwright() as playwright:
             options = {"headless": True}
@@ -199,6 +200,8 @@ def main():
                     assert page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text='first busy input').count()==0
                     page.locator('#cinput').fill('second busy input')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # The fake now records Claude's own enqueue for the next line.
+                    (root/'claude-queue').touch()
                     second=send('second busy input')
                     # The sends sit in the server's CLI state object, in send order,
                     # for every page and device (docs/cli-state.md). The first echo
@@ -209,6 +212,15 @@ def main():
                     assert all(row['state']=='queued' and row['echo_hash'] for row in checked['cli']['queued']),checked['cli']
                     assert checked['cli']['instance']['running'] is True,checked['cli']
                     expect(page.locator('#queued-sends .msg.queued-send').filter(has_text='second busy input')).to_have_count(1)
+                    # Claude's enqueue record shows the send is held in the CLI's
+                    # own queue until its step ends (BUG-20260928-231633-9a7610).
+                    second_bubble=page.locator('#queued-sends .msg.queued-send').filter(has_text='second busy input')
+                    expect(second_bubble.locator('.queued-send-state')).to_have_text('已进入 CLI 队列，当前步骤结束后处理',timeout=10000)
+                    expect(second_bubble).to_have_attribute('data-cli-queued','1')
+                    checked=context.request.post(base+'/api/session/conversation/check',data={'uid':uid,'name':receipt['name'],'_build':build}).json()
+                    held=[row for row in checked['cli']['queued'] if row['request_id']==second['request_id']]
+                    assert held and isinstance(held[0]['cli_queued_at'],(int,float)) and held[0]['state']=='queued',checked['cli']
+                    (root/'claude-queue').unlink()
                     assert first['request_id']!=second['request_id']
                     replay=context.request.post(base+'/api/session/conversation/send',data=first)
                     assert replay.status==200,replay.text()

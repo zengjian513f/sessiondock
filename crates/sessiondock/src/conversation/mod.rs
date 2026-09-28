@@ -167,10 +167,11 @@ impl Conversations {
         }
         Ok(state)
     }
-    /// Retires queued sends whose native record appeared: same digest and a
-    /// record time no earlier than the send (records without a time count).
-    /// Returns whether the queue changed.
-    pub fn retire_echoes(&self, uid: &str, echoes: &[(String, Option<f64>)]) -> bool {
+    /// Retires queued sends whose native user/command record appeared: same
+    /// digest and a record time no earlier than the send (records without a
+    /// time count). A matching CLI enqueue record only marks the send as held
+    /// in the CLI's own queue. Returns whether the queue changed.
+    pub fn retire_echoes(&self, uid: &str, echoes: &[cli_state::Echo]) -> bool {
         let Some(key) = self.cli.key_of(uid) else {
             return false;
         };
@@ -180,21 +181,40 @@ impl Conversations {
         }
         let mut used = vec![false; echoes.len()];
         let mut retired = Vec::new();
+        let mut enqueued = Vec::new();
         for row in &queued {
-            let hit = echoes.iter().enumerate().position(|(index, (hash, ts))| {
-                !used[index]
-                    && *hash == row.echo_hash
-                    && ts.is_none_or(|at| at >= row.sent_at - 5.0)
-            });
-            if let Some(index) = hit {
-                used[index] = true;
+            let mut take = |enqueue: bool| {
+                let hit = echoes.iter().enumerate().position(|(index, echo)| {
+                    !used[index]
+                        && echo.enqueue == enqueue
+                        && echo.hash == row.echo_hash
+                        && echo.ts.is_none_or(|at| at >= row.sent_at - 5.0)
+                });
+                hit.map(|index| {
+                    used[index] = true;
+                    echoes[index].ts
+                })
+            };
+            if take(false).is_some() {
                 retired.push(row.request_id.clone());
+                continue;
+            }
+            // An already marked send still consumes its enqueue record, so a
+            // replayed record cannot mark a later send with the same text.
+            if let Some(at) = take(true)
+                && row.cli_queued_at.is_none()
+            {
+                enqueued.push((
+                    row.request_id.clone(),
+                    at.unwrap_or_else(cli_state::unix_now),
+                ));
             }
         }
-        if retired.is_empty() {
-            return false;
-        }
-        self.store.retire_queued(&key, &retired).unwrap_or(false)
+        let marked =
+            !enqueued.is_empty() && self.store.mark_cli_queued(&key, &enqueued).unwrap_or(false);
+        let removed =
+            !retired.is_empty() && self.store.retire_queued(&key, &retired).unwrap_or(false);
+        marked || removed
     }
     /// Drops one queued send the user dismissed (typically a lost one).
     pub async fn dismiss_queued(&self, uid: &str, request_id: &str) -> Result<bool, Failure> {
@@ -781,6 +801,7 @@ impl Conversations {
                 echo_hash: cli_state::echo_hash(&prompt),
                 sent_at: cli_state::unix_now(),
                 state: "queued".into(),
+                cli_queued_at: None,
             },
         )?;
         let mut response = result;
