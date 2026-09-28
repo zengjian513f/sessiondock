@@ -285,7 +285,7 @@ def check_report_layout(page):
         send_align: Math.abs(send.right - effort.right), inside: effort.right <= row.right + 1,
       };
     }""")
-    assert wide["titles"] == ["Claude", "Codex", "Grok"], wide
+    assert wide["titles"] == ["Claude", "Codex", "Grok", "OpenCode"], wide
     assert len(set(wide["tops"])) == 1 and wide["order"] and wide["joined"], wide
     assert wide["select_width"] <= 140 and wide["inside"] and wide["send_align"] <= 1, wide
     # The model list is the chosen machine's; the choice goes out with the report.

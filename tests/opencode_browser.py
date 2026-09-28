@@ -18,6 +18,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 from urllib.parse import urlsplit
 
 from playwright.sync_api import expect, sync_playwright
@@ -153,9 +154,12 @@ def main():
         legacy_pending_record(root / 'ledger', root / 'work')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, state_dir=root / 'state',
-                trash_dir=root / 'trash', file_roots=(root / 'work',), file_write_roots=(root / 'work',),
+                trash_dir=root / 'trash', audit_dir=root / 'audit',
+                file_roots=(root / 'work',), file_write_roots=(root / 'work',),
                 extra_env={'SESSIONDOCK_OPENCODE_DB': str(db),
-                           'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror')}) as (base, _), sync_playwright() as pw:
+                           'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror'),
+                           'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
+                           'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')}) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -305,7 +309,7 @@ def main():
                 page.locator('.dhead-actions [data-report-bug]').click()
                 expect(page.locator('#bug-report-dialog')).to_be_visible()
                 assert page.evaluate("[...document.querySelectorAll('#bug-report-source input')].map(i => i.value)") \
-                    == ['claude', 'codex', 'grok']
+                    == ['claude', 'codex', 'grok', 'opencode']
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 
@@ -346,13 +350,35 @@ def main():
                     assert connection.execute('SELECT count(*) FROM session_v2 WHERE id = ?', (sid,)).fetchone()[0] == 0
                     assert connection.execute('SELECT count(*) FROM session_message WHERE session_id = ?', (sid,)).fetchone()[0] == 0
                 assert not (root / 'mirror' / 'fakeproject' / sid).exists()
+
+                # ---- A report handled by OpenCode: the worker session is pre-created
+                #      in the repository and receives the report prompt through SEND.
+                page.locator('#report-bug').click()
+                expect(page.locator('#bug-report-dialog')).to_be_visible()
+                page.locator('#bug-report-form label:has(input[value="opencode"])').click()
+                page.fill('#bug-report-description', 'OpenCode 处理这份报告')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report', timeout=60000) as reported:
+                    page.locator('#bug-report-go').click()
+                assert reported.value.status == 202, reported.value.text()
+                report = reported.value.json()
+                worker = report['worker']
+                assert worker['source'] == 'opencode' and worker['sid'] and worker['cwd'] == str(root / 'work'), worker
+                deadline = time.monotonic() + 45
+                while True:
+                    with sqlite3.connect(db) as connection:
+                        texts = [json.loads(data).get('text', '') for (data,) in connection.execute(
+                            "SELECT data FROM session_message WHERE session_id = ? AND type = 'user'", (worker['sid'],))]
+                    if any(report['report_id'] in text for text in texts) or time.monotonic() > deadline:
+                        break
+                    time.sleep(0.3)
+                assert any(report['report_id'] in text for text in texts), texts
                 assert not errors, errors
             finally:
                 context.close()
                 browser.close()
     print('PASS opencode browser: mirrored seed (image, tools, failures) listed/rendered/searched, five-source picker, '
           'pre-created launch lands on the native row, SEND with native echo, input checks, stop+resume, '
-          'icons, report dialog, irreversible delete')
+          'icons, report dialog, irreversible delete, OpenCode report worker receives the prompt')
 
 
 if __name__ == '__main__':

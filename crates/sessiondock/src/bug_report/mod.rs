@@ -96,6 +96,7 @@ pub fn parse_source(text: &str) -> Option<Source> {
         "claude" => Some(Source::Claude),
         "codex" => Some(Source::Codex),
         "grok" => Some(Source::Grok),
+        "opencode" => Some(Source::Opencode),
         _ => None,
     }
 }
