@@ -305,6 +305,59 @@ pub struct Launcher {
     adapters: BTreeMap<String, Adapter>,
     profiles: BTreeMap<String, CliProfile>,
     entries: Vec<Entry>,
+    /// Profile IDs whose CLI the last [`Launcher::probe_clis`] found not
+    /// installed (the wrapper could not find the command). Empty until the
+    /// first probe, so nothing is hidden on an unanswered probe.
+    missing: std::sync::Mutex<BTreeSet<String>>,
+}
+
+/// Upper bound of one `--version` probe (a wrapper may first load a shell rc).
+const CLI_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Whether the profile's command is positively absent: the executable cannot
+/// be started, or it ends with a shell's "command not found" / "not
+/// executable" status (127/126, e.g. a `with-zshrc grok` wrapper on a machine
+/// without Grok). Any other outcome, including a timeout or a CLI that
+/// rejects `--version`, counts as installed.
+fn cli_absent(profile: &CliProfile) -> bool {
+    let Ok(executable) = current_executable(&profile.executable) else {
+        return true;
+    };
+    let mut command = Command::new(executable);
+    command.args(&profile.args).arg("--version");
+    for name in &profile.env_remove {
+        command.env_remove(name);
+    }
+    command.envs(&profile.env);
+    for name in DENIED_ENV {
+        command.env_remove(name);
+    }
+    if let Some(home) = profile.env.get("HOME").map(PathBuf::from).filter(|home| home.is_dir()) {
+        command.current_dir(home);
+    }
+    let mut child = match command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
+    };
+    let deadline = std::time::Instant::now() + CLI_PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return matches!(status.code(), Some(126 | 127)),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(50))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 impl Launcher {
@@ -334,7 +387,37 @@ impl Launcher {
             adapters,
             profiles,
             entries,
+            missing: std::sync::Mutex::new(BTreeSet::new()),
         })
+    }
+
+    /// Check every agent CLI profile once, in parallel, and remember which
+    /// commands are not installed. Blocking; run it off the reactor.
+    pub fn probe_clis(&self) {
+        let absent: BTreeSet<String> = std::thread::scope(|scope| {
+            let probes: Vec<_> = self
+                .profiles
+                .values()
+                .filter(|profile| profile.source != Source::Shell)
+                .map(|profile| (profile.id.clone(), scope.spawn(move || cli_absent(profile))))
+                .collect();
+            probes
+                .into_iter()
+                .filter_map(|(id, probe)| probe.join().unwrap_or(false).then_some(id))
+                .collect()
+        });
+        if let Ok(mut missing) = self.missing.lock() {
+            *missing = absent;
+        }
+    }
+    /// Whether the source's configured CLI was found not installed.
+    pub fn cli_missing(&self, source: Source) -> bool {
+        let Ok(missing) = self.missing.lock() else {
+            return false;
+        };
+        self.profiles
+            .values()
+            .any(|profile| profile.source == source && missing.contains(&profile.id))
     }
 
     pub fn host_dir(&self) -> &Path {
