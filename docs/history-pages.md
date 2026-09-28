@@ -156,7 +156,15 @@ keep that turn id without the flag. Its `aborted` status follows the input
 directly when nothing native sits below it, otherwise it is the interrupt
 record's own `aborted`, in file order after the branch. Inputs at or
 before a confirmed rewind boundary (`abandoned_after`) stay hidden. A native
-interrupt record never starts a turn. The batch-35 lineage notes (missing
+interrupt record never starts a turn. **Queued prompts** (Claude 2.1.283,
+`promptSource: "queued"`): a prompt submitted while a tool runs is written
+beside the tool result its submit rejected, yet the records that answer it
+carry its `promptId`. An off-chain input whose parent is on the chain and
+whose `promptId` an on-chain input carries is part of the timeline — a normal
+input with `working`, no `interrupted` flag — and the interrupt record below
+that rejected result emits no `aborted`, since the prompt's turn goes on. This
+is an intentional extension beyond the frozen Python oracle, whose lineage
+reads no `promptId` and treats such an input as an unanswered sibling. The batch-35 lineage notes (missing
 ancestor, cycle, missing declared leaf) are unchanged and non-fatal.
 
 **Codex rollout rotation.** Codex 0.156.1 can keep a native thread ID while

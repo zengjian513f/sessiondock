@@ -327,6 +327,7 @@ fn parse_context<'a>(
             claude::Branch {
                 abandoned,
                 deferred_abort: id.is_some_and(|id| lineage.deferred_abort.contains(id)),
+                continued: id.is_some_and(|id| lineage.continued.contains(id)),
             }
         } else {
             claude::Branch::default()
