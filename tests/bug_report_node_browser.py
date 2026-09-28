@@ -7,7 +7,9 @@ session's); a worker elsewhere first asks the problem's machine for `/api/bug-re
 and hands the answer to the worker's machine as `captured` (a failed capture becomes
 `captured: {error}`); the chosen machine's missing CLIs are greyed out. Wide layout keeps
 one row of a narrow machine picker, joined agent icons and the machine's own model and effort
-pickers, whose choice is sent with the report; 390px puts two attachments on one row.
+pickers, whose choice is sent with the report; the model list floats above the dialog without
+resizing or scrolling the form; Enter submits and Shift+Enter adds a line like the composer (a
+phone's Enter is a newline); 390px puts two attachments on one row.
 `/api/bug-report` and `/api/bug-report/capture` are answered at the browser boundary so the
 bodies the page builds can be asserted. No CLI, no session root.
 """
@@ -432,6 +434,63 @@ def check_draft_follows_machine(page, boundary):
     boundary.calls.clear();boundary.uploads.clear();boundary.discards.clear()
 
 
+def check_model_menu_floats(page):
+    # BUG-20260928-123931-9cc8ae: the model menu opened inside the report form's
+    # scroll box, which is shorter than the menu, so the form grew a scroll area
+    # and the menu was cut off. The menu now floats above the dialog.
+    for width, height, scale in ((1280, 900, 1), (390, 844, 1), (1280, 700, 0.8)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.evaluate(f"document.documentElement.style.setProperty('--compact-scale', '{scale}')")
+        page.evaluate("openBugReportDialog()")
+        page.wait_for_selector("#bug-report-dialog[open]")
+        page.wait_for_function("!document.querySelector('#bug-report-model').disabled")
+        measure = """() => {
+          const form = document.querySelector('#bug-report-form'), r = form.getBoundingClientRect();
+          return {rect: [r.left, r.top, r.width, r.height].map(Math.round),
+                  scroll: form.scrollHeight - form.clientHeight, top: form.scrollTop};
+        }"""
+        before = page.evaluate(measure)
+        page.locator("#bug-report-model").click()
+        expect(page.locator("#bug-report-model-menu")).to_be_visible()
+        after = page.evaluate(measure)
+        assert after == before, (width, before, after)
+        menu = page.evaluate("""() => {
+          const menu = document.querySelector('#bug-report-model-menu').getBoundingClientRect();
+          const pick = document.querySelector('#bug-report-model').getBoundingClientRect();
+          const choice = document.querySelector('#bug-report-form .new-choice').getBoundingClientRect();
+          const last = [...document.querySelectorAll('#bug-report-model-options [role=option]')].pop();
+          const at = last.getBoundingClientRect();
+          const hit = document.elementFromPoint(at.left + at.width / 2, at.top + at.height / 2);
+          return {below: menu.top >= pick.bottom - 1, left: Math.abs(menu.left - choice.left),
+                  width: Math.abs(menu.width - choice.width), inside: menu.bottom <= innerHeight && menu.right <= innerWidth,
+                  hit: last.contains(hit)};
+        }""")
+        assert menu["below"] and menu["left"] <= 1 and menu["width"] <= 1, (width, menu)
+        assert menu["inside"] and menu["hit"], (width, menu)
+        page.keyboard.press("Escape")
+        expect(page.locator("#bug-report-model-menu")).to_be_hidden()
+        expect(page.locator("#bug-report-dialog")).to_be_visible()
+        page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    page.evaluate("document.documentElement.style.removeProperty('--compact-scale')")
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+
+def check_enter_keys(page):
+    # Enter and Shift+Enter match the composer: on a phone Enter is a newline too.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.evaluate("openBugReportDialog()")
+    page.wait_for_selector("#bug-report-dialog[open]")
+    textarea = page.locator("#bug-report-description")
+    textarea.fill("手机上")
+    textarea.press("Enter")
+    assert textarea.input_value() == "手机上\n", textarea.input_value()
+    expect(page.locator("#bug-report-dialog")).to_be_visible()
+    textarea.fill("")
+    page.evaluate("document.querySelector('#bug-report-dialog').close()")
+    wait_drafts(page)
+    page.set_viewport_size({"width": 1280, "height": 900})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--binary", default=str(REPO / "target/release/sessiondock"))
@@ -466,6 +525,8 @@ def main():
                     check_report_drag_selection(page)
                     check_report_scroll(page)
                     check_report_layout(page)
+                    check_model_menu_floats(page)
+                    check_enter_keys(page)
                     check_send_busy_width(page, boundary)
 
                     # 1. No session selected, all machines ticked: picker lists all three,
@@ -481,8 +542,13 @@ def main():
                         page.locator("#bug-report-dialog .report-form").screenshot(path=args.screenshot)
                     # Pick NodeB: no session → origin is the worker machine, single request.
                     page.select_option("#bug-report-node", NID["b"])
+                    # Like the composer: Shift+Enter is a newline, Enter submits.
                     page.fill("#bug-report-description", "列表页卡住")
-                    page.locator("#bug-report-go").click()
+                    page.locator("#bug-report-description").press("Shift+Enter")
+                    page.locator("#bug-report-description").press_sequentially("第二行")
+                    expect(page.locator("#bug-report-dialog")).to_be_visible()
+                    assert page.locator("#bug-report-description").input_value() == "列表页卡住\n第二行"
+                    page.locator("#bug-report-description").press("Enter")
                     page.wait_for_function("!document.querySelector('#bug-report-dialog').open")
                     paths = [p for p, _ in boundary.calls]
                     assert paths == ["bug-report"], paths

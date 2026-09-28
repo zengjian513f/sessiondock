@@ -1109,6 +1109,13 @@ $('#bug-report-description').addEventListener('input', event => {
   persistComposerDraft(BUG_REPORT_DRAFT_UID);
   autoGrow(event.target);
 });
+// 与 composer 一致：Enter 提交、Shift+Enter 换行；手机上 Enter 始终换行，只用按钮提交。
+$('#bug-report-description').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !MOBILE.matches) {
+    e.preventDefault();
+    $('#bug-report-form').requestSubmit();
+  }
+});
 window.addEventListener('resize', () => {
   if ($('#bug-report-dialog').open) autoGrow($('#bug-report-description'));
 });
@@ -1660,6 +1667,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     ...(picker.effort ? {effort: picker.effort} : {})});
   picker.close = (focus = false) => {
     if (menu.hidden) return;
+    if (menu.matches(':popover-open')) menu.hidePopover();
     menu.hidden = true;
     button.setAttribute('aria-expanded', 'false');
     if (focus) button.focus();
@@ -1715,10 +1723,28 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     search.hidden = picker.catalog.models.length <= MODEL_SEARCH_MIN;
     search.value = '';
     menu.hidden = false;
+    menu.showPopover();
     button.setAttribute('aria-expanded', 'true');
     render();
+    place();
     (search.hidden ? box : search).focus();
   };
+  // 浮层与模型+强度这一组等宽，下方放不下时翻到上方。getBoundingClientRect 是缩放后的
+  // 像素，写回 style 前除以界面缩放。
+  const place = () => {
+    const zoom = menu.currentCSSZoom || 1, gap = 4, edge = 8;
+    const group = button.closest('.new-choice').getBoundingClientRect();
+    const pick = button.getBoundingClientRect();
+    const below = innerHeight - pick.bottom - gap - edge, above = pick.top - gap - edge;
+    const up = below < 160 && above > below;
+    menu.style.left = `${group.left / zoom}px`;
+    menu.style.width = `${group.width / zoom}px`;
+    menu.style.maxHeight = `${Math.max(0, up ? above : below) / zoom}px`;
+    const top = up ? pick.top - gap - menu.getBoundingClientRect().height : pick.bottom + gap;
+    menu.style.top = `${top / zoom}px`;
+  };
+  addEventListener('resize', () => { if (!menu.hidden) place(); });
+  addEventListener('scroll', e => { if (!menu.hidden && !menu.contains(e.target)) place(); }, true);
   const choose = index => {
     const model = picker.rows[index];
     if (!model) return;
@@ -4924,6 +4950,9 @@ function syncComposerMode() {
   ta.placeholder = MOBILE.matches
     ? '输入内容'
     : '输入内容，Enter 发送，Shift+Enter 换行';
+  $('#bug-report-description').placeholder = MOBILE.matches
+    ? '描述遇到的问题'
+    : '描述遇到的问题，Enter 发送，Shift+Enter 换行';
   autoGrow(ta);
 }
 
