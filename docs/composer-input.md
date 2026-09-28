@@ -23,7 +23,7 @@
 - 其余状态：HTTP 409，`ok` 为 false，并带父合同已有的顶层 `code`/`error` 以及 `draft_revision`。
 - 顶层码与 `input.code` 一致：`cli_starting`（空屏）、`cli_catching_up`（捕获滞后）、`cli_pasting`（粘贴中）、`cli_question`（已知菜单）、`cli_not_ready`（未知画面）。身份或所有权等错误仍返回原有错误响应，不伪造画面分类。
 
-SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 ready；真正执行 SEND 时每个检查点最多等待 3 秒，每 100ms 再检。Claude/Codex 粘贴后等待编辑区文字变化，且新文字包含消息末尾或 CLI 的多行粘贴折叠占位符；该画面连续 200ms 未再变化、没有粘贴提示或画面滞后时立即发送 Enter。与 Python 一致，这一等待只是尽力而为：3 秒内仍未确认（CLI 重绘慢）也照常发送 Enter，只有期间出现的选择菜单会否决 Enter。粘贴已写入却拒发 Enter 会把消息留在 CLI 编辑区，且同一提交 ID 的重试都被拒绝（BUG-20260927-112827-5aa96e）。Grok 尚无可用的编辑区正文提取，仍保留 600ms 最短间隔和画面就绪再检。
+SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 ready；真正执行 SEND 时每个检查点最多等待 3 秒，每 100ms 再检。Claude/Codex 粘贴后等待编辑区文字变化，且新文字包含消息末尾或 CLI 的多行粘贴折叠占位符；该画面连续 200ms 未再变化、没有粘贴提示或画面滞后时立即发送 Enter。与 Python 一致，这一等待只是尽力而为：3 秒内仍未确认（CLI 重绘慢）也照常发送 Enter，只有期间出现的选择菜单会否决 Enter。粘贴已写入却拒发 Enter 会把消息留在 CLI 编辑区，且同一提交 ID 的重试都被拒绝（BUG-20260927-112827-5aa96e）。Grok 和 OpenCode 尚无可用的编辑区正文提取，仍保留 600ms 最短间隔和画面就绪再检。OpenCode 的原生记录尚未读取，SEND 结果的 `echo_hash` 为 `null`，页面不等待对话回显。
 
 ## UI 与否决边界
 
@@ -41,7 +41,7 @@ SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 re
 
 ## 识别摘要
 
-Claude/Codex 按父合同复用各自 composer 识别。Grok 匹配框式编辑区结构、框内光标、以及非空页脚标签；不依赖特定模型名子串。CLI 布局变化导致无法识别时，状态为 `unknown`，须用 PTY。
+Claude/Codex 按父合同复用各自 composer 识别。Grok 匹配框式编辑区结构、框内光标、以及非空页脚标签；不依赖特定模型名子串。OpenCode（1.18.32 布局）匹配只有左边框 `┃` 的连续行块、其下 `╹▀` 底边、块内最后一行的「agent · 模型」标签，且光标在标签行之上的块内；命令面板和对话框会把光标移出，补全弹层左右都有边框，均不算编辑区。CLI 布局变化导致无法识别时，状态为 `unknown`，须用 PTY。
 
 Codex 多行编辑区可以持续隐藏页脚，光标停在下一空行；不能据此判断仍在粘贴，也不等待状态栏恢复。SEND 仍须确认消息末尾或折叠占位符已经出现，并连续稳定 200ms；编辑区中的空段落不会截断识别。当前状态栏的 `tab to queue message … 100% context left` 与旧版 `Context … used / Ready` 都作为编辑区的边界，而非消息正文。
 

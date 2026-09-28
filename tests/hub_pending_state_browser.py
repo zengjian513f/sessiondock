@@ -93,6 +93,47 @@ def scenario(browser, hub, node, other):
     context.close()
 
 
+def node_source_picker(browser, hub, node, other):
+    """The picker follows the chosen machine: OpenCode only where configured,
+    and the machine select plus five sources stay inside the dialog."""
+    node.set(term_sources={"claude": True, "codex": True, "grok": True, "shell": True})
+    other.set(term_sources={"claude": True, "codex": True, "grok": True, "opencode": True, "shell": True})
+    context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+    page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
+    page.locator("#new-session").click()
+    opencode = page.locator('input[name="new-source"][value="opencode"]')
+    page.locator("#new-node").select_option(node.nid)
+    expect(opencode).to_be_disabled()
+    page.locator("#new-node").select_option(other.nid)
+    expect(opencode).to_be_enabled()
+    page.locator('#new-session-form label:has(input[value="opencode"])').click()
+    expect(opencode).to_be_checked()
+    for width in (1280, 390):
+        page.set_viewport_size({"width": width, "height": 900})
+        dialog = page.locator("#new-session-dialog").bounding_box()
+        for item in page.locator("#new-session-form .new-row > *:not([hidden]), #new-session-form .new-source label").all():
+            box = item.bounding_box()
+            assert box and box["x"] >= dialog["x"] and box["x"] + box["width"] <= dialog["x"] + dialog["width"] + 0.5, (width, box, dialog)
+        rows = page.evaluate("""() => new Set([...document.querySelectorAll('#new-session-form .new-source label')]
+            .map(l => Math.round(l.getBoundingClientRect().top))).size""")
+        assert rows == 1, (width, rows)
+        # Buttons never overlap, and each keeps a usable tap width.
+        spans = page.evaluate("""() => [...document.querySelectorAll('#new-session-form .new-source label > span')]
+            .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; })""")
+        assert all(b[0] >= a[1] - 0.5 for a, b in zip(spans, spans[1:])), (width, spans)
+        assert all(r - l >= 34 for l, r in spans), (width, spans)
+        if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
+            page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}.png"))
+    assert not errors, errors
+    context.close()
+    node.pop("term_sources")
+    other.pop("term_sources")
+
+
 def node_switch_cwd(browser, hub, node, other):
     """Switching machine keeps a typed directory that also exists on the new one."""
     node.set(dirs=["/shared/proj"])
@@ -146,6 +187,7 @@ def main():
                     if executable:
                         launch["executable_path"] = executable
                     browser = playwright.chromium.launch(**launch)
+                    node_source_picker(browser, hub, *nodes)
                     node_switch_cwd(browser, hub, *nodes)
                     scenario(browser, hub, *nodes)
                     browser.close()
@@ -154,7 +196,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker fits beside the machine select, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":

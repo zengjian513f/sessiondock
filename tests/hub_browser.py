@@ -106,7 +106,7 @@ def check_page(page, nodes, hub):
       renderChips(); renderSide();
     }""")
     page.locator('#chips button[data-source="codex"]').click(button="right")
-    assert page.evaluate("[...S.off].sort()") == ["claude", "grok", "shell"]
+    assert page.evaluate("[...S.off].sort()") == ["claude", "grok", "opencode", "shell"]
     grok = page.locator('#chips button[data-source="grok"]')
     grok.dispatch_event("pointerdown", {"pointerType": "touch", "pointerId": 41,
                                         "button": 0, "clientX": 20, "clientY": 20})
@@ -114,8 +114,8 @@ def check_page(page, nodes, hub):
     grok.dispatch_event("pointerup", {"pointerType": "touch", "pointerId": 41,
                                       "button": 0, "clientX": 20, "clientY": 20})
     grok.dispatch_event("click")
-    assert page.evaluate("[...S.off].sort()") == ["claude", "codex", "shell"]
-    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["claude", "codex", "shell"]
+    assert page.evaluate("[...S.off].sort()") == ["claude", "codex", "opencode", "shell"]
+    assert page.evaluate("JSON.parse(localStorage.getItem('sessiondock.hub./.off')).sort()") == ["claude", "codex", "opencode", "shell"]
     page.evaluate("""() => {
       S.off.clear(); store.set('off', []); loadSessions(true);
     }""")

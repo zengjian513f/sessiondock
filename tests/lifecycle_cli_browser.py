@@ -294,7 +294,7 @@ def main():
                     listed = context.request.get(base + "/api/term/list").json()
                     row = next(row for row in listed["sessions"] if row["uid"] == uid)
                     assert row["name"] == receipt["name"] and row["instance_id"] == receipt["instance_id"] and row["sid"] == receipt["declared_sid"], row
-                    assert listed["resume_sources"] == {"claude": True, "codex": True, "grok": False}, listed
+                    assert listed["resume_sources"] == {"claude": True, "codex": True, "grok": False, "opencode": False}, listed
                     assert listed["backends"][0]["name"] == "ptyhost" and listed["backends"][1]["available"] is False
 
                     # ---- Resume the synthetic Codex session with the existing console button.
