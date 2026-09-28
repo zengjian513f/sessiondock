@@ -804,13 +804,13 @@ async function post(url, body, {timeoutMs = 0} = {}) {
 // ---------------------------------------------------------------- 缺陷报告
 let bugReportToastTimer = 0;
 
-const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok' };
+const BUG_REPORT_SOURCES = { claude: 'Claude', codex: 'Codex', grok: 'Grok', opencode: 'OpenCode' };
 
 function bugReportSource() {
   return $('#bug-report-source input:checked')?.value || 'codex';
 }
 
-// 与新建会话一样，三种 CLI 都可以做处理会话；记住上次的选择，处理机器上
+// 与新建会话一样，四种 AI CLI 都可以做处理会话；记住上次的选择，处理机器上
 // 缺少的命令置灰（中央站下按所选机器的能力表，单机按本机）。
 function syncBugReportSources() {
   const remembered = store.get('bugReportSource', 'codex');
