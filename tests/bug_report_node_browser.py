@@ -6,7 +6,8 @@ machine like the new-session dialog and defaults to the problem's machine (the s
 session's); a worker elsewhere first asks the problem's machine for `/api/bug-report/capture`
 and hands the answer to the worker's machine as `captured` (a failed capture becomes
 `captured: {error}`); the chosen machine's missing CLIs are greyed out. Wide layout keeps
-source names and a bounded machine picker; 390px puts two attachments on one row.
+one row of a narrow machine picker, joined agent icons and the machine's own model and effort
+pickers, whose choice is sent with the report; 390px puts two attachments on one row.
 `/api/bug-report` and `/api/bug-report/capture` are answered at the browser boundary so the
 bodies the page builds can be asserted. No CLI, no session root.
 """
@@ -171,11 +172,11 @@ def check_report_scroll(page):
             const add = document.querySelector('#bug-report-add').getBoundingClientRect();
             const send = document.querySelector('#bug-report-go').getBoundingClientRect();
             const items = document.querySelector('#bug-report-items').getBoundingClientRect();
-            const sources = document.querySelector('#bug-report-source').getBoundingClientRect();
+            const row = document.querySelector('.report-row').getBoundingClientRect();
             return Math.abs(add.bottom - input.bottom) < 1
                 && Math.abs(send.bottom - input.bottom) < 1 && items.bottom <= input.top
                 && add.right <= input.left && input.right <= send.left
-                && Math.abs(send.right - sources.right) <= 1;
+                && Math.abs(send.right - row.right) <= 1;
         }""")
         # Grow to the same 180px cap as the session composer, without imposing
         # any input limit. Overflowing text remains editable inside the textarea.
@@ -256,37 +257,47 @@ def wait_drafts(page):
 
 
 def check_report_layout(page):
-    # Wide dialog: source buttons keep their names, and the machine picker
-    # stays on the same row without eating the leftover width.
+    # Wide dialog: one row like the new-session dialog — a narrow machine
+    # picker, the joined agent icons (names on hover), the model and effort
+    # pickers ending flush with the send button.
     page.set_viewport_size({"width": 1280, "height": 900})
     page.evaluate("openBugReportDialog()")
     page.wait_for_selector("#bug-report-dialog[open]")
     page.wait_for_function("!document.querySelector('#bug-report-node-label').hidden")
-    # The picker says what the machine is for: it runs the handling session.
+    # The picker still says what the machine is for, now as its accessible name and tooltip.
     expect(page.locator("#bug-report-node-label > span")).to_have_text("处理节点")
-    expect(page.locator("#bug-report-node-label > span")).to_be_visible()
+    expect(page.locator("#bug-report-node-label > span")).to_have_class("visually-hidden")
+    expect(page.locator("#bug-report-model-label")).not_to_have_text("读取模型…")
     wide = page.evaluate("""() => {
-      const labels = [...document.querySelectorAll('#bug-report-source .src-label')];
-      const hidden = labels.filter(el => !el.offsetWidth || getComputedStyle(el).display === 'none');
-      const row = document.querySelector('.report-row').getBoundingClientRect();
-      const select = document.querySelector('#bug-report-node-label').getBoundingClientRect();
-      const sources = document.querySelector('#bug-report-source').getBoundingClientRect();
-      const send = document.querySelector('#bug-report-go').getBoundingClientRect();
+      const box = s => document.querySelector(s).getBoundingClientRect();
+      const row = box('.report-row'), select = box('#bug-report-node-label');
+      const sources = box('#bug-report-source'), model = box('#bug-report-model');
+      const effort = box('.report-row .new-effort');
+      const send = box('#bug-report-go');
+      const spans = [...document.querySelectorAll('#bug-report-source label > span')]
+        .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; });
       return {
-        names: labels.map(el => el.textContent),
-        hidden: hidden.length,
-        select_wider: select.width > sources.width,
-        one_row: Math.abs(select.top - sources.top) <= 2
-          && select.right <= sources.left + 1
-          && select.bottom <= row.bottom + 1,
-        select_frac: select.width / row.width,
-        send_align: Math.abs(send.right - sources.right),
+        titles: [...document.querySelectorAll('#bug-report-source label')].map(l => l.title),
+        tops: [select.top, sources.top, model.top, effort.top].map(Math.round),
+        order: select.right <= sources.left + 1 && sources.right <= model.left + 1 && model.right <= effort.left + 1,
+        select_width: select.width,
+        joined: spans.every((s, i) => !i || Math.abs(s[0] - spans[i - 1][1]) <= 0.5),
+        send_align: Math.abs(send.right - effort.right), inside: effort.right <= row.right + 1,
       };
     }""")
-    assert wide["names"] == ["Claude", "Codex", "Grok"], wide
-    assert wide["hidden"] == 0, wide
-    assert wide["one_row"] and not wide["select_wider"] and wide["select_frac"] <= 0.42 + 1e-6, wide
-    assert wide["send_align"] <= 1, wide
+    assert wide["titles"] == ["Claude", "Codex", "Grok"], wide
+    assert len(set(wide["tops"])) == 1 and wide["order"] and wide["joined"], wide
+    assert wide["select_width"] <= 140 and wide["inside"] and wide["send_align"] <= 1, wide
+    # The model list is the chosen machine's; the choice goes out with the report.
+    page.select_option("#bug-report-node", NID["b"])
+    page.locator('#bug-report-form label:has(input[value="codex"])').click()
+    page.locator("#bug-report-model").click()
+    page.locator("#bug-report-model-options [role=option]", has_text="NodeB-codex").click()
+    expect(page.locator("#bug-report-model-label")).to_have_text("NodeB-codex")
+    page.locator("#bug-report-effort").select_option("high")
+    # Back to the default machine; the choice stays remembered for NodeB's Codex.
+    page.select_option("#bug-report-node", NID["a"])
+    expect(page.locator("#bug-report-model-label")).to_have_text("默认模型")
     page.evaluate("document.querySelector('#bug-report-dialog').close()")
 
     # Phone: two attachments share one row instead of stacking at 100% width.
@@ -478,6 +489,8 @@ def main():
                     body = boundary.calls[0][1]
                     assert body["_node"] == NID["b"], body
                     assert body["uid"] == "" and "captured" not in body, body
+                    # The model and effort chosen for NodeB's Codex are remembered and sent.
+                    assert (body["source"], body.get("model"), body.get("effort")) == ("codex", "NodeB-codex", "high"), body
                     assert body["origin"] == {"node_id": NID["b"], "node_name": "NodeB", "uid": ""}, body["origin"]
                     page.wait_for_function("!document.querySelector('#bug-report-toast').classList.contains('hidden')")
                     toast = page.locator("#bug-report-toast").inner_text()
@@ -562,7 +575,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS bug_report_node_browser: server drafts, draft follows the chosen machine, staged on selection, no browser message store, one-click removal with discard, scrollable submit, named sources, two-up attachments, picker and capture")
+    print("PASS bug_report_node_browser: server drafts, draft follows the chosen machine, staged on selection, no browser message store, one-click removal with discard, scrollable submit, one-row joined sources with the machine's model/effort sent, two-up attachments, picker and capture")
 
 
 if __name__ == "__main__":

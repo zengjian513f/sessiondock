@@ -29,8 +29,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 ### `bad_body`
 
 - bad body
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L480, L482 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L182, L195, L242, L352, L432
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L502, L504 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L195, L208, L263, L373, L454
 
 ### `create_cwd_failed`
 
@@ -558,7 +558,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `draft_revision`
 
-- 另一页面已更新报告草稿，未发布附件和创建诊断 — [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L226
+- 另一页面已更新报告草稿，未发布附件和创建诊断 — [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L247
 
 ### `file_ambiguous`
 
@@ -672,7 +672,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 此报告已开始保存，请核对诊断和处理会话；原输入保留，不会重复创建报告
 - 诊断已开始保存，输入保留，不会重复创建
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L216
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L237
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `get` L59 → `GET /api/session/conversation`
 
 ### `run_state_unknown`
@@ -857,8 +857,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 报告捕获任务异常退出
 - 审计查询任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L525 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L358
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L547 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L379
 
 ### `file_headers_invalid`
 
@@ -868,7 +868,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 附件写入任务异常退出
 - 文件读取任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L692 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L714 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `work` L94
 
 ### `live_failed`
@@ -936,7 +936,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 服务端会话草稿未配置，无法转交报告
 - 会话保存和发送未配置
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L169
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L182
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `enabled` L27
 
 ### `file_action_not_implemented`
@@ -963,7 +963,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 文件写入服务未启用
 - 文件写入未启用：必须显式配置 SESSIONDOCK_FILE_WRITE_ROOTS（只读目录不会隐式变为可写）
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L636 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L658 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_configured` L458
 
 ### `media_files_disabled`
