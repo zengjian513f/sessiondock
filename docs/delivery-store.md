@@ -1,7 +1,8 @@
 # Delivery persistence
 
 `delivery::store::DeliveryStore` persists the Claude and Codex receipt state
-machines. The executor performs terminal writes and observes native confirmation.
+machines. The retired reliable-send executor performed terminal writes and
+observed native confirmation; the ledger is now a read-only archive.
 A storage acknowledgment records a state transition; it does not confirm that a
 CLI accepted a prompt.
 

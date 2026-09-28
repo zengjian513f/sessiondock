@@ -15,9 +15,7 @@ mod history;
 mod index;
 mod native_input;
 mod native_media;
-mod native_tail;
 pub mod opencode;
-pub use native_tail::{NativeCheckpoint, NativeTail, TailError, TailRecord};
 mod pages;
 mod views;
 pub use pages::PageStore;
@@ -185,37 +183,6 @@ pub struct NativeScope {
     pub uid: String,
     pub session_id: String,
     pub agent_id: Option<String>,
-}
-
-/// Delivery executor evidence: one physical checkpoint of a Claude
-/// main session, in the same terms the message cursor uses. `source_identity`
-/// is the validated view identity, never a display SID or file name.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeFence {
-    pub source_identity: String,
-    pub offset: u64,
-    pub head: String,
-    pub anchor: String,
-}
-
-/// One projected human `user` input committed after a fence, with the exact
-/// physical byte span of its native record and the record's own UUID.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeUserInput {
-    pub uuid: String,
-    pub start: u64,
-    pub end: u64,
-    pub text: String,
-    pub ts: String,
-}
-
-pub struct NativeInputRead {
-    pub scope: NativeScope,
-    pub current: NativeFence,
-    /// False when the supplied fence is no longer a checkpoint of this view
-    /// (rewrite/truncation/identity change); `inputs` is then empty.
-    pub fence_valid: bool,
-    pub inputs: Vec<NativeUserInput>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -1084,16 +1051,6 @@ impl SessionStore {
     /// used by history reads. Must run on a bounded blocking executor.
     pub fn native_scope(&self, uid: &str, agent: &str) -> Result<NativeScope, SessionError> {
         self.snapshot(uid, agent)?.native_scope()
-    }
-
-    /// Delivery executor read; see `ViewSnapshot::claude_native_inputs`.
-    /// Run on the bounded blocking reader executor.
-    pub fn claude_native_inputs(
-        &self,
-        uid: &str,
-        from: Option<&NativeFence>,
-    ) -> Result<NativeInputRead, SessionError> {
-        self.snapshot(uid, "")?.claude_native_inputs(from)
     }
 
     /// Native ids and agent ownership from one fresh index snapshot (head/tail

@@ -330,7 +330,7 @@ capabilities.js 读取前把路径补进 `storage_namespace`（按 `location.pat
 `name`、`parent_uid`、`_node`、`terminal_name`（`/api/bug-report` 与 `/api/bug-report/capture`）、`id`、`media[].src`）收集机器 id，去限定成本地引用；多于一个 →
 400 `操作必须明确指定同一台机器`，附件来自另一台 → 400 `附件来自另一台机器`。机器未注册 → 404；
 离线且 `recheck` 仍失败 → 503 `{error,node_offline,node_id,offline_since}`；
-`send/outbox/retry/term/send/term/create` 校 `body._build == 前端 build`，否则 409
+`conversation/send|check|restart`、`term/send`、`term/create` 校 `body._build == 前端 build`，否则 409
 `{reload:true,build}`。`proxy` 带节点头转发，透传 `Content-Type,X-SessionDock-Page,X-SessionDock-Trace,
 X-SessionDock-Build,Range,User-Agent`（后者只供终端 ownership 的设备标签）、加 `X-Real-IP`
 （`_display_ip`：`X-Real-IP`→首个 `X-Forwarded-For`→TCP 对端）：JSON 经 `public_payload` 改写并带 `X-SessionDock-Decoded-Length`；`text/event-stream` 按

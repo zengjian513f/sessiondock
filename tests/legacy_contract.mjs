@@ -869,35 +869,6 @@ test('absent metadata still runs the original audit enqueue and live request', a
   assert.deepEqual(urls, ['api/live']);
 });
 
-test('unsupported outbox does not migrate, expire, reconcile or clear saved pending input', async () => {
-  const pending = [['codex:fixture', [{id: 'receipt', text: 'keep', state: 'sending', server: true}]]];
-  const fail = () => assert.fail('Pending data must remain untouched');
-  const context = contextWithCapabilities(disabled, {
-    store: {get: () => pending, set: fail},
-    S: {queued: new Map(pending)}, fetch: fail,
-  });
-  assert.equal(loadFunction(context, 'loadQueuedMessages')(), pending);
-  for (const name of ['syncServerOutbox', 'reconcileQueuedMessages',
-    'retireSupersededClaudeMessages', 'expireQueuedMessages', 'reconcilePendingSnapshot']) {
-    assert.equal(loadFunction(context, name)('codex:fixture', []), false, name);
-  }
-  assert.equal(await loadFunction(context, 'reconcilePendingUid')('codex:fixture'), false);
-  assert.equal(await loadFunction(context, 'recoverPendingWindow')('codex:fixture', new Set(['receipt'])), false);
-  assert.equal((await loadFunction(context, 'reconcileAllPendingMessages')()).length, 0);
-  assert.deepEqual([...context.S.queued], pending);
-});
-
-test('unsupported outbox-only SSE packet cannot cause recovery or erase pending input', async () => {
-  const context = contextWithCapabilities(disabled, {
-    cache: new Map([['codex:fixture', {end: 100}]]), viewKey: value => value,
-    migrationReadFailures: new Map(),
-    scheduleDiffRecovery: () => assert.fail('No outbox recovery when unavailable'),
-  });
-  loadFunction(context, 'migrationReadPaused');
-  const result = await loadFunction(context, 'applyDiff')('codex:fixture', {outbox_only: true, outbox: []});
-  assert.equal(result, 0);
-});
-
 test('unsupported search reports a clear error without a backend request', async () => {
   const context = contextWithCapabilities(disabled, {fetch: () => assert.fail('No unsupported search')});
   const result = await loadFunction(context, 'fetchSearch')(new URLSearchParams({q: 'hello'}));
@@ -1066,7 +1037,7 @@ test('transient failures are classified like Python retries; only definitive one
 
 test('a transient sync failure keeps the view live and the stream open', async () => {
   const es = {close: () => assert.fail('transient failure must not close the stream')};
-  const context = migrationContext({_es: es, _esUid: 'codex:fixture', expireQueuedMessages: () => {},
+  const context = migrationContext({_es: es, _esUid: 'codex:fixture',
     fetchMessages: async () => {throw Object.assign(new Error('只读工作池繁忙'), {status: 503, code: 'reader_busy'});}});
   assert.equal(await loadFunction(context, 'syncSession')('codex:fixture', null), 0);
   assert.equal(context.migrationReadPaused('codex:fixture', null), false);
@@ -1170,7 +1141,7 @@ test('Rust stream failure preserves snapshots and pauses only its own view', () 
 
 test('background sync, tick and watch do no work for a paused view', async () => {
   const fail = () => assert.fail('Paused view must not create more requests');
-  const context = migrationContext({fetchMessages: fail, EventSource: fail, expireQueuedMessages: () => {}});
+  const context = migrationContext({fetchMessages: fail, EventSource: fail});
   context.reportMigrationReadFailure('codex:fixture', null, new Error('paused'));
   assert.equal(await loadFunction(context, 'syncSession')('codex:fixture', null), 0);
   loadFunction(context, 'tickSync')();

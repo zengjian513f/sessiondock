@@ -1,31 +1,23 @@
 # Delivery state and behavior
 
-The Rust backend follows the send queue and native confirmation
-behavior. [delivery-engine.md](delivery-engine.md) describes orchestration and
-[delivery-store.md](delivery-store.md) describes persistence.
+SEND is the conversation service's ([conversation.md](conversation.md)): it
+writes to the CLI and waits for the native echo. The delivery ledger is a
+read-only archive of receipts the retired reliable-send executor recorded
+before that service existed; `GET /api/session/outbox` (see
+[delivery-http.md](delivery-http.md)) and bug reports still read it, nothing
+writes it. [delivery-engine.md](delivery-engine.md) describes the ledger's
+domain and [delivery-store.md](delivery-store.md) its persistence.
 
 ## Baseline
 
-Submission and confirmation match the frozen queue, protocol, audit and
+Submission and confirmation matched the frozen queue, protocol, audit and
 native bridge code.
 
 ## Interface and state transitions
 
 The Codex and Claude machines retain request identity and state. The engine
-persists every transition before acting on the terminal. Native evidence, not a
-transport return, establishes queueing, acceptance and completion.
-
-## Draft and injection
-
-The executor checks the composer and uses the existing terminal lease. It
-reports draft conflicts and transport errors. Host input keeps its 1 MiB
-payload and 4 MiB frame limits.
-
-## Native acknowledgment and fixed confirmation fences
-
-Confirmation reads the selected native session after the send boundary and
-uses the text and timing rules. Accepted text may lack a turn ID.
-Completion remains separate from acceptance.
+persisted every transition before acting on the terminal. Native evidence, not
+a transport return, established queueing, acceptance and completion.
 
 ## Persistence, ordering, privacy and bounded resources
 

@@ -5,11 +5,9 @@
 //! particular, `Persisted` means a durable commit, not a successful write call.
 
 pub mod claude;
-pub mod claude_adapter;
 pub mod codex;
-pub mod codex_adapter;
 pub mod driver;
 pub mod engine;
-pub mod executor;
 pub mod service;
 pub mod store;
+pub mod target;

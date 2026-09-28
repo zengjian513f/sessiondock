@@ -108,9 +108,6 @@ in grid and xterm, stable history position, subsequent live input, no HTTP scrol
 `python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
 claim/input after exit, composer hidden, fixture bytes unchanged);
-`python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease); `python3 tests/grok_raw_send_browser.py`
-(Grok composer text from a 390 px page without a console: paste + Enter with
-an empty token and the pane identity while another page holds the console, no claim, no reliable-send call, the
-shell's reply visible once the console opens).
+`python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease).
 Out of scope: reliable send, Escape's activity side effects, `text`+`enter`
 submit semantics, tmux copy-mode.

@@ -9,19 +9,11 @@ Configuration determines whether the delivery and terminal services are enabled.
 ignored. A valid session with no visible receipts returns an empty outbox with
 its current version; missing sessions and actual service errors remain errors.
 
-`POST /api/session/send` submits prompt text and opaque media metadata under a
-request ID. The executor uses the session's terminal association and persists
-its receipt, writes input, then checks the native queue or transcript using the
-provider's confirmation rules. Retrying an existing ID returns its receipt;
-changing that ID's payload is a conflict. Uploaded attachment paths are already
-part of the text.
-
-Discard, retry and other supported mutations are described in
-[delivery-executor.md](delivery-executor.md) and
-[delivery-codex-executor.md](delivery-codex-executor.md). The terminal protocol
-retains its actual input and framing limits. Ordinary request admission queues
-behind the service worker. Growing outboxes are returned without a separate
-response-size quota.
+The reliable-send routes (`POST /api/session/send`, `draft-status`,
+`outbox/retry`, `outbox/discard`) are retired together with their executor;
+SEND is `POST /api/session/conversation/send` ([conversation.md](conversation.md)).
+Ordinary request admission queues behind the service worker. Growing outboxes
+are returned without a separate response-size quota.
 
 Responses are JSON with `Cache-Control: no-store`. Authentication, same-origin
 checks and native scope remain in their respective transport layers. Storage

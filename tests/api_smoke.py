@@ -204,12 +204,6 @@ def run(base, opener):
     error_json(route, payload, raw)
     passed("/api/session/outbox")
 
-    # Send is a POST route; unconfigured it is 501, and a GET is 405.
-    route = "/api/session/send"
-    _, payload, raw = expect(opener, base, route, 501, method="POST", data=b"{}")
-    error_json(route, payload, raw)
-    passed(route)
-
     route = "/api/__smoke_unknown__"
     _, payload, raw = expect(opener, base, route, 404)
     error_json(route, payload, raw)

@@ -1,7 +1,7 @@
 //! Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND.
 use crate::{
     conversation::{Conversations, SendInput, page_lease, store::Upload},
-    delivery::executor::Failure,
+    delivery::target::Failure,
     error::ApiError,
     state::AppState,
 };

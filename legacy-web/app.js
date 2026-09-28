@@ -17,27 +17,6 @@ const store = {
   set: (k, v) => localStorage.setItem(STORAGE_PREFIX + k, JSON.stringify(v)),
 };
 
-// 存储结构的版本只由公共层调度；每种 CLI 自己决定怎样迁移旧队列。
-const QUEUED_MESSAGES_VERSION = 5;
-function loadQueuedMessages() {
-  if (SessionDockCapabilities.config.conversation_send === true) return [];
-  const saved = store.get('queuedMessages', []);
-  const valid = Array.isArray(saved) ? saved : [];
-  if (!SessionDockCapabilities.allows('outbox')) return valid;
-  const fromVersion = +store.get('queuedMessagesVersion', 1) || 1;
-  if (fromVersion !== QUEUED_MESSAGES_VERSION) {
-    const migrated = valid.flatMap(([uid, items]) => {
-      const kept = sessiondockCli(uid)?.migrateQueuedMessages(
-        items, fromVersion, QUEUED_MESSAGES_VERSION) || [];
-      return kept.length ? [[uid, kept]] : [];
-    });
-    store.set('queuedMessages', migrated);
-    store.set('queuedMessagesVersion', QUEUED_MESSAGES_VERSION);
-    return migrated;
-  }
-  return valid;
-}
-
 const FONT_CHOICES = SessionDockTypography.choices;
 const themeMedia = matchMedia('(prefers-color-scheme: dark)');
 
@@ -209,10 +188,6 @@ const S = {
   compactTurns: store.get('compactTurns', true), // 已完成回合只保留过程合集与最终结论
   unread: new Map(store.get('unread', [])),   // uid → {count, tmux}; 只计代理产生的新内容
   cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
-  queued: new Map(loadQueuedMessages()),       // uid → 尚未写入原生会话记录的已发送消息
-  outboxVersions: new Map(), // uid → 最近接受的服务端发送账本快照版本
-  dismissedOutboxIds: new Map(), // uid → 本页已明确移除的回执，拒收滞留快照
-  retiredOutboxEpochs: new Set(), // 服务重启后拒收仍在网络中滞留的旧进程快照
   starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
   picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
   nestAttach: '',     // 附属点选：等待点击父会话的子会话 uid；不持久化
@@ -491,7 +466,7 @@ window.confirm = message => {
 
 function browserStateSnapshot(reason = '') {
   const box = $('#msgs');
-  const nodes = box ? [...box.querySelectorAll('.msg, #activity, .client-outbox')].slice(-40) : [];
+  const nodes = box ? [...box.querySelectorAll('.msg, #activity')].slice(-40) : [];
   const entry = S.sel ? cache.get(viewKey(S.sel, S.agent)) : null;
   const termState = typeof T === 'undefined' ? null : {
     name: T.name, uid: T.uid, mode: T.mode,
@@ -507,8 +482,7 @@ function browserStateSnapshot(reason = '') {
         visual_width: window.visualViewport?.width,
         visual_height: window.visualViewport?.height},
       cache: entry ? {messages: entry.msgs?.length || 0, end: entry.end,
-        anchor: entry.anchor, activity: entry.activity?.state || '',
-        outbox: queuedMessages(S.sel).map(item => ({id: item.id, state: item.state}))} : null,
+        anchor: entry.anchor, activity: entry.activity?.state || ''} : null,
       dom_messages: nodes.length, terminal: termState,
       header: consoleButtonState(),
     },
@@ -1052,7 +1026,6 @@ const FAST_MAX = 3000;
 const TICK_MS = 200;
 const BACKUP_MS = 20000;    // SSE 正常时的兜底对账间隔
 const LIST_MS = 8000;       // 会话列表跟进磁盘变化的间隔
-const PENDING_RECONCILE_MS = 5000; // 只在有服务端 pending 时巡检小账本
 // 主动增量读取可能因浏览器连接池、网络切换或代理半开而既不成功也不失败。
 // 只要响应头或正文仍有进展就续期；真正静止到这个时长才中止，让下一次
 // SSE/对账从同一游标重试。用 let 是为了浏览器 E2E 能把分钟级故障压缩到毫秒。
@@ -1090,24 +1063,6 @@ const messageCount = msgs => msgs.filter(m => m.counted !== false).length;
 const entryTotal = entry => Number.isFinite(+entry?.total)
   ? +entry.total : messageCount(entry?.msgs || []);
 
-function saveQueuedMessages() {
-  if (SessionDockCapabilities.config.conversation_send === true) return;
-  for (const [uid, items] of S.queued) {
-    if (!Array.isArray(items) || !items.length) S.queued.delete(uid);
-  }
-  // 极长 prompt 可能超过浏览器的 localStorage 配额；不能让持久化失败反过来阻止发送。
-  const localOnly = [...S.queued].flatMap(([uid, items]) => {
-    const kept = items.filter(item => !item?.server);
-    return kept.length ? [[uid, kept]] : [];
-  });
-  try { store.set('queuedMessages', localOnly); } catch { /* 本页内存回显仍然有效 */ }
-}
-
-function queuedMessages(uid) {
-  const items = S.queued.get(uid);
-  return Array.isArray(items) ? items : [];
-}
-
 function queuedAfterTimestamp(uid) {
   const entry = cache.get(viewKey(uid));
   let latest = Date.parse(entry?.activity?.ts || '');
@@ -1118,298 +1073,6 @@ function queuedAfterTimestamp(uid) {
     break;
   }
   return Number.isFinite(latest) ? new Date(latest).toISOString() : null;
-}
-
-/** Codex 在忙时只把新输入留在 TUI 内存里，轮到它之前 rollout 没有任何记录。
- *  先持久化并回显；原生 user/command 记录出现后再按正文和时间精确消重。 */
-function queuePendingUserMessage(uid, text, media = []) {
-  text = String(text || '');
-  if (!uid || !text.trim()) return null;
-  const cli = sessiondockCli(uid);
-  if (!cli) return null;
-  const created = Date.now();
-  const item = cli.createQueuedMessage({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    text, created, afterTs: queuedAfterTimestamp(uid),
-    // 附件消息在 CLI 真正写入 rollout 前也要能显示图片。这里只保存服务端
-    // 签发的短媒体 token，不把 File/blob URL 或本地绝对路径塞进 localStorage。
-    media: Array.isArray(media) ? media.filter(x => x?.src).map(x => ({ ...x })) : [],
-  });
-  const items = queuedMessages(uid).slice();
-  items.push(item);
-  S.queued.set(uid, items);
-  browserAuditEvent('outbox.local_queued', {id: item.id, state: item.state},
-    {text: item.text, media: item.media}, {uid, requestId: item.id});
-  saveQueuedMessages();
-  if (S.sel === uid && !S.agent) renderConversationTail(
-    cache.get(viewKey(uid))?.activity, uid);
-  return item.id;
-}
-
-function discardQueuedUserMessage(uid, id) {
-  const items = queuedMessages(uid).filter(item => item.id !== id);
-  if (items.length) S.queued.set(uid, items); else S.queued.delete(uid);
-  browserAuditEvent('outbox.local_discarded', {id, remaining: items.length}, null,
-    {uid, requestId: id});
-  saveQueuedMessages();
-  if (S.sel === uid && !S.agent) renderConversationTail(
-    cache.get(viewKey(uid))?.activity, uid);
-}
-
-function validOutboxVersion(version) {
-  return version && typeof version.epoch === 'string' && version.epoch
-    && Number.isFinite(+version.revision);
-}
-
-function staleServerOutbox(uid, version) {
-  if (!validOutboxVersion(version)) return false;
-  const current = S.outboxVersions.get(uid);
-  if (!current) return S.retiredOutboxEpochs.has(version.epoch);
-  if (current.epoch === version.epoch) return +version.revision < +current.revision;
-  return S.retiredOutboxEpochs.has(version.epoch);
-}
-
-function acceptServerOutboxVersion(uid, version) {
-  if (!validOutboxVersion(version)) return;
-  const current = S.outboxVersions.get(uid);
-  if (current?.epoch && current.epoch !== version.epoch) {
-    S.retiredOutboxEpochs.add(current.epoch);
-  }
-  S.outboxVersions.set(uid, {
-    epoch: version.epoch,
-    revision: +version.revision,
-  });
-}
-
-function syncServerOutbox(uid, items, version = null, { retireMissing = false } = {}) {
-  if (SessionDockCapabilities.config.conversation_send === true) {
-    const changed=S.queued.delete(uid);return changed;
-  }
-  if (!SessionDockCapabilities.allows('outbox')) return false;
-  if (!['claude', 'codex'].includes(sessiondockCli(uid)?.source)
-      || !Array.isArray(items)) return false;
-  if (staleServerOutbox(uid, version)) {
-    browserAuditEvent('outbox.snapshot_rejected', {version, reason: 'stale'}, items, {uid});
-    return false;
-  }
-  acceptServerOutboxVersion(uid, version);
-  const dismissed = S.dismissedOutboxIds.get(uid);
-  const next = items.filter(item => !dismissed?.has(item?.id))
-    .map(item => ({ ...item, server: true }));
-  const current = queuedMessages(uid);
-  if (!retireMissing) {
-    const ids = new Set(next.map(item => item?.id).filter(Boolean));
-    // 服务端账本消失只证明原生记录已经被服务端看见，不证明这个标签页也
-    // 收到了正文 diff。占位必须等匹配的 user/command 被本页接受后，再由
-    // reconcileQueuedMessages 原子替换；否则空账本包先到就会让消息消失。
-    for (const item of current) {
-      if (item?.server && item.id && !ids.has(item.id)
-          && !dismissed?.has(item.id)) next.push(item);
-    }
-  }
-  next.sort((a, b) => (+a?.created || 0) - (+b?.created || 0)
-    || String(a?.id || '').localeCompare(String(b?.id || '')));
-  const before = JSON.stringify(current);
-  if (next.length) S.queued.set(uid, next); else S.queued.delete(uid);
-  const changed = before !== JSON.stringify(next);
-  browserAuditEvent('outbox.snapshot_applied', {
-    version, changed, retire_missing: retireMissing, before: current.length, after: next.length,
-  }, next, {uid});
-  if (changed && S.sel === uid && !S.agent) {
-    renderConversationTail(cache.get(viewKey(uid))?.activity, uid);
-  }
-  return changed;
-}
-
-function confirmTerminalDraftOverwrite() {
-  return confirm('终端草稿中有内容，是否覆盖？');
-}
-
-async function retryServerQueuedMessage(uid, id) {
-  const activity = cache.get(viewKey(uid))?.activity || null;
-  let overwriteDraft = '';
-  let d = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    d = await post('api/session/outbox/retry', {
-      uid, id, activity, overwrite_draft: overwriteDraft,
-      ...(typeof termSendLease === 'function' ? termSendLease(takenOver(uid)) : {}),
-    });
-    if (!d.draft_conflict) break;
-    if (!confirmTerminalDraftOverwrite()) {
-      await discardServerQueuedMessage(uid, id);
-      return;
-    }
-    overwriteDraft = d.draft_token || '';
-  }
-  if (d?.draft_conflict) return alert('终端草稿持续变化，消息未发送');
-  if (d.error) return alert('重试失败: ' + d.error);
-  syncServerOutbox(uid, d.outbox || [], d.outbox_version);
-}
-
-async function discardServerQueuedMessage(uid, id) {
-  let d;
-  try {
-    d = await post('api/session/outbox/discard', { uid, id });
-  } catch (error) {
-    return alert('移除失败: ' + (error.message || String(error)));
-  }
-  // 另一个页面或后台已收掉此项时，也允许清理本页残留回执。
-  if (d.error && d.code !== 'delivery_missing') return alert('移除失败: ' + d.error);
-  const dismissed = S.dismissedOutboxIds.get(uid) || new Set();
-  dismissed.add(id);
-  S.dismissedOutboxIds.set(uid, dismissed);
-  // 只收掉用户点选的回执；其他项仍须等待各自的原生正文，不能随快照清空。
-  discardQueuedUserMessage(uid, id);
-  if (Array.isArray(d.outbox)) syncServerOutbox(uid, d.outbox, d.outbox_version);
-}
-
-function updateClientQueuedMessage(uid, id, update) {
-  const items = queuedMessages(uid).slice();
-  const at = items.findIndex(item => !item.server && item.id === id);
-  if (at < 0) return null;
-  items[at] = { ...items[at], ...update };
-  S.queued.set(uid, items);
-  saveQueuedMessages();
-  if (S.sel === uid && !S.agent) renderConversationTail(
-    cache.get(viewKey(uid))?.activity, uid);
-  return items[at];
-}
-
-async function retryClientQueuedMessage(uid, id) {
-  const item = queuedMessages(uid).find(x => !x.server && x.id === id);
-  if (!item) return;
-  const name = takenOver(uid);
-  if (!name) return alert('重试失败: 会话终端未连接');
-  updateClientQueuedMessage(uid, id, {
-    state: 'sending', expiresAt: Date.now() + 8000, error: null,
-  });
-  let d;
-  try {
-    d = await post('api/term/send', { name, text: item.text });
-  } catch (error) {
-    d = { error: error.message || String(error) };
-  }
-  if (d.error) {
-    updateClientQueuedMessage(uid, id, {
-      state: 'failed', error: d.error, expiresAt: null,
-    });
-    return alert('重试失败: ' + d.error);
-  }
-  S.live.add(uid);
-  S.liveTmux.add(uid);
-  paintLive();
-  S.syncGap = FAST_MIN;
-  S.lastSync = 0;
-}
-
-function reconcileQueuedMessages(uid, messages) {
-  if (!SessionDockCapabilities.allows('outbox')) return false;
-  const items = queuedMessages(uid).slice();
-  if (!items.length) return false;
-  const cli = sessiondockCli(uid);
-  if (!cli) return false;
-  let changed = false;
-  for (const message of messages || []) {
-    const action = cli.queueAction(message);
-    if (!action) continue;
-    const recorded = Date.parse(message.ts || '');
-    const followsBoundary = item => {
-      const boundary = Date.parse(item.afterTs || '');
-      return !Number.isFinite(recorded) || !Number.isFinite(boundary)
-        || recorded > boundary;
-    };
-    if (action.type === 'promote-first') {
-      // 完整缓存兜底会重放历史 dequeue。只能提升该事件发生前已经存在的
-      // 排队项，不能让几小时前的 dequeue 改写刚刚确认的新消息。
-      const at = items.findIndex(item => item.state === 'queued'
-        && followsBoundary(item));
-      if (at >= 0) {
-        items[at] = { ...items[at], state: 'sending', expiresAt: Date.now() + 8000 };
-        changed = true;
-      }
-      continue;
-    }
-    if (action.type === 'promote-all') {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].state !== 'queued' || !followsBoundary(items[i])) continue;
-        items[i] = { ...items[i], state: 'sending', expiresAt: Date.now() + 8000 };
-        changed = true;
-      }
-      continue;
-    }
-    const at = items.findIndex(item => {
-      if (!cli.queuedTextMatches(item.text, action.text)) return false;
-      // 同文指令可能连续排队；enqueue 应依次确认尚未确认的副本，
-      // 不能反复命中第一条已确认项。
-      if (action.type === 'confirm' && item.state === 'queued') return false;
-      // 不比较浏览器 Date.now() 和 CLI 时间：手机/电脑时钟偏差、CLI 排队延迟
-      // 都可能超过数秒。发送时的最后原生消息才是可靠的因果边界。
-      // 必须严格晚于边界；否则用户连续发送两条完全相同的内容时，上一条
-      // 正式消息会误删下一条尚未落盘的乐观副本。
-      // 旧版遗留项没有 afterTs，首次完整对账时按同文迁移清理。
-      return followsBoundary(item);
-    });
-    if (at < 0) continue;
-    if (action.type === 'confirm') {
-      items[at] = { ...items[at], state: 'queued' };
-      delete items[at].expiresAt;
-      delete items[at].error;
-    } else {
-      items.splice(at, 1);
-    }
-    changed = true;
-  }
-  if (!changed) return false;
-  if (items.length) S.queued.set(uid, items); else S.queued.delete(uid);
-  saveQueuedMessages();
-  return true;
-}
-
-/** Claude 的 Esc 编辑会把原输入留在 JSONL 的旧分支，再从同一父节点提交
- *  新输入。服务端已经确认旧输入后 outbox 会消失；若当前活动时间线出现了
- *  因果更晚的另一条 user/command，它不是“仍待确认”，而是已被新分支取代。 */
-function retireSupersededClaudeMessages(uid, ids, messages) {
-  if (!SessionDockCapabilities.allows('outbox')) return false;
-  if (sessiondockCli(uid)?.source !== 'claude' || !ids?.size) return false;
-  const laterInputs = (messages || []).filter(message =>
-    ['user', 'command'].includes(message?.role)
-    && Number.isFinite(Date.parse(message.ts || '')));
-  if (!laterInputs.length) return false;
-  const current = queuedMessages(uid);
-  const next = current.filter(item => {
-    if (!item?.server || !ids.has(item.id)) return true;
-    const submitted = +item.created;
-    if (!Number.isFinite(submitted)) return true;
-    return !laterInputs.some(message => Date.parse(message.ts) > submitted);
-  });
-  if (next.length === current.length) return false;
-  if (next.length) S.queued.set(uid, next); else S.queued.delete(uid);
-  saveQueuedMessages();
-  return true;
-}
-
-/** 超时未获 CLI 原生回执时保留消息，并明确标成“发送未确认”。 */
-function expireQueuedMessages(now = Date.now()) {
-  if (!SessionDockCapabilities.allows('outbox')) return false;
-  let changed = false;
-  let selectedChanged = false;
-  for (const [uid, current] of S.queued) {
-    const cli = sessiondockCli(uid);
-    if (!cli || !Array.isArray(current)) continue;
-    const hasNativeHistory = cache.has(viewKey(uid));
-    const settled = current.map(item => cli.settleQueuedMessage(
-      item, now, hasNativeHistory));
-    if (settled.every((item, i) => item === current[i])) continue;
-    changed = true;
-    selectedChanged ||= uid === S.sel;
-    S.queued.set(uid, settled);
-  }
-  if (!changed) return false;
-  saveQueuedMessages();
-  if (selectedChanged && !S.agent) {
-    renderConversationTail(cache.get(viewKey(S.sel))?.activity, S.sel);
-  }
-  return true;
 }
 
 function cacheGet(uid) {
@@ -1666,21 +1329,6 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     if (S.sel === uid && !S.agent) renderConversationTail(e.activity, uid);
     return 0;
   }
-  if (data.outbox_only) {
-    if (!SessionDockCapabilities.allows('outbox')) return 0;
-    if (!agent && Array.isArray(data.outbox)) {
-      if (staleServerOutbox(uid, data.outbox_version)) return 0;
-      const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
-      // 后台确认线程可能先删掉服务端终端回执，稍后 watch 才读到对应的
-      // rollout user 记录。此时直接照空 outbox 清 UI，会让刚发的消息
-      // 短暂消失。先从当前浏览器游标补一次正文，再原子完成替换。
-      const removesPending = queuedMessages(uid).some(
-        item => item.server && item.id && !ids.has(item.id));
-      syncServerOutbox(uid, data.outbox, data.outbox_version);
-      if (removesPending) scheduleDiffRecovery(uid, agent);
-    }
-    return 0;
-  }
   // 正文 diff 受游标约束。SSE 与兜底拉取可能同时从同一旧游标出发；
   // 乱序包必须在修改 outbox、prompt 或乐观消息之前丢弃，否则正文没被
   // 接收，发送占位却已先清掉。
@@ -1702,26 +1350,6 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
   if (!agent && Object.prototype.hasOwnProperty.call(data, 'prompt')) {
     e.prompt = data.prompt || null;
     globalThis.revealConversationForPrompt?.(uid, e.prompt);
-  }
-  let missingOutboxIds = null;
-  if (SessionDockCapabilities.allows('outbox') && !agent && Array.isArray(data.outbox)) {
-    const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
-    missingOutboxIds = new Set(queuedMessages(uid)
-      .filter(item => item.server && item.id && !ids.has(item.id))
-      .map(item => item.id));
-    syncServerOutbox(uid, data.outbox, data.outbox_version);
-  }
-  if (!agent) reconcileQueuedMessages(uid, data.messages);
-  if (missingOutboxIds?.size) {
-    // reset 时旧缓存属于被回退的分支，不能拿来判断；普通追加则当前缓存和
-    // 本批共同构成活动时间线。只有更晚的用户输入才能证明旧项已被取代。
-    const activeMessages = data.reset ? data.messages : [...e.msgs, ...data.messages];
-    retireSupersededClaudeMessages(uid, missingOutboxIds, activeMessages);
-  }
-  if (missingOutboxIds?.size && queuedMessages(uid).some(
-      item => missingOutboxIds.has(item.id))) {
-    // 本批没有带来匹配正文；主动补读，但补读期间仍保留占位。
-    scheduleDiffRecovery(uid, agent);
   }
   const questionCalls = data.reset ? new Set() : messageIndex(e.msgs).questions;
   for (const message of data.messages || []) {
@@ -1774,7 +1402,6 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     if (S.sel === uid && S.agent === agent) {
       const box = $('#msgs');
       $('#activity')?.remove();
-      box?.querySelectorAll('.client-outbox').forEach(node => node.remove());
       if (box && e.activity?.state !== 'working') sealTurnTail(box, e);
       renderConversationTail(e.activity, uid);
     }
@@ -1790,7 +1417,6 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
   const box = $('#msgs');
   if (!box) return data.messages.length;
   $('#activity')?.remove();
-  box.querySelectorAll('.client-outbox').forEach(node => node.remove());
   const built = appendMessages(box, data.messages, null,
     {openTail: e.activity?.state === 'working'});
   const sealed = sealTurnTail(box, e);
@@ -2006,152 +1632,6 @@ function syncSession(uid, agent = S.agent) {
   return task;
 }
 
-// SSE 负责低延迟更新，但标签页休眠、网络切换和浏览会话切换都可能让某次
-// 账本/正文更新错过。只要本页仍有服务端 pending，就定期读取很小的 outbox
-// 快照；若服务端项已消失，再用缓存和一次增量正文读取判断它是正式落盘、
-// Claude 分支取代，还是仍应保留为“未确认”。
-const pendingReconciliations = new Map();
-const pendingWindowRecoveries = new Map();
-const recoveredPendingWindows = new Map();
-
-function reconcilePendingSnapshot(uid, data) {
-  if (!SessionDockCapabilities.allows('outbox')) return false;
-  if (!data || !Array.isArray(data.outbox)) return false;
-  const ids = new Set(data.outbox.map(item => item?.id).filter(Boolean));
-  const missing = new Set(queuedMessages(uid)
-    .filter(item => item?.server && item.id && !ids.has(item.id))
-    .map(item => item.id));
-  let changed = syncServerOutbox(uid, data.outbox, data.outbox_version);
-  const entry = cache.get(viewKey(uid));
-  if (entry?.msgs?.length) {
-    changed = reconcileQueuedMessages(uid, entry.msgs) || changed;
-    changed = retireSupersededClaudeMessages(uid, missing, entry.msgs) || changed;
-  }
-  if (changed && S.sel === uid && !S.agent) {
-    renderConversationTail(entry?.activity || null, uid);
-  }
-  return changed;
-}
-
-/**
- * 服务端已经从 outbox 移除一项，说明原生记录曾被确认；但浏览器可能在
- * SSE/主动补读竞争或移动端休眠期间把游标推进到了正文之后，同时漏掉正文。
- * 从当前 EOF 继续补读永远找不回来，因此只对同一组缺失 id 做一次有界窗口
- * 重载（最早 100 + 最新 500），而不是反复下载完整长会话。
- */
-function recoverPendingWindow(uid, ids) {
-  if (!SessionDockCapabilities.allows('outbox')) return Promise.resolve(false);
-  const key = viewKey(uid);
-  const fingerprint = [...ids].sort().join('\0');
-  if (!fingerprint || recoveredPendingWindows.get(uid) === fingerprint) {
-    return Promise.resolve(false);
-  }
-  const current = pendingWindowRecoveries.get(uid);
-  if (current) return current;
-  const task = (async () => {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), SYNC_STALL_MS);
-    try {
-      const {data, bytes} = await fetchMessages(uid, {
-        windowed: true, signal: ac.signal,
-      });
-      if (!data?.reset) return false;
-      recoveredPendingWindows.set(uid, fingerprint);
-      if (Array.isArray(data.outbox)) {
-        syncServerOutbox(uid, data.outbox, data.outbox_version);
-      }
-      reconcileQueuedMessages(uid, data.messages);
-      retireSupersededClaudeMessages(uid, ids, data.messages);
-      cachePut(key, {
-        meta: data.meta, msgs: data.messages, version: data.version,
-        end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-        prompt: data.prompt || null, total: data.message_total,
-        partial: data.partial || null,
-      });
-      S.cursors.set(key, {
-        end: data.end, head: data.version.head, anchor: data.anchor,
-      });
-      if (!queuedMessages(uid).some(item => item?.server)) {
-        recoveredPendingWindows.delete(uid);
-      }
-      if (S.sel === uid && !S.agent) {
-        await renderSession(data.meta, data.messages, data.activity);
-      }
-      return true;
-    } catch {
-      return false;
-    } finally {
-      clearTimeout(timer);
-    }
-  })().finally(() => {
-    if (pendingWindowRecoveries.get(uid) === task) {
-      pendingWindowRecoveries.delete(uid);
-    }
-  });
-  pendingWindowRecoveries.set(uid, task);
-  return task;
-}
-
-function reconcilePendingUid(uid) {
-  if (!SessionDockCapabilities.allows('outbox')) return Promise.resolve(false);
-  uid = String(uid || '');
-  if (!queuedMessages(uid).some(item => item?.server)) return Promise.resolve(false);
-  const current = pendingReconciliations.get(uid);
-  if (current) return current;
-  const task = (async () => {
-    try {
-      const query = new URLSearchParams({uid});
-      const response = await fetch(appUrl(`api/session/outbox?${query}`), {
-        cache: 'no-store',
-      });
-      if (!response.ok) return false;
-      const data = await response.json();
-      let changed = reconcilePendingSnapshot(uid, data);
-      // 账本状态只能说明服务端是否还在追踪。正文决定 pending 是被同文
-      // 正式消息取代，还是 Claude Esc 后被新分支取代；缓存存在时补一次
-      // 小型增量读取，未打开的会话则等打开时读取，绝不拉几十 MB 全量。
-      const serverIds = new Set(data.outbox.map(item => item?.id).filter(Boolean));
-      let missing = new Set(queuedMessages(uid)
-        .filter(item => item?.server && item.id && !serverIds.has(item.id))
-        .map(item => item.id));
-      if (missing.size && cache.has(viewKey(uid))) {
-        changed = !!(await syncSession(uid, null)) || changed;
-        missing = new Set(queuedMessages(uid)
-          .filter(item => item?.server && item.id && !serverIds.has(item.id))
-          .map(item => item.id));
-      }
-      // 当前详情的缓存可能被旧版本 LRU 清掉；DOM 还在并不代表仍有可续读
-      // 游标。窗口恢复同时覆盖“有缓存但游标已经越过正文”和“详情缓存丢失”。
-      if (missing.size && (cache.has(viewKey(uid))
-                           || (S.sel === uid && !S.agent))) {
-        changed = !!(await recoverPendingWindow(uid, missing)) || changed;
-      }
-      return changed;
-    } catch {
-      return false;
-    }
-  })().finally(() => {
-    if (pendingReconciliations.get(uid) === task) pendingReconciliations.delete(uid);
-  });
-  pendingReconciliations.set(uid, task);
-  return task;
-}
-
-async function reconcileAllPendingMessages() {
-  if (!SessionDockCapabilities.allows('outbox')) return [];
-  expireQueuedMessages();
-  if (document.hidden) return [];
-  const uids = [...S.queued]
-    .filter(([, items]) => items?.some(item => item?.server))
-    .map(([uid]) => uid);
-  return Promise.all(uids.map(reconcilePendingUid));
-}
-
-setInterval(reconcileAllPendingMessages, PENDING_RECONCILE_MS);
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) reconcileAllPendingMessages();
-});
-
 // ---- 服务端推送 ----
 // 服务端盯着会话文件, 一变就把 diff 推过来, 不用客户端反复问。
 let _es = null, _esUid = null, _esRetry = null;
@@ -2328,7 +1808,6 @@ function clearUnread(uid) {
 
 /** 兜底轮询: SSE 连着的时候只是很慢地对一下账, 断了才回到自适应的快节奏。 */
 function tickSync() {
-  expireQueuedMessages();
   if (!S.sel || document.hidden) return;
   if (migrationReadPaused(S.sel, S.agent)) return;
   const pushing = _es && _esUid === S.sel && _es.readyState === 1;
@@ -4961,9 +4440,6 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   if (S.sel !== uid || S.agent !== selectedAgent) return; // 期间切了别的视图
   const { data, bytes } = res;
   if (SessionDockCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
-  if (!selectedAgent && Array.isArray(data.outbox)) {
-    syncServerOutbox(uid, data.outbox, data.outbox_version);
-  }
   cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
                   end: data.end, anchor: data.anchor, activity: data.activity, bytes,
                   prompt: data.prompt || null,
@@ -5390,7 +4866,6 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
   disposeMessageObservers($('#msgs'));
   d.innerHTML = '';
   const entry = cache.get(viewKey(uid, agent));
-  if (!agent) reconcileQueuedMessages(uid, msgs);
   d.appendChild(head(meta, entryTotal(entry || {msgs})));
   layoutSessionHead();
   renderTimelinePinNotice(meta);
@@ -5459,7 +4934,6 @@ async function renderSession(meta, msgs, activity = null, { startWatch = true, h
     renderMigrationReadFailure(uid, agent);
     if (startWatch) watchSession(meta.uid, agent); // 之后的更新由服务端推过来
     if (typeof restoreTermPane === 'function') restoreTermPane(uid, agent);
-    if (!agent) queueMicrotask(reconcileAllPendingMessages);
     scheduleBrowserSnapshot('rendered');
   }
 }
@@ -6560,7 +6034,7 @@ function refreshMessageTimeDividers(box = $('#msgs')) {
     }
     const start = Number(node.dataset.timeStart);
     const end = Number(node.dataset.timeEnd);
-    if (!node.matches('.client-outbox, .live-question')) {
+    if (!node.matches('.live-question')) {
       box._timeDividerTail = {node, previousEnd, lastShownAt};
     }
     if (!Number.isFinite(start) || !Number.isFinite(end)) {
@@ -6687,7 +6161,6 @@ function lastRenderedTurnStart(box) {
   const children = [...box.children];
   for (let i = children.length - 1; i >= 0; i--) {
     const node = children[i];
-    if (node.classList?.contains('client-outbox')) continue;
     if (!node.matches?.('.msg') || !TURN_START_ROLES.has(node.dataset.role)) continue;
     // 同一原生 user 记录可能是相邻的“文字 + 图片”多个气泡；重建回合时
     // 从第一块开始移除，避免把文字留在旧 DOM、图片再复制一份。
@@ -6709,7 +6182,6 @@ function lastRenderedTurnStart(box) {
 }
 
 const isConversationTailNode = node => node?.id === 'activity'
-  || node?.classList?.contains('client-outbox')
   || node?.classList?.contains('live-question');
 
 /** 增量期间先按现有方式铺开活动回合；final/idle 到达后只重建最后一轮。
@@ -8023,71 +7495,6 @@ function renderActivity(activity) {
   box.appendChild(n);
 }
 
-function renderQueuedMessages(uid = S.sel) {
-  const box = $('#msgs');
-  if (!box || S.agent || uid !== S.sel) return;
-  for (const item of queuedMessages(uid)) {
-    const cli = sessiondockCli(uid);
-    const queuedMessage = {role: 'user', text: item.text, media: item.media,
-      counted: false, ts: item.created_iso || item.created_at || item.ts};
-    const node = stampMessageTime(msgNode(queuedMessage), [queuedMessage]);
-    const interrupted = ['aborted', 'restored'].includes(item.state);
-    node.classList.add('client-outbox',
-      interrupted ? 'client-aborted' : 'client-pending');
-    node.classList.toggle('failed', item.state === 'failed');
-    node.dataset.queuedId = item.id;
-    const footer = el('div', 'client-pending-footer');
-    footer.appendChild(el('small', 'client-pending-state',
-      cli?.queuedMessageLabel(item) || '排队中'));
-    const codexNeedsInspection = item.server && cli?.source === 'codex'
-      && (item.state === 'confirming'
-          || (item.state === 'failed' && +item.attempts > 0));
-    if (item.server && !interrupted
-        && (cli?.source === 'claude' || codexNeedsInspection)) {
-      const actions = el('span', 'client-pending-actions');
-      const inspect = el('button', '', '检查终端');
-      inspect.type = 'button';
-      inspect.title = `消息可能已经被 ${cli.name} 接收；打开终端核对，不会重复发送`;
-      inspect.onclick = () => globalThis.revealNativeTerminal?.(uid);
-      actions.append(inspect);
-      if (['ambiguous', 'failed', 'confirming'].includes(item.state)) {
-        // 回执只说明粘贴和回车已到达终端；移除它不会重发。终端把它并进
-        // 草稿后原生记录永远不会出现，用户必须能自己收掉这条回执。
-        const discard = el('button', '', '移除');
-        discard.type = 'button';
-        discard.title = '只移除待确认提示，不会重发或中断会话';
-        discard.onclick = () => discardServerQueuedMessage(uid, item.id);
-        actions.append(discard);
-      }
-      footer.appendChild(actions);
-    } else if ((item.server
-                && ['injecting', 'failed', 'aborted', 'restored'].includes(item.state))
-               || (!item.server && item.state === 'failed')) {
-      const actions = el('span', 'client-pending-actions');
-      if (item.state === 'failed') {
-        const retry = el('button', '', '重试');
-        retry.type = 'button';
-        retry.title = '仅在终端确实没有收到时重试，避免重复发送';
-        retry.onclick = () => item.server
-          ? retryServerQueuedMessage(uid, item.id)
-          : retryClientQueuedMessage(uid, item.id);
-        actions.append(retry);
-      }
-      const discard = el('button', '', item.state === 'injecting' ? '撤销' : '移除');
-      discard.type = 'button';
-      discard.onclick = () => item.server
-        ? discardServerQueuedMessage(uid, item.id)
-        : discardQueuedUserMessage(uid, item.id);
-      actions.append(discard);
-      footer.appendChild(actions);
-    }
-    if (item.error) node.title = item.error;
-    node.appendChild(footer);
-    box.appendChild(node);
-  }
-}
-
-/** Activity 和提交回执都是时间线尾部状态；每次重画都固定保持回执在最下方。 */
 function pendingHistoryQuestion(entry) {
   if (entry?.meta?.source !== 'codex' || entry?.activity?.state !== 'waiting') return null;
   const answered = new Set((entry.msgs || [])
@@ -8128,19 +7535,10 @@ function renderConversationTail(activity, uid = S.sel) {
   const box = $('#msgs');
   if (!box) return;
   const entry = cache.get(viewKey(uid));
-  // SSE 与主动补读从同一旧游标出发时，携带正式 user 的那一批可能因游标
-  // 冲突被丢弃；随后正文 reset 已把它放进完整缓存，但队尾重画过去只看
-  // 增量，乐观副本便会永久残留。Claude 有本地副本时，每次画队尾都用
-  // 已接受的完整缓存兜底对账一次。通常只有一条、几千项，且仅发送期间执行。
-  if (sessiondockCli(uid)?.source === 'claude'
-      && queuedMessages(uid).length && entry?.msgs?.length) {
-    reconcileQueuedMessages(uid, entry.msgs);
-  }
   $('#activity')?.remove();
   box.querySelectorAll('.live-question').forEach(node => node.remove());
   box.querySelectorAll('.question-live-shadowed').forEach(
     node => node.classList.remove('question-live-shadowed'));
-  box.querySelectorAll('.client-outbox').forEach(node => node.remove());
   const prompt = entry?.prompt;
   const nativeQuestion = prompt?.questions?.length ? null : pendingHistoryQuestion(entry);
   const activeQuestion = prompt?.questions?.length ? prompt : nativeQuestion;
@@ -8171,7 +7569,6 @@ function renderConversationTail(activity, uid = S.sel) {
   }
   renderTerminalThreadNotice(uid);
   if (typeof syncComposerSendState==='function') syncComposerSendState();
-  renderQueuedMessages(uid);
   refreshMessageTimeDividers(box);
   scheduleBrowserSnapshot('conversation-tail');
 }

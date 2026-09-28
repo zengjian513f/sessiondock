@@ -167,9 +167,6 @@ def check_browser(browser, root, config):
                                    "instance_id": "missing"},
             }
             auth = {"X-SessionDock-Protocol": "1", "X-SessionDock-Node-Token": node.token}
-            retired = ctx.request.post(local + "/api/session/outbox/retry",
-                                       data={"uid": uid, "id": "missing", "_build": build})
-            assert retired.status == 501 and retired.json()["code"] == "delivery_send_disabled"
             for path, body in bodies.items():
                 body = {**body, "_build": build}
                 response = ctx.request.post(local + path, data=body)
@@ -191,7 +188,6 @@ def check_browser(browser, root, config):
                 print("hub send diagnostics:", page.evaluate("""() => ({
                     selected: S.sel, composerUid, name: takenOver(S.sel),
                     lease: termSendLease(takenOver(S.sel)),
-                    outbox: SessionDockCapabilities.allows('outbox'),
                     input: document.querySelector('#cinput')?.value,
                     disabled: document.querySelector('#csend')?.disabled,
                     staleBuildShown,

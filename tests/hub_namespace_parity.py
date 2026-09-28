@@ -140,7 +140,7 @@ def corpus():
         ("opaque_subtrees_verbatim", "/api/sessions", NODE,
          {key: {"uid": "claude:hidden", "src": MEDIA, "epoch": "hidden", "deeper": [{"uid": "claude:h2"}]}
           for key in ("data", "content", "input", "arguments", "raw", "resolved")}),
-        ("opaque_list_verbatim", "/api/session/send", NODE,
+        ("opaque_list_verbatim", "/api/session/conversation/send", NODE,
          {"content": [{"uid": "claude:h"}], "arguments": ["claude:h", {"src": MEDIA}],
           "sibling": {"uid": "claude:visible"}}),
         ("uid_non_string_values_recurse", "/api/session/star", NODE,

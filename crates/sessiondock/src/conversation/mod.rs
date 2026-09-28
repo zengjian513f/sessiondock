@@ -8,7 +8,7 @@ use crate::{
             DeliveryTarget, HostTerminalDriver, LeaseHandle, PageLease, ScreenCapture,
             TerminalDriver,
         },
-        executor::{Failure, ManagedResolver, TargetResolver},
+        target::{Failure, ManagedResolver, TargetResolver},
     },
     files::WriteService,
     lifecycle::{
