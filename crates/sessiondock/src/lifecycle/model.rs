@@ -137,8 +137,9 @@ impl Launch {
             Self::Fixed => true,
             // Claude and Grok get a UUID, OpenCode an id in its own format
             // (the launcher creates that session first); Codex discovers its
-            // thread identity after launch.
-            Self::NewPending => source == Source::Codex,
+            // thread identity after launch. OpenCode records from before
+            // pre-creation stay pending and must still load.
+            Self::NewPending => matches!(source, Source::Codex | Source::Opencode),
             Self::NewAssigned => matches!(source, Source::Claude | Source::Grok | Source::Opencode),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
