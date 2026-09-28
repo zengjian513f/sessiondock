@@ -163,7 +163,7 @@ pub async fn send(
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(q): Json<SendInput>,
 ) -> Result<Response, ApiError> {
-    if let Some(response) = super::delivery::stale_build(&s, &q._build, hub.is_some()) {
+    if let Some(response) = stale_build(&s, &q._build, hub.is_some()) {
         return Ok(response);
     }
     let service = enabled(&s)?;
@@ -186,7 +186,7 @@ pub async fn check(
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(q): Json<SendInput>,
 ) -> Result<Response, ApiError> {
-    if let Some(response) = super::delivery::stale_build(&s, &q._build, hub.is_some()) {
+    if let Some(response) = stale_build(&s, &q._build, hub.is_some()) {
         return Ok(response);
     }
     let service = enabled(&s)?;
@@ -227,7 +227,7 @@ pub async fn restart(
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
     Json(q): Json<SendInput>,
 ) -> Result<Response, ApiError> {
-    if let Some(response) = super::delivery::stale_build(&s, &q._build, hub.is_some()) {
+    if let Some(response) = stale_build(&s, &q._build, hub.is_some()) {
         return Ok(response);
     }
     let service = enabled(&s)?;
@@ -588,4 +588,22 @@ pub async fn drafts(State(s): State<AppState>) -> Result<Response, ApiError> {
         Json(json!({"drafts":records})),
     )
         .into_response())
+}
+
+fn stale_build(state: &AppState, build: &str, hub: bool) -> Option<Response> {
+    // Text writes from a tab that outlived a deployment are rejected before
+    // touching the terminal; old clients surface the error and keep their text.
+    (!hub && build != state.assets.build).then(|| {
+        (
+            StatusCode::CONFLICT,
+            [(header::CACHE_CONTROL, "no-store")],
+            Json(json!({
+                "error": "页面版本已过期，请重新加载整个网页后再发送",
+                "code": "stale_build",
+                "reload": true,
+                "build": state.assets.build,
+            })),
+        )
+            .into_response()
+    })
 }

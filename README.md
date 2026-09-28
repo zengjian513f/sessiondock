@@ -63,7 +63,6 @@ cargo run -p sessiondock --locked
 | `SESSIONDOCK_CODEX_INDEX` | 无 | 显式外置 `session_index.jsonl` 副本，不能置于 native/host/state/static/file roots 中；只读名称索引 |
 | `SESSIONDOCK_GROK_ROOT` | 无 | `项目/会话/{summary.json,chat_history.jsonl}` |
 | `SESSIONDOCK_STATE_DIR` | 无 | 既有独立开发元数据目录；仅保存星标/显示偏好，不迁移旧数据 |
-| `SESSIONDOCK_DELIVERY_DIR` | 无 | 显式独立私有账本目录；仅打开已初始化账本，提供只读outbox，不启用发送 |
 | `SESSIONDOCK_PTYHOST_DIR` | 无 | 私有 host 目录；启用精确 UID/实例控制台和观察 |
 | `SESSIONDOCK_FILE_ROOTS` | 无 | 1–16个显式绝对开发文件目录；POSIX以冒号、Windows以分号分隔，只读 |
 
@@ -72,18 +71,6 @@ cargo run -p sessiondock --locked
 当前仅支持根路径本地开发，静态文件变更后需要重启以更新资源快照/build。
 静态前端与所有私有数据目录不得重叠，元数据目录也不能与host/native输入重叠。
 
-Linux 私有账本可显式初始化一次（不启动 Web 或模型 CLI，不导入旧队列）：
-
-```sh
-mkdir -p -m 700 .runtime/delivery
-cargo run --locked -p sessiondock -- --initialize-delivery "$PWD/.runtime/delivery"
-```
-
-目标必须既存、空、私有且与其他配置根分离；重复初始化报错，不覆盖账本。
-正常 Web 启动不会因账本缺失而自动初始化。初始化后可以显式配置
-`SESSIONDOCK_DELIVERY_DIR="$PWD/.runtime/delivery"` 启动服务，读取既有账本。
-打开时先持久化两家新的恢复epoch；后续GET不改账本。`outbox_read`与发送总开关
-分离，legacy发送/重试/丢弃入口仍关闭；Windows 持久化尚未实现。
 如需保存偏好，请先创建新的私有目录（例如忽略的 `.runtime/metadata`，Unix
 权限0700），再显式设置 `SESSIONDOCK_STATE_DIR`。未配置时仍返回501；坏schema、
 不安全权限、已有writer不会被自动修复或覆盖。详见 [元数据边界](docs/metadata.md)。

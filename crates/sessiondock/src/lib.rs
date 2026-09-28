@@ -1,7 +1,7 @@
 //! Loopback development HTTP crate: config, router, and optional isolated services.
-//! `app` is synchronous and rejects lifecycle/delivery configuration; `prepare_app`
+//! `app` is synchronous and rejects lifecycle configuration; `prepare_app`
 //! opens existing private ledgers before publishing routes. Caller owns shutdown
-//! of delivery, lifecycle, and audit. No home discovery, CLI launch, or ledger init.
+//! of lifecycle and audit. No home discovery, CLI launch, or ledger init.
 //! With a node identity configured the same state also backs a
 //! second router for the node listener (`node_auth` gate, no static page).
 //! The hub binary has its own configuration and router:
@@ -68,17 +68,14 @@ pub fn app_pair_with_shutdown(
     shutdown: tokio_util::sync::CancellationToken,
 ) -> io::Result<(Router, Option<Router>)> {
     config.validate()?;
-    if config.delivery_dir.is_some()
-        || config.lifecycle_dir.is_some()
-        || config.launcher_config.is_some()
-    {
+    if config.lifecycle_dir.is_some() || config.launcher_config.is_some() {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "configured lifecycle/delivery services require the asynchronous prepare_app factory",
+            "configured lifecycle services require the asynchronous prepare_app factory",
         ));
     }
     let terminal = prepare_terminal(&config)?;
-    let built = build_app(config, shutdown.clone(), None, None, terminal, Vec::new())?;
+    let built = build_app(config, shutdown.clone(), None, terminal, Vec::new())?;
     // The synchronous factory runs inside test runtimes; without one the
     // `/api/live` handler still records spawners on every call.
     if let Some(start) = built.spawn_watch
@@ -95,14 +92,13 @@ struct SpawnStart {
     reader: Reader,
 }
 
-/// Startup ownership remains with the caller, which must await delivery
+/// Startup ownership remains with the caller, which must await lifecycle
 /// shutdown after stopping admission to the HTTP server.
 pub struct PreparedApp {
     pub router: Router,
     /// The node listener's router (`SESSIONDOCK_NODE_BIND`); `None` unless the
     /// identity, credential and peer networks are all configured.
     pub node_router: Option<Router>,
-    pub delivery: Option<Arc<delivery::service::DeliveryService>>,
     pub lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     /// Bounded diagnostics writer; `shutdown()` drains it within its deadline.
     pub audit: Option<Arc<audit::AuditService>>,
@@ -130,18 +126,6 @@ pub async fn prepare_app(
         let terminal = prepare_terminal(&config)?;
         Ok((config, launcher, terminal, adapters))
     }).await.map_err(io::Error::other)??;
-    let delivery = match config.delivery_dir.clone() {
-        Some(directory) => Some(Arc::new(
-            delivery::service::DeliveryService::open(
-                directory,
-                Default::default(),
-                shutdown.clone(),
-            )
-            .await
-            .map_err(io::Error::other)?,
-        )),
-        None => None,
-    };
     let lifecycle = match (config.lifecycle_dir.clone(), launcher) {
         (Some(directory), Some(launcher)) => {
             let result = lifecycle::service::LifecycleService::open(
@@ -159,28 +143,15 @@ pub async fn prepare_app(
             .await;
             match result {
                 Ok(service) => Some(Arc::new(service)),
-                Err(error) => {
-                    if let Some(service) = &delivery {
-                        let _ = service.shutdown().await;
-                    }
-                    return Err(io::Error::other(error));
-                }
+                Err(error) => return Err(io::Error::other(error)),
             }
         }
         _ => None,
     };
-    let worker_delivery = delivery.clone();
     let worker_lifecycle = lifecycle.clone();
     let shutdown_for_watch = shutdown.clone();
     let result = tokio::task::spawn_blocking(move || {
-        build_app(
-            config,
-            shutdown,
-            worker_delivery,
-            worker_lifecycle,
-            terminal,
-            adapters,
-        )
+        build_app(config, shutdown, worker_lifecycle, terminal, adapters)
     })
     .await
     .map_err(io::Error::other)
@@ -198,16 +169,12 @@ pub async fn prepare_app(
             Ok(PreparedApp {
                 router: built.router,
                 node_router: built.node_router,
-                delivery,
                 lifecycle,
                 audit: built.audit,
             })
         }
         Err(error) => {
             if let Some(service) = lifecycle {
-                let _ = service.shutdown().await;
-            }
-            if let Some(service) = delivery {
                 let _ = service.shutdown().await;
             }
             Err(error)
@@ -247,7 +214,6 @@ struct BuiltApp {
 fn build_app(
     config: Config,
     shutdown: tokio_util::sync::CancellationToken,
-    delivery: Option<Arc<delivery::service::DeliveryService>>,
     lifecycle: Option<Arc<lifecycle::service::LifecycleService>>,
     terminal: Option<Arc<terminal::TerminalService>>,
     launch_adapters: Vec<state::LaunchAdapter>,
@@ -327,7 +293,6 @@ fn build_app(
         .as_ref()
         .map_or(serde_json::json!(false), |service| service.capabilities());
     capabilities["file_thumbnails"] = serde_json::json!(false);
-    capabilities["outbox_read"] = serde_json::json!(delivery.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config
@@ -536,7 +501,6 @@ fn build_app(
         capabilities,
         terminal,
         metadata,
-        delivery,
         lifecycle,
         launch_adapters: Arc::new(launch_adapters),
         lifecycle_http: Arc::new(Semaphore::new(pools.responses())),

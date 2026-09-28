@@ -31,11 +31,12 @@ BASE = {
     "terminal": False, "outbox": False, "audit": False, "files": True,
     "mutations": False, "hub": False,
     "media": True, "media_remote": True, "media_lazy": True, "history_pages": True,
+    "unread_batch": True, "ui_events": True,
     "media_continuation": True, "history_semantics": "limited_native",
     "terminal_transport": False, "terminal_records": False, "terminal_create": False, "terminal_pending": False,
     "terminal_bind": False, "terminal_takeover": False, "terminal_complete_dir": False,
     "terminal_backend": False, "metadata": False, "files_jobs": False,
-    "file_thumbnails": False, "outbox_read": False,
+    "file_thumbnails": False,
 }
 # Present in current lib.rs / state.rs; older binaries omit them.
 OPTIONAL = {"timeline_pin": "metadata", "terminal_input": "terminal", "files_write": None, "trash": None,

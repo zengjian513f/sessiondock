@@ -52,7 +52,7 @@
   launch processes, auto-clean unknown host records, or expose host credentials.
 - `legacy-web` is the production frontend, based on the predecessor Python
   frontend at `e5b023a`. Keep changes small and capability-gated. Missing row
-  fields degrade like Python. Keep console explanations and outbox data visible.
+  fields degrade like Python. Keep console explanations visible.
   Preferences use `SessionDockCapabilities.stored` and only `sessiondock.*`
   keys. `tests/brand_names_check.py` checks the complete tracked source tree.
 - `web/src/api`: wire types, runtime validation, and network clients.

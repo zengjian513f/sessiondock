@@ -66,9 +66,8 @@ def main():
                     'new_args': [], 'resume_args': ['resume', '{sid}'], 'env': env}]}))
             launcher.chmod(0o600)
             initialize('--initialize-lifecycle', root / 'ledger')
-            initialize('--initialize-delivery', root / 'delivery')
             with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
-                    launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
+                    launcher_config=launcher, state_dir=root / 'state',
                     file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
                 options = {'headless': True}
                 if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):

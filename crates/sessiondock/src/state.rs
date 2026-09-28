@@ -30,7 +30,6 @@ pub struct AppState {
     pub terminal: Option<Arc<crate::terminal::TerminalService>>,
     pub metadata: Option<Arc<crate::metadata::MetadataStore>>,
     pub conversations: Option<Arc<crate::conversation::Conversations>>,
-    pub delivery: Option<Arc<crate::delivery::service::DeliveryService>>,
     pub lifecycle: Option<Arc<crate::lifecycle::service::LifecycleService>>,
     pub launch_adapters: Arc<Vec<LaunchAdapter>>,
     pub lifecycle_http: Arc<Semaphore>,

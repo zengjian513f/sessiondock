@@ -10,23 +10,22 @@ python3 tests/env_reference.py --write
 
 | Variable | Field | Required | Validation | Set by tests | Docs |
 | --- | --- | --- | --- | --- | --- |
-| `SESSIONDOCK_BIND` | `bind` | no (default) | invalid SESSIONDOCK_BIND | isolated_server, delivery_init.rs | [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
+| `SESSIONDOCK_BIND` | `bind` | no (default) | invalid SESSIONDOCK_BIND | isolated_server | [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) |  | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_CLAUDE_ROOT` | `roots.claude` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [liveness.md](liveness.md) |
-| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [codex-names.md](codex-names.md) |
+| `SESSIONDOCK_CODEX_ROOT` | `roots.codex` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | [README.md](README.md), [codex-names.md](codex-names.md) |
 | `SESSIONDOCK_GROK_ROOT` | `roots.grok` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
-| `SESSIONDOCK_OPENCODE_DB` | `opencode_db` | no (Option) | OpenCode's `opencode.db`, opened read-only; set together with the mirror root | opencode_browser | [opencode.md](opencode.md) |
-| `SESSIONDOCK_OPENCODE_ROOT` | `roots.opencode` | no (Option) | SessionDock-owned mirror directory, created `0700` | opencode_browser | [opencode.md](opencode.md) |
+| `SESSIONDOCK_OPENCODE_ROOT` | `roots.opencode` | no (Option) | nonempty; directory when present; missing roots are retried | no | [opencode.md](opencode.md) |
 | `SESSIONDOCK_PTYHOST_DIR` | `ptyhost_dir` | no (Option) | Opt-in isolated terminal transport; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md), [processes.md](processes.md), [runbook-dev.md](runbook-dev.md), [terminal-ownership.md](terminal-ownership.md) |
 | `SESSIONDOCK_STATE_DIR` | `state_dir` | no (Option) | SessionDock-owned preferences and grants; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [error-codes.md](error-codes.md), [liveness.md](liveness.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
-| `SESSIONDOCK_DELIVERY_DIR` | `delivery_dir` | no (Option) | Delivery state directory | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [delivery-configuration.md](delivery-configuration.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_LIFECYCLE_DIR` | `lifecycle_dir` | no (Option) | Creation receipts directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md) |
 | `SESSIONDOCK_LAUNCHER_CONFIG` | `launcher_config` | no (Option) | Server-owned adapter/launcher JSON, not browser input | isolated_server | [lifecycle-http.md](lifecycle-http.md) |
 | `SESSIONDOCK_AUDIT_DIR` | `audit_dir` | no (Option) | Directory for browser diagnostics JSONL | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [deploy-hub.md](deploy-hub.md), [diagnostics.md](diagnostics.md), [hub.md](hub.md) |
 | `SESSIONDOCK_TRASH_DIR` | `trash_dir` | no (Option) | Directory for the session recycle bin | isolated_server | [README.md](README.md), [trash.md](trash.md) |
-| `SESSIONDOCK_CODEX_INDEX` | `codex_index` | no (Option) | Names file; defaults beside the configured Codex sessions root | no | [README.md](README.md), [codex-names.md](codex-names.md) |
+| `SESSIONDOCK_CODEX_INDEX` | `codex_index` | no (Option) | Names file; defaults beside the configured Codex sessions root | no | [codex-names.md](codex-names.md) |
 | `SESSIONDOCK_PROC_ROOT` | `proc_root` | no (default) | Process table to scan; `/proc` by default and a synthetic tree in tests | no | [liveness.md](liveness.md), [validation.md](validation.md) |
 | `SESSIONDOCK_GROK_ACTIVE` | `grok_active` | no (Option) | Optional override for `~/.grok/active_sessions.json` | no | [liveness.md](liveness.md) |
+| `SESSIONDOCK_OPENCODE_DB` | `opencode_db` | no (Option) | OpenCode's session database (`opencode.db`), opened read-only and mirrored into `roots.opencode` (`sessions::opencode`); SESSIONDOCK_OPENCODE_DB and SESSIONDOCK_OPENCODE_ROOT are set together | no | [opencode.md](opencode.md) |
 | `SESSIONDOCK_NODE_BIND` | `node_bind` | no (Option) | Second listener for Hub traffic; invalid SESSIONDOCK_NODE_BIND | node_auth.rs | [deploy-hub.md](deploy-hub.md), [deploy-macos.md](deploy-macos.md), [hub.md](hub.md), [security-model.md](security-model.md) |
 | `SESSIONDOCK_NODE_TOKEN_FILE` | `node_token_file` | no (Option) | Shared hub credential (`--node-token-file`): 32–256 chars of `[A-Za-z0-9._~+/=-]`, read once at startup, never printed | node_auth.rs | [hub.md](hub.md) |
 | `SESSIONDOCK_NODE_ID_FILE` | `node_id_file` | no (Option) | Persistent node identity (`--node-id-file`): 32 hex, minted `O_EXCL` 0600 on first start; an existing file is only read | node_auth.rs | [hub.md](hub.md) |
@@ -46,7 +45,7 @@ python3 tests/env_reference.py --write
 | `SESSIONDOCK_CACHE_ENTRIES` | `pools` | no (default) | Pool, page, runtime and cache budgets: `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`; probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS` events per history pa... | no | [performance.md](performance.md), [read-model.md](read-model.md) |
 | `SESSIONDOCK_VIEW_CACHE_MB` | `pools` | no (default) | Pool, page, runtime and cache budgets: `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`; probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS` events per history pa... | no | [performance.md](performance.md), [read-model.md](read-model.md) |
 | `SESSIONDOCK_AST_CACHE_MB` | `pools` | no (default) | Pool, page, runtime and cache budgets: `SESSIONDOCK_READ_WORKERS` blocking readers (default `clamp(cores/2, 8, 32)`; probes and response permits derive from it), `SESSIONDOCK_HISTORY_PAGE_EVENTS` events per history pa... | no | [performance.md](performance.md), [read-model.md](read-model.md) |
-| `SESSIONDOCK_FILE_ROOTS` | `file_roots` | no (default) | Legacy file-root values retained for configuration compatibility; they do not authorize or confine authenticated file reads | isolated_server | — |
+| `SESSIONDOCK_FILE_ROOTS` | `file_roots` | no (default) | Legacy file-root values retained for configuration compatibility; they do not authorize or confine authenticated file reads | isolated_server | [performance.md](performance.md) |
 | `SESSIONDOCK_FILE_WRITE_ROOTS` | `file_write_roots` | no (default) | Legacy write-root values may enable the write service for configuration compatibility; they do not authorize or confine target paths | isolated_server | [error-codes.md](error-codes.md) |
 
 ## Hub (`sessiondock-hub`, `HubConfig::from_env`)

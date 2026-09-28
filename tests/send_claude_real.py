@@ -184,8 +184,7 @@ def main():
 
             }]}))
 
-        for flag, directory in (("--initialize-lifecycle", ledger),
-                                ("--initialize-delivery", delivery)):
+        for flag, directory in (("--initialize-lifecycle", ledger),):
             with socket.socket() as occupied:
                 occupied.bind(("127.0.0.1", 0))
                 env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -211,7 +210,7 @@ def main():
         if session_file() is None:
             skip(f"the one-shot did not create {sid}.jsonl under the isolated projects dir")
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger,
-                             launcher_config=launcher, delivery_dir=delivery, state_dir=state,
+                             launcher_config=launcher, state_dir=state,
                              file_roots=(area,), file_write_roots=(area,)) as (base, opener):
             status, meta = request(opener, base, "GET", "/api/meta")
             assert status == 200 and meta["capabilities"]["conversation_send"] is True, meta

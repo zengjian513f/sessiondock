@@ -188,11 +188,10 @@ def main():
                       "args": ["-c", SHELL], "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}],
         "profiles": []}))
     initialize("--initialize-lifecycle", root / "ledger")
-    initialize("--initialize-delivery", root / "delivery")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                             launcher_config=cfg, delivery_dir=root / "delivery", state_dir=root / "state") as (base, _):
+                             launcher_config=cfg, state_dir=root / "state") as (base, _):
             for renderer in ("xterm", "grid"):
                 run(browser, base, root, renderer)
         browser.close()

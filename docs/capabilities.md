@@ -80,8 +80,7 @@ this routing; it does not establish mobile Edge device compatibility.
 | `terminal_takeover` | same as `terminal_create` | resume via `resume_sources`, never name-guess | [lifecycle-http.md](lifecycle-http.md) |
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
 | `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
-| `outbox` | always false (the legacy send routes and browser outbox are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [delivery.md](delivery.md) |
-| `outbox_read` | true when `SESSIONDOCK_DELIVERY_DIR` opens DeliveryService | no `config`/`allows` gate (does not enable `outbox`) | [delivery-http.md](delivery-http.md) |
+| `outbox` | always false (the legacy send routes, browser outbox and delivery ledger are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [conversation.md](conversation.md) |
 | `audit` | true when `SESSIONDOCK_AUDIT_DIR` is configured | queues `POST /api/audit/browser`; else no posts | [diagnostics.md](diagnostics.md) |
 | `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |
 | `metadata` | true when `SESSIONDOCK_STATE_DIR` opens MetadataStore | enables stars and display preferences | [metadata.md](metadata.md) |
@@ -96,12 +95,6 @@ this routing; it does not establish mobile Edge device compatibility.
 | `media_continuation` | `true` | gallery `.media-more` appends the next batch in place | [media.md](media.md) |
 | `history_pages` | `true` | gap button loads `/page` instead of full history | [history-pages.md](history-pages.md) |
 | `history_semantics` | `"limited_native"` | no `config`/`allows` gate | [native-input.md](native-input.md) |
-
-`outbox_read` is the read-only projection; `outbox` additionally requires the
-terminal transport because reliable send drives a real managed instance. When
-the delivery ledger is configured but no terminal directory is, `outbox_read`
-is true and `outbox` stays false, so the composer stays hidden and the four
-send routes return `501 delivery_send_disabled`.
 
 ## Actions with the session list hidden
 

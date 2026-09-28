@@ -124,13 +124,6 @@ def builders():
             0, None, ["config=ok"],
         )
 
-    def delivery_missing_dir(tmp):
-        path = os.path.join(tmp, "missing")
-        return base(SESSIONDOCK_DELIVERY_DIR=path), 0, None, [f"delivery_dir={path}"]
-
-    def delivery_relative(_tmp):
-        return base(SESSIONDOCK_DELIVERY_DIR="relative/dir"), 0, None, ["delivery_dir=relative/dir"]
-
     def file_write_without_read(tmp):
         return base(SESSIONDOCK_FILE_WRITE_ROOTS=mkdir(os.path.join(tmp, "files"))), 0, None, ["config=ok"]
 
@@ -168,18 +161,18 @@ def builders():
         web = make_web(tmp)
         roots = {n: mkdir(os.path.join(tmp, n)) for n in ("claude", "codex", "grok")}
         priv = {n: mkdir(os.path.join(tmp, n), 0o700)
-                for n in ("state", "delivery", "audit", "trash", "ptyhost")}
+                for n in ("state", "audit", "trash", "ptyhost")}
         env = {
             "SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": web,
             "SESSIONDOCK_CLAUDE_ROOT": roots["claude"], "SESSIONDOCK_CODEX_ROOT": roots["codex"],
             "SESSIONDOCK_GROK_ROOT": roots["grok"], "SESSIONDOCK_STATE_DIR": priv["state"],
-            "SESSIONDOCK_DELIVERY_DIR": priv["delivery"], "SESSIONDOCK_AUDIT_DIR": priv["audit"],
+            "SESSIONDOCK_AUDIT_DIR": priv["audit"],
             "SESSIONDOCK_TRASH_DIR": priv["trash"], "SESSIONDOCK_PTYHOST_DIR": priv["ptyhost"],
         }
         extras = [
             f"claude_root={real(roots['claude'])}", f"codex_root={real(roots['codex'])}",
             f"grok_root={real(roots['grok'])}", f"state_dir={real(priv['state'])}",
-            f"delivery_dir={priv['delivery']}", f"audit_dir={priv['audit']}",
+            f"audit_dir={priv['audit']}",
             f"trash_dir={priv['trash']}", f"ptyhost_dir={real(priv['ptyhost'])}",
         ]
         return env, 0, None, extras
@@ -222,7 +215,7 @@ def builders():
         roots = {n: deep(os.path.join(home, "." + n, sub))
                  for n, sub in (("claude", "projects"), ("codex", "sessions"), ("grok", "sessions"))}
         priv = {n: deep(os.path.join(tmp, "priv", n), 0o700)
-                for n in ("state", "delivery", "audit", "trash", "ptyhost", "lifecycle")}
+                for n in ("state", "audit", "trash", "ptyhost", "lifecycle")}
         bindir = deep(os.path.join(tmp, "bin"))
         exe = {}
         for n in ("ptyhost", "claude"):
@@ -243,7 +236,7 @@ def builders():
             "SESSIONDOCK_BIND": "127.0.0.1:0", "SESSIONDOCK_WEB_DIR": web,
             "SESSIONDOCK_CLAUDE_ROOT": roots["claude"], "SESSIONDOCK_CODEX_ROOT": roots["codex"],
             "SESSIONDOCK_GROK_ROOT": roots["grok"], "SESSIONDOCK_STATE_DIR": priv["state"],
-            "SESSIONDOCK_DELIVERY_DIR": priv["delivery"], "SESSIONDOCK_AUDIT_DIR": priv["audit"],
+            "SESSIONDOCK_AUDIT_DIR": priv["audit"],
             "SESSIONDOCK_TRASH_DIR": priv["trash"], "SESSIONDOCK_PTYHOST_DIR": priv["ptyhost"],
             "SESSIONDOCK_LIFECYCLE_DIR": priv["lifecycle"], "SESSIONDOCK_LAUNCHER_CONFIG": launcher,
         }
@@ -522,8 +515,6 @@ def builders():
         ("root_is_file", root_is_file),
         ("state_overlaps_root", state_overlaps_root),
         ("state_inside_web", state_inside_web),
-        ("delivery_missing_dir", delivery_missing_dir),
-        ("delivery_relative", delivery_relative),
         ("file_write_without_read", file_write_without_read),
         ("file_write_outside_read", file_write_outside_read),
         ("file_roots_too_many", file_roots_too_many),

@@ -7,11 +7,7 @@ use futures_util::future::BoxFuture;
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
-use super::{
-    claude, codex,
-    driver::{DeliveryTarget, DriverError},
-    engine, service,
-};
+use super::driver::{DeliveryTarget, DriverError};
 use crate::state::Reader;
 
 /// Resolves a native UID to the managed instance a SEND writes to.
@@ -158,49 +154,10 @@ impl From<DriverError> for Failure {
     }
 }
 
-impl From<service::Error> for Failure {
-    fn from(error: service::Error) -> Self {
-        match error {
-            service::Error::Closed => Failure::new(503, "delivery_closed", "发送账本服务已关闭"),
-            service::Error::Engine(engine::Error::Frozen) => Failure::new(
-                503,
-                "delivery_unavailable",
-                "发送账本已冻结；需要重新打开服务，不会返回空队列代替错误",
-            ),
-            service::Error::Engine(engine::Error::Claude(claude::Error::Capacity))
-            | service::Error::Engine(engine::Error::Codex(codex::Error::Capacity)) => Failure::new(
-                429,
-                "delivery_capacity",
-                "发送账本已满或该会话待确认消息过多",
-            ),
-            service::Error::Engine(engine::Error::Codex(codex::Error::WrongState)) => Failure::new(
-                409,
-                "delivery_busy",
-                "该会话有另一条消息正处于注入边界；请稍后再发送",
-            ),
-            other => Failure::new(
-                503,
-                "delivery_unavailable",
-                format!("发送账本操作失败：{other}"),
-            ),
-        }
-    }
-}
-
-impl From<engine::Error> for Failure {
-    fn from(error: engine::Error) -> Self {
-        service::Error::Engine(error).into()
-    }
-}
-
 /// Reader failures keep their code; an unknown session is a 400.
 fn api_failure(error: crate::error::ApiError) -> Failure {
     if error.code == "session_error" && error.status.as_u16() == 404 {
-        return Failure::new(
-            400,
-            "session_error",
-            "服务端发送账本只用于已有 Claude/Codex 会话",
-        );
+        return Failure::new(400, "session_error", "只能向已有的原生会话发送");
     }
     Failure::new(error.status.as_u16(), error.code, error.message)
 }

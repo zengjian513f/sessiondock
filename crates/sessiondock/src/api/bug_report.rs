@@ -302,7 +302,6 @@ async fn report_inner(
         (
             Context {
                 session: captured["session"].clone(),
-                outbox: captured["outbox"].clone(),
                 terminal_capture: text(&captured["terminal_capture"], usize::MAX),
             },
             events,
@@ -315,7 +314,6 @@ async fn report_inner(
     };
     let Context {
         session,
-        outbox,
         terminal_capture,
     } = context;
     let page_id = {
@@ -340,7 +338,6 @@ async fn report_inner(
         snapshot,
         terminal_capture,
         session,
-        outbox,
         attachments,
         origin,
         remote_events,
@@ -436,12 +433,10 @@ async fn report_inner(
     Ok(json_body(response_body.0, response_body.1))
 }
 
-/// The server-side context of a report: the session's list row, its
-/// delivery ledger and the managed terminal's frame, all read on this
-/// machine.
+/// The server-side context of a report: the session's list row and the
+/// managed terminal's frame, both read on this machine.
 struct Context {
     session: Value,
-    outbox: Value,
     terminal_capture: String,
 }
 
@@ -461,14 +456,8 @@ async fn local_context(
     } else {
         terminal_capture(state, ctx, terminal_name).await
     };
-    let outbox = if uid.is_empty() {
-        json!({})
-    } else {
-        outbox_snapshot(state, uid).await
-    };
     Context {
         session,
-        outbox,
         terminal_capture,
     }
 }
@@ -476,7 +465,7 @@ async fn local_context(
 /// `POST /api/bug-report/capture`: the server-side context of a report on
 /// this machine, for a worker that starts elsewhere. Body `{uid,
 /// terminal_name, page_id|_page_id, _trace_id}`; answer `{ok, hostname,
-/// captured_at, session, outbox, terminal_capture, events}` where `events`
+/// captured_at, session, terminal_capture, events}` where `events`
 /// is the same 900 s audit window `create` would have bundled here (newest
 /// `REMOTE_EVENT_ROWS` rows). Gated exactly like the report route.
 pub async fn capture(
@@ -545,7 +534,7 @@ pub async fn capture(
             "ok": true, "hostname": state.hostname.to_string(),
             "captured_at": crate::audit::query::rfc3339(now),
             "uid": uid, "terminal_name": terminal_name,
-            "session": context.session, "outbox": context.outbox,
+            "session": context.session,
             "terminal_capture": context.terminal_capture, "events": events,
         }),
     ))
@@ -568,39 +557,6 @@ async fn session_row(state: &AppState, uid: &str) -> Value {
         })
         .await
         .unwrap_or_else(|_| json!({}))
-}
-
-/// The delivery ledger's view
-/// of the session, `{}` when there is no ledger or the session is unknown.
-async fn outbox_snapshot(state: &AppState, uid: &str) -> Value {
-    let Some(delivery) = &state.delivery else {
-        return json!({});
-    };
-    let wanted = uid.to_owned();
-    let Ok(scope) = state
-        .reader
-        .run(move |store| store.native_scope(&wanted, ""))
-        .await
-    else {
-        return json!({});
-    };
-    let encoded = match scope.source.as_str() {
-        "codex" => delivery.codex_outbox(scope.uid, scope.agent_id).await,
-        "claude" => {
-            delivery
-                .claude_outbox(crate::delivery::claude::Scope {
-                    uid: scope.uid,
-                    session_id: scope.session_id,
-                    agent_id: scope.agent_id,
-                })
-                .await
-        }
-        _ => return json!({}),
-    };
-    match encoded {
-        Ok(encoded) => serde_json::from_slice(encoded.as_bytes()).unwrap_or_else(|_| json!({})),
-        Err(_) => json!({}),
-    }
 }
 
 /// Capture history (`name`, 8000) with the screen as fallback:
