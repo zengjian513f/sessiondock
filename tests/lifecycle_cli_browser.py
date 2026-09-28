@@ -177,7 +177,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sessiondock-lifecycle-cli-") as temporary:
         root = Path(temporary).resolve()
         for name in ["host", "host-stale", "work", "work/claude-area", "work/codex-area", "ledger", "ledger-stale",
-                     "bin", "claude", "codex", "grok"]:
+                     "bin", "claude", "codex", "grok", "trash-stale"]:
             (root / name).mkdir(mode=0o700)
         (root / "work/linked-claude").symlink_to(root / "work/claude-area", target_is_directory=True)
         server_wrapper = root / "bin/server-home"
@@ -370,7 +370,7 @@ def main():
                 # ---- A host binary from before recordings still creates agent
                 # sessions: the launcher probes it and drops `--no-record`.
                 with isolated_server(corpus, server_wrapper, host_dir=root / "host-stale", lifecycle_dir=root / "ledger-stale",
-                                     launcher_config=stale_configuration) as (base, _):
+                                     launcher_config=stale_configuration, trash_dir=root / "trash-stale") as (base, _):
                     errors = []
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
                     page = watch(context)
@@ -379,6 +379,43 @@ def main():
                                           wrapper="updated", host_kind="stale")
                     meta = json.loads((root / "host-stale" / (stale["name"] + ".json")).read_text())["meta"]
                     assert meta["sid"] == stale["declared_sid"] and meta["launch_id"] == stale["launch_id"], meta
+
+                    # ---- Deleting an ended session takes its launch receipt with it.
+                    # The exited receipt stays in term/list.pending and is hidden only
+                    # by the native row it declared. The server discards it together
+                    # with the files, so the sidebar must not bring it back as a
+                    # 「新建 Claude 会话」 row until the next terminal list.
+                    stale_uid = claude_uid(root, stale["declared_sid"])
+                    typed = page.locator("#termpane .xterm-helper-textarea")
+                    typed.press_sequentially("hello")
+                    typed.press("Enter")
+                    xterm_includes(page, "RS_INPUT_OK")
+                    page.wait_for_function("uid => S.sel === uid", arg=stale_uid, timeout=20000)
+                    page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
+                    typed.press_sequentially("quit")
+                    typed.press("Enter")
+                    page.wait_for_function("name => (T.pending || []).some(row => row.name === name && !row.running)",
+                                           arg=stale["name"], timeout=15000)
+                    receipt_row = f'#side .item[data-uid="tmux:{stale["name"]}"]'
+                    expect(page.locator(f'#side .item[data-uid="{stale_uid}"]')).to_be_visible()
+                    expect(page.locator(receipt_row)).to_have_count(0)
+                    page.evaluate("""selector => { window.receiptRowSeen = false;
+                        new MutationObserver(() => { if (document.querySelector(selector)) window.receiptRowSeen = true; })
+                          .observe(document.querySelector('#side'), {childList: true, subtree: true}); }""", receipt_row)
+                    action = page.locator("#a-session-action")
+                    if not action.is_visible():
+                        page.locator("#a-more").click()
+                    expect(action).to_have_attribute("aria-label", "删除会话", timeout=15000)
+                    with page.expect_response(lambda response: response.request.method == "DELETE"
+                                              and urlsplit(response.url).path.startswith("/api/session/")) as deleted:
+                        action.click()
+                    assert deleted.value.status == 200, deleted.value.text()
+                    expect(page.locator("#detail")).to_contain_text("已移入回收站")
+                    expect(page.locator(f'#side .item[data-uid="{stale_uid}"]')).to_have_count(0)
+                    page.wait_for_function("name => !(T.pending || []).some(row => row.name === name)",
+                                           arg=stale["name"], timeout=15000)
+                    assert page.evaluate("window.receiptRowSeen") is False, "deleted session came back as its launch receipt"
+                    expect(page.locator(receipt_row)).to_have_count(0)
                     assert not errors, errors
                     context.close()
             finally:
@@ -405,7 +442,7 @@ def main():
           "declared identity followed after the fake CLI persisted its record, Codex resume via console button "
           "with exact `resume <sid>` argv, inherited service PATH/HOME/custom env, explicit overrides/removals, "
           "stale parent identity removal, executable wrapper, reuse including legacy force, tmux refusal, native bytes unchanged, "
-          "agent creation through a host that predates --no-record")
+          "agent creation through a host that predates --no-record, deleting an ended session without its receipt reappearing")
 
 
 if __name__ == "__main__":

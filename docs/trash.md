@@ -8,7 +8,8 @@ The file set comes from the published inventory row. Claude and Codex transcript
 move with their indexed agent files; Grok sessions move as whole directories.
 A finished launch receipt that declared or bound that native session is discarded
 with its retained conversation draft, so the pending row does not return after
-the native files leave the catalog.
+the native files leave the catalog. The page drops those receipts when it removes
+the deleted rows, before its next terminal list arrives.
 The entry manifest records original paths, session metadata and observed run state.
 Moves support different filesystems by publishing a complete copy before removing
 the source. Named symlinks move as links. Later file changes remain part of the
