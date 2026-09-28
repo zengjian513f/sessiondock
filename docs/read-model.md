@@ -87,8 +87,9 @@
   为 `failed`），`turn_aborted` 为 `aborted`。Claude 跳过 sidechain、`isMeta`、注入文本与
   `!` shell 记录：`system` 的 `turn_duration` 或压缩边界为 `idle`，Esc 中断标记为
   `aborted`，含提问工具调用的 assistant 为 `waiting`，API 错误为 `failed`，`end_turn`
-  为 `idle`，其余输入、工具调用与工具结果为 `working`。尾部没有能定论的记录、Grok 与
-  OpenCode 不出字段。`turn` 只说转录写到哪里，进程是否还在由 `/api/live` 决定；
+  为 `idle`，其余输入、工具调用与工具结果为 `working`。主回合已收尾但仍有
+  `agent_items[].active` 的子代理（后台子代理还在跑、主会话在等它们）时，非 `waiting` 的
+  `turn` 记为 `working`。尾部没有能定论的记录、Grok 与 OpenCode 不出字段。`turn` 只说转录写到哪里，进程是否还在由 `/api/live` 决定；
   前端只在会话运行中时区分轮转中/等待/空闲，正在看的会话再用对话 `activity` 与
   [CLI 状态对象](cli-state.md)的 `instance.busy` 覆盖（等待回答优先）。
 - **刷新节奏**：500 ms TTL 内复用上一份行；`force=1` 立即重扫；扫描在有界

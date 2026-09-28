@@ -747,12 +747,16 @@ pub fn build(
                 ))
         });
         if let Some(row) = rows.get_mut(&uid) {
-            row["agent_items"] = Value::Array(
-                agents
-                    .iter()
-                    .map(|agent| graph.agent_item(&uid, agent))
-                    .collect(),
-            );
+            let items: Vec<Value> = agents
+                .iter()
+                .map(|agent| graph.agent_item(&uid, agent))
+                .collect();
+            // A main turn that ended while background subagents still run
+            // is not idle: it waits for them (an open question still wins).
+            if items.iter().any(|item| item["active"] == true) && row["turn"] != "waiting" {
+                row["turn"] = json!("working");
+            }
+            row["agent_items"] = Value::Array(items);
             row["agents"] = json!(agents.len());
         }
     }
