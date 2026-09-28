@@ -5,7 +5,7 @@ Isolated Rust server, synthetic Claude session with a branch (an API field only)
 320 (608 and both sides of every breakpoint included); each width checks two invariants and the
 whole sweep checks the fold order:
   header chrome, in this order as the page gets narrower: Agent/view/nest labels, then the
-      hostname title, then machine chips into the picker (seeded here; hub does the same),
+      hostname title, then machine chips down to their initials (seeded here; hub does the same),
       then right-side buttons. Buttons that fold are a suffix of the priority list (settings ->
       report -> trash -> page refresh [-> new when terminal_create]); the menu keeps the inline order;
       the filter bar is never squeezed unless everything folded; once folded, one more button
@@ -63,7 +63,13 @@ HEADER_FOLD_JS = """() => {
       || shown(header.querySelector('#nest .mobile-label')),
     brand: shown(header.querySelector('.brand-name')),
     nodes_present: nodesPresent,
-    nodes_menu: nodesPresent && shown(header.querySelector('#node-pick')),
+    nodes_abbr: nodesPresent && [...header.querySelectorAll('#node-chips button')].every(b =>
+      shown(b.querySelector('.node-abbr')) && !shown(b.querySelector('.node-name'))
+      && !shown(b.querySelector('.node-count'))),
+    node_texts: [...header.querySelectorAll('#node-chips button')].map(b =>
+      [...b.children].filter(shown).map(e => e.textContent).join(' ')),
+    scope_width: Math.max(...[...header.querySelectorAll('#session-scope button')]
+      .map(b => b.getBoundingClientRect().width)),
     fold_labels: header.classList.contains('header-fold-labels'),
     fold_brand: header.classList.contains('header-fold-brand'),
     fold_nodes: header.classList.contains('header-fold-nodes')};
@@ -152,12 +158,18 @@ def check_header(page, width, tiers, header_actions, chrome_tiers):
     if fold["fold_nodes"] or fold["menu"]:
         assert not fold["brand"] or width <= 720, (where, "title must go before machines/buttons", fold)
     if fold["menu"] and fold["nodes_present"]:
-        assert fold["nodes_menu"] or width <= 720, (where, "machines must go before buttons", fold)
+        assert fold["nodes_abbr"] or width <= 720, (where, "machines must go before buttons", fold)
+    if fold["nodes_present"]:
+        full = ["Lyra 9", "Cygnus 9", "Cetus 9"]
+        abbr = ["L", "Cy", "Ce"]
+        assert fold["node_texts"] == (abbr if fold["nodes_abbr"] else full), (where, fold)
+        assert fold["nodes_abbr"] or width > 720, (where, "narrow header shows machine initials", fold)
+    assert fold["scope_width"] <= 30, (where, "session counts take only their digits", fold)
     if fold["fold_nodes"]:
         assert fold["fold_brand"] or width <= 720, (where, fold)
     if fold["fold_brand"]:
         assert fold["fold_labels"] or width <= 720, (where, fold)
-    chrome = (not fold["labels"], not fold["brand"], bool(fold["nodes_menu"]), len(fold["menu"]))
+    chrome = (not fold["labels"], not fold["brand"], bool(fold["nodes_abbr"]), len(fold["menu"]))
     tier = tier_of(width)
     assert chrome >= chrome_tiers.get(tier, chrome), (where, "chrome unfolded while narrowing", fold, chrome_tiers)
     chrome_tiers[tier] = chrome
@@ -245,26 +257,24 @@ def check_status_badge(page, uid):
 
 
 def seed_header_nodes(page):
-    # Local mode has no machine picker. Three named chips make the third fold step measurable.
+    # Local mode has no machine chips. Three named chips (two sharing an initial) make the third
+    # fold step measurable; the markup mirrors nodes.js renderNodes and uses its nodeAbbrs.
     page.evaluate("""() => {
       const picker = document.querySelector('#node-picker');
       picker.hidden = false;
       const chips = document.querySelector('#node-chips');
       chips.replaceChildren();
-      for (const [id, name] of [['n1', 'Lyra'], ['n2', 'Cygnus'], ['n3', 'Pavo']]) {
+      const nodes = [['n1', 'Lyra'], ['n2', 'Cygnus'], ['n3', 'Cetus']]
+        .map(([id, name]) => ({id, name}));
+      const abbrs = nodeAbbrs(nodes);
+      for (const node of nodes) {
         const b = document.createElement('button');
         b.type = 'button';
-        b.dataset.node = id;
-        const count = document.createElement('b');
-        count.className = 'node-count';
-        count.textContent = '9';
-        b.append(name + ' ', count);
+        b.dataset.node = node.id;
+        const part = (tag, cls, text) => Object.assign(document.createElement(tag), {className: cls, textContent: text});
+        b.append(part('span', 'node-name', node.name), part('span', 'node-abbr', abbrs.get(node.id)),
+          part('b', 'node-count', '9'));
         chips.appendChild(b);
-      }
-      const label = document.querySelector('#node-pick .node-pick-label');
-      if (label) {
-        label.textContent = '全部机器';
-        label.classList.remove('node-none');
       }
       layoutHeader();
     }""")
@@ -282,7 +292,7 @@ def run(page, uid):
     first = page.evaluate(HEADER_FOLD_JS)
     header_actions = first["inline"] + first["menu"]
     assert header_actions == [i for i in HEADER_PRIORITY if i in header_actions] and "trash" in header_actions, first
-    assert first["labels"] and first["brand"] and first["nodes_present"] and not first["nodes_menu"], first
+    assert first["labels"] and first["brand"] and first["nodes_present"] and not first["nodes_abbr"], first
     head = page.evaluate(HEAD_STATE_JS)
     meta_order = head["brief"] + head["menu_meta"]
     assert meta_order == ["mcount-total", "size", "time", "cwd", "meta-source", "session-id"], head
@@ -303,14 +313,14 @@ def run(page, uid):
         fold = check_header(page, width, header_tiers, header_actions, chrome_tiers)
         header_rows.append((width, fold["menu"], tier))
         heights.append((width, fold["height"], tier))
-        chrome = (fold["labels"], fold["brand"], not fold["nodes_menu"], len(fold["menu"]))
+        chrome = (fold["labels"], fold["brand"], not fold["nodes_abbr"], len(fold["menu"]))
         if previous_chrome is not None:
             was_labels, was_brand, was_inline, was_folded = previous_chrome
             if was_labels and not fold["labels"]:
                 chrome_events.append((width, "labels"))
             if was_brand and not fold["brand"]:
                 chrome_events.append((width, "brand"))
-            if was_inline and fold["nodes_menu"]:
+            if was_inline and fold["nodes_abbr"]:
                 chrome_events.append((width, "nodes"))
             if was_folded == 0 and fold["menu"]:
                 chrome_events.append((width, "buttons"))
