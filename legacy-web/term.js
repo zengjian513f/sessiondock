@@ -4147,110 +4147,68 @@ function acceptComposerServerRevision(draft,row) {
     && JSON.stringify(value?.quotes || [])===JSON.stringify(draft.quotes);
   if (empty || same) draft.revision=row.revision;
 }
-// Only visual progress lives here. The server owns delivery and deduplication.
-const composerSendProgress = new WeakMap();
-const composerEchoHashes = new WeakMap();
-function prepareComposerSend(draft, id, uid, text = '') {
-  let state = composerSendProgress.get(draft);
-  if (!state) composerSendProgress.set(draft, state = {items:[], used:new Set()});
-  state.items = state.items.filter(item => item.hash || item.id === id);
-  if (!state.items.some(item => item.id === id)) {
-    state.items.push({id, uid, text:String(text || ''), afterTs:queuedAfterTimestamp(uid),
-      afterCount:(cache.get(viewKey(uid))?.msgs || []).length, hash:null});
+// The server owns delivery, deduplication and the per-session CLI state
+// object (docs/cli-state.md). Queued sends are read from that object, which
+// arrives in view packets (`cli`) and CHECK responses; nothing is guessed here.
+function applyCliState(uid, cli, {status = true} = {}) {
+  const draft = composerDrafts.get(composerDraftOwner(uid));
+  if (!draft || !cli || typeof cli !== 'object') return;
+  draft.cli = cli;
+  if (status && cli.input && takenOver(uid)) {
+    updateComposerInputStatus(uid, {ok: cli.input.state === 'ready', input: cli.input});
   }
-}
-function composerEchoReady(item, recorded, index) {
-  if (!item?.hash) return false;
-  // Claude/Codex records carry a timestamp, so an older identical line cannot
-  // retire a later send. Grok chat_history lines do not; the cache length at
-  // prepare time is the same fence.
-  if (Number.isFinite(recorded)) return !item.afterTs || recorded > Date.parse(item.afterTs);
-  return Number.isInteger(item.afterCount) && index >= item.afterCount;
-}
-function acceptComposerSend(draft, result) {
-  const item = composerSendProgress.get(draft)?.items.find(item => item.id === result?.request_id);
-  if (item && result.state === 'sent') item.hash = result.echo_hash || null;
-}
-function paintComposerSendProgress() {
-  const draft = composerDrafts.get(composerDraftOwner(composerUid));
-  const queued = (composerSendProgress.get(draft)?.items || []).filter(item => item.hash);
-  // Text the terminal took but no native record shows yet is queued inside
-  // the CLI (busy turn, API retry). It is drawn as a queued bubble, not as a
-  // spinner: the Send button stays free for the next message.
-  if (!composerSending) setSendButtonBusy($('#csend'), ''); // Preserve upload/SEND progress labels.
-  renderQueuedSends(composerUid, queued);
+  if (composerDraftOwner(composerUid) === composerDraftOwner(uid)) renderQueuedSends(composerUid);
 }
 /** Queued sends live in one `#queued-sends` block after the activity row so
  *  turn sealing, tool grouping and time dividers never treat them as history.
  *  app.js removes the block before appending records; the tail render
- *  restores it, and the native echo retires each bubble. */
-function renderQueuedSends(uid, items) {
+ *  restores it. A `lost` row (the instance stopped answering) can be closed. */
+function renderQueuedSends(uid = composerUid) {
   // A new session waits on its stage page until the first native record;
   // its queued text goes under the stage text instead of a message list.
   const box = $('#msgs'), stage = box ? null : $('#detail .new-session-wait');
   $('#queued-sends')?.remove();
   if (!box && !stage) return;
-  // The draft already belongs to this composer's session (temporary launch
-  // bindings carry over), so every unretired item is shown here.
-  const rows = uid && uid === S.sel && !S.agent ? items : [];
+  const draft = uid && uid === S.sel && !S.agent ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  const rows = Array.isArray(draft?.cli?.queued) ? draft.cli.queued : [];
   if (!rows.length) return;
   const block = el('div', 'queued-sends');
   block.id = 'queued-sends';
   block.setAttribute('role', 'status');
   block.setAttribute('aria-live', 'polite');
   for (const item of rows) {
-    const n = el('div', 'msg queued-send');
+    const lost = item.state === 'lost';
+    const n = el('div', 'msg queued-send' + (lost ? ' lost' : ''));
     n.dataset.role = 'user';
-    n.dataset.requestId = item.id;
+    n.dataset.requestId = item.request_id;
+    n.dataset.state = item.state || 'queued';
     const body = el('div', 'mb');
-    if (typeof md === 'function') body.innerHTML = md(item.text, true, [], {uid, agent:null});
-    else body.textContent = item.text;
+    const text = String(item.text || '');
+    if (typeof md === 'function') body.innerHTML = md(text, true, [], {uid, agent:null});
+    else body.textContent = text;
     n.appendChild(body);
-    n.appendChild(el('small', 'queued-send-state', '已发送，等待 CLI 处理'));
+    const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看' : '已发送，等待 CLI 处理');
+    if (lost) {
+      const close = el('button', 'queued-send-dismiss', '关闭');
+      close.type = 'button';
+      close.onclick = () => dismissQueuedSend(uid, item.request_id);
+      state.appendChild(close);
+    }
+    n.appendChild(state);
     block.appendChild(n);
   }
   if (box) box.appendChild(block);
   else stage.insertAdjacentElement('afterend', block);
 }
-async function reconcileComposerSendProgress(uid) {
-  const draft = composerDrafts.get(composerDraftOwner(uid));
-  const state = composerSendProgress.get(draft);
-  if (!state || state.busy || !state.items.some(item => item.hash)) return;
-  state.busy = true;
+async function dismissQueuedSend(uid, requestId) {
   try {
-    const messages = cache.get(viewKey(uid))?.msgs || [];
-    const occurrences = new Map();
-    for (let index = 0; index < messages.length; index++) {
-      const message = messages[index];
-      if (!['user', 'command'].includes(message.role)) continue;
-      const recorded = Date.parse(message.ts || '');
-      if (!state.items.some(item => composerEchoReady(item, recorded, index))) continue;
-      let hashing = composerEchoHashes.get(message);
-      if (!hashing) {
-        const bytes = new TextEncoder().encode(JSON.stringify(String(message.text || '').trim()));
-        hashing = crypto.subtle.digest('SHA-256', bytes).then(buffer =>
-          Array.from(new Uint8Array(buffer), byte => byte.toString(16).padStart(2, '0')).join(''));
-        composerEchoHashes.set(message, hashing);
-      }
-      const hash = await hashing;
-      const key = `${message.ts}:${hash}`;
-      const occurrence = (occurrences.get(key) || 0) + 1;
-      occurrences.set(key, occurrence);
-      const identity = `${key}:${occurrence}`;
-      if (state.used.has(identity)) continue;
-      const at = state.items.findIndex(item => item.hash === hash
-        && composerEchoReady(item, recorded, index));
-      if (at >= 0) {
-        state.items.splice(at, 1);
-        state.used.add(identity); // One native record completes one send only.
-      }
-    }
-  } catch { /* No guessed success if history or hashing is unavailable. */ }
-  finally {
-    state.busy = false;
-    if (!state.items.length) composerSendProgress.delete(draft);
-    paintComposerSendProgress();
+    await post('api/session/conversation/queued/dismiss', {uid, request_id: requestId});
+  } catch { /* The next CLI-state packet shows whether it is still queued. */ }
+  const draft = composerDrafts.get(composerDraftOwner(uid));
+  if (Array.isArray(draft?.cli?.queued)) {
+    draft.cli.queued = draft.cli.queued.filter(item => item.request_id !== requestId);
   }
+  renderQueuedSends(uid);
 }
 async function consumeComposerSubmission(uid,text,attachments,quotes) {
   const owner=composerDraftOwner(uid),draft=composerDrafts.get(owner);
@@ -4968,7 +4926,6 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
         quotes:options.quotes || [], lease:termSendLease(name).lease || null,
       });
       if (data.error) {updateComposerInputStatus(uid, data); throw new Error(data.error);}
-      acceptComposerSend(draft, data);
       acceptComposerServerRevision(draft,data.draft);
       S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
       paintLive();
@@ -5138,13 +5095,16 @@ async function probeComposerInput(uid) {
   }
   // An older poll cannot overwrite a newer SEND check, a switched view, or
   // the state of a replacement terminal using the same logical draft.
-  if (draft.inputProbe === probe && takenOver(uid) === name) updateComposerInputStatus(uid, data);
+  if (draft.inputProbe === probe && takenOver(uid) === name) {
+    updateComposerInputStatus(uid, data);
+    if (data && typeof data === 'object' && data.cli) applyCliState(uid, data.cli, {status:false});
+  }
   return data;
 }
 
 function syncComposerSendState() {
-  paintComposerSendProgress();
-  void reconcileComposerSendProgress(composerUid);
+  if (!composerSending) setSendButtonBusy($('#csend'), ''); // Preserve upload/SEND progress labels.
+  renderQueuedSends(composerUid);
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
   const blocked = composerUsesInputStatus()
     ? !composerInputAllowsSend(draft?.inputStatus) : !!activeCliQuestion(composerUid);
@@ -5201,7 +5161,6 @@ async function reconcileComposerSubmission(uid) {
       || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
   // A later attachment may be saved as metadata while its bytes still live in
   // this page. A receipt refresh must preserve that File and its preview.
-  acceptComposerSend(draft, result);
   adoptServerDraft(draft,result.draft);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
@@ -5701,7 +5660,6 @@ async function submitComposer() {
     if (draft.requestId && (draft.requestText===priorPayload || (draft.report_prompt && draft.report_text===text))) {
       const previous=await priorComposerSubmission(uid,draft.requestId);
       if (previous?.state==='sent') {
-        acceptComposerSend(draft, previous);
         acceptComposerServerRevision(draft,previous.draft);
         await consumeComposerSubmission(uid,text,attachments,quotes);return;
       }
@@ -5723,7 +5681,6 @@ async function submitComposer() {
     if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
     const submittedRevision = draft.revision;
     setSendButtonBusy(button, '发送中');
-    prepareComposerSend(draft, draft.requestId, uid, text);
     const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
       draftRevision:submittedRevision, attachments:uploaded, quotes});
     if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);

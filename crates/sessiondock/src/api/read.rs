@@ -136,7 +136,9 @@ pub async fn messages(
     let files = state.files.clone();
     let pages = state.history_pages.clone();
     let prompts = state.prompts.clone();
-    let (body, scope, mut prompt) = state
+    let uid_for_cli = uid.clone();
+    let query_agent_empty = query.agent.is_empty();
+    let (body, scope, mut prompt, echoes) = state
         .reader
         .run(move |store| {
             let snapshot = store.snapshot(&uid, &query.agent)?;
@@ -151,9 +153,15 @@ pub async fn messages(
             if body.size() > LARGE_RESPONSE {
                 crate::sessions::memory::release_soon();
             }
-            Ok((body, scope, prompt))
+            let echoes = if query_agent_empty {
+                body.echoes(&snapshot)
+            } else {
+                Vec::new()
+            };
+            Ok((body, scope, prompt, echoes))
         })
         .await?;
+    retire_echo_list(&state, &uid_for_cli, &echoes).await;
     // `result["prompt"]` is set for every main view:
     // null unless a Claude card or a Codex approval is live.
     if let Some(scope) = scope {
@@ -165,7 +173,10 @@ pub async fn messages(
         )
         .await;
     }
-    Ok(JsonBytes(body.finish(prompt.as_ref()).into()))
+    let cli = cli_field(&state, &uid_for_cli, query_agent_empty);
+    Ok(JsonBytes(
+        body.finish_with(prompt.as_ref(), cli.as_ref()).into(),
+    ))
 }
 
 /// The Claude half of the `prompt` field, on the blocking reader (it reads
@@ -374,15 +385,20 @@ struct Packet {
     body: MessageBody,
     /// The `prompt` field to append (`None` on agent views).
     prompt: Option<Value>,
+    /// The `cli` field to append (`None` on agent views).
+    cli: Option<Value>,
     query: MessageQuery,
 }
 
 impl Packet {
-    /// The SSE data (the document with its `prompt` appended) and the
-    /// cursor the next packet continues from.
+    /// The SSE data (the document with its `prompt` and `cli` appended) and
+    /// the cursor the next packet continues from.
     fn data(self) -> (String, MessageQuery) {
-        let data = String::from_utf8(self.body.finish(self.prompt.as_ref()))
-            .expect("serde_json output and its spliced copies are UTF-8");
+        let data = String::from_utf8(
+            self.body
+                .finish_with(self.prompt.as_ref(), self.cli.as_ref()),
+        )
+        .expect("serde_json output and its spliced copies are UTF-8");
         if data.len() > LARGE_RESPONSE {
             crate::sessions::memory::release_soon();
         }
@@ -402,6 +418,7 @@ fn packet(body: MessageBody, prompt: Option<Value>, requested: MessageQuery) -> 
     Packet {
         body,
         prompt,
+        cli: None,
         query,
     }
 }
@@ -413,6 +430,74 @@ fn prompt_only(prompt: Value) -> String {
 
 /// Poll spacing for the Claude file stamp / Codex screen (0.4 s).
 const PROMPT_POLL: Duration = Duration::from_millis(500);
+/// How often a watcher refreshes the session's CLI state; readings younger
+/// than `CLI_MAX_AGE` are shared by every watcher and CHECK (docs/cli-state.md).
+const CLI_POLL: Duration = Duration::from_millis(1000);
+const CLI_MAX_AGE: Duration = Duration::from_millis(900);
+
+/// The `cli` field for a main view: the state the conversation service has
+/// for this session, JSON null before its first identification.
+fn cli_field(state: &AppState, uid: &str, main_view: bool) -> Option<Value> {
+    if !main_view {
+        return None;
+    }
+    let service = state.conversations.as_ref()?;
+    Some(
+        service
+            .cli_state(uid)
+            .map(|cli| cli.to_value())
+            .unwrap_or(Value::Null),
+    )
+}
+
+/// Refreshes the session's CLI state for a watcher tick; a failure or a
+/// slow host leaves the last state in place.
+async fn observe_cli(state: &AppState, uid: &str) -> Option<Value> {
+    let service = state.conversations.as_ref()?;
+    let observed =
+        tokio::time::timeout(Duration::from_secs(8), service.observe(uid, CLI_MAX_AGE)).await;
+    match observed {
+        Ok(Ok(cli)) => Some(cli.to_value()),
+        _ => service.cli_state(uid).map(|cli| cli.to_value()),
+    }
+}
+
+/// Retires queued sends echoed by a batch's user/command records. A session
+/// nothing has identified yet (a page opening the native view of a launch)
+/// is resolved first when the ledger holds queued sends.
+async fn retire_echo_list(state: &AppState, uid: &str, echoes: &[(String, Option<f64>)]) -> bool {
+    let Some(service) = state.conversations.as_ref() else {
+        return false;
+    };
+    if echoes.is_empty() || service.ensure_cli_key(uid).await.is_none() {
+        return false;
+    }
+    let has_queue = service
+        .cli_state(uid)
+        .is_some_and(|cli| !cli.queued.is_empty());
+    has_queue && service.retire_echoes(uid, echoes)
+}
+
+/// Retires queued sends echoed by this packet's user/command records.
+fn retire_echoes(
+    state: &AppState,
+    uid: &str,
+    body: &MessageBody,
+    snapshot: &crate::sessions::ViewSnapshot,
+) -> bool {
+    let Some(service) = state.conversations.as_ref() else {
+        return false;
+    };
+    let has_queue = service
+        .cli_state(uid)
+        .is_some_and(|cli| !cli.queued.is_empty());
+    has_queue && service.retire_echoes(uid, &body.echoes(snapshot))
+}
+
+/// Emit `{"cli_only": true, "cli": ...}` as a CLI-state packet.
+fn cli_only(cli: &Value) -> String {
+    json!({"cli_only": true, "cli": cli}).to_string()
+}
 
 pub async fn watch(
     State(state): State<AppState>,
@@ -420,6 +505,8 @@ pub async fn watch(
 ) -> Result<Response, ApiError> {
     let Query(query) = query.map_err(query_error)?;
     let cursor = query.cursor();
+    let main_view = query.agent.is_empty();
+    let watched_uid = query.uid.clone();
     let mut subscription = state.observations.subscribe(query.uid, query.agent).await?;
     let snapshot = subscription.current()?;
     // `claude_sid` / `codex_session` only for a main session; the
@@ -444,10 +531,26 @@ pub async fn watch(
             } else {
                 None
             };
-            Ok(packet(body, prompt, cursor))
+            let echoes = if main_view {
+                body.echoes(&snapshot)
+            } else {
+                Vec::new()
+            };
+            Ok((packet(body, prompt, cursor), echoes))
         })
         .await?;
+    let first_echoes = std::mem::take(&mut first.1);
+    let mut first = first.0;
     codex_prompt_field(&state, scope.as_ref(), &mut first.prompt, &mut probe).await;
+    if main_view {
+        // Identify the session first so the echoes retire against its key.
+        let observed = observe_cli(&state, &watched_uid).await;
+        first.cli = if retire_echo_list(&state, &watched_uid, &first_echoes).await {
+            cli_field(&state, &watched_uid, true)
+        } else {
+            observed.or_else(|| cli_field(&state, &watched_uid, true))
+        };
+    }
     let stream = async_stream::stream! {
         // `prompt_revision` / `codex_prompt`: what the last packet carried.
         let mut claude_revision = match &scope {
@@ -455,8 +558,13 @@ pub async fn watch(
             _ => None,
         };
         let mut codex_prompt = first.prompt.clone().unwrap_or(Value::Null);
+        let mut last_cli = first.cli.clone().unwrap_or(Value::Null);
         let mut poll = tokio::time::interval(PROMPT_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let cli_watched = main_view && state.conversations.is_some();
+        let mut cli_poll = tokio::time::interval(CLI_POLL);
+        cli_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        cli_poll.tick().await; // The first packet already carried a reading.
         // A byte checkpoint does not encode the browser's metadata version.
         // Always send one aligned batch so a reconnect catches a preference or
         // menu change that occurred between its HTTP snapshot and subscribe.
@@ -466,6 +574,17 @@ pub async fn watch(
             let changed = tokio::select! {
                 _ = state.shutdown.cancelled() => break,
                 changed = subscription.changed() => changed,
+                _ = cli_poll.tick(), if cli_watched => {
+                    // A changed input state, editor or queue without new
+                    // records is a `cli_only` packet.
+                    if let Some(current) = observe_cli(&state, &watched_uid).await
+                        && current != last_cli
+                    {
+                        last_cli = current;
+                        yield Ok(Event::default().data(cli_only(&last_cli)));
+                    }
+                    continue;
+                }
                 _ = poll.tick(), if scope.is_some() => {
                     // A changed card file stamp or approval screen
                     // without new records is a `prompt_only` packet.
@@ -500,6 +619,8 @@ pub async fn watch(
             let pages = state.history_pages.clone();
             let prompts = state.prompts.clone();
             let packet_scope = scope.clone();
+            let echo_state = state.clone();
+            let echo_uid = watched_uid.clone();
             let result = match snapshot {
                 Ok(snapshot) => state.reader.run_wait(&state.shutdown, move |_| {
                     let body = snapshot.messages_body(&request_cursor, &media, files.as_deref(), &pages)?;
@@ -508,6 +629,9 @@ pub async fn watch(
                     } else {
                         None
                     };
+                    if main_view {
+                        retire_echoes(&echo_state, &echo_uid, &body, &snapshot);
+                    }
                     Ok(packet(body, prompt, request_cursor))
                 }).await,
                 Err(error) => Err(error),
@@ -515,6 +639,10 @@ pub async fn watch(
             match result {
                 Ok(mut next) => {
                     codex_prompt_field(&state, scope.as_ref(), &mut next.prompt, &mut probe).await;
+                    if main_view {
+                        next.cli = cli_field(&state, &watched_uid, true);
+                        last_cli = next.cli.clone().unwrap_or(Value::Null);
+                    }
                     match &scope {
                         // `_claude_prompt` may have deleted the file: resync the stamp.
                         Some(PromptScope::Claude { sid }) => claude_revision = state.prompts.claude_revision(sid),

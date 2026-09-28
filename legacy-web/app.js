@@ -1324,6 +1324,15 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     if (S.sel === uid && !S.agent) renderConversationTail(e.activity, uid);
     return 0;
   }
+  if (data.cli_only) {
+    // The session's CLI state changed (input readiness, editor text, queued
+    // sends) without new records (docs/cli-state.md).
+    if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
+      e.cli = data.cli || null;
+      globalThis.applyCliState?.(uid, e.cli);
+    }
+    return 0;
+  }
   // 正文 diff 受游标约束。SSE 与兜底拉取可能同时从同一旧游标出发；
   // 乱序包必须在修改 outbox、prompt 或乐观消息之前丢弃，否则正文没被
   // 接收，发送占位却已先清掉。
@@ -1346,6 +1355,10 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     e.prompt = data.prompt || null;
     globalThis.revealConversationForPrompt?.(uid, e.prompt);
   }
+  if (!agent && Object.prototype.hasOwnProperty.call(data, 'cli')) {
+    e.cli = data.cli || null;
+    globalThis.applyCliState?.(uid, e.cli);
+  }
   const questionCalls = data.reset ? new Set() : messageIndex(e.msgs).questions;
   for (const message of data.messages || []) {
     if (message.role === 'question' && message.call_id) questionCalls.add(message.call_id);
@@ -1359,7 +1372,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     markInterruptedTurn(data.messages, data.activity);
     cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
                     end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-                    prompt: data.prompt || null,
+                    prompt: data.prompt || null, cli: data.cli ?? null,
                     total: data.message_total, partial: data.partial || null });
     S.cursors.set(key, { end: data.end, head: data.version.head, anchor: data.anchor });
     if (S.sel === uid && S.agent === agent) {
@@ -1537,7 +1550,7 @@ async function retryMigrationRead(uid, agent = null) {
           || !Number.isFinite(data.end)) throw new Error('服务端返回了无效的会话快照');
       cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
         end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-        prompt: data.prompt || null, total: data.message_total, partial: data.partial || null});
+        prompt: data.prompt || null, cli: data.cli ?? null, total: data.message_total, partial: data.partial || null});
       S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
       migrationReadFailures.delete(key);
       if (S.sel === uid && S.agent === agent) {
@@ -4460,7 +4473,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   if (SessionDockCapabilities.config.backend === 'rust') { migrationReadFailures.delete(key); openRetries.delete(key); }
   cachePut(key, { meta: data.meta, msgs: data.messages, version: data.version,
                   end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-                  prompt: data.prompt || null,
+                  prompt: data.prompt || null, cli: data.cli ?? null,
                   total: data.message_total, partial: data.partial || null });
   S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
   await renderSession(data.meta, data.messages, data.activity);
@@ -4854,7 +4867,7 @@ async function loadFullHistory(uid, agent, button) {
     });
     cachePut(key, {meta: data.meta, msgs: data.messages, version: data.version,
                    end: data.end, anchor: data.anchor, activity: data.activity, bytes,
-                   prompt: data.prompt || null,
+                   prompt: data.prompt || null, cli: data.cli ?? null,
                    total: data.message_total, partial: null});
     S.cursors.set(key, {end: data.end, head: data.version.head, anchor: data.anchor});
     if (S.sel === uid && S.agent === agent) {

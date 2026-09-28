@@ -112,6 +112,13 @@ def main():
 
                 send('新的一句')
                 assert user_count('新的一句') == 0
+                # The queue is server state (docs/cli-state.md): a reloaded page
+                # shows the bubble again before any echo exists.
+                page.evaluate('async () => await composerDraftWrites')
+                page.reload(wait_until='networkidle')
+                page.wait_for_function("composerUid && !composerDraft().loading", timeout=15000)
+                expect(page.locator('#queued-sends .msg.queued-send[data-role=user]').filter(has_text='新的一句')).to_have_count(1, timeout=15000)
+                expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
                 append('新的一句', 1)
                 page.wait_for_function(
                     "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('新的一句')).length === 1",

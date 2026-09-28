@@ -200,7 +200,15 @@ def main():
                     page.locator('#cinput').fill('second busy input')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     second=send('second busy input')
-                    expect(page.locator('#queued-sends .msg.queued-send')).to_have_count(2)
+                    # The sends sit in the server's CLI state object, in send order,
+                    # for every page and device (docs/cli-state.md). The first echo
+                    # lands 2.5 s after its send and may already have retired that row.
+                    checked=context.request.post(base+'/api/session/conversation/check',data={'uid':uid,'name':receipt['name'],'_build':build}).json()
+                    queued=[row['request_id'] for row in checked['cli']['queued']]
+                    assert queued in ([first['request_id'],second['request_id']],[second['request_id']]),checked['cli']
+                    assert all(row['state']=='queued' and row['echo_hash'] for row in checked['cli']['queued']),checked['cli']
+                    assert checked['cli']['instance']['running'] is True,checked['cli']
+                    expect(page.locator('#queued-sends .msg.queued-send').filter(has_text='second busy input')).to_have_count(1)
                     assert first['request_id']!=second['request_id']
                     replay=context.request.post(base+'/api/session/conversation/send',data=first)
                     assert replay.status==200,replay.text()

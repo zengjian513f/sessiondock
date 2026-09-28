@@ -17,7 +17,7 @@ linked from [the documentation index](README.md).
 | Terminal transport | POST `/api/term/claim`, `/api/term/send`, `/api/term/scroll`; WS `/api/term/attach` (`mode=grid` streams the server grid); GET `/api/term/grid/history` | capability-gated |
 | Terminal recordings | GET `/api/term/records`; WS `/api/term/records/attach` (read-only replay, no lease) | capability-gated |
 | Files and media | POST `/api/session/resolve-files`, `/api/session/attachment`, `/api/session/files/action`, `/api/session/files/upload`; GET `/api/session/file`, `/api/session/files`, `/api/media/{token}` | capability-gated |
-| Conversation drafts | GET/POST `/api/session/conversation`; POST `/api/session/conversation/{send,check,restart,attachment,attachment/discard,import}`; GET `/api/session/conversation/drafts` | capability-gated |
+| Conversation drafts | GET/POST `/api/session/conversation`; POST `/api/session/conversation/{send,check,restart,attachment,attachment/discard,queued/dismiss,import}`; GET `/api/session/conversation/drafts` | capability-gated |
 | Trash | DELETE `/api/session/{uid}`; POST `/api/sessions/delete`, `/api/trash/restore`, `/api/trash/purge`; GET `/api/trash` | capability-gated |
 | Diagnostics | POST `/api/audit/browser`, `/api/bug-report`; `debug_run` filtering | capability-gated |
 | Hub | node registry and display settings; authenticated node proxy; HTTP/SSE/NDJSON/WS forwarding; UID/reference namespace conversion | hub mode |
