@@ -76,6 +76,7 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
             (editor.composer_token.is_some(), editor.pasting)
         }
         "grok" => (grok_composer(capture), false),
+        "opencode" => (opencode_editor(capture), false),
         _ => (false, false),
     };
     if !recognized {
@@ -263,6 +264,46 @@ fn grok_composer(capture: &ScreenCapture) -> bool {
             .is_some_and(|line| !line.trim_matches('─').trim().is_empty())
         && (top + 1..bottom)
             .all(|i| lines[i].chars().nth(left) == Some('│') && lines[i].trim_end().ends_with('│'))
+}
+
+/// OpenCode's prompt is a block of rows with a single `┃` left border, closed
+/// by a `╹▀…` rule; its last row names the agent and model (`Build · …`). The
+/// cursor must be on a draft row inside that block: the command palette and
+/// dialogs move it away, and completion popups are bordered on both sides.
+/// Layout verified against OpenCode 1.18.32.
+fn opencode_editor(capture: &ScreenCapture) -> bool {
+    let text = driver::strip_ansi(&capture.text);
+    let lines: Vec<Vec<char>> = text.lines().map(|line| line.chars().collect()).collect();
+    let (x, y) = (usize::from(capture.cursor.0), usize::from(capture.cursor.1));
+    let Some(left) = lines
+        .get(y)
+        .and_then(|row| row.iter().position(|&c| c == '┃'))
+    else {
+        return false;
+    };
+    let boxed = |i: usize| {
+        lines.get(i).is_some_and(|row| {
+            row.get(left) == Some(&'┃')
+                && row[..left].iter().all(|c| c.is_whitespace())
+                && row.iter().rposition(|&c| c == '┃') == Some(left)
+        })
+    };
+    if !boxed(y) || x < left + 3 {
+        return false;
+    }
+    let last = (y..lines.len())
+        .take_while(|&i| boxed(i))
+        .last()
+        .unwrap_or(y);
+    let label: String = lines[last][left + 1..].iter().collect();
+    y < last
+        && lines
+            .get(last + 1)
+            .is_some_and(|rule| rule.get(left) == Some(&'╹') && rule.get(left + 1) == Some(&'▀'))
+        && label
+            .trim_start()
+            .split_once(" · ")
+            .is_some_and(|(agent, model)| !agent.trim().is_empty() && !model.trim().is_empty())
 }
 
 #[cfg(test)]

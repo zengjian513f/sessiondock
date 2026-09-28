@@ -145,6 +145,8 @@ def main(bind_native=False, bare_shell=False, agent_source="codex"):
                             # exited; the exited row stays listed with its recording).
                             expect(page.locator(".new-session-wait")).to_have_text("")
                             expect(page.locator(".new-session-wait")).to_be_hidden()
+                            # Back from the phone width, the header returns its global buttons.
+                            expect(page.locator(".dhead-actions #a-global-new-session")).to_have_count(0)
                             assert sorted(page.evaluate("[...document.querySelectorAll('.dhead-actions button')].map(b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : ''))"))==["a-more","a-session-action","a-term","report-bug"]
                             expect(page.locator("#a-session-action")).to_have_attribute("aria-label","停止会话" if source == "shell" else "删除会话")
                             if bare_shell:
@@ -167,11 +169,14 @@ def main(bind_native=False, bare_shell=False, agent_source="codex"):
                         else:
                             page.locator(f'#side .item[data-uid="tmux:{receipt["name"]}"]').click()
                         if not (bind_native and restarted):
-                            if bare_shell:
+                            if bare_shell or source == "opencode":
+                                # SSH and OpenCode (history not read yet) lead with the console.
                                 expect(page.locator("#termpane")).to_be_visible()
-                                expect(page.locator("#composer")).to_be_visible()
-                                expect(page.locator("#cadd")).to_be_hidden()
-                                expect(page.locator("#cesc")).to_be_hidden()
+                                # Without conversation send an agent row has no composer.
+                                if bare_shell:
+                                    expect(page.locator("#composer")).to_be_visible()
+                                    expect(page.locator("#cadd")).to_be_hidden()
+                                    expect(page.locator("#cesc")).to_be_hidden()
                                 page.locator("#a-term").click()
                             else:
                                 expect(page.locator("#termpane")).to_be_hidden()

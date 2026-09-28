@@ -66,7 +66,8 @@ OpenCode is an AI CLI source like the others: native UID `opencode:<sid>`,
 conversations live in OpenCode's own SQLite database, which the session
 index does not read yet, so no OpenCode catalog row exists: a launch stays
 pending (unbound), is never resumed from a list row, and has no conversation
-view or composer recognition — use the terminal. A node offers OpenCode only
+view. The page leads with its console like an SSH row, while the composer keeps
+the CLI send path ([composer input](composer-input.md)). A node offers OpenCode only
 when its launcher configuration names exactly one `opencode` profile, for
 example `{"id": "opencode-cli-v1", "source": "opencode", "executable":
 "<absolute path>", "args": ["opencode"], "resume_args": ["--session", "{sid}"]}`.

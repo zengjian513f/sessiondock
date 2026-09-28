@@ -14,6 +14,11 @@ class SessionDockCli {
     this.color = color;
   }
 
+  // SessionDock 能读取它的原生对话记录；否则控制台就是看回复的地方。
+  get nativeHistory() {
+    return true;
+  }
+
   migrateQueuedMessages(items, _fromVersion, _toVersion) {
     return Array.isArray(items) ? items : [];
   }
@@ -284,6 +289,10 @@ class GrokCli extends SessionDockCli {
 class OpencodeCli extends SessionDockCli {
   constructor() {
     super('opencode', 'OpenCode', 'i-opencode', 'var(--opencode)');
+  }
+
+  get nativeHistory() {
+    return false;
   }
 }
 
