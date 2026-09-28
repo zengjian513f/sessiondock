@@ -363,7 +363,7 @@ fn launch_for(entry: &Entry, resume: Option<(String, String)>) -> Launch {
     match resume {
         Some((sid, uid)) => Launch::Resume { sid, uid },
         None if !entry.profile || entry.source == Source::Shell => Launch::Fixed,
-        None if entry.source != Source::Codex => Launch::NewAssigned,
+        None if !matches!(entry.source, Source::Codex | Source::Opencode) => Launch::NewAssigned,
         None => Launch::NewPending,
     }
 }
@@ -603,6 +603,7 @@ fn source_of(scope: &crate::sessions::NativeScope) -> Option<Source> {
         "claude" => Some(Source::Claude),
         "codex" => Some(Source::Codex),
         "grok" => Some(Source::Grok),
+        "opencode" => Some(Source::Opencode),
         _ => None,
     }
 }

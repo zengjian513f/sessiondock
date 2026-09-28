@@ -81,7 +81,7 @@ argv, environment, SID, and legacy adapter fields cannot choose the command.
 Source selects exactly one interactive configured CLI or the `shell` terminal.
 The legacy source picker advertises only this unambiguous subset and labels
 `shell` as SSH. `term/list.sources.shell` advertises shell creation; resume
-sources remain the three AI CLIs. Shell receipts use fixed argv, stay in the
+sources are the AI CLIs (Claude, Codex, Grok, OpenCode). Shell receipts use fixed argv, stay in the
 terminal list while running, and support the same guarded attach, reconnect,
 kill and discard as other launch receipts without native binding.
 Shell receipts stay in the sidebar after exit or launch failure until explicitly

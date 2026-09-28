@@ -279,10 +279,19 @@ class GrokCli extends SessionDockCli {
   }
 }
 
+// OpenCode 目前只接入启动：会话记录存在它自己的 SQLite 里，尚未读取，
+// 所以没有原生消息可对账，排队与确认都沿用基类。
+class OpencodeCli extends SessionDockCli {
+  constructor() {
+    super('opencode', 'OpenCode', 'i-opencode', 'var(--opencode)');
+  }
+}
+
 const SESSIONDOCK_CLIS = Object.freeze({
   claude: new ClaudeCli(),
   codex: new CodexCli(),
   grok: new GrokCli(),
+  opencode: new OpencodeCli(),
 });
 
 function sessiondockCli(sourceOrUid) {
@@ -291,12 +300,12 @@ function sessiondockCli(sourceOrUid) {
   // 首条原生记录落盘前，新建会话的 uid 是 tmux:sessiondock-<cli>-...。
   // 这个阶段也必须使用对应 CLI 的发送确认策略。
   if (source === 'tmux') {
-    source = value.match(/^tmux:sessiondock-(claude|codex|grok)-/)?.[1] || source;
+    source = value.match(/^tmux:sessiondock-(claude|codex|grok|opencode)-/)?.[1] || source;
   }
   return SESSIONDOCK_CLIS[source] || null;
 }
 
 // 供 app.js、term.js 以及 headless 回归共同使用。
 Object.assign(globalThis, {
-  SessionDockCli, ClaudeCli, CodexCli, GrokCli, SESSIONDOCK_CLIS, sessiondockCli,
+  SessionDockCli, ClaudeCli, CodexCli, GrokCli, OpencodeCli, SESSIONDOCK_CLIS, sessiondockCli,
 });

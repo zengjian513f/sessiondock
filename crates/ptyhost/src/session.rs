@@ -468,7 +468,14 @@ impl Session {
                 .unwrap_or_default();
             if matches!(
                 base.as_str(),
-                "claude" | "codex" | "grok" | "claude.exe" | "codex.exe" | "grok.exe"
+                "claude"
+                    | "codex"
+                    | "grok"
+                    | "opencode"
+                    | "claude.exe"
+                    | "codex.exe"
+                    | "grok.exe"
+                    | "opencode.exe"
             ) {
                 return base;
             }

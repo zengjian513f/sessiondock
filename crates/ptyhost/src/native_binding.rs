@@ -95,8 +95,10 @@ pub fn prepare(request: &Value, metadata: &Value) -> Result<NativeBinding, Error
         sid: text(&request["native"]["sid"], 1, 256)?,
         uid: text(&request["native"]["uid"], 1, 256)?,
     };
-    if !matches!(candidate.source.as_str(), "claude" | "codex" | "grok")
-        || !candidate.uid.starts_with(&format!("{}:", candidate.source))
+    if !matches!(
+        candidate.source.as_str(),
+        "claude" | "codex" | "grok" | "opencode"
+    ) || !candidate.uid.starts_with(&format!("{}:", candidate.source))
         || candidate.uid.len() <= candidate.source.len() + 1
         || !candidate.matches_pending(metadata)
     {
