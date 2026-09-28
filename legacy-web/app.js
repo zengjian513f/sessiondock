@@ -2017,8 +2017,8 @@ function pendingTmuxSessions() {
   return pending.flatMap(t => {
     // A receipt whose binding the server confirmed is represented by
     // the native row it binds, exactly like a declared Claude identity.
-    const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
-    if (!SOURCES[t.source] || (declared && indexedSessions().byNative.has(JSON.stringify([t.node_id || '', t.source, String(declared)])))) return [];
+    const native = pendingNativeKey(t);
+    if (!SOURCES[t.source] || (native && indexedSessions().byNative.has(native))) return [];
     const source = t.source;
     return [{
       node_id: t.node_id, node_name: t.node_name, stale: t.stale,
@@ -2033,6 +2033,21 @@ function pendingTmuxSessions() {
       size: 0,
     }];
   });
+}
+
+function pendingNativeKey(t) {
+  const declared = t.sid || t.declared_sid || (t.binding?.state === 'confirmed' ? t.binding.sid : '');
+  return declared ? JSON.stringify([t.node_id || '', t.source, String(declared)]) : '';
+}
+
+// Deleting native rows also discards the launch receipts they hid on the
+// server. Drop those receipts here too: otherwise the stale T.pending brings
+// the session back as a pending row until the next terminal list.
+function forgetDeletedReceipts(rows) {
+  if (typeof T === 'undefined' || !Array.isArray(T.pending)) return;
+  const keys = new Set(rows.filter(row => row.sid)
+    .map(row => JSON.stringify([row.node_id || '', row.source, String(row.sid)])));
+  if (keys.size) T.pending = T.pending.filter(t => !keys.has(pendingNativeKey(t)));
 }
 
 let sessionIndexRows = null, sessionIndex = null;
@@ -2726,6 +2741,7 @@ async function deleteSessions(uids, button = null) {
   const failed = d.errors || [];
   if (watched && S.sel === watched && !gone.has(watched)) watchSession(watched, S.agent);
   if (gone.size) {
+    forgetDeletedReceipts(S.sessions.filter(x => gone.has(x.uid)));
     S.sessions = S.sessions.filter(x => !gone.has(x.uid));
     if (S.results) S.results = S.results.filter(x => !gone.has(x.uid));
     if (gone.has(S.sel)) {
@@ -5717,6 +5733,7 @@ async function del(m) {
     watchSession(m.uid);                // 删除失败，会话仍在，恢复实时同步
     return alert('删除失败: ' + (data.error || response.status));
   }
+  forgetDeletedReceipts([m]);
   S.sessions = S.sessions.filter(x => x.uid !== m.uid);
   if (S.results) S.results = S.results.filter(x => x.uid !== m.uid);
   S.sel = null;
