@@ -42,13 +42,7 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 ### Delivery
 
-- [delivery.md](delivery.md) — Codex/Claude receipt machines; the ledger is a read-only archive.
-- [delivery-store.md](delivery-store.md) — Durable delivery ledger and recovery semantics.
-- [delivery-engine.md](delivery-engine.md) — Exclusive owner of the store and both machines.
-- [delivery-service.md](delivery-service.md) — Serialized async committed-outbox reads.
-- [delivery-http.md](delivery-http.md) — HTTP contracts backed by the configured delivery service.
 - [delivery-scope.md](delivery-scope.md) — `NativeScope` from the session store.
-- [delivery-configuration.md](delivery-configuration.md) — Explicit directory; no implicit init.
 
 ### Files, diagnostics, capabilities, security
 

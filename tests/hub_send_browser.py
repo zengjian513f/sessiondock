@@ -71,7 +71,6 @@ def prepare(root):
              "env": {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
                      "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude")}}]}))
     initialize("--initialize-lifecycle", root / "ledger")
-    initialize("--initialize-delivery", root / "delivery")
     return config
 
 
@@ -86,7 +85,7 @@ def check_browser(browser, root, config):
                 "SESSIONDOCK_NODE_PEERS": "127.0.0.0/8"}
     with isolated_server(Corpus(root), BINARY, state_dir=root / "state", host_dir=root / "host",
                          lifecycle_dir=root / "ledger", launcher_config=config,
-                         delivery_dir=root / "delivery", extra_env=node_env) as (local, _):
+                         extra_env=node_env) as (local, _):
         context = browser.new_context(service_workers="block")
         page = context.new_page()
         page.goto(local, wait_until="domcontentloaded")

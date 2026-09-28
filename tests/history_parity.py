@@ -499,7 +499,7 @@ def build_corpus(root: Path) -> Corpus:
 
 
 @contextmanager
-def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, delivery_dir: Path | None = None, extra_env: dict[str, str] | None = None):
+def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Path | None = None, file_roots: tuple[Path, ...] = (), file_write_roots: tuple[Path, ...] = (), host_dir: Path | None = None, lifecycle_dir: Path | None = None, launcher_config: Path | None = None, audit_dir: Path | None = None, trash_dir: Path | None = None, extra_env: dict[str, str] | None = None):
     executable = executable.resolve(strict=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("SESSIONDOCK_")}
     with socket.socket() as reservation:
@@ -520,7 +520,7 @@ def isolated_server(corpus: Corpus, executable: Path = BINARY, *, state_dir: Pat
     if host_dir is not None:
         assert host_dir.resolve().is_relative_to(corpus.root.resolve())
         environment["SESSIONDOCK_PTYHOST_DIR"] = str(host_dir)
-    for name, path in [("LIFECYCLE_DIR", lifecycle_dir), ("LAUNCHER_CONFIG", launcher_config), ("AUDIT_DIR", audit_dir), ("TRASH_DIR", trash_dir), ("DELIVERY_DIR", delivery_dir)]:
+    for name, path in [("LIFECYCLE_DIR", lifecycle_dir), ("LAUNCHER_CONFIG", launcher_config), ("AUDIT_DIR", audit_dir), ("TRASH_DIR", trash_dir)]:
         if path is not None:
             assert path.resolve().is_relative_to(corpus.root.resolve())
             environment["SESSIONDOCK_" + name] = str(path)

@@ -1,10 +1,10 @@
 //! Loopback development binary. No option starts the Web service.
-//! `--initialize-delivery` and `--initialize-lifecycle` create their state
-//! directories as needed and exit without starting Web or any CLI.
+//! `--initialize-lifecycle` creates its state directory as needed and exits
+//! without starting Web or any CLI.
 //! `--check-config` validates the environment exactly as startup does, prints
 //! the effective paths and exits without opening any ledger, binding or
 //! starting a CLI (the cutover preflight). Bind failure and graceful shutdown
-//! drain lifecycle, delivery, and audit. There is no implicit CLI or
+//! drain lifecycle and audit. There is no implicit CLI or
 //! production discovery. With the node identity configured a second listener
 //! (`SESSIONDOCK_NODE_BIND`) serves the hub-facing router next to loopback.
 //! `claude-hook` is the Claude Code hook command (stdin JSON → question-card
@@ -14,7 +14,7 @@ use std::{error::Error, path::PathBuf};
 
 use sessiondock::config::Config;
 
-const USAGE: &str = "usage: sessiondock [--check-config | --initialize-delivery DIRECTORY | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]";
+const USAGE: &str = "usage: sessiondock [--check-config | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]";
 
 /// The reactor's thread count comes from `SESSIONDOCK_ASYNC_WORKERS`,
 /// so the runtime is built after the environment is read.
@@ -40,7 +40,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if arguments.len() == 1 && arguments[0] == "--help" {
         println!(
-            "sessiondock [--check-config | --initialize-delivery DIRECTORY | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]\nNo option starts the loopback development Web service.\n--check-config validates SESSIONDOCK_* like startup, prints the effective paths and exits.\nInitialization creates the requested state directory as needed and exits without starting Web or any CLI.\n--write-bridge-settings writes the Claude `--settings` hooks file (0600) that runs this binary as `claude-hook --state-dir $SESSIONDOCK_STATE_DIR`.\nclaude-hook reads one Claude Code hook payload from stdin and records an AskUserQuestion card under <state dir>/claude-prompts; it never prints and always exits 0."
+            "sessiondock [--check-config | --initialize-lifecycle DIRECTORY | --write-bridge-settings ABSOLUTE_FILE | claude-hook [--state-dir ABSOLUTE_DIRECTORY]]\nNo option starts the loopback development Web service.\n--check-config validates SESSIONDOCK_* like startup, prints the effective paths and exits.\nInitialization creates the requested state directory as needed and exits without starting Web or any CLI.\n--write-bridge-settings writes the Claude `--settings` hooks file (0600) that runs this binary as `claude-hook --state-dir $SESSIONDOCK_STATE_DIR`.\nclaude-hook reads one Claude Code hook payload from stdin and records an AskUserQuestion card under <state dir>/claude-prompts; it never prints and always exits 0."
         );
         return Ok(());
     }
@@ -54,9 +54,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return write_bridge_settings(PathBuf::from(&arguments[1]));
     }
     let check_config = arguments.len() == 1 && arguments[0] == "--check-config";
-    let initialize = arguments.len() == 2 && arguments[0] == "--initialize-delivery";
     let initialize_lifecycle = arguments.len() == 2 && arguments[0] == "--initialize-lifecycle";
-    if !arguments.is_empty() && !check_config && !initialize && !initialize_lifecycle {
+    if !arguments.is_empty() && !check_config && !initialize_lifecycle {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, USAGE).into());
     }
     let mut config = Config::from_env()?;
@@ -100,27 +99,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         println!("Lifecycle ledger initialized. No Web service or CLI was started.");
         return Ok(());
     }
-    if initialize {
-        config.delivery_dir = Some(arguments[1].clone().into());
-        config.validate()?;
-        let directory = config
-            .delivery_dir
-            .take()
-            .expect("explicit initialization path");
-        tokio::task::spawn_blocking(move || {
-            sessiondock::delivery::engine::DeliveryEngine::initialize(&directory).map(drop)
-        })
-        .await??;
-        println!("Delivery ledger initialized. No Web service or CLI was started.");
-        return Ok(());
-    }
     let bind = config.bind;
     let node_bind = config.node_bind;
     let shutdown = tokio_util::sync::CancellationToken::new();
     let sessiondock::PreparedApp {
         router: app,
         node_router,
-        delivery,
         lifecycle,
         audit,
     } = sessiondock::prepare_app(config, shutdown.clone()).await?;
@@ -140,9 +124,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
             shutdown.cancel();
             if let Some(service) = &lifecycle {
                 let _ = service.shutdown().await;
-            }
-            if let Some(delivery) = &delivery {
-                let _ = delivery.shutdown().await;
             }
             return Err(error.into());
         }
@@ -181,12 +162,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         _ => loopback.await,
     };
     shutdown.cancel();
-    // Always drain both coordinators, even when one reports a worker failure.
+    // Always drain the coordinator, even when serving reported a failure.
     let lifecycle_result = match lifecycle {
-        Some(service) => service.shutdown().await,
-        None => Ok(()),
-    };
-    let delivery_result = match delivery {
         Some(service) => service.shutdown().await,
         None => Ok(()),
     };
@@ -195,7 +172,6 @@ async fn run() -> Result<(), Box<dyn Error>> {
         service.shutdown().await;
     }
     lifecycle_result?;
-    delivery_result?;
     served?;
     Ok(())
 }
@@ -301,7 +277,6 @@ fn print_effective_config(config: &Config) {
                 .map(|dir| dir.join(sessiondock::sessions::DEBUG_RUNS_FILENAME))
         )
     );
-    println!("delivery_dir={}", path(&config.delivery_dir));
     println!("lifecycle_dir={}", path(&config.lifecycle_dir));
     println!("launcher_config={}", path(&config.launcher_config));
     println!("file_roots={}", list(&config.file_roots));

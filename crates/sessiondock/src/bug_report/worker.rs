@@ -16,9 +16,8 @@ use tokio_util::sync::CancellationToken;
 use super::{BugReportService, Report, source_label, source_name, update_manifest};
 use crate::{
     audit::{AuditService, query::ServerEvent},
-    delivery::{
-        claude::ComposerState,
-        driver::{ComposerKind, ScreenCapture, inspect_for, same_text_ignoring_whitespace},
+    delivery::driver::{
+        ComposerKind, ComposerState, ScreenCapture, inspect_for, same_text_ignoring_whitespace,
     },
     lifecycle::{
         model::{LaunchSpec, Source, State},

@@ -18,10 +18,18 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 use std::sync::LazyLock;
 
-use super::claude::ComposerState;
 use crate::terminal::{
     ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
 };
+
+/// What a composer capture shows: an empty prompt, text in it, or no
+/// recognized composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComposerState {
+    Empty,
+    Editing,
+    Unknown,
+}
 
 /// Page identity under which the server claims a server-held lease (the value
 /// predates the conversation service and stays stable). It is a registry page

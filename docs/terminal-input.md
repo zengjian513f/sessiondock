@@ -53,7 +53,7 @@ Named keys map to the host's key names and byte sequences: `enter`→`\r`,
 translates under DECCKM), `f1`–`f12`, and `ctrl-<a-z>` / `C-x` / `^x`
 (letter & 0x1f), plus one single ASCII letter or digit (`1`–`9`, `y`, `p`)
 typed literally — the Codex question menu and command approval answers the
-live question cards send ([delivery.md](delivery.md)). Exact host names,
+live question cards send ([below](#live-questions-and-approvals)). Exact host names,
 lower-case aliases are normalized. Every other nonempty key name up to the
 host's 256-byte per-key ceiling is typed literally.
 
@@ -111,3 +111,18 @@ claim/input after exit, composer hidden, fixture bytes unchanged);
 `python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease).
 Out of scope: reliable send, Escape's activity side effects, `text`+`enter`
 submit semantics, tmux copy-mode.
+
+## Live questions and approvals
+
+Claude question cards come from `sessiondock claude-hook`; Codex approvals come
+from the managed TUI screen. Main-session message and watch responses expose
+them as `prompt`. A native answer clears the card.
+
+The page answers through `/api/term/send` under its console lease. The bridge
+never writes to the CLI, takes a lease or acknowledges delivery. Hook files and
+generated settings are private and atomic. Codex prompt recognition must match
+the frozen bridge. See [lifecycle-launcher.md](lifecycle-launcher.md).
+
+Validate with `tests/claude_prompt_suite.py`. Run the
+real Claude and Codex prompt suites only under the real-CLI policy in
+`AGENTS.md`.

@@ -7,7 +7,6 @@
 mod audit;
 mod bug_report;
 mod conversation;
-mod delivery;
 mod events;
 mod files;
 mod health;
@@ -70,7 +69,6 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{uid}/media-page", get(read::media_page))
         .route("/media/{token}", get(media::get))
         .route("/session/input-history", get(read::input_history))
-        .route("/session/outbox", get(delivery::outbox))
         .route(
             "/session/conversation",
             get(conversation::get).post(conversation::save).layer(

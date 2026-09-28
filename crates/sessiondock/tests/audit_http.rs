@@ -377,7 +377,7 @@ async fn graceful_shutdown_flushes_queued_batches_and_closes_admission() {
     let prepared = prepare_app(fixture.config(limits), stop.clone())
         .await
         .unwrap();
-    assert!(prepared.delivery.is_none() && prepared.lifecycle.is_none());
+    assert!(prepared.lifecycle.is_none());
     let audit = prepared.audit.clone().expect("configured audit service");
     let app = prepared.router;
     for round in 0..4 {

@@ -73,7 +73,7 @@ pub struct ClaimRequest {
 
 fn python_string<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     let raw = <Box<serde_json::value::RawValue>>::deserialize(deserializer)?;
-    super::delivery::python_id_value(raw.get(), false).map_err(serde::de::Error::custom)
+    python_id_value(raw.get(), false).map_err(serde::de::Error::custom)
 }
 
 fn python_truthy(value: &Value) -> bool {
@@ -1054,4 +1054,151 @@ pub async fn list(
         .polls
         .store_term_list(&debug_run, generation, runs, bytes.clone());
     Ok(super::lifecycle::response_bytes(bytes, permit))
+}
+
+/// Python-compatible `str(value or "")` text for a JSON id field (terminal send).
+fn python_id_value(raw: &str, nested: bool) -> serde_json::Result<String> {
+    let raw = raw.trim();
+    Ok(match raw.as_bytes()[0] {
+        b'n' => if nested { "None" } else { "" }.into(),
+        b'f' => if nested { "False" } else { "" }.into(),
+        b't' => "True".into(),
+        b'"' => {
+            let value: String = serde_json::from_str(raw)?;
+            if nested {
+                python_string_repr(&value)
+            } else {
+                value
+            }
+        }
+        b'[' => {
+            let items: Vec<Box<serde_json::value::RawValue>> = serde_json::from_str(raw)?;
+            if items.is_empty() && !nested {
+                String::new()
+            } else {
+                let items = items
+                    .iter()
+                    .map(|item| python_id_value(item.get(), true))
+                    .collect::<serde_json::Result<Vec<_>>>()?;
+                format!("[{}]", items.join(", "))
+            }
+        }
+        b'{' => {
+            struct Object;
+            impl<'de> serde::de::Visitor<'de> for Object {
+                type Value = Vec<(String, String)>;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a JSON object")
+                }
+                fn visit_map<M: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: M,
+                ) -> Result<Self::Value, M::Error> {
+                    let mut entries = Vec::new();
+                    let mut positions = std::collections::HashMap::<String, usize>::new();
+                    while let Some((key, value)) =
+                        map.next_entry::<String, Box<serde_json::value::RawValue>>()?
+                    {
+                        let value =
+                            python_id_value(value.get(), true).map_err(serde::de::Error::custom)?;
+                        if let Some(index) = positions.get(&key) {
+                            entries[*index] = (key, value);
+                        } else {
+                            positions.insert(key.clone(), entries.len());
+                            entries.push((key, value));
+                        }
+                    }
+                    Ok(entries)
+                }
+            }
+            let entries = serde::Deserializer::deserialize_map(
+                &mut serde_json::Deserializer::from_str(raw),
+                Object,
+            )?;
+            if entries.is_empty() && !nested {
+                String::new()
+            } else {
+                format!(
+                    "{{{}}}",
+                    entries
+                        .iter()
+                        .map(|(key, value)| format!("{}: {value}", python_string_repr(key)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        _ => {
+            // JSON's integer spelling is already the decimal representation,
+            // except -0. Floating point uses the fixed/scientific threshold.
+            if !raw.contains(['.', 'e', 'E']) {
+                if raw == "0" || raw == "-0" {
+                    if nested { "0" } else { "" }.into()
+                } else {
+                    raw.into()
+                }
+            } else {
+                let number: f64 = raw
+                    .parse()
+                    .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+                if number == 0.0 && !nested {
+                    String::new()
+                } else if !number.is_finite() {
+                    number.to_string()
+                } else {
+                    let scientific = format!("{number:e}");
+                    let (mantissa, exponent) =
+                        scientific.split_once('e').expect("finite float exponent");
+                    let exponent: i32 = exponent.parse().expect("formatted exponent");
+                    if (-4..16).contains(&exponent) {
+                        let mut text = number.to_string();
+                        if !text.contains('.') {
+                            text.push_str(".0");
+                        }
+                        text
+                    } else {
+                        format!("{mantissa}e{exponent:+03}")
+                    }
+                }
+            }
+        }
+    })
+}
+
+fn python_string_repr(value: &str) -> String {
+    use std::{fmt::Write, sync::OnceLock};
+    static NON_PRINTABLE: OnceLock<regex::Regex> = OnceLock::new();
+    let non_printable = NON_PRINTABLE.get_or_init(|| regex::Regex::new(r"[\p{C}\p{Z}]").unwrap());
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut result = String::new();
+    result.push(quote);
+    for ch in value.chars() {
+        match ch {
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            ch if ch == quote => {
+                result.push('\\');
+                result.push(ch);
+            }
+            ch if ch != ' ' && non_printable.is_match(ch.encode_utf8(&mut [0; 4])) => {
+                let number = ch as u32;
+                if number <= 0xff {
+                    write!(result, "\\x{number:02x}").unwrap();
+                } else if number <= 0xffff {
+                    write!(result, "\\u{number:04x}").unwrap();
+                } else {
+                    write!(result, "\\U{number:08x}").unwrap();
+                }
+            }
+            ch => result.push(ch),
+        }
+    }
+    result.push(quote);
+    result
 }

@@ -49,9 +49,8 @@ def main():
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
-        initialize('--initialize-delivery', root / 'delivery')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
-                launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
+                launcher_config=launcher, state_dir=root / 'state',
                 audit_dir=root / 'audit', extra_env={
                     'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
                     'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},

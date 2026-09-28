@@ -73,7 +73,7 @@ const AGGREGATED: [&str; 5] = [
 const AUDIT_TIMEOUT: Duration = Duration::from_secs(2);
 const NOT_REGISTERED: &str = "机器未注册或已移除";
 
-/// What the hub page declares. Per-machine features (terminal, outbox, files,
+/// What the hub page declares. Per-machine features (terminal, files,
 /// trash, live, audit) stay undeclared so the page degrades per request.
 /// The hub page declares nothing; the read-model pages every Rust
 /// node serves are declared. `media_lazy` is left out: the page blanks a

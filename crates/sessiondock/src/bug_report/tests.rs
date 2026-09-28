@@ -106,8 +106,7 @@ async fn bundle_filters_related_events_and_captures_context() {
                 client_ip: "192.0.2.1".into(),
                 snapshot: json!({"data": {"selected": "codex:one"}, "content": {"composer": "x"}}),
                 terminal_capture: "terminal frame".into(),
-                session: json!({"path": "/tmp/session.jsonl"}),
-                outbox: json!({"outbox": [{"state": "confirming", "secret": "s3cret"}]}),
+                session: json!({"path": "/tmp/session.jsonl", "secret": "s3cret"}),
                 attachments: Vec::new(),
                 origin: Origin::default(),
                 remote_events: Vec::new(),
@@ -132,8 +131,8 @@ async fn bundle_filters_related_events_and_captures_context() {
     assert_eq!(manifest["attachments"], json!([]));
     assert_eq!(manifest["repository"], fixture.repo.to_str().unwrap());
     // Secrets are redacted in every bundle document.
-    assert_eq!(manifest["outbox"]["outbox"][0]["secret"], "<redacted>");
-    assert_eq!(manifest["outbox"]["outbox"][0]["state"], "confirming");
+    assert_eq!(manifest["session"]["secret"], "<redacted>");
+    assert_eq!(manifest["session"]["path"], "/tmp/session.jsonl");
     let rows: Vec<Value> = fs::read_to_string(directory.join("events.jsonl"))
         .unwrap()
         .lines()

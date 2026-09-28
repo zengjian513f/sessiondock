@@ -90,7 +90,6 @@ def main():
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
                          "SESSIONDOCK_TEST_CLAUDE_QUESTION": str(root / "question.json")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
-        initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -98,7 +97,7 @@ def main():
             browser = playwright.chromium.launch(**options)
             try:
                 with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                                     launcher_config=configuration, delivery_dir=root / "delivery",
+                                     launcher_config=configuration, 
                                      state_dir=root / "state") as (base, _):
                     errors = []
                     context = browser.new_context(viewport={"width": 390, "height": 844}, service_workers="block")

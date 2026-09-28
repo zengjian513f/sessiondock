@@ -144,9 +144,8 @@ def main():
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
         legacy_pending_record(root / 'ledger', root / 'work')
-        initialize('--initialize-delivery', root / 'delivery')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
-                launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
+                launcher_config=launcher, state_dir=root / 'state',
                 trash_dir=root / 'trash', file_roots=(root / 'work',), file_write_roots=(root / 'work',),
                 extra_env={'SESSIONDOCK_OPENCODE_DB': str(db),
                            'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror')}) as (base, _), sync_playwright() as pw:

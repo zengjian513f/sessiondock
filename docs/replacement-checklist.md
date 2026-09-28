@@ -51,7 +51,7 @@ Python 与 Rust 的变量名称不同，完整映射见 [environment.md](environ
 3. 启动 Rust 服务并核对 `/api/meta`、`/api/nodes` 与页面 capabilities。
 4. 验证已有外部/受管会话可发现，force takeover 会撤销旧页面，stop 会等待真实确认，
    resume 会绑定新的实例。
-5. 验证文件读取、写入、普通附件上传、delivery outbox 以及 metadata 外部修改重载。
+5. 验证文件读取、写入、普通附件上传以及 metadata 外部修改重载。
 6. 取得用户的最终切流授权后再修改反向代理入口。
 
 ## 5. 回退步骤

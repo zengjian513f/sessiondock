@@ -42,7 +42,7 @@ hostname and can be overridden with `SESSIONDOCK_HOSTNAME`.
 
 ## 4. Optional private runtime services
 
-Use a private development tree for synthetic ptyhost, delivery, lifecycle, audit,
+Use a private development tree for synthetic ptyhost, lifecycle, audit,
 trash and bug-report data. The runtime follows each module's documented format;
 it does not impose a blanket disjoint-root or 0700 policy on otherwise valid
 layouts.
@@ -54,12 +54,6 @@ allowed. See [metadata.md](metadata.md).
 **Search text — `SESSIONDOCK_SEARCH_CACHE_DIR`.** Optional persistent cache;
 cache size, workers and warmup affect performance and eviction, not which valid
 search input is accepted. See [read-model.md](read-model.md#搜索).
-
-**Delivery — `SESSIONDOCK_DELIVERY_DIR`.** Initialize a new ledger when needed:
-
-```sh
-./target/release/sessiondock --initialize-delivery "$PWD/.runtime/dev/delivery"
-```
 
 **Ptyhost and launcher.** Configure `SESSIONDOCK_PTYHOST_DIR`, lifecycle storage
 and a launcher file when testing create/resume/takeover/stop. Launcher profiles
@@ -82,8 +76,8 @@ Open the loopback URL printed by SessionDock. `legacy-web/` is served directly.
 
 ## 6. Banner and capabilities
 
-The injected capabilities describe current runtime support. Reliable send needs
-delivery plus terminal transport. File reads are available; file writes track
+The injected capabilities describe current runtime support. Conversation SEND
+needs metadata, terminal transport, lifecycle and file writes. File reads are available; file writes track
 terminal operation. A false capability should reflect a truly unavailable
 service rather than an old migration stub.
 

@@ -14,8 +14,9 @@ session reads, callers must use the bounded blocking reader executor.
 | Codex child | Inventory owner UID | Selected child's native `session_meta.payload.id` | Exact owned child ID |
 | Grok | — | — | Scope resolution returns 501 |
 
-Resolving a child proves which native view was selected and is passed through
-to delivery rather than rejected by an application-level agent policy.
+Resolving a child proves which native view was selected; conversation SEND
+and the live-question bridge use it rather than an application-level agent
+policy.
 Successful Claude scope selection is
 identity evidence, not permission to write to a terminal or run a CLI.
 
@@ -60,17 +61,15 @@ Claude agent parsing replaces `parsed.meta.sid` with the agent ID, and logical
 view rendering sets `meta.sid` to the agent-menu ID again. An agent's native
 records can simultaneously declare the parent's `sessionId`. The cursor's
 `native_identity` is also a hash of the physical source/UID/agent, not a native
-session ID. A scope built from any of those display/cursor fields can miss
-existing receipts because the delivery engine compares every scope field.
+session ID. A scope built from any of those display/cursor fields can name
+the wrong native session.
 
-Filtering only by owner UID and ignoring
-the agent query, and omitting the outbox driver for child views, does
-not establish a child-delivery scope contract. Rust resolves the full native
-identity explicitly and never substitutes the main outbox for a child scope.
+Filtering only by owner UID and ignoring the agent query does not identify a
+child. Rust resolves the full native identity explicitly and never substitutes
+the main session for a child scope.
 
 ## Validation
 
-Default check is the delivery HTTP/browser path that uses the scope
-(`cargo test -p sessiondock --test delivery_send --locked` and
-`python3 tests/send_browser.py` when the change is user-visible). Do not run
-crate unit tests unless the user asks.
+Default check is the conversation SEND browser path that uses the scope
+(`python3 tests/send_browser.py`). Do not run crate unit tests unless the user
+asks.
