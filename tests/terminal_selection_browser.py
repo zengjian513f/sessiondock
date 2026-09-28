@@ -27,6 +27,11 @@ while True:
    for i in range(5000): os.write(1, ('HISTORY_%05d 中文 tail\r\n' % i).encode())
    os.write(1, b'PERF_HISTORY_READY\r\n')
    continue
+  if mode == 'rows':
+   rows = os.get_terminal_size(0).lines
+   os.write(1, b'\x1b[?1002l\x1b[?1003l\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H'
+            + b'\r\n'.join(b'ROW_%03d' % r for r in range(rows - 1)))
+   continue
   if mode not in ('none', '1000', '1002', '1003'): continue
   os.write(1, b'\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006h')
   if mode != 'none': os.write(1, ('\x1b[?' + mode + 'h').encode())
@@ -158,6 +163,8 @@ def check_surface(pw, surface, mobile=False):
                     data = bytes(sum(page.evaluate('selectionBytes'), []))
                     assert b'\x1b[<' in data and data.endswith(b'm'), (surface, mode, data)
                     assert page.evaluate('navigator.clipboard.readText()') == 'remote-gesture-sentinel'
+            if surface == 'grid':
+                check_scaled_rows(page, root, keyboard, surface)
             if not standalone:
                 keyboard.focus()
                 page.keyboard.type('mode:none')
@@ -395,6 +402,50 @@ def check_touch_coexistence(page, context, root, keyboard, surface):
             page.locator('.term-context-menu:visible').wait_for()
             page.get_by_role('menuitem', name='粘贴', exact=True).press('Escape')
             print('PASS', surface, mode, delay, 'hold → pinch → hold → immediate mouse menu; no copied or PTY bytes from pinch', flush=True)
+
+
+def check_scaled_rows(page, root, keyboard, surface):
+    # Interface scale is CSS zoom: pointer rows must stay under the pointer on
+    # every row, for both CLI mouse reports and Shift local selection.
+    page.evaluate('applyInterfaceScale(125, true)')
+    page.wait_for_timeout(300)
+    keyboard.focus()
+    page.keyboard.type('mode:rows')
+    page.keyboard.press('Enter')
+    page.wait_for_function('selectionTerm.modes.mouseTrackingMode === ' + repr('vt200'))
+    page.wait_for_function('r => selectionTerm.buffer.active.getLine(selectionTerm.buffer.active.baseY + r)'
+                           '?.translateToString(true).startsWith("ROW_")', arg=3)
+    rows = page.evaluate('selectionTerm.rows')
+    b = page.evaluate("""() => {
+      const t=selectionTerm, b=(t._canvas || document.querySelector('.xterm-screen')).getBoundingClientRect();
+      return {x:b.x, y:b.y, cw:b.width/t.cols, ch:b.height/t.rows};
+    }""")
+    for row in (1, rows // 2, rows - 3):
+        page.evaluate('selectionBytes = []')
+        before = (root / 'work/input.bin').read_bytes()
+        page.mouse.click(b['x'] + 2.5*b['cw'], b['y'] + (row + .5)*b['ch'])
+        expected = ('\x1b[<0;3;%dM' % (row + 1)).encode()
+        import time
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and expected not in (root / 'work/input.bin').read_bytes()[len(before):]:
+            page.wait_for_timeout(50)
+        sent = (root / 'work/input.bin').read_bytes()[len(before):]
+        assert expected in sent, (surface, row, rows, sent)
+        page.keyboard.down('Shift')
+        page.mouse.move(b['x'] + .2*b['cw'], b['y'] + (row + .5)*b['ch'])
+        page.mouse.down()
+        page.mouse.move(b['x'] + 6.8*b['cw'], b['y'] + (row + .5)*b['ch'], steps=6)
+        selected = page.evaluate('selectionTerm.getSelection()')
+        page.mouse.up()
+        page.keyboard.up('Shift')
+        assert selected.strip() == 'ROW_%03d' % row, (surface, row, selected)
+    page.evaluate('applyInterfaceScale(100, true)')
+    page.wait_for_timeout(300)
+    keyboard.focus()
+    page.keyboard.type('mode:none')
+    page.keyboard.press('Enter')
+    page.wait_for_function("selectionTerm.modes.mouseTrackingMode === 'none'")
+    print('PASS', surface, 'scaled interface keeps mouse reports and selection on the pointer row', flush=True)
 
 
 def check_shift_selection(page, context, root, keyboard, surface):
