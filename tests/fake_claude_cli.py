@@ -25,11 +25,17 @@ Left/Right as text; Left/Right switch questions only from an option row and
 stop at the first question and at Review; Enter or an option's digit answers
 and moves on (a single question submits at once); Review's two rows wrap and
 `1` submits. The outcome is written to `<path>.answers`.
+
+With `$SESSIONDOCK_TEST_CLAUDE_NOTICE` set, the file at that path is watched
+from startup; once it appears its text is appended as a Claude `system`
+informational record (the startup notice a SessionStart hook leaves before any
+input, which creates the native history) and the file is removed.
 """
 import json
 import os
 import sys
 import termios
+import threading
 import time
 import tty
 import uuid
@@ -154,6 +160,25 @@ class Fake:
             stream.flush()
             os.fsync(stream.fileno())
 
+    def watch_notice(self):
+        path = os.environ.get("SESSIONDOCK_TEST_CLAUDE_NOTICE", "")
+        if not path or not self.path:
+            return
+        while not os.path.isfile(path):
+            time.sleep(0.05)
+        text = open(path, encoding="utf-8").read()
+        os.unlink(path)
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % int((time.time() % 1) * 1000)
+        notice = str(uuid.uuid4())
+        row = {"parentUuid": self.parent, "isSidechain": False, "type": "system",
+               "subtype": "informational", "content": text, "isMeta": False, "timestamp": now,
+               "uuid": notice, "level": "notice", "userType": "external", "entrypoint": "cli",
+               "cwd": os.getcwd(), "sessionId": self.sid, "version": "fake-2.1"}
+        self.parent = notice
+        with open(self.path, "a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+
     def load_menu(self):
         path = os.environ.get("SESSIONDOCK_TEST_CLAUDE_QUESTION", "")
         if self.menu is not None or not path or not os.path.isfile(path):
@@ -265,6 +290,7 @@ class Fake:
         try:
             self.write("\x1b[?2004h")  # bracketed paste on, like Claude
             self.render()
+            threading.Thread(target=self.watch_notice, daemon=True).start()
             pending = b""
             paste = None
             while True:
