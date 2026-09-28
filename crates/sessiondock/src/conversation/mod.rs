@@ -1,4 +1,5 @@
 //! One conversation send path: drafts are server-owned, successful SEND belongs to the CLI.
+pub mod cli_state;
 mod input;
 pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
@@ -61,6 +62,8 @@ pub struct Conversations {
     pub writer: Arc<WriteService>,
     reports: Option<Arc<crate::bug_report::BugReportService>>,
     locks: Mutex<HashMap<String, Arc<AsyncMutex<()>>>>,
+    /// Per-session CLI state (docs/cli-state.md).
+    pub cli: cli_state::Registry,
 }
 impl Conversations {
     #[allow(clippy::too_many_arguments)] // Inject the independently owned services once at startup.
@@ -82,7 +85,123 @@ impl Conversations {
             writer,
             reports,
             locks: Mutex::new(HashMap::new()),
+            cli: cli_state::Registry::default(),
         }
+    }
+    /// Remembers the identity key under the requested UID and, for a launch
+    /// that declared its native UID, under that UID too: packets for the
+    /// native session read the state before anything resolves it there.
+    fn remember_cli_identity(&self, uid: &str, identity: &Identity) {
+        self.cli.remember(uid, &identity.key);
+        if let Some(native) = identity.record.as_ref().and_then(|r| r.declared_uid())
+            && native != uid
+        {
+            self.cli.remember(native, &identity.key);
+        }
+    }
+    /// The identity key of `uid`, resolving it once when nothing has yet.
+    /// Only worth calling when the ledger holds queued sends at all.
+    pub async fn ensure_cli_key(&self, uid: &str) -> Option<String> {
+        if let Some(key) = self.cli.key_of(uid) {
+            return Some(key);
+        }
+        if !self.store.has_queued() {
+            return None;
+        }
+        let identity = self.identity(uid).await.ok()?;
+        self.remember_cli_identity(uid, &identity);
+        Some(identity.key)
+    }
+    /// The CLI state of a session this service has already identified
+    /// (through SEND, CHECK or a watcher); `None` before that.
+    pub fn cli_state(&self, uid: &str) -> Option<cli_state::CliState> {
+        let key = self.cli.key_of(uid)?;
+        Some(self.cli.current(&key, self.store.queued(&key)))
+    }
+    /// Reads the CLI screen unless a reading younger than `max_age` exists,
+    /// classifies input readiness and editor text, and returns the state
+    /// with the session's queued sends. Sends of an instance that has been
+    /// unreadable for `LOST_AFTER` are marked lost.
+    pub async fn observe(
+        &self,
+        uid: &str,
+        max_age: Duration,
+    ) -> Result<cli_state::CliState, Failure> {
+        if let Some(key) = self.cli.key_of(uid)
+            && let Some(state) = self.cli.fresh(&key, max_age, self.store.queued(&key))
+        {
+            return Ok(state);
+        }
+        let identity = self.identity(uid).await?;
+        self.remember_cli_identity(uid, &identity);
+        if let Some(state) =
+            self.cli
+                .fresh(&identity.key, max_age, self.store.queued(&identity.key))
+        {
+            return Ok(state);
+        }
+        let lock = self.lock(&identity.key);
+        let (_guard, waited) = match lock.try_lock() {
+            Ok(guard) => (guard, false),
+            Err(_) => (lock.lock().await, true),
+        };
+        let observation: cli_state::Observation = match self.lease(&identity, None, waited).await {
+            Ok(lease) => {
+                let capture = self.driver.capture(&lease).await.map_err(driver_error);
+                self.driver.release(lease).await;
+                capture.map(|capture| {
+                    (
+                        input::classify(&identity.source, &capture),
+                        cli_state::editor_text(&identity.source, &capture),
+                    )
+                })
+            }
+            Err(error) => Err(error),
+        };
+        let queued = self.store.queued(&identity.key);
+        let (mut state, lost) = self.cli.record(&identity.key, &observation, queued);
+        if lost && state.queued.iter().any(|row| row.state != "lost") {
+            self.store.mark_queued(&identity.key, "lost")?;
+            state.queued = self.store.queued(&identity.key);
+        }
+        Ok(state)
+    }
+    /// Retires queued sends whose native record appeared: same digest and a
+    /// record time no earlier than the send (records without a time count).
+    /// Returns whether the queue changed.
+    pub fn retire_echoes(&self, uid: &str, echoes: &[(String, Option<f64>)]) -> bool {
+        let Some(key) = self.cli.key_of(uid) else {
+            return false;
+        };
+        let queued = self.store.queued(&key);
+        if queued.is_empty() {
+            return false;
+        }
+        let mut used = vec![false; echoes.len()];
+        let mut retired = Vec::new();
+        for row in &queued {
+            let hit = echoes.iter().enumerate().position(|(index, (hash, ts))| {
+                !used[index]
+                    && *hash == row.echo_hash
+                    && ts.is_none_or(|at| at >= row.sent_at - 5.0)
+            });
+            if let Some(index) = hit {
+                used[index] = true;
+                retired.push(row.request_id.clone());
+            }
+        }
+        if retired.is_empty() {
+            return false;
+        }
+        self.store.retire_queued(&key, &retired).unwrap_or(false)
+    }
+    /// Drops one queued send the user dismissed (typically a lost one).
+    pub async fn dismiss_queued(&self, uid: &str, request_id: &str) -> Result<bool, Failure> {
+        let key = match self.cli.key_of(uid) {
+            Some(key) => key,
+            None => self.identity(uid).await?.key,
+        };
+        self.store.retire_queued(&key, &[request_id.to_owned()])
     }
     pub fn housekeeping(self: &Arc<Self>, shutdown: tokio_util::sync::CancellationToken) {
         let service = self.clone();
@@ -397,22 +516,35 @@ impl Conversations {
         &self,
         uid: &str,
         page: Option<&PageLease>,
-    ) -> Result<(u64, InputStatus), Failure> {
+    ) -> Result<(u64, InputStatus, cli_state::CliState), Failure> {
         let identity = self.identity(uid).await?;
         let lock = self.lock(&identity.key);
         let (_guard, waited) = match lock.try_lock() {
             Ok(guard) => (guard, false),
             Err(_) => (lock.lock().await, true),
         };
-        let lease = self.lease(&identity, page, waited).await?;
-        let result = self
-            .driver
-            .capture(&lease)
-            .await
-            .map_err(driver_error)
-            .map(|capture| input::classify(&identity.source, &capture));
-        self.driver.release(lease).await;
-        result.map(|status| (self.store.draft(&identity.key).revision, status))
+        self.remember_cli_identity(uid, &identity);
+        let observation: cli_state::Observation = match self.lease(&identity, page, waited).await {
+            Ok(lease) => {
+                let capture = self.driver.capture(&lease).await.map_err(driver_error);
+                self.driver.release(lease).await;
+                capture.map(|capture| {
+                    (
+                        input::classify(&identity.source, &capture),
+                        cli_state::editor_text(&identity.source, &capture),
+                    )
+                })
+            }
+            Err(error) => Err(error),
+        };
+        let queued = self.store.queued(&identity.key);
+        let (mut state, lost) = self.cli.record(&identity.key, &observation, queued);
+        if lost && state.queued.iter().any(|row| row.state != "lost") {
+            self.store.mark_queued(&identity.key, "lost")?;
+            state.queued = self.store.queued(&identity.key);
+        }
+        let status = observation?.0;
+        Ok((self.store.draft(&identity.key).revision, status, state))
     }
     /// Drops staged bytes the editor removed before SEND published them.
     pub async fn discard_upload(&self, uid: &str, id: &str) -> Result<bool, Failure> {
@@ -635,6 +767,19 @@ impl Conversations {
             "sent",
             result.clone(),
             input.draft_revision,
+        )?;
+        // The CLI now holds the text in its own queue until it starts the
+        // turn; the queued row is retired by the native echo (docs/cli-state.md).
+        self.remember_cli_identity(&input.uid, identity);
+        self.store.enqueue(
+            &identity.key,
+            store::QueuedSend {
+                request_id: input.request_id.clone(),
+                text: prompt.trim().to_owned(),
+                echo_hash: cli_state::echo_hash(&prompt),
+                sent_at: cli_state::unix_now(),
+                state: "queued".into(),
+            },
         )?;
         let mut response = result;
         response["draft"] = serde_json::to_value(self.store.draft(&identity.key)).unwrap();

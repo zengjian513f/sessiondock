@@ -20,6 +20,19 @@ struct Document {
     legacy: BTreeMap<String, Value>,
     aliases: BTreeMap<String, String>,
     reports: BTreeMap<String, Value>,
+    /// Sent text the CLI has not echoed as a native record yet, per identity
+    /// key, in send order (docs/cli-state.md).
+    queued: BTreeMap<String, Vec<QueuedSend>>,
+}
+/// One SEND the terminal accepted whose native user/command record has not
+/// been seen yet. `state` is `queued` or `lost` (the instance went away).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct QueuedSend {
+    pub request_id: String,
+    pub text: String,
+    pub echo_hash: String,
+    pub sent_at: f64,
+    pub state: String,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct Draft {
@@ -371,6 +384,77 @@ impl Store {
                 }
             }
             Ok(())
+        })
+    }
+    /// Queued sends of one identity key, oldest first.
+    pub fn queued(&self, key: &str) -> Vec<QueuedSend> {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queued
+            .get(key)
+            .cloned()
+            .unwrap_or_default()
+    }
+    /// Whether any session has queued sends (cheap gate before resolving identities).
+    pub fn has_queued(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queued
+            .values()
+            .any(|rows| !rows.is_empty())
+    }
+    /// Records a SEND the terminal accepted. A replayed submission ID is kept once.
+    pub fn enqueue(&self, key: &str, item: QueuedSend) -> Result<()> {
+        self.update(|doc| {
+            let rows = doc.queued.entry(key.into()).or_default();
+            if rows.iter().any(|row| row.request_id == item.request_id) {
+                return Ok(());
+            }
+            rows.push(item);
+            Ok(())
+        })
+    }
+    /// Removes the named sends; nothing is written when none of them is queued.
+    pub fn retire_queued(&self, key: &str, request_ids: &[String]) -> Result<bool> {
+        let present = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queued
+            .get(key)
+            .is_some_and(|rows| rows.iter().any(|row| request_ids.contains(&row.request_id)));
+        if !present {
+            return Ok(false);
+        }
+        self.update(|doc| {
+            if let Some(rows) = doc.queued.get_mut(key) {
+                rows.retain(|row| !request_ids.contains(&row.request_id));
+                if rows.is_empty() {
+                    doc.queued.remove(key);
+                }
+            }
+            Ok(true)
+        })
+    }
+    /// Marks every queued send of the key with `state` (e.g. `lost`).
+    pub fn mark_queued(&self, key: &str, state: &str) -> Result<bool> {
+        let changed = self
+            .state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .queued
+            .get(key)
+            .is_some_and(|rows| rows.iter().any(|row| row.state != state));
+        if !changed {
+            return Ok(false);
+        }
+        self.update(|doc| {
+            for row in doc.queued.get_mut(key).into_iter().flatten() {
+                row.state = state.into();
+            }
+            Ok(true)
         })
     }
     pub fn upload(&self, key: &str, id: &str) -> Result<Upload> {

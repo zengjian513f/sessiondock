@@ -10,27 +10,27 @@ python3 tests/module_map.py --write
 
 ## sessiondock
 
-`crates/sessiondock/src`: 190 files, 107255 lines, 915 tests, 39 undocumented.
+`crates/sessiondock/src`: 192 files, 108465 lines, 918 tests, 39 undocumented.
 
 - `api/`
   - `audit.rs` — `POST /api/audit/browser`: bounded browser diagnostics intake. (79 lines, 0 tests)
-  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (774 lines, 2 tests)
-  - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (609 lines, 0 tests)
+  - `bug_report.rs` — `POST /api/bug-report`, `POST /api/bug-report/capture` and the (798 lines, 2 tests)
+  - `conversation.rs` — Thin HTTP transport for server-owned conversation drafts, staging and one-shot SEND. (632 lines, 0 tests)
   - `events.rs` — Node UI invalidations share one cached observer per debug view. (40 lines, 0 tests)
   - `files.rs` — File transport. Every request resolves the selected session; opening a (977 lines, 1 tests)
   - `health.rs` — Local liveness JSON: version, `api_version` 1, and `stage: "read_only"`. (49 lines, 0 tests)
   - `hub.rs` — The hub's HTTP surface (`hub.py` `HubHandler.dispatch`, 518–584), served (726 lines, 0 tests)
-  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1190 lines, 1 tests)
+  - `lifecycle.rs` — Explicit creation receipts; native identities and reliable send stay separate. (1237 lines, 1 tests)
   - `media.rs` — Opaque media transport. File tokens require current native-scope authorization. (242 lines, 1 tests)
   - `metadata.rs` — SessionDock-owned preferences only. No native session writes or CLI actions. (482 lines, 0 tests)
-  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (326 lines, 0 tests)
+  - `mod.rs` — Axum transport router nested at `/api`. Handlers stay in sibling modules; (331 lines, 0 tests)
     - mods: `audit`, `bug_report`, `conversation`, `events`, `files`, `health`, `hub`, `lifecycle`, `media`, `metadata`, `node_auth`, `read`, `records`, `runtime`, `search`, `terminal`, `trash`
   - `node_auth.rs` — Node listener gate (`server.py` `_allowed` / `_hub_protocol` for hub (215 lines, 2 tests)
-  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (551 lines, 0 tests)
+  - `read.rs` — Read-only session list, messages, grant pages, input history, and SSE watch. (646 lines, 0 tests)
   - `records.rs` — `/api/term/records`: list session recordings; `/api/term/records/attach`: (119 lines, 0 tests)
   - `runtime.rs` — Read-only live status; never upgrades observations into CLI authority. (736 lines, 4 tests)
   - `search.rs` — JSON/NDJSON search transport queues work and applies stream backpressure. Search (222 lines, 1 tests)
-  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1204 lines, 0 tests)
+  - `terminal.rs` — Explicit-directory development transport only; legacy CLI actions stay gated. (1209 lines, 0 tests)
   - `trash.rs` — Session recycle-bin HTTP routes, using delete protection. (627 lines, 0 tests)
 - `assets.rs` — Startup snapshot of regular frontend files. Requests never walk the disk. (384 lines, 3 tests)
 - `audit.rs` — Best-effort browser diagnostics intake. (413 lines, 0 tests)
@@ -49,16 +49,17 @@ python3 tests/module_map.py --write
   - `mod.rs` — CLI question cards and approvals shown live on the conversation page: (13 lines, 0 tests)
     - mods: `claude`, `codex`, `live`
 - `bug_report/`
-  - `mod.rs` — Bug-report bundles and their CLI workers. (1021 lines, 0 tests)
+  - `mod.rs` — Bug-report bundles and their CLI workers. (1022 lines, 0 tests)
     - mods: `worker`, `tests`
   - `tests.rs` — Semantics for the bundle, the (641 lines, 10 tests)
-  - `worker.rs` — The bug-report worker. (467 lines, 0 tests)
-- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (1074 lines, 11 tests)
+  - `worker.rs` — The bug-report worker. (469 lines, 0 tests)
+- `config.rs` — SessionDock configuration. Paths come from explicit environment variables; (1070 lines, 11 tests)
 - `conversation/`
+  - `cli_state.rs` — Per-session CLI state that native history cannot tell (docs/cli-state.md): (248 lines, 3 tests)
   - `input.rs` — Positive recognition of the CLI input surface, shared by CHECK and every (528 lines, 9 tests)
-  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (953 lines, 4 tests)
-    - mods: `input`, `store`
-  - `store.rs` — Session-owned drafts and one-shot submission identities. No CLI acknowledgment queue. (1124 lines, 12 tests)
+  - `mod.rs` — One conversation send path: drafts are server-owned, successful SEND belongs to the CLI. (1074 lines, 4 tests)
+    - mods: `cli_state`, `input`, `store`
+  - `store.rs` — Session-owned drafts and one-shot submission identities. No CLI acknowledgment queue. (1199 lines, 12 tests)
 - `delivery/`
   - `driver.rs` — Terminal driver for conversation SEND and the bug-report worker. (1073 lines, 0 tests)
     - mods: `tests`
@@ -66,7 +67,7 @@ python3 tests/module_map.py --write
     - `tests.rs` — (no module doc) (462 lines, 20 tests)
   - `mod.rs` — Server-side terminal writes for conversation SEND and the bug-report (6 lines, 0 tests)
     - mods: `driver`, `target`
-  - `target.rs` — Managed-instance target resolution and the failure type shared by (167 lines, 0 tests)
+  - `target.rs` — Managed-instance target resolution and the failure type shared by (163 lines, 0 tests)
 - `error.rs` — HTTP JSON error envelope `{error, code}` shared by Axum handlers. (63 lines, 0 tests)
 - `files/`
   - `boundary.rs` — (no module doc) (627 lines, 0 tests)
@@ -114,17 +115,18 @@ python3 tests/module_map.py --write
   - `registry/`
     - `tests.rs` — Registry rules against an in-process fake node (tokio listener) so faults (1363 lines, 12 tests)
 - `hub_config.rs` — Configuration of the `sessiondock-hub` binary. Separate from (180 lines, 2 tests)
-- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (570 lines, 0 tests)
+- `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (564 lines, 0 tests)
   - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `state`, `terminal`, `trash`, `ui_events`
 - `lifecycle/`
   - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (305 lines, 0 tests)
-  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (997 lines, 1 tests)
+  - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1130 lines, 1 tests)
     - mods: `tests`
   - `launcher_tests.rs` — (no module doc) (1193 lines, 20 tests)
-  - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (6 lines, 0 tests)
-    - mods: `autobind`, `launcher`, `model`, `service`, `store`
-  - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (577 lines, 0 tests)
-  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1675 lines, 0 tests)
+  - `mod.rs` — Isolated durable process-creation intent. No launcher or native-session binding. (7 lines, 0 tests)
+    - mods: `autobind`, `launcher`, `model`, `models`, `service`, `store`
+  - `model.rs` — Private creation-intent types: `LaunchSpec`, `Record`, and `BindingSpec`. (616 lines, 0 tests)
+  - `models.rs` — Read-only model catalogs for the new-session picker. Each CLI's own list: (328 lines, 0 tests)
+  - `service.rs` — Isolated lifecycle coordinator. HTTP cancellation never owns a spawn. (1720 lines, 0 tests)
     - mods: `tests`
   - `service_tests.rs` — (no module doc) (1267 lines, 23 tests)
   - `store/`
@@ -271,7 +273,7 @@ python3 tests/module_map.py --write
   - `scope.rs` — Identity provenance captured once from already parsed, committed records. (108 lines, 0 tests)
   - `tests.rs` — (no module doc) (1691 lines, 42 tests)
   - `views/`
-    - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (237 lines, 0 tests)
+    - `body.rs` — Byte rendering of message batches: the `/api/messages` document and the (269 lines, 0 tests)
     - `body_tests.rs` — The byte renderer (`messages_body`, `history_page_body`) against the (785 lines, 10 tests)
     - `encoded.rs` — Serialized message bytes of one projected file, kept next to its events (427 lines, 3 tests)
     - `mod.rs` — Per-session views on demand: one opened session is (2119 lines, 0 tests)

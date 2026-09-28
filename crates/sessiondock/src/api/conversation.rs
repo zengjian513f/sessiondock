@@ -191,8 +191,9 @@ pub async fn check(
     }
     let service = enabled(&s)?;
     let page = page_lease(q.lease.as_ref());
-    let (draft_revision, input) = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
-    let mut body = json!({"ok":input.ready(), "draft_revision":draft_revision, "input":input});
+    let (draft_revision, input, cli) = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
+    let mut body = json!({"ok":input.ready(), "draft_revision":draft_revision, "input":input,
+        "cli":cli.to_value()});
     let status = if input.ready() {
         StatusCode::OK
     } else {
@@ -207,6 +208,28 @@ pub async fn check(
 pub struct Discard {
     uid: String,
     id: String,
+}
+#[derive(Deserialize)]
+pub struct DismissQueued {
+    uid: String,
+    request_id: String,
+}
+/// Drops one queued send from the session's CLI state (a lost one the user
+/// closed). The text is not resent.
+pub async fn dismiss_queued(
+    State(s): State<AppState>,
+    Json(q): Json<DismissQueued>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&s)?;
+    let removed = service
+        .dismiss_queued(&q.uid, &q.request_id)
+        .await
+        .map_err(error)?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"ok":true,"removed":removed})),
+    )
+        .into_response())
 }
 /// Forgets a staged attachment the editor removed. A draft or unfinished
 /// submission that still names the upload refuses, so pages save first.

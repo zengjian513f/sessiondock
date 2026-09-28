@@ -25,7 +25,8 @@ SEND 和 `check` 使用同一 PTY 编辑区分类器，返回 `ready / starting 
 | POST /api/session/conversation/attachment | `{uid, id, name}` 查询参数，原始流式文件体；成功返回 upload_id |
 | GET /api/session/conversation/attachment | `{uid, id}` 读回暂存字节；图片类型原样下发，其余按不透明字节，一律 `nosniff` 加沙箱 CSP；已发布或已回收的上传返回 404 |
 | POST /api/session/conversation/attachment/discard | `{uid, id}` 丢弃未发布且无引用的暂存上传；返回 `removed`，被引用或已发布返回 409 |
-| POST /api/session/conversation/check | 检查 PTY 输入状态；画面检查结果带 `input` 和 `draft_revision`，供前端展示及空闲草稿同步 |
+| POST /api/session/conversation/check | 检查 PTY 输入状态；画面检查结果带 `input`、`draft_revision` 和会话 [CLI 状态对象](cli-state.md) `cli`，供前端展示及空闲草稿同步 |
+| POST /api/session/conversation/queued/dismiss | `{uid, request_id}` 关闭一条排队中/未送达的发送记录；不重发 |
 | POST /api/session/conversation/send | `{uid, request_id, text, attachments, quotes, draft_revision, lease}` |
 | POST /api/session/conversation/restart | 已退出、未绑定的实例重新启动，保留逻辑草稿 |
 | POST /api/session/conversation/import | 只读迁移旧版输入证据 |
@@ -43,6 +44,6 @@ Hub 的启动草稿发现按节点独立记忆结果：成功节点在本页只�
 
 发送关键路径只等待包含提交 ID 的草稿保存和 SEND，不再串行追加独立 CHECK 或提前重复保存；SEND 仍在发布附件、粘贴和 Enter 前核验画面。成功响应已持久化发送结果并消费对应草稿修订，页面立即清除已发送内容、恢复编辑和发送；剩余内容和后续编辑继续由原有草稿队列后台保存，失败提示和离页保护仍生效。
 
-SEND 成功后清除已发送草稿，并在对话末尾（活动状态行之后）按用户气泡显示已发送正文，标注"已发送，等待 CLI 处理"；发送按钮不转圈、可继续发送。CLI 忙碌或 API 重试时会把输入留在自己的队列里，这一气泡就是该队列在页面上的样子。直到本页读到对应的原生 user/command 记录才撤掉气泡；不弹成功 toast。排队气泡只在本页内存，不参与回合封装、工具分组、时间分隔和搜索计数；刷新后不恢复（BUG-20260928-113817-9301c2）。等待期间仍可编辑和继续发送，多条输入逐条对账。服务端回执只增加实际发送正文（去首尾空白）的 SHA-256 摘要，不保存正文副本；本页以摘要和发送前原生时间边界匹配，已有同文消息、助手输出及重复快照不能提前结束等待。附件、引用参与完整正文摘要。状态按会话隔离，已验证的临时会话绑定沿用，刷新后不恢复；不自动重发，不用固定超时假定成功。响应丢失仍按原提交 ID 查询，失败提示与输入就绪状态独立保留。
+SEND 成功后清除已发送草稿，并把正文压入会话的 [CLI 状态对象](cli-state.md) `queued`；页面在对话末尾（活动状态行之后）按用户气泡显示它，标注"已发送，等待 CLI 处理"；发送按钮不转圈、可继续发送。CLI 忙碌或 API 重试时会把输入留在自己的队列里，这一气泡就是该队列在页面上的样子（BUG-20260928-113817-9301c2）。服务端读到对应的原生 user/command 记录后从对象里退掉它，页面随数据包撤掉气泡；不弹成功 toast。排队记录在服务端账本，刷新、换页面、换设备都能看到，不参与回合封装、工具分组、时间分隔和搜索计数。等待期间仍可编辑和继续发送，多条输入逐条对账。回执里的 `echo_hash` 是实际发送正文（去首尾空白）的 SHA-256 摘要；对账以摘要和发送时间边界匹配，已有同文消息、助手输出及重复快照不能提前退掉。附件、引用参与完整正文摘要。已验证的临时会话绑定沿用；不自动重发，不用固定超时假定成功。响应丢失仍按原提交 ID 查询，失败提示与输入就绪状态独立保留。
 
 原生会话身份只从同一次已验证视图读取 scope 和 cwd，不为草稿操作序列化历史消息。CHECK/SEND 在未等待会话锁时复用本请求刚解析的目标；排队等待后重新解析。目标不跨请求缓存，每次捕获和写入仍由 host 核验完整实例身份。目标解析中的 host 观察和 Codex 进程扫描并行执行，仍使用新鲜观察并保留重名拒绝、线程切换及 fork 选择规则。
