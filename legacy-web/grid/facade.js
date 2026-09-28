@@ -903,9 +903,13 @@ export class GridTerm {
       return {line: this._viewportTop, col: 0};
     }
     const rect = canvas.getBoundingClientRect();
+    // Pointer and rect coordinates include ancestor CSS zoom (interface scale);
+    // cell metrics are layout pixels. Convert before picking a cell.
+    const scaleX = canvas.offsetWidth > 0 ? rect.width / canvas.offsetWidth : 1;
+    const scaleY = canvas.offsetHeight > 0 ? rect.height / canvas.offsetHeight : 1;
     return this.renderer.cellAt(
-      event.clientX - rect.left,
-      event.clientY - rect.top,
+      (event.clientX - rect.left) / (scaleX || 1),
+      (event.clientY - rect.top) / (scaleY || 1),
       this._viewportTop,
     );
   }
