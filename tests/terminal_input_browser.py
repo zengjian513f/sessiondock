@@ -7,7 +7,10 @@ the WebSocket; the shell reply renders in the same xterm. Mobile 390px: the on-s
 named keys over HTTP. After the shell exits, the rendered tail stays, the key
 bar issues no request for the vanished instance and nothing reclaims it (HTTP
 403/409/410 refusals are covered by the Rust `terminal_input` suite). The
-reliable-send composer stays hidden.
+reliable-send composer stays hidden. Console file paste: ignored with a hint
+while the 设置 › 功能 switch is off; enabled, a clipboard image and a two-file
+paste land in `<cwd>/sessiondock_attachments/<batch>/` and their relative
+paths are typed into the shell as one bracketed paste.
 """
 from contextlib import contextmanager
 import base64
@@ -33,6 +36,8 @@ XTERM_TEXT = """() => [...T.views.values()].map(view => {
     buffer.getLine(i)?.translateToString(true) || '').join('\\n').trimEnd() : '';
 }).join('\\n')"""
 
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
 # Same fixed loop as the other console tests plus two named-key cases: a lone
 # Tab line and an Up-arrow line, so HTTP key input is observable as shell output.
 SHELL = """stty -echo
@@ -43,6 +48,7 @@ while IFS= read -r command; do
     osc52) printf 'RS_OSC52_OK\\n' ;;
     "\t") printf 'RS_TAB_OK\\n' ;;
     *"[A") printf 'RS_UP_OK\\n' ;;
+    ./sessiondock_attachments/*) printf 'RS_PASTE_PATH %s\\n' "$command" ;;
     quit) printf 'RS_SHELL_DONE\\n'; exit 0 ;;
     *) printf 'RS_UNKNOWN_INPUT\\n' ;;
   esac
@@ -109,7 +115,9 @@ def main():
         uid = corpus.uid(sid)
         native = corpus.paths[sid].read_bytes()
         instance = "synthetic-" + uuid.uuid4().hex
-        with host(root, instance, uid) as (process, _), isolated_server(corpus, BINARY, host_dir=root / "host") as (base, _), sync_playwright() as playwright:
+        with host(root, instance, uid) as (process, _), \
+                isolated_server(corpus, BINARY, host_dir=root / "host", file_roots=(root / "work",),
+                                file_write_roots=(root / "work",)) as (base, _), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
                 launch["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
@@ -132,7 +140,9 @@ def main():
                 context.on("request", observe)
                 page = context.new_page()
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+                dialog_action = {"accept": True}
+                page.on("dialog", lambda dialog: (dialogs.append(dialog.message),
+                                                  dialog.accept() if dialog_action["accept"] else dialog.dismiss()))
                 page.goto(base, wait_until="networkidle")
                 capabilities = page.evaluate("SessionDockCapabilities.config")
                 assert capabilities["terminal_input"] is True and capabilities["outbox"] is False, capabilities
@@ -199,6 +209,120 @@ def main():
                 assert not dialogs, dialogs
                 assert page.evaluate("[...T.views.values()][0].scrollPos") == 0
 
+                # ---- Console file paste. Off by default: a pasted image is
+                # ignored with a hint and no upload. Enabled from 设置 › 功能,
+                # a clipboard image lands in <cwd>/sessiondock_attachments/<batch>/
+                # and its relative path is typed into the shell; two files in one
+                # paste share a batch and a name with a space is escaped.
+                uploads = []
+                context.on("request", lambda request: uploads.append(request.url)
+                           if urlsplit(request.url).path == "/api/session/attachment" else None)
+                wrote = page.evaluate("""async b64 => {
+                  try {
+                    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                    await navigator.clipboard.write([new ClipboardItem({'image/png': new Blob([bytes], {type: 'image/png'})})]);
+                    return true;
+                  } catch (error) { return String(error); }
+                }""", PNG_B64)
+
+                def paste(files):
+                    keyboard.focus()
+                    if files is None and wrote is True:
+                        keyboard.press("Control+V")      # the real clipboard image
+                        return
+                    page.evaluate("""files => {
+                      const transfer = new DataTransfer();
+                      for (const [name, type, b64] of files) {
+                        const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                        transfer.items.add(new File([bytes], name, {type}));
+                      }
+                      const target = document.querySelector('#termpane .xterm-helper-textarea');
+                      target.dispatchEvent(new ClipboardEvent('paste', {clipboardData: transfer, bubbles: true, cancelable: true}));
+                    }""", files or [["image.png", "image/png", PNG_B64]])
+
+                def wait_uploads(count):
+                    deadline = time.monotonic() + 10
+                    while len(uploads) < count and time.monotonic() < deadline:
+                        page.wait_for_timeout(50)
+                    assert len(uploads) == count, uploads
+
+                assert page.evaluate("localStorage.getItem('sessiondock.consolePasteFiles')") is None
+                paste(None)
+                page.wait_for_timeout(400)
+                assert not uploads and not dialogs, (uploads, dialogs)
+                expect(page.locator("#console-toast")).to_contain_text("控制台粘贴文件")
+                assert not (root / "work" / "sessiondock_attachments").exists()
+
+                page.locator("#settings").click()
+                page.locator('.settings-tab[data-tab="features"]').click()
+                toggle = page.locator("#setting-console-paste-files")
+                expect(toggle).to_be_visible()
+                toggle.check()
+                page.locator("#settings-dialog .modal-close").click()
+                expect(page.locator("#settings-dialog")).to_be_hidden()
+                assert page.evaluate("localStorage.getItem('sessiondock.consolePasteFiles')") == "true"
+
+                sends.clear()
+                paste(None)
+                wait_uploads(1)
+                deadline = time.monotonic() + 10
+                while not sends and time.monotonic() < deadline:
+                    page.wait_for_timeout(50)
+                assert sends and sends[-1].get("paste") == "./sessiondock_attachments/1/image.png ", sends
+                assert sends[-1]["uid"] == uid and sends[-1]["instance_id"] == instance, sends
+                saved = root / "work" / "sessiondock_attachments" / "1" / "image.png"
+                # Chromium re-encodes an image written to the real clipboard, so
+                # only the synthetic event keeps the exact bytes.
+                assert saved.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n", saved
+                assert wrote is True or saved.read_bytes() == base64.b64decode(PNG_B64), saved
+                keyboard.press("Enter")
+                xterm_contains(page, "RS_PASTE_PATH ./sessiondock_attachments/1/image.png")
+                expect(page.locator("#console-toast")).to_be_hidden()
+
+                sends.clear()
+                paste([["shot 2.png", "image/png", PNG_B64],
+                       ["notes.txt", "text/plain", base64.b64encode(b"pasted notes\n").decode()]])
+                wait_uploads(3)
+                deadline = time.monotonic() + 10
+                while not sends and time.monotonic() < deadline:
+                    page.wait_for_timeout(50)
+                assert sends and sends[-1].get("paste") == \
+                    "./sessiondock_attachments/2/shot\\ 2.png ./sessiondock_attachments/2/notes.txt ", sends
+                assert (root / "work" / "sessiondock_attachments" / "2" / "shot 2.png").read_bytes() == base64.b64decode(PNG_B64)
+                assert (root / "work" / "sessiondock_attachments" / "2" / "notes.txt").read_bytes() == b"pasted notes\n"
+                keyboard.press("Enter")
+                xterm_contains(page, "RS_PASTE_PATH ./sessiondock_attachments/2/shot\\ 2.png ./sessiondock_attachments/2/notes.txt")
+                assert not dialogs, dialogs
+                # More than five files, or over 50 MB, asks first. Dismissed:
+                # nothing is uploaded or typed. Accepted: one batch of six.
+                six = [[f"shot-{i}.png", "image/png", PNG_B64] for i in range(6)]
+                sends.clear()
+                dialog_action["accept"] = False
+                paste(six)
+                assert dialogs[-1] == "粘贴了 6 个文件，共 1 KB。继续？", dialogs
+                page.evaluate("""() => {
+                  const transfer = new DataTransfer();
+                  transfer.items.add(new File([new Uint8Array(51 * 1048576)], 'big.bin', {type: 'application/octet-stream'}));
+                  document.querySelector('#termpane .xterm-helper-textarea')
+                    .dispatchEvent(new ClipboardEvent('paste', {clipboardData: transfer, bubbles: true, cancelable: true}));
+                }""")
+                assert dialogs[-1] == "粘贴了 1 个文件，共 51.0 MB。继续？", dialogs
+                page.wait_for_timeout(400)
+                assert len(uploads) == 3 and not sends, (uploads, sends)
+                dialog_action["accept"] = True
+                paste(six)
+                wait_uploads(9)
+                deadline = time.monotonic() + 10
+                while not sends and time.monotonic() < deadline:
+                    page.wait_for_timeout(50)
+                assert sends and sends[-1].get("paste") == "".join(f"./sessiondock_attachments/3/shot-{i}.png " for i in range(6)), sends
+                assert sorted(path.name for path in (root / "work" / "sessiondock_attachments" / "3").iterdir()) == \
+                    sorted(f"shot-{i}.png" for i in range(6))
+                keyboard.press("Enter")
+                xterm_contains(page, "RS_PASTE_PATH ./sessiondock_attachments/3/shot-0.png")
+                dialogs.clear()
+                print("console paste via", "real clipboard" if wrote is True else f"synthetic ClipboardEvent ({wrote})")
+
                 # ---- Mobile 390px: the key bar sends named keys over HTTP.
                 page.set_viewport_size({"width": 390, "height": 844})
                 open_console(page, uid)
@@ -250,7 +374,8 @@ def main():
             finally:
                 browser.close()
     print("PASS terminal input browser: OSC 52 clipboard + Ctrl+V, terminal_input capability, "
-          "desktop local wheel + WebSocket input, mobile key bar HTTP keys, exact lease body, "
+          "desktop local wheel + WebSocket input, console file paste (off: hint; on: batch + path), "
+          "mobile key bar HTTP keys, exact lease body, "
           "no input/reclaim after exit, composer hidden, native fixture unchanged")
 
 

@@ -119,6 +119,7 @@ def main():
                                      launcher_config=configuration, state_dir=root / "state",
                                      file_roots=(root / "work",), file_write_roots=(root / "work",)) as (base, _):
                     errors, dialogs, sends = [], [], []
+                    dialog_action = {'accept': True}
 
                     def watch(context):
                         context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
@@ -130,7 +131,7 @@ def main():
                         def on_dialog(dialog):
                             dialogs.append((dialog.type, dialog.message))
                             try:
-                                dialog.accept()
+                                dialog.accept() if dialog_action['accept'] else dialog.dismiss()
                             except Exception:
                                 pass
                         page.on("dialog", on_dialog)
@@ -376,6 +377,33 @@ def main():
                     assert not list(staging.iterdir()) # Published bytes leave staging.
                     wait_history(page,'attachment send')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # A paste of more than five files (or over 50 MB) asks first:
+                    # dismissed stages nothing, accepted stages every file.
+                    paste_files="""files => {
+                      const transfer = new DataTransfer();
+                      for (const [name, type, text] of files) transfer.items.add(new File([text], name, {type}));
+                      document.querySelector('#cinput').dispatchEvent(new ClipboardEvent('paste', {clipboardData: transfer, bubbles: true, cancelable: true}));
+                    }"""
+                    six=[[f'shot-{i}.png','image/png',f'png {i}'] for i in range(6)]
+                    dialog_action['accept']=False
+                    page.evaluate(paste_files,six)
+                    assert dialogs[-1]==('confirm','粘贴了 6 个文件，共 1 KB。继续？'),dialogs[-1]
+                    page.wait_for_timeout(200)
+                    assert page.evaluate('composerDraft().attachments.length')==0
+                    dialog_action['accept']=True
+                    page.evaluate(paste_files,six)
+                    page.wait_for_function("composerDraft().attachments.length===6 && composerDraft().attachments.every(a => a.uploaded?.upload_id && !a.staging)")
+                    page.evaluate(paste_files,six[:5])
+                    page.wait_for_function('composerDraft().attachments.length===11')
+                    assert dialogs[-1][1].startswith('粘贴了 6 个文件'),dialogs[-1]   # five files asked nothing
+                    for remaining in range(10,-1,-1):
+                        page.locator('#compose-items .draft-card').first.locator('.draft-remove').click()
+                        page.wait_for_function(f'composerDraft().attachments.length==={remaining}')
+                    page.evaluate('async () => await composerDraftWrites')
+                    page.wait_for_function('!document.querySelector("#compose-items .draft-card")')
+                    deadline=time.monotonic()+10
+                    while list(staging.iterdir()) and time.monotonic()<deadline:page.wait_for_timeout(100)
+                    assert not list(staging.iterdir()),list(staging.iterdir())
                     # The same upload ID cannot overwrite another session's staging bytes.
                     for owner,content in [('report:a',b'a'),('report:b',b'b')]:
                         response=context.request.post(base+'/api/session/conversation/attachment?uid='+owner+'&id=same&name=x',data=content,headers={'Content-Type':'text/plain'})
