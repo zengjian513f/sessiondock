@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, isolated_server
@@ -108,13 +109,13 @@ def main():
                                      cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
         work = root / "work"
+        pw = sync_playwright().start()
+        options = {"headless": True}
+        if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
+            options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
+        browser = pw.chromium.launch(**options)
         with isolated_server(Corpus(root), args.binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                             launcher_config=launcher, state_dir=root / "state") as (base, _), \
-                sync_playwright() as pw:
-            options = {"headless": True}
-            if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
-                options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
-            browser = pw.chromium.launch(**options)
+                             launcher_config=launcher, state_dir=root / "state") as (base, _):
             context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
             context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
             page = context.new_page()
@@ -240,9 +241,45 @@ def main():
 
             assert not errors, errors
             context.close()
-            browser.close()
+
+        # ---- A configured CLI that is not installed (a shell wrapper whose
+        #      command is missing, exit 127) cannot be picked.
+        profiles[0] = {**profiles[0], "executable": str(Path("/bin/sh").resolve()),
+                       "args": ["-c", 'exec "$0" "$@"', "sessiondock-missing-claude-cli"]}
+        launcher.write_text(json.dumps({"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
+                                        "host_dir": str(root / "host"), "adapters": [], "profiles": profiles}))
+        with isolated_server(Corpus(root), args.binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
+                             launcher_config=launcher, state_dir=root / "state") as (base, _):
+            deadline = time.monotonic() + 20
+            while True:
+                listed = json.load(urllib.request.urlopen(base + "/api/term/list?force=1", timeout=10))
+                if listed["sources"].get("claude") is False or time.monotonic() > deadline:
+                    break
+                time.sleep(0.2)
+            assert listed["sources"] == {"claude": False, "codex": True, "grok": True,
+                                         "opencode": True, "shell": True}, listed["sources"]
+            assert listed["resume_sources"]["claude"] is False, listed["resume_sources"]
+            context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
+            context.route("**/*", lambda route: route.continue_() if route.request.url.startswith(base + "/") else route.abort())
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.goto(base, wait_until="networkidle")
+            page.wait_for_function("T.listLoaded")
+            open_dialog(page)
+            claude = page.locator('input[name="new-source"][value="claude"]')
+            expect(claude).to_be_disabled()
+            expect(claude).not_to_be_checked()
+            assert "未安装" in page.locator('#new-session-form label:has(input[value="claude"])').get_attribute("title")
+            for source in ("codex", "grok", "opencode", "shell"):
+                expect(page.locator(f'input[name="new-source"][value="{source}"]')).to_be_enabled()
+            expect(page.locator('input[name="new-source"]:checked')).to_have_value("codex")
+            assert not errors, errors
+            context.close()
+        browser.close()
+        pw.stop()
     print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, remembered choice, "
-          "steady row across sources, search above ten, argv and pre-created session carry the model, phone wrap")
+          "steady row across sources, search above ten, argv and pre-created session carry the model, phone wrap, "
+          "an uninstalled CLI cannot be picked")
 
 
 if __name__ == "__main__":

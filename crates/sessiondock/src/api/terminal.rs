@@ -1013,17 +1013,22 @@ pub async fn list(
         for source in sources {
             let key = serde_json::to_value(source).expect("source enum");
             let key = key.as_str().expect("source string");
+            // A configured CLI that this machine does not have installed
+            // cannot be started, created or resumed.
+            let installed = !service.cli_missing(source);
             response["sources"][key] = json!(
-                state
-                    .launch_adapters
-                    .iter()
-                    .filter(|adapter| adapter.source == source)
-                    .count()
-                    == 1
+                installed
+                    && state
+                        .launch_adapters
+                        .iter()
+                        .filter(|adapter| adapter.source == source)
+                        .count()
+                        == 1
             );
             // Resume/takeover needs exactly one resume-capable CLI profile.
             if source != crate::lifecycle::model::Source::Shell {
-                response["resume_sources"][key] = json!(service.entry_for(source, true).is_some());
+                response["resume_sources"][key] =
+                    json!(installed && service.entry_for(source, true).is_some());
             }
         }
         response["backends"] = super::lifecycle::backends();
