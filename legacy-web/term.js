@@ -4187,7 +4187,11 @@ function renderQueuedSends(uid = composerUid) {
     if (typeof md === 'function') body.innerHTML = md(text, true, [], {uid, agent:null});
     else body.textContent = text;
     n.appendChild(body);
-    const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看' : '已发送，等待 CLI 处理');
+    // The CLI's own enqueue record means it holds the text until its current step ends.
+    const inCli = !lost && item.cli_queued_at != null;
+    if (inCli) n.dataset.cliQueued = '1';
+    const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看'
+      : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
     if (lost) {
       const close = el('button', 'queued-send-dismiss', '关闭');
       close.type = 'button';

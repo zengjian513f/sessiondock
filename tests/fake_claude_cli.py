@@ -26,6 +26,10 @@ stop at the first question and at Review; Enter or an option's digit answers
 and moves on (a single question submits at once); Review's two rows wrap and
 `1` submits. The outcome is written to `<path>.answers`.
 
+While the file at `$SESSIONDOCK_TEST_CLAUDE_QUEUE` exists, a delayed line is
+first recorded as Claude's `queue-operation` enqueue at Enter, and its `remove`
+precedes the user record, the way a busy Claude holds input in its own queue.
+
 With `$SESSIONDOCK_TEST_CLAUDE_NOTICE` set, the file at that path is watched
 from startup; once it appears its text is appended as a Claude `system`
 informational record (the startup notice a SessionStart hook leaves before any
@@ -131,13 +135,27 @@ class Fake:
         if delay > 0:
             time.sleep(delay)
 
-    def record(self, text):
+    @staticmethod
+    def now():
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % int((time.time() % 1) * 1000)
+
+    def queue_operation(self, operation, text):
+        return {"type": "queue-operation", "operation": operation, "sessionId": self.sid,
+                "timestamp": self.now(), "content": text}
+
+    def append(self, rows):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as stream:
+            stream.write("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows))
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def record(self, text, before=()):
         if not self.path:
             return
-        os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        now = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + ".%03dZ" % int((time.time() % 1) * 1000)
+        now = self.now()
         user_uuid = str(uuid.uuid4())
-        rows = [{
+        rows = [*before, {
             "type": "user", "uuid": user_uuid, "parentUuid": self.parent,
             "sessionId": self.sid, "cwd": os.getcwd(), "timestamp": now,
             "isSidechain": False, "userType": "external", "version": "fake-2.1",
@@ -154,11 +172,7 @@ class Fake:
                             "content": [{"type": "text", "text": "OK: " + text}]},
             })
             self.parent = reply_uuid
-        with open(self.path, "a", encoding="utf-8") as stream:
-            for row in rows:
-                stream.write(json.dumps(row, ensure_ascii=False) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
+        self.append(rows)
 
     def watch_notice(self):
         path = os.environ.get("SESSIONDOCK_TEST_CLAUDE_NOTICE", "")
@@ -276,11 +290,18 @@ class Fake:
         if self.options["swallow"] == self.submitted:
             self.render()
             return
+        before = []
         if self.options["delay"] > 0:
+            queue = os.environ.get("SESSIONDOCK_TEST_CLAUDE_QUEUE", "")
+            if queue and self.path and os.path.exists(queue):
+                self.append([self.queue_operation("enqueue", text)])
+                before.append(self.queue_operation("remove", text))
             footer = "✻ Thinking… (esc to interrupt)" if self.options["busy_footer"] else ""
             self.render(footer)
             time.sleep(self.options["delay"])
-        self.record(text)
+            if before:
+                before[0]["timestamp"] = self.now()
+        self.record(text, before)
         self.render()
 
     def run(self):
