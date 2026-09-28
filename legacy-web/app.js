@@ -1262,6 +1262,7 @@ function applyCoveredActivity(uid, agent, entry, data) {
   if (S.sel !== uid || S.agent !== agent) return;
   const box = $('#msgs');
   $('#activity')?.remove();
+  $('#queued-sends')?.remove();
   if (box && entry.activity?.state !== 'working') sealTurnTail(box, entry);
   renderConversationTail(entry.activity, uid);
 }
@@ -1402,6 +1403,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
     if (S.sel === uid && S.agent === agent) {
       const box = $('#msgs');
       $('#activity')?.remove();
+      $('#queued-sends')?.remove();
       if (box && e.activity?.state !== 'working') sealTurnTail(box, e);
       renderConversationTail(e.activity, uid);
     }
@@ -1417,6 +1419,7 @@ async function applyDiff(uid, data, bytes = 0, agent = null) {
   const box = $('#msgs');
   if (!box) return data.messages.length;
   $('#activity')?.remove();
+  $('#queued-sends')?.remove();
   const built = appendMessages(box, data.messages, null,
     {openTail: e.activity?.state === 'working'});
   const sealed = sealTurnTail(box, e);

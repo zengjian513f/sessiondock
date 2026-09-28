@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Grok SEND stops the composer spinner once the user line is on screen.
+"""Grok SEND retires the queued bubble once the user line is on screen.
 
-Grok ``chat_history.jsonl`` user records have no ``timestamp``. The send
-button used to stay on "等待对话显示" after that line was already visible
-(BUG-20260927-211850-1fa082). An older identical line must not clear a later
+Grok ``chat_history.jsonl`` user records have no ``timestamp``. The sent
+text used to keep the composer waiting after that line was already visible
+(BUG-20260927-211850-1fa082). An older identical line must not retire a later
 send. Private fake CLI, loopback server, temporary directories only.
 """
 import hashlib
@@ -91,11 +91,11 @@ def main():
                         handle.write(user_line(text, prompt_index))
 
                 def user_count(text):
-                    return page.locator('#msgs .msg[data-role=user]').filter(has_text=text).count()
+                    return page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text=text).count()
 
                 append('claude我已经卸载。cygnus上有', 0)
                 page.wait_for_function(
-                    "text => [...document.querySelectorAll('#msgs .msg[data-role=user]')].some(n => n.textContent.includes(text))",
+                    "text => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].some(n => n.textContent.includes(text))",
                     arg='claude我已经卸载。cygnus上有', timeout=15000)
                 stamps = page.evaluate("() => (cache.get(S.sel)?.msgs || []).filter(m => m.role === 'user').map(m => m.ts)")
                 assert stamps == [None], stamps
@@ -107,24 +107,26 @@ def main():
                     assert sent.value.status == 200, sent.value.text()
                     assert sent.value.json()['state'] == 'sent', sent.value.text()
                     expect(page.locator('#cinput')).to_have_value('')
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy', 'true')
-                    expect(page.locator('#csend')).to_have_attribute('aria-label', '等待对话显示')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
+                    expect(page.locator('#queued-sends .msg.queued-send[data-role=user]').filter(has_text=text)).to_have_count(1)
 
                 send('新的一句')
                 assert user_count('新的一句') == 0
                 append('新的一句', 1)
                 page.wait_for_function(
-                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('新的一句')).length === 1",
+                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('新的一句')).length === 1",
                     timeout=15000)
+                expect(page.locator('#queued-sends')).to_have_count(0)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
 
                 send('claude我已经卸载。cygnus上有')
                 assert user_count('claude我已经卸载。cygnus上有') == 1
-                expect(page.locator('#csend')).to_have_attribute('aria-busy', 'true')
+                expect(page.locator('#queued-sends .msg.queued-send')).to_have_count(1)
                 append('claude我已经卸载。cygnus上有', 2)
                 page.wait_for_function(
-                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('claude我已经卸载。cygnus上有')).length === 2",
+                    "() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('claude我已经卸载。cygnus上有')).length === 2",
                     timeout=15000)
+                expect(page.locator('#queued-sends')).to_have_count(0)
                 expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
                 assert not dialogs, dialogs
                 assert not errors, errors
