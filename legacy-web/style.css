@@ -501,7 +501,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 }
 :is(#new-session-form, #bug-report-form) .new-source input:focus-visible + span { outline-offset: -2px; }
 :is(#new-session-form, #bug-report-form) .new-source { flex: 0 1 212px; min-width: 172px; }
-#bug-report-form .new-source { flex-basis: 128px; min-width: 104px; }
+#bug-report-form .new-source { flex-basis: 170px; min-width: 138px; }
 :is(#new-session-form, #bug-report-form) .new-source label { flex: 1 1 42px; min-width: 34px; }
 :is(#new-session-form, #bug-report-form) .new-source .src-label {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;

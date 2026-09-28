@@ -44,7 +44,7 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 ## Route contract (`POST /api/bug-report`)
 
 Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
-_trace_id, _build, source ∈ claude|codex|grok (default codex), model, effort, terminal_name,
+_trace_id, _build, source ∈ claude|codex|grok|opencode (default codex), model, effort, terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
 uid}, optional), captured (object, optional)}`; unknown fields are ignored,
@@ -100,8 +100,9 @@ tells it that the session's native JSONL and ledgers are not on its machine.
 | `500 bug_report_worker_failed {error, report_id, path}` | capture succeeded, the worker launch failed (manifest `status: failed`, audit `bug_report.worker_launch_failed`) |
 | `202 {ok, report_id, path, worker: {name, source, sid, cwd, token, title, kind: "bug-report", report_id, record_id, launch_id, instance_id, profile, cols, rows}}` | worker started; the prompt injection continues in the background |
 
-`worker.sid` is the declared Claude session id (`null` for Codex/Grok, whose
-identity stays pending like any other launch); `token` is that sid or the
+`worker.sid` is the declared session id of a Claude, Grok or OpenCode worker
+(OpenCode's is pre-created with the repository as its directory; `null` for
+Codex, whose identity stays pending like any other launch); `token` is that sid or the
 launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
