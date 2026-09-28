@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real Hub/node report staging: recover a lost reply without duplicate uploads or launches."""
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -117,9 +118,21 @@ def run(browser, root, config):
             assert len(attempts) == 5 and attempts[4] == attempts[2], attempts
             print('PASS persistent interruption: bounded retry, retained text/file, manual recovery', flush=True)
 
+            # The worker CLI runs with the model and effort picked in the dialog.
+            page.locator('#bug-report-model').click()
+            page.locator('#bug-report-model-options [role=option]', has_text='Opus').click()
+            page.locator('#bug-report-effort').select_option('high')
             with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as submitted:
                 page.locator('#bug-report-go').click()
             assert submitted.value.status == 202, submitted.value.text()
+            assert json.loads(submitted.value.request.post_data)['model'] == 'opus'
+            ledger = json.loads((root / 'ledger/lifecycle-ledger.json').read_text())
+            specs = [r['spec'] for r in ledger['records'].values() if r['request_id'].startswith('bug-report-')]
+            assert [(spec.get('model'), spec.get('effort')) for spec in specs] == [('opus', 'high')], specs
+            sid = submitted.value.json()['worker']['sid']
+            argv = next(cmd for cmd in (p.read_bytes().rstrip(b'\0').split(b'\0') for p in Path('/proc').glob('[0-9]*/cmdline')
+                                        if p.exists() and sid.encode() in p.read_bytes()) if b'--effort' in cmd)
+            assert argv[-4:] == [b'--model', b'opus', b'--effort', b'high'], argv
             expect(page.locator('#bug-report-dialog')).not_to_be_visible()
             bundles = list((root / 'reports').glob('BUG-*'))
             assert len(bundles) == 1, bundles
@@ -130,7 +143,7 @@ def run(browser, root, config):
             assert len(files) == 2, files
             assert {p.name: p.read_bytes() for p in files} == {'capture.png': payload, 'second.png': PNG}
             assert not errors, errors
-            print('PASS report submit: one bundle, AGENTS.md-only worker brief, two exact attachments, one worker response', flush=True)
+            print('PASS report submit: one bundle, AGENTS.md-only worker brief, two exact attachments, one worker response with the chosen model/effort', flush=True)
         finally:
             context.close()
             hub.stop()

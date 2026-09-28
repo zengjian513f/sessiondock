@@ -165,6 +165,19 @@ async fn report_inner(
             json!({"error": format!("本机找不到 {} 命令", source_name(source)), "code": "bug_report_source_unavailable"}),
         ));
     }
+    // Picker model and effort for the worker CLI; empty is its own default.
+    let chosen = |key: &str| Some(text(&body[key], usize::MAX).trim().to_owned()).filter(|v| !v.is_empty());
+    let model = chosen("model");
+    let effort = chosen("effort").filter(|_| crate::lifecycle::models::supports_effort(source));
+    if ![&model, &effort]
+        .into_iter()
+        .all(|value| value.as_deref().is_none_or(crate::lifecycle::models::valid_choice))
+    {
+        return Ok(json_body(
+            StatusCode::BAD_REQUEST,
+            json!({"error": "模型或推理强度名称无效", "code": "launch_model"}),
+        ));
+    }
     let conversations = state.conversations.clone().ok_or_else(|| {
         ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
@@ -200,8 +213,16 @@ async fn report_inner(
     })?;
     let report_lock = conversations.upload_lock(&identity.key, "report-submission");
     let _report_guard = report_lock.lock().await;
-    let payload = json!({"description":body["description"],"source":source_text,
+    let mut payload = json!({"description":body["description"],"source":source_text,
         "attachments":body["attachments"],"origin":body["origin"],"uid":body["uid"]});
+    // Only a chosen model/effort joins the replay payload, so earlier
+    // receipts without one still match their retried request.
+    if let Some(model) = &model {
+        payload["model"] = json!(model);
+    }
+    if let Some(effort) = &effort {
+        payload["effort"] = json!(effort);
+    }
     if let Some(old) = conversations.store.report(&identity.key, &request_id) {
         if old["payload"] != payload {
             return Err(invalid("相同报告提交 ID 对应了不同内容"));
@@ -390,6 +411,7 @@ async fn report_inner(
         conversations.clone(),
         draft_uid,
         body["draft_revision"].as_u64(),
+        (model, effort),
     )
     .await
     {

@@ -120,7 +120,7 @@ def node_source_picker(browser, hub, node, other):
     for width in (1280, 390):
         page.set_viewport_size({"width": width, "height": 900})
         dialog = page.locator("#new-session-dialog").bounding_box()
-        for item in page.locator("#new-session-form .new-row > *:not([hidden]), #new-session-form .new-source label, #new-model, .new-effort").all():
+        for item in page.locator("#new-session-form .new-row > *:not([hidden]), #new-session-form .new-source label, #new-model, #new-session-form .new-effort").all():
             box = item.bounding_box()
             assert box and box["x"] >= dialog["x"] and box["x"] + box["width"] <= dialog["x"] + dialog["width"] + 0.5, (width, box, dialog)
         rows = page.evaluate("""() => new Set([...document.querySelectorAll('#new-session-form .new-source label')]
