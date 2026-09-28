@@ -1818,9 +1818,12 @@ function paintItemStatus(node) {
 function sessionTurn(uid) {
   if (!uid || !S.live.has(uid)) return '';
   const entry = S.sel === uid ? cache.get(viewKey(uid)) : null;
-  let state = entry?.activity?.state || indexedSessions().byUid.get(uid)?.turn || '';
+  const row = indexedSessions().byUid.get(uid);
+  let state = entry?.activity?.state || row?.turn || '';
   const busy = entry?.cli?.instance?.busy;
   if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
+  // 主回合结束但后台子代理还在跑：会话在等它们，仍算轮转中。
+  if (state !== 'waiting' && (row?.agent_items || []).some(item => agentRunning(uid, item))) state = 'working';
   return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
 }
 const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';

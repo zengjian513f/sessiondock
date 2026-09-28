@@ -6,7 +6,8 @@ button with a fake CLI (a plain shell), so both are really live. Native
 records appended to the session that is *not* open drive its sidebar dot
 through the list row's `turn` (docs/read-model.md): working pulses, an open
 question tool turns amber, a finished or interrupted turn is a still dot, and
-`!` shell records start no turn. For the open session the CLI state object's
+`!` shell records start no turn, and a finished main turn whose background
+subagent still runs keeps turning. For the open session the CLI state object's
 `instance.busy` (docs/cli-state.md) wins: typing into the console makes the
 fake CLI print Codex's busy footer, and the header and sidebar dots pulse
 although the transcript says the turn is complete. No model binary, native CLI
@@ -167,6 +168,21 @@ def main():
                     append(claude_path, claude_row(CLAUDE_SID, "user", "u6", "u5", [{"type": "text",
                         "text": "[Request interrupted by user]"}], cwd=work))
                     assert row_turn(opener, base, claude_uid, claude_path.stat().st_size) == "aborted"
+                    expect(badge(claude_uid)).not_to_have_class(TURN, timeout=20000)
+                    # A finished main turn waiting on a background subagent is still turning.
+                    agents = claude_path.parent / CLAUDE_SID / "subagents"
+                    agents.mkdir(parents=True)
+                    (agents / "agent-a1b2c3d4e5f6a7b8c.meta.json").write_text(
+                        json.dumps({"agentType": "general-purpose", "description": "Synthetic background job"}))
+                    sidecar = agents / "agent-a1b2c3d4e5f6a7b8c.jsonl"
+                    append(sidecar, claude_row(CLAUDE_SID, "user", "b0", None, "Synthetic background job",
+                                               isSidechain=True, agentId="a1b2c3d4e5f6a7b8c", cwd=work))
+                    expect(badge(claude_uid)).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    rows = json.loads(opener.open(base + "/api/sessions?force=1", timeout=10).read())["sessions"]
+                    row = next(row for row in rows if row["uid"] == claude_uid)
+                    assert row["turn"] == "working" and row["agent_items"][0]["active"] is True, row
+                    append(sidecar, claude_row(CLAUDE_SID, "assistant", "b1", "b0", "Synthetic background result",
+                                               isSidechain=True, agentId="a1b2c3d4e5f6a7b8c", cwd=work))
                     expect(badge(claude_uid)).not_to_have_class(TURN, timeout=20000)
 
                     # ---- Codex leaves the view (Claude opens): rollout boundaries drive it.
