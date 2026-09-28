@@ -5,8 +5,8 @@ Seeded through an init script before the page's own scripts run, the served
 page must:
 
 1. apply `sessiondock.*` values on first load (theme, font, sidebar width, nesting,
-   timeline view, compact turns, chip filter, cache limit, tool icons, unread
-   badges, last selection);
+   timeline view, compact turns, chip filter, cache limit, unread badges,
+   last selection);
 2. write changes back only under that namespace and retain them after reload;
 3. leave a fresh browser at the defaults and use only SessionDock keys.
 
@@ -208,7 +208,7 @@ def main():
             "sessiondock.theme": '"dark"', "sessiondock.font": '"cascadia"', "sessiondock.width": "420",
             "sessiondock.sideCollapsed": "false", "sessiondock.nest": "true", "sessiondock.view": '"date"',
             "sessiondock.compactTurns": "false", "sessiondock.off": '["grok"]', "sessiondock.cacheMb": "64",
-            "sessiondock.toolIcons": '"boss"', "sessiondock.unread": json.dumps([[unread, {"count": 3}]]),
+            "sessiondock.unread": json.dumps([[unread, {"count": 3}]]),
             "sessiondock.sel": json.dumps(target), "sessiondock.nodesOff": '["stale-node"]',
             "sessiondock.settingsTab": '"appearance"',
             "sessiondock.mobilePage": '"list"',
@@ -235,7 +235,6 @@ def main():
                 # 1: applied.
                 assert page.evaluate("document.documentElement.dataset.theme") == "dark"
                 assert "Cascadia" in page.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--terminal-font')")
-                assert page.evaluate("document.documentElement.dataset.toolIcons") == "boss"
                 state = page.evaluate("({nest: S.nest, view: S.view, compact: S.compactTurns, off: [...S.off], "
                                       "unread: [...S.unread], sel: S.sel, cache: cacheLimitMb, "
                                       "width: parseInt(document.querySelector('#left').style.width, 10), "
@@ -252,7 +251,7 @@ def main():
                 # Every seeded preference remains under the SessionDock prefix.
                 dump = page.evaluate(LS_DUMP)
                 for key in ("theme", "font", "width", "nest", "view", "compactTurns", "off", "cacheMb",
-                            "toolIcons", "unread", "sel", "nodesOff"):
+                            "unread", "sel", "nodesOff"):
                     assert dump.get("sessiondock." + key) is not None, (key, sorted(dump))
                     assert dump["sessiondock." + key] == seed["sessiondock." + key], key
                 assert dump["sessiondock.mobilePage"] == '"list"'

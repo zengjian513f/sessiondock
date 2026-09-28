@@ -27,3 +27,6 @@
 - Reports and conversations share browser draft persistence and saved-input recovery; new sessions enter conversation mode while their CLI starts on the backend.
 - 未落盘的新建会话顶栏是删除会话（等同丢弃），不是关机停止；已落盘且仍在运行的才是停止。
 - 已完成回合折叠时，主助手的第一条原生 final（Claude `end_turn`、Codex `final_answer`）就是露在顶层的结论；Stop hook 拒绝收尾后追加的工具调用与短补充、后台 task 短报单独成段规划，不再把长结论折进过程合集只露出末尾几行。
+- 移除了“老板头像”工具图标模式：设置对话框不再有“工具图标”选择项，页面不再读写
+  `sessiondock.toolIcons` 偏好，`avatars/` 目录（头像资源与其来源许可页）一并删除，
+  来源图标始终显示原版图标。

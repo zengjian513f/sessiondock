@@ -1985,29 +1985,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 .spin { padding: 14px; color: var(--muted); font-size: 13px; }
 .ico { width: 14px; height: 14px; }
 .source-icon { width: 18px; height: 18px; flex: none; }
-.source-icon[data-source="claude"] {
-  --source-avatar: url('avatars/dario-wef.webp');
-  --avatar-size: 110%; --avatar-position: center top;
-}
-.source-icon[data-source="codex"] {
-  --source-avatar: url('avatars/sam-imdb.webp');
-  --avatar-size: 100%; --avatar-position: center 10%;
-}
-.source-icon[data-source="grok"] {
-  --source-avatar: url('avatars/elon-penglobal.webp');
-  --avatar-size: 170%; --avatar-position: 55% 10%;
-}
-:root[data-tool-icons="boss"] .source-icon {
-  border-radius: 50%;
-  background-image: var(--source-avatar);
-  background-size: var(--avatar-size);
-  background-position: var(--avatar-position);
-  background-repeat: no-repeat;
-}
-:root[data-tool-icons="boss"] .source-icon > use { visibility: hidden; }
-/* 没有头像的来源在头像模式下仍显示图标。 */
-:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] { border-radius: 0; background-image: none; }
-:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] > use { visibility: visible; }
 #side .item > .ico { width: 30px; height: 30px; }
 #side .item > .ico > .source-icon { width: 26px; height: 26px; }
 #side .item-status, .dtitle h2 .item-status { right: -4px; }
@@ -2015,7 +1992,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 .dtitle h2 > .ico > .source-icon {
   width: 26px; height: 26px; margin-top: 0;
 }
-.avatar-credits { align-self: flex-end; font-size: 11px; color: var(--muted); }
 
 /* ---------- 手机：列表与详情分屏显示 ---------- */
 @media (max-width: 720px) {
