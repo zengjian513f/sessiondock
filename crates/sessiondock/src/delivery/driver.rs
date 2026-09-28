@@ -1,4 +1,4 @@
-//! Terminal driver for the delivery executor.
+//! Terminal driver for conversation SEND and the bug-report worker.
 //!
 //! The driver owns nothing durable. It captures the host's screen model,
 //! recognizes Claude's composer (rules, `❯`,
@@ -23,12 +23,13 @@ use crate::terminal::{
     ExpectedTarget, InputPayload, TerminalError, TerminalService, UnleasedTarget,
 };
 
-/// Page identity under which the executor claims a server-held lease. It is a
-/// registry page ID like any browser page, so a page holding the lease sees
-/// the ordinary conflict and can force it like any takeover.
+/// Page identity under which the server claims a server-held lease (the value
+/// predates the conversation service and stays stable). It is a registry page
+/// ID like any browser page, so a page holding the lease sees the ordinary
+/// conflict and can force it like any takeover.
 pub const SERVER_PAGE: &str = "sessiondock-delivery-executor";
 
-/// Managed instance resolved by the executor from the runtime catalog. Never
+/// Managed instance resolved from the runtime catalog. Never
 /// built from a display name, cwd, time or PID.
 #[derive(Clone)]
 pub struct DeliveryTarget {
@@ -41,9 +42,9 @@ pub struct DeliveryTarget {
 }
 
 /// A browser page's own lease for the instance, as sent with the request.
-/// Used only when it authorizes; otherwise the executor claims for itself.
+/// Used only when it authorizes; otherwise the server claims for itself.
 /// A console opened on a launched (pending) instance holds a launch lease
-/// (`launch_id` present); the executor still resolves the native identity
+/// (`launch_id` present); the server still resolves the native identity
 /// through the runtime catalog and only borrows the page's write authority
 /// for that exact process instance.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,9 +55,9 @@ pub struct PageLease {
     pub launch_id: Option<String>,
 }
 
-/// Lease under which one executor operation performs its host requests.
-/// `owned` leases were claimed by the executor and are released afterwards;
-/// page leases are borrowed and never released by the executor. Conversation
+/// Lease under which one server operation performs its host requests.
+/// `owned` leases were claimed by the server and are released afterwards;
+/// page leases are borrowed and never released by the server. Conversation
 /// handles instead hold a verified target and never enter the browser registry.
 pub struct LeaseHandle {
     pub name: String,
@@ -811,9 +812,9 @@ pub fn paste_placeholder(text: &str) -> bool {
     text.starts_with("[Pasted") && text.contains(']')
 }
 
-/// Host operations needed by the executor. One production implementation
+/// Host operations a server-side write needs. One production implementation
 /// exists; tests provide fakes. Every method must be safe to call only under
-/// the executor's per-session serialization.
+/// the caller's per-session serialization.
 pub trait TerminalDriver: Send + Sync {
     /// Borrow the page's lease when it authorizes this exact instance;
     /// otherwise claim a server-held lease without force. A lease held by any
@@ -951,7 +952,7 @@ impl TerminalDriver for HostTerminalDriver {
                     conversation: None,
                 };
                 // A capture both validates the lease and warms nothing: the
-                // executor captures again for its own inspection.
+                // caller captures again for its own inspection.
                 match self
                     .terminal
                     .capture_screen(&handle.name, &handle.page, &handle.token, handle.expected())
@@ -1057,20 +1058,6 @@ impl TerminalDriver for HostTerminalDriver {
                     .cancel_reservation(&lease.name, &lease.page, &lease.token);
             }
         })
-    }
-}
-
-#[cfg(all(test, unix))]
-pub(crate) fn test_lease(name: &str, uid: &str, instance: &str) -> LeaseHandle {
-    LeaseHandle {
-        name: name.into(),
-        uid: uid.into(),
-        instance_id: instance.into(),
-        launch_id: None,
-        page: "test-page".into(),
-        token: "0".repeat(64),
-        owned: false,
-        conversation: None,
     }
 }
 

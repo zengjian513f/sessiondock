@@ -305,7 +305,7 @@ def run_cases(hub, a, b):
     status, body = hub.json("POST", "/api/term/create", {"_node": NIDS["b"], "_build": "stale"})
     if status != 409 or body.get("reload") is not True or body.get("build") != build:
         fail("resolve", "_build 409", json.dumps(body))
-    status, body = hub.json("POST", "/api/session/send", {
+    status, body = hub.json("POST", "/api/session/conversation/send", {
         "uid": ua, "name": f"{NIDS['a']}~same-terminal", "text": "keep exact text", "_build": build,
         "media": [{"src": f"/api/nodes/{NIDS['a']}/api/media/{'d' * 32}"}]})
     forwarded = a.state()["writes"][-1][1]

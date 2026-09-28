@@ -1,8 +1,9 @@
 # Asynchronous delivery service
 
 `DeliveryService` serializes access to [DeliveryEngine](delivery-engine.md).
-It supplies outbox reads, receipt diagnostics and executor access through
-`with_engine`. HTTP handlers select the native session before submitting work.
+It supplies the read-only outbox projections of the archived ledger (the
+reliable-send executor that wrote it is retired). HTTP handlers select the
+native session before submitting work.
 
 ## API and startup
 

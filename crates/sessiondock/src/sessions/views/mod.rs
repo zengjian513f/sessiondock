@@ -21,10 +21,9 @@ use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 
 use super::{
-    CURSOR_SCHEMA, Candidate, MessageQuery, NativeFence, NativeInputRead, NativeScope,
-    NativeUserInput, PageStore, RewindTarget, SessionError, budgets, claude_agent_of, hash,
-    history, media_projection, native_input, pages, providers, records, restamp, scope, timestamp,
-    uid_for,
+    CURSOR_SCHEMA, Candidate, MessageQuery, NativeScope, PageStore, RewindTarget, SessionError,
+    budgets, claude_agent_of, hash, history, media_projection, native_input, pages, providers,
+    records, restamp, scope, timestamp, uid_for,
 };
 use crate::metadata::TimelinePin;
 
@@ -495,72 +494,6 @@ impl ViewSnapshot {
                 return None;
             }
             Some((role, event.message["text"].as_str().unwrap_or("")))
-        })
-    }
-
-    /// Delivery executor read: the current fence of a Claude main
-    /// session plus the projected human `user` inputs committed after `from`,
-    /// taken from this checked, restamped immutable view (no ad-hoc file
-    /// access). The fence is validated exactly like a message checkpoint; an
-    /// invalid fence yields no inputs rather than a guess.
-    pub fn claude_native_inputs(
-        &self,
-        from: Option<&NativeFence>,
-    ) -> Result<NativeInputRead, SessionError> {
-        let view = &self.view;
-        let scope = view.native_scope.clone()?;
-        if scope.source != "claude" || scope.agent_id.is_some() {
-            return Err(SessionError::new(400, "可靠发送只支持 Claude 主会话"));
-        }
-        let parsed = &view.parsed;
-        let current = NativeFence {
-            source_identity: view.identity.clone(),
-            offset: parsed.committed as u64,
-            head: self.head.clone(),
-            anchor: self.anchor.clone(),
-        };
-        let Some(from) = from else {
-            return Ok(NativeInputRead {
-                scope,
-                current,
-                fence_valid: true,
-                inputs: Vec::new(),
-            });
-        };
-        let fence_valid = from.source_identity == view.identity
-            && self.valid_checkpoint(&MessageQuery {
-                start: from.offset,
-                head: from.head.clone(),
-                anchor: from.anchor.clone(),
-                ..Default::default()
-            });
-        let mut inputs = Vec::new();
-        if fence_valid {
-            for event in view.events() {
-                let message = &event.message;
-                if event.end <= from.offset
-                    || message["role"] != "user"
-                    || message["interrupted"] == true
-                {
-                    continue;
-                }
-                let Some(uuid) = message["turn_id"].as_str().filter(|id| !id.is_empty()) else {
-                    continue;
-                };
-                inputs.push(NativeUserInput {
-                    uuid: uuid.to_owned(),
-                    start: parsed.raw_index.record_start(event.end),
-                    end: event.end,
-                    text: message["text"].as_str().unwrap_or("").to_owned(),
-                    ts: message["ts"].as_str().unwrap_or("").to_owned(),
-                });
-            }
-        }
-        Ok(NativeInputRead {
-            scope,
-            current,
-            fence_valid,
-            inputs,
         })
     }
 

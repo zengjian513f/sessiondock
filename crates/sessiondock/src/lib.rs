@@ -187,11 +187,6 @@ pub async fn prepare_app(
     .and_then(|result| result);
     match result {
         Ok(built) => {
-            // Native tracking runs on this runtime, spawned here from
-            // the async context rather than the blocking build thread.
-            if let Some(executor) = &built.executor {
-                executor.spawn_tracker();
-            }
             // The 10 s spawner tick, same context.
             if let Some(start) = built.spawn_watch {
                 start.watcher.spawn_loop(start.reader, shutdown_for_watch);
@@ -239,12 +234,11 @@ fn prepare_terminal(config: &Config) -> io::Result<Option<Arc<terminal::Terminal
 }
 
 /// build_app's outputs the caller drives: the routers plus the services whose
-/// shutdown and (for the executor / spawn watcher) background task the caller owns.
+/// shutdown and (for the spawn watcher) background task the caller owns.
 struct BuiltApp {
     router: Router,
     node_router: Option<Router>,
     audit: Option<Arc<audit::AuditService>>,
-    executor: Option<Arc<delivery::executor::DeliveryExecutor>>,
     spawn_watch: Option<SpawnStart>,
     /// The router's state, for background tasks started from the async context.
     state: AppState,
@@ -334,9 +328,6 @@ fn build_app(
         .map_or(serde_json::json!(false), |service| service.capabilities());
     capabilities["file_thumbnails"] = serde_json::json!(false);
     capabilities["outbox_read"] = serde_json::json!(delivery.is_some());
-    // The legacy composer/outbox needs both the initialized ledger
-    // and the terminal transport (managed instances only).
-    capabilities["outbox"] = serde_json::json!(delivery.is_some() && terminal.is_some());
     capabilities["audit"] = serde_json::json!(audit.is_some());
     // Explicit private trash directory only; routes stay 501 without it.
     let trash = config
@@ -521,7 +512,7 @@ fn build_app(
                 store,
                 reader.clone(),
                 lifecycle.clone(),
-                Arc::new(delivery::executor::ManagedResolver {
+                Arc::new(delivery::target::ManagedResolver {
                     runtime: runtime.clone(),
                     reader: reader.clone(),
                     lifecycle: Some(lifecycle.clone()),
@@ -538,25 +529,6 @@ fn build_app(
     if let Some(service) = &conversations {
         service.housekeeping(shutdown.clone());
     }
-    let executor = match (&delivery, &terminal, &runtime, conversations.is_none()) {
-        (Some(delivery), Some(terminal), Some(runtime), true) => {
-            Some(delivery::executor::DeliveryExecutor::start(
-                delivery.clone(),
-                Arc::new(delivery::driver::HostTerminalDriver::new(terminal.clone())),
-                Arc::new(delivery::executor::ManagedResolver {
-                    runtime: runtime.clone(),
-                    reader: reader.clone(),
-                    lifecycle: lifecycle.clone(),
-                    probes: runtime_probes.clone(),
-                    proc_scan: proc_scan.clone(),
-                }),
-                reader.clone(),
-                Default::default(),
-                shutdown.clone(),
-            ))
-        }
-        _ => None,
-    };
     let state = AppState {
         opencode_root,
         conversations,
@@ -565,7 +537,6 @@ fn build_app(
         terminal,
         metadata,
         delivery,
-        executor: executor.clone(),
         lifecycle,
         launch_adapters: Arc::new(launch_adapters),
         lifecycle_http: Arc::new(Semaphore::new(pools.responses())),
@@ -623,7 +594,6 @@ fn build_app(
         router,
         node_router,
         audit,
-        executor,
         spawn_watch: spawn_start,
         state,
     })

@@ -170,11 +170,12 @@ def main():
 
         deadline = time.monotonic() + 150
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger, launcher_config=launcher,
-                             delivery_dir=delivery, state_dir=state) as (base, opener):
+                             delivery_dir=delivery, state_dir=state, file_roots=(area,),
+                             file_write_roots=(area,)) as (base, opener):
             hostname, port = base.replace("http://", "").split(":")
             port = int(port)
             status, meta = request(opener, base, "GET", "/api/meta")
-            assert status == 200 and meta["capabilities"]["outbox"] is True, meta
+            assert status == 200 and meta["capabilities"]["conversation_send"] is True, meta
             build = meta["build"]
             status, listed = request(opener, base, "GET", "/api/sessions?force=1")
             row = next((r for r in listed.get("sessions", []) if r.get("source") == "claude" and r.get("sid") == sid), None)
@@ -207,10 +208,10 @@ def main():
                 note(timeline, "instance_associated", instance_id=instance["instance_id"])
                 time.sleep(2.0)
 
-                status, sent = request(opener, base, "POST", "/api/session/send",
-                    {"uid": uid, "name": name, "text": ASK, "media": [], "request_id": "real-ask-0001", "_build": build})
-                assert status == 200 and sent["item"]["state"] in ("ambiguous", "persisted"), sent
-                note(timeline, "prompt_sent", state=sent["item"]["state"])
+                status, sent = request(opener, base, "POST", "/api/session/conversation/send",
+                    {"uid": uid, "name": name, "text": ASK, "request_id": "real-ask-0001", "_build": build})
+                assert status == 200 and sent.get("ok") is True, sent
+                note(timeline, "prompt_sent", state=sent.get("state"))
 
                 # 1+2: the hook wrote the card and the API shows it before any native record.
                 card = None

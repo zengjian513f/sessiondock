@@ -313,7 +313,7 @@ impl BugReportService {
     pub(crate) fn conversation_status(
         &self,
         record_id: &str,
-        result: &Result<Value, crate::delivery::executor::Failure>,
+        result: &Result<Value, crate::delivery::target::Failure>,
     ) -> io::Result<()> {
         let Some(decoration) = self.pending_decoration(record_id) else {
             return Ok(());

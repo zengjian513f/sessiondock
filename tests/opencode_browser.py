@@ -239,7 +239,7 @@ def main():
                     assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
                     expect(page.locator('#cinput')).to_have_value('')
                     expect(page.locator('#msgs .msg[data-role=assistant]').filter(has_text=reply)).to_have_count(1, timeout=20000)
-                    expect(page.locator('#msgs .msg[data-role=user]:not(.client-outbox)').filter(has_text=echo)).to_have_count(1)
+                    expect(page.locator('#msgs .msg[data-role=user]').filter(has_text=echo)).to_have_count(1)
                     # The native echo settles the send button.
                     expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false', timeout=15000)
 

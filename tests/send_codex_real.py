@@ -11,10 +11,9 @@ throwaway working directory pre-trusted), a throwaway working directory, and
 deletes everything it creates. It launches the real `codex` binary through the
 lifecycle launcher profile (schema 2, `resume {sid}` on the session the login
 probe created), resumes that session via `/api/term/create`, sends ONE prompt
-via `POST /api/session/send`, verifies the receipt goes persisted → injected →
-confirmed from the real rollout `response_item` user record (its
-native user text confirms through the fixed pre-injection cursor, sees the assistant
-reply via `/api/messages`, asserts the model reached the CLI (the rollout's
+via `POST /api/session/conversation/send`, waits for the prompt in the real
+rollout `response_item` user records, sees the assistant reply via
+`/api/messages`, asserts the model reached the CLI (the rollout's
 `turn_context.payload.model` is exactly that ID), then kills the instance.
 Proxy variables (HTTP(S)_PROXY, ALL_PROXY, NO_PROXY, lower-case too) are passed
 through to the CLI because this network needs them; nothing else is inherited.
@@ -183,7 +182,8 @@ def main():
         ledger = tmp / "ledger"
         delivery = tmp / "delivery"
         web = tmp / "web"
-        for path in (work, area, host, ledger, delivery, web):
+        state = tmp / "state"
+        for path in (work, area, host, ledger, delivery, web, state):
             path.mkdir(mode=0o700, parents=True)
         (web / "index.html").write_text(
             '<!doctype html><meta name="sessiondock-mode" content="local"><title>x</title>')
@@ -242,9 +242,10 @@ def main():
 
         deadline = time.monotonic() + 120
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger,
-                             launcher_config=launcher, delivery_dir=delivery) as (base, opener):
+                             launcher_config=launcher, delivery_dir=delivery, state_dir=state,
+                             file_roots=(area,), file_write_roots=(area,)) as (base, opener):
             status, meta = request(opener, base, "GET", "/api/meta")
-            assert status == 200 and meta["capabilities"]["outbox"] is True, meta
+            assert status == 200 and meta["capabilities"]["conversation_send"] is True, meta
             build = meta["build"]
 
             status, listed = request(opener, base, "GET", "/api/sessions?force=1")
@@ -275,34 +276,25 @@ def main():
                 skip("the resumed real Codex never became an associated managed instance "
                      "(TUI startup differs); auth and one-shot verified above")
 
-            # Let the resumed TUI paint its composer; the draft probe must read
-            # it as empty before sending (an `unknown` composer is a pre-write
-            # failure the executor never pastes into).
+            # The resumed TUI must show a writable composer before SEND.
             probe = {}
             while time.monotonic() < deadline:
-                status, probe = request(opener, base, "POST", "/api/session/draft-status",
-                                        {"uid": uid, "name": name})
-                if status == 200 and probe.get("draft_state") == "empty":
+                status, probe = request(opener, base, "POST", "/api/session/conversation/check",
+                                        {"uid": uid, "name": name, "_build": build})
+                if status == 200 and probe.get("ok") is True:
                     break
                 time.sleep(1.0)
-            if probe.get("draft_state") != "empty":
-                skip(f"the real Codex composer never read as empty: {probe}")
+            if probe.get("ok") is not True:
+                skip(f"the real Codex composer never read as ready: {probe}")
 
-            status, sent = request(opener, base, "POST", "/api/session/send",
-                {"uid": uid, "name": name, "text": SECOND, "media": [],
-                 "request_id": "real-codex-send-0001", "_build": build})
-            assert status == 200, sent
-            item = sent["item"]
-            print(f"send accepted: state={item['state']} attempts={item.get('attempts')}", flush=True)
-            if item["state"] == "failed" and int(item.get("attempts") or 0) == 0:
-                skip(f"the executor refused to paste (pre-write failure): {item}")
-            assert item["state"] == "failed" and int(item.get("attempts") or 0) == 1, item
+            status, sent = request(opener, base, "POST", "/api/session/conversation/send",
+                {"uid": uid, "name": name, "text": SECOND, "request_id": "real-codex-send-0001", "_build": build})
+            assert status == 200 and sent.get("ok") is True, sent
+            print(f"send accepted: {sent.get('state')}", flush=True)
 
             confirmed = False
             while time.monotonic() < deadline:
-                status, box = request(opener, base, "GET",
-                    "/api/session/outbox?uid=" + quote(uid, safe=":"))
-                if status == 200 and not any(r["id"] == "real-codex-send-0001" for r in box["outbox"]):
+                if any(SECOND.strip() == t.strip() for t in user_texts_of(rollout)):
                     confirmed = True
                     break
                 time.sleep(1.0)
@@ -336,7 +328,7 @@ def main():
             assert status == 200, killed
         print(f"PASS send_codex_real: real Codex ({MODEL}, model_reasoning_effort={EFFORT}) launched via the "
               "launcher profile (`codex exec` created the session, the TUI resumed it), one prompt sent through "
-              "/api/session/send, receipt persisted then injected then confirmed from the real rollout user record "
+              "/api/session/conversation/send and confirmed from the real rollout user record "
               "(causal text match), assistant reply visible in /api/messages, model asserted from turn_context, instance "
               "killed; isolated CODEX_HOME reused the login read-only, temp dirs removed")
 

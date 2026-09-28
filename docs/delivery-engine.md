@@ -1,8 +1,9 @@
 # Delivery engine
 
 `DeliveryEngine` owns the delivery store and one Claude/Codex machine each.
-`DeliveryService` serializes operations; executors perform terminal writes and
-native confirmation after the corresponding state has been persisted.
+`DeliveryService` serializes operations. The retired reliable-send executor
+performed terminal writes and native confirmation after the corresponding
+state had been persisted; the ledger is now only read ([delivery.md](delivery.md)).
 
 ## Lifecycle and persistence
 
@@ -24,7 +25,7 @@ by a restart or transport failure.
 
 ## External action ownership
 
-Consuming `DispatchBatch::claim()` transfers terminal actions to the executor.
+Consuming `DispatchBatch::claim()` transferred terminal actions to the executor.
 Operation identities associate later callbacks with their original actions.
 A replayed HTTP request can return its existing receipt without performing
 another paste or Enter. A storage error must not be reported as native acceptance.

@@ -2,7 +2,7 @@
 //! SEND checkpoint. A nonempty screen alone never authorizes terminal writes.
 use crate::delivery::{
     driver::{self, ScreenCapture},
-    executor::Failure,
+    target::Failure,
 };
 use std::time::Duration;
 

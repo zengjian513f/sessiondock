@@ -106,7 +106,7 @@ fn resolve_unscopes_path_query_and_body_for_one_machine() {
     let send = resolve(
         None,
         "POST",
-        "/api/session/send",
+        "/api/session/conversation/send",
         q(""),
         body(json!({"uid": scoped, "name": format!("{A}~same-terminal"), "text": "keep exact text",
             "media": [{"src": format!("/api/nodes/{A}/api/media/{}", "d".repeat(32))}, {"src": "data:x"}]})),
@@ -247,7 +247,7 @@ fn resolve_rejects_mixed_missing_and_foreign_targets() {
     let foreign = resolve(
         None,
         "POST",
-        "/api/session/send",
+        "/api/session/conversation/send",
         q(""),
         body(
             json!({"uid": a, "media": [{"src": format!("/api/nodes/{B}/api/media/{}", "d".repeat(32))}]}),

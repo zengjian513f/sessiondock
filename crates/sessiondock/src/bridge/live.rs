@@ -205,7 +205,7 @@ impl LivePrompts {
 }
 
 /// The unique guard-capable managed host whose verified association names
-/// this UID (the same rule as the delivery executor's resolver), from the
+/// this UID (the same rule as conversation SEND's resolver), from the
 /// display-grade shared observation (2 s TTL, single flight). A Codex
 /// rollback branch without a binding of its own reads the pane bound to its
 /// ancestor (`RuntimeSnapshot::fork_host`). No lease is taken: a read-only

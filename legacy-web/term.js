@@ -606,7 +606,7 @@ function takenOver(uid) {
  *  error. Undeclared capabilities send nothing extra. */
 function termSendLease(name) {
   if (SessionDockCapabilities.config.backend !== 'rust'
-      || (!SessionDockCapabilities.allows('outbox') && SessionDockCapabilities.config.conversation_send!==true)) return {};
+      || SessionDockCapabilities.config.conversation_send!==true) return {};
   const lease = T.views.get(name)?.inputLease;
   if (!lease?.token || !lease?.instance_id) return {};
   const out = { page: TERM_PAGE_ID, token: lease.token, instance_id: lease.instance_id };
@@ -4439,18 +4439,6 @@ function nativeComposerHistory(messages) {
   }));
 }
 
-function withQueuedComposerHistory(uid, items) {
-  const result = items.map(item => ({ ...item }));
-  for (const [index, item] of queuedMessages(uid).entries()) {
-    if (!String(item?.text || '').trim()) continue;
-    result.push({
-      id: `queued-${item.id || index}`, text: String(item.text),
-      ts: item.created || null,
-    });
-  }
-  return result;
-}
-
 async function composerHistoryItems(uid) {
   const entry = cache.get(viewKey(uid));
   let items;
@@ -4475,7 +4463,7 @@ async function composerHistoryItems(uid) {
       });
     }
   }
-  return withQueuedComposerHistory(uid, items);
+  return items.map(item => ({ ...item }));
 }
 
 function closeComposerHistory() {
@@ -4561,7 +4549,7 @@ async function openComposerHistory() {
     open: true, uid, items: [], index: -1,
   });
   const entry = cache.get(viewKey(uid));
-  const seed = withQueuedComposerHistory(uid, nativeComposerHistory(entry?.msgs));
+  const seed = nativeComposerHistory(entry?.msgs);
   if (seed.length) {
     composerHistoryPicker.items = seed;
     composerHistoryPicker.index = seed.length - 1;
@@ -4671,7 +4659,7 @@ function sessionComposerEnded(uid = S.sel) {
 
 function renderComposer() {
   const shell = typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(S.sel);
-  const enabled=conversationSendEnabled() || SessionDockCapabilities.allows('outbox') || shell;
+  const enabled=conversationSendEnabled() || shell;
   const name = enabled && sessionTerminalEnabled(S.sel) ? takenOver(S.sel) : null;
   const pending = enabled && String(S.sel || '').startsWith('tmux:');
   const receipt = pending && (T.pending || []).find(row => pendingUid(row.name) === S.sel);
@@ -4726,77 +4714,31 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
       return false;
     }
   }
-  const cli = sessiondockCli(uid);
-  const serverQueued = !!text && ['claude', 'codex'].includes(cli?.source)
-    && !uid.startsWith('tmux:');
-  const queuedId = text && !serverQueued && typeof queuePendingUserMessage === 'function'
-    ? queuePendingUserMessage(uid, text, media) : null;
+  // Without the conversation service (a node lacking its prerequisites, or
+  // a PTY-only shell) text is a bracketed paste, then Enter once the CLI took it.
   let d;
   try {
-    if (serverQueued) {
-      const entry = cache.get(viewKey(uid));
-      const activity = entry?.activity || null;
-      const requestId = String(options.requestId || '')
-        || globalThis.crypto?.randomUUID?.()
-        || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      let overwriteDraft = String(options.overwriteDraft || '');
-      for (let attempt = 0; attempt < 3; attempt++) {
-        d = await post('api/session/send', {
-          uid, name, text, media, activity, request_id: requestId,
-          page_id: TERM_PAGE_ID,
-          overwrite_draft: overwriteDraft,
-          cursor: entry ? {
-            start: entry.end, head: entry.version?.head, anchor: entry.anchor,
-          } : null,
-          ...termSendLease(name),
-        });
-        if (!d.draft_conflict) break;
-        if (!confirmTerminalDraftOverwrite()) return false;
-        overwriteDraft = d.draft_token || '';
-      }
-      if (d?.draft_conflict) {
-        alert('终端草稿持续变化，消息未发送');
-        return false;
-      }
-    } else {
-      // Text on the raw path — a pending console before its first native
-      // record, or a source without reliable send such as Grok — is
-      // a bracketed paste, then Enter once the CLI took it.
-      const rawText = !!text;
-      const body = termInputBody(name, keys ? { name, keys, uid }
-        : rawText ? { name, paste: text, uid } : { name, text });
-      if (!body) {
-        if (queuedId) discardQueuedUserMessage(uid, queuedId);
-        alert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
-        return false;
-      }
-      d = await post('api/term/send', body);
-      if (rawText && !d.error) {
-        // The CLI may briefly show a paste-burst marker. Sending Enter in
-        // the same tick can be swallowed while that marker is active.
-        await new Promise(resolve => setTimeout(resolve, 600));
-        d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
-      }
+    const rawText = !!text;
+    const body = termInputBody(name, keys ? { name, keys, uid }
+      : rawText ? { name, paste: text, uid } : { name, text });
+    if (!body) {
+      alert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
+      return false;
+    }
+    d = await post('api/term/send', body);
+    if (rawText && !d.error) {
+      // The CLI may briefly show a paste-burst marker. Sending Enter in
+      // the same tick can be swallowed while that marker is active.
+      await new Promise(resolve => setTimeout(resolve, 600));
+      d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
     }
   } catch (e) {
-    if (queuedId) discardQueuedUserMessage(uid, queuedId);
     alert('发送失败: ' + (e.message || e));
     return false;
   }
   if (d.error) {
-    if (queuedId) discardQueuedUserMessage(uid, queuedId);
     alert('发送失败: ' + d.error);
     return false;
-  }
-  if (serverQueued && typeof syncServerOutbox === 'function') {
-    syncServerOutbox(uid, d.outbox || [], d.outbox_version);
-  }
-  if (Object.prototype.hasOwnProperty.call(d, 'activity')) {
-    const entry = cache.get(viewKey(uid));
-    if (entry) entry.activity = d.activity || null;
-    if (S.sel === uid && !S.agent && typeof renderConversationTail === 'function') {
-      renderConversationTail(entry?.activity || null, uid);
-    }
   }
   S.live.add(uid);            // 发完立刻按最快节奏拉新消息
   S.liveTmux.add(uid);
@@ -5369,7 +5311,7 @@ function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
 let composerSending = false;
 async function submitComposer() {
   if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return;
-  if (!conversationSendEnabled() && !SessionDockCapabilities.allows('outbox')
+  if (!conversationSendEnabled()
       && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
     alert('此服务尚未启用会话发送，请更新服务后重试'); return;
   }
