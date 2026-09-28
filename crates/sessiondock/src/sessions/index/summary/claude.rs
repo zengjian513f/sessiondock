@@ -103,6 +103,60 @@ fn main_turn(records: &Records) -> Option<&'static str> {
         })
 }
 
+/// Background tasks of the main transcript still running as the tail shows
+/// them. A Monitor result names its `taskId`, a backgrounded Bash result its
+/// `backgroundTaskId`; a task ends with a `<task-notification>` carrying a
+/// `<status>` or a Monitor expiry event, or with a `TaskStop` result's
+/// `task_id`. A task started before the tail is not seen.
+fn background_tasks(records: &Records) -> usize {
+    let mut running: Vec<String> = Vec::new();
+    let text = |value: &Value| match value {
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    };
+    for record in records.all() {
+        let value = &record.value;
+        if truthy(&value["isSidechain"]) {
+            continue;
+        }
+        let notice = match value["type"].as_str() {
+            Some("user") => {
+                let result = &value["toolUseResult"];
+                if let Some(id) = result["taskId"]
+                    .as_str()
+                    .or_else(|| result["backgroundTaskId"].as_str())
+                {
+                    running.push(id.to_owned());
+                }
+                if let Some(id) = result["task_id"].as_str() {
+                    running.retain(|known| known != id);
+                }
+                text(&value["message"]["content"])
+            }
+            Some("queue-operation") => text(&value["content"]),
+            _ => continue,
+        };
+        for block in notice.split("<task-notification>").skip(1) {
+            let Some(id) = block
+                .split_once("<task-id>")
+                .and_then(|(_, rest)| rest.split_once("</task-id>"))
+                .map(|(id, _)| id.trim())
+            else {
+                continue;
+            };
+            if block.contains("<status>") || block.contains("[Monitor expired") {
+                running.retain(|known| known != id);
+            }
+        }
+    }
+    running.len()
+}
+
 /// A user record that starts or continues a model turn: a tool result, an
 /// image, or text that is neither injected nor a `!` shell command/output.
 fn turn_input(content: &Value) -> bool {
@@ -356,6 +410,11 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
             None
         } else {
             main_turn(&records)
+        },
+        background: if agent.is_some() {
+            0
+        } else {
+            background_tasks(&records)
         },
     }
 }

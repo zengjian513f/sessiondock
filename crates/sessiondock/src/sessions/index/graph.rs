@@ -536,6 +536,14 @@ impl<'a> Graph<'a> {
             if let Some(turn) = entry.summary.turn {
                 row["turn"] = json!(turn);
             }
+            // A main turn that ended while its background tasks still run
+            // waits for them (an open question still wins).
+            if entry.summary.background > 0 {
+                row["background"] = json!(entry.summary.background);
+                if row["turn"] != "waiting" {
+                    row["turn"] = json!("working");
+                }
+            }
         }
         row
     }

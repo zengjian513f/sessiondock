@@ -146,6 +146,10 @@ pub struct RowSummary {
     /// conversation's status vocabulary); `None` when the tail decides
     /// nothing or the source has no rule (docs/read-model.md).
     pub turn: Option<&'static str>,
+    /// Claude main transcripts: background tasks (Monitor watches and
+    /// backgrounded Bash commands) the tail shows started and not yet
+    /// ended; the main turn waits on them (docs/read-model.md).
+    pub background: usize,
 }
 
 impl RowSummary {
@@ -172,6 +176,7 @@ impl RowSummary {
             warnings: Vec::new(),
             committed: None,
             cursor_head: None,
+            background: 0,
             turn: None,
         }
     }

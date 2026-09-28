@@ -10,7 +10,9 @@ question tool turns amber, a finished or interrupted turn is a still dot, and
 subagent still runs keeps turning. For the open session the CLI state object's
 `instance.busy` (docs/cli-state.md) wins: typing into the console makes the
 fake CLI print Codex's busy footer, and the header and sidebar dots pulse
-although the transcript says the turn is complete. No model binary, native CLI
+although the transcript says the turn is complete; with a quiet screen, a
+finished Claude turn whose Monitor watch or backgrounded command still runs
+keeps turning until its end notice or TaskStop. No model binary, native CLI
 home or production host is touched.
 """
 import json
@@ -199,6 +201,72 @@ def main():
                         codex_row("event_msg", {"type": "task_complete", "turn_id": "t1"}, 5))
                     expect(badge(codex_uid)).not_to_have_class(TURN, timeout=20000)
                     assert row_turn(opener, base, codex_uid, codex_path.stat().st_size) == "idle"
+
+                    # ---- Claude open, quiet screen: a finished turn waiting on its background
+                    # tasks (a Monitor watch, a backgrounded command) keeps turning.
+                    wait_busy(page, claude_uid, False)
+                    expect(header).not_to_have_class(TURN)
+
+                    leaf = ["u6"]
+
+                    def finished_turn(tag, *records):
+                        """Appends the records, an answer and `turn_duration`, chained after the last leaf."""
+                        answer = claude_row(CLAUDE_SID, "assistant", f"{tag}-a", None, "Synthetic wait", cwd=work)
+                        done = claude_row(CLAUDE_SID, "system", f"{tag}-s", None, subtype="turn_duration",
+                                          durationMs=900, cwd=work)
+                        for record in (*records, answer, done):
+                            if record["type"] == "queue-operation":
+                                for key in ["uuid", "parentUuid", "isSidechain", "cwd"]:
+                                    record.pop(key, None)
+                                continue
+                            record["parentUuid"], leaf[0] = leaf[0], record["uuid"]
+                        append(claude_path, *records, answer, done)
+
+                    def background_row():
+                        rows = json.loads(opener.open(base + "/api/sessions?force=1", timeout=10).read())["sessions"]
+                        row = next(row for row in rows if row["uid"] == claude_uid)
+                        assert row["size"] == claude_path.stat().st_size, row
+                        return row.get("turn"), row.get("background")
+
+                    def notification(task, event, status=""):
+                        return (f"<task-notification>\n<task-id>{task}</task-id>\n{status}"
+                                f"<summary>Monitor event: \"Synthetic watch\"</summary>\n<event>{event}</event>\n"
+                                "</task-notification>")
+
+                    watch = claude_row(CLAUDE_SID, "assistant", "m0", None, [{"type": "tool_use", "id": "toolu_watch",
+                        "name": "Monitor", "input": {"description": "Synthetic watch", "command": "true"}}], cwd=work)
+                    watch["message"]["stop_reason"] = "tool_use"
+                    finished_turn("m1", watch, claude_row(CLAUDE_SID, "user", "m0r", "m0", [{"type": "tool_result",
+                        "tool_use_id": "toolu_watch", "content": "Monitor started (task bsynwatch1)"}],
+                        toolUseResult={"taskId": "bsynwatch1", "timeoutMs": 1800000, "persistent": False}, cwd=work))
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    expect(header).to_have_attribute("title", re.compile("正在处理"))
+                    expect(badge(claude_uid)).to_have_class(re.compile(r"\bturn-working\b"))
+                    assert background_row() == ("working", 1)
+                    # A progress event queued into the CLI does not end the watch.
+                    event = notification("bsynwatch1", "outputs=10/40")
+                    finished_turn("m2", claude_row(CLAUDE_SID, "queue-operation", "m2q", None, event, operation="enqueue"),
+                                  claude_row(CLAUDE_SID, "user", "m2u", None, event, origin={"kind": "task-notification"},
+                                             cwd=work))
+                    assert background_row() == ("working", 1)
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                    # The stream-ended notice (it carries a status) ends it.
+                    finished_turn("m3", claude_row(CLAUDE_SID, "user", "m3u", None,
+                        notification("bsynwatch1", "done", "<status>completed</status>\n"), cwd=work))
+                    expect(header).not_to_have_class(TURN, timeout=20000)
+                    expect(badge(claude_uid)).not_to_have_class(TURN)
+                    assert background_row() == ("idle", None)
+                    # A backgrounded command runs until TaskStop stops it.
+                    finished_turn("m4", claude_row(CLAUDE_SID, "user", "m4u", None, [{"type": "tool_result",
+                        "tool_use_id": "toolu_bg", "content": "Command running in background with ID: bsynbash1."}],
+                        toolUseResult={"stdout": "", "backgroundTaskId": "bsynbash1"}, cwd=work))
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    finished_turn("m5", claude_row(CLAUDE_SID, "user", "m5u", None, [{"type": "tool_result",
+                        "tool_use_id": "toolu_stop", "content": "Successfully stopped task: bsynbash1"}],
+                        toolUseResult={"message": "Successfully stopped task: bsynbash1", "task_id": "bsynbash1",
+                                       "task_type": "local_bash"}, cwd=work))
+                    expect(header).not_to_have_class(TURN, timeout=20000)
+                    assert background_row() == ("idle", None)
 
                     # ---- Codex open: the screen's busy footer outranks the finished transcript.
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
