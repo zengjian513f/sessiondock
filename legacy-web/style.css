@@ -452,13 +452,11 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .machine-palette .machine-swatch { width: 18px; height: 18px; border-radius: 5px; }
 .machine-swatch[data-node-color=""] { border: 1px dashed var(--border); background: var(--panel-2); }
 .machine-palette .machine-swatch[aria-selected="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
-.setting-group { padding: 11px 0; border-bottom: 1px solid var(--border); }
 .setting-group-title { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
 .setting-group-title small {
   display: block; margin-top: 2px; color: var(--muted);
   font-size: 11.5px; font-weight: 400; line-height: 1.35;
 }
-.setting-group .setting-row:last-child { border-bottom: 0; padding-bottom: 0; }
 .setting-note { margin: 6px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
 .setting-note[data-state="error"] { color: #e5484d; }
 .modal-head { display: flex; align-items: flex-start; gap: 12px; }
@@ -908,9 +906,6 @@ mark {
   background: #ffe08a; color: #000; border-radius: 2px; padding: 0 1px;
 }
 mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
-.mnav { display: inline-flex; align-items: center; gap: 2px; margin-left: 3px; }
-.mnav b { color: var(--muted); font-weight: 500; font-size: 12.5px; }
-.mnav b.capped { color: #b7791f; cursor: help; }
 .msg.hashit { border-color: color-mix(in srgb, #ffb020 70%, var(--border)); }
 .msg.hashit::after {
   content: ""; position: absolute; z-index: 1; top: 5px; right: 5px;
@@ -2165,11 +2160,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 }
 
 /* Saved input uses the same compact disclosure in reports and conversations. */
-.draft-saved { width:100%; color:var(--muted); font-size:12px; }
-.draft-saved summary { cursor:pointer; }
-.draft-saved-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
-.draft-saved-row > span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.draft-saved-row .btn { flex-shrink:0; padding:3px 6px; font-size:11px; }
 .draft-save-error { width:100%; color:var(--danger); font-size:12px; }
 
 .xterm-view { position: relative; }

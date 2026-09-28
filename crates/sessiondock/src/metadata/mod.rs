@@ -221,12 +221,6 @@ impl MetadataStore {
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
         self.update(|snapshot| snapshot.with_confirmed_rewind(uid, confirmed_tip))
     }
-    pub fn cancel_timeline_rewind(
-        &self,
-        uid: &str,
-    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.without_pending_rewind(uid))
-    }
 
     /// Persist a validated display pin. The caller must have verified the
     /// target against the frozen native inventory; this is not a native rewind.

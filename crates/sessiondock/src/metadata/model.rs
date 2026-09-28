@@ -455,16 +455,6 @@ impl MetadataSnapshot {
         })
     }
 
-    pub fn without_pending_rewind(&self, uid: &str) -> Result<Self, MetadataError> {
-        validate_uid(uid)?;
-        self.change(|rows| {
-            if let Some(row) = rows.get_mut(uid) {
-                row.rewind_pending = None
-            }
-            Ok(())
-        })
-    }
-
     /// Replace the display pin. Re-pinning the identical tip/target/boundary
     /// is a no-op that keeps the original `pinned_at` and revision. This is a
     /// read-model preference only: no native write, no CLI signal.

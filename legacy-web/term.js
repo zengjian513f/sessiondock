@@ -34,8 +34,6 @@ const T = {
   listLoadedAt: 0,     // 上次列表成功返回的时刻（performance.now）；live 轮询据此跳过刚拉过的重复请求
   listError: '',
   unavailable_reason: '',
-  backend: '',     // 本机当前的终端后端；hub 模式下按机器看 Nodes.capabilities
-  backends: [],
   height: store.get('termh', 320),
   mode: store.get('termmode', 'full'), // normal(手动分屏) | collapsed(对话：PTY+输入) | full(纯终端)
   shiftSelect: false,                       // 手机 Shift：锁定本地拖动选字，不发送到 CLI
@@ -404,8 +402,6 @@ async function fetchTermList() {
     T.sources = data.sources || {};
     T.resume_sources = data.resume_sources || {};
     T.home = data.home || '';
-    T.backend = data.backend || '';
-    T.backends = data.backends || [];
     const hadSelected = String(S.sel || '').startsWith('tmux:')
       && (T.pending || []).some(row => pendingUid(row.name) === S.sel);
     T.pending = mergeUnavailableTermRows(data.pending || [], T.pending, data.errors);
@@ -432,7 +428,6 @@ async function fetchTermList() {
     T.list = [];
     T.sources = {};
     T.resume_sources = {};
-    T.backends = [];
     T.pending = [];
   }
   // 设置面板开着时，后端清单要跟着刷新，否则显示的是上一轮的状态。
@@ -3871,9 +3866,6 @@ let lastMessageSelectionUid = null;
 const conversationSendEnabled = () => SessionDockCapabilities.config.conversation_send === true;
 const newComposerDraft = () => ({text:'', attachments:[], quotes:[], nextAttachmentNumber:1,
   revision:0, editVersion:0, savedVersion:0});
-const snapshotComposerAttachments = items => items.map(item => ({...item,
-  uploaded:item.uploaded ? {...item.uploaded} : null}));
-const composerDraftFiles = draft => draft.attachments;
 const composerHydrations = new Map();
 let composerDraftWrites = Promise.resolve();
 const composerSaveQueues = new Map();
@@ -4350,7 +4342,6 @@ function renderSavedComposerInputs(box, draft) {
   const error = el('div', 'draft-save-error', draft.storageError);
   error.setAttribute('role','alert'); box.append(error);
 }
-const composerDraftRecoveryReady = Promise.resolve();
 
 // Discovery is once per node, not once per all-node batch. An unavailable
 // peer must not make every successful peer re-read its drafts on each poll.
@@ -4628,14 +4619,6 @@ function ensureComposerAttachmentNumbers(draft) {
   return draft;
 }
 
-function remapAttachmentReferences(text, remap) {
-  if (!remap.size) return text;
-  return String(text || '').replace(/\[附件([1-9]\d*)\]/g, (token, raw) => {
-    const number = remap.get(Number(raw));
-    return number ? `[附件${number}]` : token;
-  });
-}
-
 function migrateComposerDraft(fromUid, toUid) {
   if (!fromUid || !toUid || fromUid === toUid) return;
   const draft = composerDrafts.get(fromUid);
@@ -4719,30 +4702,6 @@ function syncComposerMode() {
     ? '输入内容'
     : '输入内容，Enter 发送，Shift+Enter 换行';
   autoGrow(ta);
-}
-
-async function prepareTerminalDraft(uid) {
-  const name = takenOver(uid);
-  const cli = sessiondockCli(uid);
-  if (!name || !['claude', 'codex'].includes(cli?.source) || uid.startsWith('tmux:')) {
-    return { proceed: true, overwriteDraft: '' };
-  }
-  let d;
-  try {
-    d = await post('api/session/draft-status', { uid, name, ...termSendLease(name) });
-  } catch (error) {
-    alert('发送失败: ' + (error.message || error));
-    return { proceed: false, overwriteDraft: '' };
-  }
-  if (d.error) {
-    alert('发送失败: ' + d.error);
-    return { proceed: false, overwriteDraft: '' };
-  }
-  if (!d.draft_conflict) return { proceed: true, overwriteDraft: '' };
-  if (!confirmTerminalDraftOverwrite()) {
-    return { proceed: false, overwriteDraft: '' };
-  }
-  return { proceed: true, overwriteDraft: d.draft_token || '' };
 }
 
 async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) {
@@ -5278,36 +5237,6 @@ function removeComposerQuote(id, draft = composerDraft()) {
   renderComposerItems();
 }
 
-function buildComposerPrompt(text, attachments = [], quotes = []) {
-  const attachmentPath = attachment => {
-    // Use the destination node's convention, regardless of the browser OS.
-    // Older nodes omit path_style; their absolute path still identifies Windows.
-    const windows = attachment.path_style === 'windows'
-      || (!attachment.path_style && /^(?:[a-z]:[\\/]|\\\\|\/\/)/i.test(attachment.path || ''));
-    const relative = String(attachment.relative_path || '').replace(/^\.[\\/]/, '');
-    if (!relative) return attachment.path;
-    return windows ? `.\\${relative.replace(/\//g, '\\')}` : `./${relative}`;
-  };
-  const body = String(text || '');
-  const quoted = quotes.map(x => String(x.text ?? x).trim()).filter(Boolean);
-  if (!attachments.length && !quoted.length) return text;
-  const blocks = [];
-  if (attachments.length) {
-    blocks.push(attachments.map((a, i) =>
-      `附件${Number.isInteger(a.number) ? a.number : i + 1}: ${attachmentPath(a)}`).join('\n'));
-  }
-  if (quoted.length) blocks.push(quoted.map((q, i) => `引用${i + 1}:\n${q}`).join('\n'));
-  let prompt = body;
-  for (const block of blocks) {
-    if (prompt) {
-      const trailingNewlines = prompt.match(/\n*$/)?.[0].length || 0;
-      prompt += '\n'.repeat(Math.max(0, 2 - trailingNewlines));
-    }
-    prompt += block;
-  }
-  return prompt;
-}
-
 async function uploadComposerAttachment(attachment, uid, attachmentId = null,
   {node = '', render = renderComposerItems} = {}) {
   if (attachment.uploaded?.upload_id && composerDraftOwner(attachment.uploaded.uid) === composerDraftOwner(uid)
@@ -5435,19 +5364,6 @@ function discardStagedAttachment(attachment, saved = Promise.resolve(true)) {
   Promise.resolve(saved)
     .then(ok => ok && post('api/session/conversation/attachment/discard', {uid, id}))
     .catch(() => {});
-}
-
-function composerAttachmentIdentity(uid) {
-  const identity = {uid};
-  if (SessionDockCapabilities.config.backend !== 'rust' || !String(uid).startsWith('tmux:')) {
-    return identity;
-  }
-  const pending = (T.pending || []).find(row => pendingUid(row.name) === uid);
-  if (pending?.record_id && pending?.instance_id) {
-    identity.record_id = pending.record_id;
-    identity.instance_id = pending.instance_id;
-  }
-  return identity;
 }
 
 let composerSending = false;
