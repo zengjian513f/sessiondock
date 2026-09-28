@@ -1412,15 +1412,6 @@ function expireQueuedMessages(now = Date.now()) {
   return true;
 }
 
-function migrateQueuedMessages(fromUid, toUid) {
-  if (!fromUid || !toUid || fromUid === toUid) return;
-  const moved = queuedMessages(fromUid);
-  if (!moved.length) return;
-  S.queued.set(toUid, [...queuedMessages(toUid), ...moved]);
-  S.queued.delete(fromUid);
-  saveQueuedMessages();
-}
-
 function cacheGet(uid) {
   const e = cache.get(uid);
   if (e) { cache.delete(uid); cache.set(uid, e); }   // 命中即移到队尾
@@ -4230,17 +4221,6 @@ function agentRow(s, a, depth) {
   };
   paintAgentStatus(it);
   return it;
-}
-
-function patchAgentRow(node, row) {
-  const title = node.querySelector('.t');
-  if (title && title.textContent !== row.agent.title) {
-    title.title = row.agent.title;
-    title.innerHTML = hl(row.agent.title);
-  }
-  const m = node.querySelector('.m'), t = agentMeta(row.s.uid, row.agent);
-  if (m && m.textContent !== t) m.textContent = t;
-  paintAgentStatus(node);
 }
 
 /** 子代理行的绿点和选中态：跑没跑由服务端按 transcript 判断，父进程不在则一律不算。 */
@@ -7796,13 +7776,6 @@ function renderFormulae(root) {
       trust: false,
     });
   } catch { /* 单个坏公式按原文保留，不能拖垮整条消息 */ }
-}
-
-/** KaTeX 延后加载；库就绪时补渲染首屏期间已经打开的消息。 */
-function refreshFormulae() {
-  for (const root of document.querySelectorAll('#msgs .mb')) {
-    if (!root.querySelector('.katex')) renderFormulae(root);
-  }
 }
 
 function msgNode(m) {

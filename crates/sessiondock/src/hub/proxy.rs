@@ -130,15 +130,6 @@ pub fn query_pairs(query: &Query) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A `Query` from wire pairs (the aggregate layer's `Params`).
-pub fn query_from_pairs(pairs: &[(String, String)]) -> Query {
-    let mut query = Query::new();
-    for (key, value) in pairs {
-        query.entry(key.clone()).or_default().push(value.clone());
-    }
-    query
-}
-
 /// `urlencode(query, doseq=True)`.
 pub fn encode_qs(query: &Query) -> String {
     encode_query(&query_pairs(query))
