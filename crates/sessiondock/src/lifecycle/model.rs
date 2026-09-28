@@ -173,6 +173,13 @@ pub struct LaunchSpec {
     adapter_id: String,
     cwd: String,
     launch: Launch,
+    /// Picker choice for a new CLI session, passed to the CLI as one
+    /// argument value; absent means the CLI's own default. Resumes keep the
+    /// session's own setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
 }
 impl LaunchSpec {
     /// Fixed-argv adapter launch. Synchronous filesystem validation: a future
@@ -231,9 +238,25 @@ impl LaunchSpec {
             adapter_id,
             cwd,
             launch,
+            model: None,
+            effort: None,
         };
         spec.validate()?;
         Ok(spec)
+    }
+    /// The picker's model and effort for a new session. Only a new CLI
+    /// launch takes them; OpenCode has no effort option.
+    pub fn with_choice(mut self, model: Option<String>, effort: Option<String>) -> Result<Self, Error> {
+        self.model = model.filter(|value| !value.is_empty());
+        self.effort = effort.filter(|value| !value.is_empty());
+        self.validate()?;
+        Ok(self)
+    }
+    pub fn model(&self) -> Option<&str> {
+        self.model.as_deref()
+    }
+    pub fn effort(&self) -> Option<&str> {
+        self.effort.as_deref()
     }
     pub fn source(&self) -> Source {
         self.source
@@ -251,6 +274,21 @@ impl LaunchSpec {
         if self.adapter_id.is_empty() || !valid_cwd(&self.cwd) {
             return Err(Error::InvalidSpec);
         }
+        if self.model.is_some() || self.effort.is_some() {
+            let new = matches!(self.launch, Launch::NewPending | Launch::NewAssigned);
+            let valid = |value: &Option<String>| {
+                value
+                    .as_deref()
+                    .is_none_or(super::models::valid_choice)
+            };
+            if !new
+                || !valid(&self.model)
+                || !valid(&self.effort)
+                || (self.effort.is_some() && !super::models::supports_effort(self.source))
+            {
+                return Err(Error::InvalidSpec);
+            }
+        }
         self.launch.validate(self.source)
     }
     pub(super) fn verify_directory(&self) -> Result<(), Error> {
@@ -259,7 +297,8 @@ impl LaunchSpec {
             self.adapter_id.clone(),
             self.cwd(),
             self.launch.clone(),
-        )?;
+        )?
+        .with_choice(self.model.clone(), self.effort.clone())?;
         if checked == *self {
             Ok(())
         } else {

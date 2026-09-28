@@ -60,7 +60,7 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 
 | Route | Input | Meaning |
 | --- | --- | --- |
-| POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
+| POST `/api/term/create` | `source`, `cwd`; optional `request_id`, `create_cwd`, `model`, `effort`, `cols`, `rows` | Persist/replay a creation receipt, request confirmation before creating a missing directory, start at most once, verify guarded readiness |
 | GET `/api/term/new-status` | `record_id`, `instance_id` | Refresh status of that exact recorded instance |
 | POST `/api/term/kill` | `record_id`, `instance_id` | Persist cancellation, retire input authority, for a shell receipt EOF (`C-d`) then up to 1.2 s for the shell's own exit, guarded stop, verify exit |
 | POST `/api/term/discard` | `record_id`, `instance_id` | Drop a finished (Exited/Failed) or durably cancelled receipt from `term/list.pending` together with the input the conversation service retained for it (a draft shared with a native session still in the catalog stays; an alias to a trashed UID does not keep it). A `new_assigned` launch also moves the matching empty native session into trash, so Grok's startup `summary.json` cannot rebuild the row; a shell receipt's recordings are deleted with it; 409 `launch_not_finished` while the instance may still run; the receipt stays queryable |
@@ -69,6 +69,7 @@ bodies ignore unrelated dictionary members. The local-only middleware applies.
 | GET `/api/term/list` | optional `force=1` | Native-bound sessions plus separate launch-only pending receipts, `resume_sources{claude,codex,grok}` and `backends`; served from a 2 s per-view response cache that every mutation above drops at once, `force=1` bypasses it ([liveness.md](liveness.md#response-caches)) |
 | POST `/api/term/takeover` | `uid`; optional `force`, `cols`, `rows` | Reuse a managed console, start a stopped session, or return `needs_confirm` for a running external CLI; confirmed force terminates only exact native-session process matches before resume |
 | GET `/api/term/complete-dir` | `path`, optional `limit` | Absolute/`~/` completion without a configured root gate; directory symlinks are followed, ≤50 (default 24) |
+| GET `/api/term/models` | `source` | The source's one CLI profile's model catalog for the new-session picker: `{models:[{id,name,efforts,default_effort?}], efforts, default_model?}`; empty when the source has no unique profile or the CLI keeps no list ([below](#model-and-effort)) |
 | POST `/api/term/backend` | `backend` | `{ok, backend:"ptyhost", backends}` for `ptyhost`/`host`, not persisted; `tmux` is 400 `backend_unsupported`, unknown 400 `backend_unknown` |
 
 The limited legacy diagnostics `_build`, `_trace_id`, `_page_id` are accepted but
@@ -77,6 +78,29 @@ hints; the terminal's attach/resize owns its actual size. They do not change the
 immutable launch specification. Missing working directories return
 `needs_create`; `create_cwd:true` creates the confirmed absolute path. Executable,
 argv, environment, SID, and legacy adapter fields cannot choose the command.
+
+### Model and effort
+
+A new CLI session may carry the picker's `model` and `effort`; empty or absent
+means the CLI's own default, and a resume or takeover keeps the session's own
+setting. They are persisted in the receipt's spec (omitted when absent, so older
+receipts and binaries are unaffected) and passed as single argument values:
+Claude `--model X --effort Y`, Codex `-m X -c model_reasoning_effort="Y"`, Grok
+`-m X --reasoning-effort Y`. OpenCode's TUI has no model option, so the model
+(`provider/model`, split at the first `/`) goes into the pre-created session's
+`session.create` body; OpenCode takes no effort, and a shell neither. A value
+that is empty, longer than 200 bytes, contains whitespace or control characters,
+or starts with `-` is 400 `launch_model`; the model itself is not checked against
+the catalog, the CLI decides.
+
+The catalog comes from each CLI's own data, read as its child would see it
+(profile environment over the service's): Codex `$CODEX_HOME/models_cache.json`
+(`visibility: list` only, `supported_reasoning_levels`; `default_model` is
+`config.toml`'s top-level `model`), Grok `$GROK_HOME/models_cache.json`
+(non-hidden, `reasoning_efforts`), OpenCode `opencode models` (bounded to 15 s;
+one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
+`sonnet`, `haiku` with `low`…`max`. The page asks again every time the dialog
+opens; the model menu gains a search box above ten models.
 
 Source selects exactly one interactive configured CLI or the `shell` terminal.
 The legacy source picker advertises only this unambiguous subset and labels

@@ -2,5 +2,6 @@
 pub mod autobind;
 pub mod launcher;
 pub mod model;
+pub mod models;
 pub mod service;
 pub mod store;

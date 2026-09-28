@@ -146,6 +146,10 @@ class NodeHandler(BaseHTTPRequestHandler):
                                "home": "/home/" + s["name"], "sessions": s.get("term_sessions", []),
                                "pending": s["pending"], "backend": current,
                                "backends": backends(current)})
+        if u.path == "/api/term/models":
+            model = s["name"] + "-" + q.get("source", [""])[0]
+            return self._json({"models": [{"id": model, "name": model, "efforts": ["low", "high"]}],
+                               "efforts": ["low", "high"]})
         if u.path == "/api/term/complete-dir":
             if "dirs" in s:
                 path = q.get("path", [""])[0]

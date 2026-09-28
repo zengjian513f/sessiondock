@@ -410,6 +410,24 @@ impl LifecycleService {
         .await
         .map_err(|_| Error::WorkerFailed)?
     }
+    /// Model catalog for the new-session picker: reads CLI caches or runs
+    /// the CLI's own list command, bounded, under the same admission.
+    pub async fn models(&self, source: Source) -> Result<super::models::Catalog, Error> {
+        if self.stop.is_cancelled() {
+            return Err(Error::Closed);
+        }
+        let permit = tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            permit = self.admission.clone().acquire_owned() => permit.map_err(|_| Error::Closed)?,
+        };
+        let launcher = self.launcher.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            launcher.models(source)
+        })
+        .await
+        .map_err(|_| Error::WorkerFailed)
+    }
     pub async fn create(&self, request_id: String, spec: LaunchSpec) -> Result<Record, Error> {
         match self.ask(Command::Create(request_id, spec)).await? {
             Answer::Record(record) => Ok(*record),
@@ -821,6 +839,12 @@ impl Core {
                     spec.cwd(),
                     spec.launch().clone(),
                 )
+                .and_then(|normalized| {
+                    normalized.with_choice(
+                        spec.model().map(str::to_owned),
+                        spec.effort().map(str::to_owned),
+                    )
+                })
                 .unwrap_or(spec);
                 if let Some(record) = store.lookup_request(&id, &spec).map_err(Error::Store)? {
                     return Ok(Created::Existing(record));

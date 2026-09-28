@@ -173,6 +173,7 @@ pub fn router() -> Router<AppState> {
             )),
         )
         .route("/term/complete-dir", get(lifecycle::complete_dir))
+        .route("/term/models", get(lifecycle::models))
         .route(
             "/term/backend",
             post(lifecycle::backend).layer(axum::extract::DefaultBodyLimit::max(
