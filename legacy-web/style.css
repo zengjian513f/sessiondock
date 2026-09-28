@@ -491,6 +491,26 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   flex: 1 1 0; min-width: min(100%, 228px); container-type: inline-size;
 }
 #new-session-form .new-row { flex-wrap: wrap; }
+/* 新建会话的来源按钮和顶栏 Agent 筛选一样连成一排：共用外框，按钮之间只留分隔线。 */
+#new-session-form .new-source {
+  display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden; background: var(--panel-2);
+}
+#new-session-form .new-source label { flex: 1 1 0; display: flex; }
+#new-session-form .new-source span {
+  flex: 1; min-height: 37px; border: 0; border-radius: 0; background: transparent; color: var(--muted);
+  transition: background-color .12s, color .12s;
+}
+#new-session-form .new-source label + label span { border-left: 1px solid var(--border); }
+#new-session-form .new-source label:hover span { background: var(--hover); color: var(--text); }
+#new-session-form .new-source input:checked + span {
+  box-shadow: none; color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+}
+#new-session-form .new-source label:hover input:checked + span {
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
+}
+#new-session-form .new-source input:focus-visible + span { outline-offset: -2px; }
 .new-source .src-label { font-style: normal; }
 @container (max-width: 510px) {
   #new-session-form .src-label { display: none; }
@@ -501,7 +521,6 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   .report-form .new-source span { min-width: 44px; padding: 6px 8px; }
 }
 @container (max-width: 300px) {
-  #new-session-form .new-source { gap: 5px; }
   #new-session-form .new-source span { min-width: 34px; padding: 6px 4px; }
   #new-session-form .node-select:not([hidden]) { min-width: 88px; padding-left: 8px; }
 }
@@ -554,7 +573,9 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   color: var(--muted); font-size: 11px;
 }
 .new-cwd-picker-head > :first-child { color: var(--text); font-weight: 600; }
-#new-cwd-options { min-height: 76px; max-height: 166px; padding: 4px; overflow: auto; }
+/* 高度固定：输入时标题、分组和“正在查找”提示来回切换，列表不能跟着伸缩，
+   否则居中的对话框每敲一次字就上下跳。 */
+#new-cwd-options { height: 166px; padding: 4px; overflow: auto; }
 .new-cwd-section {
   padding: 7px 8px 3px; color: var(--muted);
   font: 600 10.5px/1.3 var(--sans);
