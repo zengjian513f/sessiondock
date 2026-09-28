@@ -54,6 +54,74 @@ fn open_turn(records: &Records) -> bool {
         })
 }
 
+/// Main-transcript turn state for the list, newest decisive record first,
+/// in the parser's status vocabulary: `turn_duration` and a compact boundary
+/// close the turn (`idle`), the interrupt mark aborts it, an assistant
+/// `end_turn` closes it, an API error record fails it, an unanswered
+/// question tool is `waiting`, and any other input, tool call or tool result
+/// keeps it `working`. Sidechain, meta, injected and `!`-shell records start
+/// no turn and are passed over; nothing decisive means `None`.
+fn main_turn(records: &Records) -> Option<&'static str> {
+    use crate::sessions::providers::{claude_compact, claude_interrupt, question_tool};
+    records
+        .tail
+        .records
+        .iter()
+        .rev()
+        .chain(records.head.records.iter().rev())
+        .map(|record| &record.value)
+        .filter(|value| !truthy(&value["isSidechain"]))
+        .find_map(|value| match value["type"].as_str()? {
+            "system" if value["subtype"] == "turn_duration" || claude_compact(value) => {
+                Some("idle")
+            }
+            "user" | "assistant"
+                if truthy(&value["isMeta"]) || truthy(&value["isCompactSummary"]) =>
+            {
+                None
+            }
+            "user" if claude_interrupt(value) => Some("aborted"),
+            "user" => turn_input(&value["message"]["content"]).then_some("working"),
+            "assistant" => {
+                let asks = value["message"]["content"].as_array().is_some_and(|parts| {
+                    parts.iter().any(|part| {
+                        part["type"] == "tool_use"
+                            && part["name"].as_str().is_some_and(question_tool)
+                    })
+                });
+                Some(if asks {
+                    "waiting"
+                } else if truthy(&value["isApiErrorMessage"]) {
+                    "failed"
+                } else if value["message"]["stop_reason"] == "end_turn" {
+                    "idle"
+                } else {
+                    "working"
+                })
+            }
+            _ => None,
+        })
+}
+
+/// A user record that starts or continues a model turn: a tool result, an
+/// image, or text that is neither injected nor a `!` shell command/output.
+fn turn_input(content: &Value) -> bool {
+    let visible = |text: &str| {
+        !py_strip(text).is_empty()
+            && !is_injected(text)
+            && claude_bash_input(text).is_none()
+            && !claude_bash_output_matches(text)
+    };
+    match content {
+        Value::String(text) => visible(text),
+        Value::Array(parts) => parts.iter().any(|part| match part["type"].as_str() {
+            Some("tool_result" | "image") => true,
+            _ => part["text"].as_str().is_some_and(visible),
+        }),
+        _ => false,
+    }
+}
+
 fn project_name(path: &Path, agent: bool) -> String {
     let project = if agent {
         path.parent().and_then(Path::parent).and_then(Path::parent)
@@ -284,5 +352,10 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         warnings,
         committed,
         cursor_head: committed.and_then(|end| cursor_head(data, end)),
+        turn: if agent.is_some() {
+            None
+        } else {
+            main_turn(&records)
+        },
     }
 }

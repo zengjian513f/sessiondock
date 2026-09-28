@@ -440,6 +440,17 @@ fn strip_grok_user_query(text: &str) -> String {
         .to_owned()
 }
 
+/// Parser predicates the list summary's turn state shares (`index/summary`).
+pub(super) fn claude_interrupt(record: &Value) -> bool {
+    claude::interrupt_record(record)
+}
+pub(super) fn claude_compact(record: &Value) -> bool {
+    claude::compact(record)
+}
+pub(super) fn question_tool(name: &str) -> bool {
+    is_question(name)
+}
+
 /// Claude's paste envelope repeats its id on the closing tag. Only unwrap a
 /// complete matching pair; unknown/malformed markup and the pasted body stay
 /// literal. This is display normalization, never a change to native input.

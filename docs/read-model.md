@@ -80,6 +80,17 @@
   `continued_in` uid（按路径序最后一个同 sid 行胜出，
   指向自身丢弃），解析不到则不出字段。Codex 同线程轮转的旧代 rollout 行同样
   带 `continued_in` = 最新一代 uid（最新一代链校验通过时），列表只显示一行。
+- **主会话回合状态**（`turn`）：Claude/Codex 主会话行按尾部从新到旧第一条能定论的记录
+  给出最近一个回合的状态，词汇与对话 `activity` 相同。Codex 看最后一条回合边界
+  `event_msg`：`task_started`/`turn_started` 为 `working`（其后最新一条 response item
+  是提问工具调用则为 `waiting`），`task_complete`/`turn_complete` 为 `idle`（带 `error`
+  为 `failed`），`turn_aborted` 为 `aborted`。Claude 跳过 sidechain、`isMeta`、注入文本与
+  `!` shell 记录：`system` 的 `turn_duration` 或压缩边界为 `idle`，Esc 中断标记为
+  `aborted`，含提问工具调用的 assistant 为 `waiting`，API 错误为 `failed`，`end_turn`
+  为 `idle`，其余输入、工具调用与工具结果为 `working`。尾部没有能定论的记录、Grok 与
+  OpenCode 不出字段。`turn` 只说转录写到哪里，进程是否还在由 `/api/live` 决定；
+  前端只在会话运行中时区分轮转中/等待/空闲，正在看的会话再用对话 `activity` 与
+  [CLI 状态对象](cli-state.md)的 `instance.busy` 覆盖（等待回答优先）。
 - **刷新节奏**：500 ms TTL 内复用上一份行；`force=1` 立即重扫；扫描在有界
   阻塞线程池并行（默认 16 路）。
 - **签名**：`sig` = 行序列化的散列，`built_at` = 发布时刻；两者只由摘要与持久元数据

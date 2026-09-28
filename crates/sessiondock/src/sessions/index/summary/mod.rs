@@ -141,6 +141,11 @@ pub struct RowSummary {
     /// `rs-m2-1` physical head hash of the committed prefix (the `head`
     /// field of a message cursor), when `committed` is known.
     pub cursor_head: Option<String>,
+    /// Claude/Codex main transcripts: the state of the latest turn as the
+    /// tail shows it (`working`/`waiting`/`idle`/`aborted`/`failed`, the
+    /// conversation's status vocabulary); `None` when the tail decides
+    /// nothing or the source has no rule (docs/read-model.md).
+    pub turn: Option<&'static str>,
 }
 
 impl RowSummary {
@@ -167,6 +172,7 @@ impl RowSummary {
             warnings: Vec::new(),
             committed: None,
             cursor_head: None,
+            turn: None,
         }
     }
 
