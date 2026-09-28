@@ -230,6 +230,13 @@ SID/file/process ancestry. Capability `session_stop` is true when terminal
 and the lifecycle service are configured; otherwise the route is the generic
 501 `not_implemented`.
 
+The page confirms a stop (header action, sidebar menu, multi-select) unless
+the session is known to be idle: its turn state
+([read-model.md](read-model.md) `turn`, the open session's CLI screen) says the
+latest turn is finished and no subagent runs. A turning, question-waiting or
+unknown-state session (Grok, OpenCode, older nodes without `turn`) still asks;
+a multi-select skips the question only when every target is idle.
+
 Managed instances use guarded host escalation:
 
 1. Fresh exact status; an instance that already exited answers
