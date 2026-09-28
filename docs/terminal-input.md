@@ -67,6 +67,27 @@ above, 504 `terminal_input_ambiguous` when the host did
 not acknowledge — the write may or may not have happened and is never
 retried automatically.
 
+## Console file paste
+
+A CLI reads its clipboard on the node (`xclip`/`wl-paste`, `osascript`,
+`Get-Clipboard`), so an image pasted into the browser console never reaches
+it and the CLI's own `[Image #N]` path cannot work through SessionDock. The
+console offers the drag-a-file equivalent instead, behind the browser
+preference `sessiondock.consolePasteFiles` (设置 › 功能 › 控制台粘贴文件, off
+by default): `term.js` captures a `paste` event carrying files ahead of the
+grid/xterm paste handler, writes each file through the raw attachment route
+(`POST /api/session/attachment?uid=…&name=…`, one `sessiondock_attachments/<batch>/`
+directory per paste, `id` reused for the second file on) and then sends the
+relative paths as one bracketed `{paste}` over `/api/term/send` under the
+console lease, followed by a space and no Enter: `./sessiondock_attachments/3/shot.png `
+(`.\…` on Windows nodes, spaces escaped). The CLI sees a typed path exactly
+as a dropped file and reads it on submit. Text pastes never enter this path.
+With the switch off a file paste is ignored and the console toast says where
+to enable it. Every paste surface (console, composer, report form) asks once
+before staging more than five files or more than 50 MB in one paste; a
+dismissed confirm stages nothing. Failures stay browser alerts; nothing is
+retried.
+
 ## `POST /api/term/scroll`
 
 `{name, up?, lines? (default 3), cancel?}` → `200 {pos:0,
@@ -106,6 +127,9 @@ the lease-less page written through its pinned instance even with a PTY holder; 
 `python3 tests/terminal_scrollback_browser.py` (real wheel up/down over PTY history
 in grid and xterm, stable history position, subsequent live input, no HTTP scroll);
 `python3 tests/terminal_input_browser.py` (desktop local wheel and WebSocket input,
+console file paste off (hint, no upload) and on from the settings switch
+(clipboard image and a two-file paste published per batch and typed as
+paths, the six-file and 51 MB confirms dismissed then accepted),
 390 px key bar `Tab`/`Up` over HTTP, exact lease body, no
 claim/input after exit, composer hidden, fixture bytes unchanged);
 `python3 tests/send_browser.py` (conversation SEND while another page holds the PTY lease).

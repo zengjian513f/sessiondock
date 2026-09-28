@@ -8987,6 +8987,10 @@ const CONSOLE_RENDERERS = [['grid', '服务端网格（默认）'], ['xterm', 'x
 function localConsoleRenderer() {
   return store.get('consoleRenderer', 'grid') === 'xterm' ? 'xterm' : 'grid';
 }
+// 控制台粘贴文件：默认关；开启后粘贴的文件存入会话目录并把路径填入终端（term.js）。
+function consolePasteFilesEnabled() {
+  return store.get('consolePasteFiles', false) === true;
+}
 
 async function chooseRenderer(target, select) {
   const previous = target.renderer;
@@ -9038,6 +9042,7 @@ function openSettings() {
   $('#setting-tool-icons').value = document.documentElement.dataset.toolIcons;
   $('#setting-cache').value = String(cacheLimitMb);
   $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
+  $('#setting-console-paste-files').checked = consolePasteFilesEnabled();
   setMachineNote('');
   showSettingsTab(store.get('settingsTab', 'appearance'));
   $('#settings-dialog').showModal();
@@ -9078,6 +9083,7 @@ $('#setting-cache').onchange = e => {
   trimCache();
 };
 $('#setting-stop-concurrency').onchange = e => store.set('stopConcurrency', Number(e.target.value));
+$('#setting-console-paste-files').onchange = e => store.set('consolePasteFiles', e.target.checked === true);
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
