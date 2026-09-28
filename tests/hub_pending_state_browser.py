@@ -126,6 +126,8 @@ def node_source_picker(browser, hub, node, other):
             .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; })""")
         assert all(b[0] >= a[1] - 0.5 for a, b in zip(spans, spans[1:])), (width, spans)
         assert all(r - l >= 34 for l, r in spans), (width, spans)
+        # Like the header Agent filter, the buttons are one joined segment: no gaps between them.
+        assert all(abs(b[0] - a[1]) <= 0.5 for a, b in zip(spans, spans[1:])), (width, spans)
         if os.environ.get("SESSIONDOCK_TEST_SHOTS"):
             page.screenshot(path=os.path.join(os.environ["SESSIONDOCK_TEST_SHOTS"], f"hub-picker-{width}.png"))
     assert not errors, errors
@@ -147,6 +149,21 @@ def node_switch_cwd(browser, hub, node, other):
     page.locator("#new-session").click()
     cwd = page.locator("#new-cwd")
     page.locator("#new-node").select_option(node.nid)
+    # Typing swaps the list title, groups and the lookup note; the dialog and
+    # the list keep their geometry on every frame instead of jumping.
+    cwd.fill("")
+    page.wait_for_timeout(100)
+    page.evaluate("""() => { window.__cwdFrames = []; const rect = s => {
+        const r = document.querySelector(s).getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; };
+        const sample = () => { window.__cwdFrames.push([...rect('#new-session-dialog'), ...rect('#new-cwd-options')]);
+          if (!window.__cwdStop) requestAnimationFrame(sample); };
+        requestAnimationFrame(sample); }""")
+    with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and "path=%2Fsh" in r.url):
+        cwd.press_sequentially("/sh", delay=40)
+    page.wait_for_timeout(200)
+    expect(page.locator("#new-cwd-options [data-cwd-kind=completion]", has_text="/shared/proj")).to_be_visible()
+    frames = page.evaluate("() => { window.__cwdStop = true; return window.__cwdFrames; }")
+    assert len(frames) > 5 and len({tuple(f) for f in frames}) == 1, sorted({tuple(f) for f in frames})
     cwd.fill("/shared/proj")
     with page.expect_response(lambda r: "/api/term/complete-dir" in r.url and f"node={other.nid}" in r.url):
         page.locator("#new-node").select_option(other.nid)
@@ -196,7 +213,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker fits beside the machine select, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker joined beside the machine select, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":
