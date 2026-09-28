@@ -8,7 +8,9 @@ card; the page clicks options and submits; the fake records what the key
 sequence actually selected. Covers the two-question form from its default
 state (BUG-20260926-005613-ae8a19: option 1 twice landed on option 3 twice),
 the form with every cursor parked on a row that eats keys, and a single
-question whose cursor sits on the text row.
+question whose cursor sits on the text row. A fork's AskUserQuestion
+PreToolUse (payload with `agent_id`, BUG-20260928-143049-61a198) never opens a
+native dialog and must not put a card on the page.
 """
 import json
 import os
@@ -33,12 +35,14 @@ FORM = [
 SINGLE = [{"header": "宠物", "question": "选哪个？", "options": ["猫", "狗", "鱼"]}]
 
 
-def hook(state, sid, event, tool, questions):
+def hook(state, sid, event, tool, questions, agent_id=None):
     payload = {"hook_event_name": event, "session_id": sid, "tool_name": "AskUserQuestion",
                "tool_use_id": tool, "tool_input": {"questions": [
                    {"header": q["header"], "question": q["question"], "multiSelect": False,
                     "options": [{"label": o, "description": ""} for o in q["options"]]}
                    for q in questions]}}
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
     done = subprocess.run([str(BINARY), "claude-hook", "--state-dir", str(state)],
                           input=json.dumps(payload).encode(), capture_output=True, timeout=20)
     assert done.returncode == 0, done.stderr.decode()
@@ -120,6 +124,15 @@ def main():
                     assert sent.value.status == 200, sent.value.text()
                     page.wait_for_function("S.sel && !S.sel.startsWith('tmux:')", timeout=20000)
 
+                    # A post-turn fork (prompt suggestion) asks: Claude refuses the
+                    # tool without a Post hook and the terminal never shows it.
+                    hook(root / "state", sid, "PreToolUse", "toolu-fork", SINGLE, agent_id="a1b2c3d4e5f6a7b8")
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        assert page.locator("#msgs .msg.question.live-question").count() == 0, \
+                            "a fork's question showed as a live card"
+                        page.wait_for_timeout(200)
+                    assert not (root / "state/claude-prompts" / f"{sid}.json").exists()
                     # The report: option 1 on both questions from the fresh menu.
                     answer(page, root, sid, "toolu-form-default", FORM, [0, 0], {})
                     # Every cursor parked where keys are eaten or wrap: Review on
