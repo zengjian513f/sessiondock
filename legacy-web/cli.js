@@ -57,10 +57,6 @@ class SessionDockCli {
     return false;
   }
 
-  questionFormAnswerKeys(_prompt, _optionIndexes) {
-    return null;
-  }
-
   questionFormAnswerKeyGroups(_prompt, _optionIndexes) {
     return null;
   }
@@ -161,11 +157,6 @@ class ClaudeCli extends SessionDockCli {
     const questions = prompt?.questions;
     return Array.isArray(questions) && questions.length > 1
       && questions.every(q => !q?.multiple && q?.options?.length);
-  }
-
-  questionFormAnswerKeys(prompt, optionIndexes) {
-    const groups = this.questionFormAnswerKeyGroups(prompt, optionIndexes);
-    return groups?.flat() || null;
   }
 
   questionFormAnswerKeyGroups(prompt, optionIndexes) {

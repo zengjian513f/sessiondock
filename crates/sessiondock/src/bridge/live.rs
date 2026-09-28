@@ -9,10 +9,7 @@
 //! prompt. Nothing here sends keys: answering goes through `/api/term/send`
 //! under the page's own lease exactly like the native console.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use ptyhost_client::{BoundTarget, CaptureKind, ControlOp, ControlReply, HostClient};
 use serde_json::Value;
@@ -240,9 +237,6 @@ async fn codex_target(state: &AppState, uid: &str) -> Option<BoundTarget> {
         }
     }
 }
-
-/// Shared handle stored in `AppState`.
-pub type SharedPrompts = Arc<LivePrompts>;
 
 #[cfg(test)]
 mod tests {

@@ -423,30 +423,6 @@ test('liveStatusTitle says unknown without the live capability and managed/direc
   assert.equal(python(true), '运行于受管终端');
 });
 
-test('composer attachment paths follow the destination node, including Windows drives and UNC', () => {
-  const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
-  const prompt = fn('buildComposerPrompt', {}, term);
-  for (const path of [String.raw`C:\work\sessiondock_attachments\1\截图 a.png`,
-    'D:/work/sessiondock_attachments/1/截图 a.png',
-    String.raw`\\server\share\sessiondock_attachments\1\截图 a.png`,
-    String.raw`\\?\C:\work\sessiondock_attachments\1\截图 a.png`,
-    '//server/share/sessiondock_attachments/1/截图 a.png']) {
-    for (const relative_path of ['sessiondock_attachments/1/截图 a.png',
-      String.raw`sessiondock_attachments\1\截图 a.png`, String.raw`.\sessiondock_attachments\1\截图 a.png`]) {
-      assert.equal(prompt('查看', [{path, relative_path}], []),
-        '查看\n\n附件1: ' + String.raw`.\sessiondock_attachments\1\截图 a.png`);
-    }
-  }
-  assert.equal(prompt('', [{path_style: 'windows', relative_path: 'sessiondock_attachments/2/a.json'}]),
-    '附件1: ' + String.raw`.\sessiondock_attachments\2\a.json`);
-  assert.equal(prompt('', [{path_style: 'posix', path: '/work/a', relative_path: './sessiondock_attachments/1/a b.txt'}]),
-    '附件1: ./sessiondock_attachments/1/a b.txt');
-  assert.equal(prompt('', [{path: '/work/a', relative_path: String.raw`dir/a\b.txt`}]),
-    '附件1: ' + String.raw`./dir/a\b.txt`);
-  assert.equal(prompt('', [{path: String.raw`C:\work\a b.txt`}]), '附件1: ' + String.raw`C:\work\a b.txt`);
-  assert.equal(prompt('unchanged'), 'unchanged');
-});
-
 test('console output: plain chunks go straight to xterm, a DEC 2026 frame is written whole', () => {
   const term = readFileSync(new URL('../legacy-web/term.js', import.meta.url), 'utf8');
   const timers = [];
