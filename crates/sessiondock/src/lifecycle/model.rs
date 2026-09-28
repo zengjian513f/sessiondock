@@ -14,6 +14,7 @@ pub enum Source {
     Codex,
     Grok,
     Shell,
+    Opencode,
 }
 
 /// Private persisted intent data, not authority to bind a native session.
@@ -43,6 +44,7 @@ impl BindingSpec {
             Source::Claude => "claude:",
             Source::Codex => "codex:",
             Source::Grok => "grok:",
+            Source::Opencode => "opencode:",
             Source::Shell => return Err(Error::InvalidSpec),
         };
         if self.sid.is_empty()
@@ -108,7 +110,7 @@ impl BindingRecord {
 
 /// Fixed launch-kind contract, decided by code rather than by configuration:
 /// a legacy adapter runs only its fixed argv; a CLI profile starts a new
-/// session either without any upfront SID (Codex/Grok: identity stays pending
+/// session either without any upfront SID (Codex/OpenCode: identity stays pending
 /// until explicit native binding) or with a server-generated SID (Claude
 /// `--session-id`); resume names one full native SID/UID resolved by the
 /// server from its index's native catalog. The kind is private intent data, never a
@@ -133,9 +135,9 @@ impl Launch {
     fn validate(&self, source: Source) -> Result<(), Error> {
         let ok = match self {
             Self::Fixed => true,
-            // A UUID is assigned to Claude and Grok; Codex discovers its
-            // thread identity after launch.
-            Self::NewPending => source == Source::Codex,
+            // A UUID is assigned to Claude and Grok; Codex and OpenCode
+            // generate their own identity after launch.
+            Self::NewPending => matches!(source, Source::Codex | Source::Opencode),
             Self::NewAssigned => matches!(source, Source::Claude | Source::Grok),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
@@ -153,6 +155,7 @@ pub fn native_uid(source: Source, text: &str) -> bool {
         Source::Claude => "claude:",
         Source::Codex => "codex:",
         Source::Grok => "grok:",
+        Source::Opencode => "opencode:",
         Source::Shell => return false,
     };
     text.strip_prefix(prefix)
@@ -180,7 +183,7 @@ impl LaunchSpec {
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
         let launch = if source == Source::Shell {
             Launch::Fixed
-        } else if source != Source::Codex {
+        } else if !matches!(source, Source::Codex | Source::Opencode) {
             Launch::NewAssigned
         } else {
             Launch::NewPending

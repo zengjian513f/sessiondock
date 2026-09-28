@@ -14,6 +14,7 @@
   --claude: #d97757;
   --codex: #10a37f;
   --grok: #8b5cf6;
+  --opencode: #4b5563;
   --tool: #b7791f;
   --terminal-bg: #f4f6f8;
   --terminal-fg: #252a32;
@@ -55,6 +56,7 @@
     --border: #2e333d;
     --text: #dfe3ea;
     --muted: #8b93a1;
+    --opencode: #aab2bf;
     --accent: #6d95ff;
     --brand-a: #8fb2ff;
     --brand-b: #d49aff;
@@ -523,6 +525,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-source input[value="claude"] + span .ico { color: var(--claude); }
 .new-source input[value="codex"] + span .ico { color: var(--codex); }
 .new-source input[value="grok"] + span .ico { color: var(--grok); }
+.new-source input[value="opencode"] + span .ico { color: var(--opencode); }
 .new-cwd-combobox { min-width: 0; }
 .new-cwd-field {
   display: flex; align-items: center; gap: 8px; min-width: 0; padding: 0 10px;
@@ -1948,6 +1951,9 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   background-repeat: no-repeat;
 }
 :root[data-tool-icons="boss"] .source-icon > use { visibility: hidden; }
+/* 没有头像的来源在头像模式下仍显示图标。 */
+:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] { border-radius: 0; background-image: none; }
+:root[data-tool-icons="boss"] .source-icon[data-source="opencode"] > use { visibility: visible; }
 #side .item > .ico { width: 30px; height: 30px; }
 #side .item > .ico > .source-icon { width: 26px; height: 26px; }
 #side .item-status, .dtitle h2 .item-status { right: -4px; }

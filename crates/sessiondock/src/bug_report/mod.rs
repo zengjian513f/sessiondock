@@ -76,6 +76,7 @@ pub fn source_label(source: Source) -> &'static str {
         Source::Claude => "Claude",
         Source::Codex => "Codex",
         Source::Grok => "Grok",
+        Source::Opencode => "OpenCode",
         Source::Shell => "SSH",
     }
 }
@@ -85,6 +86,7 @@ pub fn source_name(source: Source) -> &'static str {
         Source::Claude => "claude",
         Source::Codex => "codex",
         Source::Grok => "grok",
+        Source::Opencode => "opencode",
         Source::Shell => "shell",
     }
 }

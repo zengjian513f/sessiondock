@@ -1,7 +1,7 @@
 # Lifecycle launcher
 
 `lifecycle::launcher` turns a server-configured source profile into the argv
-passed to `ptyhost`. Browser requests choose `claude`, `codex`, or `grok` and a
+passed to `ptyhost`. Browser requests choose `claude`, `codex`, `grok`, or `opencode` and a
 working directory; the `shell` source opens the selected node's interactive
 terminal (labelled SSH in the browser). Executable, fixed arguments, and environment still come
 from server configuration, so request JSON cannot become an arbitrary command.
@@ -54,10 +54,22 @@ missing identity templates no longer disable a source:
 - Claude new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
 - Codex new: no assigned SID; resume: `resume <sid>`.
 - Grok new: `--session-id <generated UUID>`; resume: `--resume <sid>`.
+- OpenCode new: no assigned SID (it generates its own `ses_…` id);
+  resume: `--session <sid>`.
 
 When a configured template contains an exact `{session_id}` or `{sid}` argument,
 the launcher substitutes it. Otherwise it appends the command above.
 Fixed profile arguments stay before those identity arguments.
+
+OpenCode is an AI CLI source like the others: native UID `opencode:<sid>`,
+`new_pending` launches, a resume profile, and no terminal recording. Its
+conversations live in OpenCode's own SQLite database, which the session
+index does not read yet, so no OpenCode catalog row exists: a launch stays
+pending (unbound), is never resumed from a list row, and has no conversation
+view or composer recognition — use the terminal. A node offers OpenCode only
+when its launcher configuration names exactly one `opencode` profile, for
+example `{"id": "opencode-cli-v1", "source": "opencode", "executable":
+"<absolute path>", "args": ["opencode"], "resume_args": ["--session", "{sid}"]}`.
 
 Managed Codex profiles append `-c check_for_update_on_startup=false` for new,
 resume and report-worker launches. An interactive startup update exits Codex

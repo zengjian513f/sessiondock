@@ -330,6 +330,7 @@ impl Launcher {
                     let defaults: &[&str] = match spec.source() {
                         Source::Codex => &["resume", SID_PLACEHOLDER],
                         Source::Claude | Source::Grok => &["--resume", SID_PLACEHOLDER],
+                        Source::Opencode => &["--session", SID_PLACEHOLDER],
                         Source::Shell => return Err(Error::InvalidSpec),
                     };
                     (&profile.resume_args, defaults, SID_PLACEHOLDER, Some(sid))
