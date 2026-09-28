@@ -96,6 +96,19 @@ def check_page(page, nodes, hub):
       '点击选择或取消；右键或长按只选这台机器'""", arg=NID["b"])
     assert page.get_by_role("button", name="NodeB 1", exact=True).get_attribute("title") == \
         "点击选择或取消；右键或长按只选这台机器"
+    # A compressed header keeps every machine chip inline, showing only its initials
+    # (two letters when initials clash) and no count; a click still toggles that machine.
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.wait_for_function("document.querySelector('header').classList.contains('header-fold-nodes')")
+    shown = page.locator("#node-chips button").evaluate_all("""e => e.map(b => [...b.children]
+      .filter(c => getComputedStyle(c).display !== 'none').map(c => c.textContent).join(' '))""")
+    assert shown == ["No", "No", "V"], shown
+    page.get_by_role("button", name="Vega 1", exact=True).click()
+    page.wait_for_function('visible().length === 2')
+    page.get_by_role("button", name="Vega 1", exact=True).click()
+    page.wait_for_function('visible().length === 3')
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.wait_for_function("!document.querySelector('header').classList.contains('header-fold-nodes')")
 
     # Agent Type has the same exclusive gesture. Give the three synthetic rows distinct types
     # locally, then verify both desktop right-click and touch long-press (including the browser's

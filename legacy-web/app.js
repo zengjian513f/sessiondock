@@ -5235,7 +5235,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 // 顶栏按空间逐级收，任何一级都不因折叠留白：
 //   1. Agent / 组织方式 / 分层 的文字标签
 //   2. 主机标题（.brand-name）
-//   3. 机器名从平铺收进下拉（仅中央站、机器筛选可见时）
+//   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
 const HEADER_ACTIONS = ['new-session', 'page-reload', 'trash', 'report-bug', 'settings'];
@@ -5274,10 +5274,7 @@ function layoutHeader() {
   // 隐藏的按钮（能力未声明）不能折进 ⋯ 菜单，否则会以菜单项的样子露出来。
   const inlineButtons = () => HEADER_ACTIONS.map(id => document.getElementById(id))
     .filter(button => button && !button.hidden && !button.hasAttribute('data-session-docked') && button.parentElement !== menu);
-  if (MOBILE.matches && canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
-    header.classList.add(HEADER_FOLD_NODES);
-    if (typeof closeNodePick === 'function') closeNodePick();
-  }
+  if (MOBILE.matches && canFoldNodes) header.classList.add(HEADER_FOLD_NODES);
   if (squeezed()) {
     closeHeaderMenu();
     if (!header.classList.contains(HEADER_FOLD_LABELS)) {
@@ -5290,7 +5287,6 @@ function layoutHeader() {
     }
     if (canFoldNodes && !header.classList.contains(HEADER_FOLD_NODES)) {
       header.classList.add(HEADER_FOLD_NODES);
-      if (typeof closeNodePick === 'function') closeNodePick();
       if (!squeezed()) return;
     }
     const buttons = inlineButtons();
@@ -5315,7 +5311,6 @@ function layoutHeader() {
   }
   if (MOBILE.matches) return;
   if (header.classList.contains(HEADER_FOLD_NODES)) {
-    if (typeof closeNodePick === 'function') closeNodePick();
     header.classList.remove(HEADER_FOLD_NODES);
     if (squeezed()) {
       header.classList.add(HEADER_FOLD_NODES);

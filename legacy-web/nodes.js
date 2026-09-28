@@ -195,54 +195,14 @@ function nodeChipReason(node) {
   return `${node.name} ${failed.join('、')}失败或超时。相关结果可能不完整或未更新。`;
 }
 
-// 中窄屏机器筛选收成一个下拉按钮，按钮上概括当前选中的机器。
-function paintNodePick() {
-  const label = document.querySelector('#node-pick .node-pick-label');
-  if (!label) return;
-  const narrow = typeof MOBILE !== 'undefined' && MOBILE.matches;
-  const picked = Nodes.list.filter(n => !Nodes.off.has(n.id));
-  let text, color = '', none = false;
-  if (!Nodes.list.length) { text = '无机器'; none = true; }
-  else if (picked.length === Nodes.list.length) text = narrow ? '全部' : '全部机器';
-  else if (!picked.length) { text = '未选机器'; none = true; }
-  else if (picked.length === 1) { text = picked[0].name; color = picked[0].color || ''; }
-  else if (picked.length === 2 && !narrow) text = picked.map(n => n.name).join('、');
-  else text = `${picked.length} 台${narrow ? '' : '机器'}`;
-  label.textContent = text;
-  label.dataset.nodeColor = color;
-  label.classList.toggle('node-none', none);
-  const button = label.parentElement;
-  const troubled = Nodes.list.filter(n => nodeChipReason(n) && !Nodes.off.has(n.id));
-  button.classList.toggle('node-issue', troubled.length > 0);
-  button.title = button.ariaLabel = troubled.length
-    ? `选择机器：${text}\n` + troubled.map(n => nodeChipReason(n)).join('\n')
-    : `选择机器：${text}`;
-}
-
-function closeNodePick() {
-  const picker = document.querySelector('#node-picker');
-  if (!picker?.classList.contains('open')) return;
-  picker.classList.remove('open');
-  document.querySelector('#node-pick')?.setAttribute('aria-expanded', 'false');
-}
-
-function toggleNodePick(open) {
-  const picker = document.querySelector('#node-picker');
-  const button = document.querySelector('#node-pick');
-  if (!picker || !button) return;
-  if (open === undefined) open = !picker.classList.contains('open');
-  if (!open) return closeNodePick();
-  // 列表定位在 header 下，与按钮左缘对齐；超出右边界时贴右
-  const header = button.closest('header');
-  const left = button.getBoundingClientRect().left - header.getBoundingClientRect().left;
-  const menu = document.querySelector('#node-chips');
-  menu.style.setProperty('--node-menu-left', `${Math.round(left)}px`);
-  picker.classList.add('open');
-  button.setAttribute('aria-expanded', 'true');
-  requestAnimationFrame(() => {
-    const overflow = menu.getBoundingClientRect().right - (innerWidth - 8);
-    if (overflow > 0) menu.style.setProperty('--node-menu-left', `${Math.round(Math.max(8, left - overflow))}px`);
-  });
+// 顶栏压缩时机器 chip 只显示缩写：首字母；与其它机器首字母相同就用前两个字母。
+function nodeAbbrs(nodes) {
+  const lead = (name, n) => Array.from(String(name || '').trim()).slice(0, n).join('').toLowerCase();
+  const shown = text => text.charAt(0).toUpperCase() + text.slice(1);
+  return new Map(nodes.map(node => {
+    const clash = nodes.some(other => other !== node && lead(other.name, 1) === lead(node.name, 1));
+    return [node.id, shown(lead(node.name, clash ? 2 : 1))];
+  }));
 }
 
 function renderNodes() {
@@ -271,6 +231,7 @@ function renderNodes() {
     showSessionCount(sidebarSessions().filter(nodeSelected).length);
     if (S.results !== null) void runSearch();
   };
+  const abbrs = nodeAbbrs(Nodes.list);
   const counts = new Map();
   for (const row of S.sessions) if (!sessionHidden(row)) counts.set(row.node_id, (counts.get(row.node_id) || 0) + 1);
   for (const n of Nodes.list) {
@@ -282,11 +243,16 @@ function renderNodes() {
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
       }, reason || '点击选择或取消；双击只选这台机器');
-    if (item.dataset.label !== n.name || item.dataset.count !== String(count)) {
+    const abbr = abbrs.get(n.id);
+    if (item.dataset.label !== n.name || item.dataset.abbr !== abbr || item.dataset.count !== String(count)) {
+      const name = document.createElement('span');
+      name.className = 'node-name'; name.textContent = n.name;
+      const short = document.createElement('span');
+      short.className = 'node-abbr'; short.textContent = abbr;
       const countLabel = document.createElement('b');
       countLabel.className = 'node-count'; countLabel.textContent = count;
-      item.replaceChildren(document.createTextNode(`${n.name} `), countLabel);
-      item.dataset.label = n.name; item.dataset.count = count;
+      item.replaceChildren(name, short, countLabel);
+      item.dataset.label = n.name; item.dataset.abbr = abbr; item.dataset.count = count;
     }
     item.dataset.node = n.id;
     item.dataset.nodeColor = n.color || '';
@@ -301,7 +267,6 @@ function renderNodes() {
   for (const [id, item] of existing) if (!Nodes.list.some(n => n.id === id)) item.remove();
   host.scrollLeft = scroll;
   host.parentElement.scrollLeft = toolbarScroll;
-  paintNodePick();
   const notice = document.querySelector('#node-notice');
   if (notice && (!notice.hidden || notice.textContent)) {
     notice.textContent = '';
@@ -386,31 +351,5 @@ document.addEventListener('DOMContentLoaded', () => {
     store.set('newNode', newNodeId());
     refreshNewNodeFields(document.querySelector('#new-cwd').value.trim());
   };
-  const pick = document.querySelector('#node-pick');
-  if (pick) {
-    pick.onclick = () => toggleNodePick();
-    pick.onkeydown = event => {
-      if (event.key !== 'ArrowDown') return;
-      event.preventDefault();
-      toggleNodePick(true);
-      document.querySelector('#node-chips button')?.focus();
-    };
-    document.querySelector('#node-picker').addEventListener('focusout', event => {
-      if (!event.currentTarget.contains(event.relatedTarget)) closeNodePick();
-    });
-    document.addEventListener('click', event => {
-      if (!event.target.closest('#node-picker')) closeNodePick();
-    }, true);
-    document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && document.querySelector('#node-picker.open')) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        closeNodePick();
-        pick.focus();
-      }
-    }, true);
-    addEventListener('resize', closeNodePick);
-    if (typeof MOBILE !== 'undefined') MOBILE.addEventListener('change', paintNodePick);
-  }
   void loadNodes().catch(() => {});
 });
