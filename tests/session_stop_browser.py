@@ -6,7 +6,7 @@ A synthetic Codex session is resumed through the existing console button
 "停止会话" action then posts `/api/session/stop` with a `request_id`, the page
 shows which stage ended the instance (graceful), the console turns into the
 exit explanation and the action flips to "删除会话". A session that has no
-running instance succeeds as a no-op. The
+running instance succeeds as a no-op, and being idle it asks no confirmation. The
 mobile (390 px) sidebar long-press menu stops a fresh resume the same way. No
 model binary, native CLI home or production host is touched.
 """
@@ -138,6 +138,7 @@ def main():
                     expect(action).to_have_attribute("aria-label", "停止会话")
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
+                    # No turn event yet (state unknown): the stop still asks first.
                     assert dialogs[-1][0] == "confirm" and "停止会话" in dialogs[-1][1], dialogs
                     reply = stopped.value.json()
                     assert stopped.value.status == 200, stopped.value.text()
@@ -189,7 +190,9 @@ def main():
                     assert result.get("external_detection") == "proc_scan", result
                     expect(notice).to_be_visible()
                     expect(notice).to_contain_text("停止请求已处理")
-                    assert len(dialogs) == before + 1 and dialogs[-1][0] == "confirm", dialogs[before:]
+                    # Its transcript ends with a finished turn: stopping an idle session asks nothing.
+                    assert page.evaluate("uid => sessionTurn(uid)", other_uid) == "idle"
+                    assert len(dialogs) == before, dialogs[before:]
                     assert not errors, errors
                     # ---- Multi-select: real managed stop, a failed target, retry,
                     # and ended selections retained without an extra stop request.

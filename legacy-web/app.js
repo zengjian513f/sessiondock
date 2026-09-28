@@ -1819,7 +1819,8 @@ function sessionTurn(uid) {
   if (!uid || !S.live.has(uid)) return '';
   const entry = S.sel === uid ? cache.get(viewKey(uid)) : null;
   const row = indexedSessions().byUid.get(uid);
-  let state = entry?.activity?.state || row?.turn || '';
+  // 列表 turn 与左栏同一规则；对话 activity 只补上更早到达的"等待回答"。
+  let state = entry?.activity?.state === 'waiting' ? 'waiting' : row?.turn || '';
   const busy = entry?.cli?.instance?.busy;
   if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
   // 主回合结束但后台子代理还在跑：会话在等它们，仍算轮转中。
@@ -2834,7 +2835,10 @@ async function deletePickedSessions() {
 async function stopPickedSessions() {
   if (sessionStopBusy || sessionDeleteBusy) return;
   const targets = pickedStopTargets();
-  if (!targets.length || !confirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
+  if (!targets.length) return;
+  // 全部停在输入框（空闲）时直接停；有在轮转、等回答或状态未知的才确认。
+  if (!targets.every(s => !s.pending && sessionTurn(s.uid) === 'idle')
+      && !confirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
   sessionStopBusy = true;
   const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
     failed: 0, uncertain: 0, details: [], refreshError: false};
@@ -5735,7 +5739,8 @@ async function requestSessionStop(m) {
 }
 
 async function stopSession(m, button = null) {
-  if (!confirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
+  // 空闲会话停止不打断任何工作，不再确认；轮转中、等回答或状态未知仍确认。
+  if (sessionTurn(m.uid) !== 'idle' && !confirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
   if (button) button.disabled = true;
   try {
     const d = await requestSessionStop(m);
