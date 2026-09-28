@@ -149,7 +149,7 @@ def main():
                 "env": {**passthrough(), "HOME": str(work), "CLAUDE_CONFIG_DIR": str(config)},
 
             }]}))
-        for flag, directory in (("--initialize-lifecycle", ledger), ("--initialize-delivery", delivery)):
+        for flag, directory in (("--initialize-lifecycle", ledger),):
             with socket.socket() as occupied:
                 occupied.bind(("127.0.0.1", 0))
                 env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -170,7 +170,7 @@ def main():
 
         deadline = time.monotonic() + 150
         with isolated_server(corpus, SERVER, host_dir=host, lifecycle_dir=ledger, launcher_config=launcher,
-                             delivery_dir=delivery, state_dir=state, file_roots=(area,),
+                             state_dir=state, file_roots=(area,),
                              file_write_roots=(area,)) as (base, opener):
             hostname, port = base.replace("http://", "").split(":")
             port = int(port)

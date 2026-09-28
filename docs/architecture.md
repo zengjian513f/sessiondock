@@ -10,14 +10,10 @@
 `ptyhost-client` 是独立的异步本地协议库；仅配置私有 host 目录时，HTTP才接入
 claim/WS传输。受控host匹配full SID/UID，缺少/冲突证据保留unknown；
 关联快照本身不授权控制，claim重新观察唯一关联并固定instance，随后只使用
-guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，可靠发送仍关闭。
+guarded attach。legacy已接手动控制台；受控创建需要额外显式配置，发送走服务端会话服务。
 Vue `web/` 仅保留第二阶段骨架。
 
-显式 delivery 目录通过 `prepare_app` 异步打开已有私有账本，恢复 epoch 后才
-发布路由；不隐式初始化。单 coordinator 串行拥有状态机和持久存储，blocking
-读取/有界序列化与 HTTP Body 共同持有准入，关停等待 OS 锁释放。只读 outbox
-使用已验证快照的 NativeScope，且与可靠发送能力分离。host 输出则由每客户端
-独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
+host 输出由每客户端独立有界队列隔离慢读者，退出完整性与进程身份分别验证。
 
 独立的 `LaunchTarget`/host launch guard 与同步 `lifecycle` 回执库：
 前者在没有SID/UID时验证真实启动实例，后者在持久化Prepared/Starting后才返回

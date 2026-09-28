@@ -298,7 +298,7 @@ Hub 是**独立二进制** `sessiondock-hub`（同 crate，`src/bin/sessiondock-
 **页面（`assets.rs` 的 `Mode::Hub`）**：同一份 legacy-web 快照，`__SESSIONDOCK_MODE__=hub`、
 hostname `SessionDock`、能力声明 `hub_capabilities()`（`backend:rust, hub:true,
 storage_namespace:"sessiondock.hub.", history_pages, media_continuation`——每机能力
-terminal/outbox/files/trash/live/audit 都不声明，页面按每台机器的 `/api/term/list.capabilities`
+terminal/files/trash/live/audit 都不声明，页面按每台机器的 `/api/term/list.capabilities`
 逐条降级；`media_lazy` 有意不声明，否则页面会在 hub 判断前把
 `/api/nodes/<nid>/api/media/…` 源置空）。Hub 页面的 storage 命名空间是
 `sessiondock.hub.<location.pathname>.`——快照不知道挂载路径，注入一段脚本在主题脚本和

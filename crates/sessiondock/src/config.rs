@@ -16,8 +16,6 @@ pub struct Config {
     pub ptyhost_dir: Option<PathBuf>,
     /// SessionDock-owned preferences and grants.
     pub state_dir: Option<PathBuf>,
-    /// Delivery state directory. Configuration itself does not open the ledger.
-    pub delivery_dir: Option<PathBuf>,
     /// Creation receipts directory.
     pub lifecycle_dir: Option<PathBuf>,
     /// Server-owned adapter/launcher JSON, not browser input.
@@ -256,7 +254,6 @@ impl Default for Config {
             codex_index: None,
             ptyhost_dir: None,
             state_dir: None,
-            delivery_dir: None,
             lifecycle_dir: None,
             launcher_config: None,
             file_roots: Vec::new(),
@@ -371,7 +368,6 @@ impl Config {
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;
         // Keep the original spelling for the store's no-follow checks. Unlike
         // the legacy root helper, this must not canonicalize and store an alias.
-        config.delivery_dir = env::var_os("SESSIONDOCK_DELIVERY_DIR").map(PathBuf::from);
         config.lifecycle_dir = env::var_os("SESSIONDOCK_LIFECYCLE_DIR").map(PathBuf::from);
         config.launcher_config = env::var_os("SESSIONDOCK_LAUNCHER_CONFIG").map(PathBuf::from);
         config.audit_dir = env::var_os("SESSIONDOCK_AUDIT_DIR").map(PathBuf::from);
@@ -656,9 +652,7 @@ mod tests {
     fn lifecycle_and_launcher_paths_do_not_create_cross_root_gates() {
         use std::os::unix::fs::DirBuilderExt;
         let root = tempfile::tempdir().unwrap();
-        for name in [
-            "web", "native", "host", "state", "delivery", "receipts", "files",
-        ] {
+        for name in ["web", "native", "host", "state", "receipts", "files"] {
             std::fs::DirBuilder::new()
                 .mode(0o700)
                 .create(root.path().join(name))
@@ -674,21 +668,18 @@ mod tests {
             },
             ptyhost_dir: Some(root.path().join("host")),
             state_dir: Some(root.path().join("state")),
-            delivery_dir: Some(root.path().join("delivery")),
             lifecycle_dir: Some(root.path().join("receipts")),
             launcher_config: Some(private.clone()),
             file_roots: vec![root.path().join("files")],
             ..Default::default()
         };
         assert!(config.validate().is_ok());
-        for name in ["web", "native", "host", "state", "delivery", "files"] {
+        for name in ["web", "native", "host", "state", "files"] {
             config.lifecycle_dir = Some(root.path().join(name));
             assert!(config.validate().is_ok(), "{name}");
         }
         config.lifecycle_dir = Some(root.path().join("receipts"));
-        for name in [
-            "web", "native", "host", "state", "delivery", "receipts", "files",
-        ] {
+        for name in ["web", "native", "host", "state", "receipts", "files"] {
             let file = root.path().join(name).join("launcher.json");
             std::fs::write(&file, b"{}").unwrap();
             config.launcher_config = Some(file);
@@ -701,16 +692,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn delivery_search_cache_launcher_and_index_paths_have_no_configuration_policy() {
+    fn search_cache_launcher_and_index_paths_have_no_configuration_policy() {
         let (temp, mut config) = names_config();
         for path in [
             PathBuf::new(),
-            PathBuf::from("relative/../delivery"),
+            PathBuf::from("relative/../cache"),
             temp.path().join("missing"),
             temp.path().join("names/session_index.jsonl"),
             config.web_dir.clone(),
         ] {
-            config.delivery_dir = Some(path.clone());
             config.search_cache_dir = Some(path.clone());
             config.launcher_config = Some(path.clone());
             config.codex_index = Some(path);
@@ -906,7 +896,6 @@ mod tests {
         assert!(config.validate().is_ok());
         assert!(config.ptyhost_dir.is_none());
         assert!(config.state_dir.is_none());
-        assert!(config.delivery_dir.is_none());
         assert!(config.file_roots.is_empty());
         assert!(config.codex_index.is_none());
         config.bind = "0.0.0.0:8741".parse().unwrap();

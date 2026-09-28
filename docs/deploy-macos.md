@@ -38,7 +38,7 @@ mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest ~/.cargo/bin/cargo te
 
 ## 3. 运行目录与 launchd
 
-`<PREFIX>/{bin,web,etc,state,delivery,lifecycle,host,audit,trash,search-cache,log}`，`etc/env`
+`<PREFIX>/{bin,web,etc,state,lifecycle,host,audit,trash,search-cache,log}`，`etc/env`
 同 Linux（`SESSIONDOCK_*`，只配置本机存在的会话根；`SESSIONDOCK_NODE_BIND=<NODE_WG_IP>:8743`）。
 launchd 没有 `EnvironmentFile`，用一个 wrapper 装载：
 
@@ -58,7 +58,6 @@ exec "$PREFIX/bin/sessiondock"
 
 ```sh
 sessiondock --check-config                           # 先 source etc/env
-sessiondock --initialize-delivery <PREFIX>/delivery
 sessiondock --initialize-lifecycle <PREFIX>/lifecycle
 sessiondock --write-bridge-settings <PREFIX>/etc/claude-bridge-settings.json
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<label>.plist

@@ -171,7 +171,6 @@ pub struct CreateInput {
     pub snapshot: Value,
     pub terminal_capture: String,
     pub session: Value,
-    pub outbox: Value,
     pub attachments: Vec<Attachment>,
     /// Where the problem happened; `Default` means this machine.
     pub origin: Origin,
@@ -611,7 +610,6 @@ impl BugReportService {
             "build": input.build, "hostname": input.hostname, "client_ip": input.client_ip,
             "origin": origin.json(),
             "session": if input.session.is_object() { input.session.clone() } else { json!({}) },
-            "outbox": if input.outbox.is_object() { input.outbox.clone() } else { json!({}) },
             "terminal_file": if input.terminal_capture.is_empty() { "" } else { "terminal.txt" },
             "attachments": saved.iter().map(|(attachment, bundle_file)| {
                 let mut row = attachment.json();

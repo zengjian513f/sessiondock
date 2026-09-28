@@ -63,14 +63,14 @@ page does it in two requests:
 1. `POST /api/bug-report/capture` to the problem's machine (`_node` = origin,
    `uid`/`terminal_name` scoped to it): the same server-side context
    `create` would have gathered there — `{ok, hostname, captured_at, uid,
-   terminal_name, session (list row), outbox (delivery ledger), terminal_capture
+   terminal_name, session (list row), terminal_capture
    (8000 rows, managed instance only), events (the 900 s audit window matching
    `uid`/`page_id`/`_trace_id`, newest 20 000 rows)}`. Gated like the report
    route (`403 terminal_disabled`, `501 bug_report_disabled`).
 2. `POST /api/bug-report` to the worker's machine with `uid: ""`,
    `terminal_name: ""`, `origin` and `captured` = the answer of step 1. The
-   worker's machine then skips its own session/ledger/terminal capture, writes
-   `captured.session`/`outbox`/`terminal_capture` into the bundle and puts
+   worker's machine then skips its own session/terminal capture, writes
+   `captured.session`/`terminal_capture` into the bundle and puts
    `captured.events` in front of its own audit window in `events.jsonl`
    (`event_count` counts both). `captured.hostname` becomes
    `origin.hostname`; a `captured` object without it is `400` unless it carries
@@ -204,7 +204,7 @@ private temp file renamed into place):
 | `terminal.txt` | only when `terminal_name` is a managed instance: 8000 scrollback rows (screen as fallback) read through the instance's guard envelope |
 | `attachments/NN-<name>` | hard link or copy of each validated upload |
 | `worker-prompt.md` | the prompt (below) |
-| `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname (the worker's machine), client_ip, origin: {node_id, node_name, hostname, uid, remote, capture_error}, session (list row of `uid`), outbox (delivery ledger snapshot), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
+| `manifest.json` | `{schema: 1, report_id, created_at, status, description_file, events_file, event_count, event_window_seconds, uid, page_id, trace_id, build, hostname (the worker's machine), client_ip, origin: {node_id, node_name, hostname, uid, remote, capture_error}, session (list row of `uid`), terminal_file, attachments[+bundle_file], browser_state_file, worker_prompt_file, repository}` plus, after launch, `worker`, `worker_source`, `tmux`, `launched_at`, `injection`, `submitted_at`, `confirmed_from`, `composer_cleared`, `error` |
 
 Redaction follows `audit.sanitize`: keys
 (authorization, cookie, api-key, password, secret, access/refresh token …)

@@ -56,7 +56,6 @@ lifecycle_http_suite python 900s python3 tests/lifecycle_http_suite.py
 media_browser python 900s python3 tests/media_browser.py
 media_get_suite python 900s python3 tests/media_get_suite.py
 native_spans python 900s python3 tests/native_spans.py --browser
-outbox_suite python 900s python3 tests/outbox_suite.py
 search_browser python 900s python3 tests/search_browser.py
 search_suite python 900s python3 tests/search_suite.py
 send_browser python 900s python3 tests/send_browser.py
@@ -107,9 +106,9 @@ class MappingTest(unittest.TestCase):
         s, _, _ = suites_of("crates/sessiondock/src/media.rs")
         self.assertTrue({"media_browser", "media_get_suite", "native_spans"} <= s and CARGO <= s, s)
         s, _, _ = suites_of("crates/sessiondock/src/lifecycle/service.rs")
-        self.assertTrue({"lifecycle_browser", "lifecycle_http_suite", "send_browser", "send_native_codex_browser", "outbox_suite"} <= s, s)
+        self.assertTrue({"lifecycle_browser", "lifecycle_http_suite", "send_browser", "send_native_codex_browser"} <= s, s)
         s, _, _ = suites_of("crates/sessiondock/src/delivery/store.rs")
-        self.assertTrue({"send_browser", "send_native_codex_browser", "outbox_suite"} <= s and "search_suite" not in s, s)
+        self.assertTrue({"send_browser", "send_native_codex_browser"} <= s and "search_suite" not in s, s)
         s, _, _ = suites_of("crates/sessiondock/src/hub/mod.rs")
         self.assertEqual(s - CARGO, {"hub_browser", "hub_http_suite"})
         s, _, _ = suites_of("crates/sessiondock/src/files/read.rs")

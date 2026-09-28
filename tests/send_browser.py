@@ -109,7 +109,6 @@ def main():
                          "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace"),
                          "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
-        initialize("--initialize-delivery", root / "delivery")
         with sync_playwright() as playwright:
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -117,7 +116,7 @@ def main():
             browser = playwright.chromium.launch(**options)
             try:
                 with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
-                                     launcher_config=configuration, delivery_dir=root / "delivery", state_dir=root / "state",
+                                     launcher_config=configuration, state_dir=root / "state",
                                      file_roots=(root / "work",), file_write_roots=(root / "work",)) as (base, _):
                     errors, dialogs, sends = [], [], []
 

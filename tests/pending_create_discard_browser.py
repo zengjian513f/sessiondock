@@ -332,16 +332,10 @@ def main():
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         if init.returncode:
             fail("initialize-lifecycle", init.stderr.decode() or init.stdout.decode())
-        init = subprocess.run(
-            [str(binary), "--initialize-delivery", str(root / "delivery")],
-            cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
-        if init.returncode:
-            fail("initialize-delivery", init.stderr.decode() or init.stdout.decode())
         corpus = Corpus(root)
         with isolated_server(
             corpus, binary, state_dir=root / "state", host_dir=root / "host",
             lifecycle_dir=root / "ledger", launcher_config=cfg, trash_dir=root / "trash",
-            delivery_dir=root / "delivery",
         ) as (base, _), sync_playwright() as playwright:
             options = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):

@@ -31,7 +31,7 @@ def run(browser, root, config):
     }
     with isolated_server(Corpus(root), REPO / 'target/release/sessiondock',
             state_dir=root / 'state', host_dir=root / 'host', lifecycle_dir=root / 'ledger',
-            launcher_config=config, delivery_dir=root / 'delivery', audit_dir=root / 'audit',
+            launcher_config=config, audit_dir=root / 'audit',
             extra_env=env):
         hub = Hub(REPO / 'target/release/sessiondock-hub', root / 'hub', [node])
         hub.start()

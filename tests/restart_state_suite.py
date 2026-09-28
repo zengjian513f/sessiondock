@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """What survives a Web restart on the same isolated directories.
 
-Stars, lifecycle receipts and a live host persist; history-page grants and
-delivery epochs do not. Synthetic fixtures, loopback only.
+Stars, lifecycle receipts and a live host persist; history-page grants do
+not. Synthetic fixtures, loopback only.
 """
 from __future__ import annotations
 import argparse, json, os, socket, stat, subprocess, tempfile, time
@@ -64,19 +64,9 @@ def wait_run(opener, base, rec, want=True, timeout=8):
 
 
 @contextmanager
-def serve(corpus, binary, delivery, **kw):
-    orig = subprocess.Popen
-    def popen(*a, **k):
-        env = dict(k.get("env") or {})
-        env["SESSIONDOCK_DELIVERY_DIR"] = str(delivery)
-        k["env"] = env
-        return orig(*a, **k)
-    subprocess.Popen = popen
-    try:
-        with isolated_server(corpus, binary, **kw) as pair:
-            yield pair
-    finally:
-        subprocess.Popen = orig
+def serve(corpus, binary, **kw):
+    with isolated_server(corpus, binary, **kw) as pair:
+        yield pair
 
 
 def initialize(binary, flag, directory):
@@ -120,7 +110,6 @@ def main():
             (root / name).mkdir(mode=0o700, parents=True, exist_ok=True)
             (root / name).chmod(0o700)
         initialize(args.binary, "--initialize-lifecycle", root / "ledger")
-        initialize(args.binary, "--initialize-delivery", root / "delivery")
         corpus, sid = Corpus(root), "claude-restart"
         corpus.put(sid, "claude", [claude_row(sid, "user" if i % 2 == 0 else "assistant", f"e{i}",
                        None if i == 0 else f"e{i-1}", f"m{i:04d}") for i in range(N)], [])
@@ -136,8 +125,8 @@ def main():
                               "env": {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}}]}))
             cfg.chmod(0o600)
             kw.update(host_dir=root / "host", lifecycle_dir=root / "ledger", launcher_config=cfg)
-        enc, box = quote(uid, safe=":"), "/api/session/outbox?uid=" + quote(uid, safe=":")
-        with serve(corpus, args.binary, root / "delivery", **kw) as (base, opener):
+        enc = quote(uid, safe=":")
+        with serve(corpus, args.binary, **kw) as (base, opener):
             saved, raw = call(opener, base, "POST", "/api/session/star", {"uid": uid, "starred": True})
             if saved.get("ok") is not True or saved.get("starred") is not True:
                 fail("star", saved, raw)
@@ -146,15 +135,11 @@ def main():
             cursor = partial.get("cursor")
             if not (isinstance(cursor, str) and len(cursor) == 32 and (partial.get("omitted") or 0) > 0):
                 fail("cursor", partial, raw)
-            payload, raw = call(opener, base, "GET", box)
-            epoch = (payload.get("legacy_delivery", payload).get("outbox_version") or {}).get("epoch")
-            if not isinstance(epoch, str) or not epoch:
-                fail("epoch", payload, raw)
             if host_ok:
                 rec, raw = call(opener, base, "POST", "/api/term/create",
                                 {"source": "codex", "cwd": str(root / "work"), "request_id": "restart-shell-1"})
                 rec = wait_run(opener, base, rec)
-        with serve(corpus, args.binary, root / "delivery", **kw) as (base, opener):
+        with serve(corpus, args.binary, **kw) as (base, opener):
             listed, raw = call(opener, base, "GET", "/api/sessions?force=1")
             row = next((s for s in listed.get("sessions") or [] if s.get("uid") == uid), None)
             if not row or row.get("starred") is not True:
@@ -165,11 +150,6 @@ def main():
             if gone.get("code") != "session_error":
                 fail("page 404", gone.get("code"), raw)
             passed("history page cursor 404 after restart")
-            payload, raw = call(opener, base, "GET", box)
-            new_epoch = (payload.get("legacy_delivery", payload).get("outbox_version") or {}).get("epoch")
-            if not isinstance(new_epoch, str) or new_epoch == epoch:
-                fail("epoch restart", payload, raw)
-            passed("delivery outbox epoch changed after restart")
             if rec is not None:
                 try:
                     deadline, last, raw = time.monotonic() + 8, {}, b""

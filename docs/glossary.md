@@ -129,15 +129,11 @@ aliases. Historical names belong only in migration records.
 
 ## Delivery
 
-**Delivery ledger.** Private `delivery-ledger.json`. Missing data does not permit initialization. It is independent of native history and send execution. See [store](delivery-store.md#one-envelope-existing-provider-schemas).
-
-**Outbox.** `GET /api/session/outbox` is a committed display projection of receipts for a verified NativeScope. `outbox_read` does not enable the `outbox` send/retry/discard capability. See [delivery HTTP](delivery-http.md).
-
-**Receipt.** Durable delivery-domain row (Codex/Claude state machine) or a lifecycle creation record. HTTP/terminal write success is not native acknowledgment. See [delivery states](delivery.md#interface-and-state-transitions).
+**Receipt.** A lifecycle creation record. HTTP/terminal write success is not native acknowledgment; conversation SEND waits for the native echo ([conversation.md](conversation.md)).
 
 ## Flags and parity
 
-**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and `outbox` versus `outbox_read`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
+**Capability flags.** HTML/`/api/meta` booleans such as `history_pages`, `media_lazy`, `media_continuation`, platform-dependent `live`, and the always-false `outbox`. Ptyhost Info uses integer `instance_guard` / `launch_guard` / `launch_bind`. See [capabilities](capabilities.md).
 
 **DELTA.** A named, asserted Python/Rust difference in a parity tool. Disappearance or a different result fails. See [validation](validation.md).
 

@@ -103,8 +103,6 @@ def collect():
     """Rows of the node service (`sessiondock`, `Config`)."""
     src = CONFIG.read_text(encoding="utf-8")
     vmap = validate_map(section(src, "pub fn validate", "\n    pub(crate) fn validate_launcher"))
-    vmap.setdefault("delivery_dir", []).extend(
-        msgs(section(src, "fn validate_delivery_directory", "\n#[cfg(test)]")))
     return rows_of(src, "pub struct Config", vmap)
 
 def collect_hub():

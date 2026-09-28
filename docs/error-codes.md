@@ -6,7 +6,7 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **196** (status, code) pairs.
 
 ## 400 Bad Request
 
@@ -29,8 +29,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 ### `bad_body`
 
 - bad body
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L491, L493 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L182, L195, L242, L355, L435
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L480, L482 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L182, L195, L242, L352, L432
 
 ### `create_cwd_failed`
 
@@ -270,10 +270,6 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L409 → `POST /api/session/rewind`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L159 → `POST /api/session/star`
 
-### `invalid_outbox_query`
-
-- 需要有效的会话 UID 和完整子代理 ID — [`api/delivery.rs`](../crates/sessiondock/src/api/delivery.rs) `outbox` L57 → `GET /api/session/outbox`
-
 ### `invalid_path`
 
 - 启动目录路径无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `complete_dir` L815 → `GET /api/term/complete-dir`
@@ -360,8 +356,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - 这不是 Claude 主会话
 - [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L506
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L176
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L572
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_message_query` L532
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L570
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_message_query` L530
 
 ### `websocket_required`
 
@@ -452,7 +448,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L186
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L71
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L154, L158
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L524
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L522
 
 ### `terminal_disabled`
 
@@ -503,8 +499,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L319
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L327 → `ANY (fallback)`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L317
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L325 → `ANY (fallback)`
 
 ### `record_not_found`
 
@@ -527,9 +523,9 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L184
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup` L202
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup_media` L213
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L580
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1689, L1692
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1733
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L578
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1687, L1690
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1731
 
 ### `session_missing`
 
@@ -730,10 +726,10 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L161, L170
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `replay_changed` L21
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L97
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L583, L586
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1924
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L515
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1697
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L581, L584
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1922
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L513
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1695
 
 ### `stale_build`
 
@@ -828,7 +824,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `inherit` L648
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L560, L594
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L507
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2029
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2027
 
 ### `terminal_input_too_large`
 
@@ -857,8 +853,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 - 报告捕获任务异常退出
 - 审计查询任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L536 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L361
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L525 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L358
 
 ### `file_headers_invalid`
 
@@ -868,7 +864,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 - 附件写入任务异常退出
 - 文件读取任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L736 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L692 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `work` L94
 
 ### `live_failed`
@@ -882,8 +878,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 ### `reader_failed`
 
 - 只读任务失败
-- [`state.rs`](../crates/sessiondock/src/state.rs) `run` L160
-- [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L135
+- [`state.rs`](../crates/sessiondock/src/state.rs) `run` L159
+- [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L134
 
 ### `runtime_encoding`
 
@@ -913,8 +909,8 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `take` L267
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_response` L324
 - [`sessions/views/body.rs`](../crates/sessiondock/src/sessions/views/body.rs) `serialize_error` L124
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `encode_events` L121
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1718
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `encode_events` L120
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1716
 
 ### `trash_encoding`
 
@@ -938,10 +934,6 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - 会话保存和发送未配置
 - [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L169
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `enabled` L27
-
-### `delivery_disabled`
-
-- 发送账本读取未启用：需要显式初始化并配置独立开发目录 — [`api/delivery.rs`](../crates/sessiondock/src/api/delivery.rs) `outbox` L50 → `GET /api/session/outbox`
 
 ### `file_action_not_implemented`
 
@@ -967,7 +959,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 - 文件写入服务未启用
 - 文件写入未启用：必须显式配置 SESSIONDOCK_FILE_WRITE_ROOTS（只读目录不会隐式变为可写）
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L680 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L636 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_configured` L458
 
 ### `media_files_disabled`
@@ -1047,12 +1039,12 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `grok_native_identity` L31
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L65, L91, L104
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `summary_native_identity` L50
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1821
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L575, L588
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L558
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2023
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1914, L1918
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L2070
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1819
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L573, L586
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L556
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2021
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1912, L1916
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L2068
 
 ## 503 Service Unavailable
 
@@ -1075,7 +1067,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 ### `cancelled`
 
-- 观察已取消 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L125
+- 观察已取消 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L124
 
 ### `conversation_send`
 
@@ -1095,10 +1087,6 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 ### `cwd_check_failed`
 
 - 启动目录检查失败 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `prepare_cwd` L465
-
-### `delivery_read_failed`
-
-- 旧发送账本读取失败，保留原记录 — [`api/delivery.rs`](../crates/sessiondock/src/api/delivery.rs) `outbox` L111 → `GET /api/session/outbox`
 
 ### `file_attachment_id`
 
@@ -1167,7 +1155,7 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 ### `reader_busy`
 
-- 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L126
+- 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L125
 
 ### `records_unreadable`
 
@@ -1225,9 +1213,9 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `link_media` L158
 - [`sessions/records/native_records.rs`](../crates/sessiondock/src/sessions/records/native_records.rs) `io_error` L76
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L89, L94, L96, L100
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L554
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_candidate_retaining` L671, L676, L679
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `read_bounded_limit` L614
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L552
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_candidate_retaining` L669, L674, L677
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `read_bounded_limit` L612
 
 ### `shutdown`
 
@@ -1250,4 +1238,4 @@ Scanned `crates/sessiondock/src`: **199** (status, code) pairs.
 
 ### `服务正在关闭`
 
-- (dynamic) — [`state.rs`](../crates/sessiondock/src/state.rs) `admit` L103
+- (dynamic) — [`state.rs`](../crates/sessiondock/src/state.rs) `admit` L102

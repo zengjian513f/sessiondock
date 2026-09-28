@@ -164,7 +164,6 @@ def main():
         python_stamp = (python_meta.read_bytes(), python_meta.stat().st_mtime_ns)
         state = mkdir(root, "state")
         host = mkdir(root, "host")
-        delivery = mkdir(root, "delivery")
         lifecycle = mkdir(root, "lifecycle")
         audit = mkdir(root, "audit")
         work = mkdir(root, "work")
@@ -189,12 +188,10 @@ def main():
             "SESSIONDOCK_GROK_ROOT": str(corpus.root / "grok"),
             "SESSIONDOCK_STATE_DIR": str(state),
             "SESSIONDOCK_PTYHOST_DIR": str(host),
-            "SESSIONDOCK_DELIVERY_DIR": str(delivery),
             "SESSIONDOCK_LIFECYCLE_DIR": str(lifecycle),
             "SESSIONDOCK_LAUNCHER_CONFIG": str(launcher),
             "SESSIONDOCK_AUDIT_DIR": str(audit),
         })
-        initialize(binary, "--initialize-delivery", delivery, env)
         initialize(binary, "--initialize-lifecycle", lifecycle, env)
 
         host_proc, instance = start_host(ptyhost, host, work)
