@@ -27,10 +27,15 @@ otherwise the capability stays `false` and the route `501`.
 
 The worker is the source's one
 configured CLI, selected exactly as `POST /api/term/create` selects it
-(`LifecycleService::entry_for`), on the CLI's own default model and effort.
-There is no worker-specific profile and no model policy: the worker is the
-same session the user would start from the picker, launched with the
-repository as cwd. A source without a unique configured CLI answers
+(`LifecycleService::entry_for`). The dialog has the new-session picker's
+model and effort controls, listing the worker machine's own catalog
+(`GET /api/term/models`); an optional `model`/`effort` in the body is passed
+to the worker CLI exactly like a new session's
+([lifecycle-http.md](lifecycle-http.md#model-and-effort)), absent means the
+CLI's own default. A chosen value joins the replay payload, so the same
+request ID with a different choice is refused. There is no worker-specific
+profile and no model policy: the worker is the same session the user would
+start from the picker, launched with the repository as cwd. A source without a unique configured CLI answers
 `503 本机找不到 <source> 命令`. (An earlier build had shipped a per-source
 `bug_report_profiles` table pinned to the cheapest test model; that confused
 the real-CLI *test* rule of AGENTS.md with production and was removed. A
@@ -39,7 +44,7 @@ leftover `bug_report_profiles` key in `launcher.json` is ignored.)
 ## Route contract (`POST /api/bug-report`)
 
 Body: `{description (required, ≤ 50000 chars), uid, page_id|_page_id,
-_trace_id, _build, source ∈ claude|codex|grok (default codex), terminal_name,
+_trace_id, _build, source ∈ claude|codex|grok (default codex), model, effort, terminal_name,
 snapshot (object), attachments: [{path, number, name, kind, mime, size,
 attachment_id}], cols (40–300), rows (12–120), origin ({node_id, node_name,
 uid}, optional), captured (object, optional)}`; unknown fields are ignored,
@@ -89,6 +94,7 @@ tells it that the session's native JSONL and ledgers are not on its machine.
 | `501 bug_report_disabled` | any dependency above missing |
 | `400` `不支持的处理会话类型: …` | unknown `source` |
 | `503` `本机找不到 <source> 命令` | the source has no unique configured CLI |
+| `400` `模型或推理强度名称无效` (`launch_model`) | a `model`/`effort` that is empty after trim is ignored; one longer than 200 bytes, with whitespace or control characters, or starting with `-` is refused |
 | `400` (`请描述遇到的问题`, `问题描述不能超过 50000 字`, attachment messages) | validation before the directory exists |
 | `500 bug_report_capture_failed {error, report_id, path}` | a bundle file could not be written after the directory was created |
 | `500 bug_report_worker_failed {error, report_id, path}` | capture succeeded, the worker launch failed (manifest `status: failed`, audit `bug_report.worker_launch_failed`) |

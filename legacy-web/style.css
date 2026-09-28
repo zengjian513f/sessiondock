@@ -471,55 +471,42 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   background: transparent; color: var(--muted); font: 21px/1 sans-serif; cursor: pointer;
 }
 .modal-close:hover { background: var(--hover); color: var(--text); }
-/* 机器下拉和来源按钮永远同一行；行宽不够时来源只留图标，和顶栏一样。 */
-.new-row { display: flex; align-items: flex-start; gap: 7px; margin-top: 2px; container-type: inline-size; }
-.new-row.report-row {
-  display: grid; grid-template-columns: minmax(0, 1fr); align-items: start;
-}
-.new-row.report-row:has(.node-select:not([hidden])) {
-  grid-template-columns: minmax(96px, 42%) minmax(0, 1fr);
-}
-.report-row .node-select:not([hidden]) { min-width: 0; max-width: none; }
-.report-source { min-width: 0; min-inline-size: 0; }
+/* 新建会话与报告问题共用一行：机器、Agent、模型、强度。Agent 和顶栏筛选一样连成
+   一排、只留图标（悬停看名字），机器框收窄；宽度不够时模型和强度一起换到下一行。 */
+.new-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 7px; margin-top: 2px; container-type: inline-size; }
 .new-source {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px;
   flex: none; margin: 0; padding: 0; border: 0;
 }
 #new-session-dialog { width: min(640px, calc(100vw - 28px)); }
-#new-session-form .new-source {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  /* 自身宽度决定是否只显示图标：中央站模式下同一行还有机器下拉。 */
-  flex: 1 1 0; min-width: min(100%, 228px); container-type: inline-size;
-}
-#new-session-form .new-row { flex-wrap: wrap; }
-/* 新建会话的来源按钮和顶栏 Agent 筛选一样连成一排：共用外框，按钮之间只留分隔线。 */
-#new-session-form .new-source {
+/* 报告问题同一行还要放下模型和强度。 */
+#bug-report-dialog { width: min(600px, calc(100vw - 28px)); }
+:is(#new-session-form, #bug-report-form) .new-source {
   display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px;
   overflow: hidden; background: var(--panel-2);
 }
-#new-session-form .new-source label { flex: 1 1 0; display: flex; }
-#new-session-form .new-source span {
+:is(#new-session-form, #bug-report-form) .new-source label { flex: 1 1 0; display: flex; }
+:is(#new-session-form, #bug-report-form) .new-source span {
   flex: 1; min-height: 37px; border: 0; border-radius: 0; background: transparent; color: var(--muted);
   transition: background-color .12s, color .12s;
 }
-#new-session-form .new-source label + label span { border-left: 1px solid var(--border); }
-#new-session-form .new-source label:hover span { background: var(--hover); color: var(--text); }
-#new-session-form .new-source input:checked + span {
+:is(#new-session-form, #bug-report-form) .new-source label + label span { border-left: 1px solid var(--border); }
+:is(#new-session-form, #bug-report-form) .new-source label:hover span { background: var(--hover); color: var(--text); }
+:is(#new-session-form, #bug-report-form) .new-source input:checked + span {
   box-shadow: none; color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
 }
-#new-session-form .new-source label:hover input:checked + span {
+:is(#new-session-form, #bug-report-form) .new-source label:hover input:checked + span {
   background: color-mix(in srgb, var(--accent) 20%, var(--panel-2));
 }
-#new-session-form .new-source input:focus-visible + span { outline-offset: -2px; }
-/* 一行放下机器、Agent、模型、强度：Agent 只留图标（悬停看名字），机器框收窄；
-   宽度不够时模型和强度一起换到下一行。 */
-#new-session-form .new-source { flex: 0 1 212px; min-width: 172px; }
-#new-session-form .new-source label { flex: 1 1 42px; min-width: 34px; }
-#new-session-form .new-source .src-label {
+:is(#new-session-form, #bug-report-form) .new-source input:focus-visible + span { outline-offset: -2px; }
+:is(#new-session-form, #bug-report-form) .new-source { flex: 0 1 212px; min-width: 172px; }
+#bug-report-form .new-source { flex-basis: 128px; min-width: 104px; }
+:is(#new-session-form, #bug-report-form) .new-source label { flex: 1 1 42px; min-width: 34px; }
+:is(#new-session-form, #bug-report-form) .new-source .src-label {
   position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
-#new-session-form .node-select:not([hidden]) { flex: 0 1 132px; min-width: 88px; padding-left: 8px; }
+:is(#new-session-form, #bug-report-form) .node-select:not([hidden]) { flex: 0 1 132px; min-width: 88px; padding-left: 8px; }
 /* 下拉菜单以模型+强度这一组为宽度，窄屏换行后也不会伸出对话框。 */
 .new-choice { position: relative; display: flex; gap: 7px; flex: 1 1 220px; min-width: 0; }
 .new-model { flex: 1 1 auto; min-width: 0; }
@@ -535,20 +522,20 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-pick[aria-expanded="true"] { border-color: var(--accent); }
 .new-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .new-pick:disabled { opacity: .45; cursor: not-allowed; }
-#new-model-menu {
+.new-model-menu {
   position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0;
   display: flex; flex-direction: column; gap: 4px; padding: 4px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
   box-shadow: 0 12px 32px rgba(0, 0, 0, .22);
 }
-#new-model-menu[hidden] { display: none; }
-#new-model-search {
+.new-model-menu[hidden] { display: none; }
+.new-model-search {
   height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--panel-2); color: var(--text); font: 12.5px/1 var(--sans); outline: none;
 }
-#new-model-search:focus { border-color: var(--accent); }
-#new-model-search[hidden] { display: none; }
-#new-model-options { max-height: 240px; overflow: auto; }
+.new-model-search:focus { border-color: var(--accent); }
+.new-model-search[hidden] { display: none; }
+.new-model-options { max-height: 240px; overflow: auto; }
 .new-model-option {
   display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
   padding: 6px 8px; border: 0; border-radius: 5px;
@@ -570,17 +557,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-effort > select:disabled { opacity: .45; cursor: not-allowed; }
 .new-effort > select:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .new-source .src-label { font-style: normal; }
-@container (max-width: 510px) {
-  #new-session-form .src-label { display: none; }
-  #new-session-form .new-source span { min-width: 44px; padding: 6px 8px; }
-}
-@container (max-width: 380px) {
-  .report-form .src-label { display: none; }
-  .report-form .new-source span { min-width: 44px; padding: 6px 8px; }
-}
 @container (max-width: 300px) {
-  #new-session-form .new-source span { min-width: 34px; padding: 6px 4px; }
-  #new-session-form .node-select:not([hidden]) { min-width: 88px; padding-left: 8px; }
+  :is(#new-session-form, #bug-report-form) .new-source span { min-width: 34px; padding: 6px 4px; }
 }
 /* 新建会话与报告问题共用的机器下拉。 */
 .node-select:not([hidden]) {
@@ -2199,7 +2177,7 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 
   .trash-item { flex-wrap: wrap; }
   .trash-acts { width: 100%; justify-content: flex-end; }
-  #new-session-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  #new-session-dialog, #bug-report-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .app-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .setting-row { grid-template-columns: 1fr; gap: 7px; }
   .report-form { padding: 14px; }

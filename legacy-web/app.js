@@ -217,7 +217,8 @@ const appUrl = path => {
   if (HUB_MODE && !url.searchParams.has('nodes') && /\/api\/(search|trash|trash\/purge)$/.test(url.pathname)) {
     url.searchParams.set('nodes', selectedNodeIds().join(','));
   }
-  if (HUB_MODE && /\/api\/term\/(complete-dir|models)$/.test(url.pathname)) url.searchParams.set('node', newNodeId());
+  if (HUB_MODE && /\/api\/term\/(complete-dir|models)$/.test(url.pathname)
+      && !url.searchParams.get('node')) url.searchParams.set('node', newNodeId());
   return url.toString();
 };
 const BUILD_ID = document.querySelector('meta[name="sessiondock-build"]')?.content || '';

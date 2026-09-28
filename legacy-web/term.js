@@ -1072,6 +1072,8 @@ function openBugReportDialog() {
     }
   });
   syncBugReportSources();
+  modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
+  BugReportModels.refresh();
   dialog.showModal();
   closeBugReportAttachMenu();
   autoGrow($('#bug-report-description'));
@@ -1093,10 +1095,14 @@ $('#bug-report-node').onchange = () => {
   renderBugReportItems();
   hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
   syncBugReportSources();
+  BugReportModels.refresh();
   $('#bug-report-error').textContent = notice;
   autoGrow($('#bug-report-description'));
 };
-$('#bug-report-source').addEventListener('change', () => store.set('bugReportSource', bugReportSource()));
+$('#bug-report-source').addEventListener('change', () => {
+  store.set('bugReportSource', bugReportSource());
+  BugReportModels.refresh();
+});
 $('#bug-report-dialog .modal-close').onclick = () => $('#bug-report-dialog').close();
 $('#bug-report-description').addEventListener('input', event => {
   bugReportDraftObject().text = event.target.value;
@@ -1217,7 +1223,7 @@ $('#bug-report-form').onsubmit = async event => {
     bugReportDraftObject().text = reportText;
     await hydrateComposerDraft(BUG_REPORT_DRAFT_UID);
     const pending=bugReportDraftObject();
-    const priorPayload=JSON.stringify({description,source:bugReportSource(),
+    const priorPayload=JSON.stringify({description,source:bugReportSource(),...BugReportModels.choice(),
       attachments:attachments.map(a=>({upload_id:a.uploaded?.upload_id,number:a.number})),origin});
     if (pending.requestId && pending.requestText===priorPayload) {
       const previous=await priorComposerSubmission(BUG_REPORT_DRAFT_UID,pending.requestId,true);
@@ -1245,7 +1251,8 @@ $('#bug-report-form').onsubmit = async event => {
     const source = bugReportSource();
     store.set('bugReportSource', source);
     const reportDraft=bugReportDraftObject();
-    const requestText=JSON.stringify({description,source,attachments:uploaded,origin});
+    const choice = BugReportModels.choice();
+    const requestText=JSON.stringify({description,source,...choice,attachments:uploaded,origin});
     if (reportDraft.requestText!==requestText || !reportDraft.requestId) {
       reportDraft.requestText=requestText;reportDraft.requestId=crypto.randomUUID();
     }
@@ -1255,7 +1262,7 @@ $('#bug-report-form').onsubmit = async event => {
     const d = await post('api/bug-report', {
       ...(HUB_MODE ? {_node: node} : {}),
       draft_uid:BUG_REPORT_DRAFT_UID,draft_revision:reportDraft.revision,request_id:reportDraft.requestId,
-      description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source,
+      description, uid: remote ? '' : (S.sel || ''), page_id: TERM_PAGE_ID, source, ...choice,
       terminal_name: remote ? '' : terminalName, snapshot, attachments: uploaded,
       origin, ...(captured ? {captured} : {}),
       cols: Math.max(80, T.term?.cols || 120), rows: Math.max(24, T.term?.rows || 36),
@@ -1574,167 +1581,199 @@ function scheduleCwdCompletions() {
   cwdCompletion.timer = setTimeout(() => loadCwdCompletions(false), CWD_COMPLETION_DELAY);
 }
 
-// ---- 新建会话的模型与推理强度：每台机器、每个来源的 CLI 自己的列表 ----
-// 两个控件始终在原位，读取中/不可用时只是禁用并换文字，不改布局。
-const NEW_MODEL_SEARCH_MIN = 10;
-const NewModels = {cache: new Map(), catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
+// ---- 模型与推理强度选择器：每台机器、每个来源的 CLI 自己的列表 ----
+// 新建会话和报告问题各用一个实例（元素 id 前缀不同）。两个控件始终在原位，
+// 读取中/不可用时只是禁用并换文字，不改布局。
+const MODEL_SEARCH_MIN = 10;
+const modelCatalogs = new Map();
 
-function newModelSource() {
-  return $('#new-session-dialog input[name="new-source"]:checked')?.value || '';
-}
-function newModelKey(source = newModelSource()) {
-  return (HUB_MODE ? newNodeId() + '|' : '') + source;
-}
-function fetchNewModels(source) {
-  const key = newModelKey(source);
-  if (!NewModels.cache.has(key)) {
-    NewModels.cache.set(key, (async () => {
+function fetchModelCatalog(node, source) {
+  const key = (HUB_MODE ? node + '|' : '') + source;
+  if (!modelCatalogs.has(key)) {
+    modelCatalogs.set(key, (async () => {
       try {
-        const params = new URLSearchParams({source});
+        const params = new URLSearchParams({source, ...(HUB_MODE ? {node} : {})});
         const response = await fetch(appUrl(`api/term/models?${params}`), {cache: 'no-store'});
         const data = response.ok ? await response.json() : null;
         return Array.isArray(data?.models) ? data : null;
       } catch { return null; }
     })().then(catalog => {
-      if (!catalog) NewModels.cache.delete(key); // 下次打开再试
+      if (!catalog) modelCatalogs.delete(key); // 下次打开再试
       return catalog;
     }));
   }
-  return NewModels.cache.get(key);
-}
-function newModelInfo(id) {
-  return NewModels.catalog?.models.find(model => model.id === id) || null;
-}
-function newModelDefaultLabel() {
-  const fallback = NewModels.catalog?.default_model;
-  return fallback ? `默认（${fallback}）` : '默认模型';
-}
-function setNewModelControls(text, title, enabled) {
-  const button = $('#new-model'), label = $('#new-model-label');
-  label.textContent = text;
-  label.classList.toggle('default', !NewModels.model);
-  button.title = title;
-  button.disabled = !enabled;
-}
-function applyNewModel(model, effort, persist = false) {
-  const catalog = NewModels.catalog;
-  const info = newModelInfo(model);
-  NewModels.model = info ? model : '';
-  const shown = info || newModelInfo(catalog?.default_model);
-  const efforts = NewModels.model ? info.efforts || [] : catalog?.efforts || [];
-  NewModels.effort = efforts.includes(effort) ? effort : '';
-  const name = info ? info.name || info.id : newModelDefaultLabel();
-  setNewModelControls(name, info && info.name !== info.id ? `${info.name}（${info.id}）` : '模型：' + name,
-    !!catalog?.models.length);
-  const select = $('#new-effort');
-  const fallback = shown?.default_effort;
-  select.replaceChildren(new Option(fallback ? `默认（${fallback}）` : '默认强度', ''),
-    ...efforts.map(value => new Option(value, value)));
-  select.value = NewModels.effort;
-  select.disabled = !efforts.length;
-  select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
-  if (persist) store.set('newModel.' + NewModels.key, {model: NewModels.model, effort: NewModels.effort});
-}
-async function refreshNewModels() {
-  const source = newModelSource(), key = newModelKey(source), seq = ++NewModels.seq;
-  closeNewModelMenu();
-  NewModels.key = key;
-  NewModels.catalog = null;
-  NewModels.model = NewModels.effort = '';
-  applyNewModel('', '');
-  if (!source || source === 'shell') {
-    setNewModelControls('默认模型', '终端会话不选择模型', false);
-    return;
-  }
-  setNewModelControls('读取模型…', '正在读取该 CLI 的模型列表', false);
-  const catalog = await fetchNewModels(source);
-  if (seq !== NewModels.seq) return;
-  NewModels.catalog = catalog;
-  const saved = store.get('newModel.' + key, {}) || {};
-  applyNewModel(saved.model || '', saved.effort || '');
-  if (!catalog) setNewModelControls('默认模型', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
+  return modelCatalogs.get(key);
 }
 
-function closeNewModelMenu(focus = false) {
-  const menu = $('#new-model-menu');
-  if (menu.hidden) return;
-  menu.hidden = true;
-  $('#new-model').setAttribute('aria-expanded', 'false');
-  if (focus) $('#new-model').focus();
-}
-function openNewModelMenu() {
-  const catalog = NewModels.catalog;
-  if (!catalog?.models.length) return;
-  const search = $('#new-model-search');
-  search.hidden = catalog.models.length <= NEW_MODEL_SEARCH_MIN;
-  search.value = '';
-  $('#new-model-menu').hidden = false;
-  $('#new-model').setAttribute('aria-expanded', 'true');
-  renderNewModelOptions();
-  (search.hidden ? $('#new-model-options') : search).focus();
-}
-function renderNewModelOptions() {
-  const query = $('#new-model-search').value.trim().toLocaleLowerCase();
-  const all = [{id: '', name: newModelDefaultLabel()}, ...NewModels.catalog.models];
-  NewModels.rows = query ? all.filter(model => model.id
-    && `${model.id} ${model.name || ''}`.toLocaleLowerCase().includes(query)) : all;
-  const box = $('#new-model-options');
-  box.replaceChildren();
-  NewModels.rows.forEach((model, index) => {
-    const option = document.createElement('button');
-    option.type = 'button';
-    option.id = `new-model-option-${index}`;
-    option.className = 'new-model-option';
-    option.dataset.modelOption = String(index);
-    option.setAttribute('role', 'option');
-    option.setAttribute('aria-selected', String(model.id === NewModels.model));
-    option.tabIndex = -1;
-    option.title = model.id || '使用 CLI 自己的默认模型';
-    const name = document.createElement('span');
-    name.textContent = model.name || model.id;
-    option.appendChild(name);
-    if (model.id && model.name && model.name !== model.id) {
-      const id = document.createElement('small');
-      id.textContent = model.id;
-      option.appendChild(id);
+/** `source()`/`node()` 给出当前选择；选择按 `storeKey.<机器|来源>` 记住。 */
+function createModelPicker(prefix, {source, node, storeKey}) {
+  const el = name => document.getElementById(`${prefix}-${name}`);
+  const button = el('model'), label = el('model-label'), menu = el('model-menu');
+  const search = el('model-search'), box = el('model-options'), select = el('effort');
+  const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
+  const info = id => picker.catalog?.models.find(model => model.id === id) || null;
+  const defaultLabel = () => picker.catalog?.default_model ? `默认（${picker.catalog.default_model}）` : '默认模型';
+  const controls = (text, title, enabled) => {
+    label.textContent = text;
+    label.classList.toggle('default', !picker.model);
+    button.title = title;
+    button.disabled = !enabled;
+  };
+  picker.apply = (model, effort, persist = false) => {
+    const catalog = picker.catalog, chosen = info(model);
+    picker.model = chosen ? model : '';
+    const shown = chosen || info(catalog?.default_model);
+    const efforts = picker.model ? chosen.efforts || [] : catalog?.efforts || [];
+    picker.effort = efforts.includes(effort) ? effort : '';
+    const name = chosen ? chosen.name || chosen.id : defaultLabel();
+    controls(name, chosen && chosen.name !== chosen.id ? `${chosen.name}（${chosen.id}）` : '模型：' + name,
+      !!catalog?.models.length);
+    const fallback = shown?.default_effort;
+    select.replaceChildren(new Option(fallback ? `默认（${fallback}）` : '默认强度', ''),
+      ...efforts.map(value => new Option(value, value)));
+    select.value = picker.effort;
+    select.disabled = !efforts.length;
+    select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
+    if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model, effort: picker.effort});
+  };
+  picker.refresh = async () => {
+    const current = source(), where = node(), seq = ++picker.seq;
+    picker.close();
+    picker.key = (HUB_MODE ? where + '|' : '') + current;
+    picker.catalog = null;
+    picker.model = picker.effort = '';
+    picker.apply('', '');
+    if (!current || current === 'shell') {
+      controls('默认模型', '终端会话不选择模型', false);
+      return;
     }
-    box.appendChild(option);
+    controls('读取模型…', '正在读取该 CLI 的模型列表', false);
+    const catalog = await fetchModelCatalog(where, current);
+    if (seq !== picker.seq) return;
+    picker.catalog = catalog;
+    const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
+    picker.apply(saved.model || '', saved.effort || '');
+    if (!catalog) controls('默认模型', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
+  };
+  /** 请求体里的选择；默认模型/强度不传。 */
+  picker.choice = () => ({...(picker.model ? {model: picker.model} : {}),
+    ...(picker.effort ? {effort: picker.effort} : {})});
+  picker.close = (focus = false) => {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    if (focus) button.focus();
+  };
+  const setActive = (index, scroll = true) => {
+    const options = [...box.querySelectorAll('[data-model-option]')];
+    picker.active = options.length ? (index + options.length) % options.length : -1;
+    options.forEach((option, i) => option.classList.toggle('active', i === picker.active));
+    const active = options[picker.active];
+    for (const target of [search, box]) {
+      if (active) target.setAttribute('aria-activedescendant', active.id);
+      else target.removeAttribute('aria-activedescendant');
+    }
+    if (active && scroll) active.scrollIntoView({block: 'nearest'});
+  };
+  const render = () => {
+    const query = search.value.trim().toLocaleLowerCase();
+    const all = [{id: '', name: defaultLabel()}, ...picker.catalog.models];
+    picker.rows = query ? all.filter(model => model.id
+      && `${model.id} ${model.name || ''}`.toLocaleLowerCase().includes(query)) : all;
+    box.replaceChildren();
+    picker.rows.forEach((model, index) => {
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.id = `${prefix}-model-option-${index}`;
+      option.className = 'new-model-option';
+      option.dataset.modelOption = String(index);
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', String(model.id === picker.model));
+      option.tabIndex = -1;
+      option.title = model.id || '使用 CLI 自己的默认模型';
+      const name = document.createElement('span');
+      name.textContent = model.name || model.id;
+      option.appendChild(name);
+      if (model.id && model.name && model.name !== model.id) {
+        const id = document.createElement('small');
+        id.textContent = model.id;
+        option.appendChild(id);
+      }
+      box.appendChild(option);
+    });
+    if (!picker.rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'new-model-empty';
+      empty.textContent = '没有匹配的模型';
+      box.appendChild(empty);
+    }
+    const selected = picker.rows.findIndex(model => model.id === picker.model);
+    setActive(query ? 0 : Math.max(0, selected), !query);
+  };
+  const open = () => {
+    if (!picker.catalog?.models.length) return;
+    search.hidden = picker.catalog.models.length <= MODEL_SEARCH_MIN;
+    search.value = '';
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    render();
+    (search.hidden ? box : search).focus();
+  };
+  const choose = index => {
+    const model = picker.rows[index];
+    if (!model) return;
+    picker.apply(model.id, picker.effort, true);
+    picker.close(true);
+  };
+  button.onclick = () => (menu.hidden ? open() : picker.close());
+  button.onkeydown = e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(); }
+  };
+  search.oninput = render;
+  menu.onkeydown = e => {
+    if (e.isComposing) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActive(picker.active + (e.key === 'ArrowDown' ? 1 : -1));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      choose(picker.active);
+    } else if (e.key === 'Escape') {
+      // 只收起下拉，不关闭整个对话框。
+      e.preventDefault();
+      e.stopPropagation();
+      picker.close(true);
+    } else if (e.key === 'Tab') {
+      picker.close();
+    }
+  };
+  box.onclick = e => {
+    const option = e.target.closest('[data-model-option]');
+    if (option) choose(Number(option.dataset.modelOption));
+  };
+  select.onchange = e => picker.apply(picker.model, e.currentTarget.value, true);
+  const dialog = button.closest('dialog');
+  dialog.addEventListener('pointerdown', e => {
+    if (!button.parentElement.contains(e.target)) picker.close();
   });
-  if (!NewModels.rows.length) {
-    const empty = document.createElement('div');
-    empty.className = 'new-model-empty';
-    empty.textContent = '没有匹配的模型';
-    box.appendChild(empty);
-  }
-  const selected = NewModels.rows.findIndex(model => model.id === NewModels.model);
-  setNewModelActive(query ? 0 : Math.max(0, selected), !query);
+  dialog.addEventListener('close', () => picker.close());
+  return picker;
 }
-function setNewModelActive(index, scroll = true) {
-  const options = [...$('#new-model-options').querySelectorAll('[data-model-option]')];
-  NewModels.active = options.length ? (index + options.length) % options.length : -1;
-  options.forEach((option, i) => option.classList.toggle('active', i === NewModels.active));
-  const active = options[NewModels.active];
-  for (const target of [$('#new-model-search'), $('#new-model-options')]) {
-    if (active) target.setAttribute('aria-activedescendant', active.id);
-    else target.removeAttribute('aria-activedescendant');
-  }
-  if (active && scroll) active.scrollIntoView({block: 'nearest'});
-}
-function chooseNewModel(index) {
-  const model = NewModels.rows[index];
-  if (!model) return;
-  applyNewModel(model.id, NewModels.effort, true);
-  closeNewModelMenu(true);
-}
+
+const NewModels = createModelPicker('new', {
+  source: () => $('#new-session-dialog input[name="new-source"]:checked')?.value || '',
+  node: () => newNodeId(), storeKey: 'newModel'});
+const BugReportModels = createModelPicker('bug-report', {
+  source: () => bugReportSource(), node: () => bugReportNode(), storeKey: 'bugReportModel'});
 
 function openNewSessionDialog() {
   const dialog = $('#new-session-dialog');
   closeCwdPicker();
   newCreateAttempt = null;
-  NewModels.cache.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
+  modelCatalogs.clear(); // 每次打开都读一遍：CLI 升级或换配置后列表会变
   prepareNewNode();
   refreshNewNodeFields();
-  refreshNewModels();
+  NewModels.refresh();
   dialog.showModal();
   renderCommonCwdOptions();
   setTimeout(() => { $('#new-cwd').focus(); $('#new-cwd').select(); }, 0);
@@ -2227,8 +2266,7 @@ async function createNewSession(e) {
     const requestId = newSessionRequestId(source, cwd);
     const request = { source, cwd, cols: 120, rows: newCreateAttempt.rows,
       request_id: requestId, ...(HUB_MODE ? {_node: newNodeId()} : {}),
-      ...(NewModels.model ? {model: NewModels.model} : {}),
-      ...(NewModels.effort ? {effort: NewModels.effort} : {}) };
+      ...NewModels.choice() };
     let d = await post('api/term/create', request);
     if (d.needs_create) {
       const target = String(d.cwd || cwd);
@@ -2291,39 +2329,8 @@ $('#new-cwd-options').onclick = e => {
   if (path) setCwdValue(path);
 };
 $('#new-session-dialog').addEventListener('close', closeCwdPicker);
-$('#new-session-dialog').addEventListener('close', () => closeNewModelMenu());
-$('#new-session-form .new-source').addEventListener('change', refreshNewModels);
-$('#new-node').addEventListener('change', refreshNewModels);
-$('#new-model').onclick = () => ($('#new-model-menu').hidden ? openNewModelMenu() : closeNewModelMenu());
-$('#new-model').onkeydown = e => {
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); openNewModelMenu(); }
-};
-$('#new-model-search').oninput = renderNewModelOptions;
-$('#new-model-menu').onkeydown = e => {
-  if (e.isComposing) return;
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    e.preventDefault();
-    setNewModelActive(NewModels.active + (e.key === 'ArrowDown' ? 1 : -1));
-  } else if (e.key === 'Enter') {
-    e.preventDefault();
-    chooseNewModel(NewModels.active);
-  } else if (e.key === 'Escape') {
-    // 只收起下拉，不关闭整个对话框。
-    e.preventDefault();
-    e.stopPropagation();
-    closeNewModelMenu(true);
-  } else if (e.key === 'Tab') {
-    closeNewModelMenu();
-  }
-};
-$('#new-model-options').onclick = e => {
-  const option = e.target.closest('[data-model-option]');
-  if (option) chooseNewModel(Number(option.dataset.modelOption));
-};
-$('#new-effort').onchange = e => applyNewModel(NewModels.model, e.currentTarget.value, true);
-$('#new-session-dialog').addEventListener('pointerdown', e => {
-  if (!e.target.closest('.new-model')) closeNewModelMenu();
-});
+$('#new-session-form .new-source').addEventListener('change', () => NewModels.refresh());
+$('#new-node').addEventListener('change', () => NewModels.refresh());
 $('#new-session-dialog').addEventListener('click', e => {
   if (e.target === $('#new-session-dialog')) $('#new-session-dialog').close();
 });
