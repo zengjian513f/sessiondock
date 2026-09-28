@@ -841,7 +841,7 @@ function prepareBugReportNode() {
   for (const n of Nodes.list) {
     const option = document.createElement('option');
     option.value = n.id;
-    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线或未启用终端）');
+    option.textContent = n.name + (Nodes.capabilities[n.id]?.enabled ? '' : '（离线）');
     option.disabled = !Nodes.capabilities[n.id]?.enabled;
     select.appendChild(option);
   }
