@@ -253,6 +253,8 @@ def main():
                     assert not errors, errors
                     # Pending shell receipts use instance identity and remain listed.
                     receipt, pending_uid = create_source(page, "shell", root / "work")
+                    pending_status = page.locator(f'#side .item[data-uid="{pending_uid}"] > .ico > .item-status')
+                    expect(pending_status).to_have_class("item-status visible tmux")
                     page.locator(f'#side .item[data-uid="{pending_uid}"]').click(button="right")
                     page.locator('#item-menu [data-act="pick"]').click()
                     expect(bulk).to_have_text("停止 (1)")
@@ -267,6 +269,9 @@ def main():
                     page.wait_for_function("!sessionStopBusy")
                     expect(bulk).to_be_disabled()
                     expect(page.locator(f'#side .item[data-uid="{pending_uid}"]')).to_be_visible()
+                    # The exited row keeps its entry but loses the running (blue) dot.
+                    page.wait_for_function("uid => !document.querySelector(`#side .item[data-uid=\"${uid}\"]`).classList.contains('live')", arg=pending_uid)
+                    expect(pending_status).to_be_hidden()
                     assert len(dialogs) == before + 1
                     assert not errors, errors
                     page.locator("#side-pick-cancel").click()

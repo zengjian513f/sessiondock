@@ -2306,7 +2306,8 @@ function paintItemStatus(node) {
   const badge = node.querySelector(':scope > .ico > .item-status');
   if (!badge) return;
   const row = unreadRow(node.dataset.uid);
-  const pending = !!node.dataset.tmuxName;
+  // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
+  const pending = !!node.dataset.tmuxName && node.classList.contains('live');
   const active = pending || S.live.has(node.dataset.uid);
   const tmux = pending || S.liveTmux.has(node.dataset.uid);
   badge.textContent = row.count > 99 ? '99+' : (row.count || '');
