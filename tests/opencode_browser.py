@@ -76,6 +76,22 @@ def seed(db, work):
     connection.close()
 
 
+def legacy_pending_record(ledger, work):
+    """A finished OpenCode launch from before pre-creation (`new_pending`) must still load."""
+    path = ledger / 'lifecycle-ledger.json'
+    data = json.loads(path.read_text())
+    data['revision'] = 3
+    data['records']['bcc0f47478d75ded04a7ca2994a646f7'] = {
+        'record_id': 'bcc0f47478d75ded04a7ca2994a646f7', 'request_id': '28aa3bc1-92dd-40a8-9d8f-e00bc58967e1',
+        'spec': {'source': 'opencode', 'adapter_id': 'opencode-cli-v1', 'cwd': str(work),
+                 'launch': {'kind': 'new_pending'}},
+        'launch_id': '766ff9293ff3340de955e2c01934da11', 'instance_id': '540f4d8ab1094a9ee68605db972b4d6d',
+        'host_name': 'sessiondock-0183e7c024d811f75511c4b87498cdcc', 'revision': 3, 'state': 'exited',
+        'failure': None, 'cancel_requested': True, 'binding': None, 'session_id': None,
+        'created_at': 1790576084, 'finished_at': 1790578497, 'discarded': True}
+    path.write_text(json.dumps(data))
+
+
 def picker_rows(page):
     """Distinct top offsets of the new-session source buttons."""
     return page.evaluate("""() => [...new Set([...document.querySelectorAll(
@@ -118,6 +134,7 @@ def main():
                                         'host_dir': str(root / 'host'), 'adapters': [], 'profiles': profiles}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
+        legacy_pending_record(root / 'ledger', root / 'work')
         initialize('--initialize-delivery', root / 'delivery')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
