@@ -126,6 +126,14 @@ def node_source_picker(browser, hub, node, other):
         rows = page.evaluate("""() => new Set([...document.querySelectorAll('#new-session-form .new-source label')]
             .map(l => Math.round(l.getBoundingClientRect().top))).size""")
         assert rows == 1, (width, rows)
+        # The machine picker shares the directory's row, leaving the agent row to agents, model and effort.
+        where = page.evaluate("""() => { const r = s => document.querySelector(s).getBoundingClientRect();
+            const node = r('#new-node-label'), cwd = r('#new-session-form .new-cwd-field'), dialog = r('#new-session-dialog');
+            return {top: Math.abs(node.top - cwd.top), order: node.right <= cwd.left + 0.5, inside: cwd.right <= dialog.right,
+                    node_width: node.width, cwd_width: cwd.width,
+                    in_agent_row: !!document.querySelector('#new-session-form .new-row #new-node-label')}; }""")
+        assert where["top"] < 1 and where["order"] and where["inside"] and not where["in_agent_row"], (width, where)
+        assert where["node_width"] <= 140 and where["cwd_width"] >= 180, (width, where)
         # Buttons never overlap, and each keeps a usable tap width.
         spans = page.evaluate("""() => [...document.querySelectorAll('#new-session-form .new-source label > span')]
             .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; })""")
@@ -218,7 +226,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker joined beside the machine select, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, machine select on the directory row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":
