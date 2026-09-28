@@ -624,6 +624,24 @@ def main():
                     assert not page.evaluate("document.querySelector('#bug-report-source input[value=codex]').disabled")
                     page.locator("#bug-report-dialog .modal-close").click()
 
+                    # 5. A machine without a usable terminal is just "（离线）" in both pickers.
+                    nodes[2].set(term_enabled=False)
+                    page.evaluate("loadTermList()")
+                    page.wait_for_function('Nodes.capabilities["' + NID["c"] + '"]?.enabled === false')
+                    open_report(page)
+                    page.wait_for_selector("#bug-report-dialog[open]")
+                    vega = next(o for o in options(page) if o["text"].startswith("Vega"))
+                    assert vega == {**vega, "text": "Vega（离线）", "disabled": True}, vega
+                    page.locator("#bug-report-dialog .modal-close").click()
+                    page.locator("#new-session").click()
+                    expect(page.locator("#new-session-dialog")).to_be_visible()
+                    assert page.evaluate("""() => [...document.querySelectorAll('#new-node option')]
+                        .filter(o => o.value === '%s').map(o => [o.textContent, o.disabled])""" % NID["c"]) == [["Vega（离线）", True]]
+                    page.locator("#new-session-dialog .modal-cancel").click()
+                    nodes[2].set(term_enabled=True)
+                    page.evaluate("loadTermList()")
+                    page.wait_for_function('Nodes.capabilities["' + NID["c"] + '"]?.enabled === true')
+
                     open_report(page)
                     page.wait_for_selector("#bug-report-dialog[open]")
                     page.evaluate("markStaleBuild('test-build')")
@@ -641,7 +659,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS bug_report_node_browser: server drafts, draft follows the chosen machine, staged on selection, no browser message store, one-click removal with discard, scrollable submit, one-row joined sources with the machine's model/effort sent, two-up attachments, picker and capture")
+    print("PASS bug_report_node_browser: server drafts, draft follows the chosen machine, staged on selection, no browser message store, one-click removal with discard, scrollable submit, one-row joined sources with the machine's model/effort sent, two-up attachments, picker and capture, offline machines labelled （离线）")
 
 
 if __name__ == "__main__":
