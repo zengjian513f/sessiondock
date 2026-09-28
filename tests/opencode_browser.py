@@ -68,6 +68,15 @@ def seed(db, work):
         ('idle', {'time': {'created': t + 8}, 'outcome': 'failed'}),
         ('user', {'time': {'created': t + 9}, 'text': '第三次', 'files': [], 'agents': []}),
         ('idle', {'time': {'created': t + 10}, 'outcome': 'failed'}),
+        ('agent-switched', {'time': {'created': t + 11}, 'agent': 'build'}),
+        ('location-switched', {'time': {'created': t + 12}, 'directory': str(work)}),
+        ('user', {'time': {'created': t + 13}, 'text': '列八十种水果', 'files': [], 'agents': []}),
+        ('assistant', {'time': {'created': t + 14, 'completed': t + 15}, 'agent': 'build',
+                       'model': fake.MODEL, 'finish': 'error',
+                       'error': {'type': 'aborted', 'message': 'The operation was aborted.'},
+                       'content': [{'type': 'reasoning', 'text': '逐个列出'},
+                                   {'type': 'text', 'text': '苹果、香蕉、樱桃，写到这里'}]}),
+        ('idle', {'time': {'created': t + 16}, 'outcome': 'interrupted'}),
     ]
     for seq, (kind, data) in enumerate(rows, 1):
         connection.execute('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -160,6 +169,8 @@ def main():
                 seeded = next(row for row in rows_of(page, base) if row['sid'] == SEEDED)
                 assert seeded['title'] == '已有的 OpenCode 会话' and seeded['model'] == 'fake-model', seeded
                 assert seeded['cwd'] == str(root / 'work') and seeded['supported'], seeded
+                # Agent/location switches are bookkeeping, not unknown records.
+                assert 'OpenCode 记录类型' not in json.dumps(seeded, ensure_ascii=False), seeded
                 item = page.locator(f'#side .item[data-uid="{seeded["uid"]}"]')
                 expect(item.locator('use[href="#i-opencode"]')).to_have_count(1)
                 item.click()
@@ -167,6 +178,10 @@ def main():
                 expect(msgs).to_contain_text('目录里有 zebracorn 文件。')
                 expect(msgs).to_contain_text('[OpenCode 错误] Key limit exceeded')
                 expect(msgs).to_contain_text('[OpenCode] 本轮失败，没有产生回复')
+                # An Esc-interrupted turn keeps its partial reply, marked interrupted.
+                interrupted = page.locator('#msgs .msg').filter(has_text='苹果、香蕉、樱桃，写到这里')
+                expect(interrupted).to_have_count(1)
+                expect(interrupted.locator('.native-message-state')).to_have_text('已中断')
                 # A failure the assistant row explained is not repeated by its idle marker.
                 assert page.locator('#msgs .msg').filter(has_text='本轮失败').count() == 1
                 expect(page.locator('#msgs .msg[data-role=user]').first).to_contain_text('看看这张图')
@@ -247,7 +262,23 @@ def main():
                     catch (error) { return {thrown: String(error)}; } }""")
                 assert '未识别到 CLI 可输入的消息编辑区' in str(refused), refused
                 assert b'blocked while' not in trace.read_bytes()
+                # ---- OpenCode's question form and permission prompt are CLI questions.
+                for dialog in ('question', 'permission'):
+                    screen.write_text(dialog)
+                    page.wait_for_function("() => composerDraft()?.inputStatus?.code === 'cli_question'", timeout=15000)
+                    expect(page.locator('#csend')).to_be_disabled()
+                    expect(page.locator('#composer-input-status')).to_contain_text('检测到终端选择界面')
+                    shot(dialog)
+                    refused = page.evaluate("""async () => { const name = takenOver(S.sel);
+                        try { return await post('api/session/conversation/send', {uid: S.sel, name,
+                            text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
+                            lease: termSendLease(name).lease || null}); }
+                        catch (error) { return {thrown: String(error)}; } }""")
+                    assert 'CLI 正在等待选择' in str(refused), refused
+                    assert b'blocked while' not in trace.read_bytes()
                 screen.write_text('composer')
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                expect(page.locator('#csend')).to_be_enabled()
                 page.locator('#cinput').fill('')
 
                 # ---- Theme and portrait icons stay legible.

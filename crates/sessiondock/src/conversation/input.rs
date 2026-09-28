@@ -56,7 +56,7 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
     if driver::strip_ansi(&capture.text).trim().is_empty() {
         return InputStatus::new(Starting, "cli_starting", "CLI 正在启动，输入已保留");
     }
-    if super::screen_question(capture) {
+    if super::screen_question(capture) || (source == "opencode" && opencode_dialog(capture)) {
         return InputStatus::new(
             Blocked,
             "cli_question",
@@ -264,6 +264,23 @@ fn grok_composer(capture: &ScreenCapture) -> bool {
             .is_some_and(|line| !line.trim_matches('─').trim().is_empty())
         && (top + 1..bottom)
             .all(|i| lines[i].chars().nth(left) == Some('│') && lines[i].trim_end().ends_with('│'))
+}
+
+/// OpenCode's question form and permission prompt replace the prompt block;
+/// each ends with its key-hint footer on a `┃` row near the bottom of the
+/// screen (verified against OpenCode 2.0.18). The same words quoted in the
+/// transcript sit above the prompt block, not in its last rows.
+fn opencode_dialog(capture: &ScreenCapture) -> bool {
+    let text = driver::strip_ansi(&capture.text);
+    let rows: Vec<&str> = text.lines().filter(|row| !row.trim().is_empty()).collect();
+    rows.iter().rev().take(4).any(|row| {
+        let row = row.trim();
+        row.starts_with('┃')
+            && ((row.contains("enter submit") && row.contains("esc dismiss"))
+                || (row.contains("Allow once")
+                    && row.contains("Reject")
+                    && row.contains("enter confirm")))
+    })
 }
 
 /// OpenCode's prompt is a block of rows with a single `┃` left border, closed

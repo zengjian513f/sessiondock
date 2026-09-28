@@ -7,8 +7,9 @@ works on an OpenCode 2 style SQLite store (`SESSIONDOCK_TEST_OPENCODE_DB`:
 `project`, `session_v2`, `session_message`). Without `api` it is the TUI:
 the prompt block copies OpenCode 2.0 (`┃` left border, `╹▀…` rule,
 `agent · model` row); `SESSIONDOCK_TEST_SCREEN` switches it between
-`composer` (default) and `palette` (the command palette moves the cursor
-away). A bracketed paste shows `[Pasted ~N lines]`. With `--session <id>`
+`composer` (default), `palette` (the command palette moves the cursor
+away), and the `question` form and `permission` prompt that replace the
+prompt block (both copied from OpenCode 2.0.18). A bracketed paste shows `[Pasted ~N lines]`. With `--session <id>`
 Enter stores the draft as a user message and a settled `echo: …` assistant
 reply, like OpenCode would. Every input byte is appended to
 `<screen>.trace`.
@@ -111,6 +112,26 @@ def palette():
     return rows, (4, 16)
 
 
+def question():
+    rows = ['    → Asked 1 question', '    ┃', '    ┃  Questions', '    ┃',
+            '    ┃  Do you prefer red or blue?', '    ┃', '    ┃  1. Red', '    ┃     I prefer red.',
+            '    ┃  2. Blue', '    ┃     I prefer blue.', '    ┃  3. Type your own answer', '    ┃',
+            '    ┃  ↑↓ select  enter submit  esc dismiss', '    ┃']
+    return rows, (6, 7)
+
+
+def permission():
+    rows = ['    ⠋ Read /etc/hostname', '    ┃', '    ┃  △ Permission required',
+            '    ┃    ← Access external directory /etc', '    ┃', '    ┃  Patterns', '    ┃',
+            '    ┃  - /etc/*', '    ┃', '    ┃',
+            '    ┃   Allow once   Always allow   Reject          ctrl+f fullscreen  ⇆ select  enter confirm',
+            '    ┃']
+    return rows, (10, 8)
+
+
+SCREENS = {'palette': palette, 'question': question, 'permission': permission}
+
+
 def history(session):
     if not session or "SESSIONDOCK_TEST_OPENCODE_DB" not in os.environ:
         return []
@@ -133,7 +154,7 @@ def main():
     try:
         while True:
             state = root.read_text() if root.exists() else 'composer'
-            rows, (y, x) = palette() if state == 'palette' else composer(draft, sent)
+            rows, (y, x) = SCREENS[state]() if state in SCREENS else composer(draft, sent)
             frame = '\x1b[2J\x1b[H' + '\r\n'.join(rows) + f'\x1b[{y + 1};{x + 1}H'
             if frame != previous:
                 sys.stdout.write(frame)
@@ -162,7 +183,7 @@ def main():
                 elif text.startswith('\x1b[200~'):
                     paste, text = '', text[6:]
                 elif text[0] == '\r':
-                    if draft and state != 'palette':
+                    if draft and state not in SCREENS:
                         sent.append(draft)
                         if session and "SESSIONDOCK_TEST_OPENCODE_DB" in os.environ:
                             submit(session, full)
