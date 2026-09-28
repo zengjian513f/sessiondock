@@ -5922,9 +5922,13 @@ function planTurnSegment(messages, promptEnd,
     : planMessages(rest);
   // 一项换成一项不会节省空间，还会徒增一次点击。
   const processSize = visiblePlanSize(processPlan);
+  // 思考例外：它在主线上整段铺开，折进合集才只占一行摘要。OpenCode 这类
+  // 显示推理原文的 CLI 常见“一段思考 + 结论”的回合，不能让思考散在主线。
+  const loneThinking = processSize === 1
+    && processPlan.some(item => item.m?.role === 'thinking' && !item.m.silent);
   // 中断轮已经要保留末次状态；即便只剩一个工具单元，也应进过程合集，
   // 否则恰好较短的中断轮会再次把工具卡散在对话主线里。
-  if (!processSize || (processSize < 2 && !conclusion?.interrupted)) {
+  if (!processSize || (processSize < 2 && !conclusion?.interrupted && !loneThinking)) {
     if (!conclusion?.continued) return planMessages(messages);
     return [...planMessages(messages.slice(0, promptEnd + conclusion.end)), ...tail];
   }
