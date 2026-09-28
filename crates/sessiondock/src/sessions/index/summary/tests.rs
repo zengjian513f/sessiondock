@@ -340,8 +340,8 @@ fn claude_title_precedence_custom_then_latest_ai_then_generated_then_user() {
     let nothing = encoded(&[json!({"type": "mode", "mode": "default"})]);
     let summary = summarize_bytes("claude", claude_path(), &nothing, None);
     assert_eq!(
-        summary.title, "claude-s",
-        "stem[:8] when nothing else is available"
+        summary.title, "新建 Claude 会话",
+        "pending-session label when nothing else is available (Python: stem[:8])"
     );
     assert_eq!(summary.sid, "claude-session-one");
     assert_eq!(

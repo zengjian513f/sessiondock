@@ -45,7 +45,8 @@
   热刷新只有 `stat`；变了只重读这一个文件。
 - **摘要读取**：头 96 KiB 内最多 40 条完整记录 + 尾 512 KiB 内的完整记录
   （残行丢弃）；推导 `title`
-  （custom-title > 最新 ai-title > 首条用户输入生成）、`cwd`（头部优先，尾部
+  （custom-title > 最新 ai-title > 首条用户输入生成；Claude 都没有时为
+  `新建 Claude 会话`，Python 回退为文件名前 8 位，DELTA）、`cwd`（头部优先，尾部
   计数兜底）、`branch`、`created`、`updated`（`mtime`）、`size`、`model`、
   Codex `session_meta`/`history_base`、Claude `sessionId`/fork 来源、Grok
   `summary.json` 字段。Grok 的 `size`：会话目录内全部普通
