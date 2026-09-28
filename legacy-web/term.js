@@ -2617,6 +2617,9 @@ function ensureTerm(name) {
   // 它会贴着 xterm 这个隐藏的 IME textarea 跟随光标。Edge 124+ 认这个属性，
   // 同时关掉文本预测；其它浏览器忽略。
   term.textarea?.setAttribute('writingsuggestions', 'false');
+  // Files pasted into the console are captured before the renderer's own
+  // paste handler; text keeps the renderer's bracketed-paste path.
+  host.addEventListener('paste', e => consolePasteFiles(view, name, e), true);
   // Claude Code uses OSC 52 after mouse selection. xterm parses the sequence
   // but has no browser clipboard policy of its own, so the embedding page must
   // opt in before Ctrl+V can paste the selected text back into the PTY.
@@ -5255,6 +5258,89 @@ function addDraftFiles(draft, files) {
   }
 }
 
+/** Console file paste (`sessiondock.consolePasteFiles`, off by default): a
+ *  pasted image or file is written into the session cwd's
+ *  `sessiondock_attachments/<batch>/` through the raw attachment route, then
+ *  its relative path is typed into the PTY as a bracketed paste, the way a
+ *  file dragged onto a local terminal lands as its path. The CLI's own
+ *  clipboard read cannot see a browser clipboard (its process runs on the
+ *  node), so this is the only way a console paste can deliver bytes. Text
+ *  pastes never enter here. */
+function consolePasteFiles(view, name, e) {
+  const files = clipboardAttachmentFiles(e.clipboardData);
+  if (!files.length) return;
+  if (!consolePasteFilesEnabled()) {
+    showConsoleToast('已忽略粘贴的文件；在 设置 › 功能 开启「控制台粘贴文件」后会存入会话目录');
+    setTimeout(() => {
+      if ($('#console-toast')?.textContent.startsWith('已忽略粘贴的文件')) showConsoleToast('');
+    }, 6000);
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+  if (T.name !== name || view.replay || view.ended || view.revoked) return;
+  if (!confirmPastedFiles(files)) return;
+  const uid = view.bindingUid || T.uid || '';
+  if (!uid) { alert('粘贴文件失败：这个终端还没有会话目录'); return; }
+  // One paste after another keeps its order, and each paste is one batch.
+  const previous = consolePasteJobs.get(name) || Promise.resolve();
+  const job = previous.then(() => publishConsolePaste(view, name, uid, files));
+  consolePasteJobs.set(name, job.catch(() => {}));
+}
+const consolePasteJobs = new Map();
+
+function consoleAttachmentPath(document) {
+  const relative = String(document.relative_path || '').replace(/^\.[\\/]/, '');
+  const windows = document.path_style === 'windows';
+  if (!relative) return String(document.path || '');
+  if (windows) {
+    const path = '.\\' + relative.replace(/\//g, '\\');
+    return /\s/.test(path) ? `"${path}"` : path;
+  }
+  return ('./' + relative).replace(/\s/g, ch => '\\' + ch);
+}
+
+async function publishConsolePaste(view, name, uid, files) {
+  const paths = [];
+  let attachmentId = null;
+  showConsoleToast(files.length === 1 ? `正在保存 ${files[0].name || '附件'}…` : `正在保存 ${files.length} 个文件…`);
+  try {
+    for (const file of files) {
+      if (!file.size) throw new Error(`「${file.name || '附件'}」为空`);
+      if (file.size > COMPOSER_MAX_FILE_BYTES) throw new Error(`「${file.name || '附件'}」超过 512 MB`);
+      const url = new URL(appUrl('api/session/attachment'));
+      url.searchParams.set('uid', uid);
+      url.searchParams.set('name', file.name || 'attachment');
+      if (attachmentId) url.searchParams.set('id', attachmentId);
+      const response = await fetch(url, {
+        method: 'POST', body: file,
+        headers: {'Content-Type': file.type || 'application/octet-stream', 'X-SessionDock-Page': TERM_PAGE_ID},
+      });
+      let data = {};
+      try { data = await response.json(); } catch { /* the status carries the failure */ }
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      attachmentId ||= data.attachment_id;
+      paths.push(consoleAttachmentPath(data));
+    }
+  } catch (error) {
+    showConsoleToast('');
+    alert('粘贴文件失败：' + (error.message || error));
+    return;
+  } finally {
+    if ($('#console-toast')?.textContent.startsWith('正在保存')) showConsoleToast('');
+  }
+  if (T.name !== name || view.ended || view.revoked) return;
+  const text = paths.join(' ') + ' ';
+  browserAuditEvent?.('terminal.paste_files', {name, count: paths.length, attachment_id: attachmentId},
+    null, {uid, connectionId: view.auditConnectionId || ''});
+  try {
+    const d = await post('api/term/send', termInputBody(name, {name, paste: text, uid}) || {name, paste: text});
+    if (d.error) throw new Error(d.error);
+  } catch (error) {
+    alert(`文件已保存到 ${paths.join(' ')}，但没有写进终端：` + (error.message || error));
+  }
+}
+
 function clipboardAttachmentFiles(data) {
   const files = [];
   const mirrored = new Map();
@@ -5795,12 +5881,25 @@ document.addEventListener('selectionchange', () => {
     lastMessageSelectionUid = S.sel;
   }
 });
+const PASTE_CONFIRM_FILES = 5;
+const PASTE_CONFIRM_BYTES = 50 * 1024 * 1024;
+/** A paste of many or large files (a folder's worth of screenshots, a video)
+ *  is often a slip; every paste surface asks once before staging them. */
+function confirmPastedFiles(files) {
+  const bytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+  if (files.length <= PASTE_CONFIRM_FILES && bytes <= PASTE_CONFIRM_BYTES) return true;
+  const size = bytes >= 1024 * 1024
+    ? `${(bytes / 1048576).toFixed(bytes >= 100 * 1048576 ? 0 : 1)} MB`
+    : `${Math.ceil(bytes / 1024)} KB`;
+  return confirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
+}
+
 function pasteAttachmentFiles(e, addFiles) {
   const directories = clipboardDirectoryNames(e.clipboardData);
   const files = clipboardAttachmentFiles(e.clipboardData);
   if (directories.length) {
     e.preventDefault();
-    if (files.length) addFiles(files);
+    if (files.length && confirmPastedFiles(files)) addFiles(files);
     alert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
     return;
   }
@@ -5813,6 +5912,7 @@ function pasteAttachmentFiles(e, addFiles) {
   }
   // 带附件的剪贴板常同时携带 text/plain；交给浏览器会把那份文字再粘贴一次。
   e.preventDefault();
+  if (!confirmPastedFiles(files)) return;
   addFiles(files);
 }
 

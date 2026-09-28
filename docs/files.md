@@ -29,7 +29,9 @@ Conversation-specific responsibilities remain here:
 - Recognizing file references in message/tool content, resolving relative paths
   against the selected cwd, and disambiguating names.
 - Inline conversation media and its checked file responses.
-- Uploading/recording conversation and bug-report attachments.
+- Uploading/recording conversation and bug-report attachments, and the
+  console file paste that publishes straight into `sessiondock_attachments`
+  ([terminal-input.md](terminal-input.md#console-file-paste)).
 - Serving existing file API consumers during the node/client migration.
 
 FileDock does not load session history, establish conversation grants, or attach
