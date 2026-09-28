@@ -103,7 +103,9 @@ impl<'a> Graph<'a> {
         let owner = &self.inventory[&selection.owner];
         let selected = &self.inventory[&selection.selected];
         let source = owner.candidate.source;
-        if source != selected.candidate.source || !matches!(source, "claude" | "codex" | "grok") {
+        if source != selected.candidate.source
+            || !matches!(source, "claude" | "codex" | "grok" | "opencode")
+        {
             return Err(unsupported("此数据源尚不支持原生操作范围"));
         }
         for parsed in [owner, selected] {

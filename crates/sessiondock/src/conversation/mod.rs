@@ -627,11 +627,8 @@ impl Conversations {
             return Err(error);
         }
         // Match native history without archiving another copy of the prompt.
-        // OpenCode's history is not read yet: no echo can ever arrive.
-        let echo =
-            (identity.source != "opencode").then(|| store::fingerprint(&json!(prompt.trim())));
         let result = json!({"ok":true,"request_id":input.request_id,"state":"sent",
-            "echo_hash":echo});
+            "echo_hash":store::fingerprint(&json!(prompt.trim()))});
         self.store.finish(
             &identity.key,
             &input.request_id,

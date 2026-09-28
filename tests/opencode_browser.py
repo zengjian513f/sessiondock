@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""OpenCode launch, console-first page and composer SEND, as a user drives them.
+"""OpenCode sessions end to end, as a user drives them.
 
-OpenCode is an AI CLI source whose history SessionDock does not read yet. The
-page therefore leads with its console, keeps the CLI send path (input checks,
-bracketed paste, Enter) and must not wait for a native echo that cannot
-arrive. Also checks the five-source picker on desktop and phone, dark theme
-and portrait icons. Private fake CLI, loopback server, temporary dirs only.
+The server mirrors an OpenCode 2 style SQLite store (`project`, `session_v2`,
+`session_message`) into files and lists, renders and searches its sessions.
+A new session is created in OpenCode under a server-assigned id before its
+TUI starts with `--session`, so the page switches straight to the native row.
+Covered: the five-source picker on desktop and phone, a seeded session with
+reasoning, tool calls, an image and failures, body search, launch, composer
+SEND with its native echo, input checks, stop and resume, portrait/dark
+icons, the report dialog and irreversible delete. Private fake CLI,
+loopback server, temporary directories only.
 """
+import base64
 import json
 import os
-import re
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 from urllib.parse import urlsplit
@@ -19,6 +24,56 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
+
+sys.path.insert(0, str(REPO / 'tests'))
+import fake_opencode_composer as fake  # noqa: E402
+
+# 1x1 PNG, as OpenCode stores a pasted image inline.
+PIXEL = base64.b64encode(bytes.fromhex(
+    '89504e470d0a1a0a0000000d4948445200000001000000010806000000'
+    '1f15c4890000000d49444154789c6360f8cfc0f01f0005000201ff6c2d5e2b0000000049454e44ae426082')).decode()
+SEEDED = 'ses_0f0000000000seededSessionA'
+
+
+def seed(db, work):
+    """One finished session with the kinds of rows OpenCode 2 writes."""
+    connection = sqlite3.connect(db)
+    connection.executescript(fake.SCHEMA)
+    t = 1790500000000
+    connection.execute("INSERT INTO project VALUES ('fakeproject', ?, ?, ?, '[]')", (str(work), t, t))
+    connection.execute(
+        "INSERT INTO session_v2 (id, project_id, slug, directory, title, version, agent, model,"
+        " time_created, time_updated) VALUES (?, 'fakeproject', 'seeded', ?, '已有的 OpenCode 会话',"
+        " '2.0.18', 'build', ?, ?, ?)", (SEEDED, str(work), json.dumps(fake.MODEL), t, t + 50))
+    rows = [
+        ('user', {'time': {'created': t}, 'text': '看看这张图 [Image 1]', 'agents': [],
+                  'files': [{'data': PIXEL, 'mime': 'image/png', 'source': {'type': 'inline'},
+                             'name': 'clipboard'}]}),
+        ('assistant', {'time': {'created': t + 1, 'completed': t + 2}, 'agent': 'build',
+                       'model': fake.MODEL, 'finish': 'tool-calls', 'content': [
+                           {'type': 'reasoning', 'text': '先列一下目录'},
+                           {'type': 'tool', 'id': 'call_1', 'name': 'shell', 'state': {
+                               'status': 'completed', 'input': {'command': 'ls'},
+                               'content': [{'type': 'text', 'text': 'README.md'}]}},
+                           {'type': 'tool', 'id': 'call_2', 'name': 'read', 'state': {
+                               'status': 'error', 'input': {'path': '/nope'}, 'error': 'No such file'}}]}),
+        ('assistant', {'time': {'created': t + 3, 'completed': t + 4}, 'agent': 'build',
+                       'model': fake.MODEL, 'finish': 'stop',
+                       'content': [{'type': 'text', 'text': '目录里有 zebracorn 文件。'}]}),
+        ('idle', {'time': {'created': t + 5}, 'outcome': 'succeeded'}),
+        ('user', {'time': {'created': t + 6}, 'text': '再来一次', 'files': [], 'agents': []}),
+        ('assistant', {'time': {'created': t + 7}, 'agent': 'build', 'model': fake.MODEL,
+                       'finish': 'error', 'content': [],
+                       'error': {'type': 'provider.auth', 'message': 'Key limit exceeded'}}),
+        ('idle', {'time': {'created': t + 8}, 'outcome': 'failed'}),
+        ('user', {'time': {'created': t + 9}, 'text': '第三次', 'files': [], 'agents': []}),
+        ('idle', {'time': {'created': t + 10}, 'outcome': 'failed'}),
+    ]
+    for seq, (kind, data) in enumerate(rows, 1):
+        connection.execute('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)',
+                           (f'msg_seed_{seq}', SEEDED, kind, seq, t + seq, t + seq, json.dumps(data)))
+    connection.commit()
+    connection.close()
 
 
 def picker_rows(page):
@@ -34,21 +89,30 @@ def wait_screen(page, text):
         return false; }""", arg=text, timeout=15000)
 
 
+def rows_of(page, base):
+    return [row for row in page.request.get(base + '/api/sessions?force=1').json()['sessions']
+            if row['source'] == 'opencode']
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='sessiondock-opencode-') as temporary:
         root = Path(temporary).resolve()
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok'):
             (root / name).mkdir(mode=0o700)
         screen = root / 'screen'
-        fake = {'executable': str(Path(sys.executable).resolve()),
-                'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
-                        'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_SCREEN': str(screen)}}
-        profiles = [{'id': 'opencode-cli-v1', 'source': 'opencode',
+        db = root / 'opencode.db'
+        seed(db, root / 'work')
+        env = {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'), 'TERM': 'xterm-256color',
+               'LANG': 'C.UTF-8', 'SESSIONDOCK_TEST_SCREEN': str(screen),
+               'SESSIONDOCK_TEST_OPENCODE_DB': str(db)}
+        executable = str(Path(sys.executable).resolve())
+        profiles = [{'id': 'opencode-cli-v1', 'source': 'opencode', 'executable': executable,
                      'args': [str(REPO / 'tests/fake_opencode_composer.py')],
-                     'resume_args': ['--session', '{sid}'], **fake}]
+                     'resume_args': ['--session', '{sid}'], 'env': env}]
         # The other CLIs only need to exist so the picker shows all five sources.
-        profiles += [{'id': f'{source}-cli-v1', 'source': source, 'args': ['-c', 'import time; time.sleep(60)'],
-                      **fake} for source in ('claude', 'codex', 'grok')]
+        profiles += [{'id': f'{source}-cli-v1', 'source': source, 'executable': executable,
+                      'args': ['-c', 'import time; time.sleep(60)'], 'env': env}
+                     for source in ('claude', 'codex', 'grok')]
         launcher = root / 'launcher.json'
         launcher.write_text(json.dumps({'schema': 2, 'host_binary': str(REPO / 'target/debug/ptyhost'),
                                         'host_dir': str(root / 'host'), 'adapters': [], 'profiles': profiles}))
@@ -57,7 +121,9 @@ def main():
         initialize('--initialize-delivery', root / 'delivery')
         with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, delivery_dir=root / 'delivery', state_dir=root / 'state',
-                file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
+                trash_dir=root / 'trash', file_roots=(root / 'work',), file_write_roots=(root / 'work',),
+                extra_env={'SESSIONDOCK_OPENCODE_DB': str(db),
+                           'SESSIONDOCK_OPENCODE_ROOT': str(root / 'mirror')}) as (base, _), sync_playwright() as pw:
             options = {'headless': True}
             if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE'):
                 options['executable_path'] = os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']
@@ -68,156 +134,165 @@ def main():
             errors, dialogs = [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+            shots = os.environ.get('SESSIONDOCK_TEST_SHOTS')
+            shot = (lambda name: page.screenshot(path=os.path.join(shots, f'opencode-{name}.png'))) if shots else (lambda name: None)
             try:
                 page.goto(base, wait_until='networkidle')
-                # ---- Picker: five sources, one row with labels on desktop,
-                # one row of icons on a phone, OpenCode selectable.
+                # ---- The mirrored seed session: listed, rendered, searchable.
+                page.wait_for_function("() => S.sessions.some(row => row.source === 'opencode')", timeout=20000)
+                seeded = next(row for row in rows_of(page, base) if row['sid'] == SEEDED)
+                assert seeded['title'] == '已有的 OpenCode 会话' and seeded['model'] == 'fake-model', seeded
+                assert seeded['cwd'] == str(root / 'work') and seeded['supported'], seeded
+                item = page.locator(f'#side .item[data-uid="{seeded["uid"]}"]')
+                expect(item.locator('use[href="#i-opencode"]')).to_have_count(1)
+                item.click()
+                msgs = page.locator('#msgs')
+                expect(msgs).to_contain_text('目录里有 zebracorn 文件。')
+                expect(msgs).to_contain_text('[OpenCode 错误] Key limit exceeded')
+                expect(msgs).to_contain_text('[OpenCode] 本轮失败，没有产生回复')
+                # A failure the assistant row explained is not repeated by its idle marker.
+                assert page.locator('#msgs .msg').filter(has_text='本轮失败').count() == 1
+                expect(page.locator('#msgs .msg[data-role=user]').first).to_contain_text('看看这张图')
+                expect(page.locator('#msgs .msg[data-role=user] img')).to_have_count(1)
+                roles = page.evaluate("[...new Set([...document.querySelectorAll('#msgs .msg')].map(m => m.dataset.role))]")
+                assert {'user', 'assistant'} <= set(roles) and ('process' in roles or 'toolgroup' in roles), roles
+                expect(page.locator('#detail .msgs')).to_be_visible()
+                shot('seeded')
+                old = page.locator('#stat').get_attribute('data-seq') or ''
+                page.locator('#q').fill('zebracorn')
+                page.locator('#q').press('Enter')
+                page.wait_for_function("old => String(document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
+                expect(page.locator(f'#side .item[data-uid="{seeded["uid"]}"]')).to_be_visible()
+                expect(page.locator(f'#side .item[data-uid="{seeded["uid"]}"] .m')).to_contain_text('命中')
+                page.locator('#q').fill('')
+                page.locator('#q').press('Enter')
+
+                # ---- Picker: five sources, one labelled row on desktop, icons on a phone.
                 page.locator('#new-session').click()
                 labels = page.locator('#new-session-form .new-source label')
                 expect(labels).to_have_count(5)
                 assert len(picker_rows(page)) == 1, picker_rows(page)
-                expect(labels.filter(has_text='OpenCode')).to_be_visible()
                 for label in labels.all():
                     scroll, client = label.locator('span').evaluate('e => [e.scrollWidth, e.clientWidth]')
-                    assert scroll <= client, (scroll, client)  # no clipped label
+                    assert scroll <= client, (scroll, client)
                 page.set_viewport_size({'width': 390, 'height': 844})
                 assert len(picker_rows(page)) == 1, picker_rows(page)
                 spans = page.evaluate("""() => [...document.querySelectorAll('#new-session-form .new-source label > span')]
                     .map(e => { const r = e.getBoundingClientRect(); return [r.left, r.right]; })""")
                 assert all(b[0] >= a[1] - 0.5 for a, b in zip(spans, spans[1:])), spans
-                for label in labels.all():
-                    box = label.bounding_box()
-                    assert box and box['x'] >= 0 and box['x'] + box['width'] <= 390, box
-                expect(labels.filter(has=page.locator('input[value="opencode"]')).locator('.src-label')).to_be_hidden()
                 page.set_viewport_size({'width': 1280, 'height': 860})
                 labels.filter(has=page.locator('input[value="opencode"]')).click()
-                expect(page.locator('input[name="new-source"][value="opencode"]')).to_be_checked()
                 page.locator('#new-cwd').fill(str(root / 'work'))
                 with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/create') as created:
                     page.locator('#new-session-go').click()
                 assert created.value.status == 200, created.value.text()
                 receipt = created.value.json()
-                assert receipt['source'] == 'opencode' and receipt['launch_kind'] == 'new_pending', receipt
-                uid = 'tmux:' + receipt['name']
-                row = page.locator(f'#side .item[data-uid="{uid}"]')
+                sid = receipt['declared_sid']
+                assert receipt['launch_kind'] == 'new_assigned' and sid.startswith('ses_') and receipt['running'], receipt
 
-                # ---- The console leads the page; the composer stays below it.
-                expect(row).to_have_count(1)
-                expect(row.locator('use[href="#i-opencode"]')).to_have_count(1)
-                expect(row).to_contain_text('在控制台查看回复')
+                # ---- The session exists in OpenCode before its TUI: the page
+                # moves to the native row at once.
+                page.wait_for_function('sid => S.sessions.some(row => row.sid === sid)', arg=sid, timeout=20000)
+                uid = next(row['uid'] for row in rows_of(page, base) if row['sid'] == sid)
+                page.wait_for_function('uid => S.sel === uid', arg=uid, timeout=20000)
                 expect(page.locator('#detail .meta-source')).to_have_text('OpenCode')
-                expect(page.locator('#termpane')).to_be_visible()
-                expect(page.locator('#right')).to_have_class(re.compile(r'\bterminal-first\b'))
-                assert 'shell-session' not in page.locator('#right').get_attribute('class')
                 expect(page.locator('#composer')).to_be_visible()
-                expect(page.locator('#detail .msgs')).to_be_hidden()
-                pane, composer = page.locator('#termpane').bounding_box(), page.locator('#composer').bounding_box()
-                assert pane['y'] + pane['height'] <= composer['y'] + 1 and pane['height'] > 300, (pane, composer)
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=15000)
-                wait_screen(page, 'Build · Fake-Model Free')
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=20000)
 
-                if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
-                    page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'], 'opencode-desktop.png'))
-                # ---- SEND: ready on the recognized prompt, blocked on a palette.
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
-                expect(page.locator('#csend')).to_be_enabled()
-                expect(page.locator('#cesc')).to_be_visible()
+                def send(text, echo, reply):
+                    page.locator('#cinput').fill(text)
+                    with page.expect_response(lambda response: urlsplit(response.url).path == '/api/session/conversation/send',
+                                              timeout=20000) as sent:
+                        page.locator('#csend').click()
+                    assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
+                    expect(page.locator('#cinput')).to_have_value('')
+                    expect(page.locator('#msgs .msg[data-role=assistant]').filter(has_text=reply)).to_have_count(1, timeout=20000)
+                    expect(page.locator('#msgs .msg[data-role=user]:not(.client-outbox)').filter(has_text=echo)).to_have_count(1)
+                    # The native echo settles the send button.
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false', timeout=15000)
+
+                send('hello opencode', 'hello opencode', 'echo: hello opencode')
+                trace = screen.with_suffix('.trace')
+                assert b'\x1b[200~hello opencode\x1b[201~' in trace.read_bytes()
+                send('first line\nsecond line\nthird line', 'third line', 'echo: first line')
+                expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_contain_text('hello opencode')
+                shot('conversation')
+
+                # ---- The server refuses SEND while a palette covers the prompt.
                 screen.write_text('palette')
                 page.locator('#cinput').fill('blocked while the palette is open')
                 page.wait_for_function("() => composerDraft()?.inputStatus?.code === 'cli_not_ready'", timeout=15000)
-                expect(page.locator('#composer-input-status')).to_contain_text('请先在上方终端关闭菜单或对话框')
                 expect(page.locator('#csend')).to_be_disabled()
-                # The server refuses SEND on its own screen check, whatever the page does.
                 refused = page.evaluate("""async () => { const name = takenOver(S.sel);
                     try { return await post('api/session/conversation/send', {uid: S.sel, name,
                         text: 'blocked while the palette is open', request_id: crypto.randomUUID(),
                         lease: termSendLease(name).lease || null}); }
                     catch (error) { return {thrown: String(error)}; } }""")
                 assert '未识别到 CLI 可输入的消息编辑区' in str(refused), refused
-                # The notice sits in the composer, never over the console.
-                status, pane = page.locator('#composer-input-status').bounding_box(), page.locator('#termpane').bounding_box()
-                assert status['y'] >= pane['y'] + pane['height'] - 1, (status, pane)
-                if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
-                    page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'], 'opencode-blocked.png'))
-                trace = screen.with_suffix('.trace')
-                assert not trace.exists() or b'blocked while' not in trace.read_bytes()
+                assert b'blocked while' not in trace.read_bytes()
                 screen.write_text('composer')
-                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
-
-                def send(text):
-                    page.locator('#cinput').fill(text)
-                    with page.expect_response(lambda response: urlsplit(response.url).path == '/api/session/conversation/send',
-                                              timeout=20000) as sent:
-                        page.locator('#csend').click()
-                    assert sent.value.status == 200, sent.value.text()
-                    body = sent.value.json()
-                    assert body['state'] == 'sent' and body['echo_hash'] is None, body
-                    expect(page.locator('#cinput')).to_have_value('')
-                    # No native echo can arrive: the button must not wait for one.
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy', 'false')
-                    if '\n' not in text:
-                        wait_screen(page, 'sent: ' + text)
-
-                send('hello opencode')
-                data = trace.read_bytes()
-                assert b'\x1b[200~hello opencode\x1b[201~' in data and data.endswith(b'\r'), data[-120:]
-                send('first line\nsecond line\nthird line')
-                wait_screen(page, 'sent: [Pasted ~3 lines]')
-                assert not dialogs, dialogs
+                page.locator('#cinput').fill('')
 
                 # ---- Theme and portrait icons stay legible.
+                row = page.locator(f'#side .item[data-uid="{uid}"]')
                 page.evaluate("document.documentElement.dataset.theme = 'dark'")
-                color = row.locator('.source-icon').evaluate('e => getComputedStyle(e).color')
-                assert color == 'rgb(170, 178, 191)', color
+                assert row.locator('.source-icon').evaluate('e => getComputedStyle(e).color') == 'rgb(170, 178, 191)'
                 page.evaluate("document.documentElement.dataset.toolIcons = 'boss'")
-                use = row.locator('.source-icon > use')
-                assert use.evaluate('e => getComputedStyle(e).visibility') == 'visible'
+                assert row.locator('.source-icon > use').evaluate('e => getComputedStyle(e).visibility') == 'visible'
                 page.evaluate("delete document.documentElement.dataset.toolIcons; document.documentElement.dataset.theme = 'light'")
 
-                # ---- Phone: console first, composer reachable.
-                page.set_viewport_size({'width': 390, 'height': 844})
-                page.wait_for_timeout(300)
-                if not page.locator('#composer').is_visible():
-                    row.click()  # the phone shows the list first; a tap opens the session
-                expect(page.locator('#termpane')).to_be_visible()
-                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=15000)
-                pane, composer = page.locator('#termpane').bounding_box(), page.locator('#composer').bounding_box()
-                assert pane['y'] + pane['height'] <= composer['y'] + 1 and pane['height'] > 300, (pane, composer)
-                if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
-                    page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'], 'opencode-phone.png'))
-                expect(page.locator('#composer')).to_be_visible()
-                page.set_viewport_size({'width': 1280, 'height': 860})
-
-                # ---- Reporting a problem from an OpenCode session opens the
-                # ordinary dialog; the handling CLI stays one of the report CLIs.
+                # ---- Report a problem: the ordinary dialog, report CLIs only.
                 page.locator('.dhead-actions [data-report-bug]').click()
                 expect(page.locator('#bug-report-dialog')).to_be_visible()
                 assert page.evaluate("[...document.querySelectorAll('#bug-report-source input')].map(i => i.value)") \
                     == ['claude', 'codex', 'grok']
-                if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
-                    page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'], 'opencode-report.png'))
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 
-                # ---- Delete: stops the CLI and removes the row.
-                if os.environ.get('SESSIONDOCK_TEST_SHOTS'):
-                    page.wait_for_timeout(500)
-                    page.screenshot(path=os.path.join(os.environ['SESSIONDOCK_TEST_SHOTS'], 'opencode-back-desktop.png'))
+                # ---- Stop, then resume from the native row with --session.
                 action = page.locator('#a-session-action')
                 if not action.is_visible():
                     page.locator('#a-more').click()
-                expect(action).to_have_attribute('aria-label', '删除会话')
-                with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/discard',
-                                          timeout=30000) as discarded:
+                expect(action).to_have_attribute('aria-label', '停止会话')
+                action.click()
+                page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
+                page.wait_for_function('uid => !S.live.has(uid) && !takenOver(uid)', arg=uid, timeout=30000)
+                shot('stopped')
+                with page.expect_response(lambda response: urlsplit(response.url).path == '/api/term/takeover', timeout=30000) as resumed:
+                    page.locator('#a-term').click()
+                assert resumed.value.json()['launch_kind'] == 'resume', resumed.value.text()
+                assert resumed.value.json()['declared_sid'] == sid, resumed.value.text()
+                page.wait_for_function('T.ws?.readyState === WebSocket.OPEN', timeout=20000)
+                wait_screen(page, 'sent: hello opencode')
+                shot('resumed')
+
+                # ---- Delete: stop, confirm the irreversible OpenCode delete.
+                page.locator('#a-term').click()
+                action = page.locator('#a-session-action')
+                if not action.is_visible():
+                    page.locator('#a-more').click()
+                if action.get_attribute('aria-label') == '停止会话':
                     action.click()
-                assert discarded.value.status == 200, discarded.value.text()
-                expect(row).to_have_count(0)
+                    page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
+                    if not action.is_visible():
+                        page.locator('#a-more').click()
+                with page.expect_response(lambda response: response.request.method == 'DELETE', timeout=30000) as removed:
+                    action.click()
+                assert removed.value.status == 200 and removed.value.json()['entry_id'] == '', removed.value.text()
+                assert any('OpenCode 会话会从 OpenCode 直接删除' in message and '无法恢复' in message for message in dialogs), dialogs
+                expect(page.locator(f'#side .item[data-uid="{uid}"]')).to_have_count(0)
+                expect(page.locator('#detail')).to_contain_text('会话已从 OpenCode 删除')
+                with sqlite3.connect(db) as connection:
+                    assert connection.execute('SELECT count(*) FROM session_v2 WHERE id = ?', (sid,)).fetchone()[0] == 0
+                    assert connection.execute('SELECT count(*) FROM session_message WHERE session_id = ?', (sid,)).fetchone()[0] == 0
+                assert not (root / 'mirror' / 'fakeproject' / sid).exists()
                 assert not errors, errors
             finally:
                 context.close()
                 browser.close()
-    print('PASS opencode browser: five-source picker (desktop labels, phone icons), OpenCode launch, '
-          'console-first page, input checks, paste+Enter SEND without echo wait, dark/portrait icons, delete')
+    print('PASS opencode browser: mirrored seed (image, tools, failures) listed/rendered/searched, five-source picker, '
+          'pre-created launch lands on the native row, SEND with native echo, input checks, stop+resume, '
+          'icons, report dialog, irreversible delete')
 
 
 if __name__ == '__main__':

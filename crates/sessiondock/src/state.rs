@@ -68,6 +68,9 @@ pub struct AppState {
     pub audit: Option<Arc<crate::audit::AuditService>>,
     /// Session recycle bin; `None` keeps delete/trash routes `501`.
     pub trash: Option<Arc<crate::trash::TrashService>>,
+    /// SessionDock's OpenCode mirror; deleting an OpenCode session removes
+    /// its mirrored directory under this root at once.
+    pub opencode_root: Option<std::path::PathBuf>,
     /// Node identity behind the second listener; `None` keeps
     /// `/api/meta` at `protocol: 0, node_id: null` and no hub can register us.
     pub node: Option<Arc<crate::api::node_auth::NodeIdentity>>,

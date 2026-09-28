@@ -110,7 +110,7 @@ impl BindingRecord {
 
 /// Fixed launch-kind contract, decided by code rather than by configuration:
 /// a legacy adapter runs only its fixed argv; a CLI profile starts a new
-/// session either without any upfront SID (Codex/OpenCode: identity stays pending
+/// session either without any upfront SID (Codex: identity stays pending
 /// until explicit native binding) or with a server-generated SID (Claude
 /// `--session-id`); resume names one full native SID/UID resolved by the
 /// server from its index's native catalog. The kind is private intent data, never a
@@ -135,10 +135,11 @@ impl Launch {
     fn validate(&self, source: Source) -> Result<(), Error> {
         let ok = match self {
             Self::Fixed => true,
-            // A UUID is assigned to Claude and Grok; Codex and OpenCode
-            // generate their own identity after launch.
-            Self::NewPending => matches!(source, Source::Codex | Source::Opencode),
-            Self::NewAssigned => matches!(source, Source::Claude | Source::Grok),
+            // Claude and Grok get a UUID, OpenCode an id in its own format
+            // (the launcher creates that session first); Codex discovers its
+            // thread identity after launch.
+            Self::NewPending => source == Source::Codex,
+            Self::NewAssigned => matches!(source, Source::Claude | Source::Grok | Source::Opencode),
             Self::Resume { sid, uid } => native_sid(sid) && native_uid(source, uid),
         };
         if ok { Ok(()) } else { Err(Error::InvalidSpec) }
@@ -183,7 +184,7 @@ impl LaunchSpec {
     pub fn profile_new(source: Source, adapter_id: String, cwd: &Path) -> Result<Self, Error> {
         let launch = if source == Source::Shell {
             Launch::Fixed
-        } else if !matches!(source, Source::Codex | Source::Opencode) {
+        } else if source != Source::Codex {
             Launch::NewAssigned
         } else {
             Launch::NewPending

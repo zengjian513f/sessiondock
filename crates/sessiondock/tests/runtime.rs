@@ -125,6 +125,7 @@ fn config(native: Option<PathBuf>, host: Option<PathBuf>) -> Config {
             claude: None,
             codex: native,
             grok: None,
+            opencode: None,
         },
         ptyhost_dir: host,
         // Pin the probe pool at two so the admission test can hold both permits

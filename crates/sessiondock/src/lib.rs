@@ -407,6 +407,24 @@ fn build_app(
     if !sessions::budgets::configure(pools.caches()) {
         eprintln!("sessiondock: cache budgets already fixed by an earlier app; keeping them");
     }
+    // OpenCode keeps sessions in SQLite. Its mirror directory must exist
+    // before the index freezes its roots; the mirror runs until shutdown.
+    if let (Some(database), Some(root)) =
+        (config.opencode_db.clone(), config.roots.opencode.clone())
+    {
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(&root)?;
+        sessions::opencode::Mirror::new(database, root).spawn(shutdown.clone())?;
+    }
+    // The canonical spelling rows carry in `path`.
+    let opencode_root = config
+        .roots
+        .opencode
+        .as_ref()
+        .and_then(|root| root.canonicalize().ok());
     let reader = Reader {
         store: Arc::new(sessions::SessionStore::with_metadata_and_names(
             config.roots,
@@ -540,6 +558,7 @@ fn build_app(
         _ => None,
     };
     let state = AppState {
+        opencode_root,
         conversations,
         assets,
         capabilities,

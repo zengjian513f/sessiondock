@@ -446,6 +446,7 @@ impl Index {
             claude: freeze(roots.claude),
             codex: freeze(roots.codex),
             grok: freeze(roots.grok),
+            opencode: freeze(roots.opencode),
         };
         Self {
             roots,
@@ -743,6 +744,7 @@ impl Index {
             ("claude", &self.roots.claude),
             ("codex", &self.roots.codex),
             ("grok", &self.roots.grok),
+            ("opencode", &self.roots.opencode),
         ] {
             let Some(root) = configured else { continue };
             let dir = match Dir::open_ambient_dir(root, ambient_authority()) {
@@ -764,6 +766,7 @@ impl Index {
             match source {
                 "claude" => walk.claude(&dir)?,
                 "codex" => walk.codex(&dir, PathBuf::new())?,
+                "opencode" => walk.opencode(&dir)?,
                 _ => walk.grok(&dir)?,
             }
         }
@@ -1041,6 +1044,43 @@ impl Walk<'_> {
         }
         Ok(())
     }
+
+    /// `<mirror>/<project>/<session>/` with `summary.json` and an optional
+    /// `messages.jsonl` (`sessions::opencode`). A session whose summary is
+    /// not there yet is not listed; a missing message file is an empty history.
+    fn opencode(&mut self, root: &Dir) -> Result<(), SessionError> {
+        for project in subdirectories(root, self.root) {
+            let Ok(project_dir) = root.open_dir_nofollow(&project) else {
+                continue;
+            };
+            let project_path = self.root.join(&project);
+            for session in subdirectories(&project_dir, &project_path) {
+                let path = project_path.join(&session);
+                let Ok(summary) = file_metadata(&path.join(super::opencode::SUMMARY_FILE)) else {
+                    continue;
+                };
+                if !summary.is_file() {
+                    continue;
+                }
+                let data = path.join(super::opencode::MESSAGES_FILE);
+                let stamp = file_metadata(&data)
+                    .ok()
+                    .filter(|meta| meta.is_file())
+                    .map(|meta| Stamp::of(&meta));
+                self.found.push(Discovered {
+                    source: "opencode",
+                    root: self.root.to_path_buf(),
+                    summary_path: Some(path.join(super::opencode::SUMMARY_FILE)),
+                    data,
+                    path,
+                    stamp,
+                    summary_stamp: Some(Stamp::of(&summary)),
+                    agent_id: None,
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The bytes of every regular
@@ -1249,7 +1289,7 @@ fn read_sidecar(root: &Path, path: &Path, label: &str) -> SidecarRead {
 fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
     let data = match candidate.stamp {
         Some(_) => match read_data(&candidate.root, &candidate.data) {
-            FileRead::Vanished if candidate.source == "grok" => None,
+            FileRead::Vanished if matches!(candidate.source, "grok" | "opencode") => None,
             FileRead::Vanished => return None,
             FileRead::Unreadable => {
                 let summary = unreadable(candidate);
@@ -1273,11 +1313,15 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
         Some(path) => {
             let label = if candidate.source == "grok" {
                 "Grok summary.json "
+            } else if candidate.source == "opencode" {
+                "OpenCode summary.json "
             } else {
                 "子代理元数据 (meta.json) "
             };
             match read_sidecar(&candidate.root, path, label) {
-                SidecarRead::Vanished if candidate.source == "grok" => return None,
+                SidecarRead::Vanished if matches!(candidate.source, "grok" | "opencode") => {
+                    return None;
+                }
                 SidecarRead::Vanished => None,
                 SidecarRead::Bytes(bytes, stamp) => Some((Some(bytes), Some(stamp), None)),
                 SidecarRead::Failed(stamp, reason) => {

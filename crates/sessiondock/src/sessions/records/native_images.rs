@@ -178,6 +178,7 @@ pub(crate) fn prepare_with_replay(
             _ => &[],
         },
         ("grok", "user" | "assistant" | "system" | "tool_result") => &["content"],
+        ("opencode", "user") => &["content"],
         _ => &[],
     };
     let tool =

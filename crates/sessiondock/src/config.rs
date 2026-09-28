@@ -42,6 +42,9 @@ pub struct Config {
     pub proc_root: PathBuf,
     /// Optional override for `~/.grok/active_sessions.json`.
     pub grok_active: Option<PathBuf>,
+    /// OpenCode's session database (`opencode.db`), opened read-only and
+    /// mirrored into `roots.opencode` (`sessions::opencode`).
+    pub opencode_db: Option<PathBuf>,
     /// Second listener for Hub traffic. Honoured only together
     /// with the token file, the id file and the peer networks; any subset of
     /// the four is a startup error. Never a substitute for the loopback bind.
@@ -248,6 +251,7 @@ impl Default for Config {
                 claude: None,
                 codex: None,
                 grok: None,
+                opencode: None,
             },
             codex_index: None,
             ptyhost_dir: None,
@@ -263,6 +267,7 @@ impl Default for Config {
             trash_dir: None,
             proc_root: "/proc".into(),
             grok_active: None,
+            opencode_db: None,
             node_bind: None,
             node_token_file: None,
             node_id_file: None,
@@ -360,6 +365,7 @@ impl Config {
             claude: root("SESSIONDOCK_CLAUDE_ROOT", true)?,
             codex: root("SESSIONDOCK_CODEX_ROOT", true)?,
             grok: root("SESSIONDOCK_GROK_ROOT", true)?,
+            opencode: root("SESSIONDOCK_OPENCODE_ROOT", true)?,
         };
         config.ptyhost_dir = root("SESSIONDOCK_PTYHOST_DIR", false)?;
         config.state_dir = root("SESSIONDOCK_STATE_DIR", false)?;
@@ -384,6 +390,13 @@ impl Config {
             config.proc_root = PathBuf::from(path);
         }
         config.grok_active = env::var_os("SESSIONDOCK_GROK_ACTIVE").map(PathBuf::from);
+        config.opencode_db = env::var_os("SESSIONDOCK_OPENCODE_DB").map(PathBuf::from);
+        if config.opencode_db.is_some() != config.roots.opencode.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "SESSIONDOCK_OPENCODE_DB and SESSIONDOCK_OPENCODE_ROOT are set together",
+            ));
+        }
         if let Some(bind) = env::var_os("SESSIONDOCK_NODE_BIND") {
             config.node_bind =
                 Some(bind.to_str().and_then(|s| s.parse().ok()).ok_or_else(|| {
@@ -803,6 +816,7 @@ mod tests {
                 claude: Some(temp.path().join("claude")),
                 codex: Some(temp.path().join("codex")),
                 grok: Some(temp.path().join("grok")),
+                opencode: None,
             },
             codex_index: Some(index),
             ptyhost_dir: Some(temp.path().join("host")),
