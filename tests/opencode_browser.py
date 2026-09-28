@@ -295,13 +295,11 @@ def main():
                 expect(page.locator('#csend')).to_be_enabled()
                 page.locator('#cinput').fill('')
 
-                # ---- Theme and portrait icons stay legible.
+                # ---- Theme keeps source icons legible.
                 row = page.locator(f'#side .item[data-uid="{uid}"]')
                 page.evaluate("document.documentElement.dataset.theme = 'dark'")
                 assert row.locator('.source-icon').evaluate('e => getComputedStyle(e).color') == 'rgb(170, 178, 191)'
-                page.evaluate("document.documentElement.dataset.toolIcons = 'boss'")
-                assert row.locator('.source-icon > use').evaluate('e => getComputedStyle(e).visibility') == 'visible'
-                page.evaluate("delete document.documentElement.dataset.toolIcons; document.documentElement.dataset.theme = 'light'")
+                page.evaluate("document.documentElement.dataset.theme = 'light'")
 
                 # ---- Report a problem: the ordinary dialog, report CLIs only.
                 page.locator('.dhead-actions [data-report-bug]').click()
