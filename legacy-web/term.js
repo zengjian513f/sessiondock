@@ -4117,12 +4117,12 @@ function acceptComposerServerRevision(draft,row) {
 // Only visual progress lives here. The server owns delivery and deduplication.
 const composerSendProgress = new WeakMap();
 const composerEchoHashes = new WeakMap();
-function prepareComposerSend(draft, id, uid) {
+function prepareComposerSend(draft, id, uid, text = '') {
   let state = composerSendProgress.get(draft);
   if (!state) composerSendProgress.set(draft, state = {items:[], used:new Set()});
   state.items = state.items.filter(item => item.hash || item.id === id);
   if (!state.items.some(item => item.id === id)) {
-    state.items.push({id, afterTs:queuedAfterTimestamp(uid),
+    state.items.push({id, uid, text:String(text || ''), afterTs:queuedAfterTimestamp(uid),
       afterCount:(cache.get(viewKey(uid))?.msgs || []).length, hash:null});
   }
 }
@@ -4139,10 +4139,45 @@ function acceptComposerSend(draft, result) {
   if (item && result.state === 'sent') item.hash = result.echo_hash || null;
 }
 function paintComposerSendProgress() {
-  if (composerSending) return; // Preserve upload/SEND progress labels.
   const draft = composerDrafts.get(composerDraftOwner(composerUid));
-  const pending = composerSendProgress.get(draft)?.items.some(item => item.hash);
-  setSendButtonBusy($('#csend'), pending ? '等待对话显示' : '');
+  const queued = (composerSendProgress.get(draft)?.items || []).filter(item => item.hash);
+  // Text the terminal took but no native record shows yet is queued inside
+  // the CLI (busy turn, API retry). It is drawn as a queued bubble, not as a
+  // spinner: the Send button stays free for the next message.
+  if (!composerSending) setSendButtonBusy($('#csend'), ''); // Preserve upload/SEND progress labels.
+  renderQueuedSends(composerUid, queued);
+}
+/** Queued sends live in one `#queued-sends` block after the activity row so
+ *  turn sealing, tool grouping and time dividers never treat them as history.
+ *  app.js removes the block before appending records; the tail render
+ *  restores it, and the native echo retires each bubble. */
+function renderQueuedSends(uid, items) {
+  // A new session waits on its stage page until the first native record;
+  // its queued text goes under the stage text instead of a message list.
+  const box = $('#msgs'), stage = box ? null : $('#detail .new-session-wait');
+  $('#queued-sends')?.remove();
+  if (!box && !stage) return;
+  // The draft already belongs to this composer's session (temporary launch
+  // bindings carry over), so every unretired item is shown here.
+  const rows = uid && uid === S.sel && !S.agent ? items : [];
+  if (!rows.length) return;
+  const block = el('div', 'queued-sends');
+  block.id = 'queued-sends';
+  block.setAttribute('role', 'status');
+  block.setAttribute('aria-live', 'polite');
+  for (const item of rows) {
+    const n = el('div', 'msg queued-send');
+    n.dataset.role = 'user';
+    n.dataset.requestId = item.id;
+    const body = el('div', 'mb');
+    if (typeof md === 'function') body.innerHTML = md(item.text, true, [], {uid, agent:null});
+    else body.textContent = item.text;
+    n.appendChild(body);
+    n.appendChild(el('small', 'queued-send-state', '已发送，等待 CLI 处理'));
+    block.appendChild(n);
+  }
+  if (box) box.appendChild(block);
+  else stage.insertAdjacentElement('afterend', block);
 }
 async function reconcileComposerSendProgress(uid) {
   const draft = composerDrafts.get(composerDraftOwner(uid));
@@ -5652,7 +5687,7 @@ async function submitComposer() {
     if (!await persistComposerDraft(uid)) throw new Error(draft.storageError || '提交标识尚未保存');
     const submittedRevision = draft.revision;
     setSendButtonBusy(button, '发送中');
-    prepareComposerSend(draft, draft.requestId, uid);
+    prepareComposerSend(draft, draft.requestId, uid, text);
     const sent = await sendToSession(text, null, uid, [], {requestId:draft.requestId,
       draftRevision:submittedRevision, attachments:uploaded, quotes});
     if (sent) await consumeComposerSubmission(uid,text,attachments,quotes);

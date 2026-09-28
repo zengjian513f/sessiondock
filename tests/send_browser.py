@@ -78,7 +78,7 @@ def create_claude(page, base, work, *, open_terminal=True):
 def wait_history(page, text, timeout=20000):
     try:
         page.wait_for_function(
-            "text => [...document.querySelectorAll('#msgs .msg')].some(n => n.textContent.includes(text))",
+            "text => [...document.querySelectorAll('#msgs .msg:not(.queued-send)')].some(n => n.textContent.includes(text))",
             arg=text, timeout=timeout)
     except Exception:
         print("history timeout:", page.evaluate("() => ({uid: S.sel, text: document.querySelector('#msgs')?.innerText})"), flush=True)
@@ -189,14 +189,18 @@ def main():
                     page.wait_for_function('composerUid && !composerDraft().loading')
                     assert not page.evaluate('composerDraft().storageError || composerDraft().loadFailed')
                     first=send('first busy input',check_width=True)
-                    # A successful write is not a visible native message yet.
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
-                    expect(page.locator('#csend')).to_have_attribute('aria-label','等待对话显示')
+                    # A successful write is not a native message yet: the CLI holds it
+                    # in its own queue. It shows as a queued bubble at the tail and the
+                    # Send button does not spin (BUG-20260928-113817-9301c2).
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     expect(page.locator('#csend')).to_be_enabled()
-                    assert page.locator('#msgs .msg[data-role=user]').filter(has_text='first busy input').count()==0
+                    expect(page.locator('#queued-sends .msg.queued-send[data-role=user]').filter(has_text='first busy input')).to_have_count(1)
+                    expect(page.locator('#queued-sends .queued-send-state').first).to_have_text('已发送，等待 CLI 处理')
+                    assert page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text='first busy input').count()==0
                     page.locator('#cinput').fill('second busy input')
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
+                    expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     second=send('second busy input')
+                    expect(page.locator('#queued-sends .msg.queued-send')).to_have_count(2)
                     assert first['request_id']!=second['request_id']
                     replay=context.request.post(base+'/api/session/conversation/send',data=first)
                     assert replay.status==200,replay.text()
@@ -211,10 +215,12 @@ def main():
                     native=page.evaluate('S.sel')
                     wait_history(page,'second busy input')
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
-                    # Older identical history must not clear a new send's spinner.
+                    expect(page.locator('#queued-sends')).to_have_count(0)
+                    # Older identical history must not retire a new send's queued bubble.
                     send('first busy input')
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
-                    page.wait_for_function("() => [...document.querySelectorAll('#msgs .msg[data-role=user]')].filter(n => n.textContent.includes('first busy input')).length === 2")
+                    expect(page.locator('#queued-sends .msg.queued-send').filter(has_text='first busy input')).to_have_count(1)
+                    page.wait_for_function("() => [...document.querySelectorAll('#msgs .msg[data-role=user]:not(.queued-send)')].filter(n => n.textContent.includes('first busy input')).length === 2")
+                    expect(page.locator('#queued-sends')).to_have_count(0)
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     # A CLI that repaints the paste after SEND's 3 s wait still
                     # gets Enter, like Python; the draft must not be stranded in
@@ -305,11 +311,13 @@ def main():
                     assert context.request.get(base+'/api/session/conversation?uid='+other).json()['draft']['value']['text']=='separate session'
                     assert context.request.get(base+'/api/session/conversation?uid='+native).json()['draft']['value']['text']=='draft survives refresh'
                     send('spinner session isolation')
-                    expect(page.locator('#csend')).to_have_attribute('aria-busy','true')
+                    expect(page.locator('#queued-sends .msg.queued-send').filter(has_text='spinner session isolation')).to_have_count(1)
                     page.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}',other_receipt)
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    expect(page.locator('#queued-sends')).to_have_count(0)
                     page.locator(f'#side .item[data-uid="{native}"]').click()
                     wait_history(page,'spinner session isolation')
+                    expect(page.locator('#queued-sends')).to_have_count(0)
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
                     # A lost HTTP reply is resolved by GET before any stale save or second SEND.
                     def lose_reply(route):

@@ -1220,6 +1220,15 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   display: block; padding: 0 10px 8px; color: var(--muted);
   font-size: 10.5px; line-height: 1.2; text-align: right;
 }
+/* Sent text the CLI still holds in its own queue: a dimmed user bubble at
+   the tail instead of a Send-button spinner. */
+.queued-sends { display: contents; }
+#detail > .queued-sends { display: block; padding: 0 18px 24px; }
+.msg.queued-send { opacity: .72; border-style: dashed; }
+.queued-send-state {
+  display: block; padding: 0 10px 8px; color: var(--muted);
+  font-size: 10.5px; line-height: 1.2; text-align: right;
+}
 .msg[data-role="assistant"], .msg[data-role="assistant·subagent"],
 .msg[data-role="user·subagent"] { --bubble: var(--bubble-assistant); }
 .msg[data-role="thinking"] {
