@@ -86,6 +86,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/session/conversation/check", post(conversation::check))
         .route(
+            "/session/conversation/queued/dismiss",
+            post(conversation::dismiss_queued),
+        )
+        .route(
             "/session/conversation/attachment",
             post(conversation::upload)
                 .get(conversation::staged)

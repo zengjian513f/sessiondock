@@ -25,13 +25,50 @@ pub struct MessageBody {
 
 impl MessageBody {
     /// The complete document, with `"prompt": <prompt>` appended when given.
-    pub fn finish(mut self, prompt: Option<&Value>) -> Vec<u8> {
+    #[cfg(test)]
+    pub fn finish(self, prompt: Option<&Value>) -> Vec<u8> {
+        self.finish_with(prompt, None)
+    }
+    /// The complete document, with `"prompt": <prompt>` and the per-session
+    /// `"cli": <state>` (docs/cli-state.md) appended when given.
+    pub fn finish_with(mut self, prompt: Option<&Value>, cli: Option<&Value>) -> Vec<u8> {
         if let Some(prompt) = prompt {
             self.open.extend_from_slice(b",\"prompt\":");
             serde_json::to_writer(&mut self.open, prompt).expect("serde_json::Value serializes");
         }
+        if let Some(cli) = cli {
+            self.open.extend_from_slice(b",\"cli\":");
+            serde_json::to_writer(&mut self.open, cli).expect("serde_json::Value serializes");
+        }
         self.open.push(b'}');
         self.open
+    }
+    /// `(echo digest, record time)` of the batch's user/command messages, in
+    /// order, for retiring queued sends (`conversation::cli_state`).
+    pub fn echoes(&self, snapshot: &ViewSnapshot) -> Vec<(String, Option<f64>)> {
+        let mut events = snapshot
+            .view
+            .events()
+            .filter(|event| event.message["role"] != "status");
+        let mut position = 0;
+        let mut found = Vec::new();
+        for &wanted in &self.positions {
+            let Some(event) = events.nth(wanted - position) else {
+                break;
+            };
+            position = wanted + 1;
+            let message = &event.message;
+            if !matches!(message["role"].as_str(), Some("user" | "command")) {
+                continue;
+            }
+            let text = message["text"].as_str().unwrap_or("");
+            let ts = message["ts"]
+                .as_str()
+                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                .map(|at| at.timestamp_millis() as f64 / 1000.0);
+            found.push((crate::conversation::cli_state::echo_hash(text), ts));
+        }
+        found
     }
     /// The finished document's size without a `prompt` field.
     pub fn size(&self) -> usize {
