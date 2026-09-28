@@ -533,6 +533,9 @@ impl<'a> Graph<'a> {
             if let Some(latest) = self.later_generation(uid) {
                 row["continued_in"] = json!(latest);
             }
+            if let Some(turn) = entry.summary.turn {
+                row["turn"] = json!(turn);
+            }
         }
         row
     }

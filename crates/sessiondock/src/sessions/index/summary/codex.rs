@@ -40,6 +40,55 @@ fn open_turn(records: &Records) -> bool {
         .unwrap_or(false)
 }
 
+/// Main-rollout turn state for the list: the latest turn-boundary
+/// `event_msg` read the way the parser reads it (`task_started` → `working`,
+/// `task_complete` → `idle` or `failed`, `turn_aborted` → `aborted`); an open
+/// turn whose newest response item is a question tool call is `waiting`.
+fn main_turn(records: &Records) -> Option<&'static str> {
+    let mut asking = None;
+    for record in records
+        .tail
+        .records
+        .iter()
+        .rev()
+        .chain(records.head.records.iter().rev())
+    {
+        let payload = &record.value["payload"];
+        match record.value["type"].as_str() {
+            Some("response_item") => {
+                asking.get_or_insert_with(|| {
+                    matches!(
+                        payload["type"].as_str(),
+                        Some("function_call" | "custom_tool_call")
+                    ) && payload["name"]
+                        .as_str()
+                        .is_some_and(crate::sessions::providers::question_tool)
+                });
+            }
+            Some("event_msg") => match payload["type"].as_str().unwrap_or("") {
+                "task_started" | "turn_started" => {
+                    return Some(if asking == Some(true) {
+                        "waiting"
+                    } else {
+                        "working"
+                    });
+                }
+                "task_complete" | "turn_complete" => {
+                    return Some(if truthy(&payload["error"]) {
+                        "failed"
+                    } else {
+                        "idle"
+                    });
+                }
+                "turn_aborted" => return Some("aborted"),
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    None
+}
+
 pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
     let stem = input
         .path
@@ -242,5 +291,10 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         warnings,
         committed,
         cursor_head: committed.and_then(|end| cursor_head(data, end)),
+        turn: if is_subagent {
+            None
+        } else {
+            main_turn(&records)
+        },
     }
 }
