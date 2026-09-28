@@ -4,6 +4,7 @@
 Isolated Rust server, synthetic Claude session with a branch (an API field only), no CLI. Widths go from 1698 down to
 320 (608 and both sides of every breakpoint included); each width checks two invariants and the
 whole sweep checks the fold order:
+  the active/total counters live in the draggable filter bar and scroll with it at 320px;
   header chrome, in this order as the page gets narrower: Agent/view/nest labels, then the
       hostname title, then machine chips down to their initials (seeded here; hub does the same),
       then right-side buttons. Buttons that fold are a suffix of the priority list (settings ->
@@ -281,6 +282,24 @@ def seed_header_nodes(page):
     settle(page)
 
 
+def check_scope_scrolls(page):
+    # The active/total counters sit in the draggable filter bar and move with it.
+    page.set_viewport_size({"width": 320, "height": 900})
+    page.evaluate("showMobileList()")
+    settle(page)
+    bar = page.locator("header .header-filters")
+    assert bar.locator("#session-scope").count() == 1
+    assert bar.evaluate("e => e.scrollWidth > e.clientWidth"), "filter bar must overflow at 320px"
+    before = page.locator("#session-scope").bounding_box()["x"]
+    box = bar.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.wheel(200, 0)
+    page.wait_for_function("document.querySelector('header .header-filters').scrollLeft > 0")
+    after = page.locator("#session-scope").bounding_box()["x"]
+    assert after < before, (before, after)
+    bar.evaluate("e => { e.scrollLeft = 0; }")
+
+
 def run(page, uid):
     page.evaluate("uid => openSession(uid)", uid)
     page.wait_for_function('document.querySelector("#msgs")?.textContent.includes("reply Sweep")')
@@ -330,6 +349,7 @@ def run(page, uid):
             settle(page)
         state = check_head(page, width, tier, head_tiers, "viewport", meta_order)
         head_rows.append((width, state["menu_meta"] + state["menu_actions"], tier))
+    check_scope_scrolls(page)
     header_events = fold_events(header_rows, lambda tier: header_actions)
     head_events = fold_events(head_rows, priority_of)
     first_chrome = {}

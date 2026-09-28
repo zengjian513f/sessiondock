@@ -1994,13 +1994,12 @@ body.dragging-v { cursor: row-resize; user-select: none; }
     height: var(--visual-viewport-height, 100dvh);
   }
 
-  /* 窄屏顶栏只有一行：会话范围、机器下拉、Agent 图标、视图、放得下的按钮和 ⋯ */
+  /* 窄屏顶栏只有一行：会话范围、机器缩写、Agent 图标、视图（这几项一起横向拖动）、放得下的按钮和 ⋯ */
   header {
     gap: 4px;
     padding: 6px max(8px, env(safe-area-inset-right)) 6px max(8px, env(safe-area-inset-left));
   }
-  .brand { gap: 0; margin-right: 0; }
-  .brand-name, #side-toggle { display: none; }
+  .brand { display: none; }
   .header-filters { gap: 4px; touch-action: pan-x; }
   .chip > span, .header-filters .mobile-label { display: none; }
   .chip > b { display: none; }
