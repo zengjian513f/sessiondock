@@ -47,6 +47,19 @@ def main():
         assistant_paste = paste("assistant", "assistant literal envelope")
         paste_rows.append(claude_row("claude-pasted", "assistant", "paste-answer", parent, assistant_paste))
         corpus.put("claude-pasted", "claude", paste_rows, [])
+        # BUG-20260928-143324-af9aac: Claude 2.1.283 writes its transcript at
+        # startup, before any prompt; the row keeps the new-session label.
+        fresh = "4f0c2a91-5d3e-4b7a-9c61-2e8d7f0a3b15"
+        corpus.put(fresh, "claude", [
+            {"type": "last-prompt", "leafUuid": "fresh-hook", "sessionId": fresh},
+            {"type": "mode", "mode": "normal", "sessionId": fresh},
+            {"type": "attachment", "uuid": "fresh-hook", "parentUuid": None, "isSidechain": False,
+             "attachment": {"type": "hook_success", "hookName": "SessionStart:startup"},
+             "timestamp": "2026-09-11T10:00:00.000Z", "cwd": "/synthetic/history", "sessionId": fresh},
+            {"type": "system", "subtype": "informational", "content": "Fresh startup notice", "isMeta": False,
+             "uuid": "fresh-note", "parentUuid": "fresh-hook", "isSidechain": False, "level": "notice",
+             "timestamp": "2026-09-11T10:00:01.000Z", "cwd": "/synthetic/history", "sessionId": fresh},
+        ], [])
         # Codex rotates a physical rollout but keeps the same native thread id.
         old_meta = batch35_meta("codex-rotation", "2026-09-11T08:00:00Z")
         old_meta["ordinal"] = 10
@@ -111,6 +124,11 @@ def main():
                     expect(page.locator("#a-term")).to_be_visible()
                     expect(page.locator("#a-term")).to_be_enabled()
 
+                fresh_item = page.locator(f'#side .item[data-uid="{corpus.uid(fresh)}"]')
+                expect(fresh_item.locator(".t")).to_have_text("新建 Claude 会话")
+                select(fresh, "Fresh startup notice")
+                expect(page.locator(".dtitle h2")).to_contain_text("新建 Claude 会话")
+                expect(page.locator(".dtitle h2")).not_to_contain_text(fresh[:8])
                 select("rotation-new", "Rotation continued question")
                 expect(page.locator("#msgs")).to_contain_text("Rotation inherited question")
                 expect(page.locator("#msgs")).to_contain_text("Rotation inherited answer")

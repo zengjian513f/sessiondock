@@ -15,6 +15,9 @@ use super::{
     py_strip, skipped_warnings, text_if_truthy, title_from_text, truthy,
 };
 
+/// Title of a transcript with no prompt or title record yet: the pending-session label.
+const UNTITLED_TITLE: &str = "新建 Claude 会话";
+
 /// `<project>/<sid>/subagents/agent-<id>.jsonl` → `<id>`.
 pub(crate) fn agent_id(path: &Path) -> Option<&str> {
     let directory = path.parent()?;
@@ -170,7 +173,9 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .or(generated_title)
         .unwrap_or_else(|| match &first_user {
             Some(text) => title_from_text(text),
-            None => stem.chars().take(8).collect(),
+            // Claude now writes its file before the first prompt; like Grok,
+            // keep the pending-session label instead of Python's stem[:8] (DELTA).
+            None => UNTITLED_TITLE.to_owned(),
         });
     let cwd = cwd
         .or_else(|| {
