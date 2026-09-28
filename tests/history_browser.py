@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from datetime import datetime, timezone
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -59,6 +60,19 @@ def main():
             {"type": "system", "subtype": "informational", "content": "Fresh startup notice", "isMeta": False,
              "uuid": "fresh-note", "parentUuid": "fresh-hook", "isSidechain": False, "level": "notice",
              "timestamp": "2026-09-11T10:00:01.000Z", "cwd": "/synthetic/history", "sessionId": fresh},
+        ], [])
+        # BUG-20260928-151831-4bbf09: a prompt queued while a tool runs is
+        # written beside the rejected tool result, but the continuation that
+        # answers it carries the prompt's promptId. It was accepted, not cut.
+        queued = "claude-queued"
+        now = lambda: datetime.now(timezone.utc).isoformat()
+        running = claude_row(queued, "assistant", "q-a0", "q-u0", timestamp=now())
+        running["message"] = {"role": "assistant", "stop_reason": "tool_use", "content": [
+            {"type": "tool_use", "id": "toolu_queued", "name": "Bash",
+             "input": {"command": "synthetic; never executed"}}]}
+        corpus.put(queued, "claude", [
+            claude_row(queued, "user", "q-u0", None, "Claude queued base question", promptId="p-old"),
+            running,
         ], [])
         # Codex rotates a physical rollout but keeps the same native thread id.
         old_meta = batch35_meta("codex-rotation", "2026-09-11T08:00:00Z")
@@ -229,6 +243,50 @@ def main():
                 expect(page.locator("#msgs")).to_contain_text("Claude fast Esc input")
                 expect(page.locator("#msgs")).to_contain_text("已中断")
 
+                # The queued prompt stays a live input: no interrupt badge, and
+                # the turn keeps working after the native cancel record.
+                select(queued, "Claude queued base question")
+                page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
+                activity = "cache.get(viewKey(S.sel, S.agent))?.activity?.state"
+                page.wait_for_function(f"{activity} === 'working'")
+                rejected = [{"type": "tool_result", "tool_use_id": "toolu_queued", "is_error": True,
+                             "content": "The user doesn't want to proceed with this tool use."}]
+                with corpus.paths[queued].open("ab") as stream:
+                    stream.write(encoded({"type": "queue-operation", "operation": "dequeue", "sessionId": queued}))
+                    stream.write(encoded(claude_row(queued, "user", "q-u1", "q-a0", "Claude queued follow-up",
+                                                    promptId="p-new", promptSource="queued",
+                                                    origin={"kind": "human"}, timestamp=now())))
+                    stream.write(encoded(claude_row(queued, "attachment", "q-hook", "q-u1", timestamp=now(),
+                                                    attachment={"type": "hook_success"})))
+                    stream.write(encoded(claude_row(queued, "user", "q-tr", "q-a0", rejected,
+                                                    promptId="p-new", timestamp=now())))
+                    stream.write(encoded(claude_row(queued, "user", "q-int", "q-tr",
+                                                    [{"type": "text", "text": "[Request interrupted by user for tool use]"}],
+                                                    promptId="p-new", interruptedMessageId="msg_queued",
+                                                    timestamp=now())))
+                    progress = claude_row(queued, "assistant", "q-a1", "q-int", "Claude queued continuation",
+                                          timestamp=now())
+                    progress["message"]["stop_reason"] = "tool_use"
+                    stream.write(encoded(progress))
+                expect(page.locator("#msgs")).to_contain_text("Claude queued continuation", timeout=10000)
+                expect(page.locator("#msgs")).to_contain_text("Claude queued follow-up")
+                expect(page.locator("#msgs .native-interrupted")).to_have_count(0)
+                expect(page.locator("#msgs")).not_to_contain_text("已中断")
+                page.wait_for_function(f"{activity} === 'working'")
+                with corpus.paths[queued].open("ab") as stream:
+                    stream.write(encoded(claude_row(queued, "assistant", "q-a2", "q-a1", "Claude queued final answer",
+                                                    timestamp=now())))
+                    stream.write(encoded(claude_row(queued, "system", "q-done", "q-a2", subtype="turn_duration",
+                                                    durationMs=1200, timestamp=now())))
+                expect(page.locator("#msgs")).to_contain_text("Claude queued final answer", timeout=10000)
+                page.wait_for_function(f"{activity} === 'idle'")
+                # A fresh full read reaches the same timeline as the appends.
+                page.reload(wait_until="networkidle")
+                select(queued, "Claude queued final answer")
+                expect(page.locator("#msgs")).to_contain_text("Claude queued follow-up")
+                expect(page.locator("#msgs .native-interrupted")).to_have_count(0)
+                assert page.evaluate(activity) == "idle"
+
                 # A last-prompt append retracts a completed branch. A proper SSE
                 # reset must replace the already rendered timeline, not append.
                 select("claude-branch", "Claude selected answer")
@@ -299,7 +357,7 @@ def main():
                 assert all(url.startswith(base + "/") for url in requests), "browser escaped isolated loopback origin"
                 for suffix in ("/api/audit/browser", "/api/session/outbox", "/api/session/resolve-files"):
                     assert not any(suffix in url for url in requests), suffix
-                print("PASS advanced legacy browser: Claude branch/compact/interrupted inputs, refreshed agent menus, parent-chain navigation, nested subagent views, ancestor-prefix SSE reset, cache re-entry")
+                print("PASS advanced legacy browser: Claude branch/compact/interrupted/queued inputs, refreshed agent menus, parent-chain navigation, nested subagent views, ancestor-prefix SSE reset, cache re-entry")
             finally:
                 browser.close()
 
