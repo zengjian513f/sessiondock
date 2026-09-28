@@ -24,6 +24,10 @@ pub struct Instance {
     /// `true` after a successful screen read, `false` after a failed one,
     /// `null` before the first attempt.
     pub running: Option<bool>,
+    /// The screen shows the CLI's busy indicator (spinner, "esc to
+    /// interrupt") on the last successful read; `null` after a failed read
+    /// or for CLIs without a recognized busy indicator (Grok, OpenCode).
+    pub busy: Option<bool>,
 }
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Editor {
@@ -58,12 +62,14 @@ struct Entry {
     running: Option<bool>,
     input: Option<InputStatus>,
     editor_text: Option<String>,
+    busy: Option<bool>,
     failing_since: Option<Instant>,
 }
 
-/// One observation result: the classified input state and editor text, or
-/// the failure that kept the screen unreadable (instance gone, host error).
-pub type Observation = Result<(InputStatus, Option<String>), Failure>;
+/// One observation result: the classified input state, editor text and busy
+/// indicator, or the failure that kept the screen unreadable (instance gone,
+/// host error).
+pub type Observation = Result<(InputStatus, Option<String>, Option<bool>), Failure>;
 
 #[derive(Default)]
 pub struct Registry {
@@ -130,17 +136,19 @@ impl Registry {
         let now = Instant::now();
         entry.attempted = Some(now);
         match observation {
-            Ok((input, text)) => {
+            Ok((input, text, busy)) => {
                 entry.observed_at = Some(unix_now());
                 entry.running = Some(true);
                 entry.input = Some(*input);
                 entry.editor_text = text.clone();
+                entry.busy = *busy;
                 entry.failing_since = None;
             }
             Err(_) => {
                 entry.running = Some(false);
                 entry.input = None;
                 entry.editor_text = None;
+                entry.busy = None;
                 entry.failing_since.get_or_insert(now);
             }
         }
@@ -154,6 +162,7 @@ impl Registry {
             observed_at: entry.observed_at,
             instance: Instance {
                 running: entry.running,
+                busy: entry.busy,
             },
             input: entry.input,
             editor: Editor {
@@ -173,6 +182,17 @@ pub fn editor_text(
     match source {
         "claude" => driver::inspect(capture).text,
         "codex" => driver::inspect_codex(capture).text,
+        _ => None,
+    }
+}
+
+/// Whether the screen shows the CLI's busy indicator, for CLIs the driver
+/// recognizes; the same patterns delivery uses before it types.
+pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCapture) -> Option<bool> {
+    use crate::delivery::driver;
+    match source {
+        "claude" => Some(driver::busy_screen(&capture.text)),
+        "codex" => Some(driver::codex_busy_screen(&capture.text)),
         _ => None,
     }
 }
@@ -215,7 +235,11 @@ mod tests {
                 .fresh("k", Duration::from_secs(1), vec![])
                 .is_none()
         );
-        let (state, lost) = registry.record("k", &Ok((ready(), Some("draft".into()))), vec![]);
+        let (state, lost) = registry.record(
+            "k",
+            &Ok((ready(), Some("draft".into()), Some(false))),
+            vec![],
+        );
         assert!(!lost);
         assert_eq!(state.instance.running, Some(true));
         assert_eq!(state.editor.text.as_deref(), Some("draft"));
@@ -241,6 +265,7 @@ mod tests {
         let value = registry.current("none", vec![]).to_value();
         assert!(value["observed_at"].is_null());
         assert!(value["instance"]["running"].is_null());
+        assert!(value["instance"]["busy"].is_null());
         assert!(value["input"].is_null());
         assert!(value["editor"]["text"].is_null());
         assert_eq!(value["queued"], serde_json::json!([]));

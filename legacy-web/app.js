@@ -685,9 +685,10 @@ const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidd
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端）
 const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
   : tmux ? '运行于受管终端' : '运行中';
-const sessionIconMarkup = (src, live, tmux) => `<span class="ico">${icon(src)}<span
-  class="item-status${live ? ' visible' : ''}${tmux ? ' tmux' : ''}" id="dlive"
-  title="${esc(liveStatusTitle(tmux))}" aria-label="${esc(liveStatusTitle(tmux))}"></span></span>`;
+const sessionIconMarkup = (src, live, tmux, turn = '') => `<span class="ico">${icon(src)}<span
+  class="item-status${live ? ' visible' : ''}${tmux ? ' tmux' : ''}${turn ? ` turn-${turn}` : ''}" id="dlive"
+  title="${esc(liveStatusTitle(tmux) + turnLabel(turn))}"
+  aria-label="${esc(liveStatusTitle(tmux) + turnLabel(turn))}"></span></span>`;
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 let staleBuildShown = false;
@@ -1312,6 +1313,12 @@ function applyMigrationMeta(uid, agent, entry, meta) {
 }
 
 async function applyDiff(uid, data, bytes = 0, agent = null) {
+  try { return await applyDiffPacket(uid, data, bytes, agent); }
+  // activity 与 CLI 画面都随数据包到达，左栏和会话头的回合状态跟着重画。
+  finally { if (!agent) paintTurn(uid); }
+}
+
+async function applyDiffPacket(uid, data, bytes = 0, agent = null) {
   const key = viewKey(uid, agent);
   if (migrationReadPaused(uid, agent)) return 0;
   const e = cache.get(key);
@@ -1796,9 +1803,42 @@ function paintItemStatus(node) {
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
   badge.classList.toggle('idle', !active);
+  const turn = pending ? '' : sessionTurn(node.dataset.uid);
+  badge.classList.toggle('turn-working', turn === 'working');
+  badge.classList.toggle('turn-waiting', turn === 'waiting');
+  const running = (tmux ? '受管会话运行中' : '会话运行中') + turnLabel(turn);
   badge.title = badge.ariaLabel = row.count
-    ? `${row.count} 条新内容，${!active ? '会话已退出' : tmux ? '受管会话运行中' : '运行中'}`
-    : (tmux ? '受管会话运行中' : '会话运行中');
+    ? `${row.count} 条新内容，${!active ? '会话已退出' : running}`
+    : running;
+}
+
+/** 回合状态只在进程还在跑时区分：working = 正在轮转，waiting = 等你回答，idle = 停在输入框。
+ *  正在看的会话用最新的对话 activity 和 CLI 画面（cli.instance.busy，docs/cli-state.md），
+ *  其他行用列表的 turn（docs/read-model.md）。缺字段的旧节点返回空串，只显示运行点。 */
+function sessionTurn(uid) {
+  if (!uid || !S.live.has(uid)) return '';
+  const entry = S.sel === uid ? cache.get(viewKey(uid)) : null;
+  let state = entry?.activity?.state || indexedSessions().byUid.get(uid)?.turn || '';
+  const busy = entry?.cli?.instance?.busy;
+  if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
+  return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
+}
+const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
+
+function paintTurn(uid) {
+  paintItemStatus(document.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`));
+  if (uid === S.sel) paintHeaderTurn();
+}
+
+function paintHeaderTurn() {
+  const h = $('#dlive');
+  if (!h) return;
+  const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
+  const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
+  const turn = row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
+  h.classList.toggle('turn-working', turn === 'working');
+  h.classList.toggle('turn-waiting', turn === 'waiting');
+  h.title = h.ariaLabel = liveStatusTitle(tmux) + turnLabel(turn);
 }
 
 function addUnread(uid, count) {
@@ -1916,7 +1956,7 @@ function paintLive() {
     const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
     h.classList.toggle('visible', live);
     h.classList.toggle('tmux', tmux);
-    h.title = h.ariaLabel = liveStatusTitle(tmux);
+    paintHeaderTurn();
   }
   const selected = S.sessions.find(x => x.uid === S.sel);
   if (selected) {
@@ -5415,7 +5455,7 @@ function head(m, total) {
     <div class="dtitle">
       <button class="mobile-back" title="返回会话列表" aria-label="返回会话列表">←</button>
       <h2 class="${hasAgents ? 'has-session-views' : ''}">${sessionIconMarkup(m.source,
-        S.live.has(m.uid), tmuxLive)}${titleView}</h2>
+        S.live.has(m.uid), tmuxLive, sessionTurn(m.uid))}${titleView}</h2>
       ${menuView}
       <div class="dhead-actions" aria-label="会话操作">
         ${forkChainButtonMarkup(m)}

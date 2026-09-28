@@ -9,7 +9,7 @@
 ```json
 {
   "observed_at": 1759056000.123,
-  "instance": {"running": true},
+  "instance": {"running": true, "busy": false},
   "input": {"state": "ready", "code": "", "message": ""},
   "editor": {"text": "粘贴的时候…"},
   "queued": [
@@ -22,6 +22,7 @@
 | --- | --- |
 | `observed_at` | 最近一次成功读到画面的 Unix 秒；从未读到为 `null` |
 | `instance.running` | 最近一次读画面成功为 `true`，失败（实例已退出、宿主不可达）为 `false`，尚未尝试为 `null` |
+| `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`，与投递前判忙同一规则；Claude、Codex）；读失败、尚未读到或 Grok、OpenCode 为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex）；Grok、OpenCode 尚无提取，为 `null` |
 | `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued` 或 `lost` |
@@ -38,6 +39,7 @@
 ## 前端
 
 - 排队项在对话末尾（活动状态行之后）按用户气泡显示，标注"已发送，等待 CLI 处理"；`lost` 项标注"未送达，请到终端查看"并提供关闭。新建会话的等待页把它们放在等待文案之下。
+- 会话运行中时，左栏与会话头的运行点按回合状态显示：轮转中外圈扩散、等待回答为琥珀色、空闲静止。正在看的会话以 `instance.busy` 为准（对话 `activity` 为 `waiting` 时优先显示等待），其他会话用列表行的 `turn`（[read-model.md](read-model.md)）。
 - 发送按钮不因等待回显而转圈；对象里 `input` 非空时按它更新输入就绪提示，与 CHECK 轮询结果同源。
 - `cli` 只随数据包变化时推送（`{"cli_only": true, "cli": …}`），页面不轮询它；没有该字段的旧节点退化为只看 CHECK 响应。
 

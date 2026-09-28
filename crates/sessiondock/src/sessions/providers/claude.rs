@@ -408,7 +408,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
 
 /// The native mark of an Esc, not a
 /// new input. Texts are the string content or the string / `text` blocks.
-fn interrupt_record(record: &Value) -> bool {
+pub(super) fn interrupt_record(record: &Value) -> bool {
     if record["type"] != "user" {
         return false;
     }
