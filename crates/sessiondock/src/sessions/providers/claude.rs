@@ -23,6 +23,9 @@ pub(super) struct Lineage {
     /// them: their `aborted` status comes from that record, not right after
     /// the input.
     pub deferred_abort: HashSet<String>,
+    /// Native interrupt records written when a queued prompt cancelled the
+    /// running tool: the prompt's turn goes on, so they abort nothing.
+    pub continued: HashSet<String>,
     pub tip: Option<String>,
     /// Graph node → parent after compact reconnection; pin validation only.
     pub parents: HashMap<String, Option<String>>,
@@ -235,6 +238,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
     let mut users = HashMap::<String, (Option<String>, u64)>::new();
     let mut responses = HashSet::<String>::new();
     let mut interrupts = Vec::<String>::new();
+    let mut prompts = HashMap::<String, String>::new();
     let mut scan_tip = None;
     let declared = options.declared_tip.filter(|tip| !tip.is_empty());
     let mut tip = declared.map(str::to_owned);
@@ -252,6 +256,9 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             parents.insert(id.to_owned(), parent.clone());
             if options.agent.is_empty() && record["type"] == "user" {
                 users.insert(id.to_owned(), (parent, *end));
+                if let Some(prompt) = record["promptId"].as_str().filter(|id| !id.is_empty()) {
+                    prompts.insert(id.to_owned(), prompt.to_owned());
+                }
                 if interrupt_record(record) {
                     interrupts.push(id.to_owned());
                 }
@@ -274,6 +281,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             abandoned: HashSet::new(),
             offshoot: HashSet::new(),
             deferred_abort: HashSet::new(),
+            continued: HashSet::new(),
             tip,
             parents,
             warnings: Vec::new(),
@@ -300,6 +308,41 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
             break;
         };
         node = parent.as_deref();
+    }
+    // A prompt queued while a tool ran is written beside the tool result its
+    // submit rejected, yet the records that answer it carry its `promptId`:
+    // the input was accepted and belongs to the timeline. The interrupt below
+    // that rejected result ends the old tool, not the prompt's turn.
+    let active_prompts = prompts
+        .iter()
+        .filter(|(id, _)| active.contains(*id))
+        .map(|(_, prompt)| prompt.as_str())
+        .collect::<HashSet<_>>();
+    let accepted = users
+        .iter()
+        .filter(|(id, (parent, _))| {
+            !active.contains(*id)
+                && parent
+                    .as_deref()
+                    .is_some_and(|parent| active.contains(parent))
+                && prompts
+                    .get(*id)
+                    .is_some_and(|prompt| active_prompts.contains(prompt.as_str()))
+        })
+        .map(|(id, (parent, _))| (id.clone(), parent.clone()))
+        .collect::<Vec<_>>();
+    let mut continued = HashSet::new();
+    for (id, parent) in accepted {
+        for interrupt in &interrupts {
+            let rejected = parents.get(interrupt).and_then(Option::as_deref);
+            if active.contains(interrupt)
+                && prompts.get(interrupt) == prompts.get(&id)
+                && rejected.is_some_and(|rejected| parents.get(rejected) == Some(&parent))
+            {
+                continued.insert(interrupt.clone());
+            }
+        }
+        active.insert(id);
     }
     let mut responded = HashSet::<String>::new();
     for response in &responses {
@@ -400,6 +443,7 @@ pub(super) fn lineage(records: &[(Value, u64)], options: ParseOptions<'_>) -> Li
         abandoned,
         offshoot,
         deferred_abort,
+        continued,
         tip,
         parents,
         warnings,
@@ -443,6 +487,8 @@ pub(super) struct Branch {
     /// The `aborted` status is emitted by the
     /// native interrupt record (or ends with the response) below it.
     pub deferred_abort: bool,
+    /// A native interrupt that a queued prompt's turn continues past.
+    pub continued: bool,
 }
 
 /// Content blocks of one record. Array elements that are neither strings nor
@@ -559,7 +605,9 @@ pub(super) fn record(
                 parser.turn = first_nonempty(&[record["uuid"].clone()], &end.to_string());
             }
             if is_interrupt {
-                parser.status(end, "aborted", &ts, json!({}));
+                if !branch.continued {
+                    parser.status(end, "aborted", &ts, json!({}));
+                }
                 return Ok(());
             }
             if kind == "user" && tag.is_none() && !abandoned && visible_user {
