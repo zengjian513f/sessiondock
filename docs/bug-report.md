@@ -33,7 +33,11 @@ model and effort controls, listing the worker machine's own catalog
 to the worker CLI exactly like a new session's
 ([lifecycle-http.md](lifecycle-http.md#model-and-effort)), absent means the
 CLI's own default. A chosen value joins the replay payload, so the same
-request ID with a different choice is refused. There is no worker-specific
+request ID with a different choice is refused. The model list opens as a
+popover above the dialog rather than inside the form's scroll box, which is
+shorter than the list (`BUG-20260928-123931-9cc8ae`). The description box
+takes Enter like the composer: Enter submits, Shift+Enter is a newline, and on
+a phone Enter is always a newline. There is no worker-specific
 profile and no model policy: the worker is the same session the user would
 start from the picker, launched with the repository as cwd. A source without a unique configured CLI answers
 `503 本机找不到 <source> 命令`. (An earlier build had shipped a per-source
@@ -308,7 +312,9 @@ window's dates line by line (≤ 100 000 rows).
   the dialog's machine picker defaults to the problem's machine, a worker on
   another machine goes through `/api/bug-report/capture` and hands `captured`
   over, a failed capture becomes `captured: {error}`, the chosen machine's
-  missing CLIs are greyed out).
+  missing CLIs are greyed out, the open model list leaves the form's size and
+  scroll untouched at desktop, phone and 0.8 interface scale, Shift+Enter adds
+  a line and Enter submits).
 - `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
   `python3 tests/meta_capabilities_suite.py`.
 - `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real

@@ -522,10 +522,12 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 .new-pick[aria-expanded="true"] { border-color: var(--accent); }
 .new-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .new-pick:disabled { opacity: .45; cursor: not-allowed; }
+/* 下拉是 popover，浮在对话框之上：不占表单的滚动区，也不被对话框裁掉。位置由脚本按
+   模型+强度这一组对齐（BUG-20260928-123931-9cc8ae）。 */
 .new-model-menu {
-  position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0;
+  position: fixed; inset: auto; margin: 0; overflow: hidden; box-sizing: border-box;
   display: flex; flex-direction: column; gap: 4px; padding: 4px;
-  border: 1px solid var(--border); border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text);
   box-shadow: 0 12px 32px rgba(0, 0, 0, .22);
 }
 .new-model-menu[hidden] { display: none; }
@@ -535,7 +537,7 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
 }
 .new-model-search:focus { border-color: var(--accent); }
 .new-model-search[hidden] { display: none; }
-.new-model-options { max-height: 240px; overflow: auto; }
+.new-model-options { flex: 0 1 auto; min-height: 0; max-height: 240px; overflow: auto; }
 .new-model-option {
   display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
   padding: 6px 8px; border: 0; border-radius: 5px;
