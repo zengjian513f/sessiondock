@@ -12,6 +12,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_parity import REPO, BINARY, Corpus, codex_message, codex_row, isolated_server
 from send_browser import initialize, xterm_includes
 from hub_send_browser import cleanup_hosts
+from popups import on_popup  # noqa: E402
 
 CODEX_SID = "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d"
 
@@ -74,7 +75,7 @@ def main():
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda error: errors.append(str(error)))
-                page.on('dialog', lambda dialog: (errors.append(dialog.message), dialog.accept()))
+                on_popup(page, lambda dialog: (errors.append(dialog.message), dialog.accept()))
                 page.goto(base, wait_until='domcontentloaded')
                 resume_codex(page, uid)
                 page.locator('#a-term').click()

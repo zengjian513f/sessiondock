@@ -16,6 +16,7 @@ import tempfile
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, claude_row, codex_row, encoded, get_json, isolated_server
 from media_browser import TOKEN, image, native_bytes, route, uid
+from popups import on_popup  # noqa: E402
 
 # All six genuinely encoded fixtures have a 3x2 canvas; animated ones have two
 # distinct solid-color frames. Chromium independently verifies actual decoding.
@@ -177,7 +178,7 @@ def main():
                     def accept_dialog(dialog):
                         dialogs.append(dialog.message)
                         dialog.accept()
-                    page.once("dialog", accept_dialog)
+                    on_popup(page, accept_dialog, once=True)
                     button.click()
                     assert dialogs == ["控制台不可用：\n" + reason]
                 assert not errors, errors

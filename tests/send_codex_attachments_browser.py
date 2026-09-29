@@ -14,6 +14,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from media_browser import PNG
 from send_browser import initialize, xterm_includes
+from popups import on_popup  # noqa: E402
 
 
 def main():
@@ -69,7 +70,7 @@ def main():
                 page = context.new_page()
                 errors, dialogs = [], []
                 page.on('pageerror', lambda error: errors.append(str(error)))
-                page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+                on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                 page.goto(base, wait_until='networkidle')
                 page.locator('#new-session').click()
                 page.locator('input[name="new-source"][value="codex"]').check()

@@ -7,6 +7,7 @@ import uuid
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_row, codex_message, isolated_server
 from host_identity import host
+from popups import on_popup  # noqa: E402
 
 
 def main():
@@ -74,12 +75,12 @@ def main():
                             # Normal confirmation must revoke the old browser,
                             # not destroy or relaunch the shell.
                             revoked=[]
-                            page.on("dialog",lambda dialog:(revoked.append(dialog.message),dialog.accept()))
+                            on_popup(page, lambda dialog:(revoked.append(dialog.message),dialog.accept()))
                             second_context=browser.new_context(viewport={"width":1280,"height":900},service_workers="block")
                             second_context.route("**/*",lambda route:route.continue_() if route.request.url.startswith(base+"/") else route.abort())
                             second=second_context.new_page()
                             second.on("pageerror",lambda error:errors.append(str(error)))
-                            second.on("dialog",lambda dialog:dialog.accept())
+                            on_popup(second, lambda dialog:dialog.accept())
                             second.goto(base,wait_until="networkidle")
                             second.locator(f'#side .item[data-uid="{uid}"]').click()
                             expect(second.locator("#a-term")).to_have_attribute("data-unavailable","false")

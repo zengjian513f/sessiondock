@@ -29,6 +29,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, codex_message, codex_row, isolated_server
 from host_identity import request as host_request
 from terminal_browser import stop
+from popups import on_popup  # noqa: E402
 
 XTERM_TEXT = """() => [...T.views.values()].map(view => {
   const buffer = view.term?.buffer?.active;
@@ -141,7 +142,7 @@ def main():
                 page = context.new_page()
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 dialog_action = {"accept": True}
-                page.on("dialog", lambda dialog: (dialogs.append(dialog.message),
+                on_popup(page, lambda dialog: (dialogs.append(dialog.message),
                                                   dialog.accept() if dialog_action["accept"] else dialog.dismiss()))
                 page.goto(base, wait_until="networkidle")
                 capabilities = page.evaluate("SessionDockCapabilities.config")

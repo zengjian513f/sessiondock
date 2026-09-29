@@ -705,7 +705,7 @@ async function takeover(uid, btn) {
     let d = await post('api/term/takeover', { uid, cols: 120, rows: termRows(), ...rustResume });
     if (d.needs_confirm) {
       const n = (d.pids || []).length;
-      const ok = confirm(
+      const ok = await appConfirm(
         `这个会话正在运行中（${n} 个进程），而且不在 tmux 里，无法直接接入。\n\n`
         + `接管会先结束正在运行的实例，再用 tmux 重新打开它。\n`
         + `未保存的输入会丢失，已完成的对话不受影响。\n\n继续吗？`);
@@ -715,7 +715,7 @@ async function takeover(uid, btn) {
     }
     if (d.error) {
       ConsoleUI.errors.set(uid, d.error);
-      return alert('打开控制台失败：' + d.error);
+      return appAlert('打开控制台失败：' + d.error);
     }
     await loadTermList();
     // Rust: the receipt is ready, but the fresh instance reaches the console
@@ -2013,7 +2013,7 @@ function pendingSelectionGone(name) {
 
 async function stopPendingSession(info, button) {
   if (SessionDockCapabilities.config.backend === 'rust') {
-    if (!confirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
+    if (!await appConfirm(`停止会话「${pendingTitle(info)}」?\n\n停止后才可以删除会话记录。`)) return;
     if (button) button.disabled = true;
     try {
       const result = await post('api/term/kill', {record_id: info.record_id, instance_id: info.instance_id,
@@ -2026,7 +2026,7 @@ async function stopPendingSession(info, button) {
         if (wait) wait.textContent = '正在停止…';
       }
       await loadTermList();
-    } catch (error) { alert(error.message || '停止失败，请重试。'); }
+    } catch (error) { await appAlert(error.message || '停止失败，请重试。'); }
     finally { if (button) button.disabled = false; }
     return;
   }
@@ -2035,13 +2035,13 @@ async function stopPendingSession(info, button) {
 
 async function deletePendingSession(info, button) {
   if (info.source === 'shell' && SessionDockCapabilities.config.backend === 'rust'
-      && !confirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
+      && !await appConfirm(`删除会话「${pendingTitle(info)}」?\n\n会话记录和它的录制会一并删除，无法恢复。`)) return;
   if (button) button.disabled = true;
   try {
     await discardPendingSession(info);
     await loadTermList();
     if (typeof loadSessions === 'function') await loadSessions(true);
-  } catch (error) { alert(error.message || '删除失败，请重试。'); }
+  } catch (error) { await appAlert(error.message || '删除失败，请重试。'); }
   finally { if (button) button.disabled = false; }
 }
 
@@ -2296,7 +2296,7 @@ async function createNewSession(e) {
     let d = await post('api/term/create', request);
     if (d.needs_create) {
       const target = String(d.cwd || cwd);
-      if (!confirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
+      if (!await appConfirm(`启动目录不存在：\n${target}\n\n是否创建该目录并继续？`)) {
         $('#new-cwd').focus();
         return;
       }
@@ -3315,13 +3315,13 @@ async function claimTermOwnership(name, uid = T.uid, binding = {}, auto = false,
     }
     const holder = describeTermTaker(result.owner?.label,
       result.same_address === false ? result.owner?.ip : '');
-    if (!confirm(`该终端正由${holder}控制。\n\n是否抢占终端？`)) return null;
+    if (!await appConfirm(`该终端正由${holder}控制。\n\n是否抢占终端？`)) return null;
     result = await claim(true);
   }
   if (result.error || !result.token) {
     ConsoleUI.errors.set(uid, result.error || '无法取得终端控制权');
     renderTakeoverBtn();
-    if (!auto && !result.timeout) alert('打开终端失败：' + (result.error || '无法取得终端控制权'));
+    if (!auto && !result.timeout) await appAlert('打开终端失败：' + (result.error || '无法取得终端控制权'));
     return null;
   }
   ConsoleUI.errors.delete(uid);
@@ -3343,7 +3343,7 @@ function handleTermRevoked(view, ip = '', by = '') {
   cancelTermReconnect(view);
   if (T.name === view.name) closeTermPane();
   try { view.ws?.close(); } catch {}
-  alert(`终端已被${describeTermTaker(by, ip)}抢占，本页面的终端已关闭。`);
+  appAlert(`终端已被${describeTermTaker(by, ip)}抢占，本页面的终端已关闭。`);
 }
 
 function renderTermOutputNotice(view) {
@@ -4946,7 +4946,7 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
       paintLive();
       return true;
     } catch (error) {
-      alert('发送失败，输入保留：' + (error.message || error));
+      await appAlert('发送失败，输入保留：' + (error.message || error));
       return false;
     }
   }
@@ -4958,7 +4958,7 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
     const body = termInputBody(name, keys ? { name, keys, uid }
       : rawText ? { name, paste: text, uid } : { name, text });
     if (!body) {
-      alert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
+      await appAlert('发送失败: 此后端未启用该会话的可靠发送；控制台键盘和快捷键仍可直接输入。');
       return false;
     }
     d = await post('api/term/send', body);
@@ -4969,11 +4969,11 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
       d = await post('api/term/send', termInputBody(name, { name, keys: ['Enter'], uid }));
     }
   } catch (e) {
-    alert('发送失败: ' + (e.message || e));
+    await appAlert('发送失败: ' + (e.message || e));
     return false;
   }
   if (d.error) {
-    alert('发送失败: ' + d.error);
+    await appAlert('发送失败: ' + d.error);
     return false;
   }
   S.live.add(uid);            // 发完立刻按最快节奏拉新消息
@@ -5291,11 +5291,11 @@ function addComposerFiles(files) {
 function addDraftFiles(draft, files) {
   for (const file of files) {
     if (draft.attachments.length >= COMPOSER_MAX_FILES) {
-      alert(`一次最多添加 ${COMPOSER_MAX_FILES} 个附件`);
+      appAlert(`一次最多添加 ${COMPOSER_MAX_FILES} 个附件`);
       break;
     }
     if (!file.size || file.size > COMPOSER_MAX_FILE_BYTES) {
-      alert(`「${file.name || '附件'}」为空或超过 512 MB`);
+      appAlert(`「${file.name || '附件'}」为空或超过 512 MB`);
       continue;
     }
     const kind = composerFileKind(file);
@@ -5328,13 +5328,14 @@ function consolePasteFiles(view, name, e) {
   e.preventDefault();
   e.stopPropagation();
   if (T.name !== name || view.replay || view.ended || view.revoked) return;
-  if (!confirmPastedFiles(files)) return;
-  const uid = view.bindingUid || T.uid || '';
-  if (!uid) { alert('粘贴文件失败：这个终端还没有会话目录'); return; }
-  // One paste after another keeps its order, and each paste is one batch.
-  const previous = consolePasteJobs.get(name) || Promise.resolve();
-  const job = previous.then(() => publishConsolePaste(view, name, uid, files));
-  consolePasteJobs.set(name, job.catch(() => {}));
+  whenPasteConfirmed(files, () => {
+    const uid = view.bindingUid || T.uid || '';
+    if (!uid) { appAlert('粘贴文件失败：这个终端还没有会话目录'); return; }
+    // One paste after another keeps its order, and each paste is one batch.
+    const previous = consolePasteJobs.get(name) || Promise.resolve();
+    const job = previous.then(() => publishConsolePaste(view, name, uid, files));
+    consolePasteJobs.set(name, job.catch(() => {}));
+  });
 }
 const consolePasteJobs = new Map();
 
@@ -5373,7 +5374,7 @@ async function publishConsolePaste(view, name, uid, files) {
     }
   } catch (error) {
     showConsoleToast('');
-    alert('粘贴文件失败：' + (error.message || error));
+    await appAlert('粘贴文件失败：' + (error.message || error));
     return;
   } finally {
     if ($('#console-toast')?.textContent.startsWith('正在保存')) showConsoleToast('');
@@ -5386,7 +5387,7 @@ async function publishConsolePaste(view, name, uid, files) {
     const d = await post('api/term/send', termInputBody(name, {name, paste: text, uid}) || {name, paste: text});
     if (d.error) throw new Error(d.error);
   } catch (error) {
-    alert(`文件已保存到 ${paths.join(' ')}，但没有写进终端：` + (error.message || error));
+    await appAlert(`文件已保存到 ${paths.join(' ')}，但没有写进终端：` + (error.message || error));
   }
 }
 
@@ -5482,7 +5483,7 @@ function removeComposerAttachment(id, draft = composerDraft()) {
 function addComposerQuote(text = '') {
   const draft = composerDraft();
   if (!draft) return;
-  if (draft.quotes.length >= 4) return alert('一次最多添加 4 段引用');
+  if (draft.quotes.length >= 4) return appAlert('一次最多添加 4 段引用');
   draft.quotes.push({ id: `quote-${globalThis.crypto?.randomUUID?.() || ++composerDraftSeq}`, text: String(text).trim().slice(0, 16000) });
   persistComposerDraft();
   renderComposerItems();
@@ -5638,13 +5639,13 @@ async function submitComposer() {
   if (typeof staleBuildShown !== 'undefined' && staleBuildShown) return;
   if (!conversationSendEnabled()
       && !(typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(composerUid || S.sel))) {
-    alert('此服务尚未启用会话发送，请更新服务后重试'); return;
+    await appAlert('此服务尚未启用会话发送，请更新服务后重试'); return;
   }
   const ta = $('#cinput'), button = $('#csend'), add = $('#cadd');
   const uid = composerUid;
   let draft = composerDraft(uid);
   if (!draft || !takenOver(uid)) {
-    alert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
+    await appAlert('会话尚未就绪，输入已保留；可切换到终端检查启动状态'); return;
   }
   const text = ta.value, attachments = [...draft.attachments];
   const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
@@ -5662,7 +5663,7 @@ async function submitComposer() {
         persistComposerDraft(uid);
       }
     } catch (error) {
-      alert('发送失败，输入保留：' + (error.message || error));
+      await appAlert('发送失败，输入保留：' + (error.message || error));
     } finally {
       composerSending = false; button.disabled = false; autoGrow(ta);
     }
@@ -5706,7 +5707,7 @@ async function submitComposer() {
     else sendFailed = true;
   } catch (error) {
     sendFailed = true;
-    alert('发送失败，输入保留：' + (error.message || error));
+    await appAlert('发送失败，输入保留：' + (error.message || error));
   } finally {
     composerSending = false; setSendButtonBusy(button, ''); add.disabled = false;
     renderComposerItems(); autoGrow(ta);
@@ -5938,7 +5939,13 @@ function confirmPastedFiles(files) {
   const size = bytes >= 1024 * 1024
     ? `${(bytes / 1048576).toFixed(bytes >= 100 * 1048576 ? 0 : 1)} MB`
     : `${Math.ceil(bytes / 1024)} KB`;
-  return confirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
+  return appConfirm(`粘贴了 ${files.length} 个文件，共 ${size}。继续？`);
+}
+/** 小批粘贴立即继续（同步，保持原有顺序）；大批先在页面中央确认。 */
+function whenPasteConfirmed(files, go, then = () => {}) {
+  const ok = confirmPastedFiles(files);
+  if (ok === true) { go(); then(); }
+  else ok.then(yes => { if (yes) go(); then(); });
 }
 
 function pasteAttachmentFiles(e, addFiles) {
@@ -5946,8 +5953,9 @@ function pasteAttachmentFiles(e, addFiles) {
   const files = clipboardAttachmentFiles(e.clipboardData);
   if (directories.length) {
     e.preventDefault();
-    if (files.length && confirmPastedFiles(files)) addFiles(files);
-    alert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
+    const warn = () => appAlert(`暂不支持直接粘贴文件夹：${directories.join('、')}。请先压缩后再粘贴。`);
+    if (files.length) whenPasteConfirmed(files, () => addFiles(files), warn);
+    else warn();
     return;
   }
   if (!files.length) {
@@ -5959,8 +5967,7 @@ function pasteAttachmentFiles(e, addFiles) {
   }
   // 带附件的剪贴板常同时携带 text/plain；交给浏览器会把那份文字再粘贴一次。
   e.preventDefault();
-  if (!confirmPastedFiles(files)) return;
-  addFiles(files);
+  whenPasteConfirmed(files, () => addFiles(files));
 }
 
 function bindFileDrop(zone, addFiles) {

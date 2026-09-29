@@ -30,6 +30,7 @@ from send_browser import initialize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_opencode_composer as fake  # noqa: E402
+from popups import on_popup  # noqa: E402
 
 NID = "c" * 32
 OPENCODE = [f"ses_0f0000000000bulkDeleteRow{n}" for n in range(4)]
@@ -108,7 +109,7 @@ def main():
                 page = context.new_page()
                 errors, dialogs = [], []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+                on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                 page.goto(f"http://127.0.0.1:{hub.port}", wait_until="networkidle")
                 page.wait_for_function("n => S.sessions.length === n", arg=1 + len(remaining(db)))
                 rows = page.evaluate("() => Object.fromEntries(S.sessions.map(s => [s.sid, s.uid]))")

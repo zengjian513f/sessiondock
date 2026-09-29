@@ -27,6 +27,7 @@ import time
 from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from popups import on_popup  # noqa: E402
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
 SETTINGS = "/synthetic/bridge-settings.json"
@@ -262,7 +263,7 @@ def main():
                             if urlsplit(request.url).path == "/api/term/takeover" else None)
                         page = context.new_page()
                         page.on("pageerror", lambda error: errors.append(str(error)))
-                        page.on("dialog", lambda dialog: dialog.accept())
+                        on_popup(page, lambda dialog: dialog.accept())
                         page.goto(base, wait_until="networkidle")
                         page.get_by_role("button", name="时间轴", exact=True).click()
                         return page

@@ -11,6 +11,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from hub_http_suite import REPO, FakeNode, Hub
 from hub_browser import CHROMIUM
+from popups import on_popup  # noqa: E402
 
 
 def scenario(browser, hub, node, other):
@@ -18,7 +19,7 @@ def scenario(browser, hub, node, other):
     page = context.new_page()
     errors, dialogs, partials = [], [], []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+    on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
     # A new receipt is newer than the hub's cached empty terminal list. Fail
     # the node immediately after create succeeds, before its next list read.
     def create_then_disconnect(route):
