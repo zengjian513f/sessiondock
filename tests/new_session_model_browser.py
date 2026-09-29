@@ -90,6 +90,9 @@ def main():
         for name in ("host", "work", "ledger", "state", "home", "codex-home", "grok-home"):
             (root / name).mkdir(mode=0o700)
         (root / "codex-home/models_cache.json").write_text(json.dumps(CODEX_CACHE))
+        (root / "home/.claude").mkdir(mode=0o700)
+        (root / "home/.claude/settings.json").write_text(json.dumps({
+            "model": "opus", "modelSettings": {"opus": {"effortLevel": "medium"}}}))
         (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\nmodel_reasoning_effort = "medium"\n[profiles.x]\nmodel = "other"\n')
         (root / "grok-home/models_cache.json").write_text(json.dumps(GROK_CACHE))
         log = root / "argv.jsonl"
@@ -129,8 +132,8 @@ def main():
             # ---- Claude: aliases, no search at five rows, effort list, one row on desktop.
             open_dialog(page)
             pick_source(page, "claude")
-            expect(page.locator("#new-model-label")).to_have_text("Fable")
-            expect(page.locator("#new-effort")).to_have_value("low")
+            expect(page.locator("#new-model-label")).to_have_text("Opus")
+            expect(page.locator("#new-effort")).to_have_value("medium")
             tops = page.evaluate("""() => ['.new-source', '#new-model', '.new-effort']
                 .map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))""")
             assert len(set(tops)) == 1, tops
@@ -144,10 +147,14 @@ def main():
             page.keyboard.press("Escape")
             expect(page.locator("#new-model-menu")).to_be_hidden()
             expect(page.locator("#new-session-dialog")).to_be_visible()
+            body = create(page, work)
+            assert body["model"] == "opus" and body["effort"] == "medium", body
+            open_dialog(page)
             choose_model(page, "Opus")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts == ["low", "medium", "high", "xhigh", "max"], efforts
+            assert efforts == ["选择强度", "low", "medium", "high", "xhigh", "max"], efforts
+            expect(page.locator("#new-effort")).to_have_value("medium")
             page.locator("#new-effort").select_option("high")
             shot("claude")
             body = create(page, work)
@@ -156,6 +163,8 @@ def main():
             assert argv[-4:] == ["--model", "opus", "--effort", "high"], argv
 
             # ---- The choice is remembered per source; switching sources never moves the row.
+            page.reload(wait_until="networkidle")
+            page.wait_for_function("T.listLoaded")
             open_dialog(page)
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             expect(page.locator("#new-effort")).to_have_value("high")
@@ -174,15 +183,18 @@ def main():
             pick_source(page, "codex")
             expect(page.locator("#new-model-label")).to_have_text("GPT Fake B")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts == ["low", "medium", "xhigh"], efforts
+            assert efforts == ["选择强度", "low", "medium", "xhigh"], efforts
             expect(page.locator("#new-effort")).to_have_value("medium")
+            body = create(page, work)
+            assert body["model"] == "gpt-fake-b" and body["effort"] == "medium", body
+            open_dialog(page)
             page.locator("#new-model").click()
             names = page.locator("#new-model-options [role=option]").all_inner_texts()
             assert not any("Hidden" in name for name in names) and len(names) == 2, names
             page.keyboard.press("Escape")
             choose_model(page, "GPT Fake A")
-            assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
-            expect(page.locator("#new-effort")).to_have_value("low")
+            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
+            expect(page.locator("#new-effort")).to_have_value("")
             page.locator("#new-effort").select_option("low")
             body = create(page, work)
             assert body["model"] == "gpt-fake-a" and body["effort"] == "low", body
@@ -216,7 +228,7 @@ def main():
             expect(page.locator("#new-model-options [role=option]")).to_have_count(1)
             page.keyboard.press("Escape")
             choose_model(page, "Grok Fake")
-            assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
+            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
             page.locator("#new-effort").select_option("low")
             body = create(page, work)
