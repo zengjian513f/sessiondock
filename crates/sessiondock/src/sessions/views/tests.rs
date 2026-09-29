@@ -251,6 +251,7 @@ fn pin_changes_the_logical_view_and_its_anchor() {
         stale_end: fs::metadata(&path).unwrap().len(),
         target: Some("u2".into()),
         pinned_at: None,
+        cli: false,
     });
     let pinned = views.open(&request, &deps).unwrap();
     assert_eq!(texts(&pinned), ["one", "two"]);

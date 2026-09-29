@@ -32,7 +32,14 @@ precedes the user record, the way a busy Claude holds input in its own queue.
 
 While the file at `$SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE` exists, a bare Esc puts
 the last submitted line back into the editor and keeps its user record, the
-way Claude Code 2.1.284 answers an Esc pressed before any model output.
+way Claude Code 2.1.284 answers an Esc pressed before any model output; lines
+submitted meanwhile get no `--reply`.
+
+While the file at `$SESSIONDOCK_TEST_CLAUDE_REWIND` exists, a bare Esc stands
+for Claude's double-Esc "restore conversation" to before the last recorded
+input: that input leaves the transcript and returns to the editor, nothing is
+written, and the next input chains to the record before it (Claude Code
+2.1.284 keeps the rewound leaf in memory only).
 
 With `$SESSIONDOCK_TEST_CLAUDE_NOTICE` set, the file at that path is watched
 from startup; once it appears its text is appended as a Claude `system`
@@ -88,6 +95,8 @@ class Fake:
         self.parent = None
         self.submitted = 0
         self.last_submitted = ""
+        # (text, parent before its record) of every recorded input, for rewinds.
+        self.inputs = []
         self.menu = None
         root = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ROOT", "")
         self.path = os.path.join(root, "project-history", f"{self.sid}.jsonl") if root and self.sid else ""
@@ -159,6 +168,7 @@ class Fake:
         if not self.path:
             return
         now = self.now()
+        self.inputs.append((text, self.parent))
         user_uuid = str(uuid.uuid4())
         rows = [*before, {
             "type": "user", "uuid": user_uuid, "parentUuid": self.parent,
@@ -167,7 +177,8 @@ class Fake:
             "message": {"role": "user", "content": text},
         }]
         self.parent = user_uuid
-        if self.options["reply"]:
+        restore = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE", "")
+        if self.options["reply"] and not (restore and os.path.exists(restore)):
             reply_uuid = str(uuid.uuid4())
             rows.append({
                 "type": "assistant", "uuid": reply_uuid, "parentUuid": user_uuid,
@@ -373,6 +384,13 @@ class Fake:
                         restore = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE", "")
                         if cut == 1 and restore and os.path.exists(restore) and self.last_submitted:
                             self.buffer, self.last_submitted = self.last_submitted, ""
+                            self.render()
+                        rewind = os.environ.get("SESSIONDOCK_TEST_CLAUDE_REWIND", "")
+                        if cut == 1 and rewind and os.path.exists(rewind) and self.inputs:
+                            text, self.parent = self.inputs.pop()
+                            if self.transcript and self.transcript[-1] == text:
+                                self.transcript.pop()
+                            self.buffer, self.last_submitted = text, ""
                             self.render()
                         pending = pending[cut:]
                         continue

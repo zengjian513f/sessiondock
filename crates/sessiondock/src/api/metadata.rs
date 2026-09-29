@@ -441,6 +441,7 @@ pub async fn rewind(
                         stale_end: resolved.stale_end,
                         target: Some(target.clone()),
                         pinned_at: Some(now),
+                        cli: false,
                     },
                 )?
             }
@@ -479,4 +480,94 @@ pub async fn rewind(
         }))
     })
     .await
+}
+
+/// Follows a rewind Claude made on its own screen (docs/cli-state.md): the
+/// editor holds an input the CLI already answered and the redrawn transcript
+/// shows only what preceded it. The view is then pinned before that input,
+/// flagged `cli`, until the next native record retires the pin. An answered
+/// input without that screen (a history recall) only stops being reported as
+/// an Esc-returned send. Returns whether the session's CLI state or pin changed.
+pub(crate) async fn follow_cli_rewind(
+    state: &AppState,
+    uid: &str,
+    cli: &Value,
+    snapshot: &crate::sessions::ViewSnapshot,
+) -> bool {
+    use crate::conversation::rewind::{EditorEcho, classify};
+    let Some(service) = state.conversations.as_ref() else {
+        return false;
+    };
+    let editor = cli["editor"]["text"].as_str().unwrap_or("");
+    let code = cli["input"]["code"].as_str().unwrap_or("");
+    if editor.trim().is_empty() || !matches!(code, "cli_input_pending" | "cli_input_returned") {
+        return false;
+    }
+    let Some(transcript) = service.cli_transcript(uid) else {
+        return false;
+    };
+    let messages: Vec<&Value> = snapshot.view.events().map(|event| &event.message).collect();
+    let target = match classify(&messages, editor, &transcript) {
+        EditorEcho::None => return false,
+        EditorEcho::Answered => {
+            service.cli_input_answered(uid, editor);
+            return code == "cli_input_returned";
+        }
+        EditorEcho::Rewound(target) => target,
+    };
+    service.cli_input_answered(uid, editor);
+    let Some(metadata) = state.metadata.clone() else {
+        return code == "cli_input_returned";
+    };
+    let Ok(permit) = state.reader.acquire().await else {
+        return false;
+    };
+    let store = state.reader.store.clone();
+    let owner = uid.to_owned();
+    let wanted = target.clone();
+    let pinned = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let resolved = store
+            .claude_rewind_target(&owner, &wanted)
+            .map_err(|error| error.message)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|at| at.as_secs_f64())
+            .ok();
+        metadata
+            .set_timeline_pin(
+                &owner,
+                crate::metadata::TimelinePin {
+                    tip: resolved.tip.clone(),
+                    stale_end: resolved.stale_end,
+                    target: Some(wanted),
+                    pinned_at: now,
+                    cli: true,
+                },
+            )
+            .map_err(|error| error.message)?;
+        Ok::<_, String>(resolved)
+    })
+    .await
+    .unwrap_or_else(|_| Err("rewind worker failed".into()));
+    if let Some(audit) = &state.audit {
+        let (severity, data) = match &pinned {
+            Ok(resolved) => (
+                "info",
+                json!({"target": target, "tip": resolved.tip, "stale_end": resolved.stale_end}),
+            ),
+            Err(error) => ("warning", json!({"target": target, "error": error})),
+        };
+        audit.record(crate::audit::query::ServerEvent {
+            event: "cli.rewind.followed",
+            category: "conversation",
+            severity,
+            uid,
+            trace_id: "",
+            page_id: "",
+            build: "",
+            data,
+        });
+    }
+    true
 }

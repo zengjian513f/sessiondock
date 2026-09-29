@@ -59,10 +59,6 @@ if (+store.get('termLayoutPolicyVersion', 0) < TERM_LAYOUT_POLICY_VERSION) {
   store.set('termviews', [...T.openViews]);
   store.set('termLayoutPolicyVersion', TERM_LAYOUT_POLICY_VERSION);
 }
-// Claude 双 Esc 的最终叶子有时只保存在 TUI 进程内，不会追加 JSONL。
-// 以 tmux 名为键跟踪原生选择器，确认后再让服务端从当前屏幕同步时间线。
-const claudeRewinds = new Map();
-
 const TERM_FONT_SAMPLE = 'MW0il中文，。！？（）【】';
 let resolvedTermFont = '';
 let resolvedTermFontKey = '';
@@ -2762,10 +2758,7 @@ function ensureTerm(name) {
       return;
     }
     view.ws.send(new TextEncoder().encode(d));
-    if (/[\r\n]/.test(d)) {
-      notePendingInput(name);
-      if (claudeRewinds.has(name)) scheduleClaudeRewindSync(name);
-    }
+    if (/[\r\n]/.test(d)) notePendingInput(name);
   });
   // ptyhost 没有服务端 copy-mode；滚轮交给 grid/xterm 的历史或应用鼠标处理。
   // 改造前遗留在默认 tmux server 的会话仍走旧兼容路径。
@@ -4981,9 +4974,6 @@ async function sendToSession(text, keys, uid = S.sel, media = [], options = {}) 
   paintLive();
   S.syncGap = FAST_MIN;
   S.lastSync = 0;
-  if (keys?.includes('Enter') && claudeRewinds.has(name)) {
-    scheduleClaudeRewindSync(name);
-  }
   return true;
 }
 
@@ -5777,36 +5767,6 @@ $('#csend').onclick = () => {
 };
 let composerEscAt = -Infinity;
 
-function scheduleClaudeRewindSync(name, delay = 450) {
-  const state = claudeRewinds.get(name);
-  if (!state) return;
-  clearTimeout(state.timer);
-  state.timer = setTimeout(() => syncClaudeRewind(name), delay);
-}
-
-async function syncClaudeRewind(name) {
-  const state = claudeRewinds.get(name);
-  if (!state || state.syncing) return;
-  state.syncing = true;
-  try {
-    const result = await post('api/session/rewind', {
-      action: 'sync', uid: state.uid, name,
-    });
-    if (result.error) return;
-    if (!result.pending) claudeRewinds.delete(name);
-    if (result.changed) {
-      // timeline pin 会改变 cursor 的逻辑叶子，即便 JSONL 一个字节都没变；
-      // 用现有增量接口拿 reset，原子替换缓存和当前 DOM。
-      S.lastSync = 0;
-      await syncSession(state.uid);
-    }
-  } catch { /* 终端仍可继续使用；下一次 Enter 会重试同步 */ }
-  finally {
-    const current = claudeRewinds.get(name);
-    if (current) current.syncing = false;
-  }
-}
-
 async function revealNativeTerminal(uid = S.sel) {
   const name = takenOver(uid);
   if (!name || S.sel !== uid) return false;
@@ -5878,11 +5838,7 @@ async function sendComposerEscape(now = performance.now()) {
   if (!rewind || !sent || !name || S.sel !== uid) return sent;
 
   // 回滚点、恢复代码/对话的选项都由原生 CLI 自己维护。第二次 Esc 后直接
-  // 揭示原生 TUI；这里只记住进入选择器前的叶子，最终选择仍服从原生菜单。
-  try {
-    const began = await post('api/session/rewind', {action: 'begin', uid, name});
-    if (began.ok) claudeRewinds.set(name, {uid, timer: null, syncing: false});
-  } catch { /* 记录失败不应阻止原生回滚 */ }
+  // 揭示原生 TUI；确认回滚后服务端从编辑区与画面同步时间线（docs/cli-state.md）。
   await revealNativeTerminal(uid);
   return sent;
 }

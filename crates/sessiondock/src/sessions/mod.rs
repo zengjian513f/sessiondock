@@ -1208,6 +1208,9 @@ fn timeline_pin_row(row: &mut Value, index: &IndexSnapshot, metadata: &MetadataS
         "target": pin.target, "tip": pin.tip, "stale_end": pin.stale_end,
         "pinned_at": pin.pinned_at, "native_rewind": false,
     });
+    if pin.cli {
+        value["cli"] = json!(true);
+    }
     if entry.committed() == Some(pin.stale_end) {
         value["retired"] = json!(false);
     }

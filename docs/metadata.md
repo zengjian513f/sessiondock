@@ -102,6 +102,10 @@ Pins never write native files and never signal the CLI; every response says
 Legacy, under `timeline_pin: true`, offers a "回到此处" action under user
 messages and a notice explaining that only the display is pinned and the CLI
 was not rewound, plus the retirement reason when present.
+A pin written because the CLI rewound on its own screen carries `cli: true`
+(persisted and published on the row and view meta; see
+[CLI state](cli-state.md)): its notice says the terminal rewind was followed,
+offers no unpin, and disappears once the pin retires.
 Validation: metadata/provider/session unit tests,
 `cargo test -p sessiondock --test rewind_http --locked` and
 `python3 tests/rewind_browser.py` (pin → trimmed history + explanation,

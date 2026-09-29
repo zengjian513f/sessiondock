@@ -1,6 +1,7 @@
 //! One conversation send path: drafts are server-owned, successful SEND belongs to the CLI.
 pub mod cli_state;
 mod input;
+pub mod rewind;
 pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
 use crate::{
@@ -145,11 +146,13 @@ impl Conversations {
             Ok(guard) => (guard, false),
             Err(_) => (lock.lock().await, true),
         };
+        let mut transcript = None;
         let observation: cli_state::Observation = match self.lease(&identity, None, waited).await {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
                 capture.map(|capture| {
+                    transcript = cli_state::transcript(&identity.source, &capture);
                     (
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
@@ -161,6 +164,7 @@ impl Conversations {
         };
         let queued = self.store.queued(&identity.key);
         let (mut state, lost) = self.cli.record(&identity.key, &observation, queued);
+        self.cli.set_transcript(&identity.key, transcript);
         if lost && state.queued.iter().any(|row| row.state != "lost") {
             self.store.mark_queued(&identity.key, "lost")?;
             state.queued = self.store.queued(&identity.key);
@@ -223,6 +227,18 @@ impl Conversations {
             self.cli.retired(&key, &row.text);
         }
         marked || removed
+    }
+    /// The visible transcript above the CLI editor from the latest reading
+    /// (Claude only), for [`rewind`] to tell which native records it shows.
+    pub fn cli_transcript(&self, uid: &str) -> Option<String> {
+        self.cli.transcript(&self.cli.key_of(uid)?)
+    }
+    /// The editor holds an input the CLI already answered, so it was not
+    /// returned by an Esc: stop naming it `cli_input_returned`.
+    pub fn cli_input_answered(&self, uid: &str, text: &str) {
+        if let Some(key) = self.cli.key_of(uid) {
+            self.cli.answered(&key, text);
+        }
     }
     /// Drops one queued send the user dismissed (typically a lost one).
     pub async fn dismiss_queued(&self, uid: &str, request_id: &str) -> Result<bool, Failure> {
@@ -553,11 +569,13 @@ impl Conversations {
             Err(_) => (lock.lock().await, true),
         };
         self.remember_cli_identity(uid, &identity);
+        let mut transcript = None;
         let observation: cli_state::Observation = match self.lease(&identity, page, waited).await {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
                 capture.map(|capture| {
+                    transcript = cli_state::transcript(&identity.source, &capture);
                     (
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
@@ -569,6 +587,7 @@ impl Conversations {
         };
         let queued = self.store.queued(&identity.key);
         let (mut state, lost) = self.cli.record(&identity.key, &observation, queued);
+        self.cli.set_transcript(&identity.key, transcript);
         if lost && state.queued.iter().any(|row| row.state != "lost") {
             self.store.mark_queued(&identity.key, "lost")?;
             state.queued = self.store.queued(&identity.key);
