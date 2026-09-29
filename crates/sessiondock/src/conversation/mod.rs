@@ -214,6 +214,14 @@ impl Conversations {
             !enqueued.is_empty() && self.store.mark_cli_queued(&key, &enqueued).unwrap_or(false);
         let removed =
             !retired.is_empty() && self.store.retire_queued(&key, &retired).unwrap_or(false);
+        if removed
+            && let Some(row) = queued
+                .iter()
+                .rev()
+                .find(|row| retired.contains(&row.request_id))
+        {
+            self.cli.retired(&key, &row.text);
+        }
         marked || removed
     }
     /// Drops one queued send the user dismissed (typically a lost one).
@@ -565,7 +573,8 @@ impl Conversations {
             self.store.mark_queued(&identity.key, "lost")?;
             state.queued = self.store.queued(&identity.key);
         }
-        let status = observation?.0;
+        // The recorded state may name a returned prompt more precisely.
+        let status = state.input.unwrap_or(observation?.0);
         Ok((self.store.draft(&identity.key).revision, status, state))
     }
     /// Drops staged bytes the editor removed before SEND published them.

@@ -64,6 +64,9 @@ struct Entry {
     editor_text: Option<String>,
     busy: Option<bool>,
     failing_since: Option<Instant>,
+    /// Text of the send the latest native echo retired, kept to recognize it
+    /// when the CLI puts it back into the editor (Esc before any output).
+    retired: Option<String>,
 }
 
 /// One observation result: the classified input state, editor text and busy
@@ -116,6 +119,11 @@ impl Registry {
         }
         Some(Self::state(entry, queued))
     }
+    /// Remembers the text of a send whose native record just retired it.
+    pub fn retired(&self, key: &str, text: &str) {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.entry(key.into()).or_default().retired = Some(text.into());
+    }
     pub fn current(&self, key: &str, queued: Vec<QueuedSend>) -> CliState {
         let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
         match entries.get(key) {
@@ -139,7 +147,7 @@ impl Registry {
             Ok((input, text, busy)) => {
                 entry.observed_at = Some(unix_now());
                 entry.running = Some(true);
-                entry.input = Some(*input);
+                entry.input = Some(returned(*input, text.as_deref(), entry, &queued));
                 entry.editor_text = text.clone();
                 entry.busy = *busy;
                 entry.failing_since = None;
@@ -170,6 +178,31 @@ impl Registry {
             },
             queued,
         }
+    }
+}
+
+/// Claude writes the user record at Enter; an Esc before any output then
+/// puts the prompt back into its editor while history keeps the record
+/// (measured on Claude Code 2.1.284). Editor text equal to a send of this
+/// session names that case instead of the generic nonempty-editor block.
+fn returned(
+    input: InputStatus,
+    text: Option<&str>,
+    entry: &Entry,
+    queued: &[QueuedSend],
+) -> InputStatus {
+    use crate::delivery::driver::same_text_ignoring_whitespace as same;
+    let Some(text) = text.filter(|_| input.code == super::input::INPUT_PENDING) else {
+        return input;
+    };
+    let sent = entry.retired.iter().map(String::as_str);
+    if sent
+        .chain(queued.iter().map(|row| row.text.as_str()))
+        .any(|sent| !sent.trim().is_empty() && same(text, sent))
+    {
+        super::input::input_returned()
+    } else {
+        input
     }
 }
 
@@ -266,6 +299,38 @@ mod tests {
         assert!(state.input.is_none());
         // A failed reading is not retried before the backoff, whatever max_age says.
         assert!(registry.fresh("k", Duration::ZERO, vec![]).is_some());
+    }
+
+    #[test]
+    fn editor_holding_a_retired_send_is_reported_as_returned() {
+        let registry = Registry::default();
+        let pending = super::super::input::input_pending();
+        let (state, _) = registry.record(
+            "k",
+            &Ok((pending, Some("哈希为什么".into()), Some(false))),
+            vec![],
+        );
+        assert_eq!(
+            state.input.map(|i| i.code),
+            Some(super::super::input::INPUT_PENDING)
+        );
+        registry.retired("k", "Reply with\nALPHA.");
+        let (state, _) = registry.record(
+            "k",
+            &Ok((pending, Some("Reply withALPHA.".into()), Some(false))),
+            vec![],
+        );
+        assert_eq!(
+            state.input.map(|i| i.code),
+            Some(super::super::input::INPUT_RETURNED)
+        );
+        // A ready editor is never rewritten.
+        let (state, _) = registry.record(
+            "k",
+            &Ok((ready(), Some("Reply with ALPHA.".into()), Some(false))),
+            vec![],
+        );
+        assert_eq!(state.input.map(|i| i.state), Some(InputState::Ready));
     }
 
     #[test]

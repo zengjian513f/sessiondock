@@ -10,18 +10,20 @@
 
 | 状态 | 含义 | 输入 |
 | --- | --- | --- |
-| `ready` | 已识别编辑区，包括忙碌或框内已有文字 | 允许 |
+| `ready` | 已识别的空编辑区，包括 CLI 忙碌时 | 允许 |
 | `starting` | 空启动、画面滞后、正在粘贴等瞬时过程 | 不允许；实际 SEND 可短暂等待并再检 |
-| `blocked` | 已知菜单；优先于任何残留编辑区 | 不允许 |
+| `blocked` | 已知菜单（优先于任何残留编辑区），或 Claude/Codex 编辑区里已有文字 | 不允许 |
 | `unknown` | 登录页或未识别画面 | 不允许；保留草稿，提示改用 PTY |
 
-已识别的编辑区在 CLI 忙碌或已有文字时仍为 `ready`。已知菜单优先于残留编辑框。不能以「没有选择题」推断可输入。
+已识别的空编辑区在 CLI 忙碌时仍为 `ready`。已知菜单优先于残留编辑框。不能以「没有选择题」推断可输入。
+
+Claude/Codex 编辑区里已有非 dim 文字（用户在 PTY 里打的字，或 CLI 退回的上一条）时为 `blocked`：粘贴会接在这段文字后面，与它一起作为一条消息提交（BUG-20260928-235840-93d732）。与 Python 的 `draft_conflict` 一样拒发，但不代为清空，由用户在 PTY 发送或清空。dim 的占位提示（`Try "…"`、`Press up to edit queued messages`）不算文字。Claude Code 2.1.284 实测：回车后、模型尚无任何输出时按 Esc，Claude 中断并把正文放回编辑区，原生 user 记录保留；已排进 CLI 队列或已开始调工具后按 Esc 不会退回。编辑区文字与本会话最近一条被回显退掉的发送（或仍在排队的发送）忽略空白后相同时，码细化为 `cli_input_returned`，对话里这条用户气泡标注"已被 Esc 退回终端输入框，CLI 未处理"。SEND 粘贴后的再检不受此规则限制，那时编辑区里就是本条消息。
 
 ## CHECK
 
 - `ready`：HTTP 200，`ok` 为 true；按父合同带回 `draft_revision`，供空闲页面跟随。
 - 其余状态：HTTP 409，`ok` 为 false，并带父合同已有的顶层 `code`/`error` 以及 `draft_revision`。
-- 顶层码与 `input.code` 一致：`cli_starting`（空屏）、`cli_catching_up`（捕获滞后）、`cli_pasting`（粘贴中）、`cli_question`（已知菜单）、`cli_not_ready`（未知画面）。身份或所有权等错误仍返回原有错误响应，不伪造画面分类。
+- 顶层码与 `input.code` 一致：`cli_starting`（空屏）、`cli_catching_up`（捕获滞后）、`cli_pasting`（粘贴中）、`cli_question`（已知菜单）、`cli_input_pending`（编辑区已有文字）、`cli_input_returned`（编辑区里是被 Esc 退回的上一条，仅 CHECK 与 CLI 状态对象给出，SEND 否决仍为 `cli_input_pending`）、`cli_not_ready`（未知画面）。身份或所有权等错误仍返回原有错误响应，不伪造画面分类。
 
 SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 ready；真正执行 SEND 时每个检查点最多等待 3 秒，每 100ms 再检。Claude/Codex 粘贴后等待编辑区文字变化，且新文字包含消息末尾或 CLI 的多行粘贴折叠占位符；该画面连续 200ms 未再变化、没有粘贴提示或画面滞后时立即发送 Enter。与 Python 一致，这一等待只是尽力而为：3 秒内仍未确认（CLI 重绘慢）也照常发送 Enter，只有期间出现的选择菜单会否决 Enter。粘贴已写入却拒发 Enter 会把消息留在 CLI 编辑区，且同一提交 ID 的重试都被拒绝（BUG-20260927-112827-5aa96e）。Grok 和 OpenCode 尚无可用的编辑区正文提取，仍保留 600ms 最短间隔和画面就绪再检。OpenCode 的原生用户消息来自服务端的镜像（[OpenCode](opencode.md)），与其他 CLI 一样按 `echo_hash` 等待对话回显。
 
@@ -55,4 +57,4 @@ Codex 多行编辑区可以持续隐藏页脚，光标停在下一空行；不�
 | 合同脚本 | [composer_input_contract.mjs](../tests/composer_input_contract.mjs) |
 | 登录/未知拒绝、恢复、粘贴后再检、不明写入不重试、软键盘不改 PTY 行列 | [send_readiness_browser.py](../tests/send_readiness_browser.py) |
 | Codex 两张图片与文字、`.txt` 与文字连续发送 | [send_codex_attachments_browser.py](../tests/send_codex_attachments_browser.py) |
-| 忙碌发送、选择题拒绝、草稿与 SEND | [send_browser.py](../tests/send_browser.py) |
+| 忙碌发送、选择题拒绝、草稿与 SEND、编辑区已有文字与 Esc 退回时拒发 | [send_browser.py](../tests/send_browser.py) |
