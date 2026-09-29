@@ -109,7 +109,11 @@ the catalog, the CLI decides.
 The catalog comes from each CLI's own data, read as its child would see it
 (profile environment over the service's): Codex `$CODEX_HOME/models_cache.json`
 (`visibility: list` only, `supported_reasoning_levels`; `default_model` is
-`config.toml`'s top-level `model`), Grok `$GROK_HOME/models_cache.json`
+`config.toml`'s top-level `model`; displayed default effort uses the top-level
+`model_reasoning_effort` before the cache's `default_reasoning_level`, including
+when a model is explicitly selected). This applies to both new-session and
+bug-report pickers; choosing default still omits the launch override, while
+choosing an explicit level passes it to the CLI. Grok `$GROK_HOME/models_cache.json`
 (non-hidden, `reasoning_efforts`), OpenCode `opencode models` (bounded to 15 s;
 one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
 `sonnet`, `haiku` with `low`…`max`. The page asks again every time the dialog

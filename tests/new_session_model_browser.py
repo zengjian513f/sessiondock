@@ -22,7 +22,7 @@ CODEX_CACHE = {"models": [
     {"slug": "gpt-fake-a", "display_name": "GPT Fake A", "visibility": "list",
      "default_reasoning_level": "low", "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]},
     {"slug": "gpt-fake-b", "display_name": "GPT Fake B", "visibility": "list",
-     "default_reasoning_level": "medium",
+     "default_reasoning_level": "low",
      "supported_reasoning_levels": [{"effort": "low"}, {"effort": "medium"}, {"effort": "xhigh"}]},
     {"slug": "gpt-fake-hidden", "display_name": "Hidden", "visibility": "hide",
      "supported_reasoning_levels": [{"effort": "ultra"}]},
@@ -90,7 +90,7 @@ def main():
         for name in ("host", "work", "ledger", "state", "home", "codex-home", "grok-home"):
             (root / name).mkdir(mode=0o700)
         (root / "codex-home/models_cache.json").write_text(json.dumps(CODEX_CACHE))
-        (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel = "other"\n')
+        (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\nmodel_reasoning_effort = "medium"\n[profiles.x]\nmodel = "other"\n')
         (root / "grok-home/models_cache.json").write_text(json.dumps(GROK_CACHE))
         log = root / "argv.jsonl"
         env = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
@@ -176,12 +176,33 @@ def main():
             assert not any("Hidden" in name for name in names) and len(names) == 3, names
             page.keyboard.press("Escape")
             choose_model(page, "GPT Fake A")
-            assert page.locator("#new-effort option").all_inner_texts() == ["默认（low）", "low", "high"]
-            page.locator("#new-effort").select_option("high")
+            assert page.locator("#new-effort option").all_inner_texts() == ["默认（medium）", "low", "high"]
+            page.locator("#new-effort").select_option("low")
             body = create(page, work)
-            assert body["model"] == "gpt-fake-a" and body["effort"] == "high", body
+            assert body["model"] == "gpt-fake-a" and body["effort"] == "low", body
             argv = wait_argv(log, lambda a: "-m" in a and "gpt-fake-a" in a)
-            assert argv[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="high"'], argv
+            assert argv[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'], argv
+
+            # Default leaves CLI configuration intact; explicit low above overrides it.
+            open_dialog(page)
+            page.locator("#new-effort").select_option("")
+            count = len(argv_lines(log))
+            body = create(page, work)
+            assert "effort" not in body, body
+            wait_argv(log, lambda a: a[-2:] == ["-m", "gpt-fake-a"])
+            assert any(a[-2:] == ["-m", "gpt-fake-a"] for a in argv_lines(log)[count:])
+
+            # The report uses the same catalog, independently of the new-session selection.
+            page.locator('[data-report-bug]:visible').first.click()
+            expect(page.locator("#bug-report-model-label")).to_have_text("默认（gpt-fake-b）")
+            expect(page.locator("#bug-report-effort option").first).to_have_text("默认（medium）")
+            page.locator("#bug-report-dialog .modal-close").click()
+
+            # Without a configured effort, fall back to the model cache on refresh.
+            (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel_reasoning_effort = "high"\n')
+            open_dialog(page)
+            expect(page.locator("#new-effort option").first).to_have_text("默认（low）")
+            page.keyboard.press("Escape")
 
             # ---- Grok: hidden models skipped, efforts in order, default marked.
             open_dialog(page)

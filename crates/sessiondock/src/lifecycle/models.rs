@@ -118,6 +118,12 @@ fn text(value: &serde_json::Value, key: &str) -> Option<String> {
 /// `$CODEX_HOME/models_cache.json`: listed models only, with their
 /// reasoning levels; the default model is `config.toml`'s top-level `model`.
 pub(super) fn codex(home: &Path) -> Catalog {
+    let config = std::fs::read_to_string(home.join("config.toml")).unwrap_or_default();
+    let default_model = toml_top_level_string(&config, "model");
+    // An omitted launch effort inherits the user's configuration, even when
+    // the picker explicitly selects a different model. The cache only supplies
+    // the fallback; treating it as the effective default mislabels the launch.
+    let configured_effort = toml_top_level_string(&config, "model_reasoning_effort");
     let models = read_json(&home.join("models_cache.json"))
         .and_then(|cache| cache.get("models")?.as_array().cloned())
         .unwrap_or_default()
@@ -132,14 +138,13 @@ pub(super) fn codex(home: &Path) -> Catalog {
                     .and_then(serde_json::Value::as_array)
                     .map(|levels| levels.iter().filter_map(|level| text(level, "effort")).collect())
                     .unwrap_or_default(),
-                default_effort: text(model, "default_reasoning_level"),
+                default_effort: configured_effort
+                    .clone()
+                    .or_else(|| text(model, "default_reasoning_level")),
                 id,
             })
         })
         .collect();
-    let default_model = std::fs::read_to_string(home.join("config.toml"))
-        .ok()
-        .and_then(|config| toml_top_level_string(&config, "model"));
     Catalog {
         models,
         efforts: Vec::new(),
