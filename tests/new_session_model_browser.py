@@ -90,6 +90,9 @@ def main():
         for name in ("host", "work", "ledger", "state", "home", "codex-home", "grok-home"):
             (root / name).mkdir(mode=0o700)
         (root / "codex-home/models_cache.json").write_text(json.dumps(CODEX_CACHE))
+        (root / "home/.claude").mkdir(mode=0o700)
+        (root / "home/.claude/settings.json").write_text(json.dumps({
+            "model": "opus", "modelSettings": {"opus": {"effortLevel": "medium"}}}))
         (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\nmodel_reasoning_effort = "medium"\n[profiles.x]\nmodel = "other"\n')
         (root / "grok-home/models_cache.json").write_text(json.dumps(GROK_CACHE))
         log = root / "argv.jsonl"
@@ -129,21 +132,29 @@ def main():
             # ---- Claude: aliases, no search at five rows, effort list, one row on desktop.
             open_dialog(page)
             pick_source(page, "claude")
-            expect(page.locator("#new-model-label")).to_have_text("默认模型")
+            expect(page.locator("#new-model-label")).to_have_text("Opus")
+            expect(page.locator("#new-effort")).to_have_value("medium")
             tops = page.evaluate("""() => ['.new-source', '#new-model', '.new-effort']
                 .map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))""")
             assert len(set(tops)) == 1, tops
+            widths = page.evaluate("""() => ['.new-model', '.new-effort']
+                .map(s => document.querySelector(s).getBoundingClientRect().width)""")
+            assert abs(widths[0] - widths[1]) <= 2, widths
             page.locator("#new-model").click()
             expect(page.locator("#new-model-search")).to_be_hidden()
-            expect(page.locator("#new-model-options [role=option]")).to_have_count(5)
+            expect(page.locator("#new-model-options [role=option]")).to_have_count(4)
             # Escape closes only the menu, not the dialog.
             page.keyboard.press("Escape")
             expect(page.locator("#new-model-menu")).to_be_hidden()
             expect(page.locator("#new-session-dialog")).to_be_visible()
+            body = create(page, work)
+            assert body["model"] == "opus" and body["effort"] == "medium", body
+            open_dialog(page)
             choose_model(page, "Opus")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts == ["默认强度", "low", "medium", "high", "xhigh", "max"], efforts
+            assert efforts == ["选择强度", "low", "medium", "high", "xhigh", "max"], efforts
+            expect(page.locator("#new-effort")).to_have_value("medium")
             page.locator("#new-effort").select_option("high")
             shot("claude")
             body = create(page, work)
@@ -152,6 +163,8 @@ def main():
             assert argv[-4:] == ["--model", "opus", "--effort", "high"], argv
 
             # ---- The choice is remembered per source; switching sources never moves the row.
+            page.reload(wait_until="networkidle")
+            page.wait_for_function("T.listLoaded")
             open_dialog(page)
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             expect(page.locator("#new-effort")).to_have_value("high")
@@ -168,50 +181,55 @@ def main():
 
             # ---- Codex: its models cache (hidden skipped), config default, per-model efforts.
             pick_source(page, "codex")
-            expect(page.locator("#new-model-label")).to_have_text("默认（gpt-fake-b）")
+            expect(page.locator("#new-model-label")).to_have_text("GPT Fake B")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts[0] == "默认（medium）", efforts
+            assert efforts == ["选择强度", "low", "medium", "xhigh"], efforts
+            expect(page.locator("#new-effort")).to_have_value("medium")
+            body = create(page, work)
+            assert body["model"] == "gpt-fake-b" and body["effort"] == "medium", body
+            open_dialog(page)
             page.locator("#new-model").click()
             names = page.locator("#new-model-options [role=option]").all_inner_texts()
-            assert not any("Hidden" in name for name in names) and len(names) == 3, names
+            assert not any("Hidden" in name for name in names) and len(names) == 2, names
             page.keyboard.press("Escape")
             choose_model(page, "GPT Fake A")
-            assert page.locator("#new-effort option").all_inner_texts() == ["默认（medium）", "low", "high"]
+            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
+            expect(page.locator("#new-effort")).to_have_value("")
             page.locator("#new-effort").select_option("low")
             body = create(page, work)
             assert body["model"] == "gpt-fake-a" and body["effort"] == "low", body
             argv = wait_argv(log, lambda a: "-m" in a and "gpt-fake-a" in a)
             assert argv[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'], argv
 
-            # Default leaves CLI configuration intact; explicit low above overrides it.
+            # The displayed value is a concrete choice, including after reopening.
             open_dialog(page)
-            page.locator("#new-effort").select_option("")
             count = len(argv_lines(log))
             body = create(page, work)
-            assert "effort" not in body, body
-            wait_argv(log, lambda a: a[-2:] == ["-m", "gpt-fake-a"])
-            assert any(a[-2:] == ["-m", "gpt-fake-a"] for a in argv_lines(log)[count:])
+            assert body["effort"] == "low", body
+            wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'])
+            assert any(a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'] for a in argv_lines(log)[count:])
 
             # The report uses the same catalog, independently of the new-session selection.
             page.locator('[data-report-bug]:visible').first.click()
-            expect(page.locator("#bug-report-model-label")).to_have_text("默认（gpt-fake-b）")
-            expect(page.locator("#bug-report-effort option").first).to_have_text("默认（medium）")
+            expect(page.locator("#bug-report-model-label")).to_have_text("GPT Fake B")
+            expect(page.locator("#bug-report-effort")).to_have_value("medium")
             page.locator("#bug-report-dialog .modal-close").click()
 
             # Without a configured effort, fall back to the model cache on refresh.
             (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel_reasoning_effort = "high"\n')
             open_dialog(page)
-            expect(page.locator("#new-effort option").first).to_have_text("默认（low）")
+            expect(page.locator("#new-effort")).to_have_value("low")
             page.keyboard.press("Escape")
 
             # ---- Grok: hidden models skipped, efforts in order, default marked.
             open_dialog(page)
             pick_source(page, "grok")
             page.locator("#new-model").click()
-            expect(page.locator("#new-model-options [role=option]")).to_have_count(2)
+            expect(page.locator("#new-model-options [role=option]")).to_have_count(1)
             page.keyboard.press("Escape")
             choose_model(page, "Grok Fake")
-            assert page.locator("#new-effort option").all_inner_texts() == ["默认（high）", "low", "high"]
+            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
+            expect(page.locator("#new-effort")).to_have_value("high")
             page.locator("#new-effort").select_option("low")
             body = create(page, work)
             argv = wait_argv(log, lambda a: "grok-fake" in a)
@@ -225,7 +243,7 @@ def main():
             page.locator("#new-model").click()
             expect(page.locator("#new-model-search")).to_be_visible()
             expect(page.locator("#new-model-search")).to_be_focused()
-            expect(page.locator("#new-model-options [role=option]")).to_have_count(len(OPENCODE_MODELS) + 1)
+            expect(page.locator("#new-model-options [role=option]")).to_have_count(len(OPENCODE_MODELS))
             page.keyboard.type("nested")
             expect(page.locator("#new-model-options [role=option]")).to_have_count(1)
             page.keyboard.press("Enter")

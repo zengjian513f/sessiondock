@@ -55,7 +55,7 @@ pub fn supports_effort(source: Source) -> bool {
 
 pub fn catalog(profile: &CliProfile) -> Catalog {
     let mut catalog = match profile.source {
-        Source::Claude => claude(),
+        Source::Claude => claude(profile),
         Source::Codex => codex(&cli_home(profile, "CODEX_HOME", ".codex")),
         Source::Grok => grok(&cli_home(profile, "GROK_HOME", ".grok")),
         Source::Opencode => opencode(profile),
@@ -87,20 +87,60 @@ fn cli_home(profile: &CliProfile, variable: &str, fallback: &str) -> PathBuf {
     })
 }
 
-fn claude() -> Catalog {
+fn profile_env(profile: &CliProfile, key: &str) -> Option<String> {
+    profile
+        .env
+        .get(key)
+        .cloned()
+        .or_else(|| {
+            (!profile.env_remove.iter().any(|removed| removed == key))
+                .then(|| std::env::var(key).ok())
+                .flatten()
+        })
+        .filter(|value| !value.is_empty())
+}
+
+fn claude(profile: &CliProfile) -> Catalog {
     let efforts: Vec<String> = CLAUDE_EFFORTS.iter().map(|&e| e.to_owned()).collect();
+    let settings = read_json(&cli_home(profile, "CLAUDE_CONFIG_DIR", ".claude").join("settings.json"));
+    let default_model = profile_env(profile, "ANTHROPIC_MODEL")
+        .or_else(|| settings.as_ref().and_then(|value| text(value, "model")))
+        .or_else(|| profile_env(profile, "ANTHROPIC_DEFAULT_MODEL"))
+        .filter(|model| !matches!(model.as_str(), "default" | "inherit" | "opusplan")
+            && !model.chars().any(char::is_whitespace));
+    let configured_effort = profile_env(profile, "CLAUDE_CODE_EFFORT_LEVEL")
+        .filter(|effort| efforts.contains(effort));
+    let effort_for = |id: &str| {
+        configured_effort.clone().or_else(|| {
+            settings
+                .as_ref()
+                .and_then(|settings| settings.get("modelSettings"))
+                .and_then(|models| models.get(id))
+                .and_then(|model| text(model, "effortLevel"))
+                .filter(|effort| efforts.contains(effort))
+        })
+    };
+    let mut models: Vec<Model> = CLAUDE_ALIASES
+        .iter()
+        .map(|&(id, name)| Model {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            efforts: efforts.clone(),
+            default_effort: effort_for(id),
+        })
+        .collect();
+    if let Some(id) = default_model.as_ref().filter(|id| !models.iter().any(|model| &model.id == *id)) {
+        models.push(Model {
+            id: id.clone(),
+            name: id.clone(),
+            efforts: efforts.clone(),
+            default_effort: effort_for(id),
+        });
+    }
     Catalog {
-        models: CLAUDE_ALIASES
-            .iter()
-            .map(|&(id, name)| Model {
-                id: id.to_owned(),
-                name: name.to_owned(),
-                efforts: efforts.clone(),
-                default_effort: None,
-            })
-            .collect(),
+        models,
         efforts,
-        default_model: None,
+        default_model,
     }
 }
 

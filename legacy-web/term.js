@@ -1615,25 +1615,25 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const search = el('model-search'), box = el('model-options'), select = el('effort');
   const picker = {catalog: null, key: '', model: '', effort: '', rows: [], active: -1, seq: 0};
   const info = id => picker.catalog?.models.find(model => model.id === id) || null;
-  const defaultLabel = () => picker.catalog?.default_model ? `默认（${picker.catalog.default_model}）` : '默认模型';
   const controls = (text, title, enabled) => {
     label.textContent = text;
-    label.classList.toggle('default', !picker.model);
+    label.classList.toggle('default', !enabled);
     button.title = title;
     button.disabled = !enabled;
   };
-  picker.apply = (model, effort, persist = false) => {
+  picker.apply = (model, effort, persist = false, savedEmptyEffort = false) => {
     const catalog = picker.catalog, chosen = info(model);
-    picker.model = chosen ? model : '';
     const shown = chosen || info(catalog?.default_model);
-    const efforts = picker.model ? chosen.efforts || [] : catalog?.efforts || [];
-    picker.effort = efforts.includes(effort) ? effort : '';
-    const name = chosen ? chosen.name || chosen.id : defaultLabel();
-    controls(name, chosen && chosen.name !== chosen.id ? `${chosen.name}（${chosen.id}）` : '模型：' + name,
+    picker.model = shown?.id || '';
+    const efforts = shown?.efforts || catalog?.efforts || [];
+    picker.effort = efforts.includes(effort) ? effort : savedEmptyEffort && !effort ? ''
+      : efforts.includes(shown?.default_effort) ? shown.default_effort : '';
+    const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
+    controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
-    const fallback = shown?.default_effort;
-    select.replaceChildren(new Option(fallback ? `默认（${fallback}）` : '默认强度', ''),
-      ...efforts.map(value => new Option(value, value)));
+    const placeholder = new Option('选择强度', '');
+    placeholder.disabled = placeholder.hidden = true;
+    select.replaceChildren(placeholder, ...efforts.map(value => new Option(value, value)));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
@@ -1647,7 +1647,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     picker.model = picker.effort = '';
     picker.apply('', '');
     if (!current || current === 'shell') {
-      controls('默认模型', '终端会话不选择模型', false);
+      controls('模型不可用', '终端会话不选择模型', false);
       return;
     }
     controls('读取模型…', '正在读取该 CLI 的模型列表', false);
@@ -1655,10 +1655,11 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (seq !== picker.seq) return;
     picker.catalog = catalog;
     const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '', saved.effort || '');
-    if (!catalog) controls('默认模型', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
+    picker.apply(saved.model || '', saved.effort || '', false,
+      !!saved.model && Object.hasOwn(saved, 'effort'));
+    if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
-  /** 请求体里的选择；默认模型/强度不传。 */
+  /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
   picker.choice = () => ({...(picker.model ? {model: picker.model} : {}),
     ...(picker.effort ? {effort: picker.effort} : {})});
   picker.close = (focus = false) => {
@@ -1681,7 +1682,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   };
   const render = () => {
     const query = search.value.trim().toLocaleLowerCase();
-    const all = [{id: '', name: defaultLabel()}, ...picker.catalog.models];
+    const all = picker.catalog.models;
     picker.rows = query ? all.filter(model => model.id
       && `${model.id} ${model.name || ''}`.toLocaleLowerCase().includes(query)) : all;
     box.replaceChildren();
@@ -1694,7 +1695,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
       option.setAttribute('role', 'option');
       option.setAttribute('aria-selected', String(model.id === picker.model));
       option.tabIndex = -1;
-      option.title = model.id || '使用 CLI 自己的默认模型';
+      option.title = model.id;
       const name = document.createElement('span');
       name.textContent = model.name || model.id;
       option.appendChild(name);
