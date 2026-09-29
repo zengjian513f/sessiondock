@@ -4865,7 +4865,10 @@ function switchComposerDraft(uid) {
   ta.value = draft?.text || '';
   renderComposerItems();
   autoGrow(ta);
-  if (uid) followServerDraft(uid); // Already hydrated: pick up edits saved elsewhere.
+  if (uid) {
+    followServerDraft(uid); // Already hydrated: pick up edits saved elsewhere.
+    pollComposerInput();
+  }
 }
 
 /** Persisted agents already drop the composer once the pane leaves the list.
@@ -5100,9 +5103,11 @@ async function probeComposerInput(uid) {
   let data;
   try {
     data = await post('api/session/conversation/check', {uid, name,
-      lease:termSendLease(name).lease || null});
+      lease:termSendLease(name).lease || null}, {timeoutMs:5000});
   } catch (error) {
-    data = {error:error.message || String(error)};
+    data = {error:error.name === 'TimeoutError'
+      ? 'CLI 输入状态检查超时，正在重试；可切换终端检查'
+      : error.message || String(error)};
   }
   // An older poll cannot overwrite a newer SEND check, a switched view, or
   // the state of a replacement terminal using the same logical draft.
@@ -5179,6 +5184,25 @@ async function reconcileComposerSubmission(uid) {
   adoptServerDraft(draft,result.draft,uid);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
+let composerInputProbeBusy=false, composerDraftSyncBusy=false;
+async function pollComposerInput() {
+  const uid=composerUid;
+  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
+      || !$('#composer').getClientRects().length || !takenOver(uid)) return;
+  composerInputProbeBusy=true;
+  let data;
+  try { data = await probeComposerInput(uid); }
+  catch { /* SEND independently checks the current input surface. */ }
+  finally { composerInputProbeBusy=false; }
+  // Draft/history reads must not hold up the live input-status checks.
+  if (composerDraftSyncBusy) return;
+  composerDraftSyncBusy=true;
+  try {
+    if (Number.isInteger(data?.draft_revision)) await followServerDraft(uid,data.draft_revision);
+    await reconcileComposerSubmission(uid);
+  } catch { /* A missing/in-progress receipt keeps the editor intact. */ }
+  finally { composerDraftSyncBusy=false; }
+}
 function scheduleComposerInputChecks(poll) {
   setInterval(poll, 1500);
   // Parent layout can hide the composer without changing its own classes.
@@ -5192,21 +5216,7 @@ function scheduleComposerInputChecks(poll) {
   });
   visibility.observe($('#composer'));
 }
-let composerInputProbeBusy=false;
-scheduleComposerInputChecks(async () => {
-  const uid=composerUid;
-  if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
-      || !$('#composer').getClientRects().length || !takenOver(uid)) return;
-  composerInputProbeBusy=true;
-  try {
-    const data = await probeComposerInput(uid);
-    if (Number.isInteger(data.draft_revision)) await followServerDraft(uid,data.draft_revision);
-  } catch { /* SEND independently checks the current input surface. */ }
-  finally {
-    try {await reconcileComposerSubmission(uid);} catch { /* A missing/in-progress receipt keeps the editor intact. */ }
-    composerInputProbeBusy=false;
-  }
-});
+scheduleComposerInputChecks(pollComposerInput);
 
 function renderComposerItems() {
   const box = $('#compose-items');
@@ -5646,6 +5656,12 @@ async function submitComposer() {
   const text = ta.value, attachments = [...draft.attachments];
   const quotes = draft.quotes.map(x => ({id:x.id, text:x.text})).filter(x => x.text.trim());
   if (composerSending || (!text.trim() && !attachments.length && !quotes.length)) return;
+  // Enter obeys the same readiness gate as the Send button. The reason stays
+  // beside the editor and polling clears it when the CLI becomes ready.
+  if (composerUsesInputStatus(uid) && !composerInputAllowsSend(draft.inputStatus)) {
+    renderComposerInputStatus();
+    return;
+  }
   if (!conversationSendEnabled() || (typeof sessionIsPtyOnly === 'function' && sessionIsPtyOnly(uid))) {
     closeComposerHistory(); composerSending = true;
     button.disabled = true;
@@ -6111,9 +6127,9 @@ function foregroundTerm(force = false) {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) backgroundTerm();
-  else { foregroundTerm(); if (composerUid) followServerDraft(composerUid); }
+  else { foregroundTerm(); pollComposerInput(); if (composerUid) followServerDraft(composerUid); }
 });
-addEventListener('focus', () => { if (composerUid) followServerDraft(composerUid); });
+addEventListener('focus', () => { pollComposerInput(); if (composerUid) followServerDraft(composerUid); });
 addEventListener('pagehide', backgroundTerm);
 addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));
