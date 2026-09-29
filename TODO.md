@@ -10,6 +10,10 @@
   保留原生创建时间校验，不能仅凭目标机器/目录/时间邻近猜测。现状与边界见
   [liveness.md](docs/liveness.md#ssh-boundary)；跨机器手工挂载已支持。
 
+- [ ] 实现会话跨机器迁移：带上依赖闭包（祖先、fork、子代理、续接链），只迁移已停止的
+  会话，两端的 CLI 根和 cwd 绝对路径必须一致。先做 Codex resume 是否依赖
+  `state_5.sqlite` 的实测。设计见 [session-move.md](docs/session-move.md)。
+
 - [ ] 为 Windows/macOS 的外部（非 ptyhost 管理）CLI 补齐进程发现与强身份验证。
   Windows 的受管 ptyhost 路径已经过实机验证，不应与此外部进程缺口混为一谈。
 - [ ] 在 macOS 实机验证 sessiondock、ptyhost、文件原子替换、进程身份和终端生命周期；
