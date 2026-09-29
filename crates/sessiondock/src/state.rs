@@ -81,6 +81,9 @@ pub struct AppState {
     /// source snapshots they came from (docs/liveness.md "Response caches").
     pub polls: Arc<crate::polls::PollCache>,
     pub ui_events: Arc<crate::ui_events::EventBus>,
+    /// Login-shell environment drift (`SESSIONDOCK_SHELL_ENV_COMMAND`);
+    /// `None` answers `/api/shell-env` with `configured: false`.
+    pub shell_env: Option<Arc<crate::shell_env::ShellEnv>>,
 }
 
 #[derive(Clone)]

@@ -726,15 +726,130 @@ function markStaleBuild(serverBuild = '') {
   }
 }
 
+let serverHostname = '';
 async function checkServerBuild() {
   try {
     const response = await fetch(appUrl('api/meta'), {cache: 'no-store'});
     const data = await response.json();
+    if (data.hostname) serverHostname = data.hostname;
     if (data.build && BUILD_ID && data.build !== BUILD_ID) markStaleBuild(data.build);
   } catch { /* 网络恢复后再检查 */ }
 }
 setInterval(checkServerBuild, 30000);
 queueMicrotask(checkServerBuild);
+
+// 登录环境：后端经 zshrc 之类的包装启动，新开的 CLI 继承后端的环境。启动文件改动后，
+// 要重启后端才会进入新会话；后端比对出变化的变量名，这里按机器列成表。
+const shellEnvIgnored = new Map();    // 机器 → 本页已忽略的变化（变量名列表）
+const shellEnvRestarting = new Map(); // 机器 → {started_at: 发起重启前的启动时间, at: 发起时刻}
+const SHELL_ENV_RESTART_WAIT_MS = 120000;
+let shellEnvRun = 0;
+let shellEnvShown = [];
+function shellEnvTargets() {
+  if (!HUB_MODE) return [{key: 'local', name: serverHostname || Nodes.list[0]?.name || '本机', prefix: ''}];
+  // 正在重启的机器暂时离线也要继续问，直到它带着新的启动时间回来。
+  return Nodes.list.filter(node => node.online !== false || shellEnvRestarting.has(node.id))
+    .map(node => ({key: node.id, name: node.name || node.id, prefix: `api/nodes/${node.id}/`}));
+}
+
+async function checkShellEnv() {
+  const run = ++shellEnvRun;
+  const targets = shellEnvTargets();
+  const found = await Promise.all(targets.map(async target => {
+    let data = null;
+    try {
+      const response = await fetch(appUrl(target.prefix + 'api/shell-env'), {cache: 'no-store'});
+      if (response.ok) data = await response.json();   // 旧后端没有这个接口
+    } catch { /* 机器重启或离线 */ }
+    const restarting = shellEnvRestarting.get(target.key);
+    if (restarting) {
+      const back = data && data.started_at && data.started_at !== restarting.started_at;
+      if (!back && Date.now() - restarting.at < SHELL_ENV_RESTART_WAIT_MS) {
+        return {...target, data: data || {}, restarting: true};
+      }
+      shellEnvRestarting.delete(target.key);
+    }
+    if (!data?.configured || !data.stale) return null;
+    return shellEnvIgnored.get(target.key) === (data.changed || []).join(',') ? null : {...target, data};
+  }));
+  if (run !== shellEnvRun) return;   // 更新的一轮检查会画出更新的结果
+  renderShellEnvNotice(found.filter(Boolean));
+}
+
+const textEl = (tag, cls, text) => { const node = el(tag, cls); node.textContent = text; return node; };
+function shellEnvButton(label, aria, onclick) {
+  const button = textEl('button', 'btn', label);
+  button.type = 'button';
+  if (aria) button.setAttribute('aria-label', aria);
+  button.onclick = onclick;
+  return button;
+}
+
+function renderShellEnvNotice(items) {
+  shellEnvShown = items;
+  let notice = $('#shell-env-notice');
+  if (!items.length) { notice?.remove(); return; }
+  if (!notice) {
+    notice = el('div', 'version-stale shell-env-stale');
+    notice.id = 'shell-env-notice';
+    notice.setAttribute('role', 'status');
+    document.body.appendChild(notice);
+  }
+  const pending = items.filter(item => !item.restarting);
+  const head = el('div', 'shell-env-head');
+  head.appendChild(textEl('span', '', '登录环境（zshrc）已变化：新开的会话仍用旧环境，重启后端后生效；正在运行的会话不受影响。'));
+  if (pending.length > 1) {
+    head.appendChild(shellEnvButton(`全部重启 (${pending.length})`, '', event => restartShellEnv(pending, event.currentTarget)));
+  }
+  const table = el('table', 'shell-env-table');
+  const header = table.createTHead().insertRow();
+  for (const title of ['机器', '变化', '', '']) header.appendChild(textEl('th', '', title));
+  const body = table.createTBody();
+  for (const item of items) {
+    const row = body.insertRow();
+    row.dataset.node = item.key;
+    row.appendChild(textEl('td', 'shell-env-node', item.name));
+    const names = item.data.changed || [];
+    row.appendChild(textEl('td', 'shell-env-changed', item.restarting ? '正在重启…' : names.join('、')));
+    const restart = row.insertCell(), ignore = row.insertCell();
+    if (item.restarting) continue;
+    restart.appendChild(shellEnvButton('重启', `重启 ${item.name} 后端`, event => restartShellEnv([item], event.currentTarget)));
+    ignore.appendChild(shellEnvButton('忽略', `忽略 ${item.name}`, () => {
+      shellEnvIgnored.set(item.key, names.join(','));
+      renderShellEnvNotice(shellEnvShown.filter(other => other.key !== item.key));
+    }));
+  }
+  notice.replaceChildren(head, table);
+}
+
+async function restartShellEnv(items, button) {
+  button.disabled = true;
+  const failed = [];
+  await Promise.all(items.map(async item => {
+    try {
+      const response = await fetch(appUrl(item.prefix + 'api/shell-env/restart'), {method: 'POST'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      shellEnvRestarting.set(item.key, {started_at: item.data.started_at, at: Date.now()});
+      browserAuditEvent('shell_env.restart', {node: item.key, changed: item.data.changed || []});
+    } catch (error) {
+      failed.push(`${item.name}: ${error.message || error}`);
+    }
+  }));
+  // 先原地把这几行换成“正在重启…”，其他机器的行保持不动。
+  renderShellEnvNotice(shellEnvShown.map(item =>
+    shellEnvRestarting.has(item.key) ? {...item, restarting: true} : item));
+  if (failed.length) alert(`重启后端失败:\n${failed.join('\n')}`);
+  for (let i = 0; i < 60 && items.some(item => shellEnvRestarting.has(item.key)); i++) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await checkShellEnv();
+  }
+}
+setInterval(checkShellEnv, 60000);
+setTimeout(checkShellEnv, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkShellEnv();
+});
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) checkServerBuild();
 });

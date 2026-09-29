@@ -128,6 +128,18 @@ html, body {
   box-shadow: 0 5px 24px rgba(0, 0, 0, .2); font-size: 13px;
 }
 .version-stale .btn { white-space: nowrap; }
+.shell-env-stale {
+  top: auto; bottom: 10px; flex-direction: column; align-items: stretch; gap: 6px;
+  width: min(640px, calc(100vw - 20px)); box-sizing: border-box; max-height: 60vh; overflow: auto;
+}
+.shell-env-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shell-env-head span { flex: 1 1 220px; min-width: 0; }
+.shell-env-table { border-collapse: collapse; width: 100%; }
+.shell-env-table th { text-align: left; font-weight: 600; padding: 2px 6px; }
+.shell-env-table td { padding: 3px 6px; border-top: 1px solid rgba(128, 128, 128, .35); vertical-align: middle; }
+.shell-env-table .shell-env-node { white-space: nowrap; font-weight: 600; }
+.shell-env-table .shell-env-changed { width: 100%; min-width: 8em; overflow-wrap: anywhere; }
+.shell-env-table td:nth-child(3), .shell-env-table td:nth-child(4) { width: 1%; white-space: nowrap; }
 :root[data-theme="dark"] .version-stale {
   background: #33280f; color: #ffe29a; border-color: #8d6a1d;
 }

@@ -30,6 +30,7 @@ pub mod runtime;
 pub mod search;
 mod security;
 pub mod sessions;
+pub mod shell_env;
 mod state;
 pub mod terminal;
 pub mod trash;
@@ -494,7 +495,18 @@ fn build_app(
     if let Some(service) = &conversations {
         service.housekeeping(shutdown.clone());
     }
+    let shell_env = config.shell_env_command.clone().map(|command| {
+        let watch = config.shell_env_watch.clone();
+        let service = Arc::new(shell_env::ShellEnv::new(command, watch));
+        // The baseline: what the wrapper produces now, as this service loaded it.
+        let startup = service.clone();
+        tokio::spawn(async move {
+            startup.check().await;
+        });
+        service
+    });
     let state = AppState {
+        shell_env,
         opencode_root,
         conversations,
         assets,
