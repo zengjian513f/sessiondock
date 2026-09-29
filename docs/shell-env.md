@@ -43,7 +43,9 @@ environment (`HOME`, `USER`, `LOGNAME`, `LANG` and a system `PATH`). It runs
 once at startup to record the baseline, then again when `GET /api/shell-env`
 finds that a watched file's size or modification time changed, or when 10
 minutes have passed since the last capture. It compares the variables, ignoring
-`_`, `SHLVL`, `PWD` and `OLDPWD`. Only names leave the process; values stay in
+`_`, `SHLVL`, `PWD` and `OLDPWD`. The startup capture runs twice. A variable
+whose value already differs between those two runs is minted fresh by every
+shell start (`ATUIN_SESSION`, `STARSHIP_SESSION_KEY`) and is never reported. Only names leave the process; values stay in
 memory, and the service's own environment already holds them.
 
 `GET /api/shell-env` returns:
@@ -67,11 +69,14 @@ baseline. Managed CLI hosts survive, as on any restart.
 
 Every 60 s, and when the page becomes visible, the page asks each online
 machine (`api/nodes/<id>/api/shell-env` on the hub, `api/shell-env` locally).
-For each machine whose environment drifted, the notice at the bottom names the
-changed variables and offers `重启 <机器> 后端` and `忽略`. `忽略` hides that
-exact set of names for the page. With two or more machines to restart, a
-`全部重启 (N)` row on top sends every restart at once. After a restart the notice says the backend is
-restarting until the machine answers with a new `started_at`. A machine
+The notice at the bottom is a table with the columns machine, changed
+variables, `重启` and `忽略`, one row per machine whose environment drifted.
+`忽略` hides that exact set of names for the page. With two or more machines to
+restart, `全部重启 (N)` above the table sends every restart at once. A
+restarting machine's row reads `正在重启…` in place, and the other rows stay.
+It keeps that state even while the hub reports the machine offline or the
+request fails, until the machine answers with a new `started_at` (at most
+2 minutes). Only the newest of overlapping checks is drawn. A machine
 without the endpoint (an older build) or without the configuration shows
 nothing.
 

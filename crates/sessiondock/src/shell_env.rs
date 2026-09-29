@@ -6,7 +6,10 @@
 //! service restarts. This module notices that: it captures what the wrapper
 //! produces from a fixed minimal environment (`<command> /usr/bin/env -0`) at
 //! startup, and again whenever a watched file changes or `RECHECK` has
-//! passed, and reports the variable *names* whose values differ. Values never
+//! passed, and reports the variable *names* whose values differ. The startup
+//! capture runs twice: a variable that already differs between those two is
+//! minted per shell (`ATUIN_SESSION`, `STARSHIP_SESSION_KEY`) and is never
+//! reported. Values never
 //! leave the process. `POST /api/shell-env/restart` exits with
 //! `RESTART_EXIT_CODE` after the normal graceful shutdown so the supervisor
 //! (systemd `Restart=on-failure`) starts a fresh service; managed CLI hosts
@@ -60,6 +63,8 @@ fn stamp(path: &PathBuf) -> Option<Stamp> {
 #[derive(Default)]
 struct Inner {
     baseline: Option<BTreeMap<String, String>>,
+    /// Variables every shell start gives a new value.
+    per_shell: std::collections::BTreeSet<String>,
     stamps: Vec<Option<Stamp>>,
     captured: Option<Instant>,
     checked_at: Option<String>,
@@ -156,18 +161,31 @@ impl ShellEnv {
             || inner.captured.is_none_or(|at| at.elapsed() >= RECHECK);
         if due {
             let this = self.clone();
-            let captured = tokio::task::spawn_blocking(move || this.capture())
-                .await
-                .unwrap_or_else(|_| Err("环境检查任务失败".into()));
+            let first = inner.baseline.is_none();
+            let captured = tokio::task::spawn_blocking(move || {
+                let current = this.capture()?;
+                // The baseline capture runs twice to learn per-shell values.
+                let again = if first { Some(this.capture()?) } else { None };
+                Ok::<_, String>((current, again))
+            })
+            .await
+            .unwrap_or_else(|_| Err("环境检查任务失败".into()));
             inner.stamps = stamps;
             inner.captured = Some(Instant::now());
             inner.checked_at = Some(now());
             match captured {
-                Ok(current) => {
+                Ok((current, again)) => {
                     inner.error = None;
+                    if let Some(again) = again {
+                        inner.per_shell = changed_names(&current, &again).into_iter().collect();
+                    }
                     match &inner.baseline {
                         None => inner.baseline = Some(current),
-                        Some(baseline) => inner.changed = changed_names(baseline, &current),
+                        Some(baseline) => {
+                            let mut changed = changed_names(baseline, &current);
+                            changed.retain(|name| !inner.per_shell.contains(name));
+                            inner.changed = changed;
+                        }
                     }
                 }
                 Err(error) => inner.error = Some(error),

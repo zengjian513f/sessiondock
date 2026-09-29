@@ -83,7 +83,8 @@ def main():
         rc = root / "rc.sh"
         rc.write_text("export SD_TEST_TOKEN=secret-one\n")
         wrapper = root / "with-rc"
-        wrapper.write_text(f"#!/bin/bash\n. {rc}\nexec \"$@\"\n")
+        # Like atuin/starship: a value minted by every shell start is not a configuration change.
+        wrapper.write_text(f"#!/bin/bash\n. {rc}\nexport SD_PER_SHELL=$RANDOM$RANDOM$$\nexec \"$@\"\n")
         wrapper.chmod(0o755)
         nodes, processes, locals_, extras = [], {}, {}, {}
         for name, nid in (("shellnode", NID), ("shellnode2", "f" * 32)):
@@ -126,6 +127,8 @@ def main():
         hub_page.evaluate("checkShellEnv()")
         notice = hub_page.locator("#shell-env-notice")
         expect(notice).to_have_count(0)
+        row = lambda nid: notice.locator(f'tr[data-node="{nid}"]')  # noqa: E731
+        NID2 = "f" * 32
         # Edit the shared startup file: a changed value and a new variable, on both machines.
         rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\n")
         data, raw = shell_env(local)
@@ -133,8 +136,10 @@ def main():
         assert b"secret" not in raw, raw
         hub_page.evaluate("checkShellEnv()")
         expect(notice).to_be_visible()
-        expect(notice).to_contain_text("shellnode 的登录环境（zshrc）已变化：SD_TEST_NEW、SD_TEST_TOKEN")
-        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化")
+        expect(notice.locator("th")).to_have_text(["机器", "变化", "", ""])
+        expect(row(NID).locator("td")).to_have_text(["shellnode", "SD_TEST_NEW、SD_TEST_TOKEN", "重启", "忽略"])
+        expect(row(NID2).locator("td")).to_have_text(["shellnode2", "SD_TEST_NEW、SD_TEST_TOKEN", "重启", "忽略"])
+        expect(notice).not_to_contain_text("SD_PER_SHELL")
         expect(notice).not_to_contain_text("secret")
         box = notice.bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= 390.5, box
@@ -143,7 +148,7 @@ def main():
         local_page.goto(local, wait_until="networkidle")
         local_page.evaluate("checkShellEnv()")
         local_notice = local_page.locator("#shell-env-notice")
-        expect(local_notice).to_contain_text("SD_TEST_TOKEN")
+        expect(local_notice.locator('tr[data-node="local"]')).to_contain_text("SD_TEST_TOKEN")
         expect(local_notice.get_by_role("button", name="全部重启")).to_have_count(0)
         local_notice.get_by_role("button", name="忽略").click()
         expect(local_notice).to_have_count(0)
@@ -152,8 +157,8 @@ def main():
         local_page.close()
         # 全部重启: both machines shut down gracefully and exit 75; a supervisor restart clears the notice.
         hub_page.get_by_role("button", name="全部重启 (2)").click()
-        expect(notice).to_contain_text("shellnode 的后端正在重启…")
-        expect(notice).to_contain_text("shellnode2 的后端正在重启…")
+        expect(row(NID).locator("td").nth(1)).to_have_text("正在重启…")
+        expect(row(NID2).locator("td").nth(1)).to_have_text("正在重启…")
         restart_node("shellnode")
         restart_node("shellnode2")
         expect(notice).to_have_count(0, timeout=40000)
@@ -161,17 +166,25 @@ def main():
         rc.write_text("export SD_TEST_TOKEN=secret-three\nexport SD_TEST_NEW=1\n")
         hub_page.evaluate("checkShellEnv()")
         expect(hub_page.get_by_role("button", name="全部重启 (2)")).to_be_visible()
+        hub_page.evaluate("""() => { window.__noticeGone = false;
+            new MutationObserver(() => { if (!document.querySelector('#shell-env-notice')) window.__noticeGone = true; })
+                .observe(document.body, {childList: true}); }""")
         hub_page.get_by_role("button", name="重启 shellnode 后端").click()
-        expect(notice).to_contain_text("shellnode 的后端正在重启…")
-        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化：SD_TEST_TOKEN")
+        # Only that row changes; the other machine's row stays through the whole restart.
+        expect(row(NID).locator("td").nth(1)).to_have_text("正在重启…")
+        expect(row(NID2).locator("td").nth(1)).to_have_text("SD_TEST_TOKEN")
         restart_node("shellnode")
-        expect(notice).not_to_contain_text("shellnode 的", timeout=40000)
-        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化")
+        for _ in range(3):   # across polls while the node is down and back, the notice never vanishes
+            expect(row(NID2)).to_be_visible()
+            hub_page.evaluate("checkShellEnv()")
+        expect(row(NID)).to_have_count(0, timeout=40000)
+        expect(row(NID2).locator("td").nth(1)).to_have_text("SD_TEST_TOKEN")
         expect(notice.get_by_role("button", name="全部重启")).to_have_count(0)
+        assert not hub_page.evaluate("window.__noticeGone"), "the notice vanished during a one-machine restart"
         data, _ = shell_env(locals_["shellnode"])
         assert not data["stale"], data
         assert not errors, errors
-    print("PASS shell env browser: drift names only (no values), two-machine hub + node notice at 390px, ignore, "
+    print("PASS shell env browser: drift names only (no values, per-shell values ignored), two-machine table at 390px, ignore, "
           "全部重启 and single restart exit 75 after graceful shutdown, a fresh start clears each row")
 
 
