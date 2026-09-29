@@ -61,6 +61,11 @@ rules without file access.
 Fork-parent detection is constrained by source and optional node identity.
 Unsupported topology rows cannot invent an edge that hides another session.
 Parents are hidden unless their explicit visibility preference is true.
+When shown, sidebar metadata identifies them as parent sessions and includes
+the native fork depth (or the original root). Fork leaves also show their depth,
+so inherited titles do not make distinct generations look like duplicate rows.
+The fork-chain menu still opens, shows and hides each ancestor independently;
+labels never change saved visibility or native transcripts.
 
 Activity-stop and timeline structures are domain hooks for later verified
 terminal integration, not authorization to perform native operations. An
