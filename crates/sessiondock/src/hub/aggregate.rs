@@ -610,10 +610,7 @@ async fn write(
     path: &str,
     body: Value,
 ) -> Option<Value> {
-    match registry
-        .request(client, node, path, "POST", Some(&body), client.timeout)
-        .await
-    {
+    match registry.bulk_write(client, node, path, &body).await {
         Ok((200, data)) => Some(namespace::public_payload(data, node, path)),
         _ => None,
     }
