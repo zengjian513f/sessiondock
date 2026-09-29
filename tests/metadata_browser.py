@@ -1,12 +1,38 @@
 #!/usr/bin/env python3
 """Synthetic preferences through the real legacy UI; no original state or CLI."""
 import argparse
+import json
 import os
 from pathlib import Path
 import tempfile
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import BINARY, build_corpus, isolated_server
+from history_parity import BINARY, batch35_meta, build_corpus, codex_message, isolated_server
+
+
+def check_shown_fork_chain(page, corpus):
+    """BUG-20260929-162715-6739df: five saved-visible, same-title generations."""
+    selectors = [f'#side .item[data-uid="{corpus.uid(f"shown-fork-{i}")}"]' for i in range(5)]
+    labels = ['父会话（原始）'] + [f'父会话（分叉 {i}）' for i in range(1, 4)] + ['分叉 4']
+    for i, (selector, label) in enumerate(zip(selectors, labels)):
+        expect(page.locator(selector + ' .t')).to_have_text('Shared fork title')
+        expect(page.locator(selector + ' .m')).to_contain_text(label)
+        page.locator(selector).click()
+        expect(page.locator('#msgs')).to_contain_text(f'Generation {i} answer')
+    page.locator('#a-fork-chain').click()
+    for i in range(4):
+        page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid(f"shown-fork-{i}")}"] .chain-toggle').click()
+        expect(page.locator(selectors[i])).to_have_count(0)
+    expect(page.locator(selectors[4])).to_be_visible()
+    # Hidden ancestors remain navigable, and showing them restores the labels.
+    page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid("shown-fork-0")}"] .chain-open').click()
+    expect(page.locator('#msgs')).to_contain_text('Generation 0 answer')
+    page.locator(selectors[4]).click()
+    page.locator('#a-fork-chain').click()
+    for i in range(4):
+        page.locator(f'#fork-chain-menu .chain-row[data-uid="{corpus.uid(f"shown-fork-{i}")}"] .chain-toggle').click()
+        expect(page.locator(selectors[i] + ' .m')).to_contain_text(labels[i])
+    page.locator('#a-fork-chain').click()
 
 
 def main():
@@ -15,9 +41,19 @@ def main():
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="sessiondock-metadata-browser-") as temporary:
         corpus = build_corpus(Path(temporary))
+        inherited = [codex_message('user', 'Shared fork title')]
+        for i in range(5):
+            sid = f'shown-fork-{i}'
+            inherited = [batch35_meta(sid, forked_from_id=f'shown-fork-{i-1}' if i else None),
+                         *inherited, codex_message('assistant', f'Generation {i} answer')]
+            corpus.put(sid, 'codex', inherited, [])
         native_before = {path: path.read_bytes() for path in corpus.paths.values()}
         state = corpus.root / "state"
         state.mkdir(mode=0o700)
+        (state / 'session-metadata.json').write_text(json.dumps({
+            'schema_version': 1, 'revision': 1,
+            'sessions': {corpus.uid(f'shown-fork-{i}'): {'fork_parent_visible': True} for i in range(4)},
+        }))
         with sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -37,6 +73,7 @@ def main():
                         expect(page.locator("#msgs")).to_contain_text("Claude selected answer")
                         page.wait_for_function("_es && _es.readyState === EventSource.OPEN")
                     first, other = pages
+                    check_shown_fork_chain(first, corpus)
                     button = f'#side .star-toggle[data-star-uid="{corpus.uid("claude-branch")}"]'
                     first.locator(button).click()
                     expect(first.locator(button)).to_have_attribute("aria-pressed", "true")
@@ -72,6 +109,7 @@ def main():
                         first.locator(f'#side .item[data-uid="{corpus.uid("codex-grandchild")}"]').click()
                     expect(first.locator("#a-term")).to_be_visible()
                     expect(first.locator("#a-term")).to_be_enabled()
+                    expect(first.locator(f'#side .item[data-uid="{corpus.uid("shown-fork-3")}"] .m')).to_contain_text('父会话（分叉 3）')
                     assert not errors, errors
                     context.close()  # Release SSE before shutting down the writer.
                 with isolated_server(corpus, args.binary, state_dir=state) as (base, _):
@@ -81,9 +119,11 @@ def main():
                     page.goto(base, wait_until="networkidle")
                     expect(page.locator(button)).to_have_attribute("aria-pressed", "true")
                     expect(page.locator(parent)).to_be_visible()
+                    for i in range(5):
+                        expect(page.locator(f'#side .item[data-uid="{corpus.uid(f"shown-fork-{i}")}"]')).to_be_visible()
                     context.close()
                 assert all(path.read_bytes() == before for path, before in native_before.items())
-                print("PASS preferences browser: cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
+                print("PASS preferences browser: five same-title fork generations, open/hide/restore, cross-tab SSE star/unstar, parent visibility, mobile console, writer restart, native files unchanged")
             finally:
                 browser.close()
 
