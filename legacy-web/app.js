@@ -4054,8 +4054,17 @@ function groupBy(list, {skipClosed = false} = {}) {
 const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
   ? pendingStateLabel(s) : '等待首条消息'}`;
 const rustPendingRow = s => !!s.pending && !!s.record_id && SessionDockCapabilities.config.backend === 'rust';
+// Explicitly shown ancestors can share the leaf's title. Keep their native
+// relationship visible instead of making a fork chain look like duplicate rows.
+const forkMeta = s => {
+  if (s.agent_id) return '';
+  const branch = s.forked_from_id
+    ? (Number.isInteger(s.fork_depth) && s.fork_depth > 0 ? `分叉 ${s.fork_depth}` : '分叉会话')
+    : '';
+  return s.fork_parent ? `父会话（${branch || '原始'}）` : branch;
+};
 const itemMeta = s => (s.stale && !rustPendingRow(s) ? '离线缓存 · ' : '') + (s.pending ? pendingMeta(s)
-  : [fmtTime(s.updated), fmtSize(s.size), s.model || '',
+  : [forkMeta(s), fmtTime(s.updated), fmtSize(s.size), s.model || '',
                        s.hits ? `命中 ${s.hits}${s.hits_capped ? '+' : ''}` : '']
                       .filter(Boolean).join(' · '));
 
