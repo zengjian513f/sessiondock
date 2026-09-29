@@ -149,6 +149,16 @@ pub struct CandidateRef {
 }
 
 impl CandidateRef {
+    /// Native immutable rollout identity, independent of the stable thread id.
+    /// Initial files end in the thread UUID; rotated files append `_rolloutUUID`.
+    /// Legacy/non-native filenames keep the older ordinal-based resolver.
+    pub fn codex_rollout_id(&self) -> Option<&str> {
+        if self.source != "codex" || self.summary.native_id.as_ref().ok() != Some(&self.summary.sid)
+        {
+            return None;
+        }
+        codex_rollout_id(&self.data, &self.summary.sid)
+    }
     /// The declared native session id when the records seen agree on one.
     #[cfg(test)]
     pub fn native_id(&self) -> Option<&str> {
@@ -168,6 +178,31 @@ impl CandidateRef {
     }
 }
 
+/// Parse the native filename only when its stable identity agrees with the
+/// session_meta header. Used both by summaries and independently parsed prefixes.
+pub(crate) fn codex_rollout_id<'a>(path: &'a Path, sid: &str) -> Option<&'a str> {
+    let name = path
+        .file_name()?
+        .to_str()?
+        .strip_prefix("rollout-")?
+        .strip_suffix(".jsonl")?;
+    let timestamp = name.get(..19)?;
+    chrono::NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%dT%H-%M-%S").ok()?;
+    let ids = name.get(19..)?.strip_prefix('-')?;
+    let (thread, rollout) = ids.split_once('_').unwrap_or((ids, ids));
+    let uuid = |s: &str| {
+        s.len() == 36
+            && s.bytes().enumerate().all(|(i, b)| {
+                if matches!(i, 8 | 13 | 18 | 23) {
+                    b == b'-'
+                } else {
+                    b.is_ascii_hexdigit()
+                }
+            })
+    };
+    (uuid(thread) && uuid(rollout) && thread == sid).then_some(rollout)
+}
+
 /// Immutable published list state.
 #[derive(Debug)]
 pub struct IndexSnapshot {
@@ -175,6 +210,8 @@ pub struct IndexSnapshot {
     candidates: BTreeMap<String, CandidateRef>,
     /// (source, native sid) → uids of every entry declaring it.
     threads: BTreeMap<(String, String), Vec<String>>,
+    /// Immutable Codex rollout UUID → all matching physical entries.
+    rollouts: BTreeMap<String, Vec<String>>,
     /// Owner uid → uids of its healthy agents.
     agents: BTreeMap<String, Vec<String>>,
     catalog: Vec<graph::CatalogSeed>,
@@ -254,6 +291,11 @@ impl IndexSnapshot {
         child: &str,
         base: &Value,
     ) -> Result<&CandidateRef, SessionError> {
+        if source == "codex"
+            && let Some(parent) = graph::rollout_parent(&self.candidates, &self.rollouts, sid)
+        {
+            return parent;
+        }
         if source == "codex"
             && let Some(ids) = self.threads.get(&(source.to_owned(), sid.to_owned()))
             && ids.len() > 1
@@ -651,6 +693,7 @@ impl Index {
         let document = signed_document(rows);
         let snapshot = Arc::new(IndexSnapshot {
             document,
+            rollouts: graph::rollout_index(&entries),
             candidates: entries,
             threads,
             agents,
