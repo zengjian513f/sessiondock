@@ -92,7 +92,7 @@
   `turn` 记为 `working`。后台任务同理：尾部主转录里 Monitor 结果带 `taskId`、后台 Bash
   结果带 `backgroundTaskId` 即开始，带 `<status>` 或 Monitor 到期事件的
   `<task-notification>`（user 记录或 `queue-operation` 正文）、`TaskStop` 结果的 `task_id`
-  即结束；仍在跑的个数写进 `background`（没有则不出字段），非 `waiting` 的 `turn` 记为
+  即结束；Monitor 命令监视的是已结束任务的 `tasks/<id>.output` 时（看门狗的 `tail -F` 会一直活到到期，却不会再有进展）不计入；仍在跑的个数写进 `background`（没有则不出字段），非 `waiting` 的 `turn` 记为
   `working`。开始于尾部窗口之前的任务看不到。尾部没有能定论的记录、Grok 与 OpenCode 不出字段。`turn` 只说转录写到哪里，进程是否还在由 `/api/live` 决定；
   前端只在会话运行中时区分轮转中/等待/空闲，正在看的会话再用对话 `activity` 与
   [CLI 状态对象](cli-state.md)的 `instance.busy` 覆盖（等待回答优先）。
