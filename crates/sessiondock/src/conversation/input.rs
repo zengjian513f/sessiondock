@@ -41,10 +41,42 @@ impl InputStatus {
     }
 }
 
+/// Text already in the Claude/Codex editor (typed in the PTY, or a prompt the
+/// CLI put back after Esc) blocks SEND: the paste would be appended to it and
+/// submitted as one message (BUG-20260928-235840-93d732). Python likewise
+/// refused a nonempty editor (`draft_conflict`).
+pub const INPUT_PENDING: &str = "cli_input_pending";
+pub const INPUT_RETURNED: &str = "cli_input_returned";
+
+pub(super) fn input_pending() -> InputStatus {
+    InputStatus::new(
+        InputState::Blocked,
+        INPUT_PENDING,
+        "终端输入框里已有未发送的文字，请切换到 PTY（终端）发送或清空后再发送；输入已保留",
+    )
+}
+
+/// The editor holds exactly a message this service just sent: Claude puts a
+/// prompt back when Esc interrupts it before any output, although its user
+/// record stays in native history.
+pub(super) fn input_returned() -> InputStatus {
+    InputStatus::new(
+        InputState::Blocked,
+        INPUT_RETURNED,
+        "上一条消息已被 Esc 退回终端输入框，CLI 未处理；请切换到 PTY（终端）按回车重发或清空后再发送；输入已保留",
+    )
+}
+
 /// Screen evidence alone determines AI input readiness. Native history and
 /// hook questions are display data and cannot veto a currently writable PTY.
 /// Menus precede editor recognition: an overlay may leave an editor visible.
 pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
+    classify_with(source, capture, false)
+}
+
+/// `draft_allowed` is only for the checks after SEND's own paste, when the
+/// editor text is this message.
+fn classify_with(source: &str, capture: &ScreenCapture, draft_allowed: bool) -> InputStatus {
     use InputState::*;
     let ready = InputStatus::new(Ready, "", "");
     if source == "shell" {
@@ -66,18 +98,22 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
     if source == "codex" && codex_loading(capture) {
         return InputStatus::new(Starting, "cli_starting", "CLI 正在启动，输入已保留");
     }
-    let (recognized, pasting) = match source {
+    let (recognized, pasting, draft) = match source {
         "claude" | "codex" => {
             let editor = if source == "claude" {
                 driver::inspect(capture)
             } else {
                 driver::inspect_codex(capture)
             };
-            (editor.composer_token.is_some(), editor.pasting)
+            (
+                editor.composer_token.is_some(),
+                editor.pasting,
+                editor.state == driver::ComposerState::Editing,
+            )
         }
-        "grok" => (grok_composer(capture), false),
-        "opencode" => (opencode_editor(capture), false),
-        _ => (false, false),
+        "grok" => (grok_composer(capture), false, false),
+        "opencode" => (opencode_editor(capture), false, false),
+        _ => (false, false, false),
     };
     if !recognized {
         InputStatus::new(
@@ -87,6 +123,8 @@ pub(super) fn classify(source: &str, capture: &ScreenCapture) -> InputStatus {
         )
     } else if pasting && pasting_indicator(capture) {
         InputStatus::new(Starting, "cli_pasting", "CLI 正在处理粘贴，输入已保留")
+    } else if draft && !draft_allowed {
+        input_pending()
     } else {
         ready
     }
@@ -188,7 +226,7 @@ where
     let mut stable: Option<(String, tokio::time::Instant)> = None;
     loop {
         let screen = capture().await?;
-        let status = classify(source, &screen);
+        let status = classify_with(source, &screen, true);
         if status.state == InputState::Blocked {
             return status.result();
         }
@@ -348,17 +386,25 @@ mod tests {
             "────────────────────\n❯ Pasting…\n────────────────────",
         ] {
             let y = if text.starts_with("Pasting") { 2 } else { 1 };
-            assert!(classify("claude", &frame(text, (10, y))).ready());
+            assert!(classify_with("claude", &frame(text, (10, y)), true).ready());
+            assert_eq!(
+                classify("claude", &frame(text, (10, y))).code,
+                INPUT_PENDING
+            );
         }
     }
 
     #[test]
     fn codex_multiline_editor_does_not_require_a_footer() {
         let transient = "older output\n\n› Reply with OK.\n  continued line\n\n\n";
-        assert!(classify("codex", &frame(transient, (2, 4))).ready());
+        assert!(classify_with("codex", &frame(transient, (2, 4)), true).ready());
         let settled =
             format!("{transient}tab to queue message                    100% context left\n");
-        assert!(classify("codex", &frame(&settled, (2, 4))).ready());
+        assert!(classify_with("codex", &frame(&settled, (2, 4)), true).ready());
+        assert_eq!(
+            classify("codex", &frame(&settled, (2, 4))).code,
+            INPUT_PENDING
+        );
     }
 
     #[tokio::test]
@@ -433,10 +479,7 @@ mod tests {
         let mut frames = VecDeque::from([
             frame("", (0, 0)),
             editor,
-            frame(
-                "────────────────────\n❯ message\n────────────────────",
-                (9, 1),
-            ),
+            frame("────────────────────\n❯ \n────────────────────", (2, 1)),
         ]);
         assert!(
             wait_for_composer("claude", || ready(Ok(frames.pop_front().unwrap())))
@@ -508,15 +551,15 @@ mod tests {
             (
                 "claude",
                 frame(
-                    "────────────────────\n❯ message\n────────────────────\nesc to interrupt",
-                    (9, 1),
+                    "────────────────────\n❯ \n────────────────────\nesc to interrupt",
+                    (2, 1),
                 ),
             ),
             (
                 "codex",
                 frame(
-                    "Working · esc to interrupt\n\n› message\n\ngpt-5.6-luna low · /synthetic/work",
-                    (9, 2),
+                    "Working · esc to interrupt\n\n› \n\ngpt-5.6-luna low · /synthetic/work",
+                    (2, 2),
                 ),
             ),
         ] {
@@ -524,5 +567,35 @@ mod tests {
             assert!(ensure_composer("grok", &capture).is_err());
         }
         assert!(ensure_composer("shell", &frame("$ ", (2, 0))).is_ok());
+    }
+
+    /// Captured from Claude Code 2.1.284: dim placeholders are an empty
+    /// editor; a prompt put back by Esc (or typed text) is not.
+    #[test]
+    fn text_left_in_the_editor_blocks_send_but_placeholders_do_not() {
+        let rule = format!("\x1b[38;5;244m{}", "─".repeat(40));
+        let editor = |row: &str| format!("{rule}\n{row}\n{rule}\n");
+        for row in [
+            "\x1b[39m❯\u{a0}\x1b[2mTry \"edit <filepath> to...\"\x1b[0m",
+            "\x1b[38;5;246m❯\u{a0}\x1b[2m\x1b[39mPress up to edit queued messages\x1b[0m",
+            "\x1b[39m❯\u{a0}",
+        ] {
+            assert!(
+                classify("claude", &frame(&editor(row), (2, 1))).ready(),
+                "{row}"
+            );
+        }
+        let restored = frame(
+            &editor("\x1b[39m❯\u{a0}Reply with the single word ALPHA."),
+            (35, 1),
+        );
+        let status = classify("claude", &restored);
+        assert_eq!(
+            (status.state, status.code),
+            (InputState::Blocked, INPUT_PENDING)
+        );
+        assert!(classify_with("claude", &restored, true).ready());
+        let codex = frame("› draft\n\ngpt-5.6-luna low · /synthetic/work", (7, 0));
+        assert_eq!(classify("codex", &codex).code, INPUT_PENDING);
     }
 }

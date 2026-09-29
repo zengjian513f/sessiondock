@@ -4170,6 +4170,14 @@ function renderQueuedSends(uid = composerUid) {
   $('#queued-sends')?.remove();
   if (!box && !stage) return;
   const draft = uid && uid === S.sel && !S.agent ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  // Esc right after Enter makes Claude put the prompt back into its editor
+  // while its user record stays in history (BUG-20260928-235840-93d732).
+  box?.querySelectorAll('.returned-to-cli').forEach(node => node.remove());
+  if (box && draft?.cli?.input?.code === 'cli_input_returned') {
+    const users = box.querySelectorAll('.msg[data-role="user"]:not(.queued-send)');
+    users[users.length - 1]?.appendChild(
+      el('small', 'queued-send-state returned-to-cli', '已被 Esc 退回终端输入框，CLI 未处理'));
+  }
   const rows = Array.isArray(draft?.cli?.queued) ? draft.cli.queued : [];
   if (!rows.length) return;
   const block = el('div', 'queued-sends');
@@ -5127,11 +5135,15 @@ function composerInputNotice(status) {
     cli_not_ready: '暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留',
   };
   // 终端优先的页面里终端已在上方，不再让用户"切换"过去。
+  const above = {
+    cli_question: '终端正在等待选择，请在上方终端处理；输入已保留',
+    cli_not_ready: '暂未识别到终端消息编辑区，请先在上方终端关闭菜单或对话框；输入已保留',
+    cli_input_pending: '终端输入框里已有未发送的文字，请在上方终端发送或清空；输入已保留',
+    cli_input_returned: '上一条消息已被 Esc 退回终端输入框，请在上方终端按回车重发或清空；输入已保留',
+  };
   if (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(composerUid)
-      && ['cli_question', 'cli_not_ready'].includes(status.code))
-    return status.code === 'cli_question'
-      ? '终端正在等待选择，请在上方终端处理；输入已保留'
-      : '暂未识别到终端消息编辑区，请先在上方终端关闭菜单或对话框；输入已保留';
+      && above[status.code])
+    return above[status.code];
   return messages[status.code] || status.message;
 }
 
