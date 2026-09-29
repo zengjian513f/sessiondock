@@ -133,6 +133,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | code_diagram_browser | `python3 tests/code_diagram_browser.py` | Fenced diagrams preserve terminal column alignment with a CJK browser fixed font. | binary, Chromium | n/a |
 | send_native_codex_browser | `python3 tests/send_native_codex_browser.py` | Conversation SEND against a resumed native Codex session with a private fake CLI. | binary, Chromium | n/a |
 | session_global_actions_browser | `python3 tests/session_global_actions_browser.py` | Global actions follow the hidden session list with synthetic capabilities. | binary, Chromium | n/a |
+| opencode_spawn_browser | `python3 tests/opencode_spawn_browser.py` | An `opencode run` started from a Claude tool shell nests under that Claude; subagent child, older session and an ambiguous directory stay roots; synthetic process tree and OpenCode database. | binary, Chromium | n/a |
 | spawn_chronology_browser | `python3 tests/spawn_chronology_browser.py` | Old Grok sessions do not acquire newer parents or memory-flush activity; synthetic process tree and native files. | binary, Chromium | n/a |
 | terminal_heartbeat_browser | `python3 tests/terminal_heartbeat_browser.py` | Stalled terminal sockets recover without replaying ambiguous input. | binary, Chromium | n/a |
 | terminal_scrollback_browser | `python3 tests/terminal_scrollback_browser.py` | Real wheel input scrolls PTY history locally in both console renderers. | binary, Chromium | n/a |

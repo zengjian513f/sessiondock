@@ -164,7 +164,7 @@ pub fn command_sids(cmd: &str) -> BTreeSet<String> {
 
 /// An existing
 /// path is canonicalized, a missing one is kept as spelled.
-fn resolve_path(path: &str) -> String {
+pub(crate) fn resolve_path(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|resolved| resolved.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_owned())
@@ -428,6 +428,10 @@ pub struct Scan {
     /// Open session file → holders (`pid` main, `-pid` helper).
     pub paths: BTreeMap<String, BTreeSet<i64>>,
     pub bare_claude: BTreeMap<u32, BareClaude>,
+    /// OpenCode processes (cwd + start). OpenCode keeps no per-session file
+    /// or id a process exposes, so only spawner discovery pairs them, by cwd
+    /// and birth order.
+    pub opencode: BTreeMap<u32, BareClaude>,
     pub stats: ScanStats,
     pub completed: Instant,
     pub tree: Arc<ProcTree>,
@@ -489,6 +493,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
     let mut sids: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut paths: BTreeMap<String, BTreeSet<i64>> = BTreeMap::new();
     let mut bare_claude = BTreeMap::new();
+    let mut opencode = BTreeMap::new();
     let mut stats = ScanStats::default();
     let entries: Vec<u32> = std::fs::read_dir(tree.root())
         .into_iter()
@@ -501,6 +506,18 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         let Some(cmd) = tree.cmdline(pid) else {
             continue;
         };
+        if cli_name(argv0_of(&cmd)) == "opencode"
+            && let Ok(target) = std::fs::read_link(tree.root().join(pid.to_string()).join("cwd"))
+            && let Some(started) = tree.started_at(pid)
+        {
+            opencode.insert(
+                pid,
+                BareClaude {
+                    cwd: resolve_path(&target.to_string_lossy()),
+                    started,
+                },
+            );
+        }
         let lower = cmd.to_ascii_lowercase();
         if !KEYWORDS.iter().any(|keyword| lower.contains(keyword)) {
             continue;
@@ -576,6 +593,7 @@ pub fn scan(tree: Arc<ProcTree>, grok_active: Option<&Path>, roots: &SessionRoot
         sids,
         paths,
         bare_claude,
+        opencode,
         stats,
         completed: Instant::now(),
         tree,
