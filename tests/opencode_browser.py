@@ -28,6 +28,7 @@ from send_browser import initialize
 
 sys.path.insert(0, str(REPO / 'tests'))
 import fake_opencode_composer as fake  # noqa: E402
+from popups import on_popup  # noqa: E402
 
 # 1x1 PNG, as OpenCode stores a pasted image inline.
 PIXEL = base64.b64encode(bytes.fromhex(
@@ -169,7 +170,7 @@ def main():
             page = context.new_page()
             errors, dialogs = [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
             shots = os.environ.get('SESSIONDOCK_TEST_SHOTS')
             shot = (lambda name: page.screenshot(path=os.path.join(shots, f'opencode-{name}.png'))) if shots else (lambda name: None)
             try:

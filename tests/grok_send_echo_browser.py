@@ -18,6 +18,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, REPO, Corpus, isolated_server
 from send_browser import initialize
+from popups import on_popup  # noqa: E402
 
 
 def uid_for(path):
@@ -64,7 +65,7 @@ def main():
             page = context.new_page()
             errors, dialogs = [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
             try:
                 page.goto(base, wait_until='networkidle')
                 if not page.locator('#new-session').is_visible():

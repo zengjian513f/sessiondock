@@ -17,6 +17,7 @@ from urllib.request import Request
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, build_corpus, get_json, isolated_server
+from popups import on_popup  # noqa: E402
 
 
 class Dialogs:
@@ -26,7 +27,7 @@ class Dialogs:
     def __init__(self, page):
         self.expected = []
         self.seen = []
-        page.on("dialog", self.handle)
+        on_popup(page, self.handle)
 
     def expect(self, *steps):
         self.expected.extend(steps)

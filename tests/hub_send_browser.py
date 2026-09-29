@@ -24,6 +24,7 @@ from history_parity import REPO, BINARY, Corpus, isolated_server
 from hub_http_suite import Hub, free_port, scoped
 from send_browser import (FAKE_CLI, SETTINGS, initialize, create_claude, claude_uid,
                           xterm_includes, wait_history)
+from popups import on_popup  # noqa: E402
 
 
 def send_from_composer(page, text):
@@ -137,7 +138,7 @@ def check_browser(browser, root, config):
                 p._sessiondock_dialogs = []
                 p._sessiondock_responses = []
                 p.on("pageerror", lambda error: errors.append(str(error)))
-                p.on("dialog", lambda dialog: (p._sessiondock_dialogs.append(dialog.message),
+                on_popup(p, lambda dialog: (p._sessiondock_dialogs.append(dialog.message),
                      dialog.accept() if dialog.type == "beforeunload"
                      or (dialog.type == "confirm" and getattr(p, "_sessiondock_claiming", False))
                      else dialog.dismiss()))
@@ -263,7 +264,7 @@ def check_browser(browser, root, config):
             expect(page.locator(".version-stale")).to_contain_text("SessionDock 已更新")
             expect(page.locator("#csend")).to_be_disabled()
             expect(page.locator("#cinput")).to_have_value("keep draft across upgrade")
-            page.locator(".version-stale button").click()
+            page.locator(".version-stale button[data-act=reload]").click()
             page.wait_for_function("expected => typeof BUILD_ID !== 'undefined' && BUILD_ID === expected", arg=fresh)
             select(page)
             assert not page.evaluate("staleBuildShown")

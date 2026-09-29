@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY as DEBUG_BINARY, Corpus, REPO, isolated_server
+from popups import on_popup
 
 RELEASE = REPO / "target/release" / DEBUG_BINARY.name
 DEFAULT_BINARY = RELEASE if RELEASE.is_file() else DEBUG_BINARY
@@ -351,7 +352,7 @@ def main():
                 page = context.new_page()
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.on("dialog", lambda dialog: dialog.accept())
+                on_popup(page, lambda dialog: dialog.accept())
                 page.goto(base, wait_until="networkidle")
                 for source in SOURCES:
                     run_source(page, context, base, source, root / "work")

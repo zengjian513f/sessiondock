@@ -119,30 +119,42 @@ html, body {
   text-rendering: optimizeLegibility;
 }
 
-.version-stale {
-  position: fixed; z-index: 10000; left: 50%; top: 10px;
-  transform: translateX(-50%); max-width: calc(100vw - 20px);
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px 8px 14px; border: 1px solid #d39a24;
-  border-radius: 10px; background: #fff5d7; color: #5b4212;
-  box-shadow: 0 5px 24px rgba(0, 0, 0, .2); font-size: 13px;
+/* 统一弹窗（popup.js）：提示框、确认框与浮动提示卡都在页面中央，外观与对话框一致。 */
+.btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
+.app-popup { width: min(440px, calc(100vw - 28px)); }
+.app-popup-panel { display: flex; flex-direction: column; gap: 12px; padding: 17px; }
+.app-popup-message {
+  white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55;
+  max-height: min(420px, 55dvh); overflow: auto;
 }
-.version-stale .btn { white-space: nowrap; }
-.shell-env-stale {
-  top: auto; bottom: 10px; flex-direction: column; align-items: stretch; gap: 6px;
-  width: min(640px, calc(100vw - 20px)); box-sizing: border-box; max-height: 60vh; overflow: auto;
+.app-popup .btn.danger { color: #e5484d; border-color: currentColor; }
+#float-stack {
+  position: fixed; inset: 0; z-index: 10000; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 12px;
 }
-.shell-env-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shell-env-head span { flex: 1 1 220px; min-width: 0; }
+.app-float {
+  pointer-events: auto; box-sizing: border-box; width: min(440px, calc(100vw - 24px));
+  max-height: 60dvh; overflow: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 13px;
+  background: var(--panel); color: var(--text); box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
+  font-size: 13px; line-height: 1.45;
+}
+.app-float.warn { border-left: 4px solid #d39a24; }
+.app-float[hidden] { display: none; }
+.app-float-head { display: flex; align-items: center; gap: 10px; }
+.app-float-head strong { flex: 1; min-width: 0; font-size: 15px; }
+.app-float-actions { display: flex; justify-content: flex-end; align-items: center; gap: 7px; flex-wrap: wrap; }
+.app-float .btn { white-space: nowrap; }
+.shell-env-stale { width: min(640px, calc(100vw - 24px)); }
 .shell-env-table { border-collapse: collapse; width: 100%; }
-.shell-env-table th { text-align: left; font-weight: 600; padding: 2px 6px; }
-.shell-env-table td { padding: 3px 6px; border-top: 1px solid rgba(128, 128, 128, .35); vertical-align: middle; }
+.shell-env-table th { text-align: left; font-weight: 600; padding: 2px 6px; color: var(--muted); }
+.shell-env-table td { padding: 4px 6px; border-top: 1px solid var(--border); vertical-align: middle; }
 .shell-env-table .shell-env-node { white-space: nowrap; font-weight: 600; }
 .shell-env-table .shell-env-changed { width: 100%; min-width: 8em; overflow-wrap: anywhere; }
 .shell-env-table td:nth-child(3), .shell-env-table td:nth-child(4) { width: 1%; white-space: nowrap; }
-:root[data-theme="dark"] .version-stale {
-  background: #33280f; color: #ffe29a; border-color: #8d6a1d;
-}
 
 #app { display: flex; flex-direction: column; height: 100%; }
 #node-notice { padding: 6px 12px; color: var(--muted); font-size: 12px; flex: none; }
@@ -367,13 +379,7 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 #bug-report-add.on { color: var(--accent); border-color: var(--accent); }
 .report-row { margin-top: 0; }
 .report-form.dragover { outline: 2px dashed var(--accent); outline-offset: -8px; }
-.bug-report-toast {
-  position: fixed; z-index: 100; right: 16px; bottom: 16px;
-  display: flex; align-items: center; gap: 10px; max-width: min(440px, calc(100vw - 24px));
-  padding: 10px 11px; border: 1px solid var(--border); border-radius: 10px;
-  background: var(--panel); color: var(--text); box-shadow: 0 12px 38px rgba(0, 0, 0, .24);
-  font-size: 12.5px;
-}
+.bug-report-toast { flex-direction: row; align-items: center; }
 .bug-report-toast > span { min-width: 0; line-height: 1.4; }
 .bug-report-toast .btn { flex: none; white-space: nowrap; }
 .setting-row {
@@ -2156,7 +2162,6 @@ body.dragging-v { cursor: row-resize; user-select: none; }
   .app-dialog { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
   .setting-row { grid-template-columns: 1fr; gap: 7px; }
   .report-form { padding: 14px; }
-  .bug-report-toast { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); }
   #new-session-form { padding: 14px; }
 }
 

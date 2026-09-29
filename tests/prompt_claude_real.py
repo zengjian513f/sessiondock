@@ -44,6 +44,7 @@ import send_claude_real as base_suite  # noqa: E402
 from send_claude_real import (  # noqa: E402
     MODEL, isolated_config, logged_in, passthrough, request, trust_project)
 from sse_suite import open_watch, sse_next  # noqa: E402
+from popups import on_popup  # noqa: E402
 
 RELEASE = REPO / "target/release" / BINARY.name
 SERVER = RELEASE if RELEASE.is_file() else BINARY
@@ -318,7 +319,7 @@ def answer_in_browser(base, uid, card, choice, evidence, timeline):
             errors = []
             page = context.new_page()
             page.on("pageerror", lambda error: errors.append(str(error)))
-            page.on("dialog", lambda dialog: dialog.accept())
+            on_popup(page, lambda dialog: dialog.accept())
             page.goto(base, wait_until="networkidle")
             page.locator(f'#side .item[data-uid="{uid}"]').click()
             page.wait_for_function("uid => S.sel === uid", arg=uid, timeout=20000)

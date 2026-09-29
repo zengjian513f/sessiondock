@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from send_browser import initialize, xterm_includes
+from popups import on_popup  # noqa: E402
 
 
 def main():
@@ -44,7 +45,7 @@ def main():
             page = context.new_page()
             errors, dialogs = [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
             receipt = None
             try:
                 page.goto(base, wait_until='networkidle')
@@ -384,7 +385,7 @@ def main():
                 claims, other_dialogs = [], []
                 page_two.on('request', lambda request: claims.append(request.post_data_json)
                     if urlsplit(request.url).path == '/api/term/claim' else None)
-                page_two.on('dialog', lambda dialog: (other_dialogs.append(dialog.message), dialog.accept()))
+                on_popup(page_two, lambda dialog: (other_dialogs.append(dialog.message), dialog.accept()))
                 try:
                     page_two.goto(base, wait_until='networkidle')
                     page_two.evaluate('async receipt => {await loadTermList();await openPendingSession(receipt)}', receipt)
