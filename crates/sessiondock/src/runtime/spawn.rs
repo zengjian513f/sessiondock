@@ -10,6 +10,8 @@
 //! Grok) the later-created one wins: a child is born after its parent. The
 //! relation is only visible while both processes exist, so it is persisted at
 //! once (write once) by a 10 s background tick and by every `/api/live`.
+//! OpenCode processes name no session, so a new top-level OpenCode session is
+//! paired with the OpenCode processes running in its directory when it was born.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
@@ -19,7 +21,9 @@ use std::{
 
 use indexmap::IndexMap;
 
-use super::procscan::{ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow, parse_created};
+use super::procscan::{
+    ANCESTRY_DEPTH, ProcScanner, SPAWN_ENV, Scan, SessionRow, parse_created, resolve_path,
+};
 use crate::metadata::{MetadataError, MetadataStore, SpawnedBy};
 
 /// Ten-second background tick.
@@ -132,12 +136,7 @@ pub fn spawn_parents(
             ));
         }
         candidates.remove(uid);
-        let Some(parent) = candidates
-            .iter()
-            .filter_map(|candidate| rows.get(candidate.as_str()))
-            .filter(|parent| !newer_than_child(parent, rows[uid.as_str()]))
-            .max_by(|a, b| a.created.cmp(&b.created).then_with(|| a.uid.cmp(&b.uid)))
-        else {
+        let Some(parent) = latest_parent(&candidates, &rows, rows[uid.as_str()]) else {
             continue;
         };
         found.insert(
@@ -148,7 +147,88 @@ pub fn spawn_parents(
             },
         );
     }
+    for child in sessions.iter().filter(|row| row.source == "opencode") {
+        if found.contains_key(&child.uid) {
+            continue;
+        }
+        if let Some(parent) = opencode_parent(scan, child, &rows, &by_key, &pid_owner) {
+            found.insert(
+                child.uid.clone(),
+                SpawnedBy {
+                    source: parent.source.clone(),
+                    sid: parent.sid.clone(),
+                },
+            );
+        }
+    }
     found
+}
+
+/// The most recently created listed candidate that is not younger than `child`.
+fn latest_parent<'a>(
+    candidates: &BTreeSet<String>,
+    rows: &HashMap<&str, &'a SessionRow>,
+    child: &SessionRow,
+) -> Option<&'a SessionRow> {
+    candidates
+        .iter()
+        .filter_map(|candidate| rows.get(candidate.as_str()).copied())
+        .filter(|parent| !newer_than_child(parent, child))
+        .max_by(|a, b| a.created.cmp(&b.created).then_with(|| a.uid.cmp(&b.uid)))
+}
+
+/// Seconds a session's recorded birth may precede its process's start tick.
+const OPENCODE_BIRTH_SLACK: f64 = 1.0;
+
+/// OpenCode (`opencode run` from a tool shell) exposes no session id on its
+/// command line or in its open files, so a top-level session is paired with the
+/// OpenCode processes that were already running in its directory when it was
+/// created. Every such process must lead to the same spawner; a process with
+/// none (a user's own TUI there) or a different one leaves the row a root. A
+/// subagent child (`parent_id`) belongs under its OpenCode parent instead.
+fn opencode_parent<'a>(
+    scan: &Scan,
+    child: &SessionRow,
+    rows: &HashMap<&str, &'a SessionRow>,
+    by_key: &HashMap<(String, String), String>,
+    pid_owner: &HashMap<u32, String>,
+) -> Option<&'a SessionRow> {
+    if scan.opencode.is_empty() {
+        return None;
+    }
+    let created = parse_created(&child.created)?;
+    let cwd = resolve_path(child.cwd.as_deref()?);
+    let mut chosen: Option<&SessionRow> = None;
+    let mut matched = false;
+    for (pid, process) in &scan.opencode {
+        if process.cwd != cwd || process.started > created + OPENCODE_BIRTH_SLACK {
+            continue;
+        }
+        let candidates = spawn_candidates(scan, *pid, &child.uid, by_key, pid_owner);
+        let parent = latest_parent(&candidates, rows, child)?;
+        if chosen.is_some_and(|known| known.uid != parent.uid) {
+            return None;
+        }
+        chosen = Some(parent);
+        matched = true;
+    }
+    if !matched || opencode_subagent(child) {
+        return None;
+    }
+    chosen
+}
+
+fn opencode_subagent(child: &SessionRow) -> bool {
+    let Ok(text) = std::fs::read_to_string(std::path::Path::new(&child.path).join("summary.json"))
+    else {
+        return true;
+    };
+    let Ok(summary) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return true;
+    };
+    summary["session"]["parent_id"]
+        .as_str()
+        .is_some_and(|parent| !parent.is_empty())
 }
 
 struct Memo {

@@ -20,8 +20,8 @@ frontend expects (`capabilities.live: true`).
 
 The scan is read-only: it lists the table, reads `cmdline` of every process,
 and `environ`, `cwd` and `fd/*` links of the processes whose command line
-mentions `claude`, `codex` or `grok`; `stat` lines are read lazily for ancestry
-walks. It never signals, writes, follows a link outside the tree, or elevates
+mentions `claude`, `codex` or `grok` (plus the `cwd` of `opencode` processes);
+`stat` lines are read lazily for ancestry walks. It never signals, writes, follows a link outside the tree, or elevates
 privileges (another user's `environ`/`fd` are unreadable and simply skipped;
 `cmdline` is world-readable).
 
@@ -248,6 +248,18 @@ when `CLAUDE_PID` names another session's owned pid. A `tmux*` server ends
 the walk (its environment belongs to nobody). Among several candidates the one
 with the latest `created` wins (a child is born after its parent). Candidates
 are memoised per scan snapshot.
+
+OpenCode names no session on its command line and holds no per-session file
+(`opencode run` from a tool shell creates its session inside one shared
+database), so its sessions are never owned by a process. Instead the scan
+notes every process whose argv0 is `opencode` with its `cwd` and start time,
+and a top-level OpenCode session (no `parent_id` in its mirrored
+`summary.json`) is paired with the OpenCode processes that were running in its
+directory by its birth (1 s slack). The chain of each such process is walked
+as above; all of them must resolve to the same spawner, otherwise (a user's
+own OpenCode there, or two spawners) the row stays a root. An OpenCode
+subagent child stays with its OpenCode parent. The relation is recorded while
+the process lives, like any other.
 
 Candidates newer than the child's native creation time are excluded before
 choosing a parent. A process launch/resume relationship does not establish that
