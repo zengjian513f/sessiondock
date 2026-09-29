@@ -671,13 +671,15 @@ pub async fn create(
     let new = resume.is_none() && entry.profile && entry.source != Source::Shell;
     let spec = build_spec(&entry, &cwd, resume)?;
     let spec = if new {
-        let chosen = |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
+        let chosen =
+            |value: Option<String>| value.map(|v| v.trim().to_owned()).filter(|v| !v.is_empty());
         let (model, effort) = (chosen(body.model), chosen(body.effort));
         let effort = effort.filter(|_| crate::lifecycle::models::supports_effort(entry.source));
-        if ![&model, &effort]
-            .into_iter()
-            .all(|value| value.as_deref().is_none_or(crate::lifecycle::models::valid_choice))
-        {
+        if ![&model, &effort].into_iter().all(|value| {
+            value
+                .as_deref()
+                .is_none_or(crate::lifecycle::models::valid_choice)
+        }) {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 "launch_model",
