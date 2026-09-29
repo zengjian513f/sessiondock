@@ -108,7 +108,8 @@ def main():
                          "LANG": "C.UTF-8", "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"),
                          "SESSIONDOCK_TEST_GATE":str(root / "gate"),"SESSIONDOCK_TEST_GATE_TRACE":str(root / "gate.trace"),
                          "SESSIONDOCK_TEST_PASTE_DELAY":str(root / "paste-delay"),
-                         "SESSIONDOCK_TEST_CLAUDE_QUEUE":str(root / "claude-queue")}}]}))
+                         "SESSIONDOCK_TEST_CLAUDE_QUEUE":str(root / "claude-queue"),
+                         "SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE":str(root / "esc-restore")}}]}))
         initialize("--initialize-lifecycle", root / "ledger")
         with sync_playwright() as playwright:
             options = {"headless": True}
@@ -254,6 +255,45 @@ def main():
                     users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
                     assert users.count('继续')==1,users
                     expect(page.locator('#csend')).to_have_attribute('aria-busy','false')
+                    # Esc right after Enter: Claude puts the prompt back into its
+                    # editor and keeps the user record. The page must say so, and
+                    # a SEND must not be appended to that text and submitted with
+                    # it (BUG-20260928-235840-93d732).
+                    (root/'esc-restore').touch()
+                    send('哈希为什么')
+                    wait_history(page,'哈希为什么')
+                    expect(page.locator('#queued-sends')).to_have_count(0)
+                    page.locator('#cesc').click()
+                    status=page.locator('#composer-input-status')
+                    expect(status).to_contain_text('上一条消息已被 Esc 退回终端输入框',timeout=10000)
+                    expect(page.locator('#csend')).to_be_disabled()
+                    returned=page.locator('#msgs .msg[data-role=user]:not(.queued-send)').filter(has_text='哈希为什么')
+                    expect(returned.locator('.returned-to-cli')).to_have_text('已被 Esc 退回终端输入框，CLI 未处理')
+                    page.fill('#cinput','我没说过研报上云')
+                    expect(page.locator('#csend')).to_be_disabled()
+                    # SEND refuses before any paste even when a client skips the gate.
+                    refused=context.request.post(base+'/api/session/conversation/send',data={
+                        'uid':native,'name':receipt['name'],'request_id':'append-to-returned',
+                        'text':'我没说过研报上云','attachments':[],'quotes':[],'_build':build})
+                    assert refused.status==409 and refused.json()['code']=='cli_input_pending',refused.text()
+                    # Clearing the PTY editor lifts the block; text typed in the
+                    # PTY blocks SEND the same way.
+                    page.evaluate("uid => sendToSession(null, ['C-u'], uid)",native)
+                    expect(page.locator('#csend')).to_be_enabled(timeout=10000)
+                    expect(page.locator('.returned-to-cli')).to_have_count(0)
+                    page.evaluate("uid => sendToSession(null, ['typed in the pty'], uid)",native)
+                    expect(status).to_contain_text('终端输入框里已有未发送的文字',timeout=10000)
+                    expect(page.locator('#csend')).to_be_disabled()
+                    expect(page.locator('.returned-to-cli')).to_have_count(0)
+                    page.evaluate("uid => sendToSession(null, ['C-u'], uid)",native)
+                    (root/'esc-restore').unlink()
+                    expect(page.locator('#csend')).to_be_enabled(timeout=10000)
+                    expect(status).to_be_hidden()
+                    send('我没说过研报上云')
+                    wait_history(page,'我没说过研报上云')
+                    users=[json.loads(line)['message']['content'] for line in jsonl.read_text().splitlines() if json.loads(line)['type']=='user']
+                    assert users[-2:]==['哈希为什么','我没说过研报上云'],users
+                    assert not any('typed in the pty' in text for text in users),users
                     holder_context=browser.new_context(service_workers='block')
                     holder=watch(holder_context)
                     holder.locator(f'#side .item[data-uid="{native}"]').click()

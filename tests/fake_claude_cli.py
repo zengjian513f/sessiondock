@@ -30,6 +30,10 @@ While the file at `$SESSIONDOCK_TEST_CLAUDE_QUEUE` exists, a delayed line is
 first recorded as Claude's `queue-operation` enqueue at Enter, and its `remove`
 precedes the user record, the way a busy Claude holds input in its own queue.
 
+While the file at `$SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE` exists, a bare Esc puts
+the last submitted line back into the editor and keeps its user record, the
+way Claude Code 2.1.284 answers an Esc pressed before any model output.
+
 With `$SESSIONDOCK_TEST_CLAUDE_NOTICE` set, the file at that path is watched
 from startup; once it appears its text is appended as a Claude `system`
 informational record (the startup notice a SessionStart hook leaves before any
@@ -83,6 +87,7 @@ class Fake:
         self.transcript = []
         self.parent = None
         self.submitted = 0
+        self.last_submitted = ""
         self.menu = None
         root = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ROOT", "")
         self.path = os.path.join(root, "project-history", f"{self.sid}.jsonl") if root and self.sid else ""
@@ -286,6 +291,7 @@ class Fake:
             self.render()
             return
         self.transcript.append(text)
+        self.last_submitted = text
         self.submitted += 1
         if self.options["swallow"] == self.submitted:
             self.render()
@@ -364,6 +370,10 @@ class Fake:
                             while cut < len(pending) and not (0x40 <= pending[cut] <= 0x7e):
                                 cut += 1
                             cut += 1
+                        restore = os.environ.get("SESSIONDOCK_TEST_CLAUDE_ESC_RESTORE", "")
+                        if cut == 1 and restore and os.path.exists(restore) and self.last_submitted:
+                            self.buffer, self.last_submitted = self.last_submitted, ""
+                            self.render()
                         pending = pending[cut:]
                         continue
                     if byte in (b"\r", b"\n"):
