@@ -1621,17 +1621,19 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     button.title = title;
     button.disabled = !enabled;
   };
-  picker.apply = (model, effort, persist = false) => {
+  picker.apply = (model, effort, persist = false, savedEmptyEffort = false) => {
     const catalog = picker.catalog, chosen = info(model);
-    const shown = chosen || info(catalog?.default_model) || catalog?.models[0];
+    const shown = chosen || info(catalog?.default_model);
     picker.model = shown?.id || '';
-    const efforts = shown?.efforts || [];
-    picker.effort = efforts.includes(effort) ? effort
-      : efforts.includes(shown?.default_effort) ? shown.default_effort : efforts[0] || '';
-    const name = shown ? shown.name || shown.id : '模型不可用';
+    const efforts = shown?.efforts || catalog?.efforts || [];
+    picker.effort = efforts.includes(effort) ? effort : savedEmptyEffort && !effort ? ''
+      : efforts.includes(shown?.default_effort) ? shown.default_effort : '';
+    const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
     controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
-    select.replaceChildren(...efforts.map(value => new Option(value, value)));
+    const placeholder = new Option('选择强度', '');
+    placeholder.disabled = placeholder.hidden = true;
+    select.replaceChildren(placeholder, ...efforts.map(value => new Option(value, value)));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
@@ -1653,7 +1655,8 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (seq !== picker.seq) return;
     picker.catalog = catalog;
     const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '', saved.effort || '');
+    picker.apply(saved.model || '', saved.effort || '', false,
+      !!saved.model && Object.hasOwn(saved, 'effort'));
     if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
   /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
@@ -1742,7 +1745,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const choose = index => {
     const model = picker.rows[index];
     if (!model) return;
-    picker.apply(model.id, '', true);
+    picker.apply(model.id, picker.effort, true);
     picker.close(true);
   };
   button.onclick = () => (menu.hidden ? open() : picker.close());

@@ -112,10 +112,15 @@ The catalog comes from each CLI's own data, read as its child would see it
 `config.toml`'s top-level `model`; displayed default effort uses the top-level
 `model_reasoning_effort` before the cache's `default_reasoning_level`, including
 when a model is explicitly selected). Both new-session and bug-report pickers
-select concrete model and effort values: the catalog's default when available,
-otherwise the first listed value. Their menus have no separate default entry;
-the selected values are sent to the CLI. When the catalog is unavailable, no
-override is sent. Grok `$GROK_HOME/models_cache.json`
+select concrete model and effort values only when the catalog identifies their
+defaults or the user chooses them. An unknown default stays unselected and the
+corresponding override is omitted, letting the CLI use its own setting. Model
+menus have no separate default entry. Claude reads the profile's
+`CLAUDE_CONFIG_DIR/settings.json` (or `HOME/.claude/settings.json`) for the saved
+model and per-model effort; the profile's `ANTHROPIC_MODEL` and
+`CLAUDE_CODE_EFFORT_LEVEL` take precedence. If the selected model is not one of
+the fixed aliases, it appears as an additional row. A previously chosen picker
+value takes precedence over these defaults. Grok `$GROK_HOME/models_cache.json`
 (non-hidden, `reasoning_efforts`), OpenCode `opencode models` (bounded to 15 s;
 one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
 `sonnet`, `haiku` with `low`…`max`. The page asks again every time the dialog
