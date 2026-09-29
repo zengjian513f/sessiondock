@@ -128,6 +128,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | host_identity | `python3 tests/host_identity.py` | POSIX host-instance guard: wrong instance rejected; guarded attach on the real child | ptyhost | n/a |
 | conversation_performance_browser | `python3 tests/conversation_performance_browser.py` | Large synthetic history: yielding search, message rendering and session index behavior in Chromium. | binary, Chromium | n/a |
 | render_assets_browser | `python3 tests/render_assets_browser.py` | Diagrams, math and terminal assets load on demand through the page. | binary, Chromium | n/a |
+| hub_bulk_browser | `python3 tests/hub_bulk_browser.py` | Real Hub and node with a slow fake OpenCode remove: pick-bar 附属到… nests several rows under one clicked parent; a bulk delete that takes longer than 5 s removes every row without errors; desktop + 390px. | binary, Chromium, ptyhost | n/a |
 | hub_nest_browser | `python3 tests/hub_nest_browser.py` | Two real isolated nodes and Hub: cross-machine manual attach via context menu, same native SID isolation, cycle/auth checks, persistence across node/Hub restart, detach/restore and local reattach. | binary, Chromium | n/a |
 | bug_report_upload_browser | `python3 tests/bug_report_upload_browser.py` | Real Hub/node report staging recovers a lost reply without duplicate uploads or launches. | binary, Chromium | n/a |
 | code_diagram_browser | `python3 tests/code_diagram_browser.py` | Fenced diagrams preserve terminal column alignment with a CJK browser fixed font. | binary, Chromium | n/a |

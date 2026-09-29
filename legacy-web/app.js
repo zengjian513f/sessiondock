@@ -183,7 +183,8 @@ const S = {
   cursors: new Map(), // 主会话/子代理 EOF 游标；用于后台会话的精确未读增量
   starBusy: new Set(), // 正在持久化星标的会话，避免多个网页请求在服务端乱序
   picking: false,     // 左栏多选模式；刻意不持久化，刷新后回到普通浏览
-  nestAttach: '',     // 附属点选：等待点击父会话的子会话 uid；不持久化
+  nestAttach: '',     // 附属点选：等待点击父会话的子会话 uid（多选时为第一条）；不持久化
+  nestAttachUids: [], // 附属点选的全部子会话 uid（单条或多选）
   sig: null,          // 列表对应的磁盘签名
   lastSync: 0,
 };
@@ -2622,7 +2623,7 @@ function setPicking(on) {
   sessionStopProgress = null;
   S.picking = !!on;
   if (!S.picking) pickedSessions.clear();
-  if (S.picking) S.nestAttach = '';
+  if (S.picking) { S.nestAttach = ''; S.nestAttachUids = []; }
   renderPickBar();
   const side = $('#side'), top = side.scrollTop;
   renderSide();
@@ -2689,12 +2690,13 @@ function renderPickBar() {
   $('#side-pick-all').hidden = attaching;
   $('#side-pick-delete').hidden = attaching;
   $('#side-pick-stop').hidden = attaching;
+  $('#side-pick-attach').hidden = attaching || !SessionDockCapabilities.allows('metadata');
   $('#side-stop-details').hidden = attaching || !S.picking || !sessionStopProgress?.details.length;
   if (attaching) {
     const row = sidebarSessions().find(session => session.uid === S.nestAttach);
-    $('#side-picked').textContent = row
-      ? `点击要附属的会话（当前：${row.title || S.nestAttach}）`
-      : '点击要附属的会话';
+    $('#side-picked').textContent = S.nestAttachUids.length > 1
+      ? `点击要附属的会话（当前：${S.nestAttachUids.length} 个会话）`
+      : row ? `点击要附属的会话（当前：${row.title || S.nestAttach}）` : '点击要附属的会话';
     return;
   }
   const picked = S.picking ? pickedSessions.size : 0;
@@ -2703,6 +2705,9 @@ function renderPickBar() {
   const action = pending ? (pending === picked ? '丢弃' : '删除 / 丢弃') : '删除';
   $('#side-pick-delete').textContent = picked ? `${action} (${picked})` : action;
   $('#side-pick-delete').disabled = !picked || sessionDeleteBusy || sessionStopBusy;
+  const attachable = S.picking ? pickedNestable().length : 0;
+  $('#side-pick-attach').textContent = attachable ? `附属到… (${attachable})` : '附属到…';
+  $('#side-pick-attach').disabled = !attachable || sessionDeleteBusy || sessionStopBusy;
   const stoppable = S.picking ? pickedStopTargets().length : 0;
   const progress = sessionStopProgress;
   const stopButton = $('#side-pick-stop');
@@ -2898,6 +2903,17 @@ $('#side-pick-cancel').onclick = () => S.nestAttach ? setNestAttach('') : setPic
 $('#side-pick-all').onclick = pickAllVisible;
 $('#side-pick-delete').onclick = deletePickedSessions;
 $('#side-pick-stop').onclick = stopPickedSessions;
+$('#side-pick-attach').onclick = () => setNestAttach(pickedNestable());
+
+/** 选中的会话里能改附属关系的：真实会话行，不是待定启动或分叉父行。 */
+function pickedNestable() {
+  if (!SessionDockCapabilities.allows('metadata')) return [];
+  const rows = new Map(sidebarSessions().map(session => [session.uid, session]));
+  return [...pickedSessions].filter(uid => {
+    const row = rows.get(uid);
+    return !!row && !row.pending && !row.fork_parent;
+  });
+}
 
 /* ---------- 会话行的右键 / 长按菜单 ---------- */
 // 删除入口不再常驻占位：右键（手机长按）某条会话，才给出删除和进入多选。
@@ -3554,8 +3570,9 @@ function applySessionNest(uid, nestParent, independent) {
   }
 }
 
-function setNestAttach(uid) {
-  S.nestAttach = uid || '';
+function setNestAttach(value) {
+  S.nestAttachUids = (Array.isArray(value) ? value : [value]).filter(Boolean);
+  S.nestAttach = S.nestAttachUids[0] || '';
   if (S.nestAttach && S.picking) {
     S.picking = false;
     pickedSessions.clear();
@@ -3591,17 +3608,20 @@ async function setSessionNest(uid, {parent_uid = null, independent = false} = {}
 }
 
 async function pickNestParent(target) {
-  const uid = S.nestAttach;
-  if (!uid || !target?.uid) return;
-  if (target.uid === uid) return;
-  const child = sidebarSessions().find(session => session.uid === uid);
-  if (!child) { setNestAttach(''); return; }
-  if (nestDescendantUids(uid).has(target.uid)) {
+  const listed = new Set(sidebarSessions().map(session => session.uid));
+  const uids = S.nestAttachUids.filter(uid => listed.has(uid));
+  if (!uids.length) { setNestAttach(''); return; }
+  if (!target?.uid || uids.includes(target.uid)) return;
+  if (uids.some(uid => nestDescendantUids(uid).has(target.uid))) {
     alert('不能附属到自己的子会话下面');
     return;
   }
-  const saved = await setSessionNest(uid, {parent_uid: target.uid, independent: false});
-  if (saved) setNestAttach('');
+  // 逐条保存；失败的留在点选里（setSessionNest 已提示原因），可以再点一次。
+  const failed = [];
+  for (const uid of uids) {
+    if (!await setSessionNest(uid, {parent_uid: target.uid, independent: false})) failed.push(uid);
+  }
+  setNestAttach(failed);
 }
 
 /** 一条会话连同它的子代理和它发起的会话，按活动时间倒序、还在跑的在前。 */
@@ -3851,7 +3871,7 @@ function patchSidebarRow(node, row, highlightKey) {
     + (!s.pending && S.live.has(s.uid) ? ' live' : '')
     + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
     + (pickable && pickedSessions.has(s.uid) ? ' picked' : '')
-    + (S.nestAttach === s.uid ? ' nest-source' : '');
+    + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : '');
   if (node.className !== className) node.className = className;
   const cwd = node.querySelector('.cwd');
   if (cwd && (cwd.title !== (s.cwd || '') || cwd.dataset.nodeName !== (s.node_name || ''))) {
@@ -3891,7 +3911,7 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
   }
   const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
-    S.view, S.nest, S.picking, S.nestAttach === r.s.uid, S.term, S.opts,
+    S.view, S.nest, S.picking, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     picked.has(r.s.uid), S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
@@ -3912,7 +3932,7 @@ function createSidebarRow(r, picked = pickedSessions) {
                           + (!s.pending && S.live.has(s.uid) ? ' live' : '')
                           + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
                           + (pickable && picked.has(s.uid) ? ' picked' : '')
-                          + (S.nestAttach === s.uid ? ' nest-source' : ''),
+                          + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : ''),
     `${nestLeadMarkup(r)}
      ${pickable ? `<input type="checkbox" class="item-pick" tabindex="-1"
        ${picked.has(s.uid) ? 'checked' : ''} aria-label="选中「${esc(s.title)}」">` : ''}
@@ -8137,7 +8157,7 @@ $('#nest-toggle').onclick = () => {
 // A full render resolves filtering and hidden-parent successors. Folding only
 // changes the visible rows within that same display tree, never its membership.
 function sidebarNestContext() {
-  return JSON.stringify([S.view, S.nest, S.picking, S.nestAttach, S.term, S.opts,
+  return JSON.stringify([S.view, S.nest, S.picking, S.nestAttachUids, S.term, S.opts,
     S.activeOnly, [...S.off], HUB_MODE ? [...Nodes.off] : []]);
 }
 

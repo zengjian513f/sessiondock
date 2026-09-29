@@ -37,7 +37,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::Target;
 use super::{
-    client::{Client, ClientError, JSON_LIMIT, REQUEST_TIMEOUT, Request, request_failure},
+    client::{
+        BULK_WRITE_TIMEOUT, Client, ClientError, JSON_LIMIT, REQUEST_TIMEOUT, Request,
+        request_failure,
+    },
     identity::{PROTOCOL, is_node_id, is_token},
 };
 
@@ -843,6 +846,23 @@ impl Registry {
             .target(node)
             .map_err(|_| ClientError::Invalid("invalid node url"))?;
         client.json(&target, method, path, body, timeout).await
+    }
+
+    /// A bulk write: connect within `client.timeout`, then wait up to
+    /// `BULK_WRITE_TIMEOUT` for the node's single answer.
+    pub async fn bulk_write(
+        &self,
+        client: &Client,
+        node: &Node,
+        path: &str,
+        body: &Value,
+    ) -> Result<(u16, Value), ClientError> {
+        let target = self
+            .target(node)
+            .map_err(|_| ClientError::Invalid("invalid node url"))?;
+        client
+            .json_idle(&target, "POST", path, Some(body), client.timeout, BULK_WRITE_TIMEOUT)
+            .await
     }
 
     /// Keep reading while the node makes progress, including cold scans.

@@ -44,6 +44,11 @@ pub const SEARCH_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Proxied requests; `/api/watch` SSE heartbeats are 20 s apart.
 pub const PROXY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const WATCH_TIMEOUT: Duration = Duration::from_secs(45);
+/// Idle timeout while a node works through a bulk write (delete, fork
+/// visibility, purge): it answers only once every session is handled, and
+/// removing OpenCode sessions or moving large files takes seconds each. Kept
+/// under the fronting proxy's usual 60 s read timeout.
+pub const BULK_WRITE_TIMEOUT: Duration = Duration::from_secs(50);
 
 /// `http.client` allows 64 KiB for each status/header/chunk line and 100 headers.
 const LINE_LIMIT: usize = 64 * 1024;
@@ -233,6 +238,20 @@ impl Client {
         body: Option<&Value>,
         timeout: Duration,
     ) -> Result<(u16, Value), ClientError> {
+        self.json_idle(target, method, path, body, timeout, timeout)
+            .await
+    }
+
+    /// `json` with a separate idle timeout for the answer.
+    pub async fn json_idle(
+        &self,
+        target: &Target,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        connect: Duration,
+        idle: Duration,
+    ) -> Result<(u16, Value), ClientError> {
         let encoded = body.map(|body| serde_json::to_vec(body).expect("JSON value serializes"));
         let headers: &[(&str, &str)] = if encoded.is_some() {
             &[("Content-Type", "application/json")]
@@ -247,8 +266,8 @@ impl Client {
                     target: path,
                     headers,
                     body: encoded.as_deref(),
-                    connect: timeout,
-                    idle: timeout,
+                    connect,
+                    idle,
                 },
             )
             .await?;
