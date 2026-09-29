@@ -85,16 +85,31 @@ def main():
         wrapper = root / "with-rc"
         wrapper.write_text(f"#!/bin/bash\n. {rc}\nexec \"$@\"\n")
         wrapper.chmod(0o755)
-        node = SimpleNamespace(name="shellnode", nid=NID, port=free_port(), token=TOKEN)
-        extra = {**node_env(root, node.port, "127.0.0.0/8"),
-                 "SESSIONDOCK_SHELL_ENV_COMMAND": wrapper, "SESSIONDOCK_SHELL_ENV_WATCH": rc}
-        process, local = start_node(binary, corpus, extra)
-        stack.callback(lambda: stop(process))
+        nodes, processes, locals_, extras = [], {}, {}, {}
+        for name, nid in (("shellnode", NID), ("shellnode2", "f" * 32)):
+            nroot = root / name
+            corpus_n = Corpus(nroot)
+            for sub in ("claude", "codex", "grok", "ids"):
+                (nroot / sub).mkdir(parents=True, exist_ok=True)
+            (nroot / "ids/node-id").write_text(nid + "\n")
+            node = SimpleNamespace(name=name, nid=nid, port=free_port(), token=TOKEN, corpus=corpus_n)
+            extras[name] = {**node_env(nroot, node.port, "127.0.0.0/8"),
+                            "SESSIONDOCK_SHELL_ENV_COMMAND": wrapper, "SESSIONDOCK_SHELL_ENV_WATCH": rc}
+            processes[name], locals_[name] = start_node(binary, corpus_n, extras[name])
+            nodes.append(node)
+        stack.callback(lambda: [stop(process) for process in processes.values()])
+
+        def restart_node(name):
+            assert processes[name].wait(timeout=15) == RESTART_EXIT_CODE, processes[name].returncode
+            node = next(n for n in nodes if n.name == name)
+            processes[name], locals_[name] = start_node(binary, node.corpus, extras[name])
+
         (root / "hubroot").mkdir()
-        hub = Hub(binary.with_name("sessiondock-hub"), root / "hubroot", [node])
+        hub = Hub(binary.with_name("sessiondock-hub"), root / "hubroot", nodes)
         hub.start()
         stack.callback(hub.stop)
-        # Unconfigured node answers configured:false; this one has a baseline and no drift.
+        local = locals_["shellnode"]
+        # A baseline and no drift yet.
         data, _ = shell_env(local)
         assert data["configured"] and not data["stale"] and data["changed"] == [], data
         launch = {"headless": True}
@@ -107,12 +122,11 @@ def main():
         errors = []
         hub_page.on("pageerror", lambda error: errors.append(str(error)))
         hub_page.goto(f"http://127.0.0.1:{hub.port}", wait_until="networkidle")
-        hub_page.wait_for_function("Nodes.list.length === 1")
+        hub_page.wait_for_function("Nodes.list.length === 2")
         hub_page.evaluate("checkShellEnv()")
         notice = hub_page.locator("#shell-env-notice")
         expect(notice).to_have_count(0)
-        # Edit the startup file: a changed value and a new variable.
-        time.sleep(0.02)
+        # Edit the shared startup file: a changed value and a new variable, on both machines.
         rc.write_text("export SD_TEST_TOKEN=secret-two\nexport SD_TEST_NEW=1\n")
         data, raw = shell_env(local)
         assert data["stale"] and data["changed"] == ["SD_TEST_NEW", "SD_TEST_TOKEN"], data
@@ -120,6 +134,7 @@ def main():
         hub_page.evaluate("checkShellEnv()")
         expect(notice).to_be_visible()
         expect(notice).to_contain_text("shellnode 的登录环境（zshrc）已变化：SD_TEST_NEW、SD_TEST_TOKEN")
+        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化")
         expect(notice).not_to_contain_text("secret")
         box = notice.bounding_box()
         assert box["x"] >= 0 and box["x"] + box["width"] <= 390.5, box
@@ -129,24 +144,35 @@ def main():
         local_page.evaluate("checkShellEnv()")
         local_notice = local_page.locator("#shell-env-notice")
         expect(local_notice).to_contain_text("SD_TEST_TOKEN")
+        expect(local_notice.get_by_role("button", name="全部重启")).to_have_count(0)
         local_notice.get_by_role("button", name="忽略").click()
         expect(local_notice).to_have_count(0)
         local_page.evaluate("checkShellEnv()")
         expect(local_notice).to_have_count(0)
         local_page.close()
-        # Restart from the hub page: the node shuts down gracefully and exits 75.
+        # 全部重启: both machines shut down gracefully and exit 75; a supervisor restart clears the notice.
+        hub_page.get_by_role("button", name="全部重启 (2)").click()
+        expect(notice).to_contain_text("shellnode 的后端正在重启…")
+        expect(notice).to_contain_text("shellnode2 的后端正在重启…")
+        restart_node("shellnode")
+        restart_node("shellnode2")
+        expect(notice).to_have_count(0, timeout=40000)
+        # Another edit, one machine at a time: the other row stays, no 全部重启 for a single one.
+        rc.write_text("export SD_TEST_TOKEN=secret-three\nexport SD_TEST_NEW=1\n")
+        hub_page.evaluate("checkShellEnv()")
+        expect(hub_page.get_by_role("button", name="全部重启 (2)")).to_be_visible()
         hub_page.get_by_role("button", name="重启 shellnode 后端").click()
         expect(notice).to_contain_text("shellnode 的后端正在重启…")
-        assert process.wait(timeout=15) == RESTART_EXIT_CODE, process.returncode
-        # The supervisor starts it again: the new baseline has the edited rc, the notice goes.
-        process, local = start_node(binary, corpus, extra)
-        stack.callback(lambda: stop(process))
-        expect(notice).to_have_count(0, timeout=40000)
-        data, _ = shell_env(local)
+        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化：SD_TEST_TOKEN")
+        restart_node("shellnode")
+        expect(notice).not_to_contain_text("shellnode 的", timeout=40000)
+        expect(notice).to_contain_text("shellnode2 的登录环境（zshrc）已变化")
+        expect(notice.get_by_role("button", name="全部重启")).to_have_count(0)
+        data, _ = shell_env(locals_["shellnode"])
         assert not data["stale"], data
         assert not errors, errors
-    print("PASS shell env browser: drift names only (no values), hub + node notice at 390px, ignore, "
-          "restart exits 75 after graceful shutdown, a fresh start clears the notice")
+    print("PASS shell env browser: drift names only (no values), two-machine hub + node notice at 390px, ignore, "
+          "全部重启 and single restart exit 75 after graceful shutdown, a fresh start clears each row")
 
 
 if __name__ == "__main__":
