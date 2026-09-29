@@ -166,13 +166,15 @@ async fn report_inner(
         ));
     }
     // Picker model and effort for the worker CLI; empty is its own default.
-    let chosen = |key: &str| Some(text(&body[key], usize::MAX).trim().to_owned()).filter(|v| !v.is_empty());
+    let chosen =
+        |key: &str| Some(text(&body[key], usize::MAX).trim().to_owned()).filter(|v| !v.is_empty());
     let model = chosen("model");
     let effort = chosen("effort").filter(|_| crate::lifecycle::models::supports_effort(source));
-    if ![&model, &effort]
-        .into_iter()
-        .all(|value| value.as_deref().is_none_or(crate::lifecycle::models::valid_choice))
-    {
+    if ![&model, &effort].into_iter().all(|value| {
+        value
+            .as_deref()
+            .is_none_or(crate::lifecycle::models::valid_choice)
+    }) {
         return Ok(json_body(
             StatusCode::BAD_REQUEST,
             json!({"error": "模型或推理强度名称无效", "code": "launch_model"}),
