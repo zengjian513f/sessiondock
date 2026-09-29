@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from popups import on_popup  # noqa: E402
 
 FAKE_CLI = REPO / "tests/fake_claude_cli.py"
 SETTINGS = "/synthetic/bridge-settings.json"
@@ -136,7 +137,7 @@ def main():
                                 dialog.accept() if dialog_action['accept'] else dialog.dismiss()
                             except Exception:
                                 pass
-                        page.on("dialog", on_dialog)
+                        on_popup(page, on_dialog)
                         page.goto(base, wait_until="networkidle")
                         return page
 

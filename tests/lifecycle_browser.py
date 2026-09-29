@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
 from terminal_browser import SHELL_SCRIPT
 from terminal_exit_browser import XTERM_TEXT
+from popups import on_popup  # noqa: E402
 
 
 def seed_archived_receipts(root):
@@ -80,7 +81,7 @@ def main(bind_native=False, bare_shell=False):
                         context.on("request",lambda request:claims.append(request.post_data_json)
                             if urlsplit(request.url).path=="/api/term/claim" else None)
                         page.on("pageerror",lambda error:errors.append(str(error)))
-                        page.on("dialog",lambda dialog:dialog.accept())
+                        on_popup(page, lambda dialog:dialog.accept())
                         page.goto(base,wait_until="networkidle")
                         if iteration==2:
                             denied=context.request.post(base+"/api/term/claim",data={"name":receipt["name"],"uid":native_uid,

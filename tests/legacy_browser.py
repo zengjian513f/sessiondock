@@ -16,6 +16,7 @@ import time
 from urllib.request import urlopen
 
 from playwright.sync_api import sync_playwright, expect
+from popups import on_popup  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -113,7 +114,7 @@ def main():
                 def accept_dialog(dialog):
                     dialogs.append(dialog.message)
                     dialog.accept()
-                page.on("dialog", accept_dialog)
+                on_popup(page, accept_dialog)
                 page.locator("#a-term").click()
                 assert dialogs and "只读" in dialogs[-1]
 

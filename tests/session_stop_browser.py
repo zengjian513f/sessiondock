@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import sync_playwright, expect
 from pending_create_discard_browser import create_source
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
+from popups import on_popup
 
 CODEX_SID = "8f3c1d2e-4a5b-4c6d-8e7f-90a1b2c3d4e5"
 SLOW_SIDS = [f"00000000-0000-4000-8000-{index:012d}" for index in range(8)]
@@ -113,7 +114,7 @@ def main():
                         def on_dialog(dialog):
                             dialogs.append((dialog.type, dialog.message))
                             dialog.accept()
-                        page.on("dialog", on_dialog)
+                        on_popup(page, on_dialog)
                         page.goto(base, wait_until="networkidle")
                         assert page.evaluate("SessionDockCapabilities.config.session_stop") is True
                         return page
@@ -350,7 +351,7 @@ def main():
                       return b && Array.from({length:b.length}, (_,i) => b.getLine(i)?.translateToString() || '').join('\\n').includes(text);
                     }""", arg=[duplicate_target["name"], "STOP_READY_" + SLOW_SIDS[0]])
                     other_page = context.new_page()
-                    other_page.on("dialog", lambda dialog: dialog.accept())
+                    on_popup(other_page, lambda dialog: dialog.accept())
                     other_page.on("pageerror", lambda error: errors.append(str(error)))
                     other_page.goto(base, wait_until="networkidle")
                     other_page.locator(f'#side .item[data-uid="{slow_uids[0]}"]').click()

@@ -694,14 +694,21 @@ const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${
 
 let staleBuildShown = false;
 function markStaleBuild(serverBuild = '') {
-  if (staleBuildShown) return;
+  if (staleBuildShown) {
+    // “稍后”只收起提示；发送仍被禁用，回到页面时再提醒一次。
+    const shown = $('.version-stale');
+    if (shown?.hidden && !document.hidden) shown.hidden = false;
+    return;
+  }
   staleBuildShown = true;
   document.body.classList.add('stale-build');
-  const notice = el('div', 'version-stale');
+  const notice = el('div', 'app-float warn version-stale');
   notice.setAttribute('role', 'alert');
-  notice.innerHTML = '<span>SessionDock 已更新。仍可编辑并自动保存草稿；发送前请重新加载。</span>';
+  notice.innerHTML = '<div class="app-float-head"><strong>SessionDock 已更新</strong></div>'
+    + '<span>仍可编辑并自动保存草稿；发送前请重新加载。</span>';
   browserAuditEvent('build.stale', {server_build: serverBuild});
-  const reload = el('button', 'btn', '重新加载');
+  const reload = el('button', 'btn primary', '重新加载');
+  reload.dataset.act = 'reload';
   reload.type = 'button';
   reload.title = serverBuild ? `服务器版本 ${serverBuild}` : '加载新版本';
   reload.onclick = async () => {
@@ -718,8 +725,13 @@ function markStaleBuild(serverBuild = '') {
       reload.textContent = '重新加载';
     }
   };
-  notice.appendChild(reload);
-  document.body.appendChild(notice);
+  const later = el('button', 'btn', '稍后');
+  later.type = 'button';
+  later.onclick = () => { notice.hidden = true; };
+  const actions = el('div', 'app-float-actions');
+  actions.append(later, reload);
+  notice.appendChild(actions);
+  floatStack().appendChild(notice);
   for (const sel of ['#csend', '#bug-report-go', '#cadd', '#bug-report-add']) {
     const button = $(sel);
     if (button) button.disabled = true;
@@ -790,17 +802,25 @@ function renderShellEnvNotice(items) {
   let notice = $('#shell-env-notice');
   if (!items.length) { notice?.remove(); return; }
   if (!notice) {
-    notice = el('div', 'version-stale shell-env-stale');
+    notice = el('div', 'app-float warn shell-env-stale');
     notice.id = 'shell-env-notice';
     notice.setAttribute('role', 'status');
-    document.body.appendChild(notice);
+    floatStack().appendChild(notice);
   }
   const pending = items.filter(item => !item.restarting);
-  const head = el('div', 'shell-env-head');
-  head.appendChild(textEl('span', '', '登录环境（zshrc）已变化：新开的会话仍用旧环境，重启后端后生效；正在运行的会话不受影响。'));
+  const head = el('div', 'app-float-head');
+  head.appendChild(textEl('strong', '', '登录环境（zshrc）已变化'));
   if (pending.length > 1) {
     head.appendChild(shellEnvButton(`全部重启 (${pending.length})`, '', event => restartShellEnv(pending, event.currentTarget)));
   }
+  const close = shellEnvButton('×', '关闭', () => {
+    for (const item of pending) shellEnvIgnored.set(item.key, (item.data.changed || []).join(','));
+    renderShellEnvNotice(shellEnvShown.filter(item => item.restarting));
+  });
+  close.className = 'modal-close';
+  close.title = '忽略这些变化';
+  head.appendChild(close);
+  const note = textEl('span', '', '新开的会话仍用旧环境，重启后端后生效；正在运行的会话不受影响。');
   const table = el('table', 'shell-env-table');
   const header = table.createTHead().insertRow();
   for (const title of ['机器', '变化', '', '']) header.appendChild(textEl('th', '', title));
@@ -819,7 +839,7 @@ function renderShellEnvNotice(items) {
       renderShellEnvNotice(shellEnvShown.filter(other => other.key !== item.key));
     }));
   }
-  notice.replaceChildren(head, table);
+  notice.replaceChildren(head, note, table);
 }
 
 async function restartShellEnv(items, button) {
@@ -839,7 +859,7 @@ async function restartShellEnv(items, button) {
   // 先原地把这几行换成“正在重启…”，其他机器的行保持不动。
   renderShellEnvNotice(shellEnvShown.map(item =>
     shellEnvRestarting.has(item.key) ? {...item, restarting: true} : item));
-  if (failed.length) alert(`重启后端失败:\n${failed.join('\n')}`);
+  if (failed.length) appAlert(`重启后端失败:\n${failed.join('\n')}`);
   for (let i = 0; i < 60 && items.some(item => shellEnvRestarting.has(item.key)); i++) {
     await new Promise(resolve => setTimeout(resolve, 2000));
     await checkShellEnv();
@@ -2858,7 +2878,7 @@ async function deleteSessions(uids, button = null) {
   const opencode = recorded.filter(uid => sidebarSessions().find(x => x.uid === uid)?.source === 'opencode');
   // Unpersisted launches discard immediately. Recorded sessions still confirm
   // because they move into the recycle bin.
-  if (recorded.length && !confirm((uids.length === 1
+  if (recorded.length && !await appConfirm((uids.length === 1
       ? `${action}会话「${only}」?\n\n` : `${action}选中的 ${uids.length} 个会话?\n\n`)
     + (pending.length ? `${pending.length} 个新建会话将停止并丢弃，未发送的草稿也会清除；若已生成会话记录，记录会保留。\n` : '')
     + (opencode.length < recorded.length ? trashLocationNote() : '')
@@ -2896,7 +2916,7 @@ async function deleteSessions(uids, button = null) {
         let errors = result.errors || [];
         // Rust 回收站：运行状态未知的会话先被跳过，用户确认后才带 force 重试。
         const unknown = trashCapable() ? (result.skipped || []).filter(x => x.needs_force) : [];
-        if (unknown.length && confirmForceDelete(unknown.length, unknown[0].run_state?.detail)) {
+        if (unknown.length && await confirmForceDelete(unknown.length, unknown[0].run_state?.detail)) {
           const forced = await postDelete(unknown.map(x => x.uid), true);
           d.deleted.push(...(forced.deleted || []));
           const retried = new Set(unknown.map(x => x.uid));
@@ -2935,10 +2955,10 @@ async function deleteSessions(uids, button = null) {
   renderChips();
   renderSide();
   if (failed.length === 1 && uids.length === 1) {
-    alert(`${action}失败: ` + failed[0].error);
+    await appAlert(`${action}失败: ` + failed[0].error);
   } else if (failed.length) {
     const lines = failed.slice(0, 5).map(x => `· ${x.title || x.uid}: ${x.error}`);
-    alert(`已${action} ${gone.size} 个，${failed.length} 个操作失败:\n\n`
+    await appAlert(`已${action} ${gone.size} 个，${failed.length} 个操作失败:\n\n`
       + lines.join('\n') + (failed.length > 5 ? '\n…' : ''));
   }
   return { gone, failed };
@@ -2959,7 +2979,7 @@ async function stopPickedSessions() {
   if (!targets.length) return;
   // 全部停在输入框（空闲）时直接停；有在轮转、等回答或状态未知的才确认。
   if (!targets.every(s => !s.pending && sessionTurn(s.uid) === 'idle')
-      && !confirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
+      && !await appConfirm(`停止所选的 ${targets.length} 个运行中会话?\n\n会话记录和草稿会保留，已结束的会话会跳过。`)) return;
   sessionStopBusy = true;
   const progress = sessionStopProgress = {total: targets.length, stopped: 0, settled: 0,
     failed: 0, uncertain: 0, details: [], refreshError: false};
@@ -3311,11 +3331,11 @@ async function setForkParentVisibility(uids, visible, button = null) {
     if (selected) renderSessionAction(selected);
     renderForkChainMenu();
     if (data.errors?.length) {
-      alert(`父会话显示状态有 ${data.errors.length} 项未保存：${data.errors[0].error}`);
+      await appAlert(`父会话显示状态有 ${data.errors.length} 项未保存：${data.errors[0].error}`);
     }
     return data;
   } catch (error) {
-    alert('父会话显示状态保存失败: ' + error.message);
+    await appAlert('父会话显示状态保存失败: ' + error.message);
     return null;
   } finally {
     if (button) button.disabled = false;
@@ -3462,7 +3482,7 @@ function selectOnlySource(source) {
 function selectOnlyNodeFilter(id) {
   const node = Nodes.list.find(item => item.id === id);
   if (!node) return false;
-  if (node.online === false) { alert(nodeOfflineReason(node)); return false; }
+  if (node.online === false) { appAlert(nodeOfflineReason(node)); return false; }
   Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
   store.set('nodesOff', [...Nodes.off]);
   renderNodes(); renderChips(); renderSide();
@@ -3717,7 +3737,7 @@ async function setSessionNest(uid, {parent_uid = null, independent = false} = {}
     if (side) side.scrollTop = top;
     return data;
   } catch (error) {
-    alert('会话附属关系保存失败: ' + error.message);
+    await appAlert('会话附属关系保存失败: ' + error.message);
     return null;
   }
 }
@@ -3728,7 +3748,7 @@ async function pickNestParent(target) {
   if (!uids.length) { setNestAttach(''); return; }
   if (!target?.uid || uids.includes(target.uid)) return;
   if (uids.some(uid => nestDescendantUids(uid).has(target.uid))) {
-    alert('不能附属到自己的子会话下面');
+    await appAlert('不能附属到自己的子会话下面');
     return;
   }
   // 逐条保存；失败的留在点选里（setSessionNest 已提示原因），可以再点一次。
@@ -5842,11 +5862,11 @@ function showSessionStopNotice(text, sticky = false) {
   if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
   let notice = $('#session-stop-notice');
   if (!notice) {
-    notice = el('div', 'bug-report-toast');
+    notice = el('div', 'app-float bug-report-toast');
     notice.id = 'session-stop-notice';
     notice.setAttribute('role', 'status');
     notice.setAttribute('aria-live', 'polite');
-    document.body.appendChild(notice);
+    floatStack().appendChild(notice);
   }
   // `.bug-report-toast` sets display:flex, so the hidden attribute alone would
   // not hide it (the shared stylesheet is left untouched).
@@ -5879,7 +5899,7 @@ async function requestSessionStop(m) {
 
 async function stopSession(m, button = null) {
   // 空闲会话停止不打断任何工作，不再确认；轮转中、等回答或状态未知仍确认。
-  if (sessionTurn(m.uid) !== 'idle' && !confirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
+  if (sessionTurn(m.uid) !== 'idle' && !await appConfirm(`停止会话「${m.title}」?\n\n停止后才可以删除会话记录。`)) return;
   if (button) button.disabled = true;
   try {
     const d = await requestSessionStop(m);
@@ -5891,7 +5911,7 @@ async function stopSession(m, button = null) {
     paintLive();
   } catch (error) {
     if (sessionStopCapable()) showSessionStopNotice(`停止失败：${error.message || error}`, true);
-    else alert(`停止失败：${error.message || error}`);
+    else await appAlert(`停止失败：${error.message || error}`);
   } finally {
     if (button) button.disabled = false;
   }
@@ -5903,7 +5923,7 @@ const trashCapable = () => SessionDockCapabilities.config.backend === 'rust'
 const trashLocationNote = () => '文件会移入服务端回收站，不会永久删除。';
 // 运行状态未知不等于已退出：只有用户明确确认 CLI 已退出，才带 force 重试。
 function confirmForceDelete(count, detail) {
-  return confirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`
+  return appConfirm(`${count === 1 ? '该会话' : `${count} 个会话`}的运行状态未知${detail ? `（${detail}）` : ''}，`
     + '后端无法确认 CLI 已经退出；未知不代表已停止。\n\n'
     + '请先确认这些会话的 CLI 都已退出。仍要删除吗?');
 }
@@ -5919,16 +5939,16 @@ const opencodeDeleteNote = () => 'OpenCode 会话会从 OpenCode 直接删除（
 
 async function del(m) {
   const opencode = m.source === 'opencode';
-  if (!confirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
+  if (!await appConfirm(`删除会话「${m.title}」?\n\n${opencode ? opencodeDeleteNote() : trashLocationNote()}`)) return;
   closeWatch();                         // 先停 SSE，避免文件移走后 EventSource 自动重连 404
   let { response, data } = await requestSessionDelete(m.uid);
   if (!response.ok && trashCapable() && data.code === 'run_state_unknown' && data.needs_force
-      && confirmForceDelete(1, data.run_state?.detail)) {
+      && await confirmForceDelete(1, data.run_state?.detail)) {
     ({ response, data } = await requestSessionDelete(m.uid, true));
   }
   if (!response.ok) {
     watchSession(m.uid);                // 删除失败，会话仍在，恢复实时同步
-    return alert('删除失败: ' + (data.error || response.status));
+    return appAlert('删除失败: ' + (data.error || response.status));
   }
   forgetDeletedReceipts([m]);
   S.sessions = S.sessions.filter(x => x.uid !== m.uid);
@@ -8150,7 +8170,7 @@ fileMenu.addEventListener('click', async event => {
       const link = document.createElement('a'); link.href = url.href;
       link.download = ''; document.body.appendChild(link); link.click(); link.remove();
     }
-  } catch (error) { alert(error.message || '文件操作失败'); }
+  } catch (error) { await appAlert(error.message || '文件操作失败'); }
 });
 
 function inline(s, media = [], context = {}) {
@@ -8799,7 +8819,7 @@ $('#trash-list').onclick = async e => {
     await loadSessions(true);       // 恢复的会话立即回到左侧列表
     return;
   }
-  if (!confirm(`彻底删除「${item.title}」?\n\n文件将从磁盘移除, 不可恢复。`)) return;
+  if (!await appConfirm(`彻底删除「${item.title}」?\n\n文件将从磁盘移除, 不可恢复。`)) return;
   const d = await trashPost('api/trash/purge', { id: item.id }, btn);
   if (!d) return;
   if (await loadTrash({ keepNote: true })) {
@@ -8809,7 +8829,7 @@ $('#trash-list').onclick = async e => {
 
 async function purgeAllTrash() {
   if (!trashItems.length || trashBusy) return;
-  if (!confirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个会话, 不可恢复。`)) return;
+  if (!await appConfirm(`清空回收站?\n\n将从磁盘彻底删除 ${trashItems.length} 个会话, 不可恢复。`)) return;
   const d = await trashPost('api/trash/purge' + (HUB_MODE ? '?nodes=' + trashScope.join(',') : ''),
     { all: true }, $('#trash-purge-all'));
   if (!d) return;

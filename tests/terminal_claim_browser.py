@@ -17,6 +17,7 @@ from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
 from host_identity import host
 from terminal_exit_browser import XTERM_TEXT
+from popups import on_popup  # noqa: E402
 
 
 def scenario(root, browser, renderer, phase):
@@ -52,7 +53,7 @@ def scenario(root, browser, renderer, phase):
             page = context.new_page()
             held, claims, errors, dialogs = [], [], [], []
             page.on('pageerror', lambda error: errors.append(str(error)))
-            page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
 
             def hold(route):
                 claims.append(route.request.post_data_json)

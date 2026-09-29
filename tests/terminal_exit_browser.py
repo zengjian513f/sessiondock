@@ -18,6 +18,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from history_parity import BINARY, Corpus, codex_message, codex_row, isolated_server
 from host_identity import host
+from popups import on_popup  # noqa: E402
 
 
 PROBE = """() => {
@@ -107,7 +108,7 @@ def scenario(root, browser, incomplete, renderer):
             context.add_init_script("(" + PROBE + ")()")
             page = context.new_page()
             page.on("pageerror", lambda error: page_errors.append(str(error)))
-            page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
             page.goto(base, wait_until="networkidle")
             page.locator(f'#side .item[data-uid="{uid}"]').click()
             expect(page.locator("#msgs")).to_contain_text("Synthetic terminal exit acceptance")

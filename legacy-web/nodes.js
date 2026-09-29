@@ -126,7 +126,7 @@ function bindConsoleButton(button, uid, agent = null) {
     const reason = consoleUnavailableReason(uid, agent, false);
     // 重复点击等待中的连接只呈现提示；原生 alert 会阻塞响应回调和超时清理。
     if (ConsoleUI.busy.has(uid)) return showConsoleToast(reason);
-    if (reason) return alert('控制台不可用：\n' + reason);
+    if (reason) return appAlert('控制台不可用：\n' + reason);
     // 上次连接失败不再拦一道确认框：点击直接重新接入并显示 pty，失败原因由终端呈现。
     ConsoleUI.busy.add(uid);
     ConsoleUI.errors.delete(uid);
@@ -137,7 +137,7 @@ function bindConsoleButton(button, uid, agent = null) {
     } catch (error) {
       const message = error.message || String(error);
       ConsoleUI.errors.set(uid, message);
-      alert('打开控制台失败：\n' + message);
+      await appAlert('打开控制台失败：\n' + message);
     } finally {
       ConsoleUI.busy.delete(uid);
       if (typeof renderTakeoverBtn === 'function') renderTakeoverBtn();
@@ -239,7 +239,7 @@ function renderNodes() {
     const reason = nodeChipReason(n);
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
-        if (n.online === false) return alert(nodeOfflineReason(n));
+        if (n.online === false) return appAlert(nodeOfflineReason(n));
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
       }, reason || '点击选择或取消；双击只选这台机器');

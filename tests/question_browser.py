@@ -24,6 +24,7 @@ from playwright.sync_api import sync_playwright, expect
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from send_browser import create_claude, initialize
+from popups import on_popup  # noqa: E402
 
 DEBUG = {}
 FORM = [
@@ -113,7 +114,7 @@ def main():
                     def on_dialog(dialog):
                         dialogs.append(dialog.message)
                         dialog.accept()
-                    page.on("dialog", on_dialog)
+                    on_popup(page, on_dialog)
                     page.goto(base, wait_until="networkidle")
                     DEBUG.update(dialogs=dialogs)
                     receipt = create_claude(page, base, root / "work", open_terminal=False)

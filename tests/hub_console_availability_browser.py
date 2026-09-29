@@ -8,6 +8,7 @@ import os
 import re
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
+from popups import on_popup  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / 'legacy-web/nodes.js').read_text()
@@ -81,7 +82,7 @@ def main():
             expect(button).to_have_attribute('aria-label', re.compile('子代理没有独立控制台'))
             apply(ready)
             dialogs = []
-            page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+            on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
             page.evaluate("bindConsoleButton(document.querySelector('#a-term'),uid)")
             button.click()
             page.wait_for_function('ConsoleUI.busy.has(uid) && claimCount===1')
