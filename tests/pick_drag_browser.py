@@ -5,7 +5,8 @@ In 多选 mode, pressing on a row and dragging over others applies one state to 
 whole run: the pressed row unpicked → the run is picked, the pressed row picked →
 the run is unpicked. Dragging back restores rows that left the run, the release
 does not toggle the pressed row again, no text gets selected, and holding at the
-list's bottom edge scrolls it. A plain click still toggles one row.
+list's bottom edge scrolls it. A plain click still toggles one row, and entering or
+leaving 多选 patches the existing rows instead of rebuilding the list.
 Real mouse input against an isolated server; synthetic corpus.
 """
 import argparse
@@ -44,6 +45,23 @@ def main():
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base, wait_until="networkidle")
             page.wait_for_function("S.sessions.length >= 30")
+            # Entering and leaving 多选 patches the rows in place: same nodes,
+            # the checkboxes come and go, no rebuild of the whole list.
+            page.evaluate("() => document.querySelectorAll('#side .item[data-uid]').forEach(n => { n.__kept = true; })")
+            for on in (True, False):
+                page.evaluate("on => setPicking(on)", on)
+                state = page.evaluate("""() => {
+                    const rows = [...document.querySelectorAll('#side .item[data-uid]')];
+                    return {rows: rows.length, kept: rows.filter(n => n.__kept).length,
+                            boxes: document.querySelectorAll('#side .item-pick').length,
+                            heads: document.querySelectorAll('#side .ghead-pick').length,
+                            groups: document.querySelectorAll('#side > .group').length};
+                }""")
+                assert state["kept"] == state["rows"], state
+                if on:
+                    assert state["boxes"] >= 30 and state["heads"] == state["groups"], state
+                else:
+                    assert state["boxes"] == 0 and state["heads"] == 0, state
             first = page.locator("#side .item[data-uid]").first
             first.click(button="right")
             page.locator('#item-menu [data-act="pick"]').click()
@@ -87,6 +105,9 @@ def main():
             drag(1, 3)
             expect_picked({0, 1, 2, 3})
             assert page.evaluate("getSelection().toString()") == "", "drag selected text"
+            row(9).locator(".t").dblclick()
+            assert page.evaluate("getSelection().toString()") == "", "double click selected text"
+            expect_picked({0, 1, 2, 3})       # a double click toggles twice
             # A plain click still toggles one row.
             row(5).click()
             expect_picked({0, 1, 2, 3, 5})
@@ -107,17 +128,18 @@ def main():
             page.mouse.move(*center(6))
             page.mouse.down()
             page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] - 4, steps=8)
-            page.wait_for_function("document.querySelector('#side').scrollTop > 200")
+            page.wait_for_function("uid => pickedSessions.has(uid)", arg=uids[16])
+            assert page.evaluate("document.querySelector('#side').scrollTop") > 0
             page.mouse.up()
             beyond = picked()
-            assert {3, 4, 6, 7, 8}.issubset(beyond) and max(beyond) > 12, beyond
+            assert {3, 4, *range(6, 17)}.issubset(beyond), beyond
             assert 5 not in beyond and not ({0, 1, 2} & beyond), beyond
             assert not errors, errors
             context.close()
         browser.close()
     print("PASS pick drag: drag from an unpicked row picks the run, from a picked row unpicks it; "
           "dragging back restores, the release does not re-toggle, no text selection, edge auto-scroll; "
-          "a plain click still toggles one row")
+          "a plain click still toggles one row; entering/leaving 多选 keeps the row nodes")
 
 
 if __name__ == "__main__":

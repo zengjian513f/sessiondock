@@ -781,7 +781,6 @@ main { display: flex; flex: 1; min-height: 0; }
 /* 长按要出自己的菜单，不能让系统选词/回调菜单抢先 */
 .item { -webkit-touch-callout: none; }
 @media (hover: none) { .item { -webkit-user-select: none; user-select: none; } }
-#side.picking .item { user-select: none; }
 #side.attaching .item[data-uid] { cursor: pointer; }
 #side.attaching .item.agent { cursor: default; }
 #side.attaching .item.nest-source { background: var(--sel); }
