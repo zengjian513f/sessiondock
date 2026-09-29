@@ -2788,6 +2788,93 @@ function toggleGroupPick(uids, group) {
   renderPickBar();
 }
 
+/** 多选模式下按住鼠标左键划过一片：按下的那条原来没选中就整片选中，原来已选中
+ *  就整片取消；划回去恢复按下前的状态，划到列表上下边缘自动滚动。只动了一条时
+ *  仍走普通点击。 */
+let pickDrag = null, pickDragSwallowClick = false;
+function pickDragRows() {
+  return [...$('#side').querySelectorAll('.item[data-uid]')]
+    .filter(row => row.querySelector('.item-pick') && row.getClientRects().length);
+}
+function pickDragTo(row) {
+  const uid = row?.dataset.uid;
+  if (!pickDrag || !uid || uid === pickDrag.last) return;
+  const rows = pickDragRows();
+  const from = rows.findIndex(r => r.dataset.uid === pickDrag.anchor), to = rows.indexOf(row);
+  if (from < 0 || to < 0) return;
+  pickDrag.last = uid;
+  pickDrag.moved = true;
+  sessionStopProgress = null;
+  pickedSessions.clear();
+  for (const kept of pickDrag.before) pickedSessions.add(kept);
+  for (let i = Math.min(from, to); i <= Math.max(from, to); i++) {
+    pickDrag.on ? pickedSessions.add(rows[i].dataset.uid) : pickedSessions.delete(rows[i].dataset.uid);
+  }
+  const groups = new Set();
+  for (const r of rows) { paintItemPick(r); groups.add(r.closest('.group')); }
+  groups.forEach(paintGroupPick);
+  renderPickBar();
+}
+/** 指针所在高度上可见的那一行；落在组标题、间隙或列表外时取纵向最近的可见行。 */
+function pickDragAt(y) {
+  const side = $('#side').getBoundingClientRect();
+  let best = null, gap = Infinity;
+  for (const row of pickDragRows()) {
+    const box = row.getBoundingClientRect();
+    if (box.bottom <= side.top || box.top >= side.bottom) continue;
+    const distance = y < box.top ? box.top - y : y > box.bottom ? y - box.bottom : 0;
+    if (distance < gap) { best = row; gap = distance; }
+    if (!distance) break;
+  }
+  return best;
+}
+function pickDragScroll() {
+  if (!pickDrag) return;
+  const side = $('#side'), box = side.getBoundingClientRect(), edge = 36;
+  const over = pickDrag.y < box.top + edge ? pickDrag.y - box.top - edge
+    : pickDrag.y > box.bottom - edge ? pickDrag.y - box.bottom + edge : 0;
+  if (over) {
+    side.scrollTop += Math.max(-24, Math.min(24, Math.round(over / 2)));
+    pickDragTo(pickDragAt(pickDrag.y));
+  }
+  pickDrag.frame = requestAnimationFrame(pickDragScroll);
+}
+function endPickDrag() {
+  if (!pickDrag) return;
+  cancelAnimationFrame(pickDrag.frame);
+  if (pickDrag.moved) {
+    // 松手处的 click 不能再把按下那条切回去。
+    pickDragSwallowClick = true;
+    setTimeout(() => { pickDragSwallowClick = false; }, 0);
+  }
+  pickDrag = null;
+}
+$('#side').addEventListener('mousedown', event => {
+  if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (!S.picking || S.nestAttach || sessionStopBusy) return;
+  const row = event.target.closest('.item[data-uid]');
+  if (!row?.querySelector('.item-pick') || event.target.closest('.item-star, .nest-caret')) return;
+  event.preventDefault();   // 划选不拉出文字选区
+  endPickDrag();
+  pickDrag = {anchor: row.dataset.uid, last: row.dataset.uid, on: !pickedSessions.has(row.dataset.uid),
+              before: new Set(pickedSessions), moved: false, y: event.clientY};
+  pickDrag.frame = requestAnimationFrame(pickDragScroll);
+});
+addEventListener('mousemove', event => {
+  if (!pickDrag) return;
+  if (!(event.buttons & 1)) { endPickDrag(); return; }
+  pickDrag.y = event.clientY;
+  pickDragTo(pickDragAt(event.clientY));
+});
+addEventListener('mouseup', event => { if (event.button === 0) endPickDrag(); });
+addEventListener('blur', endPickDrag);
+$('#side').addEventListener('click', event => {
+  if (!pickDragSwallowClick) return;
+  pickDragSwallowClick = false;
+  event.stopPropagation();
+  event.preventDefault();
+}, true);
+
 function paintItemPick(row) {
   const on = pickedSessions.has(row.dataset.uid);
   row.classList.toggle('picked', on);
