@@ -113,7 +113,10 @@ client 会把连接池、解析器、`tower`、`tracing` 一并带进锁文件�
 - 不跟随重定向（3xx 只是一个非 200 状态）；`Accept-Encoding: identity`；
 - 每个 socket 操作都有空闲超时：连接 5 s；JSON 请求
   读 5 s；搜索流行间 60 s；代理 10 s、`/api/watch` 45 s（常量 `PROXY_TIMEOUT`/
-  `WATCH_TIMEOUT` 供 H4 用）；
+  `WATCH_TIMEOUT` 供 H4 用）；批量写（删除、分叉可见性、清空回收站）连接仍 5 s，
+  等节点唯一的答复 50 s（`BULK_WRITE_TIMEOUT`，低于前置代理常见的 60 s）：节点处理完
+  整批才答复，逐条删除 OpenCode 会话要调用 `opencode api`，5 s 会在节点还在删时放弃，
+  并随断开中止节点剩余的删除；
 - 响应框架按 `http.client` 规则：1xx/204/304/HEAD 无正文；`Transfer-Encoding: chunked`；
   `Content-Length`（多值必须相同）；否则读到对端关闭；`100 Continue` 跳过；
 - 状态行与每条响应头分别以 64 KiB 为界，响应头最多 100 条；不对全部响应头另设累计上限；
@@ -261,7 +264,8 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   中止所有节点任务。
 - `delete(registry, client, body)`：`uids` 先 `split` 分组（首次出现顺序），空 →
   `没有选中任何会话`；`force` 保持布尔值并逐机顺序转发
-  `POST /api/sessions/delete {uids,force}`（`client.timeout`），
+  `POST /api/sessions/delete {uids,force}`（`Registry::bulk_write`：连接 `client.timeout`，
+  等答复 `BULK_WRITE_TIMEOUT`），
   200 的答复经 `public_payload` 后并入 `deleted/errors`；机器未注册/非 200/连接失败
   → 该机每个 uid 一条 `{uid: 重新限定, error: "机器请求失败，请核对结果"}`。
 - `fork_visibility`：`visible` 必须是布尔（`需要布尔值 visible`），空 →

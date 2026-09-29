@@ -65,6 +65,8 @@ def api(args):
         if operation == "session.get":
             return 0 if db.execute("SELECT 1 FROM session_v2 WHERE id = ?", (sid,)).fetchone() else 1
         if operation == "session.remove":
+            # A real remove of a long session takes a while; bulk deletes add these up.
+            time.sleep(float(os.environ.get("SESSIONDOCK_TEST_OPENCODE_REMOVE_DELAY", "0")))
             db.execute("DELETE FROM session_message WHERE session_id = ?", (sid,))
             db.execute("DELETE FROM session_v2 WHERE id = ?", (sid,))
             return 0
