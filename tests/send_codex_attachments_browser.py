@@ -25,8 +25,14 @@ def main():
         # Model the update trap: without the launch override the CLI exits
         # before rendering an editor or creating a native session.
         cli = root / 'codex.py'
-        cli.write_text("import sys, runpy\n"
-            "assert any(sys.argv[i] in ('-c', '--config') and sys.argv[i+1] == "
+        cli.write_text("import sys, runpy, os, tty, termios\n"
+            + "gate = " + repr(str(root / "trust-gate")) + "\n"
+            + "if os.path.exists(gate):\n"
+            + " old = termios.tcgetattr(0); tty.setraw(0)\n"
+            + " print(\"\\x1b[2J\\x1b[HDo you trust this directory?\\r\\n  › 1. Yes, proceed\\r\\n    2. No, exit\\r\\nPress Enter to confirm\", flush=True)\n"
+            + " while os.read(0, 1) != b\"\\r\": pass\n"
+            + " termios.tcsetattr(0, termios.TCSANOW, old)\n"
+            + "assert any(sys.argv[i] in ('-c', '--config') and sys.argv[i+1] == "
             "'check_for_update_on_startup=false' for i in range(1, len(sys.argv)-1)), "
             "'startup updater would exit this session'\n"
             + "runpy.run_path(" + repr(str(REPO / 'tests/fake_codex_cli.py')) + ", run_name='__main__')\n")
@@ -68,7 +74,9 @@ def main():
                 context.route('**/*', lambda route: route.continue_()
                     if route.request.url.startswith(base + '/') else route.abort())
                 page = context.new_page()
-                errors, dialogs = [], []
+                errors, dialogs, uploads = [], [], []
+                page.on('request', lambda r: uploads.append(r.url) if r.method == 'POST'
+                    and urlsplit(r.url).path == '/api/session/conversation/attachment' else None)
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 on_popup(page, lambda dialog: (dialogs.append(dialog.message), dialog.accept()))
                 page.goto(base, wait_until='networkidle')
@@ -186,18 +194,47 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
                 (root / 'footer-paste').touch()
-                for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告']):
+                for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告', 'trust 后发送图片报告']):
                     # Submit an actual report through the dialog. The worker must
                     # consume its whole task once without a manual terminal Enter.
+                    if index == 3:
+                        (root / 'trust-gate').touch()
                     if not page.locator('#report-bug').is_visible():
                         page.locator('#header-more-btn').click()
                     page.locator('#report-bug').click()
                     page.locator('#bug-report-description').fill(description)
+                    if index == 3:
+                        page.locator('#bug-report-file').set_input_files(
+                            {'name': 'trust.png', 'mimeType': 'image/png', 'buffer': png})
+                        page.wait_for_function('bugReportDraftObject().attachments[0]?.uploaded?.upload_id && !bugReportDraftObject().attachments[0].staging')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/bug-report') as report:
                         page.locator('#bug-report-go').click()
                     assert report.value.status == 202, report.value.text()
                     worker = report.value.json()['worker']
                     bundle = Path(report.value.json()['path'])
+                    if index == 3:
+                        staged_uploads = len(uploads)
+                        page.locator('#bug-report-toast').get_by_role('button', name='打开', exact=True).click()
+                        page.wait_for_function("composerDraft()?.inputStatus?.code === 'cli_question'", timeout=15000)
+                        expect(page.locator('#cinput')).to_have_value(description)
+                        expect(page.locator('#csend')).to_be_disabled()
+                        page.locator('#a-term').click()
+                        xterm_includes(page, 'Do you trust this directory?')
+                        page.locator('.xterm-helper-textarea').last.press('Enter')
+                        page.locator('#a-term').click()
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                        # Refresh loses all File objects and frontend aliases.
+                        page.reload(wait_until='domcontentloaded')
+                        page.locator('#side .item').filter(has_text='处理 ' + report.value.json()['report_id']).click()
+                        expect(page.locator('#cinput')).to_have_value(description)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as retried:
+                            page.locator('#csend').click()
+                        assert retried.value.status == 200, retried.value.text()
+                        assert len(uploads) == staged_uploads, 'restored report must reuse its upload'
+                        print('PASS trust report: terminal answer, reload, retained image sent without re-upload', flush=True)
+                        images = list((root / 'work/sessiondock_attachments').glob('*/trust.png'))
+                        assert len(images) == 1 and images[0].read_bytes() == png, images
                     if index == 2:
                         stopped = context.request.post(base + '/api/term/kill', data={
                             'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
@@ -206,7 +243,7 @@ def main():
                         expect(page.get_by_role('button', name='重新启动', exact=True)).to_be_visible(timeout=15000)
                         expect(page.locator('#cinput')).to_have_value(description)
                         # Reload exercises recovery from server-owned report input.
-                        page.reload(wait_until='networkidle')
+                        page.reload(wait_until='domcontentloaded')
                         page.locator('#side .item').filter(has_text='处理 ' + report.value.json()['report_id']).click()
                         expect(page.locator('#cinput')).to_have_value(description)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/restart') as recovered:

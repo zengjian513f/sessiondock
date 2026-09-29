@@ -257,6 +257,15 @@ available to legacy callers; it is not the new browser upload path.
    history rendering independently. An exited unbound CLI can be restarted from
    the retained conversation draft; both launches share that draft identity.
 
+After a trust/menu refusal, reopening or refreshing the processing conversation
+restores attachment references under the session identity used to read the server
+draft. Stored upload metadata may still name the provisional report identity;
+that older browser UID does not require re-uploading the file. The server keeps
+resolving the verified aliases and reuses its published attachment record on SEND.
+The Codex attachment browser suite answers a startup trust menu through the PTY,
+reloads the retained image report, and sends it once without another upload or
+published copy (`BUG-20260929-162939-2fafba`).
+
 ### Prompt
 
 `worker_prompt` is rewritten for this repository: read the bundle, locate the
