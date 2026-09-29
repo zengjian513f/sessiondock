@@ -726,15 +726,106 @@ function markStaleBuild(serverBuild = '') {
   }
 }
 
+let serverHostname = '';
 async function checkServerBuild() {
   try {
     const response = await fetch(appUrl('api/meta'), {cache: 'no-store'});
     const data = await response.json();
+    if (data.hostname) serverHostname = data.hostname;
     if (data.build && BUILD_ID && data.build !== BUILD_ID) markStaleBuild(data.build);
   } catch { /* 网络恢复后再检查 */ }
 }
 setInterval(checkServerBuild, 30000);
 queueMicrotask(checkServerBuild);
+
+// 登录环境：后端经 zshrc 之类的包装启动，新开的 CLI 继承后端的环境。启动文件改动后，
+// 要重启后端才会进入新会话；后端比对出变化的变量名，这里逐台机器提示。
+const shellEnvIgnored = new Map();   // 机器 → 本页已忽略的变化（变量名列表）
+const shellEnvRestarting = new Map(); // 机器 → 发起重启前的 started_at
+function shellEnvTargets() {
+  if (!HUB_MODE) return [{key: 'local', name: serverHostname || Nodes.list[0]?.name || '本机', prefix: ''}];
+  return Nodes.list.filter(node => node.online !== false)
+    .map(node => ({key: node.id, name: node.name || node.id, prefix: `api/nodes/${node.id}/`}));
+}
+
+async function checkShellEnv() {
+  const found = [];
+  await Promise.all(shellEnvTargets().map(async target => {
+    try {
+      const response = await fetch(appUrl(target.prefix + 'api/shell-env'), {cache: 'no-store'});
+      if (!response.ok) return;              // 旧后端没有这个接口
+      const data = await response.json();
+      if (!data.configured) return;
+      const before = shellEnvRestarting.get(target.key);
+      if (before !== undefined) {
+        if (data.started_at === before) { found.push({...target, data, restarting: true}); return; }
+        shellEnvRestarting.delete(target.key);
+      }
+      const signature = (data.changed || []).join(',');
+      if (data.stale && shellEnvIgnored.get(target.key) !== signature) found.push({...target, data});
+    } catch {
+      if (shellEnvRestarting.has(target.key)) found.push({...target, data: {}, restarting: true});
+    }
+  }));
+  renderShellEnvNotice(found);
+}
+
+const textEl = (tag, cls, text) => { const node = el(tag, cls); node.textContent = text; return node; };
+function renderShellEnvNotice(items) {
+  let notice = $('#shell-env-notice');
+  if (!items.length) { notice?.remove(); return; }
+  if (!notice) {
+    notice = el('div', 'version-stale shell-env-stale');
+    notice.id = 'shell-env-notice';
+    notice.setAttribute('role', 'status');
+    document.body.appendChild(notice);
+  }
+  notice.replaceChildren(...items.map(item => {
+    const row = el('div', 'shell-env-row');
+    row.dataset.node = item.key;
+    const names = item.data.changed || [];
+    const shown = names.slice(0, 4).join('、') + (names.length > 4 ? ` 等 ${names.length} 个` : '');
+    row.appendChild(textEl('span', '', item.restarting
+      ? `${item.name} 的后端正在重启…`
+      : `${item.name} 的登录环境（zshrc）已变化：${shown}。新开的会话仍用旧环境，重启后端后生效。`));
+    if (!item.restarting) {
+      const restart = textEl('button', 'btn', `重启 ${item.name} 后端`);
+      restart.type = 'button';
+      restart.title = '正在运行的会话不受影响；页面会短暂断开后自动重连';
+      restart.onclick = () => restartShellEnv(item, restart);
+      const ignore = textEl('button', 'btn', '忽略');
+      ignore.type = 'button';
+      ignore.onclick = () => { shellEnvIgnored.set(item.key, names.join(',')); row.remove();
+        if (!notice.children.length) notice.remove(); };
+      row.append(restart, ignore);
+    }
+    return row;
+  }));
+}
+
+async function restartShellEnv(item, button) {
+  button.disabled = true;
+  try {
+    const response = await fetch(appUrl(item.prefix + 'api/shell-env/restart'), {method: 'POST'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+    shellEnvRestarting.set(item.key, item.data.started_at);
+    browserAuditEvent('shell_env.restart', {node: item.key, changed: item.data.changed || []});
+    renderShellEnvNotice([{...item, restarting: true}]);
+    for (let i = 0; i < 30 && shellEnvRestarting.has(item.key); i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await checkShellEnv();
+    }
+  } catch (error) {
+    button.disabled = false;
+    alert(`重启 ${item.name} 后端失败: ${error.message || error}`);
+  }
+}
+setInterval(checkShellEnv, 60000);
+setTimeout(checkShellEnv, 3000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) checkShellEnv();
+});
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) checkServerBuild();
 });

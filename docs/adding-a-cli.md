@@ -58,7 +58,7 @@
   - `catalog()`：模型目录从哪里读，要按子进程的环境读；
   - `supports_effort()`：这个 CLI 有没有强度参数。
 - `lifecycle/autobind.rs`：进程证据绑定。
-- **节点配置**：每台机器 `etc/launcher.json` 为每种 CLI 配**唯一**一个 profile（`args`、`resume_args`，按需 `with-zshrc`）；env 按需增加新变量。改之前先备份。
+- **节点配置**：每台机器 `etc/launcher.json` 为每种 CLI 配**唯一**一个 profile（`executable` 写 CLI 的绝对路径，`args`、`resume_args`；服务本身经 `with-zshrc` 启动，CLI 继承它的环境，见 [shell-env.md](shell-env.md)）；env 按需增加新变量。改之前先备份。
 
 ### 读模型
 

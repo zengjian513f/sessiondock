@@ -152,6 +152,7 @@ fn bare_claude_matches_only_nearby_session_in_same_cwd() {
         sids: BTreeMap::new(),
         paths: BTreeMap::new(),
         bare_claude: BTreeMap::new(),
+        opencode: BTreeMap::new(),
         stats: ScanStats::default(),
         completed: Instant::now(),
         tree,
@@ -398,6 +399,7 @@ fn shared_process_belongs_only_to_deepest_fork_and_ancestors_keep_their_own() {
             .map(|row| (row.path.clone(), BTreeSet::from([123])))
             .collect(),
         bare_claude: BTreeMap::new(),
+        opencode: BTreeMap::new(),
         stats: ScanStats::default(),
         completed: Instant::now(),
         tree: tree.clone(),
