@@ -1322,6 +1322,7 @@ fn persisted_timeline_pin_equals_pure_options_resets_cursors_and_retires_explici
                 stale_end: target.stale_end,
                 target: Some("u3".into()),
                 pinned_at: Some(1.0),
+                cli: false,
             },
         )
         .unwrap();

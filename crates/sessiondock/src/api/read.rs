@@ -498,6 +498,10 @@ fn retire_echoes(
     has_queue && service.retire_echoes(uid, &body.echoes(snapshot))
 }
 
+fn service_transcript(state: &AppState, uid: &str) -> Option<String> {
+    state.conversations.as_ref()?.cli_transcript(uid)
+}
+
 /// Emit `{"cli_only": true, "cli": ...}` as a CLI-state packet.
 fn cli_only(cli: &Value) -> String {
     json!({"cli_only": true, "cli": cli}).to_string()
@@ -566,6 +570,10 @@ pub async fn watch(
         let mut poll = tokio::time::interval(PROMPT_POLL);
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let cli_watched = main_view && state.conversations.is_some();
+        let claude_view = matches!(scope, Some(PromptScope::Claude { .. }));
+        // Editor text, input code, transcript and view anchor of the last
+        // rewind check: an unchanged screen and view is not classified again.
+        let mut last_rewind_probe = (Value::Null, Value::Null, None, String::new());
         let mut cli_poll = tokio::time::interval(CLI_POLL);
         cli_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         cli_poll.tick().await; // The first packet already carried a reading.
@@ -581,7 +589,23 @@ pub async fn watch(
                 _ = cli_poll.tick(), if cli_watched => {
                     // A changed input state, editor or queue without new
                     // records is a `cli_only` packet.
-                    if let Some(current) = observe_cli(&state, &watched_uid).await
+                    let mut observed = observe_cli(&state, &watched_uid).await;
+                    // A Claude TUI rewind leaves the JSONL untouched until the
+                    // next input; follow it from the editor and transcript.
+                    if claude_view
+                        && let Some(current) = &observed
+                        && let Ok(snapshot) = subscription.current()
+                    {
+                        let probe = (current["editor"]["text"].clone(), current["input"]["code"].clone(),
+                            service_transcript(&state, &watched_uid), snapshot.anchor.clone());
+                        if probe != last_rewind_probe {
+                            last_rewind_probe = probe;
+                            if super::metadata::follow_cli_rewind(&state, &watched_uid, current, &snapshot).await {
+                                observed = cli_field(&state, &watched_uid, true);
+                            }
+                        }
+                    }
+                    if let Some(current) = observed
                         && current != last_cli
                     {
                         last_cli = current;

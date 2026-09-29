@@ -445,6 +445,15 @@ pub fn inspect(capture: &ScreenCapture) -> ComposerView {
     }
 }
 
+/// The screen rows above Claude's composer box (the visible transcript), when
+/// the composer is recognized; the editor itself is never part of it.
+pub fn transcript(capture: &ScreenCapture) -> Option<String> {
+    let normalized = capture.text.replace('\r', "");
+    let clean_lines: Vec<String> = normalized.lines().map(strip_ansi).collect();
+    let block = locate(&clean_lines, capture.cursor)?;
+    Some(clean_lines[..block.prompt_y].join("\n"))
+}
+
 /// Editor text: the prompt row after `❯ ` plus continuation rows, joined
 /// without separators (soft wraps) and end-trimmed per row.
 fn composer_text(rows: &[String], marker: usize) -> String {

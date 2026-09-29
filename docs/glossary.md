@@ -93,7 +93,7 @@ aliases. Historical names belong only in migration records.
 
 **Compaction.** Claude compact events that rejoin across the tree and hide finished abandoned branches (two compact forms). Codex also filters compacted/internal context. See [read model](read-model.md).
 
-**Rewind.** Native branch signal already on disk; live CLI-screen rewind and durable pin are not opened as writes. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [history pages](history-pages.md).
+**Rewind.** Native branch signal already on disk; a rewind made in Claude's TUI is followed from the editor and transcript as a `cli` display pin until the next native input ([CLI state](cli-state.md)); native files are never written. Page grants treat rewind/prefix change as 409 unless the full checkpoint still matches. See [history pages](history-pages.md).
 
 **Last-prompt.** Claude record that cuts the active leaf. An append-only last-prompt can withdraw older displayed events and reset. See [read model](read-model.md).
 

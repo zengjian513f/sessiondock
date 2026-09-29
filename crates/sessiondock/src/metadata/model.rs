@@ -124,6 +124,10 @@ pub struct TimelinePin {
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<f64>,
+    /// Set when SessionDock followed a rewind the CLI made on its own screen
+    /// (docs/cli-state.md), not an operator's display-only pin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cli: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -449,6 +453,7 @@ impl MetadataSnapshot {
                 stale_end: pending.stale_end,
                 target: None,
                 pinned_at: None,
+                cli: false,
             });
             row.timeline_revision = increment(row.timeline_revision)?;
             Ok(())
@@ -473,6 +478,7 @@ impl MetadataSnapshot {
                 current.tip == pin.tip
                     && current.stale_end == pin.stale_end
                     && current.target == pin.target
+                    && current.cli == pin.cli
             }) {
                 return Ok(());
             }

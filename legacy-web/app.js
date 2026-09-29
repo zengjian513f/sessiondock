@@ -3515,6 +3515,9 @@ function renderTimelinePinNotice(meta) {
   const detail = $('#detail');
   if (!detail) return;
   const pin = meta.timeline_pin;
+  // A rewind made in the terminal: the next native input settles it, so a
+  // retired one needs no notice and an active one offers nothing to undo.
+  if (pin.cli && pin.retired) return;
   const notice = document.createElement('div');
   notice.id = 'timeline-pin-notice';
   notice.setAttribute('role', 'status');
@@ -3523,6 +3526,14 @@ function renderTimelinePinNotice(meta) {
   notice.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;'
     + 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
   const text = document.createElement('span');
+  notice.append(text);
+  const heading = detail.querySelector(':scope > .dhead');
+  if (heading) heading.after(notice); else detail.prepend(notice);
+  if (pin.cli) {
+    notice.dataset.cli = 'true';
+    text.textContent = '已同步终端里的回滚，显示到回滚点为止';
+    return;
+  }
   text.textContent = pin.retired
     ? `固定显示已失效：${pin.retired_message || pin.retired_reason || '原生记录已变化'}。CLI 未回滚。`
     : '已固定显示到所选输入之前，CLI 未回滚；原生记录继续后自动失效。';
@@ -3532,9 +3543,7 @@ function renderTimelinePinNotice(meta) {
   clear.textContent = pin.retired ? '清除记录' : '取消固定';
   clear.title = '只移除 SessionDock 的显示固定，不会回滚 CLI';
   clear.onclick = () => { clear.disabled = true; void pinTimeline(meta.uid, null).finally(() => { clear.disabled = false; }); };
-  notice.append(text, clear);
-  const heading = detail.querySelector(':scope > .dhead');
-  if (heading) heading.after(notice); else detail.prepend(notice);
+  notice.append(clear);
 }
 
 function timelinePinAction(n, m) {
