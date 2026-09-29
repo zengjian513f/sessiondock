@@ -4095,7 +4095,7 @@ function composerDraftOwner(uid) {
   }
   return uid;
 }
-function restoreComposerDraftRecord(record) {
+function restoreComposerDraftRecord(record, uid) {
   const draft = Object.assign(newComposerDraft(), record || {});
   delete draft.saved;
   // Optional/nullable fields in old server records must retain editor defaults.
@@ -4104,6 +4104,11 @@ function restoreComposerDraftRecord(record) {
   draft.quotes ??= [];
   for (const attachment of draft.attachments) {
     attachment.status = ''; attachment.preview = '';
+    // The server resolved this draft through the requested session identity.
+    // Report handoff/restart can leave an older UID in its stored metadata.
+    if (uid && attachment.uploaded?.upload_id) {
+      attachment.uploaded = {...attachment.uploaded, uid, node:nodeOf(uid) || ''};
+    }
   }
   return ensureComposerAttachmentNumbers(draft);
 }
@@ -4367,7 +4372,7 @@ function hydrateComposerDraft(uid, retry = false) {
       }
       if (!draft.editVersion && row.value && !row.value.removed) {
         for (const field of ['requestId','requestText','report_prompt','report_text']) delete draft[field];
-        Object.assign(draft, restoreComposerDraftRecord(row.value), {revision:row.revision});
+        Object.assign(draft, restoreComposerDraftRecord(row.value, uid), {revision:row.revision});
         if (legacy?.db) await Promise.all(draft.attachments.map(async item => {
           if (item.uploaded?.upload_id) return;
           const file = await new Promise((resolve, reject) => {
@@ -4382,7 +4387,7 @@ function hydrateComposerDraft(uid, retry = false) {
           }
         }));
       } else if (draft.editVersion && !draft.savedVersion && row.value && !row.value.removed) {
-        mergeEarlyComposerEdit(draft, restoreComposerDraftRecord(row.value), uid);
+        mergeEarlyComposerEdit(draft, restoreComposerDraftRecord(row.value, uid), uid);
       }
       draft.storageError = '';
       draft.loadFailed = false;
@@ -4415,14 +4420,15 @@ function mergeEarlyComposerEdit(draft, server, uid) {
 /** Replace the editor with a newer server row. Attachment objects this page
  *  already holds stay the same objects, so their File bytes, previews and
  *  in-flight uploads survive; only their server-side fields are refreshed. */
-function adoptServerDraft(draft, row) {
-  const next = restoreComposerDraftRecord(row.value);
+function adoptServerDraft(draft, row, uid) {
+  const next = restoreComposerDraftRecord(row.value, uid);
   next.attachments = next.attachments.map(a => {
     const local = draft.attachments.find(b => a.id === b.id);
     if (!local) return a;
     local.number = a.number;
     if (a.kind) local.kind = a.kind;
-    if (!local.uploaded?.upload_id && a.uploaded) local.uploaded = a.uploaded;
+    if (a.uploaded?.upload_id && (!local.uploaded?.upload_id
+        || local.uploaded.upload_id === a.uploaded.upload_id)) local.uploaded = a.uploaded;
     return local;
   });
   for (const a of draft.attachments) if (a.preview && !next.attachments.some(b => a.id === b.id)) URL.revokeObjectURL(a.preview);
@@ -4450,7 +4456,7 @@ async function followServerDraft(uid, revision = null) {
     composerFollowedAt = performance.now();
     if (!row || row.revision <= draft.revision || draft.editVersion !== version
         || composerSaving.has(draft) || composerSending) return false;
-    adoptServerDraft(draft, row);
+    adoptServerDraft(draft, row, uid);
     refreshComposerDraft(owner); syncComposerUnloadProtection();
     return true;
   } catch {
@@ -4600,7 +4606,7 @@ async function recoverServerComposerNode(node, state) {
     let changed = false;
     for (const row of data.drafts || []) {
       if (!row.uid || row.uid.startsWith('report:') || composerDrafts.has(row.uid)) continue;
-      const draft = restoreComposerDraftRecord(row.draft.value); draft.revision = row.draft.revision;
+      const draft = restoreComposerDraftRecord(row.draft.value, row.uid); draft.revision = row.draft.revision;
       composerDrafts.set(row.uid, draft);
       changed = true;
     }
@@ -5170,7 +5176,7 @@ async function reconcileComposerSubmission(uid) {
       || draft.editVersion!==version || composerSaving.has(draft) || composerSending) return;
   // A later attachment may be saved as metadata while its bytes still live in
   // this page. A receipt refresh must preserve that File and its preview.
-  adoptServerDraft(draft,result.draft);
+  adoptServerDraft(draft,result.draft,uid);
   refreshComposerDraft(composerDraftOwner(uid));syncComposerUnloadProtection();
 }
 function scheduleComposerInputChecks(poll) {
