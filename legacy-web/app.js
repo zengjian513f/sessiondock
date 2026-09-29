@@ -161,8 +161,8 @@ applyFont();
 const S = {
   sessions: [],
   view: store.get('view', 'tree'),
-  nest: store.get('nest', false),  // 左栏分层：子代理和由会话发起的会话缩进在发起者下
-  nestClosed: new Set(store.get('nestClosed', [])),  // 分层里手动收起的发起者 uid
+  nest: store.get('nest', false),  // 左栏分层：由会话发起的会话缩进在发起者下；子代理行两种模式都挂
+  nestClosed: new Set(store.get('nestClosed', [])),  // 手动收起的发起者 uid（平铺收起子代理行，分层收起整棵子树）
   off: new Set(store.get('off', [])),
   closed: new Set(store.get('closed', [])),
   sel: null,
@@ -1274,15 +1274,16 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   if (!agent) {
     const listed = indexedSessions().byUid.get(uid);
     // Cursor/size updates do not change membership, ordering, nesting or
-    // filters. Keep the indexed row object used by the resolved sidebar tree;
+    // filters; migration_warnings 同样只出现在详情里，左栏从不展示（docs/history-pages.md）。
+    // Keep the indexed row object used by the resolved sidebar tree;
     // replace the array normally for every other kind of metadata change.
     if (listed && JSON.stringify(listed) !== JSON.stringify(meta)) {
       const local = Object.keys({...listed, ...meta}).every(field =>
-        field === 'cursor' || field === 'size'
+        field === 'cursor' || field === 'size' || field === 'migration_warnings'
           || JSON.stringify(listed[field]) === JSON.stringify(meta[field]));
       if (local) {
         const sizeChanged = listed.size !== meta.size;
-        for (const field of ['cursor', 'size']) {
+        for (const field of ['cursor', 'size', 'migration_warnings']) {
           if (Object.hasOwn(meta, field)) listed[field] = meta[field];
           else delete listed[field];
         }
@@ -3636,7 +3637,8 @@ function nestSize(s, children, memo = new Map()) {
 function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   const row = {s, agent: null, depth, kids: 0, closed: false};
   out.push(row);
-  if (!S.nest) return;
+  // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
+  // 发起的会话只在分层模式缩进。
   if (S.nestClosed.has(s.uid)) {
     row.kids = nestSize(s, children, sizes).rows - 1;
     row.closed = row.kids > 0;
@@ -3664,7 +3666,8 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
 
 const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
 
-/** 左栏分组：[组键, 行数组]。行 = {s, agent, depth}；平铺模式下 depth 恒为 0 且没有子代理行。
+/** 左栏分组：[组键, 行数组]。行 = {s, agent, depth}；子代理行在两种模式下都以 depth+1 挂在
+ *  会话下面，平铺模式没有发起的会话行（children 为空）。
  *  分层模式按整棵子树的最新活动排位和归组，发起的孩子刚有动静时父亲跟着浮上来。 */
 function groupBy(list, {skipClosed = false} = {}) {
   const {children, nested} = nestTree(list);
@@ -3725,7 +3728,7 @@ function groupBy(list, {skipClosed = false} = {}) {
   return groups;
 }
 
-/** 列表项的元信息行。子代理数不在这里显示：分层打开后它们就是缩进的行，关着时在标题下拉里。 */
+/** 列表项的元信息行。子代理数不在这里显示：它们就是挂在会话下面的缩进行，收起时计入三角数字。 */
 // Rust pending rows carry the receipt state; a finished instance says so
 // instead of "waiting" (its `stale` is the receipt flag, not a hub cache).
 const pendingMeta = s => `${fmtTime(s.updated)} · ${typeof pendingStateLabel === 'function'
@@ -3745,10 +3748,10 @@ function patchSide(list) {
 /* ---------- 子代理行 ---------- */
 const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) ? null : a.updated)}`;
 
-/** 分层模式下每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。
+/** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
+ *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
  *  槽位与分组标题的三角同列，深一层的槽位正好落在上一层图标的下方。 */
 function nestLeadMarkup(r) {
-  if (!S.nest) return '';
   const caret = r.kids ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
       title="${r.closed ? '展开' : '收起'} ${r.kids} 项" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${r.kids} 项"></button>` : '';
   return `<span class="nest-lead" aria-hidden="${r.kids ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
@@ -3841,8 +3844,8 @@ function patchSidebarRow(node, row, highlightKey) {
     return;
   }
   const pickable = S.picking && sessionPickable(s);
-  const selected = S.sel === s.uid && !(S.nest && S.agent);
-  const className = 'item' + (S.nest ? ' tree' : '') + (selected ? ' sel' : '')
+  const selected = S.sel === s.uid && !S.agent;
+  const className = 'item tree' + (selected ? ' sel' : '')
     + (row.closed ? ' nest-closed' : '')
     + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
     + (!s.pending && S.live.has(s.uid) ? ' live' : '')
@@ -3890,7 +3893,7 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
     S.view, S.nest, S.picking, S.nestAttach === r.s.uid, S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,
-    S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !(S.nest && S.agent)),
+    S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     picked.has(r.s.uid), S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
   const structure = JSON.stringify([!!r.agent, S.view, S.nest,
     S.picking && sessionPickable(r.s), r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
@@ -3902,9 +3905,9 @@ function createSidebarRow(r, picked = pickedSessions) {
   const s = r.s;
   const meta = itemMeta(s);
   const pickable = S.picking && sessionPickable(s);
-  // 分层时正在看的子代理有自己那一行，主会话行不再一起亮
-  const selected = S.sel === s.uid && !(S.nest && S.agent);
-  const it = el('div', 'item' + (S.nest ? ' tree' : '') + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
+  // 正在看的子代理有自己那一行，主会话行不再一起亮
+  const selected = S.sel === s.uid && !S.agent;
+  const it = el('div', 'item tree' + (selected ? ' sel' : '') + (r.closed ? ' nest-closed' : '')
                           + (s.pending ? (s.stale ? ' pending' : ' pending live live-tmux') : '')
                           + (!s.pending && S.live.has(s.uid) ? ' live' : '')
                           + (!s.pending && S.liveTmux.has(s.uid) ? ' live-tmux' : '')
@@ -4423,10 +4426,11 @@ function revealSessionInSidebar(uid, agent) {
     if (S.activeOnly) { S.activeOnly = false; store.set('activeOnly', false); }
     changed = true;
   }
-  if (agent && !S.nest) { S.nest = true; store.set('nest', true); changed = true; }
+  // 子代理行两种模式都在，深链不再替用户打开分层开关；分层模式才需要沿发起链展开祖先。
   const byKey = new Map(S.sessions.map(s => [spawnKey(s.node_id, s.source, s.sid), s]));
   const seen = new Set();
-  for (let current = row; current && !seen.has(current.uid); current = nestParentOf(current, byKey)) {
+  for (let current = row; current && !seen.has(current.uid);
+       current = S.nest ? nestParentOf(current, byKey) : null) {
     seen.add(current.uid);
     // A hidden link target needs its ancestors, but not its own children.
     if ((current.uid !== uid || agent) && S.nestClosed.delete(current.uid)) changed = true;
@@ -8139,7 +8143,7 @@ function sidebarNestContext() {
 
 function patchNestFold(uid) {
   const side = $('#side'), tree = side?._nestTree;
-  if (!S.nest || sidebarTextSelectionProtected() || !tree
+  if (sidebarTextSelectionProtected() || !tree
       || tree.sessions !== S.sessions || tree.results !== S.results
       || tree.context !== sidebarNestContext()) return false;
   const node = side.querySelector(`.item[data-uid="${CSS.escape(uid)}"]`);

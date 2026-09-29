@@ -268,6 +268,22 @@ def main():
                     expect(header).not_to_have_class(TURN, timeout=20000)
                     assert background_row() == ("idle", None)
 
+                    # ---- A subagent of the live session has no composer: the parent's
+                    # console button repaint must not bring back the parent's editor or its
+                    # CLI input notice.
+                    if page.locator("#termpane").is_visible():
+                        page.locator("#a-term").click()
+                    expect(page.locator("#composer")).to_be_visible()
+                    page.locator('#side .item.agent[data-agent="a1b2c3d4e5f6a7b8c"]').click()
+                    expect(page.locator("#msgs")).to_contain_text("Synthetic background result")
+                    page.wait_for_function("S.agent === 'a1b2c3d4e5f6a7b8c'")
+                    expect(page.locator("#a-term")).to_have_attribute("aria-label", re.compile("子代理"))
+                    page.evaluate("renderTakeoverBtn()")
+                    expect(page.locator("#composer")).to_be_hidden()
+                    expect(page.locator("#composer-input-status")).to_be_hidden()
+                    page.locator(f'#side .item[data-uid="{claude_uid}"]:not(.agent)').click()
+                    expect(page.locator("#composer")).to_be_visible()
+
                     # ---- Codex open: the screen's busy footer outranks the finished transcript.
                     page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic Codex turn target")

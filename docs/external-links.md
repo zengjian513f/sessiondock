@@ -5,7 +5,8 @@ The selected node disambiguates copies across machines. Root sessions open their
 view. A native subagent ID resolves through `agent_items` and opens that subagent
 under its owning root, including nested agents. The deep link takes precedence over
 the last saved selection. `tests/session_deep_link_browser.py` covers root, child and
-nested-child navigation on desktop/mobile with synthetic native histories.
+nested-child navigation on desktop/mobile with synthetic native histories, in both
+sidebar modes.
 
 File links resolve to FileDock's machine-and-path entry; see [files](files.md).
 The independent file service owns directory navigation and standalone previews.
@@ -22,3 +23,9 @@ Selecting an already displayed session row preserves its folded children; only
 the row's triangle expands or collapses that subtree. Restoring a selected parent
 after reload also preserves its own fold. Revealing a hidden link target opens
 only the ancestors needed to show the target row.
+
+Subagent rows hang under their owning session in both flat and hierarchical
+sidebar modes; the session row's triangle folds or expands them, and the
+hierarchy toggle only controls whether spawned sessions indent. Opening an
+agent deep link no longer switches the sidebar into hierarchical mode — it
+reveals and selects the agent row in whichever mode is active.
