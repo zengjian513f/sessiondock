@@ -152,12 +152,26 @@ def check_page(page, uid, data, server, width):
     assert toggle.is_visible(), "the nest toggle must be visible in the header"
     assert not page.evaluate("S.nest") and toggle.get_attribute("aria-pressed") == "false"
 
-    # Flat: no subagent rows, every row a root, B in its own directory group.
+    # Flat: spawned sessions stay roots, but subagent rows still hang under their
+    # owner with a caret of their own; B in its own directory group.
     flat = rows()
-    assert all(r["depth"] == 0 and r["agent"] is None and not r["caret"] for r in flat), flat
-    assert [r["uid"] for r in flat] == [B, A, C, D, E], flat
+    assert [(r["uid"], r["agent"], r["depth"]) for r in flat] == [
+        (B, None, 0), (A, None, 0), (None, "y", 1), (None, "x", 1),
+        (C, None, 0), (D, None, 0), (E, None, 0)], flat
+    assert [r["caret"] for r in flat] == [False, True, False, False, False, False, False], flat
     assert len({r["group"] for r in flat}) == 3, flat
-    base_pad = flat[0]["pad"]       # icon offset from the row's left edge when flat
+    base_pad = flat[0]["pad"]       # icon offset from the row's left edge (every row has the lead slot)
+    assert flat[2]["pad"] > base_pad and flat[2]["pad"] == flat[3]["pad"], flat
+    # The flat caret folds only the agent rows; the same set drives both modes.
+    flat_caret = page.locator(f'#side .item[data-uid="{A}"] .nest-caret')
+    assert "2 项" in flat_caret.get_attribute("title")
+    flat_caret.click()
+    assert [(r["uid"], r["agent"]) for r in rows()] == [
+        (B, None), (A, None), (C, None), (D, None), (E, None)]
+    assert page.evaluate("[...S.nestClosed]") == [A]
+    flat_caret.click()
+    assert [r["agent"] for r in rows() if r["agent"]] == ["y", "x"]
+    assert page.evaluate("[...S.nestClosed]") == []
 
     # Nested: B (with C) leaves the beta group for A's subtree; the two
     # transcript agents retain backend order; D (spawner gone) and E stay roots.
@@ -177,9 +191,10 @@ def check_page(page, uid, data, server, width):
     marks = page.evaluate(MARKS_JS)
     assert marks and all(m["mark"] and m["icon"] == "claude" and m["opacity"] == "1" for m in marks), marks
     # Indent: the icon moves right with depth and lines up per depth; a root's caret shares the group
-    # caret's column; a child's caret sits one indent step further right.
+    # caret's column; a child's caret sits one indent step further right. Roots keep the flat pad
+    # because the lead slot exists in both modes.
     pads = [r["pad"] for r in tree]
-    assert pads[0] > base_pad and pads[1] > pads[0] and pads[2] > pads[1] == pads[3] == pads[4], pads
+    assert pads[0] == base_pad and pads[1] > pads[0] and pads[2] > pads[1] == pads[3] == pads[4], pads
     assert pads[5] == pads[6] == pads[0], pads
     assert all(r["pad"] < width / 3 for r in tree), pads
     assert abs(tree[0]["caretX"] - tree[0]["gheadCaretX"]) < 1, (tree[0]["caretX"], tree[0]["gheadCaretX"])
@@ -396,11 +411,13 @@ def check_page(page, uid, data, server, width):
     page.locator('#item-menu [data-act="detach"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=E)
 
-    # Off again: the flat list as before, no subagent rows.
+    # Off again: spawned sessions return to roots; the subagent rows stay under A.
     page.locator("#nest-toggle").click()
     back = rows()
-    assert [r["uid"] for r in back] == [r["uid"] for r in flat] and all(r["depth"] == 0 for r in back)
-    assert not page.locator("#side .item.agent").count()
+    assert [(r["uid"], r["agent"], r["depth"]) for r in back] == [
+        (B, None, 0), (A, None, 0), (None, "y", 1), (None, "x", 1),
+        (C, None, 0), (D, None, 0), (E, None, 0)], back
+    assert page.locator("#side .item.agent").count() == 2
 
 
 def check_hidden_spawner(browser, binary, root, width):

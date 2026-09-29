@@ -286,7 +286,7 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
   // here every spawner is listed, so the full inventory equals the rendered list.
   const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
   const context = ctx({S});
-  for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'agentRunning', 'expandRows']) load(context, name);
+  for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'nestSize', 'agentRunning', 'expandRows']) load(context, name);
   const a = {uid: 'claude:a', source: 'claude', sid: 'a', updated: '2026-09-12T00:00:00Z',
     agent_items: [{id: 'ag', type: 'Task', updated: '2026-09-12T00:30:00Z'}]};
   const b = {uid: 'claude:b', source: 'claude', sid: 'b', updated: '2026-09-12T01:00:00Z', spawned_by: {source: 'claude', sid: 'a'}};
@@ -315,9 +315,19 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
   same([...context.nestTree([p, q]).nested], ['claude:p']);
   S.nest = false;
   assert.equal(context.nestTree([a, b, c]).nested.size, 0);
+  // Flat mode still hangs the subagent rows under their owner; spawned sessions
+  // stay roots because the children map is empty.
   const flatRows = [];
   context.expandRows(a, 0, new Map(), flatRows, new Set());
-  same(flatRows.map(r => r.s.uid), ['claude:a']);
+  same(flatRows.map(r => [r.agent ? r.agent.id : r.s.uid, r.depth]), [['claude:a', 0], ['ag', 1]]);
+  assert.equal(flatRows[0].kids, 1);
+  // The same fold set drives both modes: a folded owner hides its flat agent rows too.
+  S.nestClosed.add('claude:a');
+  const foldedRows = [];
+  context.expandRows(a, 0, new Map(), foldedRows, new Set());
+  same(foldedRows.map(r => [r.agent ? r.agent.id : r.s.uid, r.closed]), [['claude:a', true]]);
+  assert.equal(foldedRows[0].kids, 1);
+  S.nestClosed.delete('claude:a');
 });
 
 test('continued-in: the old Claude file is hidden while its continuation is listed and never nests it as a child', () => {
