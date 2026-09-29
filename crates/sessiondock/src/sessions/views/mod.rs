@@ -723,6 +723,9 @@ pub(crate) fn parse_candidate_retaining(
             "pinned_at": pin.pinned_at, "retired": outcome.retired.is_some(),
             "native_rewind": false,
         });
+        if pin.cli {
+            meta["timeline_pin"]["cli"] = json!(true);
+        }
         if let Some(retired) = outcome.retired {
             meta["timeline_pin"]["retired_reason"] = json!(retired.code());
             meta["timeline_pin"]["retired_message"] = json!(retired.message());

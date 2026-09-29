@@ -67,6 +67,8 @@ struct Entry {
     /// Text of the send the latest native echo retired, kept to recognize it
     /// when the CLI puts it back into the editor (Esc before any output).
     retired: Option<String>,
+    /// Claude's visible transcript above the editor (never serialized).
+    transcript: Option<String>,
 }
 
 /// One observation result: the classified input state, editor text and busy
@@ -123,6 +125,38 @@ impl Registry {
     pub fn retired(&self, key: &str, text: &str) {
         let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
         entries.entry(key.into()).or_default().retired = Some(text.into());
+    }
+    /// Stores the transcript of the reading just recorded (`None` when the
+    /// read failed or the CLI has no recognized editor).
+    pub fn set_transcript(&self, key: &str, transcript: Option<String>) {
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.entry(key.into()).or_default().transcript = transcript;
+    }
+    pub fn transcript(&self, key: &str) -> Option<String> {
+        let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        entries.get(key)?.transcript.clone()
+    }
+    /// Native history holds output after the input the editor now shows (a
+    /// CLI rewind or history recall): forget it as a returned send.
+    pub fn answered(&self, key: &str, text: &str) {
+        use crate::delivery::driver::same_text_ignoring_whitespace as same;
+        let mut entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(entry) = entries.get_mut(key) else {
+            return;
+        };
+        if entry
+            .retired
+            .as_deref()
+            .is_some_and(|sent| same(text, sent))
+        {
+            entry.retired = None;
+            if entry
+                .input
+                .is_some_and(|input| input.code == super::input::INPUT_RETURNED)
+            {
+                entry.input = Some(super::input::input_pending());
+            }
+        }
     }
     pub fn current(&self, key: &str, queued: Vec<QueuedSend>) -> CliState {
         let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
@@ -217,6 +251,16 @@ pub fn editor_text(
         "codex" => driver::inspect_codex(capture).text,
         _ => None,
     }
+}
+
+/// Claude's transcript above its editor; other CLIs have no rewind to follow.
+pub fn transcript(
+    source: &str,
+    capture: &crate::delivery::driver::ScreenCapture,
+) -> Option<String> {
+    (source == "claude")
+        .then(|| crate::delivery::driver::transcript(capture))
+        .flatten()
 }
 
 /// Whether the screen shows the CLI's busy indicator, for CLIs the driver
@@ -323,6 +367,22 @@ mod tests {
         assert_eq!(
             state.input.map(|i| i.code),
             Some(super::super::input::INPUT_RETURNED)
+        );
+        // Output after that input (a rewind or history recall) means the
+        // CLI answered it: the editor text is no longer an Esc-returned send.
+        registry.answered("k", "Reply with ALPHA.");
+        assert_eq!(
+            registry.current("k", vec![]).input.map(|i| i.code),
+            Some(super::super::input::INPUT_PENDING)
+        );
+        let (state, _) = registry.record(
+            "k",
+            &Ok((pending, Some("Reply withALPHA.".into()), Some(false))),
+            vec![],
+        );
+        assert_eq!(
+            state.input.map(|i| i.code),
+            Some(super::super::input::INPUT_PENDING)
         );
         // A ready editor is never rewritten.
         let (state, _) = registry.record(

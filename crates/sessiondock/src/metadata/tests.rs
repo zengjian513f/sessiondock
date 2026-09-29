@@ -433,6 +433,7 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
         stale_end: 512,
         target: Some("u3".into()),
         pinned_at: Some(1_789_120_800.0),
+        cli: false,
     };
     let pinned = store.set_timeline_pin("claude:pin", pin.clone()).unwrap();
     assert_eq!(pinned.revision(), 2);
@@ -506,6 +507,7 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
                         stale_end: 1,
                         target: target.map(str::to_owned),
                         pinned_at: None,
+                        cli: false,
                     },
                 )
                 .is_err()
@@ -526,7 +528,8 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
             tip: "leaf".into(),
             stale_end: 7,
             target: None,
-            pinned_at: None
+            pinned_at: None,
+            cli: false,
         })
     );
 }
