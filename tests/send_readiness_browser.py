@@ -78,6 +78,16 @@ def main():
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
+                expect(page.locator('#composer-input-status')).to_be_visible()
+                # No submission is needed to show or retain the reason. Enter
+                # follows the disabled button and leaves the draft editable.
+                trace = screen.with_suffix('.trace')
+                page.locator('#cinput').press('Enter')
+                page.wait_for_timeout(1800)
+                assert not dialogs, dialogs
+                assert not trace.exists()
+                expect(page.locator('#composer-input-status')).to_be_visible()
+                expect(page.locator('#cinput')).to_have_value('keep this message')
                 # A proxy failure belongs to SessionDock, not the native CLI.
                 page.route('**/api/session/conversation/check', lambda route:
                     route.fulfill(status=502, content_type='text/html', body='Bad Gateway'))
@@ -86,6 +96,25 @@ def main():
                 expect(page.locator('#cinput')).to_have_value('keep this message')
                 page.unroute('**/api/session/conversation/check')
                 expect(page.locator('#composer-input-status')).to_have_text('暂未识别到终端消息编辑区，请切换到 PTY（终端）查看；输入已保留', timeout=10000)
+                # A stalled CHECK must time out and let later polls recover,
+                # without the user submitting or reloading the conversation.
+                page.evaluate('''() => {
+                    const original=window.fetch;
+                    window.restoreInputChecks=() => {window.fetch=original;};
+                    window.fetch=(url, options) => {
+                        if (!String(url).endsWith('/api/session/conversation/check'))
+                            return original(url, options);
+                        return new Promise((resolve, reject) => {
+                            options?.signal?.addEventListener('abort', () =>
+                                reject(new DOMException('Aborted', 'AbortError')), {once:true});
+                        });
+                    };
+                }''')
+                expect(page.locator('#composer-input-status')).to_contain_text('检查超时', timeout=12000)
+                expect(page.locator('#csend')).to_be_disabled()
+                page.evaluate('restoreInputChecks()')
+                expect(page.locator('#composer-input-status')).to_contain_text('PTY', timeout=10000)
+                assert not dialogs, dialogs
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
@@ -200,10 +229,13 @@ def main():
                 page.set_viewport_size({'width': 1280, 'height': 720})
                 page.evaluate("removeComposerQuote(composerDraft().quotes[0].id)")
                 page.evaluate('async () => await composerDraftWrites')
-                # Keyboard submission still exercises the authoritative preflight.
+                # Repeated keyboard attempts keep the inline reason, without
+                # a modal or terminal writes.
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
                 page.locator('#cinput').press('Enter')
                 page.wait_for_function('() => !composerSending')
-                assert dialogs and 'PTY' in dialogs[-1], dialogs
+                assert not dialogs, dialogs
+                expect(page.locator('#composer-input-status')).to_be_visible()
                 assert page.evaluate("document.activeElement?.id === 'cinput'"), 'failed SEND stole composer focus'
                 expect(page.locator('#cinput')).to_have_value('keep this message')
                 refused = post('send', text='keep this message', request_id='login-refusal')
