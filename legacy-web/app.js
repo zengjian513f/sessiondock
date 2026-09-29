@@ -2758,73 +2758,11 @@ function setPicking(on) {
   sessionStopProgress = null;
   S.picking = !!on;
   if (!S.picking) pickedSessions.clear();
-  const attaching = S.nestAttachUids.length;
   if (S.picking) { S.nestAttach = ''; S.nestAttachUids = []; }
   renderPickBar();
-  if (attaching) {
-    const side = $('#side'), top = side.scrollTop;
-    renderSide();
-    side.scrollTop = top;     // 进出选择模式不该把列表弹回顶部
-    return;
-  }
-  // 进出多选只多一个勾选框：原地补上或拿掉，不重建整份列表（上千行时要半秒多）。
-  const side = $('#side');
-  for (const node of side.querySelectorAll('.item[data-uid]')) {
-    if (node._nestRow && !node._nestRow.agent) syncRowPickBox(node, node._nestRow.s);
-  }
-  // 折叠的分组没有行对象，整组勾选的名单只在多选时收集，这里补上。
-  const closed = new Map([...side.querySelectorAll(':scope > .group.closed')].map(group => [group.dataset.key, group]));
-  if (S.picking && closed.size) {
-    for (const [key, , summary] of groupBy(visible(), {skipClosed: true})) {
-      if (summary && closed.has(key)) closed.get(key)._pickUids = summary.pickUids;
-    }
-  }
-  for (const group of side.querySelectorAll(':scope > .group')) syncGroupPickBox(group);
-}
-
-/** 多选模式下的行勾选框与 picked 底色；退出多选时拿掉。 */
-function syncRowPickBox(node, s) {
-  const pickable = S.picking && sessionPickable(s);
-  let box = node.querySelector(':scope > .item-pick');
-  if (pickable && !box) {
-    box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'item-pick';
-    box.tabIndex = -1;
-    node.insertBefore(box, node.querySelector(':scope > .ico'));
-  } else if (!pickable && box) {
-    box.remove();
-    box = null;
-  }
-  if (box) {
-    box.checked = pickedSessions.has(s.uid);
-    box.ariaLabel = `选中「${s.title}」`;
-  }
-  node.classList.toggle('picked', pickable && pickedSessions.has(s.uid));
-}
-
-/** 分组标题上的“整组勾选”框，只在多选模式下出现。 */
-function syncGroupPickBox(group) {
-  const head = group.querySelector(':scope > .ghead');
-  if (!head) return;
-  let box = head.querySelector(':scope > .ghead-pick');
-  if (S.picking && !box) {
-    box = document.createElement('input');
-    box.type = 'checkbox';
-    box.className = 'ghead-pick';
-    box.onclick = event => {
-      event.stopPropagation();      // 勾整组，不要顺手把分组折叠了
-      toggleGroupPick(group._pickUids, group);
-    };
-    head.prepend(box);
-  } else if (!S.picking && box) {
-    box.remove();
-    box = null;
-  }
-  if (box) {
-    box.ariaLabel = `选中「${head._pickLabel || ''}」下的全部会话`;
-    paintGroupPick(group);
-  }
+  const side = $('#side'), top = side.scrollTop;
+  renderSide();
+  side.scrollTop = top;       // 进出选择模式不该把列表弹回顶部
 }
 
 function toggleSessionPick(uid) {
@@ -2930,11 +2868,6 @@ addEventListener('mousemove', event => {
 });
 addEventListener('mouseup', event => { if (event.button === 0) endPickDrag(); });
 addEventListener('blur', endPickDrag);
-// 多选时列表里不拉文字选区（含触屏长按）。不用 #side.picking 的 CSS：切换它要为
-// 上千行重算样式，进出多选会多卡一两百毫秒。
-$('#side').addEventListener('selectstart', event => {
-  if (S.picking) event.preventDefault();
-});
 $('#side').addEventListener('click', event => {
   if (!pickDragSwallowClick) return;
   pickDragSwallowClick = false;
@@ -3593,12 +3526,13 @@ function renderTimelinePinNotice(meta) {
   notice.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;'
     + 'padding:8px 12px;flex:none;border-bottom:1px solid var(--border);font-size:13px';
   const text = document.createElement('span');
-  notice.append(text);
   const heading = detail.querySelector(':scope > .dhead');
-  if (heading) heading.after(notice); else detail.prepend(notice);
+  const place = () => { if (heading) heading.after(notice); else detail.prepend(notice); };
   if (pin.cli) {
     notice.dataset.cli = 'true';
     text.textContent = '已同步终端里的回滚，显示到回滚点为止';
+    notice.append(text);
+    place();
     return;
   }
   text.textContent = pin.retired
@@ -3610,7 +3544,8 @@ function renderTimelinePinNotice(meta) {
   clear.textContent = pin.retired ? '清除记录' : '取消固定';
   clear.title = '只移除 SessionDock 的显示固定，不会回滚 CLI';
   clear.onclick = () => { clear.disabled = true; void pinTimeline(meta.uid, null).finally(() => { clear.disabled = false; }); };
-  notice.append(clear);
+  notice.append(text, clear);
+  place();
 }
 
 function timelinePinAction(n, m) {
@@ -4180,7 +4115,11 @@ function patchSidebarRow(node, row, highlightKey) {
   const snippet = node.querySelector('.snip');
   if (snippet && (snippet.textContent !== s.snippet || node._highlightKey !== highlightKey)) snippet.innerHTML = hl(s.snippet);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
-  syncRowPickBox(node, s);
+  const checkbox = node.querySelector('.item-pick');
+  if (checkbox) {
+    checkbox.checked = pickedSessions.has(s.uid);
+    checkbox.ariaLabel = `选中「${s.title}」`;
+  }
   const caret = node.querySelector('.nest-caret');
   if (caret) {
     caret.setAttribute('aria-expanded', String(!row.closed));
@@ -4191,7 +4130,8 @@ function patchSidebarRow(node, row, highlightKey) {
   node.onclick = event => {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
-    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (pickable) return toggleSessionPick(s.uid);
+    if (S.picking) return;
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   paintItemStatus(node);
@@ -4204,12 +4144,12 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
   }
   const signature = JSON.stringify([sessionSignatures.get(r.s.uid), r.agent, r.depth, r.kids, r.closed,
     r.agent ? agentMeta(r.s.uid, r.agent) : itemMeta(r.s),
-    S.view, S.nest, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
+    S.view, S.nest, S.picking, S.nestAttachUids.includes(r.s.uid), S.term, S.opts,
     S.opts.regex ? regexResultRevision : 0,
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
-    S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
+    picked.has(r.s.uid), S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
   const structure = JSON.stringify([!!r.agent, S.view, S.nest,
-    r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
+    S.picking && sessionPickable(r.s), r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
   return {signature, structure};
 }
 
@@ -4227,6 +4167,8 @@ function createSidebarRow(r, picked = pickedSessions) {
                           + (pickable && picked.has(s.uid) ? ' picked' : '')
                           + (S.nestAttachUids.includes(s.uid) ? ' nest-source' : ''),
     `${nestLeadMarkup(r)}
+     ${pickable ? `<input type="checkbox" class="item-pick" tabindex="-1"
+       ${picked.has(s.uid) ? 'checked' : ''} aria-label="选中「${esc(s.title)}」">` : ''}
      <span class="ico">${icon(s.source)}<span class="item-status"></span></span>
      <div class="body">
        <div class="t" title="${esc(s.title)}">${hl(s.title)}</div>
@@ -4240,11 +4182,11 @@ function createSidebarRow(r, picked = pickedSessions) {
   it.dataset.key = s.uid;
   it.dataset.depth = r.depth;
   if (s.pending) it.dataset.tmuxName = s.tmuxName;
-  syncRowPickBox(it, s);
   it.onclick = event => {
     if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
     if (S.nestAttach) { void pickNestParent(s); return; }
-    if (S.picking) { if (sessionPickable(s)) toggleSessionPick(s.uid); return; }
+    if (pickable) return toggleSessionPick(s.uid);
+    if (S.picking) return;
     s.pending ? openPendingSession(s) : openSession(s.uid);
   };
   const star = it.querySelector('.item-star');
@@ -4313,10 +4255,12 @@ function renderSide(suppliedList = null) {
     g.dataset.key = key;
     const label = S.view === 'tree' ? nodeDirectory(first) : key;   // 分组标题不缩写, 只换 ~
     const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
-    const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
+    const headSignature = JSON.stringify([label, key, count, S.picking, S.view, first?.node_name]);
     const oldHead = g.querySelector(':scope > .ghead');
     const head = oldHead?._signature === headSignature ? oldHead : el('div', 'ghead',
-      `<span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(first) : esc(label)}</span>
+      `${S.picking ? `<input type="checkbox" class="ghead-pick"
+         aria-label="选中「${esc(label)}」下的全部会话">` : ''}
+       <span class="caret">▼</span><span class="gname" title="${esc(key)}">${S.view === 'tree' ? nodeDirectoryMarkup(first) : esc(label)}</span>
        <span class="gcount">${count}</span>`);
     head.onclick = event => {
       if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
@@ -4324,8 +4268,14 @@ function renderSide(suppliedList = null) {
       store.set('closed', [...S.closed]);
       renderSide();
     };
+    const groupBox = head.querySelector('.ghead-pick');
+    if (groupBox) {
+      groupBox.onclick = event => {
+        event.stopPropagation();      // 勾整组，不要顺手把分组折叠了
+        toggleGroupPick(g._pickUids, g);
+      };
+    }
     head._signature = headSignature;
-    head._pickLabel = label;
     if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
     g._pickUids = groupUids;
     g._rows = rows;
@@ -4344,11 +4294,7 @@ function renderSide(suppliedList = null) {
         if (ul.children[rowPosition] !== node) ul.insertBefore(node, ul.children[rowPosition] || null);
         rowPosition++;
       };
-      if (old?._signature === signature) {
-        if (!r.agent) syncRowPickBox(old, r.s);
-        place(old);
-        continue;
-      }
+      if (old?._signature === signature) { place(old); continue; }
       if (old?._structure === structure) {
         patchSidebarRow(old, r, highlightKey);
         place(old);
@@ -4362,7 +4308,7 @@ function renderSide(suppliedList = null) {
     if (ul.parentElement !== g) g.appendChild(ul);
     if (side.children[groupPosition] !== g) side.insertBefore(g, side.children[groupPosition] || null);
     groupPosition++;
-    syncGroupPickBox(g);
+    if (groupBox) paintGroupPick(g);
   }
   for (const old of oldGroups.values()) old.remove();
   fitTimelineDirectories();

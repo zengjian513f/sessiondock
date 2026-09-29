@@ -1359,10 +1359,17 @@ test('timeline pins are capability gated and never claim a native rewind', () =>
   assert.match(inserted[1].children[0].textContent, /<b>CLI 未回滚<\/b>/);
   assert.equal(inserted[1].dataset.retiredReason, 'native_advanced');
   assert.equal(inserted[1].children[1].textContent, '清除记录');
+  // A followed terminal rewind says so, offers no unpin, and vanishes once retired.
+  render({uid: 'claude:fixture', timeline_pin: {tip: 'a2', target: 'u3', cli: true, retired: false}});
+  assert.equal(inserted.length, 3);
+  assert.equal(inserted[2].children.length, 1);
+  assert.equal(inserted[2].children[0].textContent, '已同步终端里的回滚，显示到回滚点为止');
+  assert.equal(inserted[2].dataset.cli, 'true');
+  render({uid: 'claude:fixture', timeline_pin: {tip: 'a2', cli: true, retired: true, retired_reason: 'native_continued'}});
   // Subagent views and sessions without a pin render nothing.
   render({uid: 'claude:fixture', agent_id: 'agent', timeline_pin: {tip: 'a2'}});
   render({uid: 'claude:fixture'});
-  assert.equal(inserted.length, 2);
+  assert.equal(inserted.length, 3);
 });
 
 
