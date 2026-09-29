@@ -131,6 +131,7 @@ html, body {
 .shell-env-stale { top: auto; bottom: 10px; flex-direction: column; align-items: stretch; }
 .shell-env-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shell-env-row span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.shell-env-all { padding-bottom: 6px; border-bottom: 1px solid currentColor; border-bottom-color: rgba(128, 128, 128, .35); }
 :root[data-theme="dark"] .version-stale {
   background: #33280f; color: #ffe29a; border-color: #8d6a1d;
 }

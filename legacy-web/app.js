@@ -780,7 +780,8 @@ function renderShellEnvNotice(items) {
     notice.setAttribute('role', 'status');
     document.body.appendChild(notice);
   }
-  notice.replaceChildren(...items.map(item => {
+  const pending = items.filter(item => !item.restarting);
+  const rows = items.map(item => {
     const row = el('div', 'shell-env-row');
     row.dataset.node = item.key;
     const names = item.data.changed || [];
@@ -792,7 +793,7 @@ function renderShellEnvNotice(items) {
       const restart = textEl('button', 'btn', `重启 ${item.name} 后端`);
       restart.type = 'button';
       restart.title = '正在运行的会话不受影响；页面会短暂断开后自动重连';
-      restart.onclick = () => restartShellEnv(item, restart);
+      restart.onclick = () => restartShellEnv([item], restart);
       const ignore = textEl('button', 'btn', '忽略');
       ignore.type = 'button';
       ignore.onclick = () => { shellEnvIgnored.set(item.key, names.join(',')); row.remove();
@@ -800,25 +801,39 @@ function renderShellEnvNotice(items) {
       row.append(restart, ignore);
     }
     return row;
-  }));
+  });
+  if (pending.length > 1) {
+    const all = el('div', 'shell-env-row shell-env-all');
+    all.appendChild(textEl('span', '', `${pending.length} 台机器的登录环境已变化。`));
+    const restartAll = textEl('button', 'btn', `全部重启 (${pending.length})`);
+    restartAll.type = 'button';
+    restartAll.title = '依次向每台机器发出重启；正在运行的会话不受影响';
+    restartAll.onclick = () => restartShellEnv(pending, restartAll);
+    all.appendChild(restartAll);
+    rows.unshift(all);
+  }
+  notice.replaceChildren(...rows);
 }
 
-async function restartShellEnv(item, button) {
+async function restartShellEnv(items, button) {
   button.disabled = true;
-  try {
-    const response = await fetch(appUrl(item.prefix + 'api/shell-env/restart'), {method: 'POST'});
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
-    shellEnvRestarting.set(item.key, item.data.started_at);
-    browserAuditEvent('shell_env.restart', {node: item.key, changed: item.data.changed || []});
-    renderShellEnvNotice([{...item, restarting: true}]);
-    for (let i = 0; i < 30 && shellEnvRestarting.has(item.key); i++) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      await checkShellEnv();
+  const failed = [];
+  await Promise.all(items.map(async item => {
+    try {
+      const response = await fetch(appUrl(item.prefix + 'api/shell-env/restart'), {method: 'POST'});
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error) throw new Error(data.error || `HTTP ${response.status}`);
+      shellEnvRestarting.set(item.key, item.data.started_at);
+      browserAuditEvent('shell_env.restart', {node: item.key, changed: item.data.changed || []});
+    } catch (error) {
+      failed.push(`${item.name}: ${error.message || error}`);
     }
-  } catch (error) {
-    button.disabled = false;
-    alert(`重启 ${item.name} 后端失败: ${error.message || error}`);
+  }));
+  if (failed.length) alert(`重启后端失败:\n${failed.join('\n')}`);
+  await checkShellEnv();
+  for (let i = 0; i < 30 && items.some(item => shellEnvRestarting.has(item.key)); i++) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await checkShellEnv();
   }
 }
 setInterval(checkShellEnv, 60000);

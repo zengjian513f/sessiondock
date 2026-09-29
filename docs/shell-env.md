@@ -69,7 +69,8 @@ Every 60 s, and when the page becomes visible, the page asks each online
 machine (`api/nodes/<id>/api/shell-env` on the hub, `api/shell-env` locally).
 For each machine whose environment drifted, the notice at the bottom names the
 changed variables and offers `重启 <机器> 后端` and `忽略`. `忽略` hides that
-exact set of names for the page. After a restart the notice says the backend is
+exact set of names for the page. With two or more machines to restart, a
+`全部重启 (N)` row on top sends every restart at once. After a restart the notice says the backend is
 restarting until the machine answers with a new `started_at`. A machine
 without the endpoint (an older build) or without the configuration shows
 nothing.
