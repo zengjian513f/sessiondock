@@ -118,7 +118,7 @@ python3 tests/module_map.py --write
 - `lib.rs` — Loopback development HTTP crate: config, router, and optional isolated services. (564 lines, 0 tests)
   - mods: `api`, `assets`, `audit`, `bridge`, `bug_report`, `config`, `conversation`, `delivery`, `error`, `files`, `fingerprint`, `hub`, `hub_config`, `lifecycle`, `media`, `metadata`, `native_replay`, `observe`, `polls`, `runtime`, `search`, `security`, `sessions`, `state`, `terminal`, `trash`, `ui_events`
 - `lifecycle/`
-  - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (305 lines, 0 tests)
+  - `autobind.rs` — Process-evidence binding of pending Codex/Grok launches. (325 lines, 0 tests)
   - `launcher.rs` — Configured adapters and one-authority process spawn. No discovery, (1130 lines, 1 tests)
     - mods: `tests`
   - `launcher_tests.rs` — (no module doc) (1193 lines, 20 tests)
