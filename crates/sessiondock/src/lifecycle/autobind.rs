@@ -4,7 +4,8 @@
 //! with the native record that appeared after the first prompt: same cwd,
 //! not in the `before` set and — for Codex — the rollout held open by a
 //! process inside the pane's tree (`term.process_belongs_to`). Rust never
-//! guesses by cwd, time or file name; it keeps only the process evidence:
+//! guesses by cwd or file name; it keeps the process evidence and the
+//! `before` set:
 //!
 //! 1. a receipt in `Running` with launch kind `new_pending` and no binding;
 //! 2. one fresh guarded host observation naming that exact instance and its
@@ -15,7 +16,9 @@
 //!    native record, `pids_of` → `process_belongs_to` with
 //!    `abs(pid)` — is, or descends from, that child with no other CLI main
 //!    process in between (the `descendant_of` barrier);
-//! 4. exactly one such session, whose native scope the index verifies.
+//! 4. exactly one such session, whose native scope the index verifies and
+//!    whose native record did not exist before the intent was persisted
+//!    (Python's `before` set).
 //!
 //! Then the ordinary `bind` path runs with `BindingMethod::Process`: the
 //! durable intent carries the evidence note, the host publishes the
@@ -33,7 +36,10 @@ use super::{
     service::{Error as ServiceError, VerifiedNativeBinding},
 };
 use crate::{
-    runtime::{Liveness, procscan::SessionRow},
+    runtime::{
+        Liveness,
+        procscan::{SessionRow, parse_created},
+    },
     state::AppState,
 };
 
@@ -149,8 +155,22 @@ pub async fn tick(state: &AppState) -> Result<Option<usize>, ServiceError> {
                 super::model::Source::Opencode => "opencode",
                 super::model::Source::Shell => continue,
             };
+            // Python's `before` set: a native record that already existed
+            // when the intent was persisted is never this launch's own. A
+            // CLI may briefly hold such a record open (Codex reads old
+            // rollouts for its resume picker) without owning it. `created_at`
+            // is whole seconds; the slack keeps a same-second record.
+            let launched = record.created_at().map(|at| at as f64);
+            let predates = |session: &SessionRow| {
+                launched.is_some_and(|launched| {
+                    parse_created(&session.created).is_some_and(|created| created + 2.0 < launched)
+                })
+            };
             let mut found: Vec<(&SessionRow, Vec<i64>)> = Vec::new();
-            for session in sessions.iter().filter(|session| session.source == source) {
+            for session in sessions
+                .iter()
+                .filter(|session| session.source == source && !predates(session))
+            {
                 let Some(pids) = active.owned.get(session.uid.as_str()) else {
                     continue;
                 };
