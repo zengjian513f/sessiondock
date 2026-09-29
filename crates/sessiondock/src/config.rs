@@ -43,6 +43,12 @@ pub struct Config {
     /// OpenCode's session database (`opencode.db`), opened read-only and
     /// mirrored into `roots.opencode` (`sessions::opencode`).
     pub opencode_db: Option<PathBuf>,
+    /// Login-shell wrapper the service itself was started through
+    /// (`SESSIONDOCK_SHELL_ENV_COMMAND`); enables `/api/shell-env`.
+    pub shell_env_command: Option<PathBuf>,
+    /// Startup files whose change triggers an immediate recheck
+    /// (`SESSIONDOCK_SHELL_ENV_WATCH`, `:`-separated).
+    pub shell_env_watch: Vec<PathBuf>,
     /// Second listener for Hub traffic. Honoured only together
     /// with the token file, the id file and the peer networks; any subset of
     /// the four is a startup error. Never a substitute for the loopback bind.
@@ -265,6 +271,8 @@ impl Default for Config {
             proc_root: "/proc".into(),
             grok_active: None,
             opencode_db: None,
+            shell_env_command: None,
+            shell_env_watch: Vec::new(),
             node_bind: None,
             node_token_file: None,
             node_id_file: None,
@@ -393,6 +401,12 @@ impl Config {
                 "SESSIONDOCK_OPENCODE_DB and SESSIONDOCK_OPENCODE_ROOT are set together",
             ));
         }
+        config.shell_env_command = env::var_os("SESSIONDOCK_SHELL_ENV_COMMAND")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        config.shell_env_watch = env::var_os("SESSIONDOCK_SHELL_ENV_WATCH")
+            .map(|value| env::split_paths(&value).filter(|path| !path.as_os_str().is_empty()).collect())
+            .unwrap_or_default();
         if let Some(bind) = env::var_os("SESSIONDOCK_NODE_BIND") {
             config.node_bind =
                 Some(bind.to_str().and_then(|s| s.parse().ok()).ok_or_else(|| {

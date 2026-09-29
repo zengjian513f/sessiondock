@@ -128,6 +128,9 @@ html, body {
   box-shadow: 0 5px 24px rgba(0, 0, 0, .2); font-size: 13px;
 }
 .version-stale .btn { white-space: nowrap; }
+.shell-env-stale { top: auto; bottom: 10px; flex-direction: column; align-items: stretch; }
+.shell-env-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shell-env-row span { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
 :root[data-theme="dark"] .version-stale {
   background: #33280f; color: #ffe29a; border-color: #8d6a1d;
 }

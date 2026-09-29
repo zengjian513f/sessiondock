@@ -19,6 +19,7 @@ mod read;
 mod records;
 pub(crate) mod runtime;
 mod search;
+mod shell_env;
 mod terminal;
 mod trash;
 
@@ -237,6 +238,8 @@ pub fn router() -> Router<AppState> {
             ))),
         )
         .route("/live", get(runtime::live))
+        .route("/shell-env", get(shell_env::status))
+        .route("/shell-env/restart", post(shell_env::restart))
         // Reads its own bounded body; 501 with the same code as before when unconfigured.
         .route(
             "/audit/browser",
