@@ -4897,7 +4897,10 @@ function renderComposer() {
   const restartable = conversationSendEnabled() && !shell
     && ['exited', 'failed'].includes(receipt?.state)
     && receipt?.binding?.state !== 'confirmed';
-  const show = restartable || (!sessionComposerEnded(S.sel) && !!(name || pending));
+  // A subagent view shares S.sel with its parent but has no CLI of its own, so
+  // neither the parent's editor nor its input notice belongs there.
+  const show = !S.agent
+    && (restartable || (!sessionComposerEnded(S.sel) && !!(name || pending)));
   const box = $('#composer');
   box.classList.toggle('hidden', !show);
   const first = typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(S.sel);
