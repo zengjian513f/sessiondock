@@ -151,8 +151,8 @@ once. Archived receipts still answer `term/new-status`.
 A new Codex/Grok pane is associated with its native record once the
 first prompt is on disk (`_new_session_status`: same cwd, not in the
 `before` set, and for Codex the rollout held by a process of the pane). The
-Rust service keeps only the process evidence — never cwd, time or file
-name — in `lifecycle::autobind`, a background task that runs while a
+Rust service keeps the process evidence and the `before` set — never cwd or
+file name — in `lifecycle::autobind`, a background task that runs while a
 `Running` receipt with launch kind `new_pending` has no binding:
 
 1. one fresh guarded host observation names the exact instance and its
@@ -163,7 +163,11 @@ name — in `lifecycle::autobind`, a background task that runs while a
    that child with no other CLI main process in between;
    Codex keeps its rollout open, a Grok TUI
    keeps `events.jsonl` of its session directory open;
-3. exactly one such session, whose native scope the index verifies
+3. a session whose native `created` is more than 2 s before the receipt's
+   `created_at` existed before the launch and is never a candidate: a CLI
+   may hold another session's record open briefly (Codex reads old rollouts
+   for its resume picker) without owning it;
+4. exactly one such session, whose native scope the index verifies
    (Claude `sessionId`, Codex `session_meta.payload.id`, Grok
    `summary.json` `info.id`), is bound through the ordinary durable bind
    path with `method: "process"`; the evidence note (`cli_pids=[…] under
