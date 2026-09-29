@@ -4,6 +4,7 @@
 //! turn), from head/tail records only. Whether an open turn is still
 //! running needs the owner's stop notices: `index/agent_stops.rs`.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use serde_json::Value;
@@ -107,9 +108,16 @@ fn main_turn(records: &Records) -> Option<&'static str> {
 /// them. A Monitor result names its `taskId`, a backgrounded Bash result its
 /// `backgroundTaskId`; a task ends with a `<task-notification>` carrying a
 /// `<status>` or a Monitor expiry event, or with a `TaskStop` result's
-/// `task_id`. A task started before the tail is not seen.
+/// `task_id`. A Monitor whose command watches the `tasks/<id>.output` file of
+/// a task that already ended waits on nothing: its `tail -F` stays alive until
+/// expiry, yet no progress can follow. A task started before the tail is not
+/// seen.
 fn background_tasks(records: &Records) -> usize {
     let mut running: Vec<String> = Vec::new();
+    let mut ended = HashSet::<String>::new();
+    // Monitor tool_use id -> its command; a started watch -> its command.
+    let mut commands = HashMap::<String, String>::new();
+    let mut watches = HashMap::<String, String>::new();
     let text = |value: &Value| match value {
         Value::String(text) => text.clone(),
         Value::Array(parts) => parts
@@ -125,6 +133,18 @@ fn background_tasks(records: &Records) -> usize {
             continue;
         }
         let notice = match value["type"].as_str() {
+            Some("assistant") => {
+                for part in value["message"]["content"].as_array().into_iter().flatten() {
+                    if part["type"] == "tool_use"
+                        && part["name"] == "Monitor"
+                        && let (Some(id), Some(command)) =
+                            (part["id"].as_str(), part["input"]["command"].as_str())
+                    {
+                        commands.insert(id.to_owned(), command.to_owned());
+                    }
+                }
+                continue;
+            }
             Some("user") => {
                 let result = &value["toolUseResult"];
                 if let Some(id) = result["taskId"]
@@ -132,9 +152,19 @@ fn background_tasks(records: &Records) -> usize {
                     .or_else(|| result["backgroundTaskId"].as_str())
                 {
                     running.push(id.to_owned());
+                    let command = value["message"]["content"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|part| part["tool_use_id"].as_str())
+                        .find_map(|tool| commands.get(tool));
+                    if let Some(command) = command {
+                        watches.insert(id.to_owned(), command.clone());
+                    }
                 }
                 if let Some(id) = result["task_id"].as_str() {
                     running.retain(|known| known != id);
+                    ended.insert(id.to_owned());
                 }
                 text(&value["message"]["content"])
             }
@@ -151,10 +181,20 @@ fn background_tasks(records: &Records) -> usize {
             };
             if block.contains("<status>") || block.contains("[Monitor expired") {
                 running.retain(|known| known != id);
+                ended.insert(id.to_owned());
             }
         }
     }
-    running.len()
+    running
+        .iter()
+        .filter(|id| {
+            !watches.get(*id).is_some_and(|command| {
+                ended
+                    .iter()
+                    .any(|task| command.contains(&format!("tasks/{task}.output")))
+            })
+        })
+        .count()
 }
 
 /// A user record that starts or continues a model turn: a tool result, an

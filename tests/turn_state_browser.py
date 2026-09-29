@@ -12,8 +12,9 @@ subagent still runs keeps turning. For the open session the CLI state object's
 fake CLI print Codex's busy footer, and the header and sidebar dots pulse
 although the transcript says the turn is complete; with a quiet screen, a
 finished Claude turn whose Monitor watch or backgrounded command still runs
-keeps turning until its end notice or TaskStop. No model binary, native CLI
-home or production host is touched.
+keeps turning until its end notice or TaskStop, and a watchdog Monitor that
+tails an ended command's output file no longer holds it. No model binary,
+native CLI home or production host is touched.
 """
 import json
 import os
@@ -266,6 +267,26 @@ def main():
                         toolUseResult={"message": "Successfully stopped task: bsynbash1", "task_id": "bsynbash1",
                                        "task_type": "local_bash"}, cwd=work))
                     expect(header).not_to_have_class(TURN, timeout=20000)
+                    assert background_row() == ("idle", None)
+                    # A watchdog Monitor tailing a backgrounded command's output file waits on
+                    # nothing once that command ends, although its tail stays alive until expiry.
+                    finished_turn("m6", claude_row(CLAUDE_SID, "user", "m6u", None, [{"type": "tool_result",
+                        "tool_use_id": "toolu_bash2", "content": "Command running in background with ID: bsynbash2."}],
+                        toolUseResult={"stdout": "", "backgroundTaskId": "bsynbash2"}, cwd=work))
+                    dog = claude_row(CLAUDE_SID, "assistant", "m7", None, [{"type": "tool_use", "id": "toolu_dog",
+                        "name": "Monitor", "input": {"description": "watchdog: synthetic run",
+                        "command": "tail -F -n +1 /tmp/claude-1000/p/s/tasks/bsynbash2.output | grep --line-buffered PASS"}}],
+                        cwd=work)
+                    dog["message"]["stop_reason"] = "tool_use"
+                    finished_turn("m8", dog, claude_row(CLAUDE_SID, "user", "m7r", "m7", [{"type": "tool_result",
+                        "tool_use_id": "toolu_dog", "content": "Monitor started (task bsyndog1)"}],
+                        toolUseResult={"taskId": "bsyndog1", "timeoutMs": 1800000, "persistent": False}, cwd=work))
+                    expect(header).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
+                    assert background_row() == ("working", 2)
+                    finished_turn("m9", claude_row(CLAUDE_SID, "user", "m9u", None,
+                        notification("bsynbash2", "exit 0", "<status>completed</status>\n"), cwd=work))
+                    expect(header).not_to_have_class(TURN, timeout=20000)
+                    expect(badge(claude_uid)).not_to_have_class(TURN)
                     assert background_row() == ("idle", None)
 
                     # ---- A subagent of the live session has no composer: the parent's
