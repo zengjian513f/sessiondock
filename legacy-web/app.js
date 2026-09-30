@@ -9588,7 +9588,7 @@ async function cloneSessionGroup(uid) {
   dialog.setAttribute('aria-labelledby', 'transfer-title');
   dialog.innerHTML = `
     <div class="transfer-head">
-      <div><h2 id="transfer-title">移动或复制会话组</h2><p>包含关联分支、祖先历史和子代理</p></div>
+      <div><h2 id="transfer-title">移动或复制会话组</h2><p class="transfer-origin">源机器：<strong class="transfer-source"></strong><span>包含关联分支、祖先历史和子代理</span></p></div>
       <button class="transfer-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="transfer-body">
@@ -9603,7 +9603,6 @@ async function cloneSessionGroup(uid) {
         <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
         <p class="transfer-identity-help"></p>
       </div>
-      <div class="transfer-summary"><span class="transfer-source"></span><span aria-hidden="true">→</span><strong class="transfer-destination"></strong><span class="transfer-effect"></span></div>
       <p class="transfer-notice" role="status" hidden></p>
       <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
       <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
@@ -9648,11 +9647,9 @@ async function cloneSessionGroup(uid) {
     $d('.transfer-identity-help').textContent = newIds.checked
       ? '为会话、子代理及历史生成新身份，组内引用同步更新。'
       : '保留原生会话身份；目标机器上的 UID 仍会带目标节点前缀。';
-    $d('.transfer-destination').textContent = machines.get(target.value)?.name || '请选择目标';
-    $d('.transfer-effect').textContent = moving ? '完成后从来源机器移走' : '原会话保留';
     $d('.transfer-footer-note').textContent = cross
-      ? (newIds.checked ? '生成新身份' : '保留原生身份')
-      : (moving ? '请选择其他机器' : '同机复制将生成新身份');
+      ? `${moving ? '完成后移走源会话' : '原会话保留'} · ${newIds.checked ? '生成新身份' : '保留原生身份'}`
+      : (moving ? '请选择其他机器' : '原会话保留 · 生成新身份');
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
     confirm.textContent = busy ? '正在复制…' : uncertain ? '重试同一次复制' : moving ? '移动整组' : '复制整组';
     confirm.disabled = busy || !plan || !!reason;
