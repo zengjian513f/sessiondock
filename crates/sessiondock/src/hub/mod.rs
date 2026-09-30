@@ -15,6 +15,7 @@ pub mod client;
 pub mod identity;
 pub mod namespace;
 pub mod nest;
+pub mod process_links;
 pub mod proxy;
 pub mod registry;
 
