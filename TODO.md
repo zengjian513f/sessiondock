@@ -18,7 +18,8 @@
   （[离线工具](docs/session-transfer-tool.md)，尚不可发布）。文件复制不足以保全分页历史和元数据。
   已完成同节点 Codex 页面、原生导入与跨数据库补偿、持久化重试与启动恢复；真实 CLI 验证
   包括 code-mode 子代理和新旧组独立续聊。待完成跨节点传输、目录一致性核对、移动执行
-  归属及源端清理、Claude/Grok 适配、跨版本及其浏览器验收。设计及实测见
+  归属及源端清理、Claude/Grok 完整原生引用与发布适配、跨版本及其浏览器验收。
+  Claude/Grok 初步文件包、分支闭包和暂存后浏览器读取已具备，尚不可发布。设计及实测见
   [session-move.md](docs/session-move.md)、[session-clone.md](docs/session-clone.md)。
 
 - [ ] 为 Windows/macOS 的外部（非 ptyhost 管理）CLI 补齐进程发现与强身份验证。

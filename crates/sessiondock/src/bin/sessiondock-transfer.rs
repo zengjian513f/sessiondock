@@ -4,7 +4,7 @@
 use serde::Deserialize;
 use sessiondock::{
     sessions::{SessionRoots, SessionStore},
-    transfer::{TransferError, codex, group},
+    transfer::{TransferError, codex, files, group},
 };
 use std::{io::Read, path::PathBuf};
 
@@ -19,6 +19,15 @@ enum Request {
         uid: String,
         roots: Roots,
         mode: codex::Mode,
+    },
+    PlanFiles {
+        uid: String,
+        roots: Roots,
+        new_ids: bool,
+    },
+    StageFiles {
+        plan: files::Plan,
+        destination: PathBuf,
     },
     StageCodex {
         plan: codex::ClonePlan,
@@ -63,6 +72,15 @@ fn run() -> Result<serde_json::Value, TransferError> {
         Request::Group { uid, roots } => serde_json::to_value(derive(&uid, roots)?)?,
         Request::PlanCodex { uid, roots, mode } => {
             serde_json::to_value(codex::plan(derive(&uid, roots)?, mode)?)?
+        }
+        Request::PlanFiles {
+            uid,
+            roots,
+            new_ids,
+        } => serde_json::to_value(files::Plan::build(derive(&uid, roots)?, new_ids)?)?,
+        Request::StageFiles { plan, destination } => {
+            plan.stage(&destination)?;
+            serde_json::json!({"staged":true,"publishable":false})
         }
         Request::StageCodex { plan, destination } => {
             serde_json::to_value(codex::stage(&plan, &destination)?)?

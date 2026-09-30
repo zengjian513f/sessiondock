@@ -1,0 +1,470 @@
+//! Native file bundles for Claude and Grok. Only structured native identity
+//! fields are rewritten; message text, source files and arbitrary attachments
+//! are never treated as identity strings.
+use super::{TransferError, codex, group::Group};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Component, Path, PathBuf},
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct File {
+    pub source: PathBuf,
+    pub relative: PathBuf,
+    pub target: PathBuf,
+    pub provider: String,
+    pub owner: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub format: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Plan {
+    pub group: Group,
+    pub new_ids: bool,
+    /// Keys include provider to keep equal IDs in different CLIs separate.
+    pub sessions: BTreeMap<String, String>,
+    pub records: BTreeMap<String, String>,
+    pub roots: BTreeMap<String, PathBuf>,
+    pub files: Vec<File>,
+}
+fn digest(raw: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(raw))
+}
+fn key(source: &str, id: &str) -> String {
+    format!("{source}:{id}")
+}
+fn mint(
+    source: &str,
+    id: &str,
+    map: &mut BTreeMap<String, String>,
+    fresh: bool,
+) -> Result<(), TransferError> {
+    if !id.is_empty() && !map.contains_key(&key(source, id)) {
+        map.insert(
+            key(source, id),
+            if fresh { codex::uuid()? } else { id.into() },
+        );
+    }
+    Ok(())
+}
+fn rewrite_scalar(value: &mut Value, source: &str, map: &BTreeMap<String, String>) {
+    if let Some(id) = value.as_str() {
+        if let Some(new) = map.get(&key(source, id)) {
+            *value = Value::String(new.clone());
+        }
+    }
+}
+fn field(value: &mut Value, name: &str, source: &str, map: &BTreeMap<String, String>) {
+    if let Some(value) = value.get_mut(name) {
+        rewrite_scalar(value, source, map);
+    }
+}
+/// Enumerate only native structural fields, never arbitrary tool arguments.
+fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value)) {
+    for name in [
+        "uuid",
+        "parentUuid",
+        "leafUuid",
+        "logicalParentUuid",
+        "parentLastUuid",
+        "promptId",
+        "messageId",
+        "interruptedMessageId",
+        "toolUseId",
+        "parentToolUseId",
+        "tool_use_id",
+        "parent_tool_use_id",
+        "toolCallId",
+        "tool_call_id",
+    ] {
+        if let Some(v) = row.get_mut(name) {
+            visit(v);
+        }
+    }
+    if let Some(snapshot) = row.get_mut("snapshot") {
+        if let Some(id) = snapshot.get_mut("messageId") {
+            visit(id);
+        }
+    }
+    if let Some(message) = row.get_mut("message") {
+        if let Some(id) = message.get_mut("id") {
+            visit(id);
+        }
+        content_ids(message.get_mut("content"), visit);
+    }
+    content_ids(row.get_mut("content"), visit);
+    // Grok/OpenAI chat messages store calls separately from content blocks.
+    if source == "grok" {
+        if let Some(calls) = row.get_mut("tool_calls").and_then(Value::as_array_mut) {
+            for call in calls {
+                if let Some(id) = call.get_mut("id") {
+                    visit(id);
+                }
+            }
+        }
+        if let Some(update) = row.get_mut("update") {
+            record_ids(update, source, visit);
+        }
+        if let Some(update) = row.get_mut("params") {
+            record_ids(update, source, visit);
+        }
+    }
+}
+fn content_ids(content: Option<&mut Value>, visit: &mut impl FnMut(&mut Value)) {
+    if let Some(items) = content.and_then(Value::as_array_mut) {
+        for item in items {
+            match item["type"].as_str() {
+                Some("tool_use") => {
+                    if let Some(id) = item.get_mut("id") {
+                        visit(id);
+                    }
+                }
+                Some("tool_result") => {
+                    if let Some(id) = item.get_mut("tool_use_id") {
+                        visit(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+fn parse(raw: &[u8], format: &str) -> Result<Vec<Value>, TransferError> {
+    if format == "json" {
+        return Ok(vec![serde_json::from_slice(raw)?]);
+    }
+    raw.split(|b| *b == b'\n')
+        .filter(|line| !line.iter().all(u8::is_ascii_whitespace))
+        .map(|line| serde_json::from_slice(line).map_err(Into::into))
+        .collect()
+}
+fn native_format(source: &str, path: &Path) -> &'static str {
+    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if source == "claude" {
+        if name.ends_with(".jsonl")
+            && (path
+                .parent()
+                .is_some_and(|p| p.file_name().is_some_and(|s| s == "subagents"))
+                || name.strip_suffix(".jsonl").is_some_and(|s| s.len() == 36))
+        {
+            return "jsonl";
+        }
+        if name.starts_with("agent-") && name.ends_with(".meta.json") {
+            return "json";
+        }
+    } else {
+        if matches!(
+            name,
+            "summary.json" | "meta.json" | "signals.json" | "rewind_state.json"
+        ) {
+            return "json";
+        }
+        if matches!(
+            name,
+            "chat_history.jsonl" | "updates.jsonl" | "events.jsonl" | "rewind_points.jsonl"
+        ) {
+            return "jsonl";
+        }
+    }
+    "raw"
+}
+fn walk(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), TransferError> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_symlink() {
+        // Preserve the link itself. Targets are validated as external dependencies
+        // by the destination preflight, never traversed while bundling a session.
+        out.push(path.into());
+    } else if meta.is_dir() {
+        for entry in fs::read_dir(path)? {
+            walk(&entry?.path(), out)?;
+        }
+    } else {
+        out.push(path.into());
+    }
+    Ok(())
+}
+fn mapped_path(path: &Path, source: &str, ids: &BTreeMap<String, String>) -> PathBuf {
+    path.components()
+        .map(|c| {
+            let text = c.as_os_str().to_string_lossy();
+            let mapped = ids.get(&key(source, &text)).cloned().or_else(|| {
+                for (prefix, suffix) in [
+                    ("", ".jsonl"),
+                    ("agent-", ".jsonl"),
+                    ("agent-", ".meta.json"),
+                ] {
+                    if let Some(id) = text
+                        .strip_prefix(prefix)
+                        .and_then(|s| s.strip_suffix(suffix))
+                    {
+                        if let Some(new) = ids.get(&key(source, id)) {
+                            return Some(format!("{prefix}{new}{suffix}"));
+                        }
+                    }
+                }
+                None
+            });
+            mapped
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(c.as_os_str()))
+        })
+        .collect()
+}
+impl Plan {
+    pub fn build(group: Group, new_ids: bool) -> Result<Self, TransferError> {
+        if !group.blockers.is_empty() {
+            return Err(TransferError::new(
+                "move_group_incomplete",
+                group
+                    .blockers
+                    .iter()
+                    .map(|b| b.message.as_str())
+                    .collect::<Vec<_>>()
+                    .join("；"),
+            ));
+        }
+        let mut plan = Self {
+            group,
+            new_ids,
+            sessions: BTreeMap::new(),
+            records: BTreeMap::new(),
+            roots: BTreeMap::new(),
+            files: Vec::new(),
+        };
+        let mut paths = BTreeMap::<PathBuf, (String, String)>::new();
+        for member in &plan.group.members {
+            if !matches!(member.source.as_str(), "claude" | "grok") {
+                return Err(TransferError::new(
+                    "move_group_unsupported",
+                    "文件适配器仅处理 Claude 和 Grok",
+                ));
+            }
+            mint(&member.source, &member.sid, &mut plan.sessions, new_ids)?;
+            if member.agent && member.source == "claude" && new_ids {
+                // Claude uses short hexadecimal agent IDs in sidecar filenames.
+                let id = codex::uuid()?.replace('-', "");
+                plan.sessions
+                    .insert(key("claude", &member.sid), format!("a{}", &id[..16]));
+            }
+            let home = if member.source == "claude"
+                && member.root.file_name().is_some_and(|s| s == "projects")
+            {
+                member.root.parent().unwrap().to_owned()
+            } else {
+                member.root.clone()
+            };
+            plan.roots.insert(member.source.clone(), home);
+            let mut owned = Vec::new();
+            if member.source == "grok" {
+                walk(member.path.parent().unwrap(), &mut owned)?;
+            } else {
+                walk(&member.path, &mut owned)?;
+                if !member.agent {
+                    let side = member.path.with_extension("");
+                    if side.exists() {
+                        walk(&side, &mut owned)?;
+                    }
+                    let history = plan.roots["claude"].join("file-history").join(&member.sid);
+                    if history.exists() {
+                        walk(&history, &mut owned)?;
+                    }
+                } else {
+                    let meta = member.path.with_extension("meta.json");
+                    if meta.exists() {
+                        walk(&meta, &mut owned)?;
+                    }
+                }
+            }
+            for path in owned {
+                paths
+                    .entry(path)
+                    .or_insert((member.source.clone(), member.uid.clone()));
+            }
+        }
+        for (path, (source, owner)) in paths {
+            let relative = path
+                .strip_prefix(&plan.roots[&source])
+                .map_err(|_| TransferError::new("move_path", "会话文件不在原生根目录内"))?
+                .to_owned();
+            if !relative
+                .components()
+                .all(|c| matches!(c, Component::Normal(_)))
+            {
+                return Err(TransferError::new("move_path", "无效的会话相对路径"));
+            }
+            let link = fs::symlink_metadata(&path)?.is_symlink();
+            let raw = if link {
+                fs::read_link(&path)?.to_string_lossy().as_bytes().to_vec()
+            } else {
+                fs::read(&path)?
+            };
+            let format = if link {
+                "symlink"
+            } else if plan.group.members.iter().any(|m| m.path == path) {
+                "jsonl"
+            } else {
+                native_format(&source, &path)
+            };
+            if matches!(format, "json" | "jsonl") {
+                for mut row in parse(&raw, format)? {
+                    let mut error = None;
+                    record_ids(&mut row, &source, &mut |value| {
+                        if let Some(id) = value.as_str() {
+                            if let Err(e) = mint(&source, id, &mut plan.records, new_ids) {
+                                error = Some(e);
+                            }
+                        }
+                    });
+                    if let Some(e) = error {
+                        return Err(e);
+                    }
+                }
+            }
+            let target = mapped_path(&relative, &source, &plan.sessions);
+            plan.files.push(File {
+                source: path,
+                relative,
+                target,
+                provider: source,
+                owner,
+                bytes: raw.len() as u64,
+                sha256: digest(&raw),
+                format: format.into(),
+            });
+        }
+        Ok(plan)
+    }
+    pub fn rewrite(&self, file: &File, raw: &[u8]) -> Result<Vec<u8>, TransferError> {
+        if digest(raw) != file.sha256 {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "原生文件在计划后发生变化",
+            ));
+        }
+        if !self.new_ids || !matches!(file.format.as_str(), "json" | "jsonl") {
+            return Ok(raw.to_vec());
+        }
+        let source = &file.provider;
+        let mut output = Vec::new();
+        for mut row in parse(raw, &file.format)? {
+            for name in [
+                "sessionId",
+                "session_id",
+                "parentSessionId",
+                "parent_session_id",
+                "forkedFromSessionId",
+                "continuedInSessionId",
+                "agentId",
+                "parentAgentId",
+                "agent_id",
+                "subagent_id",
+                "child_session_id",
+            ] {
+                field(&mut row, name, source, &self.sessions);
+            }
+            if source == "grok" {
+                if let Some(info) = row.get_mut("info") {
+                    field(info, "id", source, &self.sessions);
+                }
+            }
+            if let Some(result) = row.get_mut("toolUseResult") {
+                for name in ["agentId", "sessionId"] {
+                    field(result, name, source, &self.sessions);
+                }
+            }
+            record_ids(&mut row, source, &mut |value| {
+                rewrite_scalar(value, source, &self.records)
+            });
+            serde_json::to_writer(&mut output, &row)?;
+            output.push(b'\n');
+        }
+        Ok(output)
+    }
+    pub fn stage(&self, destination: &Path) -> Result<(), TransferError> {
+        if destination.exists() {
+            return Err(TransferError::new("move_conflict", "暂存目录已存在"));
+        }
+        let parent = destination
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .canonicalize()?;
+        for root in self.roots.values() {
+            if parent.starts_with(root.canonicalize()?) {
+                return Err(TransferError::new(
+                    "move_path",
+                    "暂存目录不能位于源会话根目录内",
+                ));
+            }
+        }
+        fs::create_dir(destination)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
+        }
+        for file in &self.files {
+            let raw = if file.format == "symlink" {
+                fs::read_link(&file.source)?
+                    .to_string_lossy()
+                    .as_bytes()
+                    .to_vec()
+            } else {
+                fs::read(&file.source)?
+            };
+            if !matches!(file.provider.as_str(), "claude" | "grok")
+                || !file
+                    .target
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)))
+            {
+                return Err(TransferError::new("move_path", "无效的暂存目标路径"));
+            }
+            let target = destination.join(&file.provider).join(&file.target);
+            fs::create_dir_all(target.parent().unwrap())?;
+            let output = self.rewrite(file, &raw)?;
+            if file.format == "symlink" {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(
+                    String::from_utf8(output)
+                        .map_err(|e| TransferError::new("move_path", e.to_string()))?,
+                    target,
+                )?;
+                #[cfg(not(unix))]
+                return Err(TransferError::new(
+                    "move_platform",
+                    "此平台不支持迁移符号链接",
+                ));
+            } else {
+                fs::write(target, output)?;
+            }
+        }
+        for file in &self.files {
+            let raw = if file.format == "symlink" {
+                fs::read_link(&file.source)?
+                    .to_string_lossy()
+                    .as_bytes()
+                    .to_vec()
+            } else {
+                fs::read(&file.source)?
+            };
+            if digest(&raw) != file.sha256 {
+                return Err(TransferError::new(
+                    "move_plan_stale",
+                    "暂存期间源文件发生变化",
+                ));
+            }
+        }
+        fs::write(
+            destination.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "publishable":false,"plan":self,"required_checks":["native_references","native_resume","destination_preflight","publication_transaction"]
+            }))?,
+        )?;
+        Ok(())
+    }
+}
