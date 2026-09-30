@@ -324,6 +324,9 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
         } else if let Some(path) = &e.summary_path {
             match grok_tools::rows(path.parent().unwrap()) {
                 Ok(rows) => {
+                    for id in grok_tools::required_references(&rows) {
+                        references.insert((id, "agent_tool".into()));
+                    }
                     for id in grok_tools::references(&rows) {
                         // The same tool also accepts shell task IDs and failed lookups.
                         // Only indexed durable agents establish a history relationship.

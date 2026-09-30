@@ -233,6 +233,18 @@ fn agent_args(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
 }
 fn agent_text(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
     if let Some(text) = value.as_str() {
+        if source == "grok" {
+            if let Ok(mut parsed) = serde_json::from_str::<Value>(text) {
+                if parsed.is_object() || parsed.is_array() {
+                    let original = parsed.clone();
+                    agent_text(&mut parsed, source, ids);
+                    if parsed != original {
+                        *value = Value::String(parsed.to_string());
+                    }
+                    return;
+                }
+            }
+        }
         let mut result = text.to_owned();
         for (id, new) in ids {
             if let Some(old) = id.strip_prefix(&format!("{source}:")) {
