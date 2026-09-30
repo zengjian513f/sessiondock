@@ -164,6 +164,8 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
                 "thread_dynamic_tools",
                 "thread_spawn_edges",
                 "thread_attachments",
+                "thread_goals",
+                "thread_goal_continuation_deferrals",
             ]
         } else if filename.starts_with("thread_history_") {
             found_history = true;
@@ -195,13 +197,7 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
                 }
             });
             if !table.rows.is_empty()
-                && matches!(
-                    *name,
-                    "thread_attachments"
-                        | "thread_goals"
-                        | "thread_goal_continuation_deferrals"
-                        | "thread_realtime_items"
-                )
+                && matches!(*name, "thread_attachments" | "thread_realtime_items")
             {
                 return Err(TransferError::new(
                     "move_native_unsupported",
@@ -358,6 +354,9 @@ pub fn rewrite(
                     mapped(row, key, &map.threads)?;
                 }
                 mapped(row, "turn_id", &map.turns)?;
+                if table.name == "thread_goals" {
+                    mapped(row, "goal_id", &map.records)?;
+                }
                 for key in ["item_id", "first_user_item_id", "final_agent_item_id"] {
                     mapped(row, key, &map.records)?;
                 }
@@ -926,7 +925,12 @@ pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), Tr
     for db in &native.databases {
         for table in &db.tables {
             for row in &table.rows {
-                for key in ["item_id", "first_user_item_id", "final_agent_item_id"] {
+                for key in [
+                    "item_id",
+                    "first_user_item_id",
+                    "final_agent_item_id",
+                    "goal_id",
+                ] {
                     if let Some(id) = row
                         .get(key)
                         .and_then(Value::as_str)

@@ -118,6 +118,13 @@ pub(super) fn visit(row: &mut Value, map: &mut Mapper<'_>) -> Result<(), Transfe
         } else {
             field(p, "thread_id", Identity::Thread, map)?;
         }
+        if event == "thread_goal_updated" {
+            field(p, "threadId", Identity::Thread, map)?;
+            field(p, "turnId", Identity::Turn, map)?;
+            if let Some(goal) = p.get_mut("goal") {
+                field(goal, "threadId", Identity::Thread, map)?;
+            }
+        }
         if matches!(event.as_str(), "item_started" | "item_completed") {
             if let Some(value) = p.get_mut("item") {
                 item(value, map)?;
