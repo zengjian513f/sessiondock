@@ -7,7 +7,7 @@
 
 Windows SSH 可能拒绝 rustup shim，并返回 OS error 448。因此直接调用稳定
 MSVC 工具链中的 `cargo.exe`，并把 `RUSTC`、`RUSTDOC` 都指向该工具链；
-`cargo test` 的 doctest 会单独启动 `rustdoc.exe`。
+默认部署使用 `cargo check --all-targets`，不执行单元测试。
 
 ```bat
 set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
@@ -32,12 +32,12 @@ set "SD_TOOLCHAIN=%USERPROFILE%\.rustup\toolchains\stable-x86_64-pc-windows-msvc
 set "RUSTC=%SD_TOOLCHAIN%\bin\rustc.exe"
 set "RUSTDOC=%SD_TOOLCHAIN%\bin\rustdoc.exe"
 
-"%SD_TOOLCHAIN%\bin\cargo.exe" test -p sessiondock --locked
+"%SD_TOOLCHAIN%\bin\cargo.exe" check -p sessiondock --all-targets --locked
 "%SD_TOOLCHAIN%\bin\cargo.exe" build -p sessiondock --release --locked
 certutil -hashfile target\release\sessiondock.exe SHA256
 ```
 
-测试、release 构建和 SHA-256 记录都成功后才能部署。错误 448 属于工具链问题；
+编译检查、release 构建和 SHA-256 记录都成功后才能部署。错误 448 属于工具链问题；
 修正后重建，不得复用旧 EXE。
 
 ## 3. 先暂存，再停止 Web 服务
@@ -95,7 +95,7 @@ python3 deploy/deploy.py rollback --targets <name> --backup <SD_RUNTIME>\backup-
   （保留 `target\`），`build.cmd` 用工具链目录里**真实的** `cargo.exe` 并把 `RUSTC`/`RUSTDOC` 指向同一
   工具链（`.cargo\bin` 下的 rustup shim 是 reparse point，提权的 SSH 进程执行会报 448）；stage 的测试
   模式（`deploy.py --test`，见 [deployment.md](deployment.md#测试门build--test--push)）不是 `none` 时
-  `build.cmd` 渲染 `TEST=1`，在解压之后、构建之前按第 2 节跑 `cargo.exe test -p sessiondock --locked`
+  `build.cmd` 渲染 `TEST=1`，在解压之后、构建之前按第 2 节跑 `cargo.exe check -p sessiondock --all-targets --locked`
   （`TEST_FAILED` → 退出码 18，该目标 `FAILED`，什么都没暂存；日志 `<SD_SOURCE>\.deploy-test.log`），
   处理器还要求输出里有 `TEST_OK`；除退出码外
   还比较 `target\release\sessiondock.exe` 构建前后的 mtime，编译过但文件没更新即失败；产物

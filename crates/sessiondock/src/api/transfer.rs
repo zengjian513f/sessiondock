@@ -29,34 +29,34 @@ fn failure(error: TransferError) -> Response {
     )
         .into_response()
 }
-fn service(state: &AppState) -> Result<Arc<TransferService>, Response> {
+fn service(state: &AppState) -> Result<Arc<TransferService>, Box<Response>> {
     state.transfer.clone().ok_or_else(|| {
-        failure(TransferError::new(
+        Box::new(failure(TransferError::new(
             "move_group_unsupported",
             "此节点未启用会话整组复制",
-        ))
+        )))
     })
 }
-async fn stopped(state: &AppState, op: &Operation) -> Result<(), Response> {
+async fn stopped(state: &AppState, op: &Operation) -> Result<(), Box<Response>> {
     let (_, live) = super::trash::frozen_liveness(state)
         .await
-        .map_err(IntoResponse::into_response)?;
+        .map_err(|error| Box::new(error.into_response()))?;
     for member in &op.group().members {
         let uid = if op.incoming_digest.is_some() {
             match (&state.transfer, &op.staged) {
                 (Some(service), Some(staged)) => service
                     .member_target_uid(op, member, staged)
-                    .map_err(failure)?,
+                    .map_err(|error| Box::new(failure(error)))?,
                 _ => member.uid.clone(),
             }
         } else {
             member.uid.clone()
         };
         if matches!(live.state(&uid), RunState::Running(_)) {
-            return Err(failure(TransferError::new(
+            return Err(Box::new(failure(TransferError::new(
                 "move_session_running",
                 format!("会话仍在运行：{}", member.title),
-            )));
+            ))));
         }
     }
     Ok(())
@@ -77,7 +77,7 @@ pub struct ExecuteRequest {
 pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let _guard = service.gate.clone().lock_owned().await;
     let copy = service.clone();
@@ -108,7 +108,7 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         Err(e) => return failure(TransferError::new("move_io", e.to_string())),
     };
     if let Err(e) = stopped(&state, &op).await {
-        return e;
+        return *e;
     }
     Json(TransferService::public(&op)).into_response()
 }
@@ -116,7 +116,7 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
 pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortRequest>) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     if body.step == "target" {
@@ -125,7 +125,7 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
             Err(e) => return failure(e),
         };
         if let Err(e) = stopped(&state, &op).await {
-            return e;
+            return *e;
         }
     }
     // Compensation and its gate survive a disconnected Hub request.
@@ -160,7 +160,7 @@ pub async fn switch_source(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let op = match service.load(&body.operation_id) {
@@ -168,7 +168,7 @@ pub async fn switch_source(
         Err(e) => return failure(e),
     };
     if let Err(e) = stopped(&state, &op).await {
-        return e;
+        return *e;
     }
     match tokio::task::spawn_blocking(move || {
         let _guard = guard;
@@ -187,7 +187,7 @@ pub async fn activate_target(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     match tokio::task::spawn_blocking(move || {
@@ -207,7 +207,7 @@ pub async fn retire_source(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let Some(trash) = state.trash.clone() else {
         return failure(TransferError::new(
@@ -226,7 +226,7 @@ pub async fn retire_source(
         return Json(TransferService::public(&op)).into_response();
     }
     if let Err(e) = stopped(&state, &op).await {
-        return e;
+        return *e;
     }
     // Keep both the journal gate and asynchronous receipt cleanup alive if
     // the Hub disconnects while source retirement is in flight.
@@ -325,7 +325,7 @@ pub async fn retire_source(
 pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequest>) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let op = match service.load(&body.operation_id) {
@@ -338,10 +338,10 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
         }
         Err(e) => return failure(e),
     };
-    if op.phase != "complete" {
-        if let Err(e) = stopped(&state, &op).await {
-            return e;
-        }
+    if op.phase != "complete"
+        && let Err(e) = stopped(&state, &op).await
+    {
+        return *e;
     }
     // The transaction and gate outlive a cancelled HTTP request.
     let result = tokio::task::spawn_blocking(move || {
@@ -373,7 +373,7 @@ pub async fn export_bundle(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let copy = service.clone();
@@ -385,7 +385,7 @@ pub async fn export_bundle(
         };
     if let Err(error) = stopped(&state, &op).await {
         let _ = service.release_export(&op.id, false);
-        return error;
+        return *error;
     }
     let name = match crate::transfer::codex::uuid() {
         Ok(v) => v,
@@ -417,7 +417,7 @@ pub async fn export_bundle(
     if let Err(error) = stopped(&state, &op).await {
         let _ = service.release_export(&op.id, false);
         let _ = std::fs::remove_file(&path);
-        return error;
+        return *error;
     }
     let file = match std::fs::File::open(&path) {
         Ok(v) => v,
@@ -490,7 +490,7 @@ pub async fn receive_bundle(State(state): State<AppState>, body: axum::body::Bod
     use futures_util::StreamExt;
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let (sender, receiver) = tokio::sync::mpsc::channel(4);
@@ -520,7 +520,7 @@ pub async fn release_export(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let result = tokio::task::spawn_blocking(move || {
@@ -541,7 +541,7 @@ pub async fn reserve_export(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let _guard = service.gate.clone().lock_owned().await;
     let copy = service.clone();
@@ -550,7 +550,7 @@ pub async fn reserve_export(
         Ok(Ok(op)) => {
             if let Err(error) = stopped(&state, &op).await {
                 let _ = service.release_export(&op.id, false);
-                return error;
+                return *error;
             }
             Json(TransferService::public(&op)).into_response()
         }
@@ -564,7 +564,7 @@ pub async fn transfer_status(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     match service.load(&body.operation_id) {
         Ok(op) => {
@@ -587,7 +587,7 @@ pub async fn bundle_manifest(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let result = tokio::task::spawn_blocking(move || {
@@ -608,7 +608,7 @@ pub async fn check_bundle(
 ) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     let guard = service.gate.clone().lock_owned().await;
     let result = tokio::task::spawn_blocking(move || {

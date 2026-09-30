@@ -265,15 +265,15 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
     Ok(result)
 }
 fn mapped(row: &mut Row, field: &str, ids: &BTreeMap<String, String>) -> Result<(), TransferError> {
-    if let Some(Value::String(id)) = row.get_mut(field) {
-        if !id.is_empty() {
-            *id = ids.get(id).cloned().ok_or_else(|| {
-                TransferError::new(
-                    "move_group_incomplete",
-                    format!("原生数据库未映射的 {field}"),
-                )
-            })?;
-        }
+    if let Some(Value::String(id)) = row.get_mut(field)
+        && !id.is_empty()
+    {
+        *id = ids.get(id).cloned().ok_or_else(|| {
+            TransferError::new(
+                "move_group_incomplete",
+                format!("原生数据库未映射的 {field}"),
+            )
+        })?;
     }
     Ok(())
 }
@@ -384,29 +384,28 @@ pub fn rewrite(
                             .to_string()
                             .into(),
                     );
-                    if let Some(Value::String(source)) = row.get_mut("source") {
-                        if let Ok(mut v) = serde_json::from_str::<Value>(source) {
-                            for spelling in ["subagent", "subAgent"] {
-                                if let Some(id) = v.pointer_mut(&format!(
-                                    "/{spelling}/thread_spawn/parent_thread_id"
-                                )) {
-                                    if let Some(old) = id.as_str() {
-                                        *id = map
-                                            .threads
-                                            .get(old)
-                                            .ok_or_else(|| {
-                                                TransferError::new(
-                                                    "move_group_incomplete",
-                                                    "数据库子代理父身份未映射",
-                                                )
-                                            })?
-                                            .clone()
-                                            .into();
-                                    }
-                                }
+                    if let Some(Value::String(source)) = row.get_mut("source")
+                        && let Ok(mut v) = serde_json::from_str::<Value>(source)
+                    {
+                        for spelling in ["subagent", "subAgent"] {
+                            if let Some(id) =
+                                v.pointer_mut(&format!("/{spelling}/thread_spawn/parent_thread_id"))
+                                && let Some(old) = id.as_str()
+                            {
+                                *id = map
+                                    .threads
+                                    .get(old)
+                                    .ok_or_else(|| {
+                                        TransferError::new(
+                                            "move_group_incomplete",
+                                            "数据库子代理父身份未映射",
+                                        )
+                                    })?
+                                    .clone()
+                                    .into();
                             }
-                            *source = serde_json::to_string(&v)?;
                         }
+                        *source = serde_json::to_string(&v)?;
                     }
                 }
                 if matches!(
@@ -696,13 +695,13 @@ pub fn insert_with_prefix(
             let approved = before
                 .and_then(|n| n.databases.iter().find(|d| d.path == database.path))
                 .and_then(|d| d.tables.iter().find(|t| t.name == table.name));
-            if let Some(expected) = approved {
-                if expected != &current {
-                    return Err(TransferError::new(
-                        "move_plan_stale",
-                        "目标原生数据在发布前发生变化",
-                    ));
-                }
+            if let Some(expected) = approved
+                && expected != &current
+            {
+                return Err(TransferError::new(
+                    "move_plan_stale",
+                    "目标原生数据在发布前发生变化",
+                ));
             }
             if reuse
                 && approved.is_none()
@@ -715,25 +714,24 @@ pub fn insert_with_prefix(
                 ));
             }
             for row in &table.rows {
-                if reuse || shared_table(&table.name) {
-                    if let Some(existing) = current
+                if (reuse || shared_table(&table.name))
+                    && let Some(existing) = current
                         .rows
                         .iter()
                         .find(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
-                    {
-                        if existing == row {
-                            continue;
-                        }
-                        if approved.is_some() && !shared_table(&table.name) {
-                            update_row(&tx, table, row)?;
-                            replaced.tables[table_index].rows.push(existing.clone());
-                            continue;
-                        }
-                        return Err(TransferError::new(
-                            "move_conflict",
-                            "目标已有不同的项目或分组关联",
-                        ));
+                {
+                    if existing == row {
+                        continue;
                     }
+                    if approved.is_some() && !shared_table(&table.name) {
+                        update_row(&tx, table, row)?;
+                        replaced.tables[table_index].rows.push(existing.clone());
+                        continue;
+                    }
+                    return Err(TransferError::new(
+                        "move_conflict",
+                        "目标已有不同的项目或分组关联",
+                    ));
                 }
                 let columns = table
                     .columns
@@ -937,14 +935,12 @@ pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), Tr
                 if matches!(
                     table.name.as_str(),
                     "thread_attachments" | "thread_artifacts"
-                ) {
-                    if let Some(id) = row.get("id").and_then(Value::as_str) {
-                        if !plan.identities.records.contains_key(id) {
-                            plan.identities
-                                .records
-                                .insert(id.into(), super::codex::uuid()?);
-                        }
-                    }
+                ) && let Some(id) = row.get("id").and_then(Value::as_str)
+                    && !plan.identities.records.contains_key(id)
+                {
+                    plan.identities
+                        .records
+                        .insert(id.into(), super::codex::uuid()?);
                 }
                 if table.name == "thread_realtime_items" {
                     let mut item: Value = serde_json::from_str(
@@ -976,20 +972,19 @@ pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), Tr
                         .get(key)
                         .and_then(Value::as_str)
                         .filter(|s| !s.is_empty())
+                        && !plan.identities.records.contains_key(id)
                     {
-                        if !plan.identities.records.contains_key(id) {
-                            plan.identities
-                                .records
-                                .insert(id.into(), super::codex::uuid()?);
-                        }
-                    }
-                }
-                if let Some(id) = row.get("turn_id").and_then(Value::as_str) {
-                    if !plan.identities.turns.contains_key(id) {
                         plan.identities
-                            .turns
+                            .records
                             .insert(id.into(), super::codex::uuid()?);
                     }
+                }
+                if let Some(id) = row.get("turn_id").and_then(Value::as_str)
+                    && !plan.identities.turns.contains_key(id)
+                {
+                    plan.identities
+                        .turns
+                        .insert(id.into(), super::codex::uuid()?);
                 }
             }
         }

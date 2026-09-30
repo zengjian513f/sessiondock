@@ -62,14 +62,12 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
     }
     let mut grok_aliases = Vec::new();
     for e in entries.values().filter(|e| e.source == "grok") {
-        if let Some(path) = &e.summary_path {
-            if let Ok(raw) = std::fs::read(path) {
-                if let Ok(row) = serde_json::from_slice::<Value>(&raw) {
-                    if let Some(alias) = row["agent_id"].as_str().filter(|s| !s.is_empty()) {
-                        grok_aliases.push((alias.to_owned(), e.summary.sid.clone()));
-                    }
-                }
-            }
+        if let Some(path) = &e.summary_path
+            && let Ok(raw) = std::fs::read(path)
+            && let Ok(row) = serde_json::from_slice::<Value>(&raw)
+            && let Some(alias) = row["agent_id"].as_str().filter(|s| !s.is_empty())
+        {
+            grok_aliases.push((alias.to_owned(), e.summary.sid.clone()));
         }
     }
     let mut identities: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
@@ -82,13 +80,13 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
         }
     }
     for (alias, sid) in &grok_aliases {
-        if alias != sid {
-            if let Some(targets) = identities.get(&("grok", sid.as_str())).cloned() {
-                identities
-                    .entry(("grok", alias.as_str()))
-                    .or_default()
-                    .extend(targets);
-            }
+        if alias != sid
+            && let Some(targets) = identities.get(&("grok", sid.as_str())).cloned()
+        {
+            identities
+                .entry(("grok", alias.as_str()))
+                .or_default()
+                .extend(targets);
         }
     }
     let mut edges = BTreeSet::new();
@@ -305,19 +303,20 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
                         ));
                     }
                 }
-                if !e.is_agent() && row.get("parentUuid").is_some() {
-                    if let Some(id) = row["uuid"].as_str().filter(|id| !id.is_empty()) {
-                        if let Some(other) = claude_messages.get(id) {
-                            if other != &e.uid {
-                                edges.insert(Edge {
-                                    from: e.uid.clone(),
-                                    to: other.clone(),
-                                    kind: "fork".into(),
-                                });
-                            }
-                        } else {
-                            claude_messages.insert(id.into(), e.uid.clone());
+                if !e.is_agent()
+                    && row.get("parentUuid").is_some()
+                    && let Some(id) = row["uuid"].as_str().filter(|id| !id.is_empty())
+                {
+                    if let Some(other) = claude_messages.get(id) {
+                        if other != &e.uid {
+                            edges.insert(Edge {
+                                from: e.uid.clone(),
+                                to: other.clone(),
+                                kind: "fork".into(),
+                            });
                         }
+                    } else {
+                        claude_messages.insert(id.into(), e.uid.clone());
                     }
                 }
             }

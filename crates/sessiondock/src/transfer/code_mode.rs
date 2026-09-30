@@ -133,9 +133,7 @@ pub(super) fn script(code: &str, map: &IdentityMap) -> Result<String, TransferEr
                             if !array {
                                 break;
                             }
-                        } else if array && matches!(ts[k].text.as_str(), "]" | "}") {
-                            break;
-                        } else if !array {
+                        } else if !array || matches!(ts[k].text.as_str(), "]" | "}") {
                             break;
                         }
                         k += 1;
@@ -181,15 +179,15 @@ fn result(v: &mut Value, map: &IdentityMap) -> Result<bool, TransferError> {
         remap(id, map)?;
         recognized = true;
     }
-    if let Some(status) = v.get_mut("status").and_then(Value::as_object_mut) {
-        if status.keys().all(|k| map.threads.contains_key(k)) {
-            let mut next = serde_json::Map::new();
-            for (k, v) in std::mem::take(status) {
-                next.insert(map.threads[&k].clone(), v);
-            }
-            *status = next;
-            recognized = true;
+    if let Some(status) = v.get_mut("status").and_then(Value::as_object_mut)
+        && status.keys().all(|k| map.threads.contains_key(k))
+    {
+        let mut next = serde_json::Map::new();
+        for (k, v) in std::mem::take(status) {
+            next.insert(map.threads[&k].clone(), v);
         }
+        *status = next;
+        recognized = true;
     }
     Ok(recognized)
 }
@@ -311,10 +309,10 @@ pub(super) fn result_references(v: &Value) -> Vec<String> {
             .ok()
             .map(|v| {
                 let mut ids = Vec::new();
-                if let Some(id) = v["agent_id"].as_str() {
-                    if uuid(id) {
-                        ids.push(id.into());
-                    }
+                if let Some(id) = v["agent_id"].as_str()
+                    && uuid(id)
+                {
+                    ids.push(id.into());
                 }
                 if let Some(status) = v["status"].as_object() {
                     ids.extend(status.keys().filter(|id| uuid(id)).cloned());

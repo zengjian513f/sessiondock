@@ -40,7 +40,8 @@ BASE = {
 }
 # Present in current lib.rs / state.rs; older binaries omit them.
 OPTIONAL = {"timeline_pin": "metadata", "terminal_input": "terminal", "files_write": None, "trash": None,
-            "session_stop": "terminal_create", "bug_report": None, "conversation_send": None}
+            "session_stop": "terminal_create", "bug_report": None, "conversation_send": None, "session_clone_local_codex": "metadata",
+            "session_freeze": "terminal_create"}
 
 
 def fail(area, why, body=""):
@@ -73,6 +74,8 @@ def check(area, opener, base, *, protocol=0, node_id=None, **flags):
         if key not in caps:
             continue
         want[key] = flags.get(key, flags.get(linked, False) if linked else False)
+        if key in {"session_clone_local_codex", "session_freeze"}:
+            want[key] = want[key] and sys.platform.startswith("linux")
     if caps != want:
         fail(area, "capabilities mismatch", caps)
     print(f"PASS {area}", flush=True)

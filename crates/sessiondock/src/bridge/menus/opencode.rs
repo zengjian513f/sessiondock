@@ -466,9 +466,7 @@ fn modal(lines: &[Row], screen: &str) -> Option<Value> {
         })?;
     let bg = lines[header_row][title_col].style.bg.clone();
     let fg = lines[header_row][title_col].style.fg.clone();
-    let muted = find(&lines[header_row], "esc")
-        .map(|i| lines[header_row][i].style.fg.clone())
-        .flatten();
+    let muted = find(&lines[header_row], "esc").and_then(|i| lines[header_row][i].style.fg.clone());
     let mut end = header_row + 1;
     while end < lines.len() && lines[end].get(left).is_some_and(|c| c.style.bg == bg) {
         end += 1

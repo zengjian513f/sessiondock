@@ -81,13 +81,13 @@ pub(in crate::transfer) fn resolve(row: &mut Value, links: &Links) {
         .into_iter()
         .flatten()
     {
-        if block["type"] == "tool_use" && block["name"] == "SendMessage" {
-            if let Some(id) = block["id"]
+        if block["type"] == "tool_use"
+            && block["name"] == "SendMessage"
+            && let Some(id) = block["id"]
                 .as_str()
                 .and_then(|call| links.resumed.get(call))
-            {
-                block["input"]["to"] = id.clone().into();
-            }
+        {
+            block["input"]["to"] = id.clone().into();
         }
     }
 }

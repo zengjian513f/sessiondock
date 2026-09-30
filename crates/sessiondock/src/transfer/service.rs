@@ -395,15 +395,14 @@ impl TransferService {
                     }
                 }
                 for key in ["spawned_by", "nest_parent"] {
-                    if let Some(mut relation) = before.get(key).cloned() {
-                        if relation["node_id"].is_null() {
-                            if let Some(mapped) = relation["sid"].as_str().and_then(|id| {
-                                op.mapped_session(relation["source"].as_str().unwrap_or(""), id)
-                            }) {
-                                relation["sid"] = mapped.clone().into();
-                                after.insert(key.into(), relation);
-                            }
-                        }
+                    if let Some(mut relation) = before.get(key).cloned()
+                        && relation["node_id"].is_null()
+                        && let Some(mapped) = relation["sid"].as_str().and_then(|id| {
+                            op.mapped_session(relation["source"].as_str().unwrap_or(""), id)
+                        })
+                    {
+                        relation["sid"] = mapped.clone().into();
+                        after.insert(key.into(), relation);
                     }
                 }
                 if new_ids && !after.is_empty() {
@@ -681,64 +680,60 @@ impl TransferService {
                 return Err(TransferError::new("move_conflict", "目标文件已存在"));
             }
         }
-        if !op.new_ids() {
-            if let Some(metadata) = &self.metadata {
-                let current = metadata
-                    .snapshot()
-                    .map_err(|e| TransferError::new(e.code, e.message))?;
-                op.metadata_replaced.clear();
-                let portable = [
-                    "starred",
-                    "starred_at",
-                    "group",
-                    "fork_parent_visible",
-                    "nest_independent",
-                    "spawned_by",
-                    "nest_parent",
-                ];
-                for (uid, row) in &mut op.metadata_after {
-                    let before = current.row(uid);
-                    let mut merged = before.as_object().cloned().unwrap_or_default();
-                    merged.remove("clone_operation");
-                    for key in portable {
-                        merged.remove(key);
-                        if let Some(value) = row.get(key) {
-                            merged.insert(key.into(), value.clone());
-                        }
+        if !op.new_ids()
+            && let Some(metadata) = &self.metadata
+        {
+            let current = metadata
+                .snapshot()
+                .map_err(|e| TransferError::new(e.code, e.message))?;
+            op.metadata_replaced.clear();
+            let portable = [
+                "starred",
+                "starred_at",
+                "group",
+                "fork_parent_visible",
+                "nest_independent",
+                "spawned_by",
+                "nest_parent",
+            ];
+            for (uid, row) in &mut op.metadata_after {
+                let before = current.row(uid);
+                let mut merged = before.as_object().cloned().unwrap_or_default();
+                merged.remove("clone_operation");
+                for key in portable {
+                    merged.remove(key);
+                    if let Some(value) = row.get(key) {
+                        merged.insert(key.into(), value.clone());
                     }
-                    let mut comparable = before.clone();
-                    comparable
-                        .as_object_mut()
-                        .unwrap()
-                        .remove("clone_operation");
-                    if Value::Object(merged.clone()) == comparable {
-                        *row = json!({}); // Already owned by the destination; no receipt.
-                        continue;
-                    }
-                    if before != json!({}) {
-                        if !extended_metadata.contains(uid) {
-                            return Err(TransferError::new(
-                                "move_conflict",
-                                "目标会话显示设置不同且历史没有延长",
-                            ));
-                        }
-                        if !before["spawned_by"].is_null()
-                            && before["spawned_by"] != row["spawned_by"]
-                        {
-                            return Err(TransferError::new(
-                                "move_conflict",
-                                "目标会话原生归属不同",
-                            ));
-                        }
-                        op.metadata_replaced.insert(uid.clone(), before);
-                    }
-                    if !merged.is_empty() || op.metadata_replaced.contains_key(uid) {
-                        merged.insert("clone_operation".into(), op.id.clone().into());
-                    }
-                    *row = merged.into();
                 }
-                op.metadata_after.retain(|_, row| row != &json!({}));
+                let mut comparable = before.clone();
+                comparable
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("clone_operation");
+                if Value::Object(merged.clone()) == comparable {
+                    *row = json!({}); // Already owned by the destination; no receipt.
+                    continue;
+                }
+                if before != json!({}) {
+                    if !extended_metadata.contains(uid) {
+                        return Err(TransferError::new(
+                            "move_conflict",
+                            "目标会话显示设置不同且历史没有延长",
+                        ));
+                    }
+                    if !before["spawned_by"].is_null() && before["spawned_by"] != row["spawned_by"]
+                    {
+                        return Err(TransferError::new("move_conflict", "目标会话原生归属不同"));
+                    }
+                    op.metadata_replaced.insert(uid.clone(), before);
+                }
+                if !merged.is_empty() || op.metadata_replaced.contains_key(uid) {
+                    merged.insert("clone_operation".into(), op.id.clone().into());
+                }
+                *row = merged.into();
             }
+            op.metadata_after.retain(|_, row| row != &json!({}));
         }
         op.phase = "publishing".into();
         self.save(&op)?;

@@ -255,15 +255,14 @@ impl TransferService {
             {
                 return Err(changed());
             }
-            if let Some(c) = &e.summary.codex {
-                if references("codex", &c.forked_from_id)
+            if let Some(c) = &e.summary.codex
+                && (references("codex", &c.forked_from_id)
                     || references("codex", &c.parent_thread_id)
                     || c.history_base["thread_id"]
                         .as_str()
-                        .is_some_and(|id| op.plan.identities.rollouts.contains_key(id))
-                {
-                    return Err(changed());
-                }
+                        .is_some_and(|id| op.plan.identities.rollouts.contains_key(id)))
+            {
+                return Err(changed());
             }
             if e.source == "codex" || e.source == "claude" {
                 let raw = fs::read(&e.data)?;
@@ -317,38 +316,38 @@ impl TransferService {
                     }
                 }
             }
-            if e.source == "grok" {
-                if let Some(path) = &e.summary_path {
-                    let rows = super::group::grok_tools::rows(path.parent().unwrap())?;
-                    if super::group::grok_tools::references(&rows)
+            if e.source == "grok"
+                && let Some(path) = &e.summary_path
+            {
+                let rows = super::group::grok_tools::rows(path.parent().unwrap())?;
+                if super::group::grok_tools::references(&rows)
+                    .iter()
+                    .any(|id| {
+                        references("grok", id)
+                            || op.file_plan.as_ref().is_some_and(|plan| {
+                                plan.sessions.contains_key(&format!("grok:{id}"))
+                            })
+                    })
+                {
+                    return Err(changed());
+                }
+                let mut paths = vec![path.clone()];
+                let agents = path.parent().unwrap().join("subagents");
+                if agents.is_dir() {
+                    for child in fs::read_dir(agents)? {
+                        let meta = child?.path().join("meta.json");
+                        if meta.is_file() {
+                            paths.push(meta);
+                        }
+                    }
+                }
+                for path in paths {
+                    let row: Value = serde_json::from_slice(&fs::read(path)?)?;
+                    if ["parent_session_id", "child_session_id"]
                         .iter()
-                        .any(|id| {
-                            references("grok", id)
-                                || op.file_plan.as_ref().is_some_and(|plan| {
-                                    plan.sessions.contains_key(&format!("grok:{id}"))
-                                })
-                        })
+                        .any(|key| row[*key].as_str().is_some_and(|id| references("grok", id)))
                     {
                         return Err(changed());
-                    }
-                    let mut paths = vec![path.clone()];
-                    let agents = path.parent().unwrap().join("subagents");
-                    if agents.is_dir() {
-                        for child in fs::read_dir(agents)? {
-                            let meta = child?.path().join("meta.json");
-                            if meta.is_file() {
-                                paths.push(meta);
-                            }
-                        }
-                    }
-                    for path in paths {
-                        let row: Value = serde_json::from_slice(&fs::read(path)?)?;
-                        if ["parent_session_id", "child_session_id"]
-                            .iter()
-                            .any(|key| row[*key].as_str().is_some_and(|id| references("grok", id)))
-                        {
-                            return Err(changed());
-                        }
                     }
                 }
             }
