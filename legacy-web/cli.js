@@ -56,6 +56,7 @@ class ClaudeCli extends SessionDockCli {
   questionAnswerKeys(prompt, optionIndex) {
     const options = prompt?.questions?.[0]?.options || [];
     if (!options[optionIndex] || optionIndex >= 9) return null;
+    if (prompt?.kind === 'folder_trust') return options[optionIndex]?.keys || null;
     // 在真实选项行上按数字即选中并提交。
     return [...this.questionOptionRowKeys(options.length), String(optionIndex + 1)];
   }
@@ -108,6 +109,7 @@ class CodexCli extends SessionDockCli {
     if (!options[optionIndex] || optionIndex >= 9) return null;
     // Command approvals are TUI-only and advertise stable mnemonic keys.  Use
     // those instead of assuming they share request_user_input's numeric menu.
+    if (prompt?.kind === 'folder_trust') return options[optionIndex]?.keys || null;
     if (prompt?.kind === 'approval') {
       const key = options[optionIndex]?.key;
       return key ? [key] : null;

@@ -4879,7 +4879,8 @@ function switchComposerDraft(uid) {
   closeComposerHistory();
   composerUid = uid;
   const draft = composerDraft(uid, !!uid);
-  if (draft) {draft.inputStatus = null; draft.inputProbe = (draft.inputProbe || 0) + 1;}
+  if (draft) {draft.inputStatus = null; draft.inputPrompt = null; draft.inputAnswer = null;
+    draft.inputProbe = (draft.inputProbe || 0) + 1;}
   ta.value = draft?.text || '';
   renderComposerItems();
   autoGrow(ta);
@@ -5108,8 +5109,13 @@ function updateComposerInputStatus(uid, data) {
   if (!draft) return;
   draft.inputProbe = (draft.inputProbe || 0) + 1;
   const status = composerInputStatus(data);
-  const changed = JSON.stringify(draft.inputStatus) !== JSON.stringify(status);
+  const prompt = status.code === 'cli_question' && data?.prompt?.kind === 'folder_trust'
+    ? data.prompt : null;
+  const changed = JSON.stringify(draft.inputStatus) !== JSON.stringify(status)
+    || JSON.stringify(draft.inputPrompt) !== JSON.stringify(prompt);
   draft.inputStatus = status;
+  draft.inputPrompt = prompt;
+  if (draft.inputAnswer !== prompt?.id) draft.inputAnswer = null;
   if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
 }
 
@@ -5178,7 +5184,7 @@ function renderComposerInputStatus() {
   const blocking = status && (status.state === 'blocked'
     || (status.state === 'unknown' && status.code !== 'input_check_pending'));
   node.classList.toggle('blocked', !!blocking);
-  node.classList.toggle('hidden', !status);
+  node.classList.toggle('hidden', !status || !!draft?.inputPrompt);
   const notice = composerInputNotice(status);
   node.title = notice;
   node.replaceChildren();
@@ -5186,7 +5192,42 @@ function renderComposerInputStatus() {
     node.append(el('span', 'composer-input-status-copy', notice));
 
   }
+  renderComposerQuestion(draft);
   syncComposerSendState();
+}
+
+function renderComposerQuestion(draft) {
+  const box = $('#composer-question');
+  const prompt = draft?.inputPrompt;
+  const signature = JSON.stringify([composerUid, prompt, draft?.inputAnswer]);
+  if (box.dataset.signature === signature) return;
+  box.dataset.signature = signature;
+  box.replaceChildren();
+  box.classList.toggle('hidden', !prompt);
+  if (!prompt) return;
+  const uid = composerUid;
+  box.appendChild(questionNode({
+    ...prompt, uid, call_id: prompt.id, live: true,
+    state: draft.inputAnswer ? 'submitted' : 'waiting',
+  }, {
+    answer: (uid, index) => answerComposerQuestion(uid, prompt.id, index),
+    cancel: uid => answerComposerQuestion(uid, prompt.id, 1),
+  }));
+}
+
+async function answerComposerQuestion(uid, id, index) {
+  const draft = composerDraft(uid, false);
+  if (!draft || draft.inputPrompt?.id !== id || draft.inputAnswer) return false;
+  draft.inputAnswer = id;
+  renderComposerQuestion(draft);
+  // Recheck the same live menu before writing, including pre-rollout launches.
+  const current = await probeComposerInput(uid);
+  if (current?.prompt?.id !== id || composerUid !== uid) return false;
+  const keys = sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
+  const ok = keys?.length && await sendToSession(null, keys, uid);
+  if (!ok) { draft.inputAnswer = null; renderComposerQuestion(draft); }
+  else pollComposerInput();
+  return !!ok;
 }
 
 async function reconcileComposerSubmission(uid) {
