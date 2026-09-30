@@ -35,20 +35,75 @@ pub(super) fn rewrite(row: &mut Value, map: &IdentityMap) -> Result<(), Transfer
         Some("function_call_output") => "output",
         _ => return Ok(()),
     };
-    let Some(text) = p[key].as_str() else {
-        return Err(TransferError::new(
-            "move_reference_unsupported",
-            "子代理工具不是已适配的 JSON 字符串格式",
-        ));
-    };
-    let mut value: Value = serde_json::from_str(text).map_err(|_| {
+    if key == "output" {
+        return output(&mut p[key], tool, map);
+    }
+    let text = p[key].as_str().ok_or_else(|| {
         TransferError::new(
             "move_reference_unsupported",
-            "子代理工具参数或结果不是 JSON",
+            "子代理工具参数不是 JSON 字符串",
         )
     })?;
-    if key == "arguments" {
-        if matches!(tool.as_str(), "send_input" | "close_agent" | "resume_agent") {
+    let mut value: Value = serde_json::from_str(text)
+        .map_err(|_| TransferError::new("move_reference_unsupported", "子代理工具参数不是 JSON"))?;
+    rewrite_value(&mut value, tool, true, map)?;
+    p[key] = Value::String(serde_json::to_string(&value)?);
+    Ok(())
+}
+
+/// Native function outputs are either text or typed content items. Keep the
+/// wire envelope and non-text items intact; only parsed agent identity slots
+/// may change. Plain error/status text without identity references is opaque.
+fn output(value: &mut Value, tool: &str, map: &IdentityMap) -> Result<(), TransferError> {
+    match value {
+        Value::String(text) => {
+            let mut parsed = match serde_json::from_str::<Value>(text) {
+                Ok(v) => v,
+                Err(_) if !map.threads.keys().any(|id| text.contains(id)) => return Ok(()),
+                Err(_) => {
+                    return Err(TransferError::new(
+                        "move_reference_unsupported",
+                        "子代理工具文本包含无法结构化解析的会话引用",
+                    ));
+                }
+            };
+            rewrite_value(&mut parsed, tool, false, map)?;
+            *text = serde_json::to_string(&parsed)?;
+        }
+        Value::Array(items) => {
+            for item in items {
+                match item["type"].as_str() {
+                    Some("input_text") if item["text"].is_string() => {
+                        output(&mut item["text"], tool, map)?
+                    }
+                    Some("input_image" | "input_audio" | "encrypted_content") => {}
+                    _ => {
+                        return Err(TransferError::new(
+                            "move_reference_unsupported",
+                            "子代理工具结果包含无法识别的内容项",
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(TransferError::new(
+                "move_reference_unsupported",
+                "子代理工具结果不是文本或原生内容数组",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_value(
+    value: &mut Value,
+    tool: &str,
+    arguments: bool,
+    map: &IdentityMap,
+) -> Result<(), TransferError> {
+    if arguments {
+        if matches!(tool, "send_input" | "close_agent" | "resume_agent") {
             if let Some(id) = value.get_mut("id") {
                 thread(id, map)?;
             }
@@ -78,7 +133,6 @@ pub(super) fn rewrite(row: &mut Value, map: &IdentityMap) -> Result<(), Transfer
             *statuses = next;
         }
     }
-    p[key] = Value::String(serde_json::to_string(&value)?);
     Ok(())
 }
 

@@ -818,11 +818,15 @@ Scanned `crates/sessiondock/src`: **216** (status, code) pairs.
 ### `move_reference_unsupported`
 
 - code-mode 中存在无法静态解析的会话引用
-- 子代理工具不是已适配的 JSON 字符串格式
-- 子代理工具参数或结果不是 JSON
+- 子代理工具参数不是 JSON 字符串
+- 子代理工具参数不是 JSON
+- 子代理工具文本包含无法结构化解析的会话引用
+- 子代理工具结果包含无法识别的内容项
+- 子代理工具结果不是文本或原生内容数组
 - ；
 - [`transfer/code_mode.rs`](../crates/sessiondock/src/transfer/code_mode.rs) `failure` L79
-- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `rewrite` L39, L45
+- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `output` L64, L81, L90
+- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `rewrite` L42, L48
 - [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan` L177
 
 ### `move_session_locked`
