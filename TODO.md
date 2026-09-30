@@ -16,7 +16,8 @@
   绝对路径必须一致。已完成 Codex 0.159.0 同版本隔离实验和
   不可变 rollout ID 读取支持，以及索引连通组、Codex 移动原样暂存和结构化 ID/字节边界重写
   （[离线工具](docs/session-transfer-tool.md)，尚不可发布）。文件复制不足以保全分页历史和元数据。
-  待完成来源/工具引用完整审计、跨版本/其他 CLI 验证、原生新身份克隆实测、生产导入与回滚、
+  已补充消息/工具配对和嵌套子代理事件的结构化身份重写，以及新身份原生恢复和独立续聊
+  隔离实验（不含 code-mode 子代理）。待完成来源/工具引用完整审计、跨版本/其他 CLI 验证、生产导入与回滚、
   停写锁与持久化编排和页面。设计及实测见
   [session-move.md](docs/session-move.md)、[session-clone.md](docs/session-clone.md)。
 

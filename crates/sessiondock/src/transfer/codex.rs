@@ -25,6 +25,9 @@ pub struct IdentityMap {
     pub threads: BTreeMap<String, String>,
     pub rollouts: BTreeMap<String, String>,
     pub turns: BTreeMap<String, String>,
+    /// Native item IDs and call IDs share identity in projected tool items.
+    pub records: BTreeMap<String, String>,
+    pub tool_calls: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -46,12 +49,20 @@ pub struct Base {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReferenceIssue {
+    pub source: PathBuf,
+    pub ordinal: Option<u64>,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ClonePlan {
     pub version: u32,
     pub mode: Mode,
     pub group: Group,
     pub identities: IdentityMap,
     pub files: Vec<HistoryFile>,
+    pub reference_issues: Vec<ReferenceIssue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -72,6 +83,7 @@ pub struct StagedClone {
     pub required_checks: Vec<String>,
     pub identities: IdentityMap,
     pub files: Vec<OutputFile>,
+    pub reference_issues: Vec<ReferenceIssue>,
 }
 
 fn hash(raw: &[u8]) -> String {
@@ -156,6 +168,8 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
         threads: BTreeMap::new(),
         rollouts: BTreeMap::new(),
         turns: BTreeMap::new(),
+        records: BTreeMap::new(),
+        tool_calls: BTreeMap::new(),
     };
     let mut files = Vec::new();
     for member in &group.members {
@@ -226,18 +240,39 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
             })
         };
         for (_, row) in &parsed {
-            if let Some(turn) = row["payload"]["turn_id"].as_str()
-                && !identities.turns.contains_key(turn)
+            let p = &row["payload"];
+            if row["type"] == "response_item"
+                && p["type"] == "function_call"
+                && (p["namespace"].is_null() || p["namespace"] == "functions")
+                && let (Some(id), Some(name)) = (p["call_id"].as_str(), p["name"].as_str())
             {
-                identities.turns.insert(
-                    turn.into(),
-                    if mode == Mode::Move {
-                        turn.into()
-                    } else {
-                        uuid()?
-                    },
-                );
+                if let Some(previous) = identities.tool_calls.insert(id.into(), name.into())
+                    && previous != name
+                {
+                    return Err(TransferError::new(
+                        "move_identity",
+                        "工具调用 ID 对应多个工具",
+                    ));
+                }
             }
+            super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
+                let map = match kind {
+                    super::codex_ids::Identity::Thread => return Ok(id.to_owned()),
+                    super::codex_ids::Identity::Turn => &mut identities.turns,
+                    super::codex_ids::Identity::Record => &mut identities.records,
+                };
+                if !map.contains_key(id) {
+                    map.insert(
+                        id.to_owned(),
+                        if mode == Mode::Move {
+                            id.to_owned()
+                        } else {
+                            uuid()?
+                        },
+                    );
+                }
+                Ok(id.to_owned())
+            })?;
         }
         let relative = member
             .path
@@ -264,10 +299,25 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
             ));
         }
     }
+    let mut reference_issues = Vec::new();
+    if mode == Mode::Clone {
+        for file in &files {
+            for (_, row) in rows(&stable_read(&file.source)?)? {
+                if let Some(reason) = super::codex_tools::audit(&row, &identities) {
+                    reference_issues.push(ReferenceIssue {
+                        source: file.source.clone(),
+                        ordinal: row["ordinal"].as_u64(),
+                        reason,
+                    });
+                }
+            }
+        }
+    }
     Ok(ClonePlan {
         version: 1,
         mode,
         group,
+        reference_issues,
         identities,
         files,
     })
@@ -328,12 +378,17 @@ fn rewrite(
             p["history_base"]["end_byte_offset"] = Value::from(*cut);
         }
     }
-    if matches!(
-        kind.as_str(),
-        "turn_context" | "event_msg" | "response_item"
-    ) {
-        remap(p, "turn_id", &map.turns)?;
-    }
+    super::codex_tools::rewrite(row, map)?;
+    super::codex_ids::visit(row, &mut |kind, id| {
+        let identities = match kind {
+            super::codex_ids::Identity::Thread => &map.threads,
+            super::codex_ids::Identity::Turn => &map.turns,
+            super::codex_ids::Identity::Record => &map.records,
+        };
+        identities.get(id).cloned().ok_or_else(|| {
+            TransferError::new("move_group_incomplete", format!("未映射的 {kind:?}: {id}"))
+        })
+    })?;
     Ok(())
 }
 
@@ -497,6 +552,7 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
         version: 1,
         mode: plan.mode,
         publishable: false,
+        reference_issues: plan.reference_issues.clone(),
         required_checks: vec![
             "native_metadata_and_projection_import".into(),
             "tool_reference_remapping".into(),
@@ -532,6 +588,7 @@ fn validate(plan: &ClonePlan) -> Result<(), TransferError> {
         &plan.identities.threads,
         &plan.identities.rollouts,
         &plan.identities.turns,
+        &plan.identities.records,
     ] {
         let values: BTreeSet<_> = map.values().collect();
         if values.len() != map.len()

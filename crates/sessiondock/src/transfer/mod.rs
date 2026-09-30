@@ -3,6 +3,8 @@
 //! Clone output is private staging only until native metadata import is verified.
 
 pub mod codex;
+mod codex_ids;
+mod codex_tools;
 pub mod group;
 
 use serde::{Deserialize, Serialize};

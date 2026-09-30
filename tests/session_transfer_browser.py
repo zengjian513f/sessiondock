@@ -76,6 +76,32 @@ def fixture(root):
         stream.write((json.dumps(codex_message('assistant', 'Discarded old branch tail', 6)) + '\n').encode())
     put('parent-agent', ident(6), ident(6), 6, 'Parent agent', 0, ident(1), agent=True)
     put('a-agent', ident(7), ident(7), 7, 'A agent', 0, ident(2), agent=True)
+    # Native event/response pairs share IDs; opaque user content keeps old IDs.
+    events = [
+        ('event_msg', {'type': 'task_started', 'turn_id': ident(20), 'root_turn_id': ident(21)}),
+        ('response_item', {'type': 'function_call', 'id': 'fc_old', 'call_id': 'call_spawn',
+                          'name': 'spawn_agent', 'arguments': json.dumps({'message': ident(6)})}),
+        ('response_item', {'type': 'function_call_output', 'call_id': 'call_spawn',
+                          'output': json.dumps({'agent_id': ident(6)})}),
+        ('event_msg', {'type': 'collab_agent_spawn_end', 'call_id': 'call_spawn',
+                       'sender_thread_id': ident(7), 'new_thread_id': ident(6), 'prompt': ident(6)}),
+        ('event_msg', {'type': 'item_completed', 'thread_id': ident(7), 'turn_id': ident(20),
+                       'item': {'type': 'CollabAgentToolCall', 'id': 'call_spawn',
+                                'sender_thread_id': ident(7), 'receiver_thread_ids': [ident(6)],
+                                'receiver_agents': [{'thread_id': ident(6)}],
+                                'agents_states': {ident(6): {'completed': ident(6)}}}}),
+        ('response_item', {'type': 'message', 'id': 'msg_old', 'role': 'assistant',
+                          'content': [{'type': 'output_text', 'text': 'Identity reference check ' + ident(6)}],
+                          'internal_chat_message_metadata_passthrough': {'turn_id': ident(20)}}),
+        ('response_item', {'type': 'function_call', 'call_id': 'call_wait', 'name': 'wait',
+                          'arguments': json.dumps({'ids': [ident(6)], 'timeout_ms': 1000})}),
+        ('response_item', {'type': 'function_call_output', 'call_id': 'call_wait',
+                          'output': json.dumps({'status': {ident(6): {'completed': ident(6)}}})}),
+    ]
+    with corpus.paths['a-agent'].open('a') as stream:
+        for ordinal, (kind, payload) in enumerate(events, 3):
+            stream.write(json.dumps({'timestamp': '2026-09-11T07:00:00Z', 'ordinal': ordinal,
+                                     'type': kind, 'payload': payload}) + '\n')
     # An unrelated broken graph must not poison this component.
     put('unrelated', ident(8), ident(8), 8, 'Unrelated missing parent', 0, ident(99))
     return corpus
@@ -126,6 +152,25 @@ def main():
         assert clone['identities']['rollouts'][ident(3)] != mapping[ident(2)]
         assert any(int(old) != new for f in clone['files'] for old, new in f['boundaries'].items()), \
             'fixture did not exercise changed byte lengths'
+        assert not plans['clone']['reference_issues']
+        agent_file = next(f for f in clone['files'] if f['source'] == str(source.paths['a-agent']))
+        native = [json.loads(line)['payload'] for line in
+                  (root / 'clone' / 'codex' / agent_file['relative']).read_text().splitlines()][3:]
+        records = clone['identities']['records']
+        assert native[0]['root_turn_id'] == clone['identities']['turns'][ident(21)]
+        assert native[1]['call_id'] == native[2]['call_id'] == native[3]['call_id'] == records['call_spawn']
+        assert native[4]['item']['id'] == records['call_spawn']
+        assert json.loads(native[1]['arguments'])['message'] == ident(6)
+        assert json.loads(native[2]['output'])['agent_id'] == mapping[ident(6)]
+        assert native[3]['prompt'] == ident(6) and native[3]['new_thread_id'] == mapping[ident(6)]
+        assert native[4]['thread_id'] == mapping[ident(7)]
+        assert native[4]['item']['receiver_agents'][0]['thread_id'] == mapping[ident(6)]
+        assert native[4]['item']['agents_states'] == {mapping[ident(6)]: {'completed': ident(6)}}
+        assert native[5]['id'] == records['msg_old']
+        assert native[5]['internal_chat_message_metadata_passthrough']['turn_id'] == clone['identities']['turns'][ident(20)]
+        assert json.loads(native[6]['arguments'])['ids'] == [mapping[ident(6)]]
+        assert json.loads(native[7]['output'])['status'] == {mapping[ident(6)]: {'completed': ident(6)}}
+        print('PASS native call/result/event identities, nested agent references, root turns and untouched text')
         print('PASS byte-exact move staging; clone identities and recomputed boundaries; source unchanged')
 
         # The same confirmed plan deterministically produces the same identity
@@ -172,10 +217,20 @@ def main():
                         page.locator('#a-view-switch').click()
                         page.locator(f'#session-view-menu button[data-agent="{ids[ident(7)]}"]').click()
                         expect(page.locator('#msgs')).to_contain_text('A agent answer')
+                        expect(page.locator('#msgs')).to_contain_text('Identity reference check ' + ident(6))
                         context.close()
                         print(f'PASS Chromium opens {mode} staging: inherited history, untouched literal UUID, remapped agent menu')
             finally:
                 browser.close()
+        with source.paths['a-agent'].open('a') as stream:
+            stream.write(json.dumps({'type': 'response_item', 'ordinal': 11, 'payload': {
+                'type': 'custom_tool_call', 'call_id': 'call_exec', 'name': 'exec',
+                'input': 'await tools.send_input({target: "' + ident(6) + '"})'}}) + '\n')
+        audited = command(transfer, {'operation': 'plan_codex', 'mode': 'clone',
+            'uid': source.uid('a'), 'roots': roots})
+        assert len(audited['reference_issues']) == 1
+        assert 'code-mode' in audited['reference_issues'][0]['reason']
+        print('PASS embedded code references produce explicit planning diagnostics')
         # A source change after confirmation cannot produce a successful stage.
         with source.paths['parent'].open('ab') as stream:
             stream.write(b'{}\n')
