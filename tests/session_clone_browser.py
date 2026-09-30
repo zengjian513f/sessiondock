@@ -55,6 +55,17 @@ def prepare(root):
         db.execute('INSERT INTO thread_items VALUES (?,?,?,?)', (ident(7),ident(20),'exec-projection-only',json.dumps({
             'type':'collabAgentToolCall','id':'exec-projection-only','senderThreadId':ident(7),
             'receiverThreadIds':[ident(6)],'agentsStates':{ident(6):{'status':'completed','message':ident(6)}}})))
+    # Current Codex serializes native function outputs as content arrays too.
+    # Preserve each item's envelope, ordinary text and non-text content.
+    agent = corpus.paths['a-agent']
+    rows = [json.loads(line) for line in agent.read_text().splitlines()]
+    for row in rows:
+        p = row['payload']
+        if p.get('type') == 'function_call_output':
+            p['output'] = [{'type':'input_text','text':p['output']},
+                           {'type':'input_text','text':'Tool completed successfully'},
+                           {'type':'input_image','image_url':'data:image/png;base64,c3ludGhldGlj','detail':'low'}]
+    agent.write_text(''.join(json.dumps(row)+'\n' for row in rows))
     # A code-mode call with literal targets and native JSON result. Text content
     # in the result deliberately contains a UUID and must remain untouched.
     with corpus.paths['a-agent'].open('a') as stream:
@@ -157,6 +168,13 @@ def main():
                         output=next(r for r in records if r.get('type')=='custom_tool_call_output')
                         assert ids[ident(6)] in code['input'] and ident(6) not in code['input']
                         assert json.loads(output['output'][0]['text'])['status']=={ids[ident(6)]:{'completed':ident(6)}}
+                        native_outputs=[r['output'] for r in records if r.get('type')=='function_call_output']
+                        assert len(native_outputs)==2
+                        assert json.loads(native_outputs[0][0]['text'])=={'agent_id':ids[ident(6)]}
+                        assert json.loads(native_outputs[1][0]['text'])=={'status':{ids[ident(6)]:{'completed':ident(6)}}}
+                        for items in native_outputs:
+                            assert items[1]=={'type':'input_text','text':'Tool completed successfully'}
+                            assert items[2]=={'type':'input_image','image_url':'data:image/png;base64,c3ludGhldGlj','detail':'low'}
                         assert set(ids).isdisjoint(ids.values())
                         with sqlite3.connect(corpus.root/'codex/state_5.sqlite') as db:
                             row=db.execute('SELECT name,is_pinned,project_id FROM threads WHERE id=?',(ids[ident(2)],)).fetchone()
