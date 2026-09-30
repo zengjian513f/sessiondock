@@ -72,12 +72,14 @@ other CLI support. See [the clone contract](session-clone.md#当前接口同节�
 Running sessions show a grey move/copy action in the title bar and sidebar menu.
 Offline machine filters and agent-type filters with no sessions in the selected
 machines use the same treatment. They carry `aria-disabled=true` while remaining
-focusable: hover, focus, click or touch displays a `role=tooltip` beside the control.
-The tooltip explains the reason without opening a modal or a central toast.
+focusable. Available and unavailable controls both use native `title` tooltips;
+the browser controls their hover delay and position. Unavailable reasons are also
+provided through `aria-description`. Passing the pointer, focusing, clicking or
+touching a control does not create a custom overlay, modal or toast.
 Unavailable controls do not change filters or request a clone plan, including
-right-click/long-press shortcuts. Escape, outside interaction, scrolling or resize
-hides the tooltip. Live status/filter refresh restores availability automatically;
-the backend still rechecks group liveness before publishing.
+right-click/long-press shortcuts. Live status/filter refresh restores availability
+and normal title hints automatically; the backend still rechecks group liveness
+before publishing.
 
 ## Flags
 

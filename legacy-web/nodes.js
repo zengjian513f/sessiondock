@@ -239,7 +239,7 @@ function renderNodes() {
     const reason = nodeChipReason(n);
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
-        if (n.online === false) return showUnavailableTooltip(e.currentTarget, nodeOfflineReason(n));
+        if (n.online === false) return;
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
       }, reason || '点击选择或取消；双击只选这台机器');

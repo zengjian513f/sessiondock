@@ -146,8 +146,8 @@ def main():
                         page.locator(f'#side .item[data-uid="{selected}"]').click()
                         expect(page.locator('#a-clone-group svg use')).to_have_attribute('href','#i-transfer')
                         expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','移动 / 复制整组')
-                        # Real browser input must explain unavailable actions at
-                        # their anchor, with no modal and no clone-plan request.
+                        # Native title hints must retain input guards without a
+                        # custom overlay, modal or clone-plan request.
                         plans=[]
                         page.on('request',lambda r:plans.append(r.url) if r.url.endswith('/api/session/clone/plan') else None)
                         running={'value':True}
@@ -162,50 +162,51 @@ def main():
                         if not action.is_visible():page.locator('#a-more').click()
                         action.hover()
                         tip=page.locator('#control-unavailable-tooltip')
-                        expect(tip).to_be_visible();expect(tip).to_contain_text('正在运行')
-                        a=action.bounding_box();t=tip.bounding_box()
-                        assert t['x']>=0 and t['x']+t['width']<=1280,t
-                        assert action.evaluate("b => getComputedStyle(b).opacity")=='.55' or action.evaluate("b => getComputedStyle(b).opacity")=='0.55'
-                        page.screenshot(path='target/unavailable-tooltip.png')
-                        assert abs(t['y']-(a['y']+a['height']))<=12 or abs(a['y']-(t['y']+t['height']))<=12,(a,t)
+                        expect(action).to_have_attribute('title','会话正在运行，请先停止后再移动或复制整组。')
+                        expect(tip).to_have_count(0)
+                        assert float(action.evaluate("b => getComputedStyle(b).opacity"))==.55
+                        page.mouse.move(0,0)
+                        action.hover()
+                        expect(tip).to_have_count(0)
                         action.click(force=True)
                         expect(page.locator('dialog[open]')).to_have_count(0)
-                        action.focus();page.keyboard.press('Enter');expect(tip).to_be_visible()
-                        page.keyboard.press('Escape');expect(tip).to_be_hidden()
+                        action.focus();page.keyboard.press('Enter');expect(tip).to_have_count(0)
+                        page.keyboard.press('Escape');expect(tip).to_have_count(0)
                         page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                         menu_action=page.locator('#item-menu [data-act="clone"]')
                         expect(menu_action).to_have_attribute('aria-disabled','true')
-                        menu_action.hover();expect(tip).to_contain_text('正在运行')
-                        menu_action.tap(force=True);expect(tip).to_be_visible()
+                        menu_action.hover();assert '正在运行' in menu_action.get_attribute('title')
+                        menu_action.tap(force=True);expect(tip).to_have_count(0)
                         assert not plans,'running action must not open a plan'
                         running['value']=False
                         page.evaluate('async () => await pollLive(true)')
                         expect(action).not_to_have_attribute('aria-disabled','true')
+                        expect(action).to_have_attribute('title','移动 / 复制整组')
                         expect(menu_action).not_to_have_attribute('aria-disabled','true')
-                        expect(tip).to_be_hidden()
+                        expect(tip).to_have_count(0)
                         page.keyboard.press('Escape')
                         # Offline machines and empty agent-type filters use the
-                        # same tooltip; no toggle/solo action or alert is sent.
+                        # same native hint; no toggle/solo action or alert is sent.
                         page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}",destination_node.nid)
                         machine=page.locator(f'#node-chips button[data-node="{destination_node.nid}"]')
                         expect(machine).to_have_attribute('aria-disabled','true')
                         off=page.evaluate('[...Nodes.off]')
-                        machine.hover();expect(tip).to_contain_text('离线')
-                        machine.tap(force=True);expect(tip).to_be_visible()
+                        machine.hover();assert '离线' in machine.get_attribute('title')
+                        machine.tap(force=True);expect(tip).to_have_count(0)
                         machine.click(button='right',force=True)
                         assert page.evaluate('[...Nodes.off]')==off
                         agent=page.locator('#chips button[data-source="claude"]')
                         expect(agent).to_have_attribute('aria-disabled','true')
                         sources=page.evaluate('[...S.off]')
-                        agent.hover();expect(tip).to_contain_text('没有会话')
-                        agent.tap(force=True);expect(tip).to_be_visible()
+                        agent.hover();assert '没有会话' in agent.get_attribute('title')
+                        agent.tap(force=True);expect(tip).to_have_count(0)
                         agent.focus();page.keyboard.press('Enter')
                         assert page.evaluate('[...S.off]')==sources
                         expect(page.locator('dialog[open]')).to_have_count(0)
-                        page.keyboard.press('Escape');expect(tip).to_be_hidden()
+                        page.keyboard.press('Escape');expect(tip).to_have_count(0)
                         page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}",destination_node.nid)
                         expect(machine).not_to_have_attribute('aria-disabled','true')
-                        print('PASS anchored unavailable tooltips: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
+                        print('PASS native title hints without custom overlays: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
 
                         # Both a flat toolbar and its overflow menu use the same
                         # icon + managed label, never a naked wrapping text node.
