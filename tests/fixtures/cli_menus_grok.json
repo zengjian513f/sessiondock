@@ -1,0 +1,1797 @@
+[
+  {
+    "name": "approval_bash",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  Working directory: /tmp/project\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Yes, always allow git status",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Never allow git status",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "approval_edit",
+    "screen": "┃\n┃  Allow editing files?\n┃\n┃  /tmp/project/readme.txt\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, allow edits for this session\n┃  3 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Yes, allow edits for this session",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "3"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "approval_mcp",
+    "screen": "┃\n┃  Allow Calendar: Create Event?\n┃\n┃  calendar.create_event\n┃  {\"title\":\"Synthetic audit event\"}\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow calendar.create_event\n┃  3 (○) Never allow calendar.create_event\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Yes, always allow calendar.create_event",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Never allow calendar.create_event",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "approval_web",
+    "screen": "┃\n┃  Allow fetching this URL?\n┃\n┃  https://example.test/docs\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow example.test\n┃  3 (○) Never allow example.test\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Yes, always allow example.test",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Never allow example.test",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "approval_risk",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ rm /tmp/project/example.txt\n┃  This command deletes the disclosed file.\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "approval_scope_controls",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  ← → narrow scope  ·  e edit pattern\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, allow once",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Yes, always allow git status",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Never allow git status",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "No, reject (type to add feedback)",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Narrow permission scope",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Widen permission scope",
+          "keys": [
+            "Right"
+          ]
+        },
+        {
+          "label": "Edit permission pattern",
+          "keys": [
+            "e"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/permission_view.rs + app/agent_view/interactions.rs::handle_permission_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_single",
+    "screen": "┃\n┃  Which build should run?\n┃\n┃  1 (●) \u001b[1mDebug\u001b[22m\n┃  2 (○) Release\n┃  z (○) Type your answer here\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Debug",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Release",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Type another answer",
+          "keys": [
+            "z"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "new_worktree",
+    "screen": "┃\n┃  Start the new session in an isolated git worktree?\n┃\n┃  1 (●) \u001b[1mYes\u001b[22m\n┃  2 (○) No\n┃  3 (○) Always worktree\n┃  4 (○) Never worktree\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Always worktree",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "Never worktree",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/session/lifecycle.rs::open_new_session_question",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fork_worktree",
+    "screen": "┃\n┃  Run this fork in an isolated git worktree?\n┃\n┃  1 (●) \u001b[1mYes\u001b[22m\n┃  2 (○) No\n┃  3 (○) Always worktree\n┃  4 (○) Never worktree\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Always worktree",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "Never worktree",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/session/lifecycle.rs::open_fork_question",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "model_incompatible",
+    "screen": "┃\n┃  Switching to Grok Build requires starting a new session. Continue?\n┃\n┃  1 (●) \u001b[1mYes\u001b[22m\n┃  2 (○) No\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/session/lifecycle.rs::open_agent_type_mismatch_question",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "delete_session",
+    "screen": "┃\n┃  Delete this session permanently?\n┃\n┃  1 (●) \u001b[1mDelete\u001b[22m\n┃  2 (○) Cancel\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Delete",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/session/lifecycle.rs::open_delete_current_session_question",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "doctor_fix",
+    "screen": "┃\n┃  Apply this fix?\n┃\n┃  1 (●) \u001b[1mApply\u001b[22m\n┃  2 (○) Cancel\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Apply",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/prompt.rs::open_doctor_fix_question",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "billing_limit",
+    "screen": "┃\n┃  You hit your free usage limit.\n┃\n┃  1 (●) \u001b[1mUpgrade subscription\u001b[22m\n┃  2 (○) Buy credits\n┃  3 (○) Try Again\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Upgrade subscription",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Buy credits",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Try Again",
+              "keys": [
+                "3"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "app/dispatch/billing.rs",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_multi_cursor_0",
+    "screen": "┃\n┃  Which languages?\n┃\n┃  1 [ ] \u001b[1mRust\u001b[22m\n┃  2 [ ] Python\n┃  3 [ ] JavaScript\n┃  z [ ] Type your answer here\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "multi_select",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Rust",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "Python",
+              "keys": [
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "JavaScript",
+              "keys": [
+                "Down",
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            }
+          ],
+          "multiple": true
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Type another answer",
+          "keys": [
+            "z"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_multi_cursor_1",
+    "screen": "┃\n┃  Which languages?\n┃\n┃  1 [x] Rust\n┃  2 [ ] \u001b[1mPython\u001b[22m\n┃  3 [ ] JavaScript\n┃  z [ ] Type your answer here\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "multi_select",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Rust",
+              "keys": [
+                "Up",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            },
+            {
+              "label": "Python",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "JavaScript",
+              "keys": [
+                "Down",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            }
+          ],
+          "multiple": true
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Submit current choices",
+          "keys": [
+            "Up",
+            "Enter"
+          ]
+        },
+        {
+          "label": "Type another answer",
+          "keys": [
+            "z"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_multi_cursor_2",
+    "screen": "┃\n┃  Which languages?\n┃\n┃  1 [x] Rust\n┃  2 [ ] Python\n┃  3 [x] \u001b[1mJavaScript\u001b[22m\n┃  z [ ] Type your answer here\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "multi_select",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Rust",
+              "keys": [
+                "Up",
+                "Up",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            },
+            {
+              "label": "Python",
+              "keys": [
+                "Up",
+                "Space"
+              ],
+              "toggle": true,
+              "selected": false
+            },
+            {
+              "label": "JavaScript",
+              "keys": [
+                "Space"
+              ],
+              "toggle": true,
+              "selected": true
+            }
+          ],
+          "multiple": true
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Submit current choices",
+          "keys": [
+            "Up",
+            "Up",
+            "Enter"
+          ]
+        },
+        {
+          "label": "Type another answer",
+          "keys": [
+            "z"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_page_two",
+    "screen": "┃\n┃  Choose deployment mode.\n┃\n┃  1 (●) \u001b[1mCanary\u001b[22m\n┃  2 (○) Rolling\n  [2/3] ↑/↓ navigate · ←/→ question · y copy       Enter:select\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Canary",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Rolling",
+              "keys": [
+                "2"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "X"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Previous question",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Next question",
+          "keys": [
+            "Right"
+          ]
+        },
+        {
+          "label": "Expand question",
+          "keys": [
+            "ctrl-f"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "question_text_empty",
+    "screen": "┃\n┃  Share details.\n┃\n┃  z (○) ❯\n┃\nEnter:submit  Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "text",
+      "questions": [
+        {
+          "options": [],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [],
+      "text": {
+        "label": "Answer",
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "multiline": true,
+        "mode": "paste",
+        "value": ""
+      }
+    },
+    "native_source": "views/question_view.rs + app/agent_view/interactions.rs::handle_question_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "pattern_editor",
+    "screen": "┃\n┃  Allow command?\n┃  type a command pattern to allow (e.g. gh api repos/*)\n┃  ❯ git status\n┃\nEnter save  Esc cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "text",
+      "questions": [
+        {
+          "options": [],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [],
+      "text": {
+        "label": "Command pattern",
+        "before_keys": [
+          "ctrl-u"
+        ],
+        "after_keys": [
+          "Enter"
+        ],
+        "multiline": false,
+        "mode": "data",
+        "value": "git status"
+      }
+    },
+    "native_source": "views/permission_view.rs::PatternEditState + app/agent_view/interactions.rs",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "cancel_running_subagents",
+    "screen": "┃\n┃  Subagents are still running. Stop them?\n┃\n┃  1 subagent running\n┃\n┃  1 (●) \u001b[1mStop running\u001b[22m\n┃  2 (○) Continue to run\n┃  3 (○) Always stop\n┃  4 (○) Always continue\n┃\n1-4:select Tab:next choice Enter:confirm Esc:back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "confirmation",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Stop running",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Continue to run",
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "label": "Always stop",
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "label": "Always continue",
+              "keys": [
+                "4"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/modal.rs::render_cancel_turn_panel + app/agent_view/interactions.rs::handle_cancel_turn_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "folder_trust",
+    "screen": "Do you trust the contents of this directory?\n/tmp/project\n\nGrok Build may run or modify contents in this directory,\nposing security risks.\n\nYes, proceed    y\nNo, quit        n\n1.0.41\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "folder_trust",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, proceed",
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "label": "No, quit",
+              "keys": [
+                "n"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": []
+    },
+    "native_source": "views/welcome/mod.rs::render_trust_welcome + app/app_view.rs::handle_welcome_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "model_picker",
+    "screen": "╭────────────────────────────────────────────────────────────────────────────╮\n│ Pick model                                                                 │\n│ search:                                                                    │\n│ ◆ \u001b[1mgrok-4.6\u001b[22m                                                                 │\n│ ◆ grok-4.7                                                                 │\n│ ↑/↓ nav   Enter select   Esc close                                          │\n╰────────────────────────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "grok-4.6",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "grok-4.7",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/picker.rs::render_picker_row + app/modals.rs::handle_arg_picker_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "effort_picker",
+    "screen": "╭────────────────────────────────────────────────────────────────────────────╮\n│ Pick reasoning effort                                                      │\n│ search:                                                                    │\n│ ◆ Low                                                                      │\n│ ◆ \u001b[1mMedium\u001b[22m                                                                   │\n│ ◆ High                                                                     │\n│ ↑/↓ nav   Enter select   Esc close                                          │\n╰────────────────────────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Low",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Medium",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "High",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/picker.rs::render_picker_row + app/modals.rs::handle_arg_picker_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "theme_picker",
+    "screen": "╭────────────────────────────────────────────────────────────────────────────╮\n│ Pick theme                                                                 │\n│ search:                                                                    │\n│ ◆ \u001b[1mTerminal\u001b[22m                                                                 │\n│ ◆ Grokday                                                                  │\n│ ↑/↓ nav   Enter select   Esc close                                          │\n╰────────────────────────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Terminal",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Grokday",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/picker.rs::render_picker_row + app/modals.rs::handle_arg_picker_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "command_palette",
+    "screen": "╭────────────────────────────────────────────────────────────────────────────╮\n│ Commands                                                                   │\n│ search:                                                                    │\n│ ◆ New Session                                                              │\n│ ◆ \u001b[1mResume Session\u001b[22m                                                           │\n│ ◆ Settings                                                                 │\n│ ↑/↓ nav   Enter select   Esc close                                          │\n╰────────────────────────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "New Session",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Resume Session",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Settings",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/picker.rs::render_picker_row + app/modals.rs::handle_arg_picker_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "settings_enum",
+    "screen": "╭────────────────────────────────────────────────────────────────────────────╮\n│ Settings › Effort                                                          │\n│ search:                                                                    │\n│ ●  Low                                                                      │\n│ ○  Medium                                                                   │\n│ ○  \u001b[1mHigh\u001b[22m                                                                     │\n│ ↑/↓ nav   Enter select   Esc close                                          │\n╰────────────────────────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Low",
+              "keys": [
+                "Up",
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Medium",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "High",
+              "keys": [
+                "Enter"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Previous options",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Next options",
+          "keys": [
+            "Down"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/picker.rs::render_picker_row + app/modals.rs::handle_arg_picker_input",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_history",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  Working directory: /tmp/project\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\nThe process continued.\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_quoted",
+    "screen": "> ┃\n> ┃  Allow command?\n> ┃\n> ┃  $ git status\n> ┃  Working directory: /tmp/project\n> ┃\n> ┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n> ┃  2 (○) Yes, always allow git status\n> ┃  3 (○) Never allow git status\n> ┃  4 (○) No, reject (type to add feedback)\n> ┃\n> 1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_fenced",
+    "screen": "```text\n┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  Working directory: /tmp/project\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n```\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_partial_footer",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  Working directory: /tmp/project\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_clipped_warning",
+    "screen": "┃\n┃  Allow command?\n┃\n┃  $ git status\n┃  ... Ctrl-F to expand\n┃  Working directory: /tmp/project\n┃\n┃  1 (●) \u001b[1mYes, allow once\u001b[22m\n┃  2 (○) Yes, always allow git status\n┃  3 (○) Never allow git status\n┃  4 (○) No, reject (type to add feedback)\n┃\n1-4:select  Tab:next option  Ctrl+O:always-approve  Ctrl+C:cancel  Esc:back\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_partial_warning",
+    "screen": "Do you trust the contents of this directory?\n/tmp/project\n\nGrok Build may run or modify contents in this directory,\n\n\nYes, proceed    y\nNo, quit        n\n1.0.41\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_multi_no_styled_focus",
+    "screen": "┃\n┃  Which languages?\n┃\n┃  1 [ ] Rust\n┃  2 [ ] Python\n┃  3 [ ] JavaScript\n┃  z [ ] Type your answer here\n  ↑/↓ navigate · y copy       Enter:submit\n┃\nTab:next answer  Esc:back  X:dismiss\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "negative_text_draft",
+    "screen": "┃\n┃  Share details.\n┃\n┃  z (○) ❯ existing draft\n┃\nEnter:submit  Esc:back\n",
+    "expected": null,
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fallback_login_secret",
+    "screen": "Grok Build\nPaste your token here...\nEnter:submit Esc:back\n",
+    "expected": null,
+    "native_source": "views/welcome/mod.rs + app/app_view.rs",
+    "native_outcome": "Use the native terminal for this explicitly inventoried unsupported surface.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fallback_plan_clipped",
+    "screen": "┃\n┃ Waiting on plan approval\n┃ [plan content unavailable]\n┃\na:approve Tab:plan Esc:back\n",
+    "expected": null,
+    "native_source": "views/plan_approval_view.rs",
+    "native_outcome": "Use the native terminal for this explicitly inventoried unsupported surface.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fallback_mcp_schema",
+    "screen": "┃ MCP server needs input\n┃ API token (required)\n┃ y Accept\n┃ d Decline\nEnter:accept / toggle d:decline Ctrl+C:cancel Tab:next field Esc:back\n",
+    "expected": null,
+    "native_source": "views/elicitation_view/render.rs",
+    "native_outcome": "Use the native terminal for this explicitly inventoried unsupported surface.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fallback_update",
+    "screen": "Grok Build update available\nDownload in progress\n",
+    "expected": null,
+    "native_source": "app/update.rs",
+    "native_outcome": "Use the native terminal for this explicitly inventoried unsupported surface.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "fallback_keybinding_capture",
+    "screen": "Keyboard Shortcuts\nPress a key to bind\nEsc cancel\n",
+    "expected": null,
+    "native_source": "views/shortcuts_help.rs",
+    "native_outcome": "Use the native terminal for this explicitly inventoried unsupported surface.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "settings_reset",
+    "screen": "╭─────────────────────────────────────────────────────────╮\n│ Settings › Reset 'Compact mode'                         │\n│ Reset 'Compact mode' to default (off)?                   │\n│ y reset  n cancel  Esc cancel  F2 cancel                 │\n╰─────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "confirmation",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Reset to default",
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "n"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": []
+    },
+    "native_source": "views/settings_modal/render.rs + app/modals.rs::handle_modal_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "settings_integer",
+    "screen": "╭─────────────────────────────────────────────────────────╮\n│ Settings › FPS                                          │\n│ 30                                                      │\n│ ↑/↓ +/-5  ←/→ +/-10   Enter commit   Esc cancel                  │\n╰─────────────────────────────────────────────────────────╯\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "setting",
+      "questions": [
+        {
+          "options": [],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": [
+        {
+          "label": "Increase by one step",
+          "keys": [
+            "Up"
+          ]
+        },
+        {
+          "label": "Decrease by one step",
+          "keys": [
+            "Down"
+          ]
+        },
+        {
+          "label": "Increase by a larger step",
+          "keys": [
+            "Right"
+          ]
+        },
+        {
+          "label": "Decrease by a larger step",
+          "keys": [
+            "Left"
+          ]
+        },
+        {
+          "label": "Commit current value",
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "native_source": "views/settings_modal/input.rs::handle_int_stepper",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "queue_edit_confirm",
+    "screen": "Save changes?  y:save  n:discard changes  x:delete prompt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "confirmation",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "save",
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "label": "discard changes",
+              "keys": [
+                "n"
+              ]
+            },
+            {
+              "label": "delete prompt",
+              "keys": [
+                "x"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": []
+    },
+    "native_source": "views/modal.rs::render_modal_overlay + app/modals.rs::handle_modal_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  },
+  {
+    "name": "queue_edit_confirm_send",
+    "screen": "Save and send?  y:save & send  n:discard & send  x:delete prompt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "grok",
+      "state": "waiting",
+      "menu_type": "confirmation",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "save & send",
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "label": "discard & send",
+              "keys": [
+                "n"
+              ]
+            },
+            {
+              "label": "delete prompt",
+              "keys": [
+                "x"
+              ]
+            }
+          ],
+          "multiple": false
+        }
+      ],
+      "cancel_keys": [
+        "Escape"
+      ],
+      "actions": []
+    },
+    "native_source": "views/modal.rs::render_modal_overlay + app/modals.rs::handle_modal_key",
+    "native_outcome": "The exact source-derived keys implement only this explicit choice; the next native frame is recaptured.",
+    "fixture_origin": "Synthetic frame constructed from the public native renderer and input-handler definitions; not an installed-binary screenshot."
+  }
+]

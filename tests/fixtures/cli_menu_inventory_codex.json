@@ -1,0 +1,3334 @@
+{
+  "cli": "codex",
+  "installed_version": "0.159.2",
+  "also_audited_version": "0.159.0",
+  "source": {
+    "repository": "https://github.com/openai/codex",
+    "release": "rust-v0.159.2",
+    "commit": "8b9fa496bbf2c47aebd62e85a080b9a522a455b5",
+    "original_release": "rust-v0.159.0",
+    "original_commit": "377f7f557a6bdea0f3a2d26d4d899c66db4789d0",
+    "comparison": "Production tui/src source identical between these two release tarballs; six test/snapshot files differ. Unmatched research checkout was not used as authority.",
+    "evidence": "Installed codex --version; official tagged source tarballs; native checked-in rendering snapshots plus source handle_key_event."
+  },
+  "audit_method": "Read-only exact-release rendering/key handling scan; offline synthetic/native snapshot fixtures. No API/model requests, CLI-account settings, transcripts, credential files, or production sessions read.",
+  "complete_support": false,
+  "limitations": [
+    "Source constructor/custom-view scan is comprehensive evidence; parser coverage is explicitly partial.",
+    "Screen tails cannot provide a native transactional ready/answer protocol; parent must recapture immediately before each explicit action.",
+    "Numeric shortcuts bypass cursor/default selection; sensitive trust/unanswered rows require explicit Enter.",
+    "Unknown keymap bindings and server-defined layouts remain native fallback.",
+    "Secret/ambiguous/nonempty text input is never surfaced as a composer text field."
+  ],
+  "menus": [
+    {
+      "id": "directory-trust",
+      "category": "onboarding",
+      "source": "onboarding/trust_directory.rs",
+      "labels": [
+        "Trust and continue",
+        "Quit",
+        "Back to Agent Command Center",
+        "Open restricted",
+        "Open existing task"
+      ],
+      "native_keys": {
+        "1": "highlight first then Enter required",
+        "2": "immediate exit/back",
+        "Enter": "current row",
+        "Escape": "quit/back"
+      },
+      "support": "supported",
+      "fallback_reason": "Only complete visible disclosures; clipped content falls back."
+    },
+    {
+      "id": "login-mode",
+      "category": "onboarding",
+      "source": "onboarding/auth.rs",
+      "labels": [
+        "Sign in with ChatGPT",
+        "Sign in with Device Code",
+        "Provide your own API key",
+        "Use an OpenAI API key",
+        "Use Amazon Bedrock"
+      ],
+      "native_keys": {
+        "1..4": "immediate native mode selection",
+        "Enter": "highlighted mode"
+      },
+      "support": "supported",
+      "fallback_reason": "Known introductory heading and complete Press enter to continue footer required; credential entry itself stays in terminal."
+    },
+    {
+      "id": "login-browser-device",
+      "category": "onboarding",
+      "source": "onboarding/auth.rs",
+      "labels": [
+        "Continue in browser",
+        "Sign in with Device Code"
+      ],
+      "native_keys": {
+        "c": "copy link",
+        "Escape": "cancel attempt"
+      },
+      "support": "fallback",
+      "fallback_reason": "Browser/device authentication is an external flow, not an answerable question; links/codes and OAuth results are not synthesized."
+    },
+    {
+      "id": "openai-key-entry",
+      "category": "credential",
+      "source": "onboarding/auth.rs",
+      "labels": [
+        "Paste or type your API key"
+      ],
+      "native_keys": {
+        "Enter": "persist key",
+        "Escape": "back"
+      },
+      "support": "fallback",
+      "fallback_reason": "Secret entry and existing environment-derived values are never exposed in composer."
+    },
+    {
+      "id": "bedrock-methods",
+      "category": "onboarding",
+      "source": "onboarding/bedrock.rs",
+      "labels": [
+        "Continue with detected credentials",
+        "Other methods",
+        "AWS profile",
+        "AWS access keys",
+        "Bedrock API key"
+      ],
+      "native_keys": {
+        "1..9": "immediate selection",
+        "Enter": "highlighted choice",
+        "Escape": "back"
+      },
+      "support": "supported",
+      "fallback_reason": "Only full method-selector render with known heading/footer; credential and region/profile text forms fall back."
+    },
+    {
+      "id": "bedrock-secret-forms",
+      "category": "credential",
+      "source": "onboarding/bedrock.rs",
+      "labels": [
+        "AWS access key",
+        "AWS secret key",
+        "Session token",
+        "Bedrock API key",
+        "AWS Region",
+        "Profile"
+      ],
+      "native_keys": {
+        "Tab/Up/Down": "field navigation",
+        "Enter": "confirm"
+      },
+      "support": "fallback",
+      "fallback_reason": "Multi-field credential wizard and potentially prefilled values require the native terminal."
+    },
+    {
+      "id": "hooks-startup",
+      "category": "onboarding",
+      "source": "startup_hooks_review.rs",
+      "labels": [
+        "Review hooks",
+        "Trust all and continue",
+        "Continue without trusting (hooks won't run)"
+      ],
+      "native_keys": {
+        "1": "open review",
+        "2,Enter": "trust all explicitly",
+        "3": "skip trust",
+        "Escape": "skip"
+      },
+      "support": "supported",
+      "fallback_reason": ""
+    },
+    {
+      "id": "hooks-detail",
+      "category": "hooks",
+      "source": "bottom_pane/hooks_browser_view.rs",
+      "labels": [
+        "Trust",
+        "Enable",
+        "Disable",
+        "Reset trust"
+      ],
+      "native_keys": {
+        "t": "trust",
+        "space": "toggle",
+        "Escape": "back"
+      },
+      "support": "fallback",
+      "fallback_reason": "Dynamic event/handler details include non-numbered hierarchical rows; no faithful shared keymap reconstruction yet."
+    },
+    {
+      "id": "windows-sandbox",
+      "category": "sandbox",
+      "source": "chatwidget/windows_sandbox_prompts.rs",
+      "labels": [
+        "Set up default sandbox (requires Administrator permissions)",
+        "Quit",
+        "Try setting up admin sandbox again",
+        "Continue without sandbox"
+      ],
+      "native_keys": {
+        "digits": "immediate except sensitive without-sandbox choice needs Enter"
+      },
+      "support": "supported",
+      "fallback_reason": "Sensitive label without sandbox is explicitly confirmed; unknown wizard renders fall back."
+    },
+    {
+      "id": "command-approval",
+      "category": "approval",
+      "source": "bottom_pane/approval_overlay.rs",
+      "labels": [
+        "Yes, proceed",
+        "Yes, and don't ask again for commands that start with ...",
+        "No, and tell Codex what to do differently"
+      ],
+      "native_keys": {
+        "y": "once",
+        "p": "persist rule",
+        "esc": "decline",
+        "digits": "equivalent native immediate shortcut"
+      },
+      "support": "supported",
+      "fallback_reason": "Clipped commands/reasons are never approved from omitted text."
+    },
+    {
+      "id": "patch-approval",
+      "category": "approval",
+      "source": "bottom_pane/approval_overlay.rs",
+      "labels": [
+        "Yes, proceed",
+        "Yes, and don't ask again for these files",
+        "No, and tell Codex what to do differently"
+      ],
+      "native_keys": {
+        "y": "once",
+        "a": "files/session policy",
+        "esc": "decline"
+      },
+      "support": "supported",
+      "fallback_reason": ""
+    },
+    {
+      "id": "permission-grant",
+      "category": "approval",
+      "source": "bottom_pane/approval_overlay.rs",
+      "labels": [
+        "Yes, grant these permissions for this turn",
+        "Yes, grant for this turn with strict auto review",
+        "Yes, grant these permissions for this session",
+        "No, continue without permissions"
+      ],
+      "native_keys": {
+        "y": "turn",
+        "r": "strict review",
+        "a": "session",
+        "d": "decline"
+      },
+      "support": "supported",
+      "fallback_reason": ""
+    },
+    {
+      "id": "network-approval",
+      "category": "approval",
+      "source": "bottom_pane/approval_overlay.rs",
+      "labels": [
+        "Yes, just this once",
+        "Yes, and allow this host for this conversation",
+        "Yes, and allow this host in the future",
+        "No, and tell Codex what to do differently"
+      ],
+      "native_keys": {
+        "y": "once",
+        "a": "conversation",
+        "p": "future host rule",
+        "esc": "decline"
+      },
+      "support": "supported",
+      "fallback_reason": ""
+    },
+    {
+      "id": "user-verification",
+      "category": "approval",
+      "source": "bottom_pane/user_verification.rs",
+      "labels": [
+        "server-defined choices"
+      ],
+      "native_keys": {
+        "displayed shortcut": "select",
+        "Enter": "highlighted choice",
+        "Escape": "cancel"
+      },
+      "support": "supported",
+      "fallback_reason": "Dynamic title recognized through source-defined Server field plus exact Verify and approve/Cancel rows and native approval footer. Clipped disclosure fallback."
+    },
+    {
+      "id": "request-user-input",
+      "category": "question",
+      "source": "bottom_pane/request_user_input/mod.rs",
+      "labels": [
+        "tool-defined choices",
+        "None of the above",
+        "Add notes",
+        "Type your answer (optional)"
+      ],
+      "native_keys": {
+        "digits": "select+advance/submit immediately",
+        "Enter": "commit current+next/submit, except Other opens notes",
+        "Tab": "notes",
+        "ctrl-p/ctrl-n": "previous/next question",
+        "Space": "commit selection without advancing",
+        "Escape": "interrupt, or clear notes when notes focused"
+      },
+      "support": "supported",
+      "fallback_reason": "One visible page at a time. Notes/free-text must be visibly empty; existing drafts remain in PTY. Runtime remapped submit/interrupt single keys supported from footer; multi-key chords fallback."
+    },
+    {
+      "id": "unanswered-confirmation",
+      "category": "question",
+      "source": "bottom_pane/request_user_input/mod.rs",
+      "labels": [
+        "Proceed",
+        "Go back"
+      ],
+      "native_keys": {
+        "1/2": "highlight only",
+        "Enter": "confirm",
+        "Escape": "return to first unanswered"
+      },
+      "support": "supported",
+      "fallback_reason": ""
+    },
+    {
+      "id": "mcp-select-elicitation",
+      "category": "question",
+      "source": "bottom_pane/mcp_server_elicitation.rs",
+      "labels": [
+        "Allow",
+        "Allow for this session",
+        "Always allow",
+        "Cancel",
+        "schema-defined enum/boolean choices"
+      ],
+      "native_keys": {
+        "digits": "commit+advance/submit immediately",
+        "Enter": "commit current+next/submit",
+        "ctrl-p/ctrl-n": "field navigation",
+        "Escape": "cancel"
+      },
+      "support": "supported",
+      "fallback_reason": "Only selectable fields, one visible field at a time; malformed/custom chord layouts fallback."
+    },
+    {
+      "id": "mcp-text-elicitation",
+      "category": "question",
+      "source": "bottom_pane/mcp_server_elicitation.rs",
+      "labels": [
+        "Type your answer",
+        "Type your answer (optional)"
+      ],
+      "native_keys": {
+        "submit": "native composer submit binding",
+        "Escape": "cancel"
+      },
+      "support": "fallback",
+      "fallback_reason": "Source current_field_is_secret only affects masking; an empty secret field is visually indistinguishable from a nonsecret field. Do not expose any MCP text field without native schema metadata."
+    },
+    {
+      "id": "model",
+      "category": "settings",
+      "source": "chatwidget/model_popups.rs",
+      "labels": [
+        "Select Model",
+        "Select Model and Effort",
+        "All models"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "effort",
+      "category": "settings",
+      "source": "chatwidget/model_popups.rs",
+      "labels": [
+        "Select Reasoning Level for ...",
+        "Advanced Reasoning",
+        "More reasoning…"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "permissions",
+      "category": "settings",
+      "source": "chatwidget/permissions_menu.rs",
+      "labels": [
+        "Ask for approval",
+        "Approve for me",
+        "Full Access",
+        "Read Only",
+        "custom profiles"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "full-access-confirm",
+      "category": "settings",
+      "source": "chatwidget/permission_popups.rs",
+      "labels": [
+        "Yes, continue anyway",
+        "Cancel"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "review",
+      "category": "review",
+      "source": "chatwidget/review_popups.rs",
+      "labels": [
+        "Select a review preset",
+        "Select a base branch",
+        "Select a commit to review"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "syntax-theme",
+      "category": "settings",
+      "source": "theme_picker.rs",
+      "labels": [
+        "Select Syntax Theme"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "voice",
+      "category": "settings",
+      "source": "chatwidget/realtime_settings.rs",
+      "labels": [
+        "Select voice"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "pets",
+      "category": "settings",
+      "source": "pets/picker.rs",
+      "labels": [
+        "Select Pet"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "skills-action",
+      "category": "settings",
+      "source": "chatwidget/skills.rs",
+      "labels": [
+        "Skills"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "apps",
+      "category": "extensions",
+      "source": "chatwidget/connectors.rs",
+      "labels": [
+        "Apps"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "plugins",
+      "category": "extensions",
+      "source": "chatwidget/plugin_catalog.rs",
+      "labels": [
+        "Plugins"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "worktrees",
+      "category": "session",
+      "source": "chatwidget/worktree_picker.rs",
+      "labels": [
+        "Worktrees",
+        "Managed worktrees",
+        "Delete this worktree?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "archive-delete",
+      "category": "session",
+      "source": "chatwidget/slash_dispatch.rs",
+      "labels": [
+        "Archive this session?",
+        "Delete this session?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "goal",
+      "category": "session",
+      "source": "chatwidget/goal_menu.rs",
+      "labels": [
+        "Resume paused goal?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "replace-goal",
+      "category": "session",
+      "source": "app/thread_goal_actions.rs",
+      "labels": [
+        "Replace goal?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "plan",
+      "category": "question",
+      "source": "chatwidget/plan_implementation.rs",
+      "labels": [
+        "Implement this plan?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "usage-reset",
+      "category": "billing",
+      "source": "chatwidget/usage.rs",
+      "labels": [
+        "Usage",
+        "Usage limit resets",
+        "Use this reset?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "rate-limits",
+      "category": "billing",
+      "source": "chatwidget/rate_limits.rs",
+      "labels": [
+        "Approaching rate limits"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "luna-reserve",
+      "category": "billing",
+      "source": "chatwidget/luna_reserve_model.rs",
+      "labels": [
+        "Add credits",
+        "Upgrade",
+        "Continue with Luna Reserve"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "paused-precaution",
+      "category": "safety",
+      "source": "chatwidget/misalignment_policy.rs",
+      "labels": [
+        "Chat paused as a precaution"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "copy-export",
+      "category": "session",
+      "source": "chatwidget/transcript_export.rs",
+      "labels": [
+        "Export conversation",
+        "Copy to clipboard",
+        "Save to file"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "tui-mode",
+      "category": "settings",
+      "source": "chatwidget/tui_mode_picker.rs",
+      "labels": [
+        "TUI mode for next launch"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "daemon",
+      "category": "runtime",
+      "source": "app/daemon_menu.rs",
+      "labels": [
+        "Daemon",
+        "Update daemon and exit Codex?"
+      ],
+      "native_keys": {
+        "digits": "immediate accept on non-searchable numbered menus; explicit-sensitive entries only highlight",
+        "Enter": "accept highlighted choice",
+        "s": "session-only model/effort secondary action when footer advertises it",
+        "Escape": "cancel/back"
+      },
+      "support": "partial",
+      "fallback_reason": "Known titles and complete numeric rows supported; dynamic detail titles, custom navigation maps, sensitive variants not fixture-proven, and unnumbered/search results stay terminal fallback. Model/effort session scope is an explicit separate action, never automatically selected."
+    },
+    {
+      "id": "experimental",
+      "category": "multi_select",
+      "source": "bottom_pane/experimental_features_view.rs",
+      "labels": [
+        "Experimental features"
+      ],
+      "native_keys": {
+        "Up/Down": "move focus",
+        "Space": "toggle",
+        "Left/Right": "reorder where advertised",
+        "Enter": "save except skill toggle",
+        "Escape": "cancel except experimental saves/closes and skills closes"
+      },
+      "support": "partial",
+      "fallback_reason": "Visible checkbox rows supported with explicit toggle state; movement keys assume default List keymap, whose remapped vertical bindings are not visible in footer. Unknown remapped footer layouts fall back."
+    },
+    {
+      "id": "status-line",
+      "category": "multi_select",
+      "source": "bottom_pane/status_line_setup.rs",
+      "labels": [
+        "Configure Status Line"
+      ],
+      "native_keys": {
+        "Up/Down": "move focus",
+        "Space": "toggle",
+        "Left/Right": "reorder where advertised",
+        "Enter": "save except skill toggle",
+        "Escape": "cancel except experimental saves/closes and skills closes"
+      },
+      "support": "partial",
+      "fallback_reason": "Visible checkbox rows supported with explicit toggle state; movement keys assume default List keymap, whose remapped vertical bindings are not visible in footer. Unknown remapped footer layouts fall back."
+    },
+    {
+      "id": "terminal-title",
+      "category": "multi_select",
+      "source": "bottom_pane/title_setup.rs",
+      "labels": [
+        "Configure Terminal Title"
+      ],
+      "native_keys": {
+        "Up/Down": "move focus",
+        "Space": "toggle",
+        "Left/Right": "reorder where advertised",
+        "Enter": "save except skill toggle",
+        "Escape": "cancel except experimental saves/closes and skills closes"
+      },
+      "support": "partial",
+      "fallback_reason": "Visible checkbox rows supported with explicit toggle state; movement keys assume default List keymap, whose remapped vertical bindings are not visible in footer. Unknown remapped footer layouts fall back."
+    },
+    {
+      "id": "skills-toggle",
+      "category": "multi_select",
+      "source": "bottom_pane/skills_toggle_view.rs",
+      "labels": [
+        "Enable/Disable Skills"
+      ],
+      "native_keys": {
+        "Up/Down": "move focus",
+        "Space": "toggle",
+        "Left/Right": "reorder where advertised",
+        "Enter": "save except skill toggle",
+        "Escape": "cancel except experimental saves/closes and skills closes"
+      },
+      "support": "partial",
+      "fallback_reason": "Visible checkbox rows supported with explicit toggle state; movement keys assume default List keymap, whose remapped vertical bindings are not visible in footer. Unknown remapped footer layouts fall back."
+    },
+    {
+      "id": "resume-fork",
+      "category": "session",
+      "source": "resume_picker.rs",
+      "labels": [
+        "Resume a previous session",
+        "Fork a previous session"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Non-numbered searchable multi-column virtual list with preview/archive grouping; no trustworthy per-row composer key mapping yet."
+    },
+    {
+      "id": "rewind",
+      "category": "session",
+      "source": "app/backtrack.rs",
+      "labels": [
+        "Edit previous message"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Esc rewind navigates transcript and restores editor draft; this is not a complete numbered menu."
+    },
+    {
+      "id": "reset-memories",
+      "category": "settings",
+      "source": "bottom_pane/memories_settings_view.rs",
+      "labels": [
+        "Memories",
+        "Reset all memories?"
+      ],
+      "native_keys": {
+        "Space": "toggle setting",
+        "Up/Down": "select row",
+        "Enter": "save settings or open/confirm explicit reset",
+        "Escape": "cancel/back"
+      },
+      "support": "supported",
+      "fallback_reason": "Visible mixed checkbox/action rows and unnumbered reset confirmation supported; clipped and remapped layouts remain fallback."
+    },
+    {
+      "id": "keymap",
+      "category": "settings",
+      "source": "keymap_setup/picker.rs",
+      "labels": [
+        "Keymap",
+        "Edit shortcut"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "partial",
+      "fallback_reason": "Ordinary category/action list, group tabs, Edit Shortcut/Replace Binding/Shortcut Conflict choice menus supported. Arbitrary key capture remains native terminal."
+    },
+    {
+      "id": "async-questions",
+      "category": "question",
+      "source": "bottom_pane/async_questions/input.rs",
+      "labels": [
+        "Questions"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Async question stack is distinct from request_user_input pages; no native fixture-supported parser yet."
+    },
+    {
+      "id": "safety-buffer-retry",
+      "category": "safety",
+      "source": "chatwidget/safety_buffering.rs",
+      "labels": [
+        "Keep waiting",
+        "Stop and retry"
+      ],
+      "native_keys": {
+        "1": "keep waiting",
+        "2,Enter": "stop and retry explicitly"
+      },
+      "support": "supported",
+      "fallback_reason": "Exact source-defined heading and fixed final Stop and retry row establish footerless selector; truncated disclosures fallback."
+    },
+    {
+      "id": "daemon-recovery",
+      "category": "runtime",
+      "source": "daemon_recovery.rs",
+      "labels": [
+        "Run without daemon this time",
+        "Restart with these settings",
+        "Cancel"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "supported",
+      "fallback_reason": "Exact source headings and fixed final Cancel row establish footerless selector. Restart with these settings requires explicit Enter."
+    },
+    {
+      "id": "custom-prompt",
+      "category": "question",
+      "source": "bottom_pane/custom_prompt_view.rs",
+      "labels": [
+        "Custom review instructions"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Native editor draft and arbitrary instructions require terminal; empty placeholder layout not audited."
+    },
+    {
+      "id": "app-link",
+      "category": "extensions",
+      "source": "bottom_pane/app_link_view.rs",
+      "labels": [
+        "Connect app"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "External account/auth flow; arbitrary detail view is not a simple numbered question."
+    },
+    {
+      "id": "settings-popups",
+      "category": "settings",
+      "source": "chatwidget/settings_popups.rs",
+      "labels": [
+        "server-provided settings"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Dynamic server descriptors require complete typed native metadata or explicit title/layout audit."
+    },
+    {
+      "id": "feedback-logs",
+      "category": "feedback",
+      "source": "bottom_pane/feedback_view.rs",
+      "labels": [
+        "Yes",
+        "No",
+        "Cancel"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Consent view can omit a footer at narrow height; uploading diagnostics requires complete disclosures. Category selector and visibly-empty note editor are supported."
+    },
+    {
+      "id": "feedback-nonempty",
+      "category": "feedback",
+      "source": "bottom_pane/feedback_note_view.rs",
+      "labels": [
+        "Tell us more"
+      ],
+      "native_keys": {
+        "native": "use terminal"
+      },
+      "support": "fallback",
+      "fallback_reason": "Composer must never append to native existing text; no whole-buffer replacement proven."
+    },
+    {
+      "id": "update",
+      "category": "update",
+      "source": "update_prompt.rs",
+      "labels": [
+        "Update now (runs ...)",
+        "Skip",
+        "Skip until next version"
+      ],
+      "native_keys": {
+        "1": "update",
+        "2": "skip",
+        "3": "persist dismissal",
+        "Escape": "skip"
+      },
+      "support": "supported",
+      "fallback_reason": "Only user-selected update/dismissal is sent, never automatic."
+    }
+  ],
+  "source_inventory": [
+    {
+      "source": "app/agents_overview.rs",
+      "line": 77,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Shared agents unavailable",
+        "Start background server",
+        "Return to this session"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/agents_overview_actions.rs",
+      "line": 139,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/agents_overview_actions.rs",
+      "line": 313,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Back to agents"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/agents_overview_errors.rs",
+      "line": 35,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Return to command center"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/agents_overview_view.rs",
+      "line": 460,
+      "construct": "impl BottomPaneView for AgentsOverviewView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/daemon_menu.rs",
+      "line": 81,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/daemon_menu.rs",
+      "line": 107,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Cancel",
+        "Update and exit"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/event_dispatch.rs",
+      "line": 3257,
+      "construct": "self.chat_widget.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/input.rs",
+      "line": 490,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Task is still running",
+        "Choose what happens to the current task."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/session_lifecycle.rs",
+      "line": 163,
+      "construct": "self.chat_widget.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/session_lifecycle.rs",
+      "line": 173,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/session_lifecycle.rs",
+      "line": 215,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Subagents"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/session_picker.rs",
+      "line": 150,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Unable to resume session",
+        "Return to command center"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "app/thread_goal_actions.rs",
+      "line": 319,
+      "construct": "self.chat_widget.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Replace current goal",
+        "Cancel",
+        "Replace goal?"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/actionable_banner.rs",
+      "line": 138,
+      "construct": "impl From<ActionableBanner> for SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/actionable_banner.rs",
+      "line": 163,
+      "construct": "self.show_selection_view(banner.into());",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/actionable_banner.rs",
+      "line": 189,
+      "construct": "InlineBannerContent::Actions(Box::new(ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/app_link_view.rs",
+      "line": 702,
+      "construct": "impl BottomPaneView for AppLinkView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/approval_overlay.rs",
+      "line": 198,
+      "construct": "list: ListSelectionView::new(Default::default(), app_event_tx, list_keymap.clone()),",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/approval_overlay.rs",
+      "line": 244,
+      "construct": "ListSelectionView::new(params, self.app_event_tx.clone(), self.list_keymap.clone());",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/approval_overlay.rs",
+      "line": 316,
+      "construct": "let params = SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/approval_overlay.rs",
+      "line": 583,
+      "construct": "impl BottomPaneView for ApprovalOverlay {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/async_questions/input.rs",
+      "line": 138,
+      "construct": "impl BottomPaneView for AsyncQuestions {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/custom_prompt_view.rs",
+      "line": 195,
+      "construct": "impl BottomPaneView for CustomPromptView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/experimental_features_view.rs",
+      "line": 275,
+      "construct": "impl BottomPaneView for ExperimentalFeaturesView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_note_view.rs",
+      "line": 171,
+      "construct": "impl BottomPaneView for FeedbackNoteView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 146,
+      "construct": ") -> super::SelectionViewParams {",
+      "nearby_literal_labels": [
+        "How was this?"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 147,
+      "construct": "super::SelectionViewParams {",
+      "nearby_literal_labels": [
+        "How was this?"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 186,
+      "construct": "pub(crate) fn feedback_disabled_params() -> super::SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Sending feedback is disabled",
+        "This action is disabled by configuration.",
+        "Close"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 187,
+      "construct": "super::SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Sending feedback is disabled",
+        "This action is disabled by configuration.",
+        "Close"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 226,
+      "construct": ") -> super::SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/feedback_view.rs",
+      "line": 311,
+      "construct": "super::SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Yes",
+        "No"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/hooks_browser_view.rs",
+      "line": 591,
+      "construct": "impl BottomPaneView for HooksBrowserView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 192,
+      "construct": "pub(crate) struct SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 251,
+      "construct": "impl Default for SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1082,
+      "construct": "impl BottomPaneView for ListSelectionView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1680,
+      "construct": "ListSelectionView::new(params, tx, crate::keymap::RuntimeKeymap::defaults().list)",
+      "nearby_literal_labels": [
+        "Selection"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1693,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Selection"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1746,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Read Only",
+        "Full Access",
+        "Select Approval Mode"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1817,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Item 9 with an intentionally much longer name",
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1818,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Item 9 with an intentionally much longer name",
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1887,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "Item 1"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1942,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Read Only",
+        "Select Approval Mode"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1969,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Read Only",
+        "Select Approval Mode",
+        "Select a base branch"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 1993,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select Approval Mode",
+        "Select a base branch",
+        "main -> feature/other",
+        "main -> feature/paste-support"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2016,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select a base branch",
+        "main -> feature/other",
+        "main -> feature/paste-support",
+        "main"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2048,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "main -> feature/paste-support",
+        "main",
+        "Alpha Item"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2070,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "main",
+        "Alpha Item",
+        "Beta Item"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2071,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "main",
+        "Alpha Item",
+        "Beta Item"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2122,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Alpha First",
+        "Alpha Current",
+        "Beta First",
+        "Beta Current"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2123,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Alpha First",
+        "Alpha Current",
+        "Beta First",
+        "Beta Current"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2182,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Plugin"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2183,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugin"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2222,
+      "construct": "let single_line_view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Debug",
+        "A very long plugin name"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2223,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "A very long plugin name"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2242,
+      "construct": "let wrapped_view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Debug",
+        "A very long plugin name"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2243,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "A very long plugin name",
+        "Short"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2305,
+      "construct": "let auto_view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Longer",
+        "Short"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2306,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Longer",
+        "Short"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2317,
+      "construct": "let widened_view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Longer",
+        "Read Only"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2318,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Longer",
+        "Read Only"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2345,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Read Only",
+        "Only choice"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2376,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Only choice",
+        "Unavailable"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2404,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Unavailable",
+        "Alpha",
+        "Busy",
+        "Beta"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2405,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Unavailable",
+        "Alpha",
+        "Busy",
+        "Beta"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2464,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "First",
+        "Second"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2465,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "First",
+        "Second"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2496,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Second",
+        "First"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2497,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Second",
+        "First"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2528,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Second",
+        "First"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2529,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Second",
+        "First"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2561,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Second"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2562,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2595,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Yes, proceed"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2596,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Yes, proceed"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2640,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Yes, proceed",
+        "Yes, and don't ask again for commands that start with `python -mpre_commit run --files eslint-plugin/no-mixed-const-enum-exports.js`",
+        "Approval",
+        "gpt-5.1-codex"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2698,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "gpt-5.1-codex-mini",
+        "gpt-4.1-codex",
+        "Select Model and Effort"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2732,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "gpt-5.1-codex",
+        "gpt-5.1-codex-mini"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2780,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "gpt-5.1-codex-mini",
+        "gpt-4.1-codex",
+        "Select Model and Effort",
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2807,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "abｶﾞc",
+        "aﾊﾟc",
+        "Halfwidth sound marks"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2839,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "abｶﾞc",
+        "aﾊﾟc",
+        "Halfwidth sound marks"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2876,
+      "construct": "let mut view = ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2877,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2911,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Item 1"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2938,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Item 1",
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 2963,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Item 1",
+        "Debug"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 3001,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "Item 1"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/list_selection_view.rs",
+      "line": 3060,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Debug",
+        "Item 1"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mcp_server_elicitation.rs",
+      "line": 1495,
+      "construct": "impl BottomPaneView for McpServerElicitationOverlay {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/memories_settings_view.rs",
+      "line": 318,
+      "construct": "impl BottomPaneView for MemoriesSettingsView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 1399,
+      "construct": "pub(crate) fn show_selection_view(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 1404,
+      "construct": "let view = list_selection_view::ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 1456,
+      "construct": "let view = list_selection_view::ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 1482,
+      "construct": "let mut view = list_selection_view::ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 1540,
+      "construct": "let view = list_selection_view::ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 2676,
+      "construct": "impl BottomPaneView for DismissibleView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 2712,
+      "construct": "impl BottomPaneView for CompletingView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3668,
+      "construct": "pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Agents",
+        "Main"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3772,
+      "construct": "pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Agents",
+        "Main"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3811,
+      "construct": "impl BottomPaneView for EscRoutingView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3870,
+      "construct": "impl BottomPaneView for CountingView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3925,
+      "construct": "impl BottomPaneView for BlockingView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/mod.rs",
+      "line": 3945,
+      "construct": "impl BottomPaneView for PasteCompletesView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/multi_select_picker.rs",
+      "line": 524,
+      "construct": "impl BottomPaneView for MultiSelectPicker {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/request_user_input/mod.rs",
+      "line": 1145,
+      "construct": "impl BottomPaneView for RequestUserInputOverlay {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/skills_toggle_view.rs",
+      "line": 236,
+      "construct": "impl BottomPaneView for SkillsToggleView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/status_line_setup.rs",
+      "line": 398,
+      "construct": "impl BottomPaneView for StatusLineSetupView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/title_setup.rs",
+      "line": 365,
+      "construct": "impl BottomPaneView for TerminalTitleSetupView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/user_verification.rs",
+      "line": 92,
+      "construct": "let params = SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/user_verification.rs",
+      "line": 111,
+      "construct": "list: ListSelectionView::new(params, app_event_tx.clone(), list_keymap.clone()),",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "bottom_pane/user_verification.rs",
+      "line": 172,
+      "construct": "impl BottomPaneView for UserVerificationView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/backend_banners.rs",
+      "line": 477,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [
+        "Continue with Luna Reserve"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 205,
+      "construct": ".show_selection_view(self.connectors_loading_popup_params());",
+      "nearby_literal_labels": [
+        "Apps",
+        "Loading installed and available apps...",
+        "Loading apps...",
+        "Failed to load apps.",
+        "App directory unavailable"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 210,
+      "construct": "self.bottom_pane.show_selection_view(",
+      "nearby_literal_labels": [
+        "Apps",
+        "Loading installed and available apps...",
+        "Loading apps...",
+        "Failed to load apps.",
+        "App directory unavailable"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 216,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Apps",
+        "Loading installed and available apps...",
+        "Loading apps...",
+        "Failed to load apps.",
+        "App directory unavailable",
+        "Retry"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 231,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Apps",
+        "Loading installed and available apps...",
+        "Loading apps...",
+        "Failed to load apps.",
+        "App directory unavailable",
+        "Retry"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 264,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Retry"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/connectors.rs",
+      "line": 344,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/copy_picker.rs",
+      "line": 99,
+      "construct": "self.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Copy to clipboard"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/goal_menu.rs",
+      "line": 50,
+      "construct": "self.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Resume paused goal?",
+        "Resume goal",
+        "Leave paused"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/interaction.rs",
+      "line": 305,
+      "construct": "pub(crate) fn show_selection_view(&mut self, params: SelectionViewParams) {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/interaction.rs",
+      "line": 306,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/keymap_picker.rs",
+      "line": 37,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/keymap_picker.rs",
+      "line": 62,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/keymap_picker.rs",
+      "line": 111,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/keymap_picker.rs",
+      "line": 149,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/luna_reserve_model.rs",
+      "line": 49,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/misalignment_policy.rs",
+      "line": 168,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Review findings",
+        "Agent command center"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/misalignment_policy.rs",
+      "line": 205,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Chat paused as a precaution",
+        "Acknowledge findings and continue",
+        "Back"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popup_state.rs",
+      "line": 75,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popups.rs",
+      "line": 192,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "All models"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popups.rs",
+      "line": 284,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popups.rs",
+      "line": 450,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popups.rs",
+      "line": 643,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "More reasoning…"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/model_popups.rs",
+      "line": 710,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permission_discovery.rs",
+      "line": 20,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Update Model Permissions",
+        "Loading permission profiles…"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permission_discovery.rs",
+      "line": 66,
+      "construct": "Err(message) => self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Update Model Permissions",
+        "Retry"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permission_popups.rs",
+      "line": 175,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Update Model Permissions",
+        "Action"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permission_popups.rs",
+      "line": 231,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permission_popups.rs",
+      "line": 512,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Yes, continue anyway",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/permissions_menu.rs",
+      "line": 174,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Update Model Permissions"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/pets.rs",
+      "line": 153,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [
+        "Pets unavailable",
+        "Close"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/pets.rs",
+      "line": 181,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Pets unavailable",
+        "Close"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/pets.rs",
+      "line": 308,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading Pet",
+        "Preparing the terminal pet.",
+        "Loading selected pet..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plan_implementation.rs",
+      "line": 32,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plan_implementation.rs",
+      "line": 78,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 341,
+      "construct": "pub(super) fn plugins_loading_popup_params(&self) -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugins...",
+        "Adding marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 342,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugins...",
+        "Adding marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 360,
+      "construct": "pub(super) fn marketplace_add_loading_popup_params(&self) -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugins...",
+        "Adding marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 361,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugins...",
+        "Adding marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 386,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Adding marketplace...",
+        "Remove marketplace"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 400,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Remove marketplace",
+        "Back to plugins"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 457,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Back to plugins",
+        "Plugins",
+        "Removing marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 458,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Removing marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 475,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Removing marketplace..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 479,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Removing marketplace...",
+        "Loading plugin details..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 500,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugin details...",
+        "Plugins",
+        "Installing plugin..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 501,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugin details...",
+        "Plugins",
+        "Installing plugin..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 522,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugin details...",
+        "Plugins",
+        "Installing plugin...",
+        "Uninstalling plugin..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 523,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Loading plugin details...",
+        "Plugins",
+        "Installing plugin...",
+        "Uninstalling plugin..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 540,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Installing plugin...",
+        "Uninstalling plugin...",
+        "Failed to load plugins.",
+        "Plugin marketplace unavailable",
+        "Marketplace add failed"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 541,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Installing plugin...",
+        "Uninstalling plugin...",
+        "Failed to load plugins.",
+        "Plugin marketplace unavailable",
+        "Marketplace add failed"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 555,
+      "construct": "pub(super) fn plugins_error_popup_params(&self, err: &str) -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Uninstalling plugin...",
+        "Failed to load plugins.",
+        "Plugin marketplace unavailable",
+        "Marketplace add failed",
+        "Try again"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 556,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Uninstalling plugin...",
+        "Failed to load plugins.",
+        "Plugin marketplace unavailable",
+        "Marketplace add failed",
+        "Try again"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 570,
+      "construct": "pub(super) fn marketplace_add_error_popup_params(&self) -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Uninstalling plugin...",
+        "Plugins",
+        "Failed to load plugins.",
+        "Plugin marketplace unavailable",
+        "Marketplace add failed",
+        "Try again",
+        "Back to plugins"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 605,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Back to plugins",
+        "Plugins",
+        "Failed to add marketplace.",
+        "Marketplace removal failed",
+        "Try again"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 619,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Failed to add marketplace.",
+        "Marketplace removal failed",
+        "Try again",
+        "Back to plugins"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 659,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Back to plugins",
+        "Plugins",
+        "Failed to remove marketplace.",
+        "Plugin detail unavailable"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 673,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Failed to remove marketplace.",
+        "Plugin detail unavailable",
+        "Back to plugins",
+        "Failed to load plugin details."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 696,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugin detail unavailable",
+        "Back to plugins",
+        "Plugins",
+        "Failed to load plugin details."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 711,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Plugins",
+        "Failed to load plugin details."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 922,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Add marketplace"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 968,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Add marketplace"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugin_catalog.rs",
+      "line": 1136,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Skills",
+        "Hooks",
+        "Apps",
+        "MCP Servers"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 239,
+      "construct": ".show_selection_view(self.plugins_loading_popup_params());",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 246,
+      "construct": ".show_selection_view(self.plugins_popup_params(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 317,
+      "construct": ".show_selection_view(self.marketplace_add_loading_popup_params());",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 335,
+      "construct": "self.bottom_pane.show_selection_view(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 366,
+      "construct": "self.bottom_pane.show_selection_view(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 382,
+      "construct": "self.bottom_pane.show_selection_view(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 546,
+      "construct": ".show_selection_view(self.marketplace_add_error_popup_params());",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 588,
+      "construct": "self.bottom_pane.show_selection_view(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 850,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/plugins.rs",
+      "line": 957,
+      "construct": "Some(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Skip remaining app setup"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/rate_limits.rs",
+      "line": 530,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Keep current model",
+        "Keep current model (never show again)",
+        "Approaching rate limits",
+        "Yes"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/realtime_settings.rs",
+      "line": 27,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select voice",
+        "Applies to your next voice conversation."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/review_popups.rs",
+      "line": 64,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Review a commit",
+        "Custom review instructions",
+        "Select a review preset",
+        "Select a base branch"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/review_popups.rs",
+      "line": 93,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select a base branch"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/review_popups.rs",
+      "line": 130,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select a commit to review"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/safety_buffering.rs",
+      "line": 229,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Dismiss and keep waiting",
+        "Learn more"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/safety_buffering.rs",
+      "line": 260,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Keep waiting",
+        "Stop and retry"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/settings_popups.rs",
+      "line": 16,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/skills.rs",
+      "line": 51,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "List skills",
+        "Enable/Disable Skills",
+        "Skills",
+        "Choose an action"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/slash_dispatch.rs",
+      "line": 194,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [
+        "Archive this session?",
+        "No, don't archive",
+        "Yes, archive"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/slash_dispatch.rs",
+      "line": 201,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [
+        "Archive this session?",
+        "No, don't archive",
+        "Yes, archive"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/slash_dispatch.rs",
+      "line": 208,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Archive this session?",
+        "No, don't archive",
+        "Yes, archive",
+        "Delete this session?"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/slash_dispatch.rs",
+      "line": 236,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "No, don't archive",
+        "Yes, archive",
+        "Delete this session?",
+        "No, keep this session"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/transcript_export.rs",
+      "line": 9,
+      "construct": "self.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Copy to clipboard",
+        "Save to file"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/tui_mode_picker.rs",
+      "line": 29,
+      "construct": "self.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "TUI mode for next launch"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/turn_runtime.rs",
+      "line": 258,
+      "construct": ".show_selection_view(plan_implementation::selection_view_params(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 21,
+      "construct": ".show_selection_view(self.usage_menu_params());",
+      "nearby_literal_labels": [
+        "Usage",
+        "Account usage and resets.",
+        "View analytics"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 43,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage",
+        "Account usage and resets.",
+        "View analytics",
+        "Redeem reset"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 104,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage limit resets",
+        "Checking your available resets...",
+        "Loading..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 166,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 203,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Cancel",
+        "Usage limit resets"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 243,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Use this reset?",
+        "Yes, use reset",
+        "No, go back"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 291,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage limit resets",
+        "Close",
+        "Try again"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 305,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage limit resets",
+        "Close",
+        "Try again"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 338,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Close",
+        "Usage limit resets",
+        "Resetting your usage...",
+        "Using a reset..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 403,
+      "construct": "self.replace_rate_limit_reset_popup(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage limit resets",
+        "Couldn't reset usage. Please try again.",
+        "Try again",
+        "Close"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/usage.rs",
+      "line": 462,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Usage limit resets",
+        "Usage reset. Checking your remaining resets...",
+        "Refreshing..."
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/windows_sandbox_prompts.rs",
+      "line": 116,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Quit"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/windows_sandbox_prompts.rs",
+      "line": 250,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Quit"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 45,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Current checkout",
+        "New worktree"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 96,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Worktrees",
+        "Continue current conversation",
+        "Start new conversation",
+        "Browse worktrees"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 149,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Browse worktrees",
+        "Managed worktrees",
+        "Loading worktrees…"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 193,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Managed worktrees"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 342,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Delete worktree",
+        "Delete this worktree?",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget/worktree_picker.rs",
+      "line": 354,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Delete this worktree?",
+        "Cancel",
+        "Delete worktree"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget.rs",
+      "line": 1035,
+      "construct": "self.bottom_pane.show_selection_view(params);",
+      "nearby_literal_labels": [
+        "Yes, enable",
+        "Not now"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "chatwidget.rs",
+      "line": 1045,
+      "construct": "self.bottom_pane.show_selection_view(SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Yes, enable",
+        "Not now"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "daemon_recovery.rs",
+      "line": 142,
+      "construct": "ListSelectionView::new(",
+      "nearby_literal_labels": [
+        "Run without daemon this time",
+        "Restart with these settings",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "daemon_recovery.rs",
+      "line": 143,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Run without daemon this time",
+        "Restart with these settings",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/capture.rs",
+      "line": 132,
+      "construct": "impl BottomPaneView for KeymapCaptureView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/debug.rs",
+      "line": 152,
+      "construct": "impl BottomPaneView for KeymapDebugView {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 142,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 154,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 169,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 185,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 199,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup/picker.rs",
+      "line": 299,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Inspect keypresses"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 143,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 299,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Remove custom binding",
+        "Back to shortcuts"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 317,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Back to shortcuts"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 364,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Pick another key"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 380,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Pick another key",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 386,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Pick another key",
+        "Cancel"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 744,
+      "construct": "ListSelectionView::new(params, app_event_sender(), RuntimeKeymap::defaults().list);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1381,
+      "construct": "ListSelectionView::new(params, app_event_sender(), RuntimeKeymap::defaults().list);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1536,
+      "construct": "pane.show_selection_view(build_keymap_picker_params(&runtime, &TuiKeymap::default()));",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1537,
+      "construct": "pane.show_selection_view(build_keymap_action_menu_params(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1621,
+      "construct": "pane.show_selection_view(build_keymap_picker_params(&runtime, &keymap));",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1633,
+      "construct": "pane.show_selection_view(action_menu);",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1685,
+      "construct": "pane.show_selection_view(build_keymap_picker_params(&runtime, &TuiKeymap::default()));",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1686,
+      "construct": "pane.show_selection_view(build_keymap_action_menu_params(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "keymap_setup.rs",
+      "line": 1692,
+      "construct": "pane.show_selection_view(build_keymap_replace_binding_menu_params(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "pets/picker.rs",
+      "line": 50,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "pets/picker.rs",
+      "line": 119,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select Pet",
+        "Choose a pet to wake in the terminal.",
+        "Disable terminal pets"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "startup_hooks_review.rs",
+      "line": 213,
+      "construct": "ListSelectionView::new(",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "startup_hooks_review.rs",
+      "line": 226,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "startup_hooks_review.rs",
+      "line": 263,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "theme_picker.rs",
+      "line": 316,
+      "construct": ") -> SelectionViewParams {",
+      "nearby_literal_labels": [],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    },
+    {
+      "source": "theme_picker.rs",
+      "line": 390,
+      "construct": "SelectionViewParams {",
+      "nearby_literal_labels": [
+        "Select Syntax Theme"
+      ],
+      "coverage": "See family inventory; conditional rendering branches may require terminal fallback."
+    }
+  ],
+  "fixture_count": 57,
+  "source_scan_scope": "Textual scan of every TUI source constructor and custom BottomPaneView implementation, including colocated cfg(test) examples; sites are evidence, not individually claimed production screens.",
+  "capture_dimension_evidence": "Browser diagnostic: the requested launch geometry did not replace the host default 32 rows, which clipped the 35-row Keymap snapshot heading. Correct validation resizes the private host before rendering. A clipped-header regression fixture expects native terminal fallback."
+}

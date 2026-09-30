@@ -1,0 +1,2228 @@
+[
+  {
+    "name": "workspace_trust",
+    "screen": "Accessing workspace:\n/work/demo\nQuick safety check: Is this a project you created or one you trust?\nClaude Code will be able to read, edit, and execute files here.\n\n❯ No, exit\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "folder_trust",
+      "state": "waiting"
+    },
+    "evidence": {
+      "embedded_source_offset": 228234252,
+      "symbol": "TrustDialog"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "workspace_permission_backstop",
+    "screen": "Accessing workspace:\n/work/demo\nQuick safety check: Is this a project you created or one you trust?\nThis folder pre-approves Bash permissions in .claude/settings.json.\nThese will apply without asking. Only proceed if you trust this configuration.\n\n❯ No, continue without these permissions\n  Yes, I trust this folder\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting"
+    },
+    "evidence": {
+      "embedded_source_offset": 228234252,
+      "symbol": "TrustDialog"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "managed_settings",
+    "screen": "Managed settings require approval\nYour organization has configured managed settings that could allow execution of arbitrary code or interception of your prompts and responses.\n\n❯ 1. Yes, I trust these settings\n  2. No, exit Claude Code\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, I trust these settings",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, exit Claude Code",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 220536692,
+      "symbol": "V_t"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "managed_telemetry_isolation",
+    "screen": "Managed settings require approval\nYour organization has configured Claude Code to send telemetry to the destination below.\nTelemetry destination: https://telemetry.example.invalid\nOnly accept if you recognize this as your organization's telemetry collector.\n\n❯ 1. Yes, I trust these settings\n  2. No, exit Claude Code\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, I trust these settings",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, exit Claude Code",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 220536692,
+      "symbol": "V_t"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "external_imports",
+    "screen": "Allow external CLAUDE.md file imports?\nThis project imports files outside the current working directory. Never allow this for third-party repositories.\nExternal imports: /work/shared/rules.md\n\n❯ No, disable external imports\n  Yes, allow external imports\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting"
+    },
+    "evidence": {
+      "embedded_source_offset": 229832927,
+      "symbol": "dkn"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "directory_change",
+    "screen": "Now in a new directory:\n/work/demo\nThis directory pre-approves tool permission rules.\nThese apply to this session only if you trust it.\n\n❯ 1. Yes, trust it and apply them\n  2. No, keep them off\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, trust it and apply them",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep them off",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 233394723,
+      "symbol": "cd"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "directory_move",
+    "screen": "Moving to a new directory:\n/work/demo\nThis directory grants access to /work/shared.\nThese will apply to this session as soon as you move.\n\n❯ 1. Yes, move here\n  2. No, stay put\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, move here",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, stay put",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 233394723,
+      "symbol": "cd"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "bash_permission",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and don't ask again for this command",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222969719,
+      "symbol": "permission"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "powershell_permission",
+    "screen": "PowerShell command\nRemove-Item ./generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and allow this command for this session\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and allow this command for this session",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222969719,
+      "symbol": "permission"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "file_edit_write_notebook",
+    "screen": "Edit file\n/work/demo/main.rs\n- old content\n+ new content\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, allow all edits during this session\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, allow all edits during this session",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222969719,
+      "symbol": "permission"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "read_outside_directories",
+    "screen": "Read outside the working directories\n/work/shared/rules.md\nAllow this read outside the working directories?\nSandboxed commands lose your home directory until you re-open paths with sandbox.filesystem.allowRead.\n\n❯ 1. Yes, and keep allowing any reads outside the working directories\n  2. No, and block reads outside the working directories from now on\n  3. No, and ask again next time\n  4. Yes, but ask again next time\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, and keep allowing any reads outside the working directories",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, and block reads outside the working directories from now on",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, and ask again next time",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, but ask again next time",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222969719,
+      "symbol": "permission"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "web_fetch",
+    "screen": "Fetch\nhttps://example.invalid/doc\nDo you want to allow Claude to fetch this content?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for example.invalid\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and don't ask again for example.invalid",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222969719,
+      "symbol": "permission"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "mcp_tool",
+    "screen": "Tool use\nTool: mcp__example__write\ninput: {path: \"/work/demo/file.txt\"}\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and always allow this tool\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and always allow this tool",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 222883993,
+      "symbol": "k4"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "mcp_connection",
+    "screen": "Do you want to allow this connection?\nMCP server: example\nCommand: example-mcp\n\n❯ 1. Yes\n  2. No, and tell Claude what to do differently\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, and tell Claude what to do differently",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "repl"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "mcp_oauth_escalation",
+    "screen": "Do you want to allow this connection?\nSigns this server out until you finish authorizing in the browser. The tool call is retried once afterwards.\n\n❯ 1. Re-authenticate in browser\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Re-authenticate in browser",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229275854,
+      "symbol": "mcp"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "plan_enter",
+    "screen": "Claude wants to enter plan mode to explore and design an implementation approach.\nDo you want to proceed?\n\n❯ 1. Yes, enter plan mode\n  2. No, start implementing now\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, enter plan mode",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, start implementing now",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "repl"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "plan_exit",
+    "screen": "Claude has written up a plan and is ready to execute. Would you like to proceed?\nPlan: inspect the project, then update the feature.\n\n❯ 1. Yes, clear context (70% used) and auto-accept edits\n  2. Yes, auto-accept edits\n  3. Yes, manually approve edits\n  4. No, keep planning\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, clear context (70% used) and auto-accept edits",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, auto-accept edits",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, manually approve edits",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "E6e"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "plan_exit_auto_bypass_ultraplan",
+    "screen": "Claude has written up a plan and is ready to execute. Would you like to proceed?\nApproval changes the session permission mode as shown by the selected option.\n\n❯ 1. Yes, clear context and bypass permissions\n  2. Yes, and use auto mode\n  3. No, refine with Ultraplan in a cloud session\n  4. No, keep planning\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, clear context and bypass permissions",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and use auto mode",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, refine with Ultraplan in a cloud session",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "E6e"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "rewind_restore",
+    "screen": "Rewind\nConfirm you want to restore to the point before you sent this message:\nFix the issue in main.rs\nRewinding does not affect files edited manually or via bash.\n\n❯ 1. Restore code and conversation\n  2. Restore conversation\n  3. Restore code\n  4. Never mind\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Restore code and conversation",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Restore conversation",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Restore code",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Never mind",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "MessageSelector"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "rewind_summarize",
+    "screen": "Rewind\nConfirm you want to restore the conversation to the point before you sent this message:\nInvestigate parser\n\n❯ 1. Restore conversation\n  2. Summarize from here\n  3. Summarize up to here\n  4. Never mind\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Restore conversation",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Never mind",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "MessageSelector"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "model_picker",
+    "screen": "Select model\nSwitch between Claude models. Your pick becomes the default for new sessions.\n\n❯ 1. Default (recommended)\n  2. Sonnet\n  3. Opus\n  4. Haiku\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Default (recommended)",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Sonnet",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Opus",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Haiku",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "SelectModel"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "model_switch_hooks",
+    "screen": "Confirm switching the model\nA PreModelSwitch hook asked you to confirm\nSwitching becomes the default for new sessions.\n\n❯ 1. Yes, switch to Sonnet\n  2. No, keep my current model\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, switch to Sonnet",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep my current model",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 232677476,
+      "symbol": "model"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "plugin_install_hints",
+    "screen": "Would you like to install this LSP plugin?\nexample-lsp from the official marketplace\n\n❯ 1. Yes, install\n  2. No, not now\n  3. No, and don't show plugin installation hints again\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, install",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, not now",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, and don't show plugin installation hints again",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "repl"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "plugin_install_remove_update",
+    "screen": "Remove marketplace?\nThe removal also deletes their saved options, secrets and data where it can.\nTo use a plugin again, add the marketplace back and reinstall the plugin.\n\n❯ 1. Yes, remove\n  2. No, cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, remove",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 231277759,
+      "symbol": "plugin"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "marketplace_add",
+    "screen": "Add marketplace?\nhttps://example.invalid/plugins\nOnly add marketplaces you trust. You will review the plugin before installing it.\n\n❯ 1. Yes\n  2. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 231872584,
+      "symbol": "marketplace"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "cloud_settings",
+    "screen": "Use this machine's settings in cloud sessions?\nSend the CLAUDE.md, rules, output styles, and preferences in this folder into each cloud session.\nYes and No are saved for this machine.\n\n❯ 1. Yes, send my settings\n  2. No, keep them on this machine\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, send my settings",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep them on this machine",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229659239,
+      "symbol": "consent"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "cloud_mcp",
+    "screen": "Let cloud sessions use this machine's MCP servers?\nThey keep running on this machine with the logins saved here.\nYes and No are saved for this machine.\n\n❯ 1. Yes, offer this machine's MCP servers\n  2. No, keep them to this machine\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, offer this machine's MCP servers",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep them to this machine",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229677748,
+      "symbol": "consent"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "cloud_mcp_changed_tools",
+    "screen": "An MCP server on this machine changed its tools\nLet cloud sessions use the changed tools?\n\n❯ 1. Yes, keep offering this server\n  2. No, stop offering this server to cloud sessions\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, keep offering this server",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, stop offering this server to cloud sessions",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229695566,
+      "symbol": "consent"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "cloud_hooks",
+    "screen": "Let cloud sessions started from this machine run its hooks?\nMatching hooks execute on this machine and their returns become part of the cloud transcript.\nYes and No are saved for this machine.\n\n❯ 1. Yes, run this machine's hooks for cloud sessions\n  2. No, keep them on this machine only\n  3. Not now (keep my answer)\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, run this machine's hooks for cloud sessions",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep them on this machine only",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Not now (keep my answer)",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 232768937,
+      "symbol": "hooks"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "cloud_plugins",
+    "screen": "Use enabled plugins in cloud sessions?\n\n❯ 1. Yes, use my enabled plugins in cloud sessions\n  2. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, use my enabled plugins in cloud sessions",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "repl"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "github_connection",
+    "screen": "Connect cloud sessions to GitHub?\nCloud sessions require connecting to your GitHub account to clone and push code on your behalf.\n\n❯ 1. Replace connection\n  2. Continue\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Replace connection",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Continue",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 231653648,
+      "symbol": "web_setup"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "remote_control",
+    "screen": "Enable Remote Control?\nThis session will be available in the Claude mobile app.\n\n❯ 1. Continue\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Continue",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 232176034,
+      "symbol": "remote_control"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "browser_enable",
+    "screen": "Claude in Chrome\nThe extension lets Claude navigate websites, fill forms, capture screenshots, and debug.\n\n❯ 1. Yes, use my browser\n  2. No, keep browser tools off\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, use my browser",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, keep browser tools off",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 233420817,
+      "symbol": "chrome"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "bypass_permissions_consent",
+    "screen": "WARNING: Bypass Permissions mode\nThis allows commands and edits without permission prompts. Only run it in environments you trust.\n\n❯ 1. Yes, I accept\n  2. No, exit\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, I accept",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, exit",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229889296,
+      "symbol": "onboarding"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "terminal_setup",
+    "screen": "Would you like to configure your terminal?\nRecommended settings for multiline input.\n\n❯ 1. Yes, use recommended settings\n  2. No, maybe later with /terminal-setup\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes, use recommended settings",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "No, maybe later with /terminal-setup",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229889296,
+      "symbol": "onboarding"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "teleport_stash",
+    "screen": "Working directory has changes\nTeleport will switch git branches.\nWould you like to stash these changes and continue with teleport?\n\n❯ 1. Stash changes and continue\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Stash changes and continue",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 218823457,
+      "symbol": "teleport"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "ultrareview",
+    "screen": "Run ultrareview in the cloud?\nThis will upload your repository, which may include staged and unstaged changes you have not committed yet, but not untracked files.\n\n❯ 1. Run and only show findings here\n  2. Run and post the findings to the PR as me\n  3. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Run and only show findings here",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Run and post the findings to the PR as me",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 231804996,
+      "symbol": "ultrareview"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "background_exit",
+    "screen": "Background this session?\nTasks will be stopped if you continue.\n\n❯ 1. Background anyway (tasks will be stopped)\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Background anyway (tasks will be stopped)",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "repl"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "rate_limit",
+    "screen": "What do you want to do?\nYour usage limit has been reached.\n\n❯ 1. Ask your admin for more usage\n  2. Upgrade your plan\n  3. Stop and wait for limit to reset\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Ask your admin for more usage",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Upgrade your plan",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Stop and wait for limit to reset",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 232510098,
+      "symbol": "rate_limit"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "environment_picker",
+    "screen": "Select remote environment\nCurrently using: Default environment\n\n❯ 1. Default environment\n  2. Example environment\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Default environment",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Example environment",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 232205927,
+      "symbol": "environment"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "question_single",
+    "screen": "Which database should this project use?\n\n❯ 1. SQLite\n  2. PostgreSQL\n  3. Other\n  4. Chat about this\nEnter to select · ↑/↓ to navigate · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "SQLite",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "PostgreSQL",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Chat about this",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "BY"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "question_multi",
+    "screen": "Which features should be enabled?\n\n❯ 1. [✓] Tests\n  2. [ ] Documentation\n  3. [ ] Other\n  Submit\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Tests",
+              "keys": [
+                "1"
+              ],
+              "selected": true,
+              "toggle": true
+            },
+            {
+              "label": "Documentation",
+              "keys": [
+                "2"
+              ],
+              "selected": false,
+              "toggle": true
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "BY"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "question_review",
+    "screen": "Review your answers\nWhich database? → SQLite\nReady to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Submit answers",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Cancel",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 223261479,
+      "symbol": "WY"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "numeric_accessibility",
+    "screen": "Do you want to proceed?\n\n1. Yes\n2. No\nSelect with numbers [1-2] or up / down arrow keys. Then Enter to submit · Escape to cancel: \n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting"
+    },
+    "evidence": {
+      "embedded_source_offset": 217865410,
+      "symbol": "N4"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "numeric_confirmation",
+    "screen": "Enable Remote Control?\n\ny. Yes\nn. No\nEnter y/n: \n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "y",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "n",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 217865410,
+      "symbol": "oTn"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "numeric_text",
+    "screen": "Which database should this project use?\n\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the list: old\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "text": {
+        "before_keys": [
+          "Backspace",
+          "Backspace",
+          "Backspace"
+        ],
+        "after_keys": [
+          "Enter"
+        ],
+        "value": "old",
+        "mode": "data"
+      }
+    },
+    "evidence": {
+      "embedded_source_offset": 217865410,
+      "symbol": "N4"
+    },
+    "layout": "source-derived synthetic"
+  },
+  {
+    "name": "onboarding_theme",
+    "screen": "Choose the text style that looks best with your terminal\nTo change this later, run /theme\n\n❯ 1. Auto (match terminal)\n  2. Dark mode\n  3. Light mode\n  4. Dark mode (colorblind-friendly)\n  5. Light mode (colorblind-friendly)\n  6. Dark mode (ANSI colors only)\n  7. Light mode (ANSI colors only)\n╌╌╌╌\nfunction greet() {\n- console.log(\"Hello, World!\");\n+ console.log(\"Hello, Claude!\");\n}\n╌╌╌╌\nSyntax theme: Monokai Extended (ctrl+t to disable)\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Auto (match terminal)",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Dark mode",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Light mode",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Dark mode (colorblind-friendly)",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Light mode (colorblind-friendly)",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Dark mode (ANSI colors only)",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Light mode (ANSI colors only)",
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 229800803,
+      "symbol": "NSe"
+    },
+    "layout": "offline isolated TUI capture reconstructed"
+  },
+  {
+    "name": "onboarding_login",
+    "screen": "Select login method:\n\n❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n  2. Anthropic Console account · API usage billing\n  3. 3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI\n\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Claude account with subscription · Pro, Max, Team, or Enterprise",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Anthropic Console account · API usage billing",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "3rd-party platform · Amazon Bedrock, Microsoft Foundry, Google Vertex AI",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "evidence": {
+      "embedded_source_offset": 218785339,
+      "symbol": "login"
+    },
+    "layout": "offline isolated TUI capture reconstructed"
+  },
+  {
+    "name": "history_followed_by_editor",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n\n❯ \n? for shortcuts\n",
+    "expected": null
+  },
+  {
+    "name": "quoted_block",
+    "screen": "> Bash command\n> rm -rf /work/demo/generated\n> Do you want to proceed?\n> \n> ❯ 1. Yes\n>   2. Yes, and don't ask again for this command\n>   3. No\n> Enter to confirm · Esc to cancel",
+    "expected": null
+  },
+  {
+    "name": "fenced_transcript",
+    "screen": "```text\nBash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n```\n",
+    "expected": null
+  },
+  {
+    "name": "unclosed_fence",
+    "screen": "```text\nBash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "partial_permission",
+    "screen": "Bash command\necho hello\nDo you want to proceed?\n❯ 1. Yes\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "missing_footer",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\n",
+    "expected": null
+  },
+  {
+    "name": "credential_field",
+    "screen": "Enable gateway?\nEnter password\n❯ 1. Continue\n  2. Cancel\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "no_selected_row",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n  1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "second_selected_row",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n❯ 2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "cursor_moved",
+    "screen": "Bash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n  1. Yes\n  2. Yes, and don't ask again for this command\n❯ 3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Up",
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and don't ask again for this command",
+              "keys": [
+                "Up",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "history_before_live_menu",
+    "screen": "Bash command\necho obsolete\n❯ 1. Yes\n  2. No\nEnter to confirm · Esc to cancel\n\nBash command\nrm -rf /work/demo/generated\nDo you want to proceed?\n\n❯ 1. Yes\n  2. Yes, and don't ask again for this command\n  3. No\nEnter to confirm · Esc to cancel\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Yes, and don't ask again for this command",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "accessible_pending_number",
+    "screen": "Do you want to proceed?\n1. Yes\n2. No\nSelect with numbers [1-2]. Then Enter to submit · Escape to cancel: 1\n",
+    "expected": {
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Backspace",
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Backspace",
+                "2",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "accessible_partial_options",
+    "screen": "Do you want to proceed?\n1. Yes\nSelect with numbers [1-2]. Then Enter to submit · Escape to cancel: \n",
+    "expected": null
+  },
+  {
+    "name": "disabled_menu_option",
+    "screen": "Select model\n❯ 1. Sonnet\n  2. Opus (disabled)\n  3. Haiku\nEnter to select · Esc to cancel\n",
+    "expected": {
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Sonnet",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Haiku",
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "accessible_multi_toggle",
+    "screen": "Which features should be enabled?\n1. (selected) Tests\n2. Documentation\n3. Metrics\nSelect with numbers [1-3] (comma- or space-separated for several) or up / down arrow keys. Then Space to toggle · Enter to Submit · Escape to cancel: 1\n",
+    "expected": {
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Documentation",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "2"
+              ],
+              "toggle": true
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "3"
+              ],
+              "toggle": true
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "config_tabs_and_inline_fields",
+    "screen": "Settings\nConfig  Permissions  MCP\n❯ Theme  Dark\n  Auto mode  Disabled\nEnter to toggle · Esc to close\n",
+    "expected": null
+  },
+  {
+    "name": "effort_slider",
+    "screen": "Effort\nLow ━━━●━━━━ High\n←/→ to adjust · Enter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "number_question_slider",
+    "screen": "How many workers?\n1 ━━●━━ 8\nEnter to select · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "question_preview_gallery",
+    "screen": "Which design?\n[Preview gallery]\n←/→ to compare · Enter to select · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "scheduled_task_multi_field_form",
+    "screen": "New scheduled task\nPrompt: \nDirectory: /work/demo\nSchedule: \nCreate task · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "plugin_configuration_form",
+    "screen": "Configure plugin\nURL: \nPassword: ********\nSave configuration · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "login_oauth_code_gateway",
+    "screen": "Log in to Claude\nPaste code here: \nPress Enter to connect\n",
+    "expected": null
+  },
+  {
+    "name": "mcp_import_checklist",
+    "screen": "Import MCP Servers from Claude Desktop\nPlease select the servers you want to import:\n[a] example\nPress Space to toggle\n",
+    "expected": null
+  },
+  {
+    "name": "native_message_rewind_list",
+    "screen": "Rewind\nRestore the code and/or conversation to the point before…\n❯ Investigate the issue\n  Fix the issue\nEnter to continue · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "session_resume_search",
+    "screen": "Resume session\nSearch: \n❯ Example session\nCtrl+R to resume · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "skills_cycle_search",
+    "screen": "Skills\n❯ example  on\nenter/space to cycle, / to search, esc to close\n",
+    "expected": null
+  },
+  {
+    "name": "diff_memory_release_notes_views",
+    "screen": "Diff\n❯ main.rs\n↑/↓ to select · Enter to view · Esc to close\n",
+    "expected": null
+  },
+  {
+    "name": "spend_limit_payment_editor",
+    "screen": "Set monthly spend limit\nMonthly limit: $20\nPress ← or → to set a limit.\nEnter to confirm · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "custom_theme_editor",
+    "screen": "Theme\nName: \nBackground: \nEnter to save · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "standalone_purge_and_plugin_eval_readline",
+    "screen": "Select a project to purge:\n> project\nDelete this and all remaining [y/n]?\n",
+    "expected": null
+  },
+  {
+    "name": "agent_task_table_multiline",
+    "screen": "Background tasks\n❯ build task  running\nEnter to view · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "free_text_question_kind",
+    "screen": "Explain your preferred approach\nType your answer\nEnter to select · Esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "accessible_text_empty_buffer",
+    "screen": "Which database should this project use?\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the list:\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "menu_type": "text",
+      "text": {
+        "value": "",
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "mode": "data"
+      }
+    }
+  },
+  {
+    "name": "accessible_text_utf16_buffer",
+    "screen": "Which database should this project use?\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the list: 🦀\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "menu_type": "text",
+      "text": {
+        "value": "🦀",
+        "before_keys": [
+          "Backspace",
+          "Backspace"
+        ],
+        "after_keys": [
+          "Enter"
+        ],
+        "mode": "data"
+      }
+    }
+  },
+  {
+    "name": "accessible_confirmation_pending_buffer",
+    "screen": "Enable Remote Control?\ny. Yes\nn. No\nEnter y/n: no\n",
+    "expected": {
+      "source": "claude",
+      "kind": "screen_menu",
+      "menu_type": "confirmation",
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Yes",
+              "keys": [
+                "Backspace",
+                "Backspace",
+                "y",
+                "Enter"
+              ]
+            },
+            {
+              "label": "No",
+              "keys": [
+                "Backspace",
+                "Backspace",
+                "n",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "accessible_text_inside_unclosed_fence",
+    "screen": "```text\nWhich database should this project use?\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the list:\n",
+    "expected": null
+  },
+  {
+    "name": "accessible_multi_toggle_wrapped_80",
+    "screen": "Which features should be enabled?\n1. (selected) Tests\n2. Documentation\n3. Metrics\nSelect with numbers [1-3] (comma- or space-separated for several) or up / down a\nrrow keys. Then Space to toggle · Enter to Submit · Escape to cancel: 1\n",
+    "expected": {
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Documentation",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "2"
+              ],
+              "toggle": true
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "3"
+              ],
+              "toggle": true
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "capture_columns": 80
+  },
+  {
+    "name": "accessible_multi_toggle_wrapped_120",
+    "screen": "Which features should be enabled?\n1. (selected) Tests\n2. Documentation\n3. Metrics\nSelect with numbers [1-3] (comma- or space-separated for several) or up / down arrow keys. Then Space to toggle · Enter \nto Submit · Escape to cancel: 1\n",
+    "expected": {
+      "questions": [
+        {
+          "multiple": true,
+          "options": [
+            {
+              "label": "Documentation",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "2"
+              ],
+              "toggle": true
+            },
+            {
+              "label": "Metrics",
+              "keys": [
+                "Backspace",
+                "1",
+                ",",
+                "3"
+              ],
+              "toggle": true
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "keys": [
+            "Enter"
+          ]
+        }
+      ]
+    },
+    "capture_columns": 120
+  },
+  {
+    "name": "accessible_text_wrapped_static_guide",
+    "screen": "Which database should this project use?\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the\nlist: old\n",
+    "expected": {
+      "menu_type": "text",
+      "text": {
+        "label": "Other",
+        "value": "old",
+        "before_keys": [
+          "Backspace",
+          "Backspace",
+          "Backspace"
+        ],
+        "after_keys": [
+          "Enter"
+        ],
+        "mode": "data"
+      }
+    }
+  },
+  {
+    "name": "accessible_text_wrapped_editable_value",
+    "screen": "Which database should this project use?\n1. SQLite\n2. Other\nEnter text for option 2 (Other), or Escape for the list: beginning\ncontinuation\n",
+    "expected": null
+  },
+  {
+    "name": "accessible_confirm_wrapped_editable_value",
+    "screen": "Enable Remote Control?\ny. Yes\nn. No\nEnter y/n: yyyyyyyyyy\nyyyy\n",
+    "expected": null
+  },
+  {
+    "name": "accessible_guide_before_unrelated_tail",
+    "screen": "Which features should be enabled?\n1. (selected) Tests\n2. Documentation\n3. Metrics\nSelect with numbers [1-3] (comma- or space-separated for several) or up / down arrow keys. Then Space to toggle · Enter to Submit · Escape to cancel: 1\nUnrelated output; this is not a current menu.\n",
+    "expected": null
+  },
+  {
+    "name": "normal_guide_wrapped",
+    "screen": "Select model\n❯ 1. Sonnet\n  2. Haiku\nEnter to select ·\nEsc to cancel\n",
+    "expected": {
+      "questions": [
+        {
+          "options": [
+            {
+              "label": "Sonnet",
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "label": "Haiku",
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
