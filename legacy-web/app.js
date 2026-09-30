@@ -4020,6 +4020,10 @@ function nestStamp(s, children, memo = new Map()) {
   return stamp;
 }
 
+// Search and title filtering expose every result without changing saved folds.
+const sidebarGroupClosed = key => !S.term && S.closed.has(key);
+const sidebarNestClosed = uid => !S.term && S.nestClosed.has(uid);
+
 // Count the rows a branch would expose without sorting or allocating row objects.
 // A nested closed session contributes just its own row, matching expandRows.
 function nestSize(s, children, memo = new Map()) {
@@ -4027,7 +4031,7 @@ function nestSize(s, children, memo = new Map()) {
   const size = {rows: 1 + (s.agent_items || []).length, sessions: 1};
   memo.set(s.uid, size);
   for (const child of children.get(s.uid) || []) {
-    const sub = S.nestClosed.has(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
+    const sub = sidebarNestClosed(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
     size.rows += sub.rows;
     size.sessions += sub.sessions;
   }
@@ -4039,7 +4043,7 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   out.push(row);
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
   // 发起的会话只在分层模式缩进。
-  if (S.nestClosed.has(s.uid)) {
+  if (sidebarNestClosed(s.uid)) {
     row.kids = nestSize(s, children, sizes).rows - 1;
     row.closed = row.kids > 0;
     return;
@@ -4051,7 +4055,7 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
     ...(children.get(s.uid) || []).map(c => ({session: c, running: S.live.has(c.uid),
       when: nestStamp(c, children, memo)})),
   ].sort((a, b) => (b.running - a.running) || (b.when - a.when));
-  row.closed = kids.length > 0 && S.nestClosed.has(s.uid);
+  row.closed = kids.length > 0 && sidebarNestClosed(s.uid);
   const start = out.length;
   for (const k of kids) {
     if (k.agent) out.push({s, agent: k.agent, depth: depth + 1});
@@ -4095,19 +4099,19 @@ function groupBy(list, {skipClosed = false} = {}) {
   const seen = new Set(), sizes = new Map();
   const groups = keys.map(k => {
     const roots = m.get(k);
-    if (skipClosed && S.closed.has(k)) {
+    if (skipClosed && sidebarGroupClosed(k)) {
       // The heading needs a count and a representative, not sorted hidden rows.
       // Pick membership is collected only while selection mode is actually on.
       let first = roots[0], count = 0;
       for (const s of roots) {
         if (compare(s, first) < 0) first = s;
-        count += !S.nest || S.nestClosed.has(s.uid) ? 1 : nestSize(s, children, sizes).sessions;
+        count += !S.nest || sidebarNestClosed(s.uid) ? 1 : nestSize(s, children, sizes).sessions;
       }
       const pickUids = [];
       if (S.picking) {
         const collect = s => {
           if (sessionPickable(s)) pickUids.push(s.uid);
-          if (S.nest && !S.nestClosed.has(s.uid)) {
+          if (S.nest && !sidebarNestClosed(s.uid)) {
             for (const child of children.get(s.uid) || []) collect(child);
           }
         };
@@ -4161,7 +4165,7 @@ const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, ag
  *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
  *  槽位与分组标题的三角同列，深一层的槽位正好落在上一层图标的下方。 */
 function nestLeadMarkup(r) {
-  const caret = r.kids ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
+  const caret = r.kids && !S.term ? `<button type="button" class="nest-caret" aria-expanded="${!r.closed}"
       title="${r.closed ? '展开' : '收起'} ${r.kids} 项" aria-label="${r.closed ? '展开' : '收起'}「${esc(r.s.title)}」下的 ${r.kids} 项"></button>` : '';
   return `<span class="nest-lead" aria-hidden="${r.kids ? 'false' : 'true'}">${'<i class="nest-guide"></i>'.repeat(r.depth)}<span class="nest-slot">${caret}</span></span>`;
 }
@@ -4299,7 +4303,7 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     S.opts.regex ? regexResultRevision : 0,
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
-  const structure = JSON.stringify([!!r.agent, S.view, S.nest,
+  const structure = JSON.stringify([!!r.agent, S.view, S.nest, !!S.term,
     r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
   return {signature, structure};
 }
@@ -4400,7 +4404,7 @@ function renderSide(suppliedList = null) {
     const count = summary ? summary.count : items.length;
     const g = oldGroups.get(key) || el('div', 'group');
     oldGroups.delete(key);
-    g.classList.toggle('closed', S.closed.has(key));
+    g.classList.toggle('closed', sidebarGroupClosed(key));
     g.dataset.key = key;
     const label = S.view === 'tree' ? nodeDirectory(first) : key;   // 分组标题不缩写, 只换 ~
     const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
@@ -4411,6 +4415,7 @@ function renderSide(suppliedList = null) {
        <span class="gcount">${count}</span>`);
     head.onclick = event => {
       if (sidebarTextSelectionActive()) { event.preventDefault(); return; }
+      if (S.term) return;
       S.closed.has(key) ? S.closed.delete(key) : S.closed.add(key);
       store.set('closed', [...S.closed]);
       renderSide();
@@ -4423,7 +4428,7 @@ function renderSide(suppliedList = null) {
     const ul = g.querySelector(':scope > .glist') || el('div', 'glist');
     const previous = new Map([...ul.children].map(node => [node.dataset.key, node]));
     let rowPosition = 0;
-    for (const r of (S.closed.has(key) ? [] : rows)) {
+    for (const r of (sidebarGroupClosed(key) ? [] : rows)) {
       const {signature, structure} = sidebarRowIdentity(r, picked, sessionSignatures);
       const old = previous.get(rowKey(r));
       previous.delete(rowKey(r));
@@ -4831,7 +4836,7 @@ function revealSessionInSidebar(uid, agent) {
        current = S.nest ? nestParentOf(current, byKey) : null) {
     seen.add(current.uid);
     // A hidden link target needs its ancestors, but not its own children.
-    if ((current.uid !== uid || agent) && S.nestClosed.delete(current.uid)) changed = true;
+    if (!S.term && (current.uid !== uid || agent) && S.nestClosed.delete(current.uid)) changed = true;
   }
   if (changed) store.set('nestClosed', [...S.nestClosed]);
   const groups = groupBy(visible(), {skipClosed: true});
@@ -4839,7 +4844,7 @@ function revealSessionInSidebar(uid, agent) {
     || (groups.children.get(session.uid) || []).some(contains);
   for (const [key, rows, summary] of groups) {
     const found = summary ? summary.roots.some(contains) : rows.some(r => r.s.uid === uid);
-    if (found && S.closed.delete(key)) {
+    if (!S.term && found && S.closed.delete(key)) {
       store.set('closed', [...S.closed]); changed = true;
     }
   }
@@ -8751,6 +8756,7 @@ function patchNestFold(uid) {
 
 /** Change only the clicked subtree; changed data or filters use the full path. */
 function toggleNestFold(uid) {
+  if (S.term) return;
   S.nestClosed.has(uid) ? S.nestClosed.delete(uid) : S.nestClosed.add(uid);
   store.set('nestClosed', [...S.nestClosed]);
   if (!patchNestFold(uid)) renderSide();
