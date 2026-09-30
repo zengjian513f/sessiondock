@@ -596,6 +596,9 @@ impl<'a> Graph<'a> {
     /// rollouts declare the same session id and are not generations.
     fn later_generation(&self, uid: &str) -> Option<&str> {
         let entry = &self.entries[uid];
+        if entry.source != "codex" {
+            return None;
+        }
         let ids = self.sids.get(&("codex", entry.summary.sid.as_str()))?;
         let mains = ids
             .iter()

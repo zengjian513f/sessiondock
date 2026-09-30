@@ -6,7 +6,9 @@
 Chromium 覆盖真实 Hub 页面确认、打开克隆组及子代理。离线入口仍不自行发布。
 它不发布 CLI 会话、不修改源文件、不导入数据库、不切换执行归属、不执行 trash。
 同节点 Codex 的 HTTP 编排与页面入口见 [当前克隆接口](session-clone.md#当前接口同节点-codex)，
-使用独立能力 `session_clone_local_codex`；完整 `session_move` / `session_clone` 尚未开启。
+节点入口使用能力 `session_clone_local_codex`（保留既有字段名，服务同时处理三种来源）；
+Hub 已提供 `session_clone_remote` / `session_move_remote`，进行跨节点复制、移动及可选身份重写。
+离线工具本身仍只负责计划与暂存，不能代替服务的发布与恢复事务。
 
 设计见 [session-move.md](session-move.md)、[session-clone.md](session-clone.md)。
 
@@ -33,7 +35,8 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 目标在收到任何迁移文件前调用 `check_storage_probe {root, probe}`，识别是否能读到同一个随机值。
 它不使用跨机器 inode 相等或路径相等推断共享存储。调用方在结束时必须通过
 `remove_storage_probe {root, probe}` 清理；探针被修改时保留现场，不删除未知文件。
-这些命令只提供编排所需的证据，还未接入跨机发布或源端清理。
+这些命令提供编排所需的证据；服务的跨机发布与源端清理已经使用对应的环境核对和存储探针。
+跨机浏览器验证见 [session-move.md](session-move.md#当前移动交接与清理)。
 
 ### 查看索引内的整组
 

@@ -419,6 +419,11 @@ Hub：
 最优先原型必须覆盖分页 fork、多代 rollout、子代理，以及选择任一兄弟分支都会纳入整个连通组。
 普通单文件迁移只作为基础样本，不能据此宣布方案可靠。
 
+[session_mixed_clone_browser.py](../tests/session_mixed_clone_browser.py) 用 `spawned_by` 将
+Codex、Claude、Grok 的分支/子代理连为一个十四会话组，覆盖一次确认、跨适配器发布失败补偿、
+节点/Hub 重启后沿用原映射重试、跨来源归属重写及三种历史的页面打开。
+样本故意让不同来源拥有相同 SID，验证 Codex 多代历史不会把其他来源重定向到 Codex。
+
 - 新增 `tests/session_move_browser.py`：起两个隔离的节点服务，加一个 Hub（fixture 参照
   `hub_bulk_browser.py`、`hub_nest_browser.py`、`trash_browser.py`）。两个节点使用
   **不同的临时 CLI 根，但绝对路径形状相同**（例如用独立的 mount namespace 或 chroot 式前缀，
