@@ -138,13 +138,40 @@ Catalog and link identities are local-node/boot/process scoped. A missing remote
 collector creates a gap in visibility, never a zero-resource observation or an
 SSH failure. Legacy nodes can still provide polling attribution.
 
-The initial resource endpoint supplies cumulative process CPU seconds, explicitly
-labelled RSS, and Linux `/proc/PID/io` byte counters. GPU, per-session network/NFS,
-PSS and complete exited-process accounting remain explicitly unavailable.
+The resource endpoint retains cumulative CPU seconds, RSS and `/proc/PID/io`
+counters and adds sampled rates, PSS, NVIDIA compute-process GPU UUIDs and
+framebuffer memory, and read-only application I/O probes. Per-process metric
+objects carry `value`, `status` and a coverage `reason`; unavailable values are
+null, never zero. The first counter interval is warming up. Rates require the
+same boot and exact process incarnation. CPU is occupied logical cores, not a
+percentage of the entire machine. GPU count is the distinct set of resident
+compute devices per execution machine, not exclusive allocation or GPU compute
+utilization. Graphics-only work and MPS worker attribution are not covered by
+the NVIDIA compute query. PSS failure never substitutes RSS. PSS uses a separate low-frequency cache
+(about 30 seconds) so expensive page-table scans cannot stall CPU/I/O sampling;
+metric timestamps retain the oldest contributing sample through aggregation.
+GPU queries also run independently, about every 10 seconds; values older than
+30 seconds are unavailable. PSS cache entries expire after 60 seconds.
+
+Local file and NFS read/write rates are successful synchronous VFS application
+bytes, distinguished by filesystem; they are not physical disk operations or
+NFS RPC traffic. These probes exclude mmap, io_uring and splice. TCP rates are
+successful application send/receive bytes, excluding MSG_PEEK, UDP, retransmits
+and NFS kernel RPC traffic. Coverage is explicitly partial. The separate
+`proc_storage_*` rates retain `/proc/PID/io` storage accounting without mixing
+it with VFS logical bytes. Kernel map limits, event loss and unavailable probes
+remain visible; this is not a complete historical billing ledger.
+
+`GET /api/session/resources?uid=...&scope=direct|inclusive` resolves the actual
+native session identity from the inventory, then reports totals and each
+execution machine. Hub reads fan out to registered nodes; unreachable, stale or
+unsupported nodes remain visible. Inclusive accounting takes the union of
+verified process identities, never sidebar nesting or summed child totals.
+GPU UUIDs are deduplicated within each machine. The local agent also publishes
+`sessions` using the same direct aggregation for Node Status consumers.
 Lifecycle events preserve inherited attribution after a parent exits. Polling
-repairs the live snapshot every two seconds; this is not yet complete historical
-resource accounting for short-lived processes or SSH connections. Event failure
-and loss are reported; polling continues without affecting workloads.
+repairs the live snapshot every two seconds; short-lived processes and SSH
+connections can still have gaps. Missing coverage does not affect workloads.
 
 The Hub still coordinates new cross-machine matches using node APIs. Existing
 bindings and local collection survive application/Hub outages; discovering new
