@@ -5,7 +5,7 @@ After=local-fs.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/resource-agent.env
-ExecStart=/opt/resource-agent/bin/resource-agent --uid ${MONITOR_UID} --node-id-file ${NODE_ID_FILE}
+ExecStart=/opt/resource-agent/bin/resource-agent --uid ${MONITOR_UID} --node-id-file ${NODE_ID_FILE} --io-events off
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
