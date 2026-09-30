@@ -509,6 +509,96 @@ pub fn preflight_copy(native: &Native, reuse: bool) -> Result<(), TransferError>
 fn shared_table(name: &str) -> bool {
     matches!(name, "projects" | "project_roots" | "thread_sections")
 }
+
+/// Capture the destination rows after file-level prefix and rollout checks.
+/// Existing history keys must be a subset; changing the current rollout is
+/// never inferred merely from a matching thread ID.
+pub fn preflight_prefix(
+    native: &Native,
+    extended: &BTreeSet<String>,
+) -> Result<Native, TransferError> {
+    let mut before = native.clone();
+    for database in &mut before.databases {
+        let db = Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        for table in &mut database.tables {
+            let current = read(&db, &table.name, &row_ids(table))?
+                .ok_or_else(|| TransferError::new("move_native_unsupported", "目标表不存在"))?;
+            if current.schema != table.schema {
+                return Err(TransferError::new(
+                    "move_plan_stale",
+                    "原生数据库结构已变化",
+                ));
+            }
+            for old in &current.rows {
+                let next = table
+                    .rows
+                    .iter()
+                    .find(|row| table.keys.iter().all(|k| row.get(k) == old.get(k)));
+                let Some(next) = next else {
+                    if shared_table(&table.name) {
+                        continue;
+                    }
+                    return Err(TransferError::new(
+                        "move_conflict",
+                        "目标存在源端没有的原生历史",
+                    ));
+                };
+                if old == next {
+                    continue;
+                }
+                let eligible = if table.name == "threads" {
+                    old.get("rollout_path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| !path.is_empty())
+                        && old.get("rollout_path") == next.get("rollout_path")
+                        && old
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| extended.contains(id))
+                } else {
+                    !shared_table(&table.name) && owned(old, extended)
+                };
+                if !eligible {
+                    return Err(TransferError::new(
+                        "move_conflict",
+                        "目标原生元数据或当前版本不同",
+                    ));
+                }
+            }
+            *table = current;
+        }
+    }
+    Ok(before)
+}
+
+fn update_row(db: &Connection, table: &Table, row: &Row) -> Result<(), TransferError> {
+    let values: Vec<_> = table
+        .columns
+        .iter()
+        .chain(table.keys.iter())
+        .map(|k| sql(&row[k]))
+        .collect();
+    let assignments = table
+        .columns
+        .iter()
+        .map(|k| format!("{}=?", quote(k)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let clause = table
+        .keys
+        .iter()
+        .map(|k| format!("{} IS ?", quote(k)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    db.execute(
+        &format!(
+            "UPDATE {} SET {assignments} WHERE {clause}",
+            quote(&table.name)
+        ),
+        rusqlite::params_from_iter(values),
+    )?;
+    Ok(())
+}
 /// Retire only captured source rows; the operation journal retains their full
 /// projection. Shared projects remain in place for unrelated source sessions.
 pub fn retire(native: &Native, apply: bool) -> Result<(), TransferError> {
@@ -557,6 +647,8 @@ pub fn retire(native: &Native, apply: bool) -> Result<(), TransferError> {
 struct Receipt {
     planned: Database,
     inserted: Database,
+    #[serde(default)]
+    replaced: Option<Database>,
 }
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
@@ -564,6 +656,14 @@ pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
     insert_copy(native, operation, false)
 }
 pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), TransferError> {
+    insert_with_prefix(native, operation, reuse, None)
+}
+pub fn insert_with_prefix(
+    native: &Native,
+    operation: &str,
+    reuse: bool,
+    before: Option<&Native>,
+) -> Result<(), TransferError> {
     for database in &native.databases {
         let mut db =
             Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -575,6 +675,7 @@ pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), 
         for table in &mut inserted.tables {
             table.rows.clear();
         }
+        let mut replaced = inserted.clone();
         for (table_index, table) in database.tables.iter().enumerate() {
             let current = read(&tx, &table.name, &row_ids(table))?
                 .ok_or_else(|| TransferError::new("move_native_unsupported", "目标表不存在"))?;
@@ -584,7 +685,19 @@ pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), 
                     "原生数据库结构已变化",
                 ));
             }
+            let approved = before
+                .and_then(|n| n.databases.iter().find(|d| d.path == database.path))
+                .and_then(|d| d.tables.iter().find(|t| t.name == table.name));
+            if let Some(expected) = approved {
+                if expected != &current {
+                    return Err(TransferError::new(
+                        "move_plan_stale",
+                        "目标原生数据在发布前发生变化",
+                    ));
+                }
+            }
             if reuse
+                && approved.is_none()
                 && !shared_table(&table.name)
                 && current.rows.iter().any(|row| !table.rows.contains(row))
             {
@@ -601,6 +714,11 @@ pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), 
                         .find(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
                     {
                         if existing == row {
+                            continue;
+                        }
+                        if approved.is_some() && !shared_table(&table.name) {
+                            update_row(&tx, table, row)?;
+                            replaced.tables[table_index].rows.push(existing.clone());
                             continue;
                         }
                         return Err(TransferError::new(
@@ -643,6 +761,7 @@ pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), 
                 &serde_json::to_string(&Receipt {
                     planned: database.clone(),
                     inserted,
+                    replaced: Some(replaced),
                 })?,
             ],
         )?;
@@ -667,7 +786,7 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
             [operation],
             |r| r.get::<_, String>(0),
         );
-        let inserted = match receipt {
+        let (inserted, replaced) = match receipt {
             Err(rusqlite::Error::QueryReturnedNoRows) => continue,
             Ok(value) => {
                 if let Ok(receipt) = serde_json::from_str::<Receipt>(&value) {
@@ -677,7 +796,7 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
                             "数据库复制凭据不匹配",
                         ));
                     }
-                    receipt.inserted
+                    (receipt.inserted, receipt.replaced)
                 } else {
                     // Journals written before shared-object imports recorded all
                     // rows as inserted. Keep recovery compatible with them.
@@ -688,14 +807,44 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
                             "数据库复制凭据不匹配",
                         ));
                     }
-                    previous
+                    (previous, None)
                 }
             }
             Err(e) => return Err(e.into()),
         };
         for table in inserted.tables.iter().rev() {
-            let current = read(&tx, &table.name, &row_ids(table))?
+            let restored = replaced
+                .as_ref()
+                .and_then(|d| d.tables.iter().find(|t| t.name == table.name));
+            let mut ids = row_ids(table);
+            if let Some(old) = restored {
+                ids.extend(row_ids(old));
+            }
+            let current = read(&tx, &table.name, &ids)?
                 .ok_or_else(|| TransferError::new("move_native_unsupported", "回滚所需表缺失"))?;
+            if let Some(old) = restored {
+                let planned = database
+                    .tables
+                    .iter()
+                    .find(|t| t.name == table.name)
+                    .unwrap();
+                for original in &old.rows {
+                    let same_key =
+                        |r: &&Row| table.keys.iter().all(|k| r.get(k) == original.get(k));
+                    let found = current.rows.iter().find(same_key);
+                    let published = planned.rows.iter().find(same_key);
+                    if found == Some(original) {
+                        continue;
+                    }
+                    if found.is_none() || found != published {
+                        return Err(TransferError::new(
+                            "move_recovery_required",
+                            "合并后的数据库记录已变化，保留现场",
+                        ));
+                    }
+                    update_row(&tx, table, original)?;
+                }
+            }
             for row in &table.rows {
                 let found = current
                     .rows

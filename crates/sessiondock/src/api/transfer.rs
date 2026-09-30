@@ -621,10 +621,14 @@ pub async fn check_bundle(
                 &dependencies,
             )?)?;
         }
-        crate::transfer::native::preflight_copy(
-            manifest.operation.rewritten.as_ref().unwrap(),
-            !manifest.operation.new_ids(),
-        )?;
+        // Preserved identities require the incoming history bytes to prove
+        // a prefix; execute performs that proof before publishing any file.
+        if manifest.operation.new_ids() {
+            crate::transfer::native::preflight_copy(
+                manifest.operation.rewritten.as_ref().unwrap(),
+                false,
+            )?;
+        }
         Ok::<_, TransferError>(())
     })
     .await;

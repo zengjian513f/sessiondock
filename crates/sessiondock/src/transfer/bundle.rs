@@ -278,6 +278,8 @@ impl TransferService {
             || op.phase != "planned"
             || op.incoming_digest.is_some()
             || !op.reused_files.is_empty()
+            || !op.replaced_files.is_empty()
+            || op.native_before.is_some()
             || !op.reclaimed_by.is_empty()
             || op.ownership_sequence != 0
         {
@@ -290,12 +292,17 @@ impl TransferService {
             ));
         }
         if op.moving {
-            if op.storage_probes.keys().collect::<Vec<_>>() != manifest.roots.keys().collect::<Vec<_>>() {
+            if op.storage_probes.keys().collect::<Vec<_>>()
+                != manifest.roots.keys().collect::<Vec<_>>()
+            {
                 return Err(invalid("缺少会话存储独立性核对"));
             }
             for (provider, probe) in &op.storage_probes {
                 if probe.shared(&manifest.roots[provider])? {
-                    return Err(TransferError::new("move_shared_storage", "两台机器共享会话存储，不能移动文件"));
+                    return Err(TransferError::new(
+                        "move_shared_storage",
+                        "两台机器共享会话存储，不能移动文件",
+                    ));
                 }
             }
         }
@@ -501,10 +508,11 @@ impl TransferService {
             snapshot.compare(&target)?;
             target_environment.push(target);
         }
-        native::preflight_copy(
-            manifest.operation.rewritten.as_ref().unwrap(),
-            !manifest.operation.new_ids(),
-        )?;
+        if manifest.operation.new_ids() {
+            native::preflight_copy(manifest.operation.rewritten.as_ref().unwrap(), false)?;
+        }
+        // Preserved identities need the verified incoming bytes before target
+        // prefix/rollout proofs and native row comparisons can be completed.
         let scratch = self
             .directory
             .join(format!("incoming-{}", super::codex::uuid()?));
