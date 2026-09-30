@@ -2,6 +2,8 @@
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
 #[path = "prefix.rs"]
 mod prefix;
+#[path = "tool_requirements.rs"]
+mod tool_requirements;
 use super::{
     TransferError,
     codex::{self, ClonePlan, StagedClone},
@@ -39,6 +41,8 @@ pub struct Operation {
     pub metadata_after: BTreeMap<String, Value>,
     #[serde(default)]
     pub metadata_replaced: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub dynamic_tools: Option<BTreeSet<String>>,
     #[serde(default)]
     pub full_group: Option<group::Group>,
     #[serde(default)]
@@ -310,6 +314,7 @@ impl TransferService {
             native::capture(&self.home, &plan)?
         };
         native::extend_identities(&native, &mut plan)?;
+        let dynamic_tools = tool_requirements::collect(&plan, &native)?;
         let id = codex::uuid()?;
         let directory = self.directory.join(&id);
         fs::create_dir(&directory)?;
@@ -326,6 +331,7 @@ impl TransferService {
             metadata_before: BTreeMap::new(),
             metadata_after: BTreeMap::new(),
             metadata_replaced: BTreeMap::new(),
+            dynamic_tools: Some(dynamic_tools),
             full_group: Some(group),
             file_plan,
             file_publications: Vec::new(),
@@ -867,6 +873,7 @@ impl TransferService {
     }
     pub fn public(op: &Operation) -> Value {
         json!({"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+            "dynamic_tools":op.dynamic_tools,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),
                 "bytes":op.plan.files.iter().filter(|f|f.source==m.path).map(|f|f.bytes).sum::<u64>()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).map(|f|f.bytes).sum::<u64>()),

@@ -2364,9 +2364,9 @@ header .btn[data-session-docked] { display: none; }
 .clone-members .transfer-number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .clone-members .transfer-empty { height: 110px; text-align: center; color: var(--muted); }
 .transfer-error { padding: 7px 10px; margin: 14px 0 0; border-radius: 7px; font-size: 12px; overflow-wrap: anywhere; }
-.transfer-notice { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 0; color: var(--accent); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.transfer-notice::before { content: 'ⓘ'; flex-shrink: 0; }
-.transfer-notice[hidden] { display: none; }
+.transfer-notice, .transfer-environment { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 0; color: var(--accent); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.transfer-notice::before, .transfer-environment::before { content: 'ⓘ'; flex-shrink: 0; }
+.transfer-notice[hidden], .transfer-environment[hidden] { display: none; }
 .transfer-error { background: var(--diff-del-bg); color: var(--diff-del-fg); }
 .transfer-footer { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--border); background: var(--panel-2); flex-shrink: 0; }
 .transfer-footer .btn { min-height: 32px; padding-inline: 16px; border-radius: 7px; }
