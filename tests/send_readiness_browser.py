@@ -80,23 +80,21 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
                 expect(page.locator('#composer-input-status')).to_be_visible()
-                expect(page.locator('#dlive')).to_have_text('!')
+                expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 page.evaluate('''() => {
                     const item = document.querySelector('#side .item.sel');
                     S.unread.set(item.dataset.uid, {count:2});
                     paintItemStatus(item);
                 }''')
                 marker = page.locator('#side .item.sel > .ico > .item-status')
-                expect(marker).to_have_text('!')
+                expect(marker).to_have_text('2')
                 expect(marker).to_have_attribute('title', re.compile('2 条新内容'))
                 page.evaluate('''() => {
                     const item = document.querySelector('#side .item.sel');
                     S.unread.delete(item.dataset.uid);
                     paintItemStatus(item);
                 }''')
-                expect(page.locator('#dlive')).to_have_css('background-color', 'rgb(251, 191, 36)')
-                assert page.locator('#composer-input-status').evaluate(
-                    "node => getComputedStyle(node, '::before').content") == '"!"'
+                expect(page.locator('#composer-input-status')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 # No submission is needed to show or retain the reason. Enter
                 # follows the disabled button and leaves the draft editable.
                 trace = screen.with_suffix('.trace')
@@ -151,6 +149,28 @@ def main():
                     return results;
                 }''')
                 assert all(not header and not composer for _, header, composer in transitions), transitions
+                ordinary_states = page.evaluate('''() => {
+                    const draft=composerDraft(), previous=draft.cli, results=[];
+                    for (const [state,code,running,expected] of [
+                        ['blocked','cli_input_pending',true,''],
+                        ['blocked','cli_input_returned',true,''],
+                        ['unknown','cli_not_ready',true,''],
+                        ['unknown','input_check_failed',true,''],
+                        ['blocked','new_unknown_block',true,''],
+                        ['blocked','cli_not_ready',true,''],
+                        ['unknown','cli_input_pending',true,''],
+                        ['blocked','cli_input_pending',false,'']]) {
+                        applyCliState(composerUid, {...previous,instance:{running,busy:false},
+                            input:{state,code,message:'synthetic native state'}});
+                        const attention=sessionInputAttention(composerUid);
+                        const shown=document.querySelector('#composer-input-status').classList.contains('input-attention');
+                        results.push({state,code,running,expected,attention,shown});
+                    }
+                    applyCliState(composerUid, previous);
+                    return results;
+                }''')
+                assert all(row['attention'] == row['expected'] and row['shown'] == bool(row['expected'])
+                           for row in ordinary_states), ordinary_states
                 assert not dialogs, dialogs
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
