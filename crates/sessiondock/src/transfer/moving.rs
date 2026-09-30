@@ -271,6 +271,17 @@ impl TransferService {
                     .split(|b| *b == b'\n')
                     .filter_map(|line| serde_json::from_slice(line).ok())
                     .collect();
+                if e.source == "claude" {
+                    let links = super::group::claude_tools::links(&rows);
+                    if links
+                        .requests
+                        .iter()
+                        .chain(links.resumed.values())
+                        .any(|id| references("claude", id))
+                    {
+                        return Err(changed());
+                    }
+                }
                 for row in &rows {
                     if e.source == "codex"
                         && super::codex_tools::references(row, &calls_by_thread[&e.summary.sid])

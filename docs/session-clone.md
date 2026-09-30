@@ -57,6 +57,8 @@
    组外纯展示挂靠不继承为新组父关系。草稿、启动回执和运行时绑定不复制。
 
 Claude 恢复已有子代理使用 `SendMessage.to`，该结构化目标随子代理身份映射，消息正文保持原样。
+若目标是短 ID，以同一调用的成功原生结果 `resumedAgentId` 解析完整身份后再映射；其所属父会话
+和子代理一并纳入连通组。工具调用 ID 只在所属 transcript 内匹配，避免其他会话的同名调用干扰。
 真实 CLI 验证必须检查原子代理历史追加，不能用成功创建另一个 Agent 代替恢复验证。
 参见 [Claude 子代理恢复说明](https://code.claude.com/docs/en/sub-agents#resume-subagents)。
 

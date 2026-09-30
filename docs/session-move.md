@@ -48,6 +48,9 @@ NFS，也可以是各自本地的目录；工作目录共享与会话存储共�
 收集文件。从 S 开始，反复沿下列边的两个方向展开，直到没有新增会话或文件：
 
 - Claude fork/ancestor、`agent_items` 及 `<sid>/subagents/` 的归属关系。
+  `SendMessage.to`、`Agent/Task.resume` 指向已索引子代理时也连接其所属会话；成功的
+  `SendMessage` 原生结果中的 `resumedAgentId` 是必须存在的历史依赖。
+  调用和结果按各自 transcript 匹配，不把其他工具输出或普通消息中的同名字段当成关系。
 - Codex `forked_from_id`、`parent_thread_id`，以及各代 rollout 的所属线程。
 - Claude `continued_in` 续接链（[history-pages.md](history-pages.md)）。
 - 跨 CLI 的 `spawned_by`；纯展示用的 `nest_parent` 不自动视为历史依赖。
