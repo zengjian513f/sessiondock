@@ -99,6 +99,7 @@ def main():
         env = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color",
                "LANG": "C.UTF-8", "SESSIONDOCK_TEST_ARGV_LOG": str(log),
                "SESSIONDOCK_TEST_MODELS": "\n".join(OPENCODE_MODELS),
+               "SESSIONDOCK_TEST_CODEX_BUNDLED": str(root / "bundled.json"),
                "CODEX_HOME": str(root / "codex-home"), "GROK_HOME": str(root / "grok-home")}
         executable = str(Path(sys.executable).resolve())
         profiles = [{"id": f"{source}-cli-v1", "source": source, "executable": executable,
@@ -219,6 +220,35 @@ def main():
             (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel_reasoning_effort = "high"\n')
             open_dialog(page)
             expect(page.locator("#new-effort")).to_have_value("low")
+            page.keyboard.press("Escape")
+
+            # An older CLI can keep rewriting a fresh cache in a shared home.
+            # The current binary's new model must still be selectable and launched.
+            bundled = json.loads(json.dumps(CODEX_CACHE))
+            bundled["models"].append({"slug": "gpt-fake-new", "display_name": "GPT Fake New",
+                "visibility": "list", "default_reasoning_level": "low",
+                "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}]})
+            (root / "bundled.json").write_text(json.dumps(bundled))
+            cache = {**CODEX_CACHE, "client_version": "0.9"}
+            (root / "codex-home/models_cache.json").write_text(json.dumps(cache))
+            open_dialog(page)
+            choose_model(page, "GPT Fake New")
+            expect(page.locator("#new-effort")).to_have_value("low")
+            body = create(page, work)
+            assert body["model"] == "gpt-fake-new" and body["effort"] == "low", body
+            wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-new", "-c", 'model_reasoning_effort="low"'])
+            # Same-version remote catalogs remain authoritative, including removals.
+            cache["client_version"] = "1.0"
+            (root / "codex-home/models_cache.json").write_text(json.dumps(cache))
+            open_dialog(page)
+            page.locator("#new-model").click()
+            expect(page.locator("#new-model-options [role=option]")).to_have_count(2)
+            page.keyboard.press("Escape")
+            page.keyboard.press("Escape")
+            # Missing cache also uses the installed binary's catalog.
+            (root / "codex-home/models_cache.json").unlink()
+            open_dialog(page)
+            choose_model(page, "GPT Fake New")
             page.keyboard.press("Escape")
 
             # ---- Grok: hidden models skipped, efforts in order, default marked.
