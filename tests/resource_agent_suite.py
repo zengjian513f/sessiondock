@@ -45,6 +45,10 @@ def main():
         (proc/'sys/kernel/random/boot_id').write_text('boot-test')
         (proc/'stat').write_text('btime 1700000000\n')
         proc_pid(proc,100,'python',['python','worker'],1)
+        stat=proc/'100/stat'
+        stat.write_text(stat.read_text().strip()+' 0 20\n')
+        (proc/'100/smaps_rollup').write_text('Rss: 80 kB\nPss: 47 kB\n')
+        (proc/'100/io').write_text('read_bytes: 1024\nwrite_bytes: 2048\n')
         (root/'node-id').write_text('a'*32)
         argv=[str(args.binary.resolve().with_name('resource-agent')),'--node-id-file',str(root/'node-id'),'--uid',str(os.getuid()),'--socket',str(sock),'--state',str(root/'state.json'),'--proc-root',str(proc),'--events','off']
         # A workload does not belong to the collector's process group/cgroup.
@@ -67,11 +71,30 @@ def main():
                     assert data['availability']=='observed'
                     assert 'nfs_per_session' in data['unavailable']
                     assert 'gpu' in data['unavailable']
+                    sample=data['samples'][0]
+                    assert sample['metrics']['memory_pss_bytes']['value']==47*1024
+                    assert sample['metrics']['gpu_devices']['value'] is None
+                    assert sample['metrics']['network_receive_bytes_per_second']['value'] is None
+                    assert data['bindings'][0]['session']['sid']=='test'
+                    assert data['sessions'][0]['metrics']['memory_pss_bytes']['value']==47*1024
+                    # CPU and storage rates require two observations of the same incarnation.
+                    wait(lambda: request(sock,'resources')['samples'][0]['metrics']['cpu_cores']['status']=='ok')
+                    raw=stat.read_text();head,tail=raw.rsplit(')',1);fields=tail.split()
+                    fields[11]='100'
+                    stat.write_text(head+') '+' '.join(fields)+'\n')
+                    (proc/'100/io').write_text('read_bytes: 5120\nwrite_bytes: 6144\n')
+                    def rates_observed():
+                        metrics=request(sock,'resources')['samples'][0]['metrics']
+                        return (metrics['cpu_cores']['value'] or 0)>0 and (metrics['proc_storage_read_bytes_per_second']['value'] or 0)>0
+                    wait(rates_observed)
                 else:
                     assert request(sock,'report')['bindings'][0]['session']['sid']=='test'
                     path=proc/'100/stat'
                     path.write_text(path.read_text().replace('10000','10001'))
                     wait(lambda: not request(sock,'report')['bindings'])
+                    reused=request(sock,'resources')
+                    assert not reused['bindings'] and not reused['sessions']
+                    assert reused['samples'][0]['metrics']['cpu_cores']['value'] is None
                 agent.terminate();agent.wait(timeout=10);agent=None
                 assert workload.poll() is None, 'stopping collector must not stop workload'
             print('PASS independent service: persistence, PID reuse, duplicate writer, unavailable metrics, workload survives stop')

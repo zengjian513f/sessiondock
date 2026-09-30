@@ -1,4 +1,5 @@
-//! Shared process-link protocol. No SessionDock, HTTP, credentials or CPU logic.
+//! Shared process identities, SSH lineage and resource aggregation.
+//! No application transport, credentials or workload management.
 //! Observations describe exact process incarnations and direct SSH sockets.
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -6,6 +7,7 @@ use std::collections::BTreeMap;
 pub mod agent;
 pub mod engine;
 pub mod linux;
+pub mod resource_summary;
 #[cfg(test)]
 mod tests;
 

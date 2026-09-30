@@ -1,15 +1,18 @@
-use crate::events::{self, Event};
+use crate::{
+    events::{self, Event},
+    gpu, io_events, memory,
+};
 use process_links::{
-    Report,
+    Process, Report,
     agent::{CollectorStatus, Request, Resources, Sample},
     engine::{Engine, Saved},
     linux::{self, Snapshot},
 };
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, BufWriter, Write},
     os::unix::{
         fs::PermissionsExt,
         net::{UnixListener, UnixStream},
@@ -140,7 +143,23 @@ impl State {
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
             ),
             Request::Report => Ok(json!(self.report)),
-            Request::Resources => Ok(json!(self.resources)),
+            Request::Resources => {
+                let mut resources = self.resources.clone();
+                let processes: BTreeSet<_> = resources
+                    .samples
+                    .iter()
+                    .map(|sample| &sample.process)
+                    .collect();
+                resources.bindings = self
+                    .report
+                    .bindings
+                    .iter()
+                    .filter(|binding| processes.contains(&binding.process))
+                    .cloned()
+                    .collect();
+                resources.sessions = process_links::resource_summary::sessions(&resources);
+                Ok(json!(resources))
+            }
             Request::Catalog(catalog) => {
                 if !self.engine.catalog(catalog) {
                     return Err("catalog belongs to another node or boot");
@@ -156,62 +175,587 @@ impl State {
         }
     }
 }
-fn resources(root: &Path, snapshot: &Snapshot, node: &str) -> Resources {
-    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64;
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64;
-    let samples = snapshot
-        .entries
-        .values()
-        .filter_map(|entry| {
-            let dir = root.join(entry.process.pid.to_string());
-            let raw = fs::read_to_string(dir.join("stat")).ok()?;
-            let fields: Vec<_> = raw[raw.rfind(')')? + 1..].split_whitespace().collect();
-            let value = |i: usize| fields.get(i)?.parse::<u64>().ok();
-            if value(19)? != entry.process.start {
-                return None;
-            }
-            let cpu_seconds = (value(11)? as f64 + value(12)? as f64) / ticks;
-            let io = fs::read_to_string(dir.join("io")).ok();
-            let counter = |name: &str| {
-                io.as_ref()?
-                    .lines()
-                    .find_map(|line| line.strip_prefix(name)?.trim().parse::<u64>().ok())
-            };
-            Some(Sample {
-                process: entry.process.clone(),
-                cpu_seconds,
-                rss_bytes: value(21)?.saturating_mul(page_size),
-                threads: value(17)?,
-                read_bytes: counter("read_bytes:"),
-                write_bytes: counter("write_bytes:"),
-            })
-        })
-        .collect();
-    Resources {
-        version: 1,
-        node_id: node.into(),
-        boot_id: snapshot.boot_id.clone(),
-        sampled_at: now(),
-        availability: if snapshot.boot_id.is_empty() {
-            "unavailable"
-        } else {
-            "observed"
+fn metric(value: Value, status: &str, reason: &str) -> Value {
+    json!({"value":value, "status":status, "reason":reason})
+}
+const IO_METRICS: [(&str, io_events::IoKind, &str); 6] = [
+    (
+        "disk_read_bytes_per_second",
+        io_events::IoKind::LocalRead,
+        "Synchronous local regular-file VFS reads; excludes NFS, mmap, io_uring and splice; logical bytes, not physical disk traffic",
+    ),
+    (
+        "disk_write_bytes_per_second",
+        io_events::IoKind::LocalWrite,
+        "Synchronous local regular-file VFS writes; excludes NFS, mmap, io_uring and splice; logical bytes, not physical disk traffic",
+    ),
+    (
+        "network_receive_bytes_per_second",
+        io_events::IoKind::TcpReceive,
+        "Application TCP recvmsg payload; excludes UDP, splice and kernel/NFS wire traffic",
+    ),
+    (
+        "network_send_bytes_per_second",
+        io_events::IoKind::TcpSend,
+        "Application TCP sendmsg payload; excludes UDP, splice and kernel/NFS wire traffic",
+    ),
+    (
+        "nfs_read_bytes_per_second",
+        io_events::IoKind::NfsRead,
+        "Synchronous NFS VFS reads, including page-cache hits; excludes mmap/io_uring/splice; not RPC or network bytes",
+    ),
+    (
+        "nfs_write_bytes_per_second",
+        io_events::IoKind::NfsWrite,
+        "Synchronous NFS VFS writes; excludes mmap/io_uring/splice; not RPC, retransmissions or network bytes",
+    ),
+];
+
+struct IoWindow {
+    status: &'static str,
+    samples: Vec<io_events::IoSample>,
+    received: Option<Instant>,
+    sampled_at: f64,
+    generation: Option<u64>,
+    lost_before: u64,
+    interval_lost: u64,
+}
+impl IoWindow {
+    fn new(enabled: bool) -> Self {
+        Self {
+            status: if enabled { "warming_up" } else { "unavailable" },
+            samples: Vec::new(),
+            received: None,
+            sampled_at: 0.0,
+            generation: None,
+            lost_before: 0,
+            interval_lost: 0,
         }
-        .into(),
-        method: "linux_proc_cumulative_cpu_rss_io".into(),
-        samples,
-        unavailable: [
-            "gpu",
-            "network_per_session",
-            "nfs_per_session",
-            "pss",
-            "complete_exited_process_accounting",
-        ]
-        .iter()
-        .map(|s| (*s).into())
-        .collect(),
+    }
+    fn update(&mut self, event: io_events::Event) {
+        match event {
+            io_events::Event::Ready => self.status = "warming_up",
+            io_events::Event::Failed => {
+                self.status = "unavailable";
+                self.samples.clear();
+            }
+            io_events::Event::Batch {
+                generation,
+                samples,
+            } => {
+                self.samples = samples;
+                self.status = "partial";
+                self.received = Some(Instant::now());
+                self.sampled_at = now();
+                self.generation = Some(generation);
+            }
+        }
+    }
+    fn observe(&mut self, event: io_events::Event, total_lost: u64) {
+        if matches!(&event, io_events::Event::Batch { .. }) {
+            self.interval_lost = total_lost.saturating_sub(self.lost_before);
+            self.lost_before = total_lost;
+        }
+        self.update(event);
+    }
+    fn metric(
+        &self,
+        kind: io_events::IoKind,
+        reason: &str,
+        process: Option<&Process>,
+        started_at: f64,
+        total_lost: u64,
+    ) -> Value {
+        let mut result = self.measurement(kind, reason, process, started_at, total_lost);
+        result["io_lost_events_total"] = json!(total_lost);
+        result
+    }
+    fn measurement(
+        &self,
+        kind: io_events::IoKind,
+        reason: &str,
+        process: Option<&Process>,
+        started_at: f64,
+        total_lost: u64,
+    ) -> Value {
+        let lost = self.interval_lost + total_lost.saturating_sub(self.lost_before);
+        if self.status != "partial" {
+            return metric(
+                Value::Null,
+                self.status,
+                "I/O kernel collector disabled, unsupported, failed or awaiting first complete interval",
+            );
+        }
+        if self
+            .received
+            .is_none_or(|at| at.elapsed() > Duration::from_secs(6))
+        {
+            return metric(
+                Value::Null,
+                "unavailable",
+                "I/O kernel collector stopped producing completed intervals",
+            );
+        }
+        if started_at > self.sampled_at {
+            return metric(
+                Value::Null,
+                "warming_up",
+                "Process started after the latest I/O interval",
+            );
+        }
+        if process.is_none() && lost > 0 {
+            return metric(
+                Value::Null,
+                "unavailable",
+                "I/O collector reported errors/loss; absence of a process measurement cannot imply zero",
+            );
+        }
+        let value = process
+            .map(|process| {
+                let rows: Vec<_> = self
+                    .samples
+                    .iter()
+                    .filter(|s| s.process == *process && s.kind == kind)
+                    .collect();
+                if lost > 0 && rows.is_empty() {
+                    Value::Null
+                } else {
+                    json!(rows.iter().map(|s| s.bytes as f64).sum::<f64>() / 2.0)
+                }
+            })
+            .unwrap_or(Value::Null);
+        let reason = if lost > 0 {
+            format!("{reason}; collector reported {lost} errors/lost events; values are incomplete")
+        } else {
+            reason.to_owned()
+        };
+        let mut result = metric(value, "partial", &reason);
+        result["interval_seconds"] = json!(2.0);
+        result["sampled_at"] = json!(self.sampled_at);
+        result["generation"] = json!(self.generation);
+        result["io_lost_events_total"] = json!(total_lost);
+        result
     }
 }
+
+#[derive(Default)]
+struct ResourceSampler {
+    previous: Option<(Resources, Instant)>,
+}
+type PssCache = BTreeMap<Process, (Option<u64>, f64)>;
+#[derive(Clone, Default)]
+struct GpuObservation {
+    sampled_at: f64,
+    processes: BTreeSet<Process>,
+    result: Option<Result<Vec<gpu::GpuSample>, String>>,
+}
+#[derive(Clone, Default)]
+struct SlowObservations {
+    pss: PssCache,
+    gpu: GpuObservation,
+}
+impl ResourceSampler {
+    fn collect(
+        &mut self,
+        root: &Path,
+        snapshot: &Snapshot,
+        node: &str,
+        io: &IoWindow,
+        io_lost: u64,
+        slow_cache: &SlowObservations,
+    ) -> Resources {
+        let sampled = Instant::now();
+        let sampled_at = now();
+        let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64;
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64;
+        let previous = self
+            .previous
+            .as_ref()
+            .filter(|(r, _)| r.boot_id == snapshot.boot_id);
+        let elapsed = previous.map(|(_, at)| sampled.duration_since(*at).as_secs_f64());
+        let previous: BTreeMap<_, _> = previous
+            .into_iter()
+            .flat_map(|(r, _)| &r.samples)
+            .map(|s| (&s.process, s))
+            .collect();
+        let observation = &slow_cache.gpu;
+        let (gpu_status, gpu_reason) = if root != Path::new("/proc") {
+            (
+                "unavailable",
+                Some("GPU collection requires the live process filesystem".to_owned()),
+            )
+        } else if observation.result.is_none() {
+            (
+                "warming_up",
+                Some("Waiting for first background GPU observation".to_owned()),
+            )
+        } else if sampled_at - observation.sampled_at > 30.0 {
+            (
+                "unavailable",
+                Some("GPU observation is older than 30 seconds".to_owned()),
+            )
+        } else if let Some(Err(reason)) = &observation.result {
+            ("unavailable", Some(reason.clone()))
+        } else {
+            ("partial", None)
+        };
+        let mut gpu_by_process: BTreeMap<Process, Vec<&gpu::GpuSample>> = BTreeMap::new();
+        if let Some(Ok(samples)) = &observation.result {
+            for sample in samples {
+                gpu_by_process
+                    .entry(sample.process.clone())
+                    .or_default()
+                    .push(sample);
+            }
+        }
+        let mut samples = Vec::new();
+        for entry in snapshot.entries.values() {
+            let Some(mut sample) = basic_sample(root, &entry.process, ticks, page_size) else {
+                continue;
+            };
+            let prior = previous.get(&sample.process).copied();
+            sample.metrics.insert(
+                "cpu_cores".into(),
+                rate(
+                    Some(sample.cpu_seconds),
+                    prior.map(|s| s.cpu_seconds),
+                    elapsed,
+                    "Logical CPU cores from process CPU-time delta / monotonic wall time",
+                ),
+            );
+            for (name, value, old) in [
+                (
+                    "proc_storage_read_bytes_per_second",
+                    sample.read_bytes,
+                    prior.and_then(|s| s.read_bytes),
+                ),
+                (
+                    "proc_storage_write_bytes_per_second",
+                    sample.write_bytes,
+                    prior.and_then(|s| s.write_bytes),
+                ),
+            ] {
+                let mut value = rate(
+                    value.map(|v| v as f64),
+                    old.map(|v| v as f64),
+                    elapsed,
+                    "Linux /proc/PID/io storage-layer bytes; distinct from local VFS/NFS logical I/O; delayed writeback may differ",
+                );
+                if value["status"] == "ok" {
+                    value["status"] = json!("partial");
+                }
+                sample.metrics.insert(name.into(), value);
+            }
+            let pss = if root == Path::new("/proc") {
+                slow_cache.pss.get(&sample.process).copied()
+            } else {
+                Some((memory::pss_bytes(root, &sample.process), sampled_at))
+            };
+            let mut pss_metric = match pss {
+                Some((value, at)) if sampled_at - at <= 60.0 => {
+                    let mut result = metric(
+                        json!(value),
+                        if value.is_some() { "ok" } else { "unavailable" },
+                        "Proportional resident memory from smaps_rollup; background refresh approximately every 30 seconds; never substitutes RSS",
+                    );
+                    result["sampled_at"] = json!(at);
+                    result
+                }
+                Some(_) => metric(
+                    Value::Null,
+                    "unavailable",
+                    "PSS observation is older than 60 seconds",
+                ),
+                None => metric(
+                    Value::Null,
+                    "warming_up",
+                    "Waiting for first background PSS observation",
+                ),
+            };
+            pss_metric["refresh_interval_seconds"] = json!(30);
+            sample.metrics.insert("memory_pss_bytes".into(), pss_metric);
+            if let Some(reason) = gpu_reason.as_ref() {
+                for name in ["gpu_devices", "gpu_memory_bytes"] {
+                    sample
+                        .metrics
+                        .insert(name.into(), metric(Value::Null, gpu_status, reason));
+                }
+            } else if !observation.processes.contains(&sample.process) {
+                for name in ["gpu_devices", "gpu_memory_bytes"] {
+                    sample.metrics.insert(
+                        name.into(),
+                        metric(
+                            Value::Null,
+                            "warming_up",
+                            "Process has not yet been included in a GPU observation",
+                        ),
+                    );
+                }
+            } else {
+                let gpu_samples = gpu_by_process.get(&sample.process);
+                let devices: Vec<_> = gpu_samples
+                    .into_iter()
+                    .flatten()
+                    .map(|s| &s.device_uuid)
+                    .collect();
+                let memory = gpu_samples
+                    .into_iter()
+                    .flatten()
+                    .try_fold(0u64, |sum, s| sum.checked_add(s.memory_bytes?));
+                sample.metrics.insert("gpu_devices".into(), metric(json!(devices), "partial", "NVIDIA compute-app residency by GPU UUID; excludes pure graphics; MPS may expose only its server; residency is not compute utilization"));
+                sample.metrics.insert("gpu_memory_bytes".into(), metric(json!(memory), if memory.is_some() {"partial"} else {"unavailable"}, "NVIDIA compute-app framebuffer residency; unsupported/conflicting memory reports remain unknown"));
+                // The sampler has no per-process utilization source; never use whole-card utilization.
+                let _ = gpu_samples
+                    .into_iter()
+                    .flatten()
+                    .any(|s| s.utilization_percent.is_some());
+            }
+            for name in ["gpu_devices", "gpu_memory_bytes"] {
+                if observation.result.is_some() {
+                    sample.metrics.get_mut(name).unwrap()["sampled_at"] =
+                        json!(observation.sampled_at);
+                }
+                sample.metrics.get_mut(name).unwrap()["refresh_interval_seconds"] = json!(10);
+            }
+            for (name, kind, reason) in IO_METRICS {
+                sample.metrics.insert(
+                    name.into(),
+                    io.metric(
+                        kind,
+                        reason,
+                        Some(&sample.process),
+                        entry.started_at,
+                        io_lost,
+                    ),
+                );
+            }
+            // Reject exit/reuse during CPU, memory and GPU reads as one incarnation.
+            if memory::matches(root, &sample.process) {
+                samples.push(sample);
+            }
+        }
+        let mut metric_availability = BTreeMap::new();
+        metric_availability.insert(
+            "cpu_cores".into(),
+            metric(
+                Value::Null,
+                if elapsed.is_some() {
+                    "ok"
+                } else {
+                    "warming_up"
+                },
+                "Logical CPU cores from process CPU-time deltas",
+            ),
+        );
+        let pss_ok = samples
+            .iter()
+            .any(|s| s.metrics["memory_pss_bytes"]["status"] == "ok");
+        metric_availability.insert(
+            "memory_pss_bytes".into(),
+            metric(
+                Value::Null,
+                if pss_ok { "partial" } else { "unavailable" },
+                "Per-process smaps_rollup access determines availability",
+            ),
+        );
+        for name in ["gpu_devices", "gpu_memory_bytes"] {
+            metric_availability.insert(name.into(), metric(Value::Null, gpu_status, gpu_reason.as_deref().unwrap_or("NVIDIA compute-app residency only; excludes graphics; utilization unavailable")));
+        }
+        for name in [
+            "proc_storage_read_bytes_per_second",
+            "proc_storage_write_bytes_per_second",
+        ] {
+            let readable = samples
+                .iter()
+                .any(|s| s.metrics[name]["status"] != "unavailable");
+            metric_availability.insert(name.into(), metric(Value::Null,
+                if !readable {"unavailable"} else if elapsed.is_none() {"warming_up"} else {"partial"},
+                "Linux /proc/PID/io storage-layer counters; not VFS/NFS logical bytes; delayed writeback attribution may differ"));
+        }
+        for (name, kind, reason) in IO_METRICS {
+            metric_availability.insert(name.into(), io.metric(kind, reason, None, 0.0, io_lost));
+        }
+        let mut result = Resources {
+            version: 1,
+            node_id: node.into(),
+            boot_id: snapshot.boot_id.clone(),
+            sampled_at,
+            availability: if snapshot.boot_id.is_empty() {
+                "unavailable"
+            } else {
+                "observed"
+            }
+            .into(),
+            method: "linux_proc_pss_nvidia_compute_apps_bpf_vfs_tcp".into(),
+            samples,
+            bindings: Vec::new(),
+            metric_availability,
+            sessions: Vec::new(),
+            unavailable: vec![
+                "gpu_per_process_compute_utilization".into(),
+                "nfs_wire_rpc_accounting".into(),
+                "complete_exited_process_accounting".into(),
+            ],
+        };
+        for (metric_name, legacy_name) in [
+            ("gpu_devices", "gpu"),
+            ("memory_pss_bytes", "pss"),
+            ("network_receive_bytes_per_second", "network_per_session"),
+            ("nfs_read_bytes_per_second", "nfs_per_session"),
+        ] {
+            if result.metric_availability[metric_name]["status"] == "unavailable" {
+                result.unavailable.push(legacy_name.into());
+            }
+        }
+        self.previous = Some((result.clone(), sampled));
+        result
+    }
+}
+fn basic_sample(root: &Path, process: &Process, ticks: f64, page_size: u64) -> Option<Sample> {
+    let dir = root.join(process.pid.to_string());
+    let raw = fs::read_to_string(dir.join("stat")).ok()?;
+    let fields: Vec<_> = raw[raw.rfind(')')? + 1..].split_whitespace().collect();
+    let value = |i: usize| fields.get(i)?.parse::<u64>().ok();
+    if value(19)? != process.start {
+        return None;
+    }
+    let io = fs::read_to_string(dir.join("io")).ok();
+    let counter = |name: &str| {
+        io.as_ref()?
+            .lines()
+            .find_map(|line| line.strip_prefix(name)?.trim().parse::<u64>().ok())
+    };
+    Some(Sample {
+        process: process.clone(),
+        cpu_seconds: (value(11)? as f64 + value(12)? as f64) / ticks,
+        rss_bytes: value(21)?.saturating_mul(page_size),
+        threads: value(17)?,
+        read_bytes: counter("read_bytes:"),
+        write_bytes: counter("write_bytes:"),
+        metrics: BTreeMap::new(),
+    })
+}
+fn rate(current: Option<f64>, previous: Option<f64>, elapsed: Option<f64>, reason: &str) -> Value {
+    let Some(current) = current else {
+        return metric(Value::Null, "unavailable", reason);
+    };
+    let (Some(previous), Some(elapsed)) = (previous, elapsed) else {
+        return metric(Value::Null, "warming_up", reason);
+    };
+    if elapsed <= 0.0 || current < previous {
+        return metric(
+            Value::Null,
+            "warming_up",
+            "Counter reset or invalid sampling interval",
+        );
+    }
+    metric(json!((current - previous) / elapsed), "ok", reason)
+}
+
+#[cfg(test)]
+mod metric_tests {
+    use super::*;
+
+    #[test]
+    fn rates_require_a_previous_incarnation_and_nonreset_counter() {
+        assert_eq!(rate(Some(5.0), Some(1.0), Some(2.0), "test")["value"], 2.0);
+        assert_eq!(
+            rate(Some(5.0), None, Some(2.0), "test")["status"],
+            "warming_up"
+        );
+        assert_eq!(
+            rate(Some(1.0), Some(5.0), Some(2.0), "test")["value"],
+            Value::Null
+        );
+        assert_eq!(
+            rate(None, Some(1.0), Some(2.0), "test")["status"],
+            "unavailable"
+        );
+    }
+
+    #[test]
+    fn io_failure_loss_and_pid_reuse_do_not_invent_measurements() {
+        let mut window = IoWindow::new(true);
+        let process = Process {
+            pid: 12,
+            start: 100,
+        };
+        let measure = |window: &IoWindow, process: &Process, lost| {
+            window.metric(
+                io_events::IoKind::NfsRead,
+                "logical NFS",
+                Some(process),
+                0.0,
+                lost,
+            )
+        };
+        assert_eq!(measure(&window, &process, 0)["status"], "warming_up");
+        window.update(io_events::Event::Batch {
+            generation: 0,
+            samples: vec![io_events::IoSample {
+                process: process.clone(),
+                device: 7,
+                kind: io_events::IoKind::NfsRead,
+                bytes: 4096,
+                generation: 0,
+            }],
+        });
+        assert_eq!(measure(&window, &process, 0)["value"], 2048.0);
+        assert_eq!(measure(&window, &process, 0)["status"], "partial");
+        assert_eq!(
+            measure(
+                &window,
+                &Process {
+                    pid: 12,
+                    start: 101
+                },
+                0
+            )["value"],
+            0.0
+        );
+        assert_eq!(
+            measure(
+                &window,
+                &Process {
+                    pid: 12,
+                    start: 101
+                },
+                1
+            )["value"],
+            Value::Null
+        );
+        window.update(io_events::Event::Failed);
+        assert_eq!(measure(&window, &process, 0)["status"], "unavailable");
+        assert_eq!(measure(&window, &process, 0)["value"], Value::Null);
+    }
+
+    #[test]
+    fn complete_io_window_recovers_after_historical_loss() {
+        let mut window = IoWindow::new(true);
+        window.observe(
+            io_events::Event::Batch {
+                generation: 0,
+                samples: vec![],
+            },
+            1,
+        );
+        assert_eq!(
+            window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1)["status"],
+            "unavailable"
+        );
+        window.observe(
+            io_events::Event::Batch {
+                generation: 1,
+                samples: vec![],
+            },
+            1,
+        );
+        let value = window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1);
+        assert_eq!(value["status"], "partial");
+        assert_eq!(value["io_lost_events_total"], 1);
+    }
+}
+
 fn save(path: &Path, saved: &Saved) -> io::Result<()> {
     let bytes = serde_json::to_vec(saved)?;
     if fs::read(path).ok().as_ref() == Some(&bytes) {
@@ -263,8 +807,10 @@ fn serve(mut stream: UnixStream, state: Arc<Mutex<State>>, uid: u32) -> io::Resu
         },
         Err(_) => json!({"ok":false,"error":"invalid request"}),
     };
-    serde_json::to_writer(&mut stream, &response)?;
-    stream.write_all(b"\n")
+    let mut writer = BufWriter::new(&mut stream);
+    serde_json::to_writer(&mut writer, &response)?;
+    writer.write_all(b"\n")?;
+    writer.flush()
 }
 pub fn run() -> io::Result<()> {
     let config = Arc::new(Config::load()?);
@@ -326,7 +872,18 @@ pub fn run() -> io::Result<()> {
         .into(),
         lost_events: 0,
     };
-    let data = resources(&config.proc_root, &snapshot, &config.node_id);
+    let io_enabled = config.events && config.proc_root == Path::new("/proc");
+    let mut io_window = IoWindow::new(io_enabled);
+    let mut sampler = ResourceSampler::default();
+    let slow_cache = Arc::new(Mutex::new(SlowObservations::default()));
+    let data = sampler.collect(
+        &config.proc_root,
+        &snapshot,
+        &config.node_id,
+        &io_window,
+        0,
+        &SlowObservations::default(),
+    );
     let report = engine.update(&snapshot, data.sampled_at, status.clone());
     let state = Arc::new(Mutex::new(State {
         engine,
@@ -352,17 +909,117 @@ pub fn run() -> io::Result<()> {
     } else {
         None
     };
+    let (io_sender, io_receiver) = mpsc::sync_channel(128);
+    let io_lost = Arc::new(AtomicU64::new(0));
+    let mut io_tracer = if io_enabled {
+        match io_events::start(config.uid, io_sender, io_lost.clone()) {
+            Ok(child) => Some(child),
+            Err(error) => {
+                eprintln!("I/O kernel events unavailable: {error}");
+                io_window.update(io_events::Event::Failed);
+                None
+            }
+        }
+    } else {
+        None
+    };
     unsafe {
         libc::signal(libc::SIGTERM, stop as *const () as usize);
         libc::signal(libc::SIGINT, stop as *const () as usize);
     }
+    // PSS walks page tables and is substantially more expensive than stat/io.
+    // Spread a 30-second refresh over processes instead of blocking the fast sampler.
+    let pss_worker = if config.proc_root == Path::new("/proc") {
+        let pss_state = state.clone();
+        let cache = slow_cache.clone();
+        Some(std::thread::spawn(move || {
+            while !STOP.load(Ordering::Relaxed) {
+                let started = Instant::now();
+                let processes: Vec<_> = pss_state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .snapshot
+                    .entries
+                    .values()
+                    .map(|entry| entry.process.clone())
+                    .collect();
+                let current: BTreeSet<_> = processes.iter().cloned().collect();
+                cache
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .pss
+                    .retain(|process, _| current.contains(process));
+                // Budget ~15 seconds per scan for pacing, leaving time for other collectors.
+                let spacing = Duration::from_secs_f64(15.0 / processes.len().max(1) as f64);
+                for process in processes {
+                    if STOP.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let value = memory::pss_bytes(Path::new("/proc"), &process);
+                    cache
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .pss
+                        .insert(process, (value, now()));
+                    let pause = Instant::now();
+                    while pause.elapsed() < spacing && !STOP.load(Ordering::Relaxed) {
+                        std::thread::sleep(
+                            Duration::from_millis(20).min(spacing.saturating_sub(pause.elapsed())),
+                        );
+                    }
+                }
+                while started.elapsed() < Duration::from_secs(30) && !STOP.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }))
+    } else {
+        None
+    };
+    let gpu_worker = if config.proc_root == Path::new("/proc") {
+        let gpu_state = state.clone();
+        let cache = slow_cache.clone();
+        Some(std::thread::spawn(move || {
+            while !STOP.load(Ordering::Relaxed) {
+                let started = Instant::now();
+                let processes: Vec<_> = gpu_state
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .snapshot
+                    .entries
+                    .values()
+                    .map(|entry| entry.process.clone())
+                    .collect();
+                let result = gpu::collect(Path::new("/proc"), &processes, Duration::from_secs(3))
+                    .map_err(|e| e.to_string());
+                cache.lock().unwrap_or_else(|e| e.into_inner()).gpu = GpuObservation {
+                    sampled_at: now(),
+                    processes: processes.into_iter().collect(),
+                    result: Some(result),
+                };
+                while started.elapsed() < Duration::from_secs(10) && !STOP.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }))
+    } else {
+        None
+    };
     let worker_state = state.clone();
     let worker_config = config.clone();
     let worker = std::thread::spawn(move || {
         let mut sampled = Instant::now();
         let mut saved_at = Instant::now();
         while !STOP.load(Ordering::Relaxed) {
-            if let Ok(event) = receiver.recv_timeout(Duration::from_millis(100)) {
+            let first = match receiver.recv_timeout(Duration::from_millis(100)) {
+                Ok(event) => Some(event),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(Duration::from_millis(100));
+                    None
+                }
+            };
+            for event in first.into_iter().chain(receiver.try_iter()) {
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 match event {
                     Event::Ready => s.status.events = "bpf".into(),
@@ -380,12 +1037,21 @@ pub fn run() -> io::Result<()> {
                         s.exits += 1;
                     }
                 }
-            } else {
-                std::thread::sleep(Duration::from_millis(100));
+            }
+            for event in io_receiver.try_iter() {
+                io_window.observe(event, io_lost.load(Ordering::Relaxed));
             }
             if sampled.elapsed() >= Duration::from_secs(2) {
                 let snapshot = linux::collect_uid(&worker_config.proc_root, worker_config.uid);
-                let data = resources(&worker_config.proc_root, &snapshot, &worker_config.node_id);
+                let slow = slow_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let data = sampler.collect(
+                    &worker_config.proc_root,
+                    &snapshot,
+                    &worker_config.node_id,
+                    &io_window,
+                    io_lost.load(Ordering::Relaxed),
+                    &slow,
+                );
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
                 s.status.lost_events = lost.load(Ordering::Relaxed);
                 s.update(snapshot, data);
@@ -422,7 +1088,7 @@ pub fn run() -> io::Result<()> {
             }
         }
     }
-    if let Some(child) = tracer.as_mut() {
+    for child in [tracer.as_mut(), io_tracer.as_mut()].into_iter().flatten() {
         unsafe {
             libc::kill(child.id() as i32, libc::SIGINT);
         }
@@ -436,6 +1102,12 @@ pub fn run() -> io::Result<()> {
         child.wait()?;
     }
     let _ = worker.join();
+    if let Some(worker) = pss_worker {
+        let _ = worker.join();
+    }
+    if let Some(worker) = gpu_worker {
+        let _ = worker.join();
+    }
     save(
         &config.state,
         &state

@@ -1,6 +1,7 @@
 //! Local protocol shared by resource-agent and application adapters.
-use crate::{Process, Published, Report, Session};
+use crate::{Binding, Process, Published, Report, Session};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_SOCKET: &str = "/run/resource-agent/agent.sock";
@@ -43,6 +44,8 @@ pub struct Sample {
     pub threads: u64,
     pub read_bytes: Option<u64>,
     pub write_bytes: Option<u64>,
+    #[serde(default)]
+    pub metrics: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Resources {
@@ -54,6 +57,12 @@ pub struct Resources {
     pub method: String,
     pub samples: Vec<Sample>,
     pub unavailable: Vec<String>,
+    #[serde(default)]
+    pub bindings: Vec<Binding>,
+    #[serde(default)]
+    pub metric_availability: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub sessions: Vec<serde_json::Value>,
 }
 /// One bounded-time local exchange. Application requests never enter SSH's path.
 #[cfg(unix)]
