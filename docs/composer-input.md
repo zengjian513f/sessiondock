@@ -54,7 +54,7 @@ CHECK 从同一次当前 PTY 捕获返回可回答的 `prompt`，不依赖原生
 
 用户主动切换到终端时，当前已存在的题卡记为已展示；后台终端列表刷新不能再因同一题卡关闭终端。新问题 ID 仍可自动展示对话，用户随后切回终端的选择同样保留。这只控制题卡展示，不代表回答或确认了 CLI 问题。
 
-窄屏软键盘只压缩网页可视区域（`interactive-widget=resizes-content` 与 `--visual-viewport-height`），不改变 PTY 行列。把键盘高度 SIGWINCH 进 CLI 会挤掉编辑区，CHECK/SEND 变成 `cli_not_ready`；收起键盘后画面恢复只是又一次重排。
+窄屏软键盘只压缩网页可视区域（`interactive-widget=resizes-content` 与 `--visual-viewport-height`），不改变 PTY 行列。把键盘高度 SIGWINCH 进 CLI 会挤掉编辑区，CHECK/SEND 变成 `cli_not_ready`；收起键盘后画面恢复只是又一次重排。行列始终按键盘收起时的布局测量，因此键盘开着时的界面缩放仍会让 PTY 行列跟着变。
 
 纯终端布局或父容器隐藏输入框时停止 CHECK，切回可见输入框立即再检；草稿保存队列仍照常完成。
 
