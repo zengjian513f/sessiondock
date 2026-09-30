@@ -65,8 +65,12 @@
 //!   the project directory name.
 //! - Native ids and conflicts come from the head/tail records seen.
 //! - A Codex head is 120 pieces, a Claude head 40.
+//! - Codex turn state uses a separate scalar scan (`codex_turn`): backwards
+//!   to the latest boundary on cold reads, only new complete lines on append.
+//!   Metadata windows cannot close a turn merely by losing its start event.
 
 pub mod agent_stops;
+mod codex_turn;
 pub mod graph;
 pub mod names;
 pub mod summary;
@@ -432,6 +436,7 @@ struct CacheKey {
 struct Cached {
     key: CacheKey,
     summary: Arc<RowSummary>,
+    codex_turn: Option<codex_turn::Scan>,
 }
 
 #[derive(Default)]
@@ -596,13 +601,14 @@ impl Index {
                         Cached {
                             key: cached.key,
                             summary: cached.summary.clone(),
+                            codex_turn: cached.codex_turn.clone(),
                         },
                     );
                 }
                 _ => pending.push(candidate.clone()),
             }
         }
-        let results = self.read_all(&pending);
+        let results = self.read_all(&pending, &state.cache);
         state.reads += pending.len();
         let mut cache = reused;
         let mut transient = Vec::new();
@@ -616,6 +622,7 @@ impl Index {
                 Cached {
                     key: read.key,
                     summary: read.summary,
+                    codex_turn: read.codex_turn,
                 },
             );
         }
@@ -816,8 +823,19 @@ impl Index {
         Ok(found)
     }
 
-    fn read_all(&self, pending: &[Discovered]) -> Vec<Option<ReadOutcome>> {
-        parallel_map(self.workers, pending.iter().collect(), read_candidate)
+    fn read_all(
+        &self,
+        pending: &[Discovered],
+        cache: &HashMap<PathBuf, Cached>,
+    ) -> Vec<Option<ReadOutcome>> {
+        parallel_map(self.workers, pending.iter().collect(), |candidate| {
+            read_candidate(
+                candidate,
+                cache
+                    .get(&candidate.path)
+                    .and_then(|cached| cached.codex_turn.as_ref()),
+            )
+        })
     }
 }
 
@@ -863,6 +881,7 @@ fn parallel_map<T: Send, R: Send>(
 struct ReadOutcome {
     key: CacheKey,
     summary: Arc<RowSummary>,
+    codex_turn: Option<codex_turn::Scan>,
     /// An I/O failure (permissions, a link or directory where a file should
     /// be): published for this snapshot but not cached, so a fix that leaves
     /// the stamp unchanged (chmod) is noticed by the next refresh.
@@ -1329,7 +1348,10 @@ fn read_sidecar(root: &Path, path: &Path, label: &str) -> SidecarRead {
 }
 
 /// Summarize one discovered candidate; `None` when its files vanished.
-fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
+fn read_candidate(
+    candidate: &Discovered,
+    previous_turn: Option<&codex_turn::Scan>,
+) -> Option<ReadOutcome> {
     let data = match candidate.stamp {
         Some(_) => match read_data(&candidate.root, &candidate.data) {
             FileRead::Vanished if matches!(candidate.source, "grok" | "opencode") => None,
@@ -1339,6 +1361,7 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
                 return Some(ReadOutcome {
                     key: candidate.key(),
                     summary: Arc::new(summary),
+                    codex_turn: None,
                     transient: true,
                 });
             }
@@ -1401,6 +1424,27 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
         data: data_file,
         sidecar: sidecar_bytes,
     });
+    let mut turn_scan = None;
+    if candidate.source == "codex"
+        && let Some((_, _, _, stamp)) = &data
+    {
+        let scan = open_indexed(&candidate.root, &candidate.data)
+            .and_then(|mut file| codex_turn::read(&mut file, *stamp, previous_turn));
+        match scan {
+            Ok(scan) => {
+                if let Some(agent) = &mut summary.agent {
+                    agent.open_turn = matches!(scan.turn, Some("working" | "waiting"));
+                } else {
+                    summary.turn = scan.turn;
+                }
+                turn_scan = Some(scan);
+            }
+            Err(_) => {
+                summary = unreadable(candidate);
+                transient = true;
+            }
+        }
+    }
     // Grok `size` is the whole session directory (updates.jsonl,
     // events, tool definitions…), refreshed with the summary/chat stamps
     // exactly as here: the cached summary carries the size read with it.
@@ -1440,6 +1484,7 @@ fn read_candidate(candidate: &Discovered) -> Option<ReadOutcome> {
             summary_stamp: sidecar.as_ref().and_then(|(_, stamp, _)| *stamp),
         },
         summary: Arc::new(summary),
+        codex_turn: turn_scan,
         transient,
     })
 }
