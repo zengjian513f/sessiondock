@@ -4171,11 +4171,15 @@ function applyCliState(uid, cli, {status = true} = {}) {
   if (!draft || !cli || typeof cli !== 'object') return;
   if (Number.isFinite(cli.observed_at) && Number.isFinite(draft.cli?.observed_at)
       && cli.observed_at < draft.cli.observed_at) return;
+  const priorBusy = draft.cli?.instance?.busy;
   draft.cli = cli;
   if (status && cli.input && takenOver(uid)) {
     updateComposerInputStatus(uid, {ok: cli.input.state === 'ready', input: cli.input});
   }
   if (composerDraftOwner(composerUid) === composerDraftOwner(uid)) renderQueuedSends(composerUid);
+  if (priorBusy !== cli.instance?.busy && composerDraftOwner(composerUid) === composerDraftOwner(uid))
+    renderComposerInputStatus();
+  paintTurn(uid);
 }
 /** Queued sends live in one `#queued-sends` block after the activity row so
  *  turn sealing, tool grouping and time dividers never treat them as history.
@@ -5134,6 +5138,7 @@ function updateComposerInputStatus(uid, data) {
         || (draft.inputAnswer.sent && draft.inputAnswer.revision !== screenMenuRevision(prompt))))
     draft.inputAnswer = null;
   if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
+  paintTurn(uid);
 }
 
 async function probeComposerInput(uid) {
@@ -5201,8 +5206,12 @@ function renderComposerInputStatus() {
   const blocking = status && (status.state === 'blocked'
     || (status.state === 'unknown' && status.code !== 'input_check_pending'));
   node.classList.toggle('blocked', !!blocking);
-  node.classList.toggle('hidden', !status || !!draft?.inputPrompt);
-  const notice = composerInputNotice(status);
+  const attention = status ? sessionInputAttention(composerUid) : '';
+  node.classList.toggle('input-attention', !!attention);
+  node.classList.toggle('input-question', attention === 'question');
+  node.classList.toggle('hidden', !status);
+  const notice = status?.code === 'cli_question' && draft?.inputPrompt
+    ? '等待用户回答，请在题卡中选择；输入已保留' : composerInputNotice(status);
   node.title = notice;
   node.replaceChildren();
   if (status) {

@@ -1935,15 +1935,36 @@ function sessionFrozen(uid) {
     && row.frozen === true && (row.uid === uid || row.current_uid === uid || `tmux:${row.name}` === uid));
 }
 
-function paintStatusMarker(badge, frozen, count = 0) {
+function paintStatusMarker(badge, frozen, count = 0, attention = '') {
   badge.classList.toggle('frozen', frozen);
-  const marker = `${frozen}:${count}`;
+  badge.classList.toggle('input-attention', !!attention);
+  badge.classList.toggle('input-question', attention === 'question');
+  const marker = `${frozen}:${count}:${attention}`;
   if (badge.dataset.marker === marker) return;
   badge.dataset.marker = marker;
   const text = count > 99 ? '99+' : (count || '');
   if (frozen) badge.innerHTML = uiIcon('pause') + esc(text);
-  else badge.textContent = text;
+  else badge.textContent = (attention === 'question' ? '?' : attention ? '!' : '') + text;
 }
+
+function sessionInputAttention(uid) {
+  if (!uid) return '';
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(uid)) : null;
+  const cli = cache.get(uid)?.cli;
+  const current = composerDraftOwner(uid) === composerDraftOwner(composerUid);
+  const input = current ? draft?.inputStatus || cli?.input : cli?.input;
+  // Normal startup/screen synchronization/paste is not a request for help.
+  if (input?.state === 'starting' || ['input_check_pending', 'cli_starting',
+      'cli_catching_up', 'cli_pasting'].includes(input?.code)) return '';
+  const turn = sessionTurn(uid);
+  if (input?.code === 'cli_question' || turn === 'waiting') return 'question';
+  const busy = (current ? draft?.cli : cli)?.instance?.busy;
+  if (busy === true || turn === 'working') return '';
+  return ['blocked', 'unknown'].includes(input?.state) ? 'blocked' : '';
+}
+const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答'
+  : attention ? ' · 输入受阻，请查看会话提示' : '';
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
@@ -1954,18 +1975,23 @@ function paintItemStatus(node) {
   const row = unreadRow(node.dataset.uid);
   // 临时会话没有 live 集合里的 uid，跑没跑以行上已算好的 live 类为准；已结束的行不亮点。
   const pending = !!node.dataset.tmuxName && node.classList.contains('live');
-  const active = pending || S.live.has(node.dataset.uid);
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
+  const active = pending || S.live.has(node.dataset.uid)
+    || (!!takenOver(node.dataset.uid) && draft?.cli?.instance?.running === true);
   const tmux = pending || S.liveTmux.has(node.dataset.uid);
   const frozen = sessionFrozen(node.dataset.uid);
-  paintStatusMarker(badge, frozen, row.count);
+  const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
+  paintStatusMarker(badge, frozen, row.count, attention);
   badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
   badge.classList.toggle('idle', !active);
   const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
-  badge.classList.toggle('turn-working', turn === 'working');
+  badge.classList.toggle('turn-working', turn === 'working' && !attention);
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中') + turnLabel(turn);
+  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中')
+    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
   badge.title = badge.ariaLabel = row.count
     ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
     : running;
@@ -2000,12 +2026,18 @@ function paintHeaderTurn() {
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
   const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
   const frozen = sessionFrozen(S.sel);
-  paintStatusMarker(h, frozen);
-  h.classList.toggle('visible', frozen || (row ? row.classList.contains('live') : S.live.has(S.sel)));
+  const draft = typeof composerDrafts !== 'undefined'
+    ? composerDrafts.get(composerDraftOwner(S.sel)) : null;
+  const active = (row ? row.classList.contains('live') : S.live.has(S.sel))
+    || (!!takenOver(S.sel) && draft?.cli?.instance?.running === true);
+  const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
+  paintStatusMarker(h, frozen, 0, attention);
+  h.classList.toggle('visible', frozen || active);
   const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
-  h.classList.toggle('turn-working', turn === 'working');
+  h.classList.toggle('turn-working', turn === 'working' && !attention);
   h.classList.toggle('turn-waiting', turn === 'waiting');
-  h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
+  h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux)
+    + turnLabel(turn) + (attention && turn !== 'waiting' ? inputAttentionLabel(attention) : '');
 }
 
 function addUnread(uid, count) {
