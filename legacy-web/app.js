@@ -10083,7 +10083,11 @@ async function cloneSessionGroup(uid) {
     const destination = machines.get(target.value);
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
     if (machines.get(sourceId)?.online === false) return '源机器已离线。';
-    if (crossMachine()) return '跨机器传输尚未接入。';
+    if (crossMachine()) {
+      if (mode() === 'move' || SessionDockCapabilities.config.session_clone_remote !== true) return '跨机器传输尚未接入。';
+      if (!identityChoices.clone) return '保留 UID 的跨机复制尚未接入。';
+      return '';
+    }
     if (mode() === 'move') return '移动需要选择另一台机器。';
     return '';
   };
@@ -10156,7 +10160,9 @@ async function cloneSessionGroup(uid) {
     if (busy || !plan || blockedReason()) return;
     busy = true; error.hidden = true; renderSelection();
     try {
-      const result = await request('api/session/clone', {uid, operation_id:plan.operation_id});
+      const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
+        uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
+      });
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
       close(); await loadSessions(true); await openSession(result.target_uid);
       showSessionStopNotice('整组复制完成，原会话已保留。');

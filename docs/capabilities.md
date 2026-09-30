@@ -61,14 +61,17 @@ updates while `visualViewport.scale` differs from 1 do not reinterpret pixel
 magnification as a keyboard or resize the PTY. Chromium touch emulation tests
 this routing; it does not establish mobile Edge device compatibility.
 
-## Local Codex group cloning
+## Group cloning
 
 `session_clone_local_codex` is explicitly `true` only on configured Linux nodes,
 and on the Hub which forwards to the selected node. The menu checks strict `true`;
-a missing flag does not enable cloning. It supports cloning a stopped Codex group
-on its current node; the source group is retained. Unsupported node/source plans
-return a concrete error. This flag does not advertise cross-node transfer or
-other CLI support. See [the clone contract](session-clone.md#当前接口同节点-codex).
+a missing flag does not enable cloning. The historically named local flag now
+also covers the Claude/Grok file adapters. The source group is retained.
+The Hub separately declares `session_clone_remote` for cross-node cloning with
+new identities. The receiver checks Linux, configured root paths, worktree
+contents and native schema before publication. Move and cross-node copying with
+retained IDs remain unavailable; the full `session_move` / `session_clone` flags
+are not enabled. See [the clone contract](session-clone.md#当前接口同节点-codex).
 
 ## Unavailable controls
 

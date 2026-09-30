@@ -41,6 +41,10 @@ pub struct Operation {
     pub file_plan: Option<files::Plan>,
     #[serde(default)]
     pub file_publications: Vec<Publication>,
+    #[serde(default)]
+    pub incoming_digest: Option<String>,
+    #[serde(default)]
+    pub export_lease_until: u64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Publication {
@@ -73,12 +77,22 @@ pub struct TransferService {
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
-    let raw = if fs::symlink_metadata(path)?.is_symlink() {
-        fs::read_link(path)?.to_string_lossy().as_bytes().to_vec()
+    let mut digest = Sha256::new();
+    if fs::symlink_metadata(path)?.is_symlink() {
+        digest.update(fs::read_link(path)?.to_string_lossy().as_bytes());
     } else {
-        fs::read(path)?
-    };
-    Ok(format!("{:x}", Sha256::digest(raw)))
+        use std::io::Read;
+        let mut file = fs::File::open(path)?;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+    }
+    Ok(format!("{:x}", digest.finalize()))
 }
 pub fn uid(path: &Path) -> String {
     format!(
@@ -170,7 +184,7 @@ impl TransferService {
             self.directory.join(id).join("operation.json"),
         )?)?)
     }
-    fn save(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn save(&self, op: &Operation) -> Result<(), TransferError> {
         persist(&self.directory.join(&op.id).join("operation.json"), op)
     }
     pub fn store(&self) -> SessionStore {
@@ -183,16 +197,17 @@ impl TransferService {
                 continue;
             }
             let op: Operation = serde_json::from_slice(&fs::read(path)?)?;
-            if matches!(
+            if (matches!(
                 op.phase.as_str(),
                 "publishing" | "verifying" | "rollback_required"
-            ) && (op.group().members.iter().any(|m| m.uid == uid)
-                || op.staged.as_ref().is_some_and(|s| {
-                    op.group()
-                        .members
-                        .iter()
-                        .any(|m| self.member_target_uid(&op, m, s).is_ok_and(|id| id == uid))
-                }))
+            ) || (op.phase == "exporting" && op.export_lease_until > super::bundle::now()))
+                && (op.group().members.iter().any(|m| m.uid == uid)
+                    || op.staged.as_ref().is_some_and(|s| {
+                        op.group()
+                            .members
+                            .iter()
+                            .any(|m| self.member_target_uid(&op, m, s).is_ok_and(|id| id == uid))
+                    }))
             {
                 return Ok(true);
             }
@@ -265,6 +280,8 @@ impl TransferService {
             full_group: Some(group),
             file_plan,
             file_publications: Vec::new(),
+            incoming_digest: None,
+            export_lease_until: 0,
         };
         // Stage at planning time: every reference/offset/native row is validated
         // before confirmation, and retry always uses this exact identity map.
@@ -400,7 +417,7 @@ impl TransferService {
         }
         Ok(())
     }
-    fn member_target_uid(
+    pub(super) fn member_target_uid(
         &self,
         op: &Operation,
         member: &group::Member,
@@ -419,7 +436,7 @@ impl TransferService {
             Ok(crate::sessions::uid_for(&member.source, &path))
         }
     }
-    fn publications(&self, op: &Operation) -> Vec<Publication> {
+    pub(super) fn publications(&self, op: &Operation) -> Vec<Publication> {
         let mut result = op.file_publications.clone();
         if let Some(staged) = &op.staged {
             result.extend(staged.files.iter().map(|f| {
@@ -499,6 +516,13 @@ impl TransferService {
         if op.phase == "complete" {
             return Ok(op);
         }
+        if op.phase == "failed" && op.incoming_digest.is_some() {
+            // A failed phase is written only after compensation succeeded.
+            // Retry the same received map; all preflight checks still run below.
+            op.phase = "planned".into();
+            op.error = None;
+            self.save(&op)?;
+        }
         if op.phase != "planned" {
             return Err(TransferError::new(
                 "move_recovery_required",
@@ -506,7 +530,18 @@ impl TransferService {
                     .unwrap_or_else(|| "复制操作需要恢复或重新发起".into()),
             ));
         }
-        self.recheck(&op)?;
+        if op.incoming_digest.is_none() {
+            self.recheck(&op)?;
+        } else {
+            let snapshots: Vec<super::environment::Snapshot> = serde_json::from_slice(&fs::read(
+                self.directory
+                    .join(&op.id)
+                    .join("incoming-environment.json"),
+            )?)?;
+            for snapshot in snapshots {
+                snapshot.recheck()?;
+            }
+        }
         native::preflight(op.rewritten.as_ref().unwrap())?;
         for file in self.publications(&op) {
             if fs::symlink_metadata(&file.target).is_ok() {
@@ -560,8 +595,11 @@ impl TransferService {
             }
             op.phase = "verifying".into();
             self.save(&op)?;
-            // Recheck only source rows and files: new identities cannot join it.
-            self.recheck(&op)?;
+            // Incoming source snapshots are rechecked on the source node by
+            // the Hub. The receiver need not contain any original identities.
+            if op.incoming_digest.is_none() {
+                self.recheck(&op)?;
+            }
             let store = self.store();
             store
                 .list(true)

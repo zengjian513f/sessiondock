@@ -303,6 +303,13 @@ pub fn router() -> Router<AppState> {
 /// message, media, file, terminal, SSE and WS route; the static page is 404.
 pub fn node_router() -> Router<AppState> {
     Router::new()
+        .route("/api/session/transfer/export", post(transfer::export_bundle))
+        .route("/api/session/transfer/receive", post(transfer::receive_bundle).layer(axum::extract::DefaultBodyLimit::disable()))
+        .route("/api/session/transfer/release", post(transfer::release_export))
+        .route("/api/session/transfer/reserve", post(transfer::reserve_export))
+        .route("/api/session/transfer/status", post(transfer::transfer_status))
+        .route("/api/session/transfer/manifest", post(transfer::bundle_manifest))
+        .route("/api/session/transfer/check", post(transfer::check_bundle).layer(axum::extract::DefaultBodyLimit::disable()))
         .nest("/api", router())
         .fallback(node_not_found)
 }

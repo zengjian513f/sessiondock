@@ -17,6 +17,7 @@ pub mod namespace;
 pub mod nest;
 pub mod proxy;
 pub mod registry;
+pub mod transfer;
 
 pub use client::{Client, ClientError, JSON_LIMIT, Target};
 pub use identity::{NodeToken, PROTOCOL};

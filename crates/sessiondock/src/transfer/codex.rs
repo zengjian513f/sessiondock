@@ -90,7 +90,7 @@ fn hash(raw: &[u8]) -> String {
     format!("{:x}", Sha256::digest(raw))
 }
 
-pub(super) fn uuid() -> Result<String, TransferError> {
+pub(crate) fn uuid() -> Result<String, TransferError> {
     let mut b = [0u8; 16];
     getrandom::fill(&mut b).map_err(|e| TransferError::new("move_identity", e.to_string()))?;
     b[6] = (b[6] & 15) | 64;

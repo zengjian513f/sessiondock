@@ -60,6 +60,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/trash/purge"),
     ("POST", "/api/audit/browser"),
     ("GET", "/api/session/file"),
+    ("POST", "/api/session/transfer/clone"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -80,7 +81,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "session_clone_local_codex": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true,
         "history_semantics": "limited_native"
     })
@@ -138,6 +139,7 @@ pub struct HubState {
     pub public_hosts: Arc<Vec<String>>,
     /// One metadata observer per view, shared by all connected browsers.
     pub ui_events: Arc<EventBus>,
+    pub transfers: Arc<crate::hub::transfer::Transfers>,
 }
 
 /// The hub router: one gate, one dispatcher.
@@ -194,6 +196,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         shutdown,
         public_hosts: Arc::new(config.public_hosts.clone()),
         ui_events: Arc::new(EventBus::default()),
+        transfers: Arc::new(crate::hub::transfer::Transfers::open(config.nodes_file.parent().unwrap_or_else(|| std::path::Path::new(".")).join("transfers"))?),
     };
     Ok(HubApp {
         router: hub_router(state),
@@ -505,6 +508,18 @@ async fn handle(
         }
     }
     if explicit.is_none() {
+        if method==Method::POST && path=="/api/session/transfer/clone" {
+            let request=serde_json::from_value::<crate::hub::transfer::Request>(Value::Object(body.unwrap_or_default()))
+                .map_err(|e| Reply::Invalid(e.to_string()))?;
+            let transfers=state.transfers.clone();let registry=state.registry.clone();let client=state.client.clone();
+            // Publication survives the browser closing or losing its connection.
+            let result=tokio::spawn(async move {transfers.execute(registry,client,request).await}).await;
+            return match result {
+                Ok(Ok(value))=>ok(&value),
+                Ok(Err(e))=>Ok(error_json(StatusCode::CONFLICT,&e.message,&e.code)),
+                Err(e)=>Ok(error_json(StatusCode::INTERNAL_SERVER_ERROR,&e.to_string(),"move_io")),
+            };
+        }
         if path == "/api/sessions/delete" {
             let value = Value::Object(body.unwrap_or_default());
             return ok(&aggregate::delete(registry, client, &value).await?);
