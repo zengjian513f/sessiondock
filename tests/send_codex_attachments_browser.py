@@ -275,6 +275,13 @@ def main():
                     assert (len(worker_prompt) > 1000) == (index == 1), 'cover expanded and collapsed reports'
                     assert worker_prompt.splitlines()[0] == expected_title
                     assert submissions[-1] == worker_prompt
+                    names = [json.loads(line) for line in (root / 'session_index.jsonl').read_text().splitlines()]
+                    assert names[-1]['thread_name'] == expected_title, names
+                    commands = [json.loads(line) for line in (root / 'submissions.jsonl.commands').read_text().splitlines()]
+                    assert commands[-1]['command'] == '/rename ' + expected_title, commands
+                    native = root / 'codex' / ('rollout-' + commands[-1]['sid'] + '.jsonl')
+                    users = [json.loads(line) for line in native.read_text().splitlines() if json.loads(line).get('type') == 'response_item']
+                    assert len(users) == 1 and users[0]['payload']['content'][0]['text'] == worker_prompt.strip(), users
                     assert '随后立即 push' in worker_prompt
                     assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
                     assert '无需再次确认' in worker_prompt

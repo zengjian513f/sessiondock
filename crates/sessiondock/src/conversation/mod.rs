@@ -1,6 +1,7 @@
 //! One conversation send path: drafts are server-owned, successful SEND belongs to the CLI.
 pub mod cli_state;
 mod input;
+mod report_name;
 pub mod rewind;
 pub use input::{InputState, InputStatus, transient_input_error};
 pub mod store;
@@ -774,6 +775,7 @@ impl Conversations {
             return Err(Failure::new(400, "invalid_send", "请输入消息"));
         }
         self.ensure_sendable(identity, lease).await?;
+        self.prepare_report_name(identity, lease, input).await?;
         if let Some(old) = self
             .store
             .begin(&identity.key, &input.request_id, payload)?
