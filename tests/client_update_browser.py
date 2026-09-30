@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Machine settings: each machine's AI clients with their versions and a manual update.
+"""Machine settings: the AI client matrix — versions, newest versions and a manual update.
 
 A real Rust node with synthetic CLI profiles only: a fake Codex whose `update`
 prints coloured, carriage-return progress, waits, then raises its version; a
 fake Claude whose `update` fails with an error on stderr; and a Grok profile
-whose command is missing (status 127), which the settings page leaves out.
-The Machines tab is exercised twice through the real UI: on the node's own
-page, and on a real `sessiondock-hub` page whose requests reach the node
-through the explicit `/api/nodes/<id>/api/…` proxy. The update receives the
-profile's fixed arguments and a closed stdin; a second request while one is
-running is refused, and an unknown profile ID is 404. No real CLI, native CLI
-home or production directory is touched.
+whose command is missing (status 127), which gets no column. A fake `curl`
+first on the profiles' PATH answers the newest-version lookups (npm dist-tags
+for Claude's `latest` channel, npm `latest` for Codex), so no network is used.
+The matrix is exercised twice through the real UI: on the node's own page, and
+on a real `sessiondock-hub` page whose requests reach the node through the
+explicit `/api/nodes/<id>/api/…` proxy, next to a fake node that has Codex only
+(its Claude cell is empty). The update receives the profile's fixed arguments
+and a closed stdin; a second request while one is running is refused, and an
+unknown profile ID is 404. No real CLI, native CLI home or production directory
+is touched.
 """
 from __future__ import annotations
 
@@ -26,7 +29,7 @@ from types import SimpleNamespace
 from playwright.sync_api import expect, sync_playwright
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
-from hub_http_suite import Hub, free_port
+from hub_http_suite import FakeNode, Hub, free_port
 
 HUB_BINARY = BINARY.parent / ("sessiondock-hub.exe" if os.name == "nt" else "sessiondock-hub")
 CODEX_ARGS = ["--enable", "default_mode_request_user_input", "-c", "suppress_unstable_features_warning=true"]
@@ -57,6 +60,14 @@ case "$last" in
 esac
 """
 MISSING = "#!/bin/sh\nexit 127\n"
+FAKE_CURL = """#!/bin/sh
+eval "url=\\${$#}"
+case "$url" in
+  */@anthropic-ai/claude-code/dist-tags) printf '{"stable":"2.0.9","latest":"2.1.1"}\\n' ;;
+  */@openai/codex/latest) printf '{"name":"@openai/codex","version":"%s"}\\n' "$SESSIONDOCK_TEST_NEW" ;;
+  *) exit 22 ;;
+esac
+"""
 
 
 def open_machines(page):
@@ -67,38 +78,49 @@ def open_machines(page):
     page.wait_for_selector("#settings-machines:not([hidden])")
 
 
+def matrix_row(page, machine):
+    return page.locator("#client-matrix tbody tr").filter(has=page.locator("th", has_text=machine))
+
+
 def check_machine(page, base, state, machine):
     page.goto(base + "/")
     open_machines(page)
-    row = page.locator("#machine-rows .machine-row").filter(has=page.locator(".machine-clients")).first
-    codex = row.locator('.machine-client[data-client-source="codex"]')
-    claude = row.locator('.machine-client[data-client-source="claude"]')
-    expect(codex.locator(".machine-client-version")).to_have_text(OLD)
-    expect(claude.locator(".machine-client-version")).to_have_text("2.1.1")
-    expect(row.locator('.machine-client[data-client-source="grok"]')).to_have_count(0)
-    expect(row.locator('.machine-client[data-client-source="opencode"]')).to_have_count(0)
+    matrix = page.locator("#client-matrix table")
+    # Columns are the clients installed on some machine: Grok is missing, OpenCode unconfigured.
+    expect(matrix.locator("thead th")).to_have_text(["机器", "Claude", "Codex"])
+    row = matrix_row(page, machine)
+    codex = row.locator('td[data-client-source="codex"]')
+    claude = row.locator('td[data-client-source="claude"]')
+    expect(codex.locator(".client-version")).to_have_text(OLD)
+    expect(codex).to_have_attribute("data-state", "outdated")
+    expect(codex.locator(".client-latest")).to_have_text(f"→ {NEW}")
+    expect(claude.locator(".client-version")).to_have_text("2.1.1")
+    expect(claude).to_have_attribute("data-state", "current")
+    expect(claude.locator(".client-latest")).to_have_text("最新")
 
-    # A successful update: the button waits while the CLI runs, then the new version shows.
-    codex.locator(".machine-client-update").click()
-    expect(codex.locator(".machine-client-update")).to_have_text("更新中…")
-    expect(codex.locator(".machine-client-update")).to_be_disabled()
-    expect(codex.locator(".machine-client-version")).to_have_text(NEW, timeout=20000)
+    # A successful update: the button waits while the CLI runs, then the cell is current.
+    codex.locator(".client-update").click()
+    expect(codex.locator(".client-update")).to_have_text("更新中…")
+    expect(codex.locator(".client-update")).to_be_disabled()
+    expect(codex.locator(".client-version")).to_have_text(NEW, timeout=20000)
     expect(page.locator("#machine-note")).to_have_text(f"{machine}：Codex 已更新 {OLD} → {NEW}。")
-    expect(codex.locator(".machine-client-update")).to_be_enabled()
+    expect(codex).to_have_attribute("data-state", "current")
+    expect(codex.locator(".client-latest")).to_have_text("最新")
+    expect(codex.locator(".client-update")).to_be_enabled()
     title = codex.get_attribute("title")
     assert f"Codex CLI {NEW} installed successfully." in title and "\x1b" not in title, title
-    assert "10%" not in title and "100%" in title, title
+    assert f"最新版本：{NEW}" in title and "10%" not in title and "100%" in title, title
     argv = (state / "codex.argv").read_text().splitlines()
     assert argv == CODEX_ARGS + ["update"], argv
     assert (state / "codex.stdin").read_text().strip() == "stdin-closed"
 
     # A failing update reports the exit status and the CLI's last line of output.
-    claude.locator(".machine-client-update").click()
+    claude.locator(".client-update").click()
     expect(page.locator("#machine-note")).to_have_text(
         f"{machine}：Claude 更新失败（退出码 3）：Error: network unreachable", timeout=20000)
     expect(page.locator("#machine-note")).to_have_attribute("data-state", "error")
-    expect(claude.locator(".machine-client-version")).to_have_text("2.1.1")
-    expect(claude.locator(".machine-client-update")).to_be_enabled()
+    expect(claude.locator(".client-version")).to_have_text("2.1.1")
+    expect(claude.locator(".client-update")).to_be_enabled()
 
 
 def api_contract(page, base):
@@ -123,10 +145,10 @@ def check_phone(page, base):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(base + "/")
     open_machines(page)
-    box = page.locator(".machine-clients").first
-    expect(box.locator(".machine-client")).to_have_count(2)
-    overflow = page.evaluate("""() => [...document.querySelectorAll('#machine-rows .machine-row')]
-      .map(row => row.scrollWidth - row.clientWidth)""")
+    expect(page.locator("#client-matrix tbody tr")).to_have_count(2)
+    # The matrix may scroll inside its own box; the dialog and the page never scroll sideways.
+    overflow = page.evaluate("""() => [document.scrollingElement, document.querySelector('#settings-machines')]
+      .map(box => box.scrollWidth - box.clientWidth)""")
     assert all(extra <= 0 for extra in overflow), overflow
 
 
@@ -138,10 +160,11 @@ def main():
         for name in ["host", "ledger", "bin", "state", "hub", "home"]:
             (root / name).mkdir(mode=0o700)
         state = root / "state"
-        for name, body in [("fake-codex", FAKE_CODEX), ("fake-claude", FAKE_CLAUDE), ("missing-grok", MISSING)]:
+        for name, body in [("fake-codex", FAKE_CODEX), ("fake-claude", FAKE_CLAUDE), ("missing-grok", MISSING),
+                           ("curl", FAKE_CURL)]:
             (root / "bin" / name).write_text(body)
             (root / "bin" / name).chmod(0o700)
-        env = {"HOME": str(root / "home"), "PATH": "/usr/bin:/bin", "TERM": "xterm-256color",
+        env = {"HOME": str(root / "home"), "PATH": str(root / "bin") + ":/usr/bin:/bin", "TERM": "xterm-256color",
                "SESSIONDOCK_TEST_CLI_STATE": str(state), "SESSIONDOCK_TEST_NEW": NEW}
         launcher = {"schema": 2, "host_binary": str(REPO / "target/debug/ptyhost"),
                     "host_dir": str(root / "host"), "adapters": [], "profiles": [
@@ -184,16 +207,22 @@ def main():
                     print("PASS local machine settings: versions, update, failure, API contract")
 
                     (state / "codex.version").write_text(OLD)
-                    hub = Hub(HUB_BINARY, root / "hub", [SimpleNamespace(name="Pavo", port=node_port, token=token)])
+                    other = FakeNode("b" * 32, "Vega")
+                    hub = Hub(HUB_BINARY, root / "hub", [SimpleNamespace(name="Pavo", port=node_port, token=token), other])
                     hub.start()
                     try:
                         hub_base = f"http://127.0.0.1:{hub.port}"
                         check_machine(page, hub_base, state, "Pavo")
-                        print("PASS hub machine settings through the explicit node proxy")
+                        vega = matrix_row(page, "Vega")
+                        expect(vega.locator('td[data-client-source="claude"]')).to_have_text("—")
+                        expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
+                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "current")
+                        print("PASS hub matrix through the explicit node proxy, with an empty cell")
                         check_phone(page, hub_base)
                         print("PASS 390px machine row without horizontal overflow")
                     finally:
                         hub.stop()
+                        other.stop()
                     assert not errors, errors
             finally:
                 browser.close()

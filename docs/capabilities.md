@@ -26,8 +26,9 @@ only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
 
-Settings have Appearance, Features and Machines tabs. Machines also lists each
-machine's installed agent CLIs with their versions and an Update button
+Settings have Appearance, Features and Machines tabs. Machines also has an AI
+client matrix: machines by installed agent CLIs, each cell with its version,
+whether it is the newest, and an Update button
 ([client versions](lifecycle-launcher.md#client-versions-and-manual-updates)). Features contains the
 existing history cache budget (`cacheMb`, default 256 MB; `0` means unlimited)
 and batch stop concurrency (`stopConcurrency`: 1, 2, 4, 6, 8, 12 or 16; default 6).
