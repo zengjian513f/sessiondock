@@ -277,6 +277,7 @@ impl TransferService {
             || !id_valid(&op.id)
             || op.phase != "planned"
             || op.incoming_digest.is_some()
+            || !op.reused_files.is_empty()
         {
             return Err(invalid("迁移清单或操作标识无效"));
         }
@@ -488,7 +489,10 @@ impl TransferService {
             snapshot.compare(&target)?;
             target_environment.push(target);
         }
-        native::preflight(manifest.operation.rewritten.as_ref().unwrap())?;
+        native::preflight_copy(
+            manifest.operation.rewritten.as_ref().unwrap(),
+            !manifest.operation.new_ids(),
+        )?;
         let scratch = self
             .directory
             .join(format!("incoming-{}", super::codex::uuid()?));

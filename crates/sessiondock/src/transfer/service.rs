@@ -45,6 +45,8 @@ pub struct Operation {
     pub incoming_digest: Option<String>,
     #[serde(default)]
     pub export_lease_until: u64,
+    #[serde(default)]
+    pub reused_files: BTreeSet<PathBuf>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Publication {
@@ -55,6 +57,9 @@ pub struct Publication {
     pub symlink: bool,
 }
 impl Operation {
+    pub fn new_ids(&self) -> bool {
+        self.plan.mode == codex::Mode::Clone
+    }
     pub fn group(&self) -> &group::Group {
         self.full_group.as_ref().unwrap_or(&self.plan.group)
     }
@@ -215,6 +220,9 @@ impl TransferService {
         Ok(false)
     }
     pub fn plan(&self, selected: &str) -> Result<Operation, TransferError> {
+        self.plan_copy(selected, true)
+    }
+    pub fn plan_copy(&self, selected: &str, new_ids: bool) -> Result<Operation, TransferError> {
         if self.locked(selected)? {
             return Err(TransferError::new(
                 "move_recovery_required",
@@ -233,9 +241,16 @@ impl TransferService {
         let file_plan = if file_group.members.is_empty() {
             None
         } else {
-            Some(files::Plan::build(file_group, true)?)
+            Some(files::Plan::build(file_group, new_ids)?)
         };
-        let mut plan = codex::plan(codex_group, codex::Mode::Clone)?;
+        let mut plan = codex::plan(
+            codex_group,
+            if new_ids {
+                codex::Mode::Clone
+            } else {
+                codex::Mode::Move
+            },
+        )?;
         if !plan.reference_issues.is_empty() {
             return Err(TransferError::new(
                 "move_reference_unsupported",
@@ -282,12 +297,15 @@ impl TransferService {
             file_publications: Vec::new(),
             incoming_digest: None,
             export_lease_until: 0,
+            reused_files: BTreeSet::new(),
         };
         // Stage at planning time: every reference/offset/native row is validated
         // before confirmation, and retry always uses this exact identity map.
         let staged = codex::stage(&op.plan, &directory.join("staging"))?;
         let rewritten = native::rewrite(&op.native, &op.plan, &staged, &self.home)?;
-        native::preflight(&rewritten)?;
+        if new_ids {
+            native::preflight(&rewritten)?;
+        }
         if let Some(files) = &op.file_plan {
             let staging = directory.join("staging-files");
             files.stage(&staging)?;
@@ -341,7 +359,7 @@ impl TransferService {
                         }
                     }
                 }
-                if !after.is_empty() {
+                if new_ids && !after.is_empty() {
                     after.insert("clone_operation".into(), op.id.clone().into());
                 }
                 op.metadata_after
@@ -485,7 +503,11 @@ impl TransferService {
         Ok(())
     }
     fn rollback(&self, op: &Operation) -> Result<(), TransferError> {
-        let files = self.publications(op);
+        let files: Vec<_> = self
+            .publications(op)
+            .into_iter()
+            .filter(|f| !op.reused_files.contains(&f.target))
+            .collect();
         for file in &files {
             if fs::symlink_metadata(&file.target).is_ok()
                 && (!Self::owns(&op.id, &file.target) || hash(&file.target)? != file.sha256)
@@ -531,6 +553,12 @@ impl TransferService {
             ));
         }
         if op.incoming_digest.is_none() {
+            if !op.new_ids() {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "保留身份复制需要另一台机器",
+                ));
+            }
             self.recheck(&op)?;
         } else {
             let snapshots: Vec<super::environment::Snapshot> = serde_json::from_slice(&fs::read(
@@ -542,16 +570,66 @@ impl TransferService {
                 snapshot.recheck()?;
             }
         }
-        native::preflight(op.rewritten.as_ref().unwrap())?;
+        native::preflight_copy(op.rewritten.as_ref().unwrap(), !op.new_ids())?;
+        op.reused_files.clear();
         for file in self.publications(&op) {
             if fs::symlink_metadata(&file.target).is_ok() {
+                if !op.new_ids()
+                    && hash(&file.target)? == file.sha256
+                    && fs::symlink_metadata(&file.target)?.is_symlink() == file.symlink
+                {
+                    #[cfg(unix)]
+                    if !file.symlink {
+                        use std::os::unix::fs::PermissionsExt;
+                        if fs::metadata(&file.target)?.permissions().mode() & 0o111
+                            != fs::metadata(&file.staging)?.permissions().mode() & 0o111
+                        {
+                            return Err(TransferError::new(
+                                "move_conflict",
+                                "目标文件执行权限不同",
+                            ));
+                        }
+                    }
+                    op.reused_files.insert(file.target);
+                    continue;
+                }
                 return Err(TransferError::new("move_conflict", "目标文件已存在"));
+            }
+        }
+        if !op.new_ids() {
+            if let Some(metadata) = &self.metadata {
+                let current = metadata
+                    .snapshot()
+                    .map_err(|e| TransferError::new(e.code, e.message))?;
+                // Existing equal overlays belong to the destination. Exclude
+                // them from both insertion and compensation receipts.
+                op.metadata_after.retain(|uid, row| {
+                    let mut existing = current.row(uid);
+                    if let Some(object) = existing.as_object_mut() {
+                        object.remove("clone_operation");
+                    }
+                    existing != *row
+                });
+                for (uid, row) in &mut op.metadata_after {
+                    if current.row(uid) != json!({}) {
+                        return Err(TransferError::new("move_conflict", "目标会话显示设置不同"));
+                    }
+                    if row.as_object().is_some_and(|r| !r.is_empty()) {
+                        row["clone_operation"] = op.id.clone().into();
+                    }
+                }
             }
         }
         op.phase = "publishing".into();
         self.save(&op)?;
         let result = (|| {
             for file in self.publications(&op) {
+                if op.reused_files.contains(&file.target) {
+                    if hash(&file.target)? != file.sha256 {
+                        return Err(TransferError::new("move_plan_stale", "目标复用文件已变化"));
+                    }
+                    continue;
+                }
                 let target = file.target;
                 let parent = target.parent().unwrap();
                 fs::create_dir_all(parent)?;
@@ -587,7 +665,7 @@ impl TransferService {
                 fs::hard_link(&temp, &target)?;
                 fs::File::open(parent)?.sync_all()?;
             }
-            native::insert(op.rewritten.as_ref().unwrap(), &op.id)?;
+            native::insert_copy(op.rewritten.as_ref().unwrap(), &op.id, !op.new_ids())?;
             if let Some(metadata) = &self.metadata {
                 metadata
                     .transfer_rows(&op.metadata_after, false)
@@ -648,7 +726,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn public(op: &Operation) -> Value {
-        json!({"operation_id":op.id,"mode":"clone","phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"operation_id":op.id,"mode":"clone","new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),
                 "bytes":op.plan.files.iter().filter(|f|f.source==m.path).map(|f|f.bytes).sum::<u64>()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).map(|f|f.bytes).sum::<u64>()),

@@ -339,6 +339,11 @@ pub fn rewrite(
     staged: &StagedClone,
     home: &Path,
 ) -> Result<Native, TransferError> {
+    if plan.mode == super::codex::Mode::Move {
+        // Identity-preserving copies keep serialized projections and byte
+        // cursors exactly as captured, including the current rollout pointer.
+        return Ok(source.clone());
+    }
     let mut result = source.clone();
     let map = &plan.identities;
     for db in &mut result.databases {
@@ -459,6 +464,9 @@ pub fn rewrite(
 
 /// Verify schema and all target primary keys before any file is published.
 pub fn preflight(native: &Native) -> Result<(), TransferError> {
+    preflight_copy(native, false)
+}
+pub fn preflight_copy(native: &Native, reuse: bool) -> Result<(), TransferError> {
     for database in &native.databases {
         let db = Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         for table in &database.tables {
@@ -470,13 +478,22 @@ pub fn preflight(native: &Native) -> Result<(), TransferError> {
                     "原生数据库结构已变化",
                 ));
             }
+            if reuse
+                && !shared_table(&table.name)
+                && current.rows.iter().any(|row| !table.rows.contains(row))
+            {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "目标原生历史或当前版本不同",
+                ));
+            }
             for row in &table.rows {
                 if let Some(existing) = current
                     .rows
                     .iter()
                     .find(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
                 {
-                    if shared_table(&table.name) && existing == row {
+                    if (reuse || shared_table(&table.name)) && existing == row {
                         continue;
                     }
                     return Err(TransferError::new(
@@ -500,6 +517,9 @@ struct Receipt {
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
 pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
+    insert_copy(native, operation, false)
+}
+pub fn insert_copy(native: &Native, operation: &str, reuse: bool) -> Result<(), TransferError> {
     for database in &native.databases {
         let mut db =
             Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
@@ -520,8 +540,17 @@ pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
                     "原生数据库结构已变化",
                 ));
             }
+            if reuse
+                && !shared_table(&table.name)
+                && current.rows.iter().any(|row| !table.rows.contains(row))
+            {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "目标原生历史或当前版本不同",
+                ));
+            }
             for row in &table.rows {
-                if shared_table(&table.name) {
+                if reuse || shared_table(&table.name) {
                     if let Some(existing) = current
                         .rows
                         .iter()
@@ -698,6 +727,9 @@ fn shared_referenced(db: &Connection, name: &str, row: &Row) -> Result<bool, Tra
 /// Projection-only IDs (including code-mode collaboration calls) are not always
 /// persisted as rollout events. Allocate them in the same confirmed map.
 pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), TransferError> {
+    if plan.mode == super::codex::Mode::Move {
+        return Ok(());
+    }
     for db in &native.databases {
         for table in &db.tables {
             for row in &table.rows {

@@ -88,6 +88,7 @@ class Peer:
         result=json.loads(self.process.stdout.readline());assert result['ok'],result;return result
     def read(self,path):return base64.b64decode(self.call('read',path=str(path))['bytes'])
     def append(self,path,raw):self.call('append',path=str(path),bytes=base64.b64encode(raw).decode())
+    def write(self,path,raw):self.call('write',path=str(path),bytes=base64.b64encode(raw).decode())
     def close(self):
         try:self.call('finish')
         finally:
@@ -98,6 +99,7 @@ class Peer:
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--peer',help='Opt-in SSH peer with shared checkout; all target data stays in private /tmp directories')
+    parser.add_argument('--preserve',action='store_true',help='Exercise identity-preserving cross-node copies')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-bundle-browser-') as temporary, sync_playwright() as pw:
         root=Path(temporary)
@@ -119,7 +121,7 @@ def main():
                 b=SimpleNamespace(name='destination',nid='b'*32,port=free_port(),token=TOKEN)
                 for node,corpus in ((a,source),(b,destination)):
                     (corpus.root/'ids').mkdir();(corpus.root/'ids/node-id').write_text(node.nid+'\n')
-                originals={str(p):p.read_bytes() for native in roots.values() for p in Path(native).rglob('*') if p.is_file() and '.sqlite' not in p.name}
+                originals={str(p):p.read_bytes() for kind in ('claude','codex','grok') for p in (source.root/kind).rglob('*') if p.is_file() and '.sqlite' not in p.name}
                 hubroot=base_root/'hub';hubroot.mkdir();hub=None;completed=None;continued=None
                 peer=Peer(args.peer,base_root,source,roots,b,args.binary) if args.peer else None
                 read_target=peer.read if peer else lambda p:p.read_bytes()
@@ -138,9 +140,22 @@ def main():
                         page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                         source_uid=scoped(a.nid,selected)
                         if restart:
+                            if args.preserve:
+                                recovered=json.loads(read_target(reused_path))
+                                assert recovered['phase']=='failed',recovered['phase']
+                                assert read_target(continued[0])==continued[1]
+                                print('PASS '+provider+' restart compensation preserves reused files and continued history',flush=True)
                             result=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']})
                             assert result.ok,result.text();assert result.json()['target_uid']==completed['target_uid']
                             assert read_target(continued[0])==continued[1]
+                            if args.preserve and peer:
+                                status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected,'new_ids':False})
+                                assert status==200,raw
+                                conflict=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':json.loads(raw)['operation_id']})
+                                assert conflict.status==409 and conflict.json()['code']=='move_conflict',conflict.text()
+                                assert read_target(continued[0])==continued[1]
+                                assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
+                                print('PASS '+provider+' changed destination rejects another preserved-ID copy without overwriting either side',flush=True)
                             print('PASS '+provider+' Hub/node restart retry preserves continued target and fixed identity',flush=True)
                             continue
                         page.locator(f'#side .item[data-uid="{source_uid}"]').click()
@@ -151,6 +166,21 @@ def main():
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(count,timeout=20000)
                         dialog.locator('#transfer-target').select_option(b.nid)
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
+                        if args.preserve:
+                            if provider=='codex':
+                                def old_plan(route):
+                                    response=route.fetch();data=response.json();data.pop('new_ids',None)
+                                    route.fulfill(response=response,json=data)
+                                page.route('**/api/session/clone/plan',old_plan,times=1)
+                                dialog.locator('#transfer-new-ids').uncheck()
+                                expect(dialog.locator('.transfer-error')).to_contain_text('源机器版本尚不支持保留 UID')
+                                expect(dialog.locator('.clone-confirm')).to_be_disabled()
+                                dialog.locator('#transfer-new-ids').check()
+                                expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as preserved_plan:
+                                dialog.locator('#transfer-new-ids').uncheck()
+                            assert preserved_plan.value.ok,preserved_plan.value.text()
+                            assert preserved_plan.value.json()['new_ids'] is False
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
                         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
                             dialog.locator('.clone-confirm').click()
@@ -162,6 +192,36 @@ def main():
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
                         assert source_op['phase']=='exported' and target_op['phase']=='complete' and target_op['incoming_digest']
                         assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
+                        if args.preserve:
+                            assert not completed['new_ids']
+                            assert completed['target_uid']==scoped(b.nid,selected)
+                            assert all(old==new for old,new in target_op['plan']['identities']['threads'].items())
+                            for item in target_op.get('staged',{}).get('files',[]):
+                                assert read_target(Path(roots['codex'])/item['relative'])==originals[item['source']]
+                            for item in target_op['file_publications']:
+                                assert read_target(Path(item['target']))==originals[item['source']]
+                            # A new operation can reuse the exact existing files
+                            # and native rows; its receipt must not claim them.
+                            status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected,'new_ids':False});assert status==200,raw
+                            repeated=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':json.loads(raw)['operation_id']})
+                            assert repeated.ok,repeated.text()
+                            reused=json.loads(read_target(destination.root/'state/transfers'/repeated.json()['operation_id']/'operation.json'))
+                            assert len(reused['reused_files'])==len(target_op['staged']['files'])+len(target_op['file_publications'])
+                            assert target_op['rewritten']==source_op['native']
+                            for db in reused['rewritten']['databases']:
+                                if peer:receipt=peer.call('receipt',path=db['path'],operation_id=reused['id'])['receipt']
+                                else:
+                                    with sqlite3.connect(db['path']) as connection:
+                                        receipt=json.loads(connection.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(reused['id'],)).fetchone()[0])
+                                assert all(not table['rows'] for table in receipt['inserted']['tables'])
+                            # Simulate interruption after a reuse-only publication.
+                            # Recovery must never delete reused files or native rows.
+                            reused['phase']='verifying'
+                            reused_path=destination.root/'state/transfers'/reused['id']/'operation.json'
+                            raw=json.dumps(reused).encode()
+                            if peer:peer.write(reused_path,raw)
+                            else:reused_path.write_bytes(raw)
+                            print('PASS '+provider+' preserves native identities and exact history bytes; new operation reuses existing destination',flush=True)
                         if provider=='codex':
                             agent=target_op['plan']['identities']['threads'][ident(7)]
                             page.locator('#a-view-switch').click();page.locator(f'#session-view-menu button[data-agent="{agent}"]').click()
