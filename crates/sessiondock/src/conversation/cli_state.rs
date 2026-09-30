@@ -274,6 +274,15 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
     }
 }
 
+/// Codex handles a bare /model in the TUI: it opens a settings menu and
+/// never emits a native user/command echo. This says only that SEND handed
+/// the command to the terminal, not that the user finished choosing a model.
+/// Match the full delivered prompt so quotes, attachments and ordinary
+/// messages mentioning /model still use native echo reconciliation.
+pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
+    !(source == "codex" && text.trim() == "/model")
+}
+
 impl super::Conversations {
     /// Persist positive TUI queue evidence, without retiring the send. A
     /// visible entry can match only one receipt, including already marked
@@ -289,6 +298,17 @@ impl super::Conversations {
             return Ok(());
         }
         let queued = self.store.queued(key);
+        // Older versions enqueued this TUI-only command. Correct the ledger
+        // through the normal observation path, including after a restart;
+        // no screen change or elapsed timeout can stand in for a native echo.
+        let local: Vec<_> = queued
+            .iter()
+            .filter(|row| !expects_native_echo(source, &row.text))
+            .map(|row| row.request_id.clone())
+            .collect();
+        if !local.is_empty() {
+            self.store.retire_queued(key, &local)?;
+        }
         if !queued
             .iter()
             .any(|row| row.state == "queued" && row.cli_queued_at.is_none())

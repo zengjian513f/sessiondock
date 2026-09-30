@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Conversation SEND against a resumed native Codex session, using a private fake CLI."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -49,6 +50,20 @@ def main():
             codex_row('session_meta', {'id': CODEX_SID, 'cwd': str(root / 'work')}),
             codex_message('user', 'Synthetic codex prompt')], [])
         uid = corpus.uid(CODEX_SID)
+        # A previous server release incorrectly waited for a native /model
+        # echo. Load that persisted state before starting this server.
+        conversations = root / 'state' / 'conversations'
+        conversations.mkdir(mode=0o700)
+        ledger = conversations / 'conversation-ledger.json'
+        legacy_rows = [{'request_id': request_id, 'text': text,
+                        'echo_hash': hashlib.sha256(json.dumps(text).encode()).hexdigest(),
+                        'sent_at': time.time(), 'state': state, 'cli_queued_at': None}
+                       for request_id, text, state in (
+                           ('old-model', '/model', 'queued'),
+                           ('old-lost-model', '/model', 'lost'),
+                           ('ordinary-model-text', '/model is mentioned here', 'lost'))]
+        legacy_key = 'launch:legacy-model-menu'
+        ledger.write_text(json.dumps({'aliases': {uid: legacy_key}, 'queued': {legacy_key: legacy_rows}}))
         launcher = root / 'launcher.json'
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({'schema': 2,
@@ -84,6 +99,43 @@ def main():
                 xterm_includes(page, 'Context 32% used · Ready')
                 xterm_includes(page, 'Context 27% used · Working')
                 page.locator('#a-term').click()
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                build = context.request.get(base + '/api/meta').json()['build']
+                checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                assert [r['request_id'] for r in checked['cli']['queued']] == ['ordinary-model-text'], (checked, json.loads(ledger.read_text()))
+                persisted = json.loads(ledger.read_text())
+                assert [r['request_id'] for rows in persisted['queued'].values() for r in rows] == ['ordinary-model-text'], persisted['queued']
+                dismissed = context.request.post(base + '/api/session/conversation/queued/dismiss',
+                    data={'uid': uid, 'request_id': 'ordinary-model-text', '_build': build})
+                assert dismissed.status == 200, dismissed.text()
+                # Exercise the actual composer -> SEND -> local CLI menu path.
+                before_model = rollout.read_bytes()
+                page.locator('#cinput').fill('  /model  ')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                    page.locator('#csend').click()
+                assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
+                model_request = sent.value.request.post_data_json
+                expect(page.locator('#cinput')).to_have_value('')
+                expect(page.locator('#queued-sends .queued-send')).to_have_count(0)
+                page.locator('#a-term').click()
+                xterm_includes(page, 'Select Model and Effort')
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'blocked'")
+                checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                assert checked['cli']['queued'] == [] and checked['input']['state'] == 'blocked', checked
+                expect(page.locator('#queued-sends .queued-send')).to_have_count(0)
+                assert rollout.read_bytes() == before_model, 'Local /model must not create native history'
+                replay = context.request.post(base + '/api/session/conversation/send', data=model_request)
+                assert replay.status == 200 and replay.json()['state'] == 'sent', replay.text()
+                # Reload preserves the selected terminal/conversation mode.
+                if not page.locator('#termpane').is_visible():
+                    page.locator('#a-term').click()
+                page.wait_for_function('() => T.ws?.readyState === WebSocket.OPEN')
+                xterm_includes(page, 'Select Model and Effort')
+                page.locator('#termpane .xterm-helper-textarea').press('Escape')
+                page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                page.locator('#a-term').click()
                 for number in range(2):
                     page.wait_for_function("uid => composerUid === uid && composerDraft()?.inputStatus?.state === 'ready'", arg=uid)
                     text = f'native conversation send {number}'
@@ -112,7 +164,7 @@ def main():
                 # Codex's busy queue is TUI-only: no native record until released.
                 queue_file = root / 'queue'
                 queue_file.write_text('quoted')
-                queued_text = '另外，网卡可以再增加个RDMA上下行（如果有的话）\n第二行保留完整正文'
+                queued_text = '/model is mentioned in an ordinary input\n第二行保留完整正文'
                 for _ in range(2):
                     page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
                     page.locator('#cinput').fill(queued_text)
@@ -147,7 +199,7 @@ def main():
                 browser.close()
         finally:
             cleanup_hosts(root)
-    print('PASS native Codex browser: resumed identity, cwd, repeated composer sends, exact native records, replay without writes, TUI queue evidence, duplicate/wrapped sends, reload, native retirement')
+    print('PASS native Codex browser: local /model menu without native echo, persisted legacy repair, reload/replay, resumed identity, cwd, repeated composer sends, exact native records, TUI queue evidence, duplicate/wrapped sends, native retirement')
 
 
 if __name__ == '__main__':

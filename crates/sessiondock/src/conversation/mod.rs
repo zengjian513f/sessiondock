@@ -832,20 +832,22 @@ impl Conversations {
             result.clone(),
             input.draft_revision,
         )?;
-        // The CLI now holds the text in its own queue until it starts the
-        // turn; the queued row is retired by the native echo (docs/cli-state.md).
+        // Only turn input waits for a native echo. TUI-only commands such
+        // as Codex /model do not create native user/command records.
         self.remember_cli_identity(&input.uid, identity);
-        self.store.enqueue(
-            &identity.key,
-            store::QueuedSend {
-                request_id: input.request_id.clone(),
-                text: prompt.trim().to_owned(),
-                echo_hash: cli_state::echo_hash(&prompt),
-                sent_at: cli_state::unix_now(),
-                state: "queued".into(),
-                cli_queued_at: None,
-            },
-        )?;
+        if cli_state::expects_native_echo(&identity.source, &prompt) {
+            self.store.enqueue(
+                &identity.key,
+                store::QueuedSend {
+                    request_id: input.request_id.clone(),
+                    text: prompt.trim().to_owned(),
+                    echo_hash: cli_state::echo_hash(&prompt),
+                    sent_at: cli_state::unix_now(),
+                    state: "queued".into(),
+                    cli_queued_at: None,
+                },
+            )?;
+        }
         let mut response = result;
         response["draft"] = serde_json::to_value(self.store.draft(&identity.key)).unwrap();
         Ok(response)
