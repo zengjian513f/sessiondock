@@ -3645,7 +3645,7 @@ function applySourceFilterChange() {
 function selectOnlySource(source) {
   if (!Object.hasOwn(SOURCES, source)) return false;
   const control = document.querySelector(`#chips button[data-source="${CSS.escape(source)}"]`);
-  if (control?.dataset.unavailableReason) { showUnavailableTooltip(control); return false; }
+  if (control?.dataset.unavailableReason) { return false; }
   S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
   applySourceFilterChange();
   return true;
@@ -3654,7 +3654,7 @@ function selectOnlySource(source) {
 function selectOnlyNodeFilter(id) {
   const node = Nodes.list.find(item => item.id === id);
   if (!node) return false;
-  if (node.online === false) { showUnavailableTooltip(document.querySelector(`#node-chips button[data-node="${CSS.escape(id)}"]`), nodeOfflineReason(node)); return false; }
+  if (node.online === false) { return false; }
   Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
   store.set('nodesOff', [...Nodes.off]);
   renderNodes(); renderChips(); renderSide();
@@ -3705,7 +3705,7 @@ function filterButton(target) {
 }
 
 function selectOnlyFilter(button) {
-  if (button.dataset.unavailableReason) { showUnavailableTooltip(button); return false; }
+  if (button.dataset.unavailableReason) { return false; }
   if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
   if (button.dataset.source) return selectOnlySource(button.dataset.source);
   return false;
@@ -9574,7 +9574,7 @@ async function cloneSessionGroup(uid) {
   const reason = transferUnavailableReason(uid);
   if (reason) {
     const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
-    paintTransferAvailability(control, uid); showUnavailableTooltip(control, reason); return;
+    paintTransferAvailability(control, uid); return;
   }
   closeSessionActions();
   document.querySelector('#clone-group-dialog')?.remove();

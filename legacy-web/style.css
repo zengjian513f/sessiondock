@@ -2320,19 +2320,9 @@ header .btn[data-session-docked] { display: none; }
   .transfer-section-head .clone-status { margin-left: 0; }
 }
 
-/* Unavailable actions remain reachable for their anchored explanation. */
+/* Unavailable actions retain native title hints. */
 [data-unavailable-reason], [data-unavailable-reason]:hover {
   cursor: not-allowed !important; color: var(--muted) !important;
   filter: grayscale(1); opacity: .55;
 }
 [data-unavailable-reason] .ico { color: var(--muted) !important; }
-#control-unavailable-tooltip {
-  position: fixed; inset: auto; margin: 0; box-sizing: border-box;
-  width: max-content; max-width: min(340px, calc(100vw - 16px));
-  padding: 8px 11px; border: 1px solid var(--border); border-radius: 7px;
-  background: var(--panel); color: var(--text); box-shadow: 0 4px 16px rgb(0 0 0 / 16%);
-  font: 12px/1.5 -apple-system, "Segoe UI", sans-serif;
-  white-space: pre-line; overflow-wrap: anywhere; pointer-events: none;
-  max-height: calc(100dvh - 16px); overflow: hidden; z-index: 11000;
-}
-#control-unavailable-tooltip[hidden] { display: none; }
