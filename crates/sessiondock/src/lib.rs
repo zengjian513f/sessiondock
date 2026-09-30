@@ -33,6 +33,7 @@ pub mod sessions;
 pub mod shell_env;
 mod state;
 pub mod terminal;
+pub mod transfer;
 pub mod trash;
 pub mod ui_events;
 

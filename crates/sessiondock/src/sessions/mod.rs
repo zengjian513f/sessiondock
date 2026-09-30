@@ -13,6 +13,7 @@ mod debug_runs;
 pub use debug_runs::{DEBUG_RUNS_FILENAME, RunIndex, debug_run_of};
 mod history;
 mod index;
+pub(crate) use index::codex_rollout_id;
 mod native_input;
 mod native_media;
 pub mod opencode;
@@ -376,6 +377,11 @@ pub struct SessionSnapshot {
 }
 
 impl SessionSnapshot {
+    /// All physical candidates from exactly the publication behind `list`.
+    /// Transfer planning must not rescan midway through graph traversal.
+    pub fn index(&self) -> &IndexSnapshot {
+        &self.index
+    }
     /// Control identity evidence from the index summaries of this snapshot.
     pub fn native_catalog(&self) -> crate::runtime::NativeCatalog {
         self.index.catalog()
