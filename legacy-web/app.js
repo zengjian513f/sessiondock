@@ -1952,7 +1952,8 @@ function sessionInputAttention(uid) {
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const cli = cache.get(uid)?.cli;
-  const current = composerDraftOwner(uid) === composerDraftOwner(composerUid);
+  const current = typeof composerDrafts !== 'undefined'
+    && composerDraftOwner(uid) === composerDraftOwner(composerUid);
   const input = current ? draft?.inputStatus || cli?.input : cli?.input;
   // Normal startup/screen synchronization/paste is not a request for help.
   if (input?.state === 'starting' || ['input_check_pending', 'cli_starting',
@@ -1978,7 +1979,7 @@ function paintItemStatus(node) {
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(node.dataset.uid)) : null;
   const active = pending || S.live.has(node.dataset.uid)
-    || (!!takenOver(node.dataset.uid) && draft?.cli?.instance?.running === true);
+    || (draft?.cli?.instance?.running === true && !!takenOver(node.dataset.uid));
   const tmux = pending || S.liveTmux.has(node.dataset.uid);
   const frozen = sessionFrozen(node.dataset.uid);
   const attention = !frozen && active ? sessionInputAttention(node.dataset.uid) : '';
@@ -2029,7 +2030,7 @@ function paintHeaderTurn() {
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(S.sel)) : null;
   const active = (row ? row.classList.contains('live') : S.live.has(S.sel))
-    || (!!takenOver(S.sel) && draft?.cli?.instance?.running === true);
+    || (draft?.cli?.instance?.running === true && !!takenOver(S.sel));
   const attention = !frozen && active ? sessionInputAttention(S.sel) : '';
   paintStatusMarker(h, frozen, 0, attention);
   h.classList.toggle('visible', frozen || active);
@@ -6142,18 +6143,11 @@ function syncSessionFreezeOverlay() {
   if (!overlay && visible) {
     overlay = el('div', 'session-freeze-overlay');
     overlay.id = 'session-freeze-overlay';
-    overlay.innerHTML = `<div class="session-freeze-card" role="status" aria-live="polite">
-      <span class="session-freeze-symbol">${uiIcon('pause')}</span>
-      <strong>现场已冻结</strong>
-      <p>会话及子进程已暂停，可以报告问题保留现场。</p>
-      <div class="session-freeze-actions">
-        <button type="button" data-freeze-resume>${uiIcon('play')}恢复运行</button>
-        <button type="button" data-freeze-report>${uiIcon('bug')}报告问题</button>
-      </div>
+    overlay.innerHTML = `<div class="app-float session-freeze-line" role="status" aria-live="polite">
+      <span>会话已暂停</span>
+      <button class="btn" type="button" data-freeze-resume title="恢复运行" aria-label="恢复运行">${uiIcon('play')}</button>
     </div>`;
     overlay.querySelector('[data-freeze-resume]').onclick = () => $('#a-session-freeze')?.click();
-    overlay.querySelector('[data-freeze-report]').onclick = () =>
-      $('#detail .dhead [data-report-bug]')?.click();
     right.appendChild(overlay);
   }
   if (overlay) {
