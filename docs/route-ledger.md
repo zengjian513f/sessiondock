@@ -12,7 +12,7 @@ linked from [the documentation index](README.md).
 | Background unread | POST `/api/sessions/unread` (read-only cursor summaries, node-scoped through Hub) | current |
 | Sync and search | GET `/api/events` (lightweight UI changes), `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
 | Runtime state | GET `/api/live`, `/api/term/list` | capability-gated |
-| Preferences and timeline | POST `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
+| Preferences and timeline | GET/POST `/api/labels`, POST `/api/session/labels`, `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
 | Group copies | POST `/api/session/clone/plan`, `/api/session/clone`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel`, `/api/session/transfer/progress`; GET `/api/session/transfers` | capability-gated |
 | Private transfer channel | POST `/api/session/transfer/manifest`, `/api/session/transfer/check`, `/api/session/transfer/reserve`, `/api/session/transfer/export`, `/api/session/transfer/receive`, `/api/session/transfer/status`, `/api/session/transfer/release` | authenticated node listener only |
 | Private move handoff | POST `/api/session/transfer/abort`, `/api/session/transfer/switch`, `/api/session/transfer/activate`, `/api/session/transfer/retire` | authenticated node listener only |

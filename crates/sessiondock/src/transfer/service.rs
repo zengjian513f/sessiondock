@@ -377,6 +377,8 @@ impl TransferService {
                 for key in [
                     "starred",
                     "starred_at",
+                    "labels",
+                    "group",
                     "fork_parent_visible",
                     "nest_independent",
                 ] {
