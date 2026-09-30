@@ -153,6 +153,8 @@ def main():
                     append(claude_path, ask)
                     expect(badge(claude_uid)).to_have_class(re.compile(r"\bturn-waiting\b"), timeout=20000)
                     expect(badge(claude_uid)).to_have_attribute("title", re.compile("等待回答"))
+                    expect(badge(claude_uid)).to_have_text(re.compile(r'^\?\d*$'))
+                    expect(badge(claude_uid)).to_have_css('background-color', 'rgb(251, 191, 36)')
                     append(claude_path,
                         claude_row(CLAUDE_SID, "user", "u2", "a1", [{"type": "tool_result", "tool_use_id": "toolu_ask",
                                                                       "content": "A"}], cwd=work),
