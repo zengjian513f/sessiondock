@@ -258,7 +258,9 @@ impl BugReportService {
                     record_id.to_owned(),
                     WorkerNote {
                         report_id: name.clone(),
-                        title: format!("处理 {name}"),
+                        title: fs::read_to_string(directory.join(name).join("description.md"))
+                            .map(|description| report_title(&description))
+                            .unwrap_or_else(|_| format!("处理 {name}")),
                         status: manifest["status"].as_str().unwrap_or("").to_owned(),
                         error: manifest["error"].as_str().map(str::to_owned),
                     },
@@ -287,13 +289,13 @@ impl BugReportService {
     pub fn attachment_root(&self) -> PathBuf {
         self.repository.join(ATTACHMENT_DIR)
     }
-    fn note_worker(&self, record_id: &str, report_id: &str) {
+    fn note_worker(&self, record_id: &str, report_id: &str, title: &str) {
         let mut workers = self.workers.lock().unwrap_or_else(|p| p.into_inner());
         workers.insert(
             record_id.to_owned(),
             WorkerNote {
                 report_id: report_id.to_owned(),
-                title: format!("处理 {report_id}"),
+                title: title.to_owned(),
                 status: "starting".into(),
                 error: None,
             },
@@ -354,6 +356,7 @@ impl BugReportService {
         self.note_worker(
             worker["record_id"].as_str().expect("lifecycle record"),
             report_id,
+            decoration["title"].as_str().unwrap_or("BUG:"),
         );
         Ok(Some(report_id.to_owned()))
     }
@@ -632,6 +635,14 @@ impl BugReportService {
     }
 }
 
+// Use the first nonempty description line, also the native session's first line.
+fn report_title(description: &str) -> String {
+    format!(
+        "BUG: {}",
+        description.trim().lines().next().unwrap_or("").trim()
+    )
+}
+
 fn string_of(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.clone(),
@@ -711,7 +722,9 @@ pub fn worker_prompt(
         uid
     };
     format!(
-        "处理 sessiondock 缺陷报告 {report_id}
+        "{title}
+
+处理 sessiondock 缺陷报告 {report_id}
 
 用户描述：
 {body}
@@ -735,6 +748,7 @@ pub fn worker_prompt(
    保留生产会话、状态和回滚备份，不手工修改生产数据。
 5. 完成后说明根因、修改的文件、验证结果、push 与各节点部署结果和仍存风险。
 ",
+        title = report_title(description),
         dir = report_dir.display(),
         machine = origin_label(origin),
     )

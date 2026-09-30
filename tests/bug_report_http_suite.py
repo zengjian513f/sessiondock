@@ -235,7 +235,7 @@ def run(opener, base, root, repo):
             fail("202 shape", f"worker.{key} missing", raw)
     if (reply.get("ok") is not True or not str(reply.get("report_id", "")).startswith("BUG-")
             or worker["kind"] != "bug-report" or worker["source"] != "claude"
-            or worker["title"] != f"处理 {reply['report_id']}" or worker["cwd"] != str(repo)
+            or worker["title"] != "BUG: 点了按钮没反应，见 [附件1]" or worker["cwd"] != str(repo)
             or Path(reply["path"]) != reports / reply["report_id"]):
         fail("202 shape", reply, raw)
     created.append(worker)
@@ -343,7 +343,7 @@ def run(opener, base, root, repo):
     users=[row for row in users if row.get('type')=='user']
     assert len(users)==1 and users[0]['message']['content'].strip()==(Path(blocked['path'])/'worker-prompt.md').read_text().strip()
     listing,_=call(opener,base,'GET','/api/term/list')
-    assert any(row.get('record_id')==restarted['record_id'] and row.get('kind')=='bug-report' and row.get('worker_status')=='submitted' for row in listing.get('pending',[]))
+    assert any(row.get('record_id')==restarted['record_id'] and row.get('kind')=='bug-report' and row.get('worker_status')=='submitted' and row.get('title')=='BUG: preserve through update' for row in listing.get('pending',[]))
     ledger=json.loads((root/'state/conversations/conversation-ledger.json').read_text())
     assert all(isinstance(row['payload'],str) and 'text' not in row['result'] for row in ledger['requests'].values())
     passed('update menu refusal, report draft restart, common first-task SEND and synchronized status')
@@ -427,6 +427,14 @@ def main():
             passed("unconfigured")
         with server(binary, root, {"SESSIONDOCK_LAUNCHER_CONFIG": str(good), **bug}) as (base, opener):
             n = run(opener, base, root, repo)
+        with server(binary, root, {"SESSIONDOCK_LAUNCHER_CONFIG": str(good), **bug}) as (base, opener):
+            listing, _ = call(opener, base, "GET", "/api/term/list")
+            reports = [row for row in listing.get("pending", []) if row.get("kind") == "bug-report"]
+            assert reports, listing
+            for row in reports:
+                description = (root / "reports" / row["report_id"] / "description.md").read_text()
+                assert row["title"] == "BUG: " + description.strip().splitlines()[0].strip(), row
+            passed("description titles survive service restart")
         alive = leftovers(root)
         if alive:
             fail("cleanup", f"fake CLI still alive pids={alive}")
