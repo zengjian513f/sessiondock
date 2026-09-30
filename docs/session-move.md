@@ -134,7 +134,10 @@ thread ID、goal ID 以及历史 `thread_goal_updated` 的结构化引用，不�
 为父线程及两个 fork 显式设置暂停目标，经 Chromium 复制后用原生接口读取并单独修改新目标，
 确认原组不变；该测试不发送模型请求，也不证明 fork 自动继承目标。
 合成复杂组另覆盖共享 goal ID、空预算、非零用量和续接延迟记录。
-`thread_attachments`、`thread_realtime_items` 的非空记录仍未适配，不能据此宣称全部原生状态可迁移。
+实时历史 `realtime_item` 与 `thread_realtime_items` 按同一映射处理记录 ID、语音会话 ID，
+以及关联普通消息的 turn/item ID；保留语音文本、顺序、时间和结束结果。这只复制持久历史，
+不会重建语音连接。合成复杂组浏览器核对 rollout 与数据库投影一致，包含仅存在于投影的记录。
+`thread_attachments` 的非空记录仍未适配，不能据此宣称全部原生状态可迁移。
 
 ### 第一步先做 Codex 实测
 

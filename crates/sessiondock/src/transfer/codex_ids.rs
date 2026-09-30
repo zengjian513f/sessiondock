@@ -89,8 +89,22 @@ pub(super) fn item(v: &mut Value, map: &mut Mapper<'_>) -> Result<(), TransferEr
     Ok(())
 }
 
+pub(super) fn realtime(v: &mut Value, map: &mut Mapper<'_>) -> Result<(), TransferError> {
+    for key in ["id", "realtime_session_id"] {
+        field(v, key, Identity::Record, map)?;
+    }
+    if v["type"] == "bem_item_promoted" {
+        field(v, "turn_id", Identity::Turn, map)?;
+        field(v, "item_id", Identity::Record, map)?;
+    }
+    Ok(())
+}
+
 pub(super) fn visit(row: &mut Value, map: &mut Mapper<'_>) -> Result<(), TransferError> {
     let kind = row["type"].as_str().unwrap_or("").to_owned();
+    if kind == "realtime_item" {
+        return realtime(&mut row["payload"], map);
+    }
     if !matches!(
         kind.as_str(),
         "event_msg" | "response_item" | "turn_context"
