@@ -10,7 +10,7 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, LabelCatalog, MetadataSnapshot, NestParent, PendingRewind,
+    ActivityStop, Attachment, GroupCatalog, MetadataSnapshot, NestParent, PendingRewind,
     SCHEMA_VERSION, SpawnedBy, StopState, TimelinePin, fork_parent_uids,
 };
 
@@ -123,21 +123,19 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_transfer_rows(rows, remove))
     }
 
-    pub fn merge_label_catalog(
+    pub fn merge_group_catalog(
         &self,
-        catalog: &LabelCatalog,
+        catalog: &GroupCatalog,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_label_catalog(catalog))
+        self.update(|snapshot| snapshot.with_group_catalog(catalog))
     }
 
-    pub fn set_labels(
+    pub fn set_group(
         &self,
         uid: &str,
-        add: &std::collections::BTreeSet<String>,
-        remove: &std::collections::BTreeSet<String>,
         group: Option<Option<String>>,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_labels(uid, add, remove, group))
+        self.update(|snapshot| snapshot.with_group(uid, group))
     }
 
     pub fn set_starred(

@@ -89,10 +89,10 @@ def main():
                     seed(peer,source)
                     source_metadata=source.root/'state/session-metadata.json'
                     source_doc=json.loads(source_metadata.read_text()) if source_metadata.exists() else {'schema_version':1,'revision':1,'sessions':{}}
-                    source_doc['sessions'][selected]={'labels':['source-label'],'group':'source-group','fork_parent_visible':True}
+                    source_doc['sessions'][selected]={'group':'source-group','fork_parent_visible':True}
                     source_metadata.write_text(json.dumps(source_doc))
                     target_metadata=root/'destination/state/session-metadata.json'
-                    target_before={'starred':True,'starred_at':123,'labels':['target-label'],'group':'target-group','activity_revision':7}
+                    target_before={'starred':True,'starred_at':123,'group':'target-group','activity_revision':7}
                     unrelated='claude:ffffffffffffffff'
                     peer.write(target_metadata,json.dumps({'schema_version':1,'revision':1,'sessions':{
                         selected:target_before,unrelated:{'starred':True}}}).encode())

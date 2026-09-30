@@ -143,7 +143,7 @@ def prepare(root):
     state = root / 'state'
     state.mkdir()
     (state / 'session-metadata.json').write_text(json.dumps({'schema_version':1,'revision':1,'sessions':{
-        corpus.uid('a'):{'starred':True,'starred_at':1000,'fork_parent_visible':True,'labels':['重要'],'group':'待办'},
+        corpus.uid('a'):{'starred':True,'starred_at':1000,'fork_parent_visible':True,'group':'待办'},
         corpus.uid('grandchild'):{'nest_parent':{'source':'codex','sid':ident(1)}}}}))
     proc = root / 'proc'
     proc.mkdir()
@@ -401,9 +401,9 @@ def main():
                         print('PASS attachment and legacy artifact membership IDs remapped; opaque payload bytes and client keys preserved',flush=True)
                         assert saved['phase']=='complete'
                         starred_copy = next(row for row in saved['metadata_after'].values() if row.get('starred'))
-                        assert starred_copy['labels'] == ['重要'] and starred_copy['group'] == '待办'
+                        assert starred_copy['group'] == '待办'
                         persisted = json.loads((corpus.root / 'state/session-metadata.json').read_text())
-                        assert any(row.get('labels') == ['重要'] and row.get('group') == '待办'
+                        assert any(row.get('group') == '待办'
                                    for uid, row in persisted['sessions'].items() if uid in saved['metadata_after'])
                         ids=saved['plan']['identities']['threads']
                         page.locator('#a-view-switch').click()

@@ -14,14 +14,13 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct LabelCatalog {
-    pub labels: BTreeSet<String>,
+pub struct GroupCatalog {
     pub groups: BTreeSet<String>,
 }
 
-impl LabelCatalog {
+impl GroupCatalog {
     fn is_empty(&self) -> bool {
-        self.labels.is_empty() && self.groups.is_empty()
+        self.groups.is_empty()
     }
 }
 
@@ -30,8 +29,8 @@ pub(super) struct Document {
     pub schema_version: u32,
     pub revision: u64,
     pub sessions: BTreeMap<String, Row>,
-    #[serde(default, skip_serializing_if = "LabelCatalog::is_empty")]
-    pub label_catalog: LabelCatalog,
+    #[serde(default, alias = "label_catalog", skip_serializing_if = "GroupCatalog::is_empty")]
+    pub group_catalog: GroupCatalog,
 }
 
 fn no(value: &bool) -> bool {
@@ -46,8 +45,6 @@ fn zero(value: &u64) -> bool {
 pub(super) struct Row {
     #[serde(skip_serializing_if = "no")]
     starred: bool,
-    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
-    labels: BTreeSet<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     group: Option<String>,
     /// Private ownership proof for compensating a clone transaction.
@@ -224,7 +221,7 @@ impl MetadataSnapshot {
                 schema_version: SCHEMA_VERSION,
                 revision: 0,
                 sessions: BTreeMap::new(),
-                label_catalog: LabelCatalog::default(),
+                group_catalog: GroupCatalog::default(),
             },
         }
     }
@@ -286,24 +283,19 @@ impl MetadataSnapshot {
         })
     }
 
-    pub fn label_catalog(&self) -> LabelCatalog {
+    pub fn group_catalog(&self) -> GroupCatalog {
         // Include assignments imported by clone or older metadata writers.
-        let mut catalog = self.document.label_catalog.clone();
+        let mut catalog = self.document.group_catalog.clone();
         for row in self.document.sessions.values() {
-            catalog.labels.extend(row.labels.iter().cloned());
             catalog.groups.extend(row.group.iter().cloned());
         }
         catalog
     }
 
-    pub fn with_label_catalog(&self, catalog: &LabelCatalog) -> Result<Self, MetadataError> {
+    pub fn with_group_catalog(&self, catalog: &GroupCatalog) -> Result<Self, MetadataError> {
         let mut next = self.clone();
         next.document
-            .label_catalog
-            .labels
-            .extend(clean_names(&catalog.labels)?);
-        next.document
-            .label_catalog
+            .group_catalog
             .groups
             .extend(clean_names(&catalog.groups)?);
         if next.document != self.document {
@@ -312,30 +304,20 @@ impl MetadataSnapshot {
         Ok(next)
     }
 
-    pub fn with_labels(
+    pub fn with_group(
         &self,
         uid: &str,
-        add: &BTreeSet<String>,
-        remove: &BTreeSet<String>,
         group: Option<Option<String>>,
     ) -> Result<Self, MetadataError> {
         validate_uid(uid)?;
-        let add = clean_names(add)?;
-        let remove = clean_names(remove)?;
         let group = group
             .map(|name| name.map(|name| clean_name(&name)).transpose())
             .transpose()?;
         let mut next = self.clone();
-        next.document
-            .label_catalog
-            .labels
-            .extend(add.iter().cloned());
         if let Some(Some(name)) = &group {
-            next.document.label_catalog.groups.insert(name.clone());
+            next.document.group_catalog.groups.insert(name.clone());
         }
         let row = next.document.sessions.entry(uid.to_owned()).or_default();
-        row.labels.retain(|name| !remove.contains(name));
-        row.labels.extend(add);
         if let Some(group) = group {
             row.group = group;
         }
@@ -691,9 +673,6 @@ impl MetadataSnapshot {
             object.insert("starred_at".into(), json!(saved.starred_at));
         }
         if let Some(saved) = saved {
-            if !saved.labels.is_empty() {
-                object.insert("labels".into(), json!(saved.labels));
-            }
             if let Some(group) = &saved.group {
                 object.insert("group".into(), json!(group));
             }
@@ -758,8 +737,8 @@ fn clean_name(name: &str) -> Result<String, MetadataError> {
     if name.is_empty() {
         return Err(MetadataError::new(
             400,
-            "label_name_empty",
-            "标签或分组名称不能为空",
+            "group_name_empty",
+            "分组名称不能为空",
         ));
     }
     Ok(name.to_owned())

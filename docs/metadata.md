@@ -212,48 +212,41 @@ The regression suite covers persistence, restart, sequential writer handles,
 external edits, concurrent callers and injected pre/post-replacement failures.
 Platform execution and deployment results are recorded in the batch ledger.
 
-## Node-owned labels and groups
+## Node-owned session groups
 
-`label_catalog: {labels: [name, ...], groups: [name, ...]}` is optional in
-`session-metadata.json`; older documents need no migration. Session rows carry
-`labels: [name, ...]` and an optional `group`. Names are trimmed, nonempty and
-case-sensitive; identical names identify the same catalog entry across nodes.
-Catalogs retain unused entries. This first version supports creation and
-assignment; it does not rename or delete catalog entries.
+`group_catalog: {groups: [name, ...]}` is optional in `session-metadata.json`.
+Each session has at most one `group`. Names are trimmed, nonempty and
+case-sensitive; identical names identify the same entry across nodes. Catalogs
+retain unused entries and support creation and assignment.
 
-- `GET /api/labels` reads the node's catalog, including names from imported
-  session assignments.
-- `POST /api/labels {labels?, groups?}` merges entries without replacing existing
-  entries or changing assignments.
-- `POST /api/session/labels {uid, add_labels?, remove_labels?, set_group?, group?}`
-  changes a listed session. Add/remove are applied to the latest metadata;
-  omitted or false `set_group` preserves its group, while true and null clears
-  it. Labels/group, catalog additions and revision commit together; other
-  preferences and native CLI records remain intact. Without metadata the routes
-  return `501 metadata_disabled`.
+- `GET /api/groups` reads the catalog, including imported session assignments.
+- `POST /api/groups {groups?}` merges names without changing assignments.
+- `POST /api/session/group {uid, set_group?, group?}` changes a listed session.
+  Omitted or false `set_group` preserves its group; true with null clears it.
+  Group, catalog additions and revision commit together. Other preferences and
+  native CLI records remain intact. Without metadata these routes return
+  `501 metadata_disabled`.
 
-The Hub's `GET/POST /api/labels` merge catalogs from all registered enabled
-nodes, independent of browser machine filters, then merge the union back into
-reachable nodes. A background task also does this every ten seconds, so a
-rejoining node catches up without a Hub page open. `hub-cache/labels.json` is a
-rebuildable union cache for offline listing and retries; nodes own the durable
-catalogs. Creating through the Hub requires at least one node to confirm the
-write. Responses expose `synced_nodes` and `sync_errors`; unreachable or older
-nodes do not block healthy nodes, and failures retry on subsequent ticks.
-Catalog union never clears entries and only converges while nodes are connected.
-Hub restart retains the cached union; a node remains independently usable.
+The Hub merges all registered enabled nodes' catalogs and distributes the union
+back to reachable nodes every ten seconds, independent of browser filters.
+`hub-cache/groups.json` is a rebuildable cache; nodes own the durable catalogs.
+Hub creation requires at least one node to confirm the write. Responses expose
+`synced_nodes` and `sync_errors`; offline nodes catch up after rejoining.
+A node remains independently usable after restarting without a Hub.
 
-The legacy session right-click/hold menu opens a labels/group editor, with a
-batch action in multi-select mode. Mixed labels are indeterminate and unchanged
-unless toggled; batch group defaults to preserving each session's group. Label
-filter clicks combine selected labels with OR, while right-click or hold selects
-only that label. The group filter combines with label filters using AND. The
-Group view groups sessions across machines by saved group, with an ungrouped
-section; manual/spawn nesting does not override group membership in this view.
-Only filters are browser preferences. Clone preserves labels/group with the
-session metadata, and catalog reads include the imported names.
+The session right-click/hold menu opens a group editor. Multi-select supports
+assigning one group to all selected sessions and defaults to preserving each
+session's existing group. A single group filter and the Group view organize
+sessions across machines; only the filter is stored in the browser. Clone
+preserves the group and catalog reads include imported names.
 
-Validation: `python3 tests/labels_browser.py` exercises two independent nodes
-and a real Hub, catalog union/downsync, assignments and batch preservation,
-right-click/hold filtering, mobile edit, offline/rejoin, Hub/node restart,
-standalone use, and unchanged native records.
+Session tags have been removed from the UI, API and metadata model. Old
+`label_catalog` documents are read only to preserve their groups; obsolete tag
+fields are ignored and disappear on the next metadata write. The Hub likewise
+reads the groups from its previous `labels.json` cache if the new cache is absent.
+Tags are never converted into groups. Old tag API routes are no longer served.
+
+Validation: `python3 tests/groups_browser.py --binary target/release/sessiondock` exercises two independent nodes
+and a real Hub, existing-group preservation, tag removal, catalog union/downsync,
+assignments and batch preservation, group filtering/view, mobile hold/clear,
+offline/rejoin, restarts, standalone use, and unchanged native records.

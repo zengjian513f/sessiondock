@@ -1421,7 +1421,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent, m.labels || [], m.group || null,
+    m.nest_parent || null, !!m.nest_independent, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
   entry.meta = meta;
@@ -2557,7 +2557,7 @@ function mergeSessionMetaEvent(entry, session) {
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
     m.title, m.parent_title, m.sid, m.agent_type, !!m.starred, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent, m.labels || [], m.group || null,
+    m.nest_parent || null, !!m.nest_independent, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);
   const before = cache.get(viewKey(S.sel, S.agent));
@@ -2786,7 +2786,7 @@ setTimeout(startUiEvents, 0);
 function visible() {
   let pool = (S.results || sidebarSessions()).filter(s => (!sessionHidden(s) || s.uid === S.sel)
     && !S.off.has(s.source) && nodeSelected(s));
-  pool = pool.filter(s => globalThis.SessionDockLabels?.matches(s) ?? true);
+  pool = pool.filter(s => globalThis.SessionDockGroups?.matches(s) ?? true);
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
   return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n')));
@@ -3049,7 +3049,7 @@ function renderPickBar() {
   $('#side').classList.toggle('picking', S.picking);
   $('#side').classList.toggle('attaching', attaching);
   $('#side-pick-all').hidden = attaching;
-  globalThis.SessionDockLabels?.paintPickBar(attaching);
+  globalThis.SessionDockGroups?.paintPickBar(attaching);
   $('#side-pick-delete').hidden = attaching;
   $('#side-pick-stop').hidden = attaching;
   $('#side-pick-attach').hidden = attaching || !SessionDockCapabilities.allows('metadata');
@@ -3312,8 +3312,8 @@ function openItemMenu(uid, x, y) {
     delete: parent ? '分叉父会话可隐藏，不能直接删除。'
       : ((!row?.pending && running && !unusedLaunch) || shellRunning)
         ? '请先停止会话再删除。' : '',
-    labels: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockLabels?.available
-      ? '此会话当前不能保存标签和分组。' : '',
+    group: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available
+      ? '此会话当前不能保存分组。' : '',
     pick: parent ? '分叉父会话不能加入多选。' : '',
   };
   for (const button of menu.querySelectorAll('button[data-act]')) {
@@ -3461,7 +3461,7 @@ $('#item-menu').onclick = async e => {
   const uid = menuUid;
   closeItemMenu();
   if (!uid) return;
-  if (button.dataset.act === 'labels') { await globalThis.SessionDockLabels?.open([uid]); return; }
+  if (button.dataset.act === 'group') { await globalThis.SessionDockGroups?.open([uid]); return; }
   if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
@@ -4288,7 +4288,7 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const snippet = node.querySelector('.snip');
   if (snippet && (snippet.textContent !== s.snippet || node._highlightKey !== highlightKey)) snippet.innerHTML = hl(s.snippet);
-  globalThis.SessionDockLabels?.paintRow(node, s);
+  globalThis.SessionDockGroups?.paintRow(node, s);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
   syncRowPickBox(node, s);
   const caret = node.querySelector('.nest-caret');
@@ -4346,7 +4346,7 @@ function createSidebarRow(r, picked = pickedSessions) {
        ${s.snippet ? `<div class="snip">${hl(s.snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
-  globalThis.SessionDockLabels?.paintRow(it, s);
+  globalThis.SessionDockGroups?.paintRow(it, s);
   it.dataset.uid = s.uid;
   it.dataset.key = s.uid;
   it.dataset.depth = r.depth;
