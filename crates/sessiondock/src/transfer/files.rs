@@ -116,7 +116,14 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
     content_ids(row.get_mut("content"), visit);
     // Grok/OpenAI chat messages store calls separately from content blocks.
     if source == "grok" {
-        for name in ["id", "eventId", "chunkId", "prompt_id", "parent_prompt_id"] {
+        for name in [
+            "id",
+            "eventId",
+            "chunkId",
+            "prompt_id",
+            "parent_prompt_id",
+            "checkpoint_id",
+        ] {
             if let Some(value) = row.get_mut(name) {
                 visit(value);
             }
@@ -128,6 +135,14 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
                 }
             }
         }
+        for item in row
+            .get_mut("compacted_history")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            record_ids(item, source, visit);
+        }
         if let Some(update) = row.get_mut("update") {
             record_ids(update, source, visit);
         }
@@ -135,6 +150,26 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
             if let Some(update) = row.get_mut(wrapper) {
                 record_ids(update, source, visit);
             }
+        }
+    }
+}
+// Only the native checkpoint pointer is a path identity. Summary text and
+// reread_file_paths describe the workspace and remain unchanged.
+fn rewrite_checkpoint_paths(row: &mut Value, records: &BTreeMap<String, String>) {
+    if let Some(pointer) = row.get_mut("checkpoint_file") {
+        if let Some(id) = pointer
+            .as_str()
+            .and_then(|s| s.strip_prefix("compaction_checkpoints/"))
+            .and_then(|s| s.strip_suffix(".json"))
+        {
+            if let Some(mapped) = records.get(&key("grok", id)) {
+                *pointer = format!("compaction_checkpoints/{mapped}.json").into();
+            }
+        }
+    }
+    for wrapper in ["params", "update", "_meta", "updateParams"] {
+        if let Some(child) = row.get_mut(wrapper) {
+            rewrite_checkpoint_paths(child, records);
         }
     }
 }
@@ -174,6 +209,14 @@ fn session_ids(row: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
         field(row, name, source, ids);
     }
     if source == "grok" {
+        for item in row
+            .get_mut("compacted_history")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            session_ids(item, source, ids);
+        }
         if let Some(info) = row.get_mut("info") {
             field(info, "id", source, ids);
         }
@@ -185,6 +228,11 @@ fn session_ids(row: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
     }
 }
 pub(super) fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<String, String>) {
+    if source == "grok" {
+        for item in row["compacted_history"].as_array().into_iter().flatten() {
+            collect_tools(item, source, names);
+        }
+    }
     for call in row["tool_calls"].as_array().into_iter().flatten() {
         if let (Some(id), Some(name)) = (call["id"].as_str(), call["name"].as_str()) {
             names.insert(key(source, id), name.into());
@@ -293,6 +341,16 @@ fn rewrite_tools(
     ids: &BTreeMap<String, String>,
     names: &BTreeMap<String, String>,
 ) -> Result<(), TransferError> {
+    if source == "grok" {
+        for item in row
+            .get_mut("compacted_history")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            rewrite_tools(item, source, ids, names)?;
+        }
+    }
     let mut send_message_result = false;
     if let Some(calls) = row.get_mut("tool_calls").and_then(Value::as_array_mut) {
         for call in calls {
@@ -423,6 +481,13 @@ fn native_format(source: &str, path: &Path) -> &'static str {
             return "json";
         }
     } else {
+        if path
+            .parent()
+            .is_some_and(|p| p.file_name().is_some_and(|s| s == "compaction_checkpoints"))
+            && path.extension().is_some_and(|s| s == "json")
+        {
+            return "json";
+        }
         if matches!(
             name,
             "summary.json" | "meta.json" | "signals.json" | "rewind_state.json"
@@ -616,6 +681,25 @@ impl Plan {
                 format: format.into(),
             });
         }
+        // Checkpoint paths are session-relative and referenced by updates.jsonl.
+        // All record IDs must be collected before assigning their filenames.
+        for file in &mut plan.files {
+            if file.provider == "grok"
+                && file
+                    .source
+                    .parent()
+                    .is_some_and(|p| p.file_name().is_some_and(|s| s == "compaction_checkpoints"))
+            {
+                if let Some(id) = file
+                    .source
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .and_then(|id| plan.records.get(&key("grok", id)))
+                {
+                    file.target.set_file_name(format!("{id}.json"));
+                }
+            }
+        }
         Ok(plan)
     }
     pub fn rewrite(&self, file: &File, raw: &[u8]) -> Result<Vec<u8>, TransferError> {
@@ -702,6 +786,9 @@ impl Plan {
             session_ids(&mut row, source, &self.sessions);
             rewrite_tools(&mut row, source, &self.sessions, names)?;
             self.tool_paths(&mut row, source);
+            if source == "grok" {
+                rewrite_checkpoint_paths(&mut row, &self.records);
+            }
             record_ids(&mut row, source, &mut |value| {
                 rewrite_scalar(value, source, &self.records)
             });

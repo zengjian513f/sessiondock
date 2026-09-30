@@ -443,6 +443,18 @@ Codex、Claude、Grok 的分支/子代理连为一个十四会话组，覆盖一
 验证目标三种历史及跨来源归属、同 SID 两代 rollout，以及移动清理或复制保留源数据。
 运行时显式传入 `--peer`；不会读取或修改生产会话。
 
+Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
+整组关系包含其中 `compacted_history` 的子代理调用与结果；重写身份时同步改写
+检查点 ID、文件名、`updates.jsonl` 的 `checkpoint_file`、内嵌调用 ID 和代理引用。
+摘要、普通消息、`original_user_info` 与 `reread_file_paths` 保持原意；保留身份时仍原字节复制。
+格式依据为 Grok 的 [检查点定义](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/extensions/notification.rs)。
+[session_files_clone_browser.py](../tests/session_files_clone_browser.py) 覆盖仅在检查点中出现的代理依赖、
+文件和索引映射、普通文本不变及源文件不变。
+[session_grok_checkpoint_browser.py](../tests/session_grok_checkpoint_browser.py) 已使用 Grok 1.0.44
+在临时 home 中完成原生 `/compact`、Chromium 新身份复制、原生加载及检查点回退，随后续聊读回压缩前标记。
+测试使用 `grok-4.6` / low，并检查原生记录与日常配置哈希；ACP 新建会话会忽略启动模型，
+因此在隔离会话中显式设置模型并在首次请求前核验。此脚本仅显式调用，不加入默认验证。
+
 - [session_bundle_browser.py](../tests/session_bundle_browser.py)：起两个隔离的节点服务和一个 Hub。
   使用 `--peer` 时通过 SSH 在两台主机创建**绝对路径相同、存储独立的临时 CLI 根**，
   数据全部合成。在页面上点菜单 → 选目标 → 看清单 → 移动 → 在目标节点打开

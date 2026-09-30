@@ -83,6 +83,27 @@ def main():
             stream.write(encoded({'type':'assistant','tool_calls':[{'id':'result-only','name':'Bash','arguments':'{}'}]}))
         with (grok_owner/'updates.jsonl').open('ab') as stream:
             stream.write(encoded({'toolCallId':'result-only','rawOutput':json.dumps({'subagent_id':'missing-unrelated-agent'})}))
+        checkpoint_alias='ag1.checkpointabcdefabcdefabcdefabcd'
+        checkpoint_agent=corpus.root/'grok/project'/ident(83);checkpoint_agent.mkdir()
+        (checkpoint_agent/'summary.json').write_text(json.dumps({'info':{'id':ident(83),'cwd':str(corpus.root/'cwd')},
+            'generated_title':'Checkpoint-only agent','agent_id':checkpoint_alias}))
+        (checkpoint_agent/'chat_history.jsonl').write_bytes(encoded({'type':'user','content':'Checkpoint agent question'})+
+            encoded({'type':'assistant','content':'Checkpoint agent answer'}))
+        checkpoint_id=ident(890)
+        checkpoint={'checkpoint_id':checkpoint_id,'prompt_index_at_compaction':2,'schema_version':1,
+            'created_at':'2026-01-01T00:00:00Z','original_user_info':'Literal '+checkpoint_alias,
+            'reread_file_paths':['/example/'+checkpoint_id], 'compacted_history':[
+                {'type':'user','content':'Literal '+checkpoint_alias},
+                {'type':'assistant','tool_calls':[{'id':'checkpoint-call','name':'spawn_subagent','arguments':'{}'}]},
+                {'type':'tool_result','tool_call_id':'checkpoint-call','content':json.dumps({'subagent_id':checkpoint_alias})},
+                {'type':'assistant','tool_calls':[{'id':'checkpoint-resume','name':'send_subagent_message',
+                    'arguments':json.dumps({'subagent_id':checkpoint_alias,'message':'Literal '+checkpoint_alias})}]}]}
+        checkpoint_path=parent/'compaction_checkpoints'/(checkpoint_id+'.json')
+        checkpoint_path.parent.mkdir(exist_ok=True);checkpoint_path.write_text(json.dumps(checkpoint,indent=2))
+        with (parent/'updates.jsonl').open('ab') as stream:
+            stream.write(encoded({'params':{'update':{'sessionUpdate':'compaction_checkpoint',
+                'checkpoint_id':checkpoint_id,'checkpoint_file':'compaction_checkpoints/'+checkpoint_id+'.json',
+                'schema_version':1,'prompt_index_at_compaction':2,'created_at':checkpoint['created_at']}}}))
         (corpus.root/'state').mkdir();(corpus.root/'proc').mkdir()
         original={str(p):p.read_bytes() for folder in ('claude','grok') for p in (corpus.root/folder).rglob('*') if p.is_file()}
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
@@ -106,9 +127,9 @@ def main():
                             if source=='grok':
                                 history=parent/'updates.jsonl';saved_history=history.read_bytes()
                                 history.write_bytes(saved_history.replace(result_alias.encode(),b'missing-result-agent'))
-                                page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
+                                page.locator(f'#side .item[data-uid="{selected}"]').click()
                                 with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as missing:
-                                    page.locator('#item-menu [data-act="clone"]').click()
+                                    page.locator('#a-clone-group').click()
                                 assert missing.value.status==409,missing.value.text()
                                 expect(page.locator('#clone-group-dialog .transfer-error')).to_contain_text('missing-result-agent')
                                 expect(page.locator('#clone-group-dialog .clone-confirm')).to_be_disabled()
@@ -119,7 +140,7 @@ def main():
                             page.locator('#item-menu [data-act="clone"]').click()
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
-                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 7)
+                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 8)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                                 dialog.locator('.clone-confirm').click()
                             response=reply.value;assert response.ok,response.text();result=response.json()
@@ -154,7 +175,7 @@ def main():
                                 meta=corpus.root/'grok/project'/ids['grok:'+ident(80)]/'subagents'/ids['grok:'+grok_alias]/'meta.json'
                                 assert json.loads(meta.read_text())['child_session_id']==ids['grok:'+ident(81)]
                                 copied=corpus.root/'grok/project'/ids['grok:'+ident(10)]/'updates.jsonl'
-                                update=json.loads(copied.read_text().splitlines()[-2])['params']['update']
+                                update=json.loads(copied.read_text().splitlines()[-3])['params']['update']
                                 assert update['rawInput']['subagent_id']==ids['grok:'+grok_alias]
                                 assert update['rawInput']['message']=='Literal '+grok_alias
                                 assert update['rawOutput']=='=== Task '+ids['grok:'+grok_alias]+' ===\n'
@@ -162,9 +183,27 @@ def main():
                                 unrelated=json.loads(foreign.read_text().splitlines()[0])
                                 assert unrelated['rawInput']['subagent_id']==grok_alias
                                 assert unrelated['rawOutput']=='=== Task '+grok_alias+' ===\n'
-                                agent_result=json.loads(json.loads(copied.read_text().splitlines()[-1])['params']['update']['rawOutput'])
+                                agent_result=json.loads(json.loads(copied.read_text().splitlines()[-2])['params']['update']['rawOutput'])
                                 assert agent_result=={'subagent_id':ids['grok:'+result_alias],'text':'Literal '+result_alias}
                                 assert 'missing-unrelated-agent' in foreign.read_text()
+                                records=op['file_plan']['records']
+                                mapped_checkpoint=records['grok:'+checkpoint_id]
+                                pointer=json.loads(copied.read_text().splitlines()[-1])['params']['update']
+                                assert pointer['checkpoint_id']==mapped_checkpoint!=checkpoint_id
+                                assert pointer['checkpoint_file']=='compaction_checkpoints/'+mapped_checkpoint+'.json'
+                                cloned_checkpoint=json.loads((copied.parent/pointer['checkpoint_file']).read_text())
+                                assert cloned_checkpoint['checkpoint_id']==mapped_checkpoint
+                                history=cloned_checkpoint['compacted_history']
+                                assert history[0]==checkpoint['compacted_history'][0]
+                                assert cloned_checkpoint['original_user_info']==checkpoint['original_user_info']
+                                assert cloned_checkpoint['reread_file_paths']==checkpoint['reread_file_paths']
+                                assert history[1]['tool_calls'][0]['id']==history[2]['tool_call_id']!= 'checkpoint-call'
+                                assert json.loads(history[2]['content'])['subagent_id']==ids['grok:'+checkpoint_alias]
+                                arguments=json.loads(history[3]['tool_calls'][0]['arguments'])
+                                assert arguments=={'subagent_id':ids['grok:'+checkpoint_alias],'message':'Literal '+checkpoint_alias}
+                                assert not (copied.parent/'compaction_checkpoints'/(checkpoint_id+'.json')).exists()
+                                print('PASS Grok checkpoint-only agent dependency, checkpoint pointer/file and embedded tool identities rewritten; prose preserved',flush=True)
+
                                 print('PASS Grok result-only dependency included and serialized native identity rewritten; other-session Bash result unchanged',flush=True)
                                 print('PASS Grok cross-owner durable alias closes group; chat/update calls scoped to owner and ordinary tool data preserved',flush=True)
                                 rows=get_json(opener,base,'/api/sessions')['sessions']
