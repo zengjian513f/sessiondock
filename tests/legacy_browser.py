@@ -6,6 +6,7 @@ explicit PLAYWRIGHT_CHROMIUM_EXECUTABLE). Never starts a CLI or reads native hom
 
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -163,6 +164,47 @@ def main():
                 expect(page.locator("#a-term")).to_be_visible()
                 expect(page.locator("#a-term")).to_be_enabled()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+                # Reloading on the mobile conversation page starts there, both
+                # from its ?sid= address and from the saved page without one:
+                # while the session list is still loading no frame may show it.
+                held = []
+                sessions_api = re.compile(r"/api/sessions(\?|$)")
+                page.add_init_script("""(() => {
+                  window.__listFrames = [];
+                  const tick = () => {
+                    const left = document.querySelector('#left');
+                    if (left) window.__listFrames.push(getComputedStyle(left).display !== 'none');
+                    requestAnimationFrame(tick);
+                  };
+                  requestAnimationFrame(tick);
+                })()""")
+                assert "sid=" in page.url, page.url
+                for address in [page.url, base + "/"]:
+                    page.route(sessions_api, lambda route: held.append(route))
+                    page.goto(address, wait_until="domcontentloaded")
+                    for _ in range(100):
+                        if held:
+                            break
+                        page.wait_for_timeout(50)
+                    assert held, "session list request was not issued"
+                    page.wait_for_timeout(400)
+                    expect(page.locator("#left")).to_be_hidden()
+                    expect(page.locator("#detail .spin")).to_be_visible()
+                    held.pop().continue_()
+                    page.unroute(sessions_api)
+                    expect(page.locator("#msgs")).to_contain_text("Claude 人工样例读取正常")
+                    expect(page.locator("#a-term")).to_be_visible()
+                    frames = page.evaluate("window.__listFrames")
+                    assert frames and not any(frames), (address, frames)
+
+                # A saved conversation that no longer exists falls back to the list.
+                page.evaluate("store.set('sel', 'claude:missing-session')")
+                page.goto(base + "/", wait_until="domcontentloaded")
+                expect(page.locator("#side .item[data-uid]")).to_have_count(3)
+                expect(page.locator("#left")).to_be_visible()
+                expect(page.locator("#detail .empty")).to_have_text("从左侧选择一个会话")
+                assert page.evaluate("document.body.classList.contains('mobile-detail')") is False
                 assert not errors, errors
                 # Linux advertises native liveness and therefore requests
                 # `/api/live`; the other optional services remain disabled.
@@ -177,7 +219,7 @@ def main():
                 if os.name != "nt":
                     assert process.returncode == 0
                 browser.close()
-                print("PASS legacy browser: native fixtures, Codex side-thread notice, SSE append/partial/reset, explicit errors/retry, console, mobile/dark, shutdown")
+                print("PASS legacy browser: native fixtures, Codex side-thread notice, SSE append/partial/reset, explicit errors/retry, console, mobile/dark, mobile reload, shutdown")
         finally:
             if process.poll() is None:
                 process.terminate()
