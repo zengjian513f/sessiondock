@@ -3298,21 +3298,31 @@ function openItemMenu(uid, x, y) {
   const canRestore = !!(row?.spawned_by?.source && row.spawned_by.sid)
     && (!!row.nest_independent || !!(row.nest_parent?.source && row.nest_parent.sid));
   const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
-  menu.querySelector('[data-act="stop"]').hidden = parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch);
-  menu.querySelector('[data-act="hide"]').hidden = !parent;
-  menu.querySelector('[data-act="detach"]').hidden = !nestable || !nested;
-  menu.querySelector('[data-act="reattach"]').hidden = !nestable || !canRestore;
-  menu.querySelector('[data-act="attach"]').hidden = !nestable;
-  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running && !unusedLaunch) || shellRunning;
+  // Keep every action in its fixed position, with the same unavailable hints as
+  // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
+  const unavailable = {
+    stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
+      ? '此会话当前没有可停止的进程。' : '',
+    hide: !parent ? '仅分叉父会话可隐藏。' : '',
+    detach: !nestable || !nested ? '此会话当前不能从父会话独立。' : '',
+    reattach: !nestable || !canRestore ? '此会话当前没有可恢复的附属关系。' : '',
+    attach: !nestable ? '此会话当前不能设置附属关系。' : '',
+    delete: parent ? '分叉父会话可隐藏，不能直接删除。'
+      : ((!row?.pending && running && !unusedLaunch) || shellRunning)
+        ? '请先停止会话再删除。' : '',
+    pick: parent ? '分叉父会话不能加入多选。' : '',
+  };
+  for (const button of menu.querySelectorAll('button[data-act]')) {
+    button.hidden = false;
+    if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
+  }
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
-  menu.querySelector('[data-act="pick"]').hidden = parent;
-  menu.querySelector('[data-act="clone"]').hidden = !row || row.pending || SessionDockCapabilities.config.session_clone_local_codex !== true;
   paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
-  menu.querySelector('button:not([hidden])')?.focus({ preventScroll: true });
+  menu.querySelector('button:not([aria-disabled="true"])')?.focus({ preventScroll: true });
 }
 
 function closeItemMenu() {
@@ -3443,7 +3453,7 @@ $('#side').addEventListener('click', e => {
 
 $('#item-menu').onclick = async e => {
   const button = e.target.closest('button[data-act]');
-  if (!button) return;
+  if (!button || button.getAttribute('aria-disabled') === 'true') return;
   const uid = menuUid;
   closeItemMenu();
   if (!uid) return;
@@ -10020,7 +10030,11 @@ function transferUnavailableReason(uid) {
   return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
 }
 function paintTransferAvailability(button, uid) {
-  setControlUnavailable(button, transferUnavailableReason(uid));
+  const row = button?.closest('#item-menu')
+    ? sidebarSessions().find(session => session.uid === uid) : null;
+  const unavailable = button?.closest('#item-menu') && (!row || row.pending
+    || SessionDockCapabilities.config.session_clone_local_codex !== true);
+  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
 }
 async function cloneSessionGroup(uid, resumed = null) {
   const reason = resumed ? '' : transferUnavailableReason(uid);
