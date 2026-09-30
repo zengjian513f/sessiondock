@@ -18,6 +18,84 @@ use std::{
 
 use regex::Regex;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+
+/// Claude's workspace trust runs before hooks or native history exist. Read
+/// both option rows and the selection from the current screen, not a saved
+/// hook question. The two-row menu needs at most one arrow before Enter.
+pub fn startup_prompt(screen: &str) -> Option<Value> {
+    let clean = crate::delivery::driver::strip_ansi(screen).replace('\r', "");
+    let lines: Vec<_> = clean.lines().map(str::trim_end).collect();
+    let start = lines
+        .iter()
+        .rposition(|line| line.trim() == "Accessing workspace:")?;
+    let block = &lines[start..];
+    let footer = block
+        .iter()
+        .position(|line| line.trim() == "Enter to confirm · Esc to cancel")?;
+    if block[footer + 1..]
+        .iter()
+        .any(|line| !line.trim().is_empty())
+        || !block[..footer]
+            .iter()
+            .any(|line| line.trim_start().starts_with("Quick safety check:"))
+    {
+        return None;
+    }
+    fn option(line: &str) -> Option<(&str, bool)> {
+        let line = line.trim();
+        let selected = line.starts_with('❯');
+        let label = line.strip_prefix('❯').unwrap_or(line).trim();
+        matches!(label, "No, exit" | "Yes, I trust this folder").then_some((label, selected))
+    }
+    let first = block[..footer]
+        .iter()
+        .position(|line| option(line).is_some())?;
+    let rows: Vec<_> = block[first..footer]
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+    if rows.len() != 2 {
+        return None;
+    }
+    let options: Vec<_> = rows
+        .iter()
+        .map(|line| option(line))
+        .collect::<Option<_>>()?;
+    let trust = options
+        .iter()
+        .position(|(label, _)| *label == "Yes, I trust this folder")?;
+    if options.iter().filter(|(_, selected)| *selected).count() != 1
+        || options
+            .iter()
+            .filter(|(label, _)| *label == "No, exit")
+            .count()
+            != 1
+    {
+        return None;
+    }
+    let selected = options.iter().position(|(_, selected)| *selected)?;
+    let mut keys = Vec::new();
+    if trust != selected {
+        keys.push(if trust > selected { "Down" } else { "Up" });
+    }
+    keys.push("Enter");
+    let question = block[1..first]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned();
+    let digest = format!("{:x}", Sha256::digest(question.as_bytes()));
+    Some(json!({
+        "id": format!("claude-startup:{}", &digest[..16]),
+        "source": "claude", "kind": "folder_trust", "state": "waiting",
+        "questions": [{"header": "目录信任确认", "question": question, "multiple": false,
+            "options": [{"label": "信任并继续", "keys": keys},
+                        {"label": "退出", "keys": ["Escape"]}]}],
+    }))
+}
 
 /// Subdirectory of `SESSIONDOCK_STATE_DIR` that holds one file per session.
 pub const PROMPTS_DIRNAME: &str = "claude-prompts";

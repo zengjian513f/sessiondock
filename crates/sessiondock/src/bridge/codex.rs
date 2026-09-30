@@ -14,6 +14,62 @@ use sha2::{Digest, Sha256};
 
 use crate::delivery::driver::strip_ansi;
 
+/// Folder trust precedes the first rollout. Recognition never grants trust;
+/// keep the disclosure and paths exactly as shown on the live screen.
+pub fn startup_prompt(screen: &str) -> Option<Value> {
+    let clean = strip_ansi(screen).replace('\r', "");
+    let lines: Vec<_> = clean.lines().map(str::trim_end).collect();
+    let start = lines
+        .iter()
+        .rposition(|line| line.trim() == "Folder access")?;
+    let block = &lines[start..];
+    let footer = block
+        .iter()
+        .position(|line| line.trim() == "enter continue · esc quit")?;
+    if block[footer + 1..]
+        .iter()
+        .any(|line| !line.trim().is_empty())
+    {
+        return None;
+    }
+    let options: Vec<_> = block[..footer]
+        .iter()
+        .filter_map(|line| {
+            OPTION
+                .captures(line)
+                .map(|captures| (captures[1].to_owned(), captures[2].trim().to_owned()))
+        })
+        .collect();
+    if options
+        != [
+            ("1".into(), "Trust and continue".into()),
+            ("2".into(), "Quit".into()),
+        ]
+        || !block
+            .iter()
+            .any(|line| line.trim_start().starts_with("Trust this folder?"))
+        || !block.iter().any(|line| line.trim_start().starts_with('›'))
+    {
+        return None;
+    }
+    let end = block.iter().position(|line| OPTION.is_match(line))?;
+    let question = block[1..end]
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_owned();
+    let digest = format!("{:x}", Sha256::digest(question.as_bytes()));
+    Some(json!({
+        "id": format!("codex-startup:{}", &digest[..16]),
+        "source": "codex", "kind": "folder_trust", "state": "waiting",
+        "questions": [{"header": "目录信任确认", "question": question, "multiple": false,
+            "options": [{"label": "信任并继续", "keys": ["1", "Enter"]},
+                        {"label": "退出", "keys": ["2"]}]}],
+    }))
+}
+
 static HEADING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\s*(Would you like to .+\?)\s*$").expect("heading"));
 static OPTION: LazyLock<Regex> =
