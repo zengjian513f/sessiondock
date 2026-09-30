@@ -205,13 +205,18 @@ class Fake:
             lines.append("> " + parts[0])
             lines.extend("  " + part for part in parts[1:])
         lines.append("")
-        busy_warning = os.environ.get('SESSIONDOCK_TEST_BUSY_WARNING')
+        queue_file = os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')
+        queue_mode = ''
+        if queue_file and os.path.exists(queue_file):
+            from pathlib import Path
+            queue_mode = Path(queue_file).read_text()
+        busy_warning = (os.environ.get('SESSIONDOCK_TEST_BUSY_WARNING')
+                        and not getattr(self, 'idle_after_interrupt', False)
+                        and queue_mode != 'idle-hidden')
         if working or busy_warning:
             lines.append("• Working (1s • esc to interrupt)")
-        queue_file = os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')
-        if self.queued and queue_file and os.path.exists(queue_file):
-            from pathlib import Path
-            mode = Path(queue_file).read_text()
+        if self.queued and queue_mode and queue_mode != 'idle-hidden':
+            mode = queue_mode
             lines.append('• Messages to be submitted after next tool call (press esc to interrupt and send immediately)')
             visible = self.queued[:1] if mode == 'one' else self.queued
             for text in visible:
@@ -300,6 +305,7 @@ class Fake:
         if not text.strip():
             self.render()
             return
+        self.idle_after_interrupt = False
         if text.rstrip() == '/model':
             # Like Codex, open a local menu without writing a native turn.
             self.model_menu = True
@@ -429,6 +435,24 @@ class Fake:
                     if byte == b"\x1b":
                         if self.model_menu:
                             self.model_menu = False
+                            self.render()
+                        elif os.environ.get('SESSIONDOCK_TEST_QUEUE_INTERRUPT') and (self.queued or getattr(self, 'steer_turn', None)):
+                            # First Esc consumes the queue as a steer; second
+                            # aborts it before Codex writes any user record.
+                            turn = getattr(self, 'steer_turn', None) or str(uuid.uuid4())
+                            rows = [{'timestamp': self.stamp(), 'type': 'event_msg',
+                                     'payload': {'type': 'turn_aborted', 'turn_id': turn, 'reason': 'interrupted'}}]
+                            if not getattr(self, 'steer_turn', None):
+                                self.steer_turn = str(uuid.uuid4())
+                                rows.append({'timestamp': self.stamp(), 'type': 'event_msg',
+                                             'payload': {'type': 'task_started', 'turn_id': self.steer_turn}})
+                                self.queued.clear()
+                            else:
+                                self.steer_turn = None
+                                self.idle_after_interrupt = True
+                            with open(self.path, 'a') as stream:
+                                for row in rows:
+                                    stream.write(json.dumps(row) + '\n')
                             self.render()
                         cut = 1
                         if len(pending) > 1 and pending[1:2] == b"[":

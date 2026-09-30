@@ -152,6 +152,9 @@ impl Conversations {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
+                if let Ok(frame) = &capture {
+                    self.observe_interrupted_queue(&identity, frame).await?;
+                }
                 capture.and_then(|capture| {
                     self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
                     transcript = cli_state::transcript(&identity.source, &capture);
@@ -577,6 +580,9 @@ impl Conversations {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
+                if let Ok(frame) = &capture {
+                    self.observe_interrupted_queue(&identity, frame).await?;
+                }
                 capture.and_then(|capture| {
                     self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
                     if capture.lag.is_none_or(|lag| lag == 0) {

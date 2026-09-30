@@ -4210,7 +4210,7 @@ function applyCliState(uid, cli, {status = true} = {}) {
 /** Queued sends live in one `#queued-sends` block after the activity row so
  *  turn sealing, tool grouping and time dividers never treat them as history.
  *  app.js removes the block before appending records; the tail render
- *  restores it. A `lost` row (the instance stopped answering) can be closed. */
+ *  restores it. Interrupted or lost rows can be closed. */
 function renderQueuedSends(uid = composerUid) {
   // A new session waits on its stage page until the first native record;
   // its queued text goes under the stage text instead of a message list.
@@ -4234,6 +4234,7 @@ function renderQueuedSends(uid = composerUid) {
   block.setAttribute('aria-live', 'polite');
   for (const item of rows) {
     const lost = item.state === 'lost';
+    const interrupted = item.state === 'interrupted';
     const n = el('div', 'msg queued-send' + (lost ? ' lost' : ''));
     n.dataset.role = 'user';
     n.dataset.requestId = item.request_id;
@@ -4244,11 +4245,12 @@ function renderQueuedSends(uid = composerUid) {
     else body.textContent = text;
     n.appendChild(body);
     // The CLI's own enqueue record means it holds the text until its current step ends.
-    const inCli = !lost && item.cli_queued_at != null;
+    const inCli = !lost && !interrupted && item.cli_queued_at != null;
     if (inCli) n.dataset.cliQueued = '1';
     const state = el('small', 'queued-send-state', lost ? '未送达，请到终端查看'
+      : interrupted ? 'CLI 已中断，未确认处理，请到终端查看'
       : inCli ? '已进入 CLI 队列，当前步骤结束后处理' : '已发送，等待 CLI 处理');
-    if (lost) {
+    if (lost || interrupted) {
       const close = el('button', 'queued-send-dismiss', '关闭');
       close.type = 'button';
       close.onclick = () => dismissQueuedSend(uid, item.request_id);
