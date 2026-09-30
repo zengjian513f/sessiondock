@@ -17,7 +17,7 @@ from session_stop_browser import CODEX_SID, session_action, wait_xterm
 from popups import on_popup
 from hub_http_suite import Hub, free_port, scoped
 
-CLI = '''import os, subprocess, sys, threading, time
+CLI = '''import os, subprocess, sys, threading, time, tty
 from pathlib import Path
 root = Path(os.environ['FREEZE_FIXTURE'])
 child = subprocess.Popen([sys.executable, str(root / 'bin/child.py'), str(root / 'child-tick')])
@@ -27,10 +27,14 @@ def tick():
         (root / 'main-tick').write_text(str(time.monotonic()))
         time.sleep(.03)
 threading.Thread(target=tick, daemon=True).start()
+tty.setraw(0)
 print('FREEZE_READY', flush=True)
 try:
-    for line in sys.stdin:
-        print('FREEZE_INPUT_' + line.strip(), flush=True)
+    while True:
+        data = os.read(0, 1024)
+        if not data or b'\\x04' in data:
+            break
+        print('FREEZE_INPUT_' + data.decode(errors='replace').strip(), flush=True)
 finally:
     child.terminate()
     child.wait()
@@ -46,6 +50,10 @@ def freeze_button(page):
     if not button.is_visible():
         page.locator('#a-more').click()
     expect(button).to_be_visible()
+    report = page.locator('.dhead [data-report-bug]')
+    expect(report).to_be_visible()
+    assert button.evaluate("button => button.nextElementSibling?.hasAttribute('data-report-bug')")
+    assert button.evaluate("button => button.parentElement.classList.contains('session-menu-diagnostics')")
     return button
 
 
@@ -115,6 +123,11 @@ def main():
                     page.wait_for_timeout(100)
                     assert (root / 'child-tick').exists()
                     page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === false)', arg=uid)
+                    for width in [1698, 1400, 1200, 1000, 800, 721]:
+                        page.set_viewport_size({'width': width, 'height': 900})
+                        page.wait_for_timeout(80)
+                        freeze_button(page)
+                        page.keyboard.press('Escape')
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '冻结现场')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as response:

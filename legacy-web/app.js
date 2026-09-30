@@ -5423,7 +5423,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 星标、折叠过程、报告、搜索、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -5805,13 +5805,16 @@ function head(m, total) {
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
-        <button class="session-menu-action" data-report-bug title="报告当前会话问题"
-          aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+        <div class="session-menu-diagnostics">
+          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
+          <button class="session-menu-action" data-report-bug title="报告当前会话问题"
+            aria-label="报告当前会话问题">${uiIcon('bug')}</button>
+        </div>
         ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
-        ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button><button class="session-menu-action danger" id="a-session-action"></button>'}
+        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
       <span id="mcount-total">${total} 条消息</span>
