@@ -42,6 +42,9 @@ def fixture(root):
         stream.write(encoded(claude_row(ident(2),'assistant',ident(150),ident(122),[{'type':'tool_use','id':'toolu_fixture','name':'Bash','input':{'command':'synthetic'}}],cwd=str(root/'cwd'))))
         stream.write(encoded(claude_row(ident(2),'user',ident(151),ident(150),[{'type':'tool_result','tool_use_id':'toolu_fixture','content':'<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'}],toolUseResult={'outputFile':str(output)},cwd=str(root/'cwd'))))
         stream.write(encoded(claude_row(ident(2),'assistant',ident(152),ident(151),'Branch A final',cwd=str(root/'cwd'))))
+        stream.write(encoded(claude_row(ident(2),'assistant',ident(153),ident(152),[{'type':'tool_use','id':'toolu_resume','name':'SendMessage','input':{'to':agent,'message':'Review literal '+agent}}],cwd=str(root/'cwd'))))
+        resumed={'success':True,'message':'Resuming agent '+agent[:7],'resumedAgentId':agent,'pin':{'id':agent,'name':agent,'ref':'opaque'}}
+        stream.write(encoded(claude_row(ident(2),'user',ident(154),ident(153),[{'type':'tool_result','tool_use_id':'toolu_resume','content':[{'type':'text','text':json.dumps(resumed)}]}],toolUseResult=resumed,cwd=str(root/'cwd'))))
     history=root/'claude/file-history'/ident(2)/'abcdef@v1';history.parent.mkdir(parents=True);history.write_bytes(b'original file\x00bytes')
     for i in (10,11,12,13):
         path=root/'grok/project'/ident(i);path.mkdir(parents=True)
@@ -91,6 +94,13 @@ def main():
                         assert link.readlink()==expected
                         cloned_rows=[json.loads(line) for line in (destination/'claude/projects/project'/(new+'.jsonl')).read_text().splitlines()]
                         assert any(row.get('message',{}).get('id')=='msg_api_response_'+ident(102) for row in cloned_rows)
+                        resume=next(item for row in cloned_rows for item in row.get('message',{}).get('content',[]) if isinstance(item,dict) and item.get('name')=='SendMessage')
+                        assert resume['input']['to']==new_agent
+                        assert resume['input']['message']=='Review literal '+agent
+                        resumed=next(row for row in cloned_rows if row.get('toolUseResult',{}).get('resumedAgentId'))
+                        expected_resume={'success':True,'message':'Resuming agent '+new_agent[:7],'resumedAgentId':new_agent,'pin':{'id':new_agent,'name':new_agent,'ref':'opaque'}}
+                        assert resumed['toolUseResult']==expected_resume
+                        assert json.loads(resumed['message']['content'][0]['content'][0]['text'])==expected_resume
                         assert (destination/'claude/file-history'/new/'abcdef@v1').read_bytes()==b'original file\x00bytes'
                         assert (destination/'claude/projects/project'/new/'tool-results/result.txt').read_bytes()==b'opaque result '+ident(1).encode()
                         rows=[json.loads(line) for line in (destination/'claude/projects/project'/(new+'.jsonl')).read_text().splitlines()]
