@@ -314,11 +314,38 @@ def main():
                 page.keyboard.press('Escape')
                 expect(page.locator('#bug-report-dialog')).to_be_hidden()
 
+                # ---- An older empty catalog snapshot must not classify the
+                # populated conversation as an unused pre-created launch. Keep
+                # watch disconnected for this snapshot; HTTP and host evidence
+                # still come from the private running server.
+                def old_cursor(route):
+                    response = route.fetch()
+                    data = response.json()
+                    rows = data.get('sessions', []) if 'sessions' in data else [data.get('meta', {})]
+                    for row in rows:
+                        if row.get('uid') == uid:
+                            row['cursor'] = {**row.get('cursor', {}), 'end': 0}
+                    route.fulfill(response=response, json=data)
+                def disconnected_watch(route):
+                    route.abort()
+                page.route('**/api/sessions?*', old_cursor)
+                page.route('**/api/messages/**', old_cursor)
+                page.route('**/api/watch?*', disconnected_watch)
+                page.reload(wait_until='domcontentloaded')
+                page.wait_for_function('T.listLoaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                page.wait_for_function('uid => S.sel === uid && cache.get(viewKey(uid,null))?.end > 0 && takenOver(uid)', arg=uid)
+                expect(page.locator('#msgs')).to_contain_text('echo: hello opencode')
+                assert page.evaluate('uid => cache.get(viewKey(uid,null)).meta.cursor.end', uid) == 0
+
                 # ---- Stop, then resume from the native row with --session.
                 action = page.locator('#a-session-action')
                 if not action.is_visible():
                     page.locator('#a-more').click()
                 expect(action).to_have_attribute('aria-label', '停止会话')
+                page.unroute('**/api/sessions?*', old_cursor)
+                page.unroute('**/api/messages/**', old_cursor)
+                page.unroute('**/api/watch?*', disconnected_watch)
                 action.click()
                 page.wait_for_function("() => document.querySelector('#a-session-action')?.getAttribute('aria-label') === '删除会话'", timeout=30000)
                 page.wait_for_function('uid => !S.live.has(uid) && !takenOver(uid)', arg=uid, timeout=30000)

@@ -10,6 +10,12 @@ source with native UID `opencode:<hash>` and native SID `ses_…`.
 Only the OpenCode 2 store (`session_v2`) is supported. A database without
 that table mirrors nothing.
 
+A pre-created launch is unused only while neither its catalog cursor nor the
+accepted conversation window contains native records. An older empty catalog
+snapshot cannot turn a populated, running session's stop action into deletion.
+The action updates when the first native records arrive, even without a title
+change.
+
 ## Configuration
 
 | Variable | Meaning |
