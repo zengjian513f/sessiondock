@@ -96,6 +96,7 @@ def serve(config,root):
                 elif op=='append':
                     with owned(request['path']).open('ab') as out:out.write(base64.b64decode(request['bytes']))
                 elif op=='write':owned(request['path']).write_bytes(base64.b64decode(request['bytes']))
+                elif op=='link':owned(request['path']).hardlink_to(owned(request['source']))
                 elif op=='seed_cwd':
                     cwd=owned(request['path'])
                     for entry in request['entries']:
@@ -104,6 +105,10 @@ def serve(config,root):
                         elif entry['kind']=='symlink':path.symlink_to(entry['target'])
                         else:path.write_bytes(base64.b64decode(entry['bytes']))
                         if entry['kind']!='symlink':path.chmod(entry['mode'])
+                elif op=='thread_path':
+                    with sqlite3.connect(owned(request['path'])) as db:
+                        result['previous']=db.execute('SELECT rollout_path FROM threads WHERE id=?',(request['sid'],)).fetchone()[0]
+                        db.execute('UPDATE threads SET rollout_path=? WHERE id=?',(request['rollout'],request['sid']))
                 elif op=='receipt':
                     with sqlite3.connect(owned(request['path'])) as db:
                         result['receipt']=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()[0])

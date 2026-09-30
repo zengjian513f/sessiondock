@@ -1,5 +1,7 @@
 //! Durable same-node clone transaction. Plans contain server-derived paths only;
 //! clients submit an opaque operation ID. Recovery never overwrites changed data.
+#[path = "prefix.rs"]
+mod prefix;
 use super::{
     TransferError,
     codex::{self, ClonePlan, StagedClone},
@@ -47,6 +49,10 @@ pub struct Operation {
     pub export_lease_until: u64,
     #[serde(default)]
     pub reused_files: BTreeSet<PathBuf>,
+    #[serde(default)]
+    pub replaced_files: BTreeMap<PathBuf, prefix::Original>,
+    #[serde(default)]
+    pub native_before: Option<Native>,
     #[serde(default)]
     pub moving: bool,
     #[serde(default)]
@@ -323,6 +329,8 @@ impl TransferService {
             incoming_digest: None,
             export_lease_until: 0,
             reused_files: BTreeSet::new(),
+            replaced_files: BTreeMap::new(),
+            native_before: None,
             moving: false,
             storage_probes: BTreeMap::new(),
             reclaimed_by: BTreeMap::new(),
@@ -524,6 +532,23 @@ impl TransferService {
     pub(super) fn cleanup_markers(&self, op: &Operation) -> Result<(), TransferError> {
         for file in self.publications(op) {
             let marker = Self::marker(&op.id, &file.target);
+            if let Some(old) = op.replaced_files.get(&file.target) {
+                for (path, expected) in [
+                    (marker.with_extension("publish"), &file.sha256),
+                    (marker.with_extension("restore"), &old.sha256),
+                ] {
+                    if let Ok(metadata) = fs::symlink_metadata(&path) {
+                        if !metadata.is_file() || hash(&path)? != *expected {
+                            return Err(TransferError::new(
+                                "move_recovery_required",
+                                "目标合并临时文件已变化，保留现场",
+                            ));
+                        }
+                        fs::remove_file(path)?;
+                        fs::File::open(file.target.parent().unwrap())?.sync_all()?;
+                    }
+                }
+            }
             if fs::symlink_metadata(&marker).is_ok() {
                 fs::remove_file(marker)?;
                 fs::File::open(file.target.parent().unwrap())?.sync_all()?;
@@ -538,6 +563,10 @@ impl TransferService {
             .filter(|f| !op.reused_files.contains(&f.target))
             .collect();
         for file in &files {
+            if let Some(old) = op.replaced_files.get(&file.target) {
+                prefix::check_restore(op, file, old)?;
+                continue;
+            }
             if fs::symlink_metadata(&file.target).is_ok()
                 && (!Self::owns(&op.id, &file.target) || hash(&file.target)? != file.sha256)
             {
@@ -556,6 +585,10 @@ impl TransferService {
             native::rollback(native, &op.id)?;
         }
         for file in files {
+            if let Some(old) = op.replaced_files.get(&file.target) {
+                prefix::restore(op, &file, old)?;
+                continue;
+            }
             if fs::symlink_metadata(&file.target).is_ok() {
                 fs::remove_file(&file.target)?;
                 fs::File::open(file.target.parent().unwrap())?.sync_all()?;
@@ -599,10 +632,21 @@ impl TransferService {
                 snapshot.recheck()?;
             }
         }
-        native::preflight_copy(op.rewritten.as_ref().unwrap(), !op.new_ids())?;
+        if !op.new_ids() {
+            let extended = prefix::prepare(self, &mut op)?;
+            op.native_before = Some(native::preflight_prefix(
+                op.rewritten.as_ref().unwrap(),
+                &extended,
+            )?);
+        } else {
+            native::preflight_copy(op.rewritten.as_ref().unwrap(), false)?;
+        }
         op.reused_files.clear();
         for file in self.publications(&op) {
             if fs::symlink_metadata(&file.target).is_ok() {
+                if op.replaced_files.contains_key(&file.target) {
+                    continue;
+                }
                 if !op.new_ids()
                     && hash(&file.target)? == file.sha256
                     && fs::symlink_metadata(&file.target)?.is_symlink() == file.symlink
@@ -691,10 +735,28 @@ impl TransferService {
                     std::io::copy(&mut fs::File::open(staging)?, &mut out)?;
                     out.sync_all()?;
                 }
-                fs::hard_link(&temp, &target)?;
+                if let Some(old) = op.replaced_files.get(&target) {
+                    if hash(&target)? != old.sha256 {
+                        return Err(TransferError::new(
+                            "move_plan_stale",
+                            "目标前缀在发布前发生变化",
+                        ));
+                    }
+                    // Keep the marker as proof of ownership for compensation.
+                    let publication = temp.with_extension("publish");
+                    fs::hard_link(&temp, &publication)?;
+                    fs::rename(&publication, &target)?;
+                } else {
+                    fs::hard_link(&temp, &target)?;
+                }
                 fs::File::open(parent)?.sync_all()?;
             }
-            native::insert_copy(op.rewritten.as_ref().unwrap(), &op.id, !op.new_ids())?;
+            native::insert_with_prefix(
+                op.rewritten.as_ref().unwrap(),
+                &op.id,
+                !op.new_ids(),
+                op.native_before.as_ref(),
+            )?;
             if let Some(metadata) = &self.metadata {
                 metadata
                     .transfer_rows(&op.metadata_after, false)
