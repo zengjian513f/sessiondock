@@ -1,0 +1,269 @@
+{
+  "upstream_commit": "67727e7cf114cf3e1b71db368d74b24e32f6cb12",
+  "commands": [
+    {
+      "name": "model",
+      "inline_args": false
+    },
+    {
+      "name": "ide",
+      "inline_args": true
+    },
+    {
+      "name": "permissions",
+      "inline_args": false
+    },
+    {
+      "name": "keymap",
+      "inline_args": true
+    },
+    {
+      "name": "vim",
+      "inline_args": false
+    },
+    {
+      "name": "setup-default-sandbox",
+      "inline_args": false
+    },
+    {
+      "name": "experimental",
+      "inline_args": false
+    },
+    {
+      "name": "approve",
+      "inline_args": false
+    },
+    {
+      "name": "auto-review",
+      "inline_args": false
+    },
+    {
+      "name": "memories",
+      "inline_args": false
+    },
+    {
+      "name": "skills",
+      "inline_args": false
+    },
+    {
+      "name": "import",
+      "inline_args": false
+    },
+    {
+      "name": "hooks",
+      "inline_args": false
+    },
+    {
+      "name": "review",
+      "inline_args": true
+    },
+    {
+      "name": "rename",
+      "inline_args": true
+    },
+    {
+      "name": "new",
+      "inline_args": true
+    },
+    {
+      "name": "archive",
+      "inline_args": false
+    },
+    {
+      "name": "delete",
+      "inline_args": false
+    },
+    {
+      "name": "resume",
+      "inline_args": true
+    },
+    {
+      "name": "fork",
+      "inline_args": true
+    },
+    {
+      "name": "worktree",
+      "inline_args": false
+    },
+    {
+      "name": "app",
+      "inline_args": false
+    },
+    {
+      "name": "init",
+      "inline_args": false
+    },
+    {
+      "name": "compact",
+      "inline_args": false
+    },
+    {
+      "name": "recap",
+      "inline_args": false
+    },
+    {
+      "name": "plan",
+      "inline_args": true
+    },
+    {
+      "name": "voice",
+      "inline_args": true
+    },
+    {
+      "name": "goal",
+      "inline_args": true
+    },
+    {
+      "name": "agents",
+      "inline_args": false
+    },
+    {
+      "name": "side",
+      "inline_args": true
+    },
+    {
+      "name": "btw",
+      "inline_args": true
+    },
+    {
+      "name": "copy",
+      "inline_args": false
+    },
+    {
+      "name": "export",
+      "inline_args": true
+    },
+    {
+      "name": "raw",
+      "inline_args": true
+    },
+    {
+      "name": "tui",
+      "inline_args": false
+    },
+    {
+      "name": "diff",
+      "inline_args": false
+    },
+    {
+      "name": "mention",
+      "inline_args": false
+    },
+    {
+      "name": "status",
+      "inline_args": false
+    },
+    {
+      "name": "daemon",
+      "inline_args": false
+    },
+    {
+      "name": "warnings",
+      "inline_args": false
+    },
+    {
+      "name": "cd",
+      "inline_args": true
+    },
+    {
+      "name": "pwd",
+      "inline_args": true
+    },
+    {
+      "name": "cwd",
+      "inline_args": true
+    },
+    {
+      "name": "usage",
+      "inline_args": true
+    },
+    {
+      "name": "debug-config",
+      "inline_args": false
+    },
+    {
+      "name": "title",
+      "inline_args": false
+    },
+    {
+      "name": "statusline",
+      "inline_args": false
+    },
+    {
+      "name": "theme",
+      "inline_args": false
+    },
+    {
+      "name": "pets",
+      "inline_args": true
+    },
+    {
+      "name": "pet",
+      "inline_args": true
+    },
+    {
+      "name": "mcp",
+      "inline_args": true
+    },
+    {
+      "name": "apps",
+      "inline_args": false
+    },
+    {
+      "name": "plugins",
+      "inline_args": false
+    },
+    {
+      "name": "logout",
+      "inline_args": false
+    },
+    {
+      "name": "quit",
+      "inline_args": false
+    },
+    {
+      "name": "exit",
+      "inline_args": false
+    },
+    {
+      "name": "feedback",
+      "inline_args": false
+    },
+    {
+      "name": "rollout",
+      "inline_args": false
+    },
+    {
+      "name": "ps",
+      "inline_args": false
+    },
+    {
+      "name": "stop",
+      "inline_args": false
+    },
+    {
+      "name": "clean",
+      "inline_args": false
+    },
+    {
+      "name": "clear",
+      "inline_args": true
+    },
+    {
+      "name": "test-approval",
+      "inline_args": false
+    },
+    {
+      "name": "subagents",
+      "inline_args": false
+    },
+    {
+      "name": "debug-m-drop",
+      "inline_args": false
+    },
+    {
+      "name": "debug-m-update",
+      "inline_args": false
+    }
+  ]
+}
