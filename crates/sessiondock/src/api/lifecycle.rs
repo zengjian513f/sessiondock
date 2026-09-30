@@ -481,6 +481,11 @@ async fn resolve_resume(
     state: &AppState,
     uid: String,
 ) -> Result<(crate::sessions::NativeScope, Option<String>), ApiError> {
+    if let Some(service)=&state.transfer {
+        if service.locked(&uid).map_err(|e|ApiError::new(StatusCode::CONFLICT,"move_recovery_required",e.message))? {
+            return Err(ApiError::new(StatusCode::CONFLICT,"move_session_locked","会话正在复制或等待恢复"));
+        }
+    }
     state
         .reader
         .run_wait(&state.shutdown, move |store| {
@@ -635,6 +640,7 @@ pub async fn create(
     State(state): State<AppState>,
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    let _transfer_guard = match &state.transfer {Some(service)=>Some(service.gate.clone().lock_owned().await),None=>None};
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
@@ -722,6 +728,7 @@ pub async fn takeover(
     State(state): State<AppState>,
     body: Result<Json<TakeoverRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
+    let _transfer_guard = match &state.transfer {Some(service)=>Some(service.gate.clone().lock_owned().await),None=>None};
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;

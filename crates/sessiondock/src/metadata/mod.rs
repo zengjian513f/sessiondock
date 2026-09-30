@@ -119,6 +119,10 @@ impl MetadataStore {
         }
     }
 
+    pub fn transfer_rows(&self, rows: &std::collections::BTreeMap<String, serde_json::Value>, remove: bool) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_transfer_rows(rows, remove))
+    }
+
     pub fn set_starred(
         &self,
         uid: &str,

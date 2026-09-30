@@ -166,10 +166,19 @@ pub async fn send(
     if let Some(response) = stale_build(&s, &q._build, hub.is_some()) {
         return Ok(response);
     }
+    let transfer_guard = match &s.transfer {
+        Some(transfer)=>{
+            let guard=transfer.gate.clone().lock_owned().await;
+            if transfer.locked(&q.uid).map_err(|e|ApiError::new(StatusCode::CONFLICT,"move_recovery_required",e.message))? {
+                return Err(ApiError::new(StatusCode::CONFLICT,"move_session_locked","会话正在复制或等待恢复"));
+            }
+            Some(guard)
+        },None=>None,
+    };
     let service = enabled(&s)?;
     // Detached operation ownership: a disconnected HTTP caller cannot cancel a
     // started one-shot SEND or release its serialization lock early.
-    let result = tokio::spawn(async move { service.send(q).await })
+    let result = tokio::spawn(async move { let _guard=transfer_guard; service.send(q).await })
         .await
         .map_err(|_| {
             ApiError::new(

@@ -90,7 +90,7 @@ fn hash(raw: &[u8]) -> String {
     format!("{:x}", Sha256::digest(raw))
 }
 
-fn uuid() -> Result<String, TransferError> {
+pub(super) fn uuid() -> Result<String, TransferError> {
     let mut b = [0u8; 16];
     getrandom::fill(&mut b).map_err(|e| TransferError::new("move_identity", e.to_string()))?;
     b[6] = (b[6] & 15) | 64;
@@ -254,6 +254,10 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
                         "工具调用 ID 对应多个工具",
                     ));
                 }
+            }
+            if row["type"]=="response_item" && p["type"]=="custom_tool_call" && p["name"]=="exec" &&
+                p["input"].as_str().is_some_and(super::code_mode::agent_call) {
+                if let Some(id)=p["call_id"].as_str(){identities.tool_calls.insert(id.into(),"__code_agent".into());}
             }
             super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
                 let map = match kind {

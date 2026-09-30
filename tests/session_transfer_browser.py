@@ -37,13 +37,13 @@ def fingerprint(root):
             for p in root.rglob('*') if p.is_file()}
 
 
-def fixture(root):
+def fixture(root, cwd=None):
     corpus = Corpus(root)
     for source in ('claude', 'codex', 'grok'):
         (root / source).mkdir(parents=True)
 
     def put(key, sid, rollout, hour, text, ordinal, parent=None, inherited=None, agent=False, archived=False):
-        extra = {}
+        extra = {"cwd": str(cwd)} if cwd else {}
         if parent:
             if agent:
                 extra['source'] = {'subagent': {'thread_spawn': {'parent_thread_id': parent}}}
