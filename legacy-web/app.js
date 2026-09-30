@@ -6025,15 +6025,13 @@ function showSessionStopNotice(text, sticky = false) {
   if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
   let notice = $('#session-stop-notice');
   if (!notice) {
-    notice = el('div', 'app-float bug-report-toast');
+    notice = el('div', 'app-float');
     notice.id = 'session-stop-notice';
     notice.setAttribute('role', 'status');
     notice.setAttribute('aria-live', 'polite');
     floatStack().appendChild(notice);
   }
-  // `.bug-report-toast` sets display:flex, so the hidden attribute alone would
-  // not hide it (the shared stylesheet is left untouched).
-  const show = visible => { notice.hidden = !visible; notice.style.display = visible ? '' : 'none'; };
+  const show = visible => { notice.hidden = !visible; };
   clearTimeout(sessionStopNoticeTimer);
   notice.textContent = text;
   show(!!text);
