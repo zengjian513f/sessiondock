@@ -7815,7 +7815,7 @@ function eventNode(m) {
   return n;
 }
 
-function questionNode(m) {
+function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = cancelCliQuestion} = {}) {
   const n = el('div', 'msg question');
   n.dataset.role = 'question';
   if (m.counted === false) n.dataset.counted = 'false';
@@ -7838,7 +7838,7 @@ function questionNode(m) {
           ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
     </section>`).join('');
   if (live) {
-    const cli = sessiondockCli(m.uid);
+    const cli = sessiondockCli(m.source || m.uid);
     const cliName = cli?.name || 'CLI';
     const waiting = promptState === 'waiting';
     const direct = waiting && rows.length === 1 && !rows[0].multiple
@@ -7874,7 +7874,7 @@ function questionNode(m) {
         }
         body.querySelectorAll('button').forEach(x => { x.disabled = true; });
         button.classList.add('submitting');
-        const ok = await answerCliQuestion(m.uid, optionIndex);
+        const ok = await answer(m.uid, optionIndex);
         if (!ok) body.querySelectorAll('button').forEach(x => { x.disabled = false; });
       };
     });
@@ -7910,7 +7910,7 @@ function questionNode(m) {
     const cancel = el('button', 'question-cancel', '取消');
     cancel.type = 'button';
     cancel.disabled = !waiting;
-    cancel.onclick = () => cancelCliQuestion(m.uid);
+    cancel.onclick = () => cancelAnswer(m.uid);
     actions.append(terminal, cancel);
     body.appendChild(actions);
   }
