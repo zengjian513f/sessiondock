@@ -34,7 +34,8 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 **此阶段的范围是已配置索引，不是完整原生文件审计**：Codex 的归档目录必须包含在显式根目录
 之内，不能只给 `sessions` 然后声称检查了相邻的 `archived_sessions`。Claude 已纳入共享消息 UUID、
 显式父会话、续接和 `fork-context-ref` 的父引用；Grok 纳入 summary 的 `parent_session_id`。
-继承历史中的全部工具/子代理引用、Grok 独立子会话元数据和跨节点关联仍在补齐。
+Grok 独立子会话同时由父目录 `subagents/<id>/meta.json` 纳入整组。
+继承历史中的全部工具引用、所有原生 checkpoint 格式和跨节点关联仍在补齐。
 某个无关组存在断链，不会让所有其他组失败；选中的组有已知缺失则在 blockers 中列出。
 
 ### 生成 Codex 历史计划
@@ -96,8 +97,9 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 
 Claude 收集 transcript、会话附属目录、子代理 sidecar 和标准 home 下的 `file-history`；
 Grok 收集整个会话目录，包括 updates、压缩记录和不解析的附件。
-当前仅验证文件包及 SessionDock 读取；原生工具结果中的完整身份/路径引用、所有 checkpoint
-格式、原生恢复与发布事务尚未完成，不能将此输出发布为可恢复的生产会话。
+已补齐原生代理工具的结构化参数、结果包中的身份指针、Grok ACP 事件以及 Claude 大输出路径。
+普通消息及代理答复中的旧 ID 保持原文。所有 checkpoint 格式、Claude 原生恢复与发布事务
+仍未完成，不能将此输出发布为可恢复的生产会话。
 
 ## 验证
 
@@ -109,3 +111,9 @@ Grok 收集整个会话目录，包括 updates、压缩记录和不解析的附�
 `python3 tests/session_files_browser.py` 构造 Claude 兄弟分支、子代理、工具结果和文件历史备份，
 以及 Grok 父子分支、updates 和压缩文件；验证整组范围与源数据不变，再用 Chromium
 打开移动/复制暂存后的各分支和 Claude 子代理。全部数据与服务使用私有临时目录。
+
+`python3 tests/session_files_grok_real.py` 是显式运行的原生隔离实验：使用 `grok-4.6` low
+创建父会话、fork 和子代理，将暂存输出实验性导入同一个临时 home，验证克隆后的父会话及
+子代理按新 ID 续聊，再继续原组并核对两组互不追加。断言原生 chat 记录中的实际模型
+`grok-4.6-build` 和 low 强度、原生关系以及日常配置不变。结果写入
+`target/session-files-grok-report.json`；不代表生产发布或跨机验收通过。
