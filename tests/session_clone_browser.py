@@ -62,6 +62,28 @@ def prepare(root):
         db.execute('INSERT INTO thread_items VALUES (?,?,?,?)', (ident(7),ident(20),'exec-projection-only',json.dumps({
             'type':'collabAgentToolCall','id':'exec-projection-only','senderThreadId':ident(7),
             'receiverThreadIds':[ident(6)],'agentsStates':{ident(6):{'status':'completed','message':ident(6)}}})))
+    # Realtime history has its own projection and identities, including references
+    # to ordinary agent turns/items. Speech text is data, never an ID reference.
+    realtime = [
+        {'id':'voice-start','realtime_session_id':'voice-session','type':'realtime_session_started'},
+        {'id':'voice-text','realtime_session_id':'voice-session','type':'transcript_segment',
+         'role':'assistant','text':'Literal voice-session '+ident(2)},
+        {'id':'voice-promoted','realtime_session_id':'voice-session','type':'bem_item_promoted',
+         'turn_id':ident(20),'item_id':'exec-projection-only','presentation':{'type':'inline_markdown'}},
+        {'id':'voice-end','realtime_session_id':'voice-session','type':'realtime_session_closed','outcome':'ended'},
+    ]
+    with sqlite3.connect(home / 'thread_history_1.sqlite') as db, corpus.paths['a'].open('a') as stream:
+        db.execute('CREATE TABLE thread_realtime_items(thread_id TEXT NOT NULL,item_id TEXT NOT NULL, '
+                   'rollout_ordinal INTEGER NOT NULL,created_at_ms INTEGER NOT NULL,item_type TEXT NOT NULL, '
+                   'item_json TEXT NOT NULL,PRIMARY KEY(thread_id,item_id),UNIQUE(thread_id,rollout_ordinal))')
+        for ordinal,item in enumerate(realtime,100):
+            stream.write(json.dumps({'type':'realtime_item','payload':item})+'\n')
+            db.execute('INSERT INTO thread_realtime_items VALUES (?,?,?,?,?,?)',
+                       (ident(2),item['id'],ordinal,1234,item['type'],json.dumps(item)))
+        # A projection-only record must also get a stable identity mapping.
+        item={'id':'voice-only','realtime_session_id':'voice-only-session','type':'realtime_session_closed','outcome':'failed'}
+        db.execute('INSERT INTO thread_realtime_items VALUES (?,?,?,?,?,?)',
+                   (ident(2),item['id'],104,1235,item['type'],json.dumps(item)))
     with sqlite3.connect(home / 'goals_1.sqlite') as db:
         db.executescript("""
         CREATE TABLE thread_goals (
@@ -345,6 +367,21 @@ def main():
                         assert event['threadId']==event['goal']['threadId']==goal_map['threads'][ident(2)]
                         assert event['goal']['objective']=='Goal literal '+ident(2)
                         print('PASS cloned native goals preserve status/budget/accounting/deferrals and remap goal and event identities',flush=True)
+                        with sqlite3.connect(corpus.root/'codex/thread_history_1.sqlite') as db:
+                            projected=db.execute('SELECT item_id,rollout_ordinal,created_at_ms,item_json FROM thread_realtime_items WHERE thread_id=? ORDER BY rollout_ordinal',
+                                                 (goal_map['threads'][ident(2)],)).fetchall()
+                        assert len(projected)==5,projected
+                        for index,(item_id,ordinal,created,item_json) in enumerate(projected):
+                            item=json.loads(item_json)
+                            assert item_id==item['id'] and item_id in goal_map['records'].values()
+                            assert ordinal==100+index and created==(1235 if index==4 else 1234)
+                            assert item['realtime_session_id']==goal_map['records']['voice-only-session' if index==4 else 'voice-session']
+                        assert json.loads(projected[1][3])['text']=='Literal voice-session '+ident(2)
+                        promoted=json.loads(projected[2][3])
+                        assert promoted['turn_id']==goal_map['turns'][ident(20)]
+                        assert promoted['item_id']==goal_map['records']['exec-projection-only']
+                        assert [row['payload'] for row in events if row['type']=='realtime_item']==[json.loads(row[3]) for row in projected[:4]]
+                        print('PASS realtime rollout and projections share rewritten session/item/turn identities; text and ordering preserved',flush=True)
                         assert saved['phase']=='complete'
                         ids=saved['plan']['identities']['threads']
                         page.locator('#a-view-switch').click()

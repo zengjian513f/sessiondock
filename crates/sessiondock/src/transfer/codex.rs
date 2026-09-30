@@ -351,7 +351,7 @@ fn rewrite(
     let kind = row["type"].as_str().unwrap_or("").to_owned();
     if !matches!(
         kind.as_str(),
-        "session_meta" | "turn_context" | "event_msg" | "response_item"
+        "session_meta" | "turn_context" | "event_msg" | "response_item" | "realtime_item"
     ) {
         return Ok(());
     }

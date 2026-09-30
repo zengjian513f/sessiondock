@@ -196,9 +196,7 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
                     owned(r, &ids)
                 }
             });
-            if !table.rows.is_empty()
-                && matches!(*name, "thread_attachments" | "thread_realtime_items")
-            {
+            if !table.rows.is_empty() && *name == "thread_attachments" {
                 return Err(TransferError::new(
                     "move_native_unsupported",
                     format!("本组包含尚未适配的原生记录 {name}"),
@@ -408,7 +406,10 @@ pub fn rewrite(
                         }
                     }
                 }
-                if table.name == "thread_items" {
+                if matches!(
+                    table.name.as_str(),
+                    "thread_items" | "thread_realtime_items"
+                ) {
                     let text = row
                         .get("item_json")
                         .and_then(Value::as_str)
@@ -416,7 +417,7 @@ pub fn rewrite(
                             TransferError::new("move_native_unsupported", "原生 item_json 缺失")
                         })?;
                     let mut item: Value = serde_json::from_str(text)?;
-                    codex_ids::item(&mut item, &mut |kind, id| {
+                    let mut mapper = |kind, id: &str| {
                         let ids = match kind {
                             Identity::Thread => &map.threads,
                             Identity::Turn => &map.turns,
@@ -428,7 +429,12 @@ pub fn rewrite(
                                 format!("原生投影身份未映射: {id}"),
                             )
                         })
-                    })?;
+                    };
+                    if table.name == "thread_realtime_items" {
+                        codex_ids::realtime(&mut item, &mut mapper)?;
+                    } else {
+                        codex_ids::item(&mut item, &mut mapper)?;
+                    }
                     row.insert("item_json".into(), serde_json::to_string(&item)?.into());
                 }
                 if table.name == "thread_turns" {
@@ -925,6 +931,26 @@ pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), Tr
     for db in &native.databases {
         for table in &db.tables {
             for row in &table.rows {
+                if table.name == "thread_realtime_items" {
+                    let mut item: Value = serde_json::from_str(
+                        row.get("item_json")
+                            .and_then(Value::as_str)
+                            .ok_or_else(|| {
+                                TransferError::new("move_native_unsupported", "原生 item_json 缺失")
+                            })?,
+                    )?;
+                    codex_ids::realtime(&mut item, &mut |kind, id| {
+                        let ids = match kind {
+                            Identity::Thread => &mut plan.identities.threads,
+                            Identity::Turn => &mut plan.identities.turns,
+                            Identity::Record => &mut plan.identities.records,
+                        };
+                        if !ids.contains_key(id) {
+                            ids.insert(id.into(), super::codex::uuid()?);
+                        }
+                        Ok(ids[id].clone())
+                    })?;
+                }
                 for key in [
                     "item_id",
                     "first_user_item_id",
