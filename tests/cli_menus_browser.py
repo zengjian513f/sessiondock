@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import select
 import sys
 import tempfile
@@ -247,6 +248,35 @@ def main():
                             "node => getComputedStyle(node, '::before').content") == '"?"'
                         assert not page.evaluate('T.openViews.size'), 'Composer answers must not require terminal attach'
                         prompt = result['prompt']
+                        if source == 'codex' and prompt.get('kind') == 'screen_menu':
+                            labels = [action['label'] for action in prompt.get('actions', [])]
+                            if fixture['name'] in ('slow_response', 'model_picker', 'request_options', 'checkbox_experiments'):
+                                assert not any(label in labels for label in
+                                    ('Previous options', 'Next options', 'Previous page', 'Next page')), labels
+                            if fixture['name'] == 'request_hidden_options':
+                                assert 'Previous options' in labels and 'Next options' in labels, labels
+                            if fixture['name'] == 'keymap_picker':
+                                assert 'Next options' in labels and 'Next page' in labels, labels
+                                assert 'Previous options' not in labels and 'Previous page' not in labels, labels
+                            if fixture['name'] == 'slow_response':
+                                expect(card.locator('.question-option')).to_have_count(2)
+                                expect(card.locator('.question-header')).to_have_text('Giving this request a little extra thought')
+                                expect(card.locator('.question-text')).to_have_text('')
+                                # Unread content stays recorded and accessible in the
+                                # tooltip, while the waiting marker remains one symbol.
+                                page.evaluate('''() => {
+                                    const item = document.querySelector('#side .item.sel');
+                                    S.unread.set(item.dataset.uid, {count:2});
+                                    paintItemStatus(item);
+                                }''')
+                                marker = page.locator('#side .item.sel > .ico > .item-status')
+                                expect(marker).to_have_text('?')
+                                expect(marker).to_have_attribute('title', re.compile('2 条新内容'))
+                                page.evaluate('''() => {
+                                    const item = document.querySelector('#side .item.sel');
+                                    S.unread.delete(item.dataset.uid);
+                                    paintItemStatus(item);
+                                }''')
                         # The history watch contains CLI status but no CHECK
                         # screen projection. It must preserve this live card.
                         page.evaluate('''() => {

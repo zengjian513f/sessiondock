@@ -1972,5 +1972,37 @@
     "expected": null,
     "native_source": "snapshots/codex_tui__keymap_setup__tests__keymap_picker_wide.snap",
     "native_outcome": "A 32-row PTY clips the native heading from this 35-row Keymap snapshot; missing current dialog identity requires terminal fallback."
+  },
+  {
+    "name": "slow_response",
+    "category": "status",
+    "screen": "  Giving this request a little extra thought\n\n› 1. Dismiss and keep waiting\n  2. Learn more\n\n  No action is required. Codex will keep waiting, and this menu will close when the response is ready.\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "header": "Giving this request a little extra thought",
+          "question": "",
+          "options": [
+            {
+              "label": "Dismiss and keep waiting",
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "label": "Learn more",
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_outcome": "Dismiss keeps the request waiting; Learn more opens the native explanation."
   }
 ]
