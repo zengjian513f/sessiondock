@@ -10,10 +10,13 @@
   保留原生创建时间校验，不能仅凭目标机器/目录/时间邻近猜测。现状与边界见
   [liveness.md](docs/liveness.md#ssh-boundary)；跨机器手工挂载已支持。
 
-- [ ] 实现会话跨机器迁移：带上依赖闭包（祖先、fork、子代理、续接链），只迁移已停止的
-  会话，两端的 CLI 根和 cwd 绝对路径必须一致。已完成 Codex 0.159.0 同版本隔离实验和
+- [ ] 同时实现会话整组移动和克隆：沿祖先、兄弟 fork、子代理、续接链、spawned_by 和物理
+  历史依赖双向展开整个连通组，只操作已停止写入的组。移动保留身份并切换归属；克隆分配新
+  身份、重建全部内部引用并保留源组，支持同机/跨机，工作目录不复制。两端 CLI 根和 cwd
+  绝对路径必须一致。已完成 Codex 0.159.0 同版本隔离实验和
   不可变 rollout ID 读取支持；文件复制不足以保全分页历史和元数据。待完成跨版本/其他 CLI
-  验证、生产导入与回滚、迁移编排和页面。设计及实测见 [session-move.md](docs/session-move.md)。
+  验证、整组计划、新身份克隆实测、生产导入与回滚、编排和页面。设计及实测见
+  [session-move.md](docs/session-move.md)、[session-clone.md](docs/session-clone.md)。
 
 - [ ] 为 Windows/macOS 的外部（非 ptyhost 管理）CLI 补齐进程发现与强身份验证。
   Windows 的受管 ptyhost 路径已经过实机验证，不应与此外部进程缺口混为一谈。
