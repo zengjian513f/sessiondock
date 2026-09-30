@@ -2316,3 +2316,23 @@ header .btn[data-session-docked] { display: none; }
 #composer-question .question-text-form label { flex:1; min-width:0; }
 #composer-question .question-text-input { display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 #composer-question .question-actions { flex-wrap:wrap; }
+
+/* Session-owned labels and groups. */
+#view button[hidden] { display: none; }
+#session-label-filters { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#session-label-filters[hidden] { display: none; }
+#session-label-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+#session-label-chips button, .session-row-labels span { border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: transparent; padding: 2px 6px; font-size: 11px; }
+#session-label-chips button { cursor: pointer; }
+#session-label-chips button.on { color: var(--accent); border-color: currentColor; }
+#session-label-filters label { font-size: 12px; color: var(--muted); }
+.session-row-labels { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+.session-row-labels:empty { display: none; }
+#session-label-dialog { width: min(460px, calc(100vw - 24px)); }
+#session-label-form fieldset { margin: 12px 0; border: 1px solid var(--border); border-radius: 6px; }
+#session-label-options { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 0; }
+#session-label-options label { display: flex; align-items: center; gap: 4px; overflow-wrap: anywhere; }
+.label-create-row, .label-group-row { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
+.label-create-row input, .label-group-row select { flex: 1; min-width: 0; }
+#session-label-note { min-height: 1.5em; color: var(--muted); overflow-wrap: anywhere; }
+#session-label-summary { overflow-wrap: anywhere; }

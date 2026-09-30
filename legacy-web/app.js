@@ -1421,7 +1421,7 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
     m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent,
+    m.nest_parent || null, !!m.nest_independent, m.labels || [], m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
   entry.meta = meta;
@@ -2555,7 +2555,7 @@ function mergeSessionMetaEvent(entry, session) {
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
     m.title, m.parent_title, m.sid, m.agent_type, !!m.starred, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent,
+    m.nest_parent || null, !!m.nest_independent, m.labels || [], m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);
   const before = cache.get(viewKey(S.sel, S.agent));
@@ -2784,6 +2784,7 @@ setTimeout(startUiEvents, 0);
 function visible() {
   let pool = (S.results || sidebarSessions()).filter(s => (!sessionHidden(s) || s.uid === S.sel)
     && !S.off.has(s.source) && nodeSelected(s));
+  pool = pool.filter(s => globalThis.SessionDockLabels?.matches(s) ?? true);
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
   return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n')));
@@ -3046,6 +3047,7 @@ function renderPickBar() {
   $('#side').classList.toggle('picking', S.picking);
   $('#side').classList.toggle('attaching', attaching);
   $('#side-pick-all').hidden = attaching;
+  globalThis.SessionDockLabels?.paintPickBar(attaching);
   $('#side-pick-delete').hidden = attaching;
   $('#side-pick-stop').hidden = attaching;
   $('#side-pick-attach').hidden = attaching || !SessionDockCapabilities.allows('metadata');
@@ -3302,6 +3304,7 @@ function openItemMenu(uid, x, y) {
   menu.querySelector('[data-act="reattach"]').hidden = !nestable || !canRestore;
   menu.querySelector('[data-act="attach"]').hidden = !nestable;
   menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running && !unusedLaunch) || shellRunning;
+  menu.querySelector('[data-act="labels"]').hidden = !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockLabels?.available;
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
   menu.hidden = false;
@@ -3443,6 +3446,7 @@ $('#item-menu').onclick = async e => {
   const uid = menuUid;
   closeItemMenu();
   if (!uid) return;
+  if (button.dataset.act === 'labels') { await globalThis.SessionDockLabels?.open([uid]); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
     return;
@@ -4063,7 +4067,8 @@ const rowKey = row => row.agent ? `${row.s.uid}#${row.agent.id}` : row.s.uid;
  *  会话下面，平铺模式没有发起的会话行（children 为空）。
  *  分层模式按整棵子树的最新活动排位和归组，发起的孩子刚有动静时父亲跟着浮上来。 */
 function groupBy(list, {skipClosed = false} = {}) {
-  const {children, nested} = nestTree(list);
+  const {children, nested} = S.view === 'group'
+    ? {children: new Map(), nested: new Set()} : nestTree(list);
   const memo = new Map();
   const stamp = s => S.nest ? nestStamp(s, children, memo) : (+new Date(s.updated) || 0);
   const m = new Map(), latest = new Map(), dates = new Map();
@@ -4072,7 +4077,7 @@ function groupBy(list, {skipClosed = false} = {}) {
     const updated = stamp(s);
     if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
     const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
-      : dates.get(updated);
+      : S.view === 'group' ? `group:${s.group || ''}` : dates.get(updated);
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(s);
     latest.set(k, Math.max(latest.get(k) ?? -Infinity, updated));
@@ -4263,6 +4268,7 @@ function patchSidebarRow(node, row, highlightKey) {
   }
   const snippet = node.querySelector('.snip');
   if (snippet && (snippet.textContent !== s.snippet || node._highlightKey !== highlightKey)) snippet.innerHTML = hl(s.snippet);
+  globalThis.SessionDockLabels?.paintRow(node, s);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
   syncRowPickBox(node, s);
   const caret = node.querySelector('.nest-caret');
@@ -4320,6 +4326,7 @@ function createSidebarRow(r, picked = pickedSessions) {
        ${s.snippet ? `<div class="snip">${hl(s.snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
+  globalThis.SessionDockLabels?.paintRow(it, s);
   it.dataset.uid = s.uid;
   it.dataset.key = s.uid;
   it.dataset.depth = r.depth;
@@ -4395,7 +4402,7 @@ function renderSide(suppliedList = null) {
     oldGroups.delete(key);
     g.classList.toggle('closed', sidebarGroupClosed(key));
     g.dataset.key = key;
-    const label = S.view === 'tree' ? nodeDirectory(first) : key;   // 分组标题不缩写, 只换 ~
+    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) || '未分组' : key;   // 分组标题不缩写, 只换 ~
     const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
     const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
     const oldHead = g.querySelector(':scope > .ghead');

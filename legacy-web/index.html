@@ -156,6 +156,7 @@
       <div class="seg chips" id="chips" role="group" aria-label="Agent Type 筛选"></div>
       <div class="seg" id="view" role="group" aria-label="列表视图">
         <button data-v="tree" class="on" title="项目树" aria-label="项目树">📁 <span class="mobile-label">项目树</span></button>
+        <button data-v="group" title="会话分组" aria-label="会话分组">🏷 <span class="mobile-label">分组</span></button>
         <button data-v="date" title="时间轴" aria-label="时间轴">🕒 <span class="mobile-label">时间轴</span></button>
       </div>
       <div class="seg" id="nest">
@@ -203,11 +204,16 @@
             <button type="button" data-o="regex" title="正则表达式：整段输入作为正则，不拆词" aria-label="正则表达式" aria-pressed="false">.*</button>
           </div>
         </div>
+        <div id="session-label-filters" hidden>
+          <div id="session-label-chips" role="group" aria-label="标签筛选"></div>
+          <label>分组 <select id="session-group-filter" aria-label="分组筛选"><option value="">全部分组</option></select></label>
+        </div>
         <div id="stat" role="status">加载中…</div>
         <div class="side-tools" id="side-tools" hidden>
           <span id="side-picked"></span>
           <button type="button" class="btn" id="side-pick-all">全选</button>
           <button type="button" class="btn" id="side-pick-stop" disabled>停止</button>
+          <button type="button" class="btn" id="side-pick-labels" disabled>标签 / 分组</button>
           <button type="button" class="btn" id="side-pick-attach" disabled>附属到…</button>
           <button type="button" class="btn danger" id="side-pick-delete" disabled>删除</button>
           <button type="button" class="btn" id="side-pick-cancel">取消</button>
@@ -304,8 +310,25 @@
   <button type="button" role="menuitem" data-act="reattach" hidden>取消独立</button>
   <button type="button" role="menuitem" data-act="attach" hidden>附属到…</button>
   <button type="button" role="menuitem" data-act="delete">删除会话</button>
+  <button type="button" role="menuitem" data-act="labels">标签 / 分组…</button>
   <button type="button" role="menuitem" data-act="pick">多选…</button>
 </div>
+<dialog id="session-label-dialog" class="app-dialog" aria-labelledby="session-label-title">
+  <form id="session-label-form">
+    <div class="modal-head"><h2 id="session-label-title">标签与分组</h2>
+      <button type="button" class="modal-close" id="session-label-close" aria-label="关闭">×</button></div>
+    <p id="session-label-summary"></p>
+    <fieldset><legend>标签（可多选）</legend><div id="session-label-options"></div></fieldset>
+    <div class="label-create-row"><input id="session-label-new" aria-label="新标签名称" placeholder="例如：重要、搁置、稍后">
+      <button type="button" class="btn" id="session-label-create">创建标签</button></div>
+    <label class="label-group-row">所属分组 <select id="session-label-group" aria-label="所属分组"></select></label>
+    <div class="label-create-row"><input id="session-group-new" aria-label="新分组名称" placeholder="新分组名称">
+      <button type="button" class="btn" id="session-group-create">创建分组</button></div>
+    <p id="session-label-note" role="status" aria-live="polite"></p>
+    <div class="modal-actions"><button type="button" class="btn" id="session-label-cancel">取消</button>
+      <button type="submit" class="btn go" id="session-label-save">保存</button></div>
+  </form>
+</dialog>
 <dialog id="new-session-dialog" aria-labelledby="new-session-title">
   <form id="new-session-form">
     <div class="modal-head">
@@ -523,6 +546,7 @@
 <script defer src="cli.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="nodes.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="app.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="labels.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script type="module">
   // 服务端网格的 xterm 兼容外观层；模块脚本与 defer 脚本按文档顺序执行，term.js 能直接用到。
   import {GridTerm} from './grid/facade.js?v=__SESSIONDOCK_ASSET_VERSION__';

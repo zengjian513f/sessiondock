@@ -13,6 +13,7 @@
 pub mod aggregate;
 pub mod client;
 pub mod identity;
+pub mod labels;
 pub mod namespace;
 pub mod nest;
 pub mod process_links;

@@ -12,6 +12,7 @@ from history_parity import BINARY, isolated_server
 
 
 def click_action(page, selector):
+    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     button = page.locator(selector)
     if not button.is_visible():
         page.locator('#a-more').click()
@@ -79,6 +80,9 @@ def main():
             # Mobile detail hides the entire header; both dialogs must remain reachable.
             for width in (390, 320):
                 page.set_viewport_size({'width': width, 'height': 844})
+                # Resize closes menus; let its event and layout observers settle
+                # before simulating the next user click.
+                page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
                 if page.locator('#left').is_visible():
                     page.locator(f'#side .item[data-uid="{data.uid(SID)}"]').click()
                 expect(page.locator('header')).not_to_be_visible()

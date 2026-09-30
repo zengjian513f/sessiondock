@@ -11,7 +11,9 @@ use serde_json::{Value, json};
 
 use crate::{
     error::ApiError,
-    metadata::{MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids},
+    metadata::{
+        LabelCatalog, MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids,
+    },
     sessions::SessionStore,
     state::{AppState, JsonBytes},
 };
@@ -145,6 +147,62 @@ async fn write(
             "偏好工作异常退出，请重新读取状态确认结果",
         )
     })?
+}
+
+#[derive(Deserialize)]
+pub struct LabelsRequest {
+    uid: String,
+    #[serde(default)]
+    add_labels: BTreeSet<String>,
+    #[serde(default)]
+    remove_labels: BTreeSet<String>,
+    #[serde(default)]
+    set_group: bool,
+    #[serde(default)]
+    group: Option<String>,
+    #[serde(flatten)]
+    diagnostics: Diagnostics,
+}
+
+pub async fn labels(State(state): State<AppState>) -> Result<JsonBytes, ApiError> {
+    let metadata = configured(&state)?;
+    write(state, move |_| {
+        Ok(json!(metadata.snapshot()?.label_catalog()))
+    })
+    .await
+}
+
+pub async fn merge_labels(
+    State(state): State<AppState>,
+    body: Result<Json<LabelCatalog>, JsonRejection>,
+) -> Result<JsonBytes, ApiError> {
+    let metadata = configured(&state)?;
+    let Json(body) = body.map_err(invalid)?;
+    write(state, move |_| {
+        Ok(json!(metadata.merge_label_catalog(&body)?.label_catalog()))
+    })
+    .await
+}
+
+pub async fn session_labels(
+    State(state): State<AppState>,
+    hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
+    body: Result<Json<LabelsRequest>, JsonRejection>,
+) -> Result<JsonBytes, ApiError> {
+    let metadata = configured(&state)?;
+    let Json(body) = body.map_err(invalid)?;
+    body.diagnostics.validate(&state, hub.is_some())?;
+    write(state, move |store| {
+        let list = store.list(true)?;
+        if !list["sessions"].as_array().is_some_and(|rows| rows.iter().any(|row| row["uid"] == body.uid)) {
+            return Err(ApiError::new(StatusCode::NOT_FOUND, "session_missing", "会话不存在"));
+        }
+        let snapshot = metadata.set_labels(&body.uid, &body.add_labels, &body.remove_labels,
+            body.set_group.then_some(body.group))?;
+        let row = snapshot.row(&body.uid);
+        Ok(json!({"ok": true, "uid": body.uid, "labels": row["labels"].as_array().cloned().unwrap_or_default(),
+            "group": row["group"], "metadata_revision": snapshot.revision()}))
+    }).await
 }
 
 pub async fn star(

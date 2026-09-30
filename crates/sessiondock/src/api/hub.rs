@@ -47,6 +47,8 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/meta"),
     ("GET", "/api/events"),
     ("GET", "/api/nodes"),
+    ("GET", "/api/labels"),
+    ("POST", "/api/labels"),
     ("POST", "/api/nodes/order"),
     ("POST", "/api/nodes/{nid}/display"),
     ("ANY", "/api/nodes/{nid}/api/{*path}"),
@@ -138,6 +140,7 @@ pub struct HubState {
     pub public_hosts: Arc<Vec<String>>,
     /// One metadata observer per view, shared by all connected browsers.
     pub ui_events: Arc<EventBus>,
+    pub labels: Arc<crate::hub::labels::Labels>,
 }
 
 /// The hub router: one gate, one dispatcher.
@@ -186,7 +189,14 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         .map(|directory| Arc::new(HubAudit::new(directory)));
     let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone());
     crate::hub::process_links::spawn(registry.clone(), client.clone(), shutdown.clone());
+    let labels = Arc::new(crate::hub::labels::Labels::open(
+        config.cache_dir.join("labels.json"),
+    )?);
+    labels
+        .clone()
+        .spawn(registry.clone(), client.clone(), shutdown.clone());
     let state = HubState {
+        labels,
         registry: registry.clone(),
         client: client.clone(),
         assets,
@@ -416,6 +426,25 @@ async fn handle(
             &json!({"mode": "hub", "protocol": PROTOCOL, "build": state.assets.build,
             "hostname": HUB_HOSTNAME, "capabilities": hub_capabilities()}),
         );
+    }
+
+    if method == Method::GET && path == "/api/labels" {
+        return ok(&state.labels.sync(registry, client, None).await);
+    }
+    if method == Method::POST && path == "/api/labels" {
+        let body = read_body(request).await?;
+        let catalog: crate::metadata::LabelCatalog = serde_json::from_value(Value::Object(body))
+            .map_err(|_| Reply::Invalid("需要有效的标签和分组集合".into()))?;
+        let catalog = crate::metadata::MetadataSnapshot::empty()
+            .with_label_catalog(&catalog)
+            .map_err(|error| Reply::Invalid(error.message))?
+            .label_catalog();
+        let value = state.labels.sync(registry, client, Some(catalog)).await;
+        return if value["ok"] == true {
+            ok(&value)
+        } else {
+            status(StatusCode::SERVICE_UNAVAILABLE, value)
+        };
     }
     if method == Method::GET && path == "/api/nodes" {
         return ok(
