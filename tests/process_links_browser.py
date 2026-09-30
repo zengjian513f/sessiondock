@@ -97,7 +97,15 @@ def main():
                         local.append(stack.enter_context(isolated_server(corpus, args.binary,
                             state_dir=corpus.root / 'state', extra_env=environment)))
                     if not restarted:
-                        hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, nodes)
+                        ghost = SimpleNamespace(name="unrelated-offline", nid="c" * 32, port=free_port(), token=TOKEN)
+                        ghost_corpus = Corpus(root / 'unrelated-offline')
+                        (ghost_corpus.root / 'ids').mkdir(parents=True)
+                        (ghost_corpus.root / 'ids/node-id').write_text(ghost.nid)
+                        ghost_env = node_env(ghost_corpus.root, ghost.port, '127.0.0.0/8')
+                        ghost_env['SESSIONDOCK_PROC_ROOT'] = str(procs[0])
+                        # Register a real private node, then take only that fixture offline.
+                        with isolated_server(ghost_corpus, args.binary, extra_env=ghost_env):
+                            hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, [*nodes, ghost])
                         hub.start()
                         stack.callback(hub.stop)
                     base, opener = local[1]
@@ -148,6 +156,8 @@ def main():
                             remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
                             assert remote['metrics']['memory_pss_bytes']['value'] == 1000 * 1024, inclusive
                             assert all(row['status'] == 'ok' for row in direct['nodes']), direct
+                            assert {row['node_id'] for row in direct['nodes']} == {node.nid for node in nodes}
+                            assert direct['partial'] is False, 'unrelated offline node must not taint totals'
                             assert remote['metrics']['network_send_bytes_per_second']['value'] is None
                             assert context.request.get(hubbase + resource_url.replace('scope=direct', 'scope=invalid')).status == 400
                             local_resources = get_json(opener, base, '/api/session/resources?' + urlencode({'uid': corpora[1].uid('child')}))
@@ -157,11 +167,14 @@ def main():
                             page.get_by_role('button', name='查看会话资源').click()
                             page.locator('.session-resources .sr-node').first.wait_for()
                             assert page.locator('.session-resources .sr-node').count() == 2
-                            with page.expect_response(lambda response: '/api/session/resources?' in response.url and 'scope=inclusive' in response.url) as received:
-                                page.locator('.session-resources [data-scope="inclusive"]').click()
-                            rendered = received.value.json()
-                            assert next(row for row in rendered['nodes'] if row['node_id'] == nodes[1].nid)['metrics']['memory_pss_bytes']['value'] == 1000 * 1024
+                            assert page.locator('.session-resources [data-scope]').count() == 2
                             page.get_by_role('button', name='关闭资源面板').click()
+                            page.locator(f'[data-uid="{uid}"]').first.click()
+                            page.get_by_role('button', name='查看会话资源').click()
+                            page.wait_for_function("document.querySelectorAll('.session-resources .sr-node').length === 1")
+                            assert page.locator('.session-resources .sr-node h3').inner_text() == 'b'
+                            page.get_by_role('button', name='关闭资源面板').click()
+                            print('PASS unrelated online/offline machines hidden, SSH target retained, totals filtered', flush=True)
                             print('PASS real session resources API, opaque UID resolution, remote direct/inclusive PSS, browser resource panel', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.
                         shutil.rmtree(procs[0] / '200')

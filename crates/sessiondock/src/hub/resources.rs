@@ -5,7 +5,41 @@ use super::{Client, Registry, namespace};
 use futures_util::{StreamExt, stream};
 use process_links::{Session, agent::Resources};
 use serde_json::{Value, json};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+/// Remember verified participants while this Hub runs, including during outages.
+#[derive(Default)]
+pub struct RelatedNodes(Mutex<BTreeMap<(String, String, String), BTreeSet<String>>>);
+impl RelatedNodes {
+    fn filter(&self, session: &Session, rows: Vec<Value>) -> Vec<Value> {
+        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let known = cache
+            .entry((
+                session.node_id.clone(),
+                session.source.clone(),
+                session.sid.clone(),
+            ))
+            .or_default();
+        known.insert(session.node_id.clone());
+        for row in &rows {
+            if row["session_related"] == true {
+                if let Some(id) = row["node_id"].as_str() {
+                    known.insert(id.to_owned());
+                }
+            }
+        }
+        rows.into_iter()
+            .filter(|row| row["node_id"].as_str().is_some_and(|id| known.contains(id)))
+            .collect()
+    }
+}
+fn same_session(a: &Session, b: &Session) -> bool {
+    a.node_id == b.node_id && a.source == b.source && a.sid == b.sid
+}
 
 pub fn now() -> f64 {
     SystemTime::now()
@@ -77,16 +111,28 @@ pub fn node_row(
             "resource_identity_mismatch",
         );
     }
+    // Scope changes the sum, not which machines participated in the session.
+    let related = resources.bindings.iter().any(|b| {
+        same_session(&b.session, session)
+            || b.initiator
+                .as_ref()
+                .is_some_and(|s| same_session(s, session))
+            || b.launch_chain
+                .iter()
+                .any(|launch| same_session(&launch.session, session))
+    });
     let age = now() - resources.sampled_at;
     if !resources.sampled_at.is_finite() || !(-5.0..=15.0).contains(&age) {
-        return unavailable(
+        let mut row = unavailable(
             node_id,
             node_name,
             "stale",
             "resource_sample_stale_or_clock_skew",
         );
+        row["session_related"] = json!(related);
+        return row;
     }
-    json!({"node_id":node_id,"node_name":node_name,"status":"ok", "sampled_at":resources.sampled_at,
+    json!({"node_id":node_id,"node_name":node_name,"status":"ok", "sampled_at":resources.sampled_at,"session_related":related,
         "metrics": process_links::resource_summary::metrics(&resources, session, inclusive)})
 }
 
@@ -97,6 +143,7 @@ pub fn response(rows: Vec<Value>) -> Value {
 }
 
 pub async fn get(
+    related: &RelatedNodes,
     registry: &Registry,
     client: &Client,
     uid: &str,
@@ -152,7 +199,10 @@ pub async fn get(
         .collect()
         .await;
     rows.sort_by_key(|(index, _)| *index);
-    Ok(response(rows.into_iter().map(|(_, row)| row).collect()))
+    Ok(response(related.filter(
+        &session,
+        rows.into_iter().map(|(_, row)| row).collect(),
+    )))
 }
 
 #[cfg(test)]
@@ -170,6 +220,26 @@ mod tests {
     fn sample() -> Value {
         json!({"version":1,"node_id":"node","boot_id":"boot","sampled_at":now(),
             "availability":"observed","method":"fixture","samples":[],"unavailable":[]})
+    }
+    #[test]
+    fn only_owner_and_verified_participants_survive_filtering() {
+        let cache = RelatedNodes::default();
+        let session = session();
+        let rows = vec![
+            unavailable("node", "owner", "unsupported", "no collector"),
+            json!({"node_id":"remote", "status":"ok", "session_related":true}),
+            json!({"node_id":"idle", "status":"ok", "metrics":{"cpu_cores":{"value":0}}}),
+            unavailable("unused", "unused", "offline", "offline"),
+        ];
+        assert_eq!(cache.filter(&session, rows).len(), 2);
+        let down = vec![
+            unavailable("remote", "remote", "offline", "offline"),
+            unavailable("unused", "unused", "offline", "offline"),
+        ];
+        assert_eq!(cache.filter(&session, down.clone()).len(), 1);
+        let mut other = session.clone();
+        other.sid = "another".into();
+        assert!(cache.filter(&other, down).is_empty());
     }
     #[test]
     fn uid_uses_inventory_native_sid() {
