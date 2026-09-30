@@ -87,6 +87,15 @@ def main():
                 with ExitStack() as stack:
                     stack.callback(peer.close)
                     seed(peer,source)
+                    source_metadata=source.root/'state/session-metadata.json'
+                    source_doc=json.loads(source_metadata.read_text()) if source_metadata.exists() else {'schema_version':1,'revision':1,'sessions':{}}
+                    source_doc['sessions'][selected]={'labels':['source-label'],'group':'source-group','fork_parent_visible':True}
+                    source_metadata.write_text(json.dumps(source_doc))
+                    target_metadata=root/'destination/state/session-metadata.json'
+                    target_before={'starred':True,'starred_at':123,'labels':['target-label'],'group':'target-group','activity_revision':7}
+                    unrelated='claude:ffffffffffffffff'
+                    peer.write(target_metadata,json.dumps({'schema_version':1,'revision':1,'sessions':{
+                        selected:target_before,unrelated:{'starred':True}}}).encode())
                     before=primary.read_bytes();primary.write_bytes(before+json.dumps(extra).encode()+b'\n')
                     after=primary.read_bytes()
                     old_files={str(primary):before}
@@ -112,6 +121,11 @@ def main():
                     hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b]);hub.start();stack.callback(hub.stop)
                     context=browser.new_context(service_workers='block');stack.callback(context.close)
                     page=context.new_page()
+                    # Equal history has no evidence to choose one divergent preference set.
+                    primary.write_bytes(before)
+                    transfer(page,hub,scoped(a.nid,selected),b.nid,count,error='move_conflict')
+                    assert json.loads(peer.read(target_metadata))['sessions'][selected]==target_before
+                    primary.write_bytes(after)
                     # A target with independent continuation is never replaced.
                     divergent=before+json.dumps({'type':'user','content':'TARGET_ONLY'}).encode()+b'\n'
                     peer.write(primary,divergent)
@@ -138,6 +152,10 @@ def main():
                         operation=json.loads(peer.read(journal))
                         assert operation['replaced_files'],operation
                         assert operation['phase']=='complete'
+                        assert operation['metadata_replaced'][selected]==target_before
+                        published_metadata=json.loads(peer.read(target_metadata))['sessions'][selected]
+                        assert published_metadata=={**source_doc['sessions'][selected],
+                            'activity_revision':7,'clone_operation':result['operation_id']},published_metadata
                         if provider=='codex':
                             receipt=peer.call('receipt',path=str(database),operation_id=result['operation_id'])['receipt']
                             old_rows=[r for t in receipt['replaced']['tables'] if t['name']=='threads' for r in t['rows']]
@@ -161,8 +179,23 @@ def main():
                         peer.write(primary,changed);peer.call('start')
                         held=json.loads(peer.read(journal))
                         assert held['phase']=='rollback_required' and peer.read(primary)==changed,held
-                        peer.call('stop');peer.write(primary,after);peer.call('start')
+                        peer.call('stop');peer.write(primary,after)
+                        # Now resolve the file mismatch but introduce a target preference change.
+                        # It must be preserved, and block file/native compensation too.
+                        changed_doc=json.loads(peer.read(target_metadata))
+                        changed_doc['sessions'][selected]={**published_metadata,'starred':True,'starred_at':987}
+                        changed_doc['sessions'][unrelated]={'starred':True,'group':'concurrent-unrelated'}
+                        peer.write(target_metadata,json.dumps(changed_doc).encode());peer.call('start')
+                        held=json.loads(peer.read(journal))
+                        assert held['phase']=='rollback_required' and peer.read(primary)==after,held
+                        assert json.loads(peer.read(target_metadata))['sessions']==changed_doc['sessions']
+                        peer.call('stop')
+                        changed_doc=json.loads(peer.read(target_metadata));changed_doc['sessions'][selected]=published_metadata
+                        peer.write(target_metadata,json.dumps(changed_doc).encode());peer.call('start')
                         assert peer.read(primary)==before
+                        restored=json.loads(peer.read(target_metadata))['sessions']
+                        assert restored[selected]==target_before
+                        assert restored[unrelated]=={'starred':True,'group':'concurrent-unrelated'}
                         if summary:assert peer.read(summary)==old_summary
                         recovered=json.loads(peer.read(journal));assert recovered['phase']=='failed',recovered
                         for target in operation['replaced_files']:

@@ -38,6 +38,8 @@ pub struct Operation {
     pub metadata_before: BTreeMap<String, Value>,
     pub metadata_after: BTreeMap<String, Value>,
     #[serde(default)]
+    pub metadata_replaced: BTreeMap<String, Value>,
+    #[serde(default)]
     pub full_group: Option<group::Group>,
     #[serde(default)]
     pub file_plan: Option<files::Plan>,
@@ -323,6 +325,7 @@ impl TransferService {
             error: None,
             metadata_before: BTreeMap::new(),
             metadata_after: BTreeMap::new(),
+            metadata_replaced: BTreeMap::new(),
             full_group: Some(group),
             file_plan,
             file_publications: Vec::new(),
@@ -580,7 +583,7 @@ impl TransferService {
         }
         if let Some(metadata) = &self.metadata {
             metadata
-                .transfer_rows(&op.metadata_after, true)
+                .transfer_prefix_rows(&op.metadata_after, &op.metadata_replaced, true)
                 .map_err(|e| TransferError::new(e.code, e.message))?;
         }
         if let Some(native) = &op.rewritten {
@@ -634,8 +637,10 @@ impl TransferService {
                 snapshot.recheck()?;
             }
         }
+        let mut extended_metadata = BTreeSet::new();
         if !op.new_ids() {
-            let extended = prefix::prepare(self, &mut op)?;
+            let (extended, metadata) = prefix::prepare(self, &mut op)?;
+            extended_metadata = metadata;
             op.native_before = Some(native::preflight_prefix(
                 op.rewritten.as_ref().unwrap(),
                 &extended,
@@ -676,23 +681,59 @@ impl TransferService {
                 let current = metadata
                     .snapshot()
                     .map_err(|e| TransferError::new(e.code, e.message))?;
-                // Existing equal overlays belong to the destination. Exclude
-                // them from both insertion and compensation receipts.
-                op.metadata_after.retain(|uid, row| {
-                    let mut existing = current.row(uid);
-                    if let Some(object) = existing.as_object_mut() {
-                        object.remove("clone_operation");
-                    }
-                    existing != *row
-                });
+                op.metadata_replaced.clear();
+                let portable = [
+                    "starred",
+                    "starred_at",
+                    "labels",
+                    "group",
+                    "fork_parent_visible",
+                    "nest_independent",
+                    "spawned_by",
+                    "nest_parent",
+                ];
                 for (uid, row) in &mut op.metadata_after {
-                    if current.row(uid) != json!({}) {
-                        return Err(TransferError::new("move_conflict", "目标会话显示设置不同"));
+                    let before = current.row(uid);
+                    let mut merged = before.as_object().cloned().unwrap_or_default();
+                    merged.remove("clone_operation");
+                    for key in portable {
+                        merged.remove(key);
+                        if let Some(value) = row.get(key) {
+                            merged.insert(key.into(), value.clone());
+                        }
                     }
-                    if row.as_object().is_some_and(|r| !r.is_empty()) {
-                        row["clone_operation"] = op.id.clone().into();
+                    let mut comparable = before.clone();
+                    comparable
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("clone_operation");
+                    if Value::Object(merged.clone()) == comparable {
+                        *row = json!({}); // Already owned by the destination; no receipt.
+                        continue;
                     }
+                    if before != json!({}) {
+                        if !extended_metadata.contains(uid) {
+                            return Err(TransferError::new(
+                                "move_conflict",
+                                "目标会话显示设置不同且历史没有延长",
+                            ));
+                        }
+                        if !before["spawned_by"].is_null()
+                            && before["spawned_by"] != row["spawned_by"]
+                        {
+                            return Err(TransferError::new(
+                                "move_conflict",
+                                "目标会话原生归属不同",
+                            ));
+                        }
+                        op.metadata_replaced.insert(uid.clone(), before);
+                    }
+                    if !merged.is_empty() || op.metadata_replaced.contains_key(uid) {
+                        merged.insert("clone_operation".into(), op.id.clone().into());
+                    }
+                    *row = merged.into();
                 }
+                op.metadata_after.retain(|_, row| row != &json!({}));
             }
         }
         op.phase = "publishing".into();
@@ -761,7 +802,7 @@ impl TransferService {
             )?;
             if let Some(metadata) = &self.metadata {
                 metadata
-                    .transfer_rows(&op.metadata_after, false)
+                    .transfer_prefix_rows(&op.metadata_after, &op.metadata_replaced, false)
                     .map_err(|e| TransferError::new(e.code, e.message))?;
             }
             op.phase = "verifying".into();
