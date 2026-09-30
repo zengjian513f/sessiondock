@@ -21,6 +21,22 @@ pub(in crate::transfer) fn rows(directory: &Path) -> Result<Vec<Value>, Transfer
             rows.push(serde_json::from_slice(line)?);
         }
     }
+    let checkpoints = directory.join("compaction_checkpoints");
+    if checkpoints.is_dir() {
+        for entry in fs::read_dir(checkpoints)? {
+            let path = entry?.path();
+            if path.extension().is_some_and(|s| s == "json") {
+                let checkpoint: Value = serde_json::from_slice(&fs::read(path)?)?;
+                rows.extend(
+                    checkpoint["compacted_history"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .cloned(),
+                );
+            }
+        }
+    }
     Ok(rows)
 }
 
