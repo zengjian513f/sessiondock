@@ -864,7 +864,7 @@ function showBugReportToast(report, worker) {
   };
   const open = document.createElement('button');
   open.type = 'button';
-  open.className = 'btn';
+  open.className = 'btn primary';
   open.textContent = '打开';
   open.onclick = async () => {
     dismiss();
@@ -878,7 +878,15 @@ function showBugReportToast(report, worker) {
   ignore.textContent = '忽略';
   ignore.title = '关闭通知，处理会话继续运行';
   ignore.onclick = dismiss;
-  toast.append(text, open, ignore);
+  const head = document.createElement('div');
+  head.className = 'app-float-head';
+  const title = document.createElement('strong');
+  title.textContent = '缺陷报告已提交';
+  head.appendChild(title);
+  const actions = document.createElement('div');
+  actions.className = 'app-float-actions';
+  actions.append(ignore, open);
+  toast.append(head, text, actions);
   toast.classList.remove('hidden');
   bugReportToastTimer = setTimeout(dismiss, 20000);
 }
