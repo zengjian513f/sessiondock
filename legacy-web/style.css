@@ -1864,12 +1864,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #composer-input-status .composer-input-status-copy { flex: 1; min-width: 0; }
 #composer-input-status .btn { flex: none; }
 #composer-input-status.blocked { color: var(--danger); }
-#composer-input-status.input-attention::before {
-  content: '!'; display: grid; place-items: center; flex: none;
+#composer-input-status.input-question::before {
+  content: '?'; display: grid; place-items: center; flex: none;
   width: 22px; height: 22px; border-radius: 5px;
   background: #fbbf24; color: #422006; font: 800 17px/1 system-ui, sans-serif;
 }
-#composer-input-status.input-question::before { content: '?'; }
 #right.shell-session #composer-input-status { display: none; }
 /* 终端优先的页面里提示不能盖住终端底部（手机上是快捷键栏），放进输入区。 */
 #right.terminal-first #composer-input-status { position: static; box-shadow: none; }
