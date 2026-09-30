@@ -94,10 +94,11 @@ fn summary(file: &Publication, old: &[u8], new: &[u8]) -> bool {
 pub fn prepare(
     service: &TransferService,
     op: &mut Operation,
-) -> Result<BTreeSet<String>, TransferError> {
+) -> Result<(BTreeSet<String>, BTreeSet<String>), TransferError> {
     let files = service.publications(op);
     let mut proven = BTreeSet::new();
     let mut extended = BTreeSet::new();
+    let mut metadata = BTreeSet::new();
     // Prove each primary history separately. An auxiliary file cannot bless
     // a divergent primary transcript or a different physical rollout.
     for file in &files {
@@ -119,8 +120,11 @@ pub fn prepare(
             return Err(conflict());
         }
         proven.insert(member.uid.clone());
-        if old != new && member.source == "codex" {
-            extended.insert(member.sid.clone());
+        if old != new {
+            metadata.insert(service.member_target_uid(op, member, op.staged.as_ref().unwrap())?);
+            if member.source == "codex" {
+                extended.insert(member.sid.clone());
+            }
         }
     }
     let mut originals = BTreeMap::new();
@@ -183,7 +187,7 @@ pub fn prepare(
         );
     }
     op.replaced_files = originals;
-    Ok(extended)
+    Ok((extended, metadata))
 }
 
 pub fn check_restore(

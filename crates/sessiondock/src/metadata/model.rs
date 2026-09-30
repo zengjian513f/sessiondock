@@ -1,5 +1,8 @@
 //! Pure, versioned metadata transformations. No process or native-file access.
 
+#[path = "transfer.rs"]
+mod transfer;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};

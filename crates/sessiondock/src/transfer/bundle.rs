@@ -288,6 +288,7 @@ impl TransferService {
             || !op.reused_files.is_empty()
             || !op.replaced_files.is_empty()
             || op.native_before.is_some()
+            || !op.metadata_replaced.is_empty()
             || !op.reclaimed_by.is_empty()
             || op.ownership_sequence != 0
         {
