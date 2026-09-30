@@ -858,19 +858,29 @@ function showBugReportToast(report, worker) {
   const label = BUG_REPORT_SOURCES[worker?.source] || '处理';
   const where = worker?.node_name ? `到 ${worker.node_name}` : '';
   text.textContent = `${report} 已保存${where}，${label} 处理会话正在启动`;
+  const dismiss = () => {
+    clearTimeout(bugReportToastTimer);
+    toast.classList.add('hidden');
+  };
   const open = document.createElement('button');
   open.type = 'button';
   open.className = 'btn';
   open.textContent = '打开';
   open.onclick = async () => {
-    toast.classList.add('hidden');
+    dismiss();
     await loadTermList();
     const pending = (T.pending || []).find(item => item.name === worker.name) || worker;
     await openPendingSession(pending);
   };
-  toast.append(text, open);
+  const ignore = document.createElement('button');
+  ignore.type = 'button';
+  ignore.className = 'btn';
+  ignore.textContent = '忽略';
+  ignore.title = '关闭通知，处理会话继续运行';
+  ignore.onclick = dismiss;
+  toast.append(text, open, ignore);
   toast.classList.remove('hidden');
-  bugReportToastTimer = setTimeout(() => toast.classList.add('hidden'), 20000);
+  bugReportToastTimer = setTimeout(dismiss, 20000);
 }
 
 // 报告框的附件复用对话输入框那一套：同样的选择菜单、粘贴/拖放、[附件N]
