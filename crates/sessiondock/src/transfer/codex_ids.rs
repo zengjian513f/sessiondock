@@ -139,10 +139,10 @@ pub(super) fn visit(row: &mut Value, map: &mut Mapper<'_>) -> Result<(), Transfe
                 field(goal, "threadId", Identity::Thread, map)?;
             }
         }
-        if matches!(event.as_str(), "item_started" | "item_completed") {
-            if let Some(value) = p.get_mut("item") {
-                item(value, map)?;
-            }
+        if matches!(event.as_str(), "item_started" | "item_completed")
+            && let Some(value) = p.get_mut("item")
+        {
+            item(value, map)?;
         }
     }
     Ok(())

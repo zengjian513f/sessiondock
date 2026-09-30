@@ -76,7 +76,12 @@ pub(super) fn cli_home(profile: &CliProfile, variable: &str, fallback: &str) -> 
             .env
             .get(name)
             .map(PathBuf::from)
-            .or_else(|| (!removed(name)).then(|| std::env::var_os(name)).flatten().map(PathBuf::from))
+            .or_else(|| {
+                (!removed(name))
+                    .then(|| std::env::var_os(name))
+                    .flatten()
+                    .map(PathBuf::from)
+            })
             .filter(|path| !path.as_os_str().is_empty())
     };
     value(variable).unwrap_or_else(|| {
@@ -102,14 +107,17 @@ fn profile_env(profile: &CliProfile, key: &str) -> Option<String> {
 
 fn claude(profile: &CliProfile) -> Catalog {
     let efforts: Vec<String> = CLAUDE_EFFORTS.iter().map(|&e| e.to_owned()).collect();
-    let settings = read_json(&cli_home(profile, "CLAUDE_CONFIG_DIR", ".claude").join("settings.json"));
+    let settings =
+        read_json(&cli_home(profile, "CLAUDE_CONFIG_DIR", ".claude").join("settings.json"));
     let default_model = profile_env(profile, "ANTHROPIC_MODEL")
         .or_else(|| settings.as_ref().and_then(|value| text(value, "model")))
         .or_else(|| profile_env(profile, "ANTHROPIC_DEFAULT_MODEL"))
-        .filter(|model| !matches!(model.as_str(), "default" | "inherit" | "opusplan")
-            && !model.chars().any(char::is_whitespace));
-    let configured_effort = profile_env(profile, "CLAUDE_CODE_EFFORT_LEVEL")
-        .filter(|effort| efforts.contains(effort));
+        .filter(|model| {
+            !matches!(model.as_str(), "default" | "inherit" | "opusplan")
+                && !model.chars().any(char::is_whitespace)
+        });
+    let configured_effort =
+        profile_env(profile, "CLAUDE_CODE_EFFORT_LEVEL").filter(|effort| efforts.contains(effort));
     let effort_for = |id: &str| {
         configured_effort.clone().or_else(|| {
             settings
@@ -129,7 +137,10 @@ fn claude(profile: &CliProfile) -> Catalog {
             default_effort: effort_for(id),
         })
         .collect();
-    if let Some(id) = default_model.as_ref().filter(|id| !models.iter().any(|model| &model.id == *id)) {
+    if let Some(id) = default_model
+        .as_ref()
+        .filter(|id| !models.iter().any(|model| &model.id == *id))
+    {
         models.push(Model {
             id: id.clone(),
             name: id.clone(),
@@ -162,16 +173,24 @@ fn codex_profile(profile: &CliProfile) -> Catalog {
     let home = cli_home(profile, "CODEX_HOME", ".codex");
     let cache = read_json(&home.join("models_cache.json"));
     let bundled = run_bounded(
-        profile, &home, &["debug", "models", "--bundled"], Duration::from_secs(3),
+        profile,
+        &home,
+        &["debug", "models", "--bundled"],
+        Duration::from_secs(3),
     )
-        .and_then(|output| serde_json::from_str::<serde_json::Value>(&output).ok())
-        .filter(|value| value.get("models").is_some_and(serde_json::Value::is_array));
+    .and_then(|output| serde_json::from_str::<serde_json::Value>(&output).ok())
+    .filter(|value| value.get("models").is_some_and(serde_json::Value::is_array));
     let catalog = if let Some(bundled) = bundled {
         let version = run_bounded(profile, &home, &["--version"], Duration::from_secs(3));
-        let version = version.as_deref().and_then(|value| value.split_whitespace().nth(1));
+        let version = version
+            .as_deref()
+            .and_then(|value| value.split_whitespace().nth(1));
         if version.is_some()
-            && cache.as_ref().and_then(|value| value.get("client_version"))
-                .and_then(serde_json::Value::as_str) == version
+            && cache
+                .as_ref()
+                .and_then(|value| value.get("client_version"))
+                .and_then(serde_json::Value::as_str)
+                == version
         {
             cache
         } else {
@@ -204,7 +223,12 @@ fn codex_catalog(home: &Path, catalog: Option<serde_json::Value>) -> Catalog {
                 efforts: model
                     .get("supported_reasoning_levels")
                     .and_then(serde_json::Value::as_array)
-                    .map(|levels| levels.iter().filter_map(|level| text(level, "effort")).collect())
+                    .map(|levels| {
+                        levels
+                            .iter()
+                            .filter_map(|level| text(level, "effort"))
+                            .collect()
+                    })
                     .unwrap_or_default(),
                 default_effort: configured_effort
                     .clone()
@@ -282,7 +306,9 @@ pub(super) fn grok(home: &Path) -> Catalog {
             };
             let default_effort = levels
                 .iter()
-                .find(|level| level.get("default").and_then(serde_json::Value::as_bool) == Some(true))
+                .find(|level| {
+                    level.get("default").and_then(serde_json::Value::as_bool) == Some(true)
+                })
                 .and_then(|level| text(level, "value").or_else(|| text(level, "id")))
                 .or_else(|| text(info, "reasoning_effort"))
                 .filter(|_| supports);
@@ -305,7 +331,8 @@ pub(super) fn grok(home: &Path) -> Catalog {
 /// reasoning variant per model, so no effort is offered.
 fn opencode(profile: &CliProfile) -> Catalog {
     let cwd = cli_home(profile, "HOME", "");
-    let output = run_bounded(profile, &cwd, &["models"], OPENCODE_MODELS_TIMEOUT).unwrap_or_default();
+    let output =
+        run_bounded(profile, &cwd, &["models"], OPENCODE_MODELS_TIMEOUT).unwrap_or_default();
     Catalog {
         models: opencode_lines(&output),
         efforts: Vec::new(),
@@ -319,9 +346,9 @@ pub(super) fn opencode_lines(output: &str) -> Vec<Model> {
         .lines()
         .map(str::trim)
         .filter(|line| {
-            line.split_once('/').is_some_and(|(provider, model)| {
-                !provider.is_empty() && !model.is_empty()
-            }) && !line.contains(char::is_whitespace)
+            line.split_once('/')
+                .is_some_and(|(provider, model)| !provider.is_empty() && !model.is_empty())
+                && !line.contains(char::is_whitespace)
         })
         .filter(|line| seen.insert(line.to_string()))
         .map(|line| Model {
@@ -350,7 +377,12 @@ fn merged_efforts(models: &[Model]) -> Vec<String> {
 
 /// The profile's executable with its fixed arguments and environment,
 /// stdout collected while it runs, killed at the deadline.
-fn run_bounded(profile: &CliProfile, cwd: &Path, args: &[&str], timeout: Duration) -> Option<String> {
+fn run_bounded(
+    profile: &CliProfile,
+    cwd: &Path,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<String> {
     let executable = super::launcher::current_executable(&profile.executable).ok()?;
     let mut command = Command::new(executable);
     command.args(&profile.args).args(args);
@@ -388,7 +420,10 @@ fn run_bounded(profile: &CliProfile, cwd: &Path, args: &[&str], timeout: Duratio
             }
         }
     }
-    reader.join().ok().map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    reader
+        .join()
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// A model or effort the CLI receives as one argument value: nonempty,

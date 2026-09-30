@@ -405,7 +405,11 @@ impl Config {
             .filter(|value| !value.is_empty())
             .map(PathBuf::from);
         config.shell_env_watch = env::var_os("SESSIONDOCK_SHELL_ENV_WATCH")
-            .map(|value| env::split_paths(&value).filter(|path| !path.as_os_str().is_empty()).collect())
+            .map(|value| {
+                env::split_paths(&value)
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         if let Some(bind) = env::var_os("SESSIONDOCK_NODE_BIND") {
             config.node_bind =

@@ -205,8 +205,20 @@ def main():
                 expect(page.locator('.media-load-error')).to_contain_text('HTTP 409')
                 assert state()["partial"] is None
                 mode["status"]=None
-                page.locator('.media-load-reload').click()
-                page.wait_for_function("historyPageRequests.size===0")
+                # The first SSE snapshot can arrive during this explicit
+                # reload. The documented guard keeps it and asks for another
+                # manual click; only that specific refusal permits a retry.
+                for attempt in range(3):
+                    page.locator('.media-load-reload').click()
+                    page.wait_for_function("historyPageRequests.size===0")
+                    notice = page.locator('.media-load-error')
+                    if not notice.count():
+                        break
+                    expect(notice).to_contain_text('实时历史已更新；已保留新内容，请再次手动重新载入')
+                    expect(page.locator('#msgs')).to_contain_text('SHORT IMAGE')
+                    assert state()["text"] == ['SHORT IMAGE'], state()
+                    assert state()["partial"] is None
+                    page.wait_for_function('_es?.readyState === EventSource.OPEN')
                 expect(page.locator('.media-load-error')).to_have_count(0)
                 page.wait_for_function("document.querySelector('#msgs img').naturalWidth===2")
                 expect(page.locator('#msgs')).to_contain_text('SHORT IMAGE')

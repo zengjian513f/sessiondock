@@ -245,19 +245,25 @@ pub fn plan(group: Group, mode: Mode) -> Result<ClonePlan, TransferError> {
                 && p["type"] == "function_call"
                 && (p["namespace"].is_null() || p["namespace"] == "functions")
                 && let (Some(id), Some(name)) = (p["call_id"].as_str(), p["name"].as_str())
+                && let Some(previous) = identities.tool_calls.insert(id.into(), name.into())
+                && previous != name
             {
-                if let Some(previous) = identities.tool_calls.insert(id.into(), name.into())
-                    && previous != name
-                {
-                    return Err(TransferError::new(
-                        "move_identity",
-                        "工具调用 ID 对应多个工具",
-                    ));
-                }
+                return Err(TransferError::new(
+                    "move_identity",
+                    "工具调用 ID 对应多个工具",
+                ));
             }
-            if row["type"]=="response_item" && p["type"]=="custom_tool_call" && p["name"]=="exec" &&
-                p["input"].as_str().is_some_and(super::code_mode::agent_call) {
-                if let Some(id)=p["call_id"].as_str(){identities.tool_calls.insert(id.into(),"__code_agent".into());}
+            if row["type"] == "response_item"
+                && p["type"] == "custom_tool_call"
+                && p["name"] == "exec"
+                && p["input"]
+                    .as_str()
+                    .is_some_and(super::code_mode::agent_call)
+                && let Some(id) = p["call_id"].as_str()
+            {
+                identities
+                    .tool_calls
+                    .insert(id.into(), "__code_agent".into());
             }
             super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
                 let map = match kind {

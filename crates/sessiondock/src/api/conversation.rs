@@ -167,27 +167,37 @@ pub async fn send(
         return Ok(response);
     }
     let transfer_guard = match &s.transfer {
-        Some(transfer)=>{
-            let guard=transfer.gate.clone().lock_owned().await;
-            if transfer.locked(&q.uid).map_err(|e|ApiError::new(StatusCode::CONFLICT,"move_recovery_required",e.message))? {
-                return Err(ApiError::new(StatusCode::CONFLICT,"move_session_locked","会话正在复制或等待恢复"));
+        Some(transfer) => {
+            let guard = transfer.gate.clone().lock_owned().await;
+            if transfer.locked(&q.uid).map_err(|e| {
+                ApiError::new(StatusCode::CONFLICT, "move_recovery_required", e.message)
+            })? {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    "move_session_locked",
+                    "会话正在复制或等待恢复",
+                ));
             }
             Some(guard)
-        },None=>None,
+        }
+        None => None,
     };
     let service = enabled(&s)?;
     // Detached operation ownership: a disconnected HTTP caller cannot cancel a
     // started one-shot SEND or release its serialization lock early.
-    let result = tokio::spawn(async move { let _guard=transfer_guard; service.send(q).await })
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "conversation_send",
-                "发送任务异常退出",
-            )
-        })?
-        .map_err(error)?;
+    let result = tokio::spawn(async move {
+        let _guard = transfer_guard;
+        service.send(q).await
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "conversation_send",
+            "发送任务异常退出",
+        )
+    })?
+    .map_err(error)?;
     Ok(([(header::CACHE_CONTROL, "no-store")], Json(result)).into_response())
 }
 pub async fn check(

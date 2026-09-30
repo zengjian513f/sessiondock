@@ -103,10 +103,10 @@ fn rewrite_value(
     map: &IdentityMap,
 ) -> Result<(), TransferError> {
     if arguments {
-        if matches!(tool, "send_input" | "close_agent" | "resume_agent") {
-            if let Some(id) = value.get_mut("id") {
-                thread(id, map)?;
-            }
+        if matches!(tool, "send_input" | "close_agent" | "resume_agent")
+            && let Some(id) = value.get_mut("id")
+        {
+            thread(id, map)?;
         }
         if tool == "wait"
             && let Some(ids) = value.get_mut("ids").and_then(Value::as_array_mut)
@@ -196,10 +196,11 @@ pub(super) fn references(
         return refs;
     }
     let p = &row["payload"];
-    if p["type"] == "custom_tool_call" && p["name"] == "exec" {
-        if let Some(code) = p["input"].as_str() {
-            refs.extend(super::code_mode::references(code));
-        }
+    if p["type"] == "custom_tool_call"
+        && p["name"] == "exec"
+        && let Some(code) = p["input"].as_str()
+    {
+        refs.extend(super::code_mode::references(code));
     }
     if matches!(
         p["type"].as_str(),
@@ -211,24 +212,24 @@ pub(super) fn references(
     {
         refs.extend(super::code_mode::result_references(&p["output"]));
     }
-    if p["type"] == "function_call" && (p["namespace"].is_null() || p["namespace"] == "functions") {
-        if let Some(args) = p["arguments"]
+    if p["type"] == "function_call"
+        && (p["namespace"].is_null() || p["namespace"] == "functions")
+        && let Some(args) = p["arguments"]
             .as_str()
             .and_then(|s| serde_json::from_str::<Value>(s).ok())
-        {
-            match p["name"].as_str() {
-                Some("send_input" | "close_agent" | "resume_agent") => {
-                    if let Some(id) = args["id"].as_str() {
-                        refs.push(id.into());
-                    }
+    {
+        match p["name"].as_str() {
+            Some("send_input" | "close_agent" | "resume_agent") => {
+                if let Some(id) = args["id"].as_str() {
+                    refs.push(id.into());
                 }
-                Some("wait") => {
-                    if let Some(ids) = args["ids"].as_array() {
-                        refs.extend(ids.iter().filter_map(Value::as_str).map(str::to_owned));
-                    }
-                }
-                _ => {}
             }
+            Some("wait") => {
+                if let Some(ids) = args["ids"].as_array() {
+                    refs.extend(ids.iter().filter_map(Value::as_str).map(str::to_owned));
+                }
+            }
+            _ => {}
         }
     }
     refs
@@ -253,14 +254,13 @@ pub(super) fn collect_call(row: &Value, calls: &mut std::collections::BTreeMap<S
         calls.insert(id.into(), "__code_agent".into());
     } else if p["type"] == "function_call"
         && (p["namespace"].is_null() || p["namespace"] == "functions")
-    {
-        if let Some(name) = p["name"].as_str().filter(|name| {
+        && let Some(name) = p["name"].as_str().filter(|name| {
             matches!(
                 *name,
                 "spawn_agent" | "wait" | "send_input" | "resume_agent" | "close_agent"
             )
-        }) {
-            calls.insert(id.into(), name.into());
-        }
+        })
+    {
+        calls.insert(id.into(), name.into());
     }
 }

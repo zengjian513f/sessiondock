@@ -482,10 +482,16 @@ async fn resolve_resume(
     state: &AppState,
     uid: String,
 ) -> Result<(crate::sessions::NativeScope, Option<String>), ApiError> {
-    if let Some(service)=&state.transfer {
-        if service.locked(&uid).map_err(|e|ApiError::new(StatusCode::CONFLICT,"move_recovery_required",e.message))? {
-            return Err(ApiError::new(StatusCode::CONFLICT,"move_session_locked","会话正在复制或等待恢复"));
-        }
+    if let Some(service) = &state.transfer
+        && service
+            .locked(&uid)
+            .map_err(|e| ApiError::new(StatusCode::CONFLICT, "move_recovery_required", e.message))?
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "move_session_locked",
+            "会话正在复制或等待恢复",
+        ));
     }
     state
         .reader
@@ -641,7 +647,10 @@ pub async fn create(
     State(state): State<AppState>,
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let _transfer_guard = match &state.transfer {Some(service)=>Some(service.gate.clone().lock_owned().await),None=>None};
+    let _transfer_guard = match &state.transfer {
+        Some(service) => Some(service.gate.clone().lock_owned().await),
+        None => None,
+    };
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
@@ -729,7 +738,10 @@ pub async fn takeover(
     State(state): State<AppState>,
     body: Result<Json<TakeoverRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let _transfer_guard = match &state.transfer {Some(service)=>Some(service.gate.clone().lock_owned().await),None=>None};
+    let _transfer_guard = match &state.transfer {
+        Some(service) => Some(service.gate.clone().lock_owned().await),
+        None => None,
+    };
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
@@ -1230,10 +1242,15 @@ pub async fn stop(
         && let crate::runtime::ProcessEvidence::Verified { child, .. } = host.process
         && crate::runtime::freeze::frozen(child)
     {
-        crate::runtime::freeze::set(child, false).await.map_err(|error| {
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "freeze_resume_failed",
-                format!("停止前无法恢复冻结进程：{error}；请先恢复运行后重试"))
-        })?;
+        crate::runtime::freeze::set(child, false)
+            .await
+            .map_err(|error| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "freeze_resume_failed",
+                    format!("停止前无法恢复冻结进程：{error}；请先恢复运行后重试"),
+                )
+            })?;
     }
     let session = observed.sessions.get(&uid);
     let candidate = match targets.as_slice() {

@@ -122,11 +122,11 @@ fn collect(rows: &[Value], required: bool) -> BTreeSet<String> {
 // user messages, arbitrary tool output, or unmarked answer prose for UUIDs.
 fn result_ids(value: &Value, result: &mut BTreeSet<String>, required: bool) {
     if let Some(text) = value.as_str() {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-            if parsed.is_object() || parsed.is_array() {
-                result_ids(&parsed, result, required);
-                return;
-            }
+        if let Ok(parsed) = serde_json::from_str::<Value>(text)
+            && (parsed.is_object() || parsed.is_array())
+        {
+            result_ids(&parsed, result, required);
+            return;
         }
         for (prefix, suffix) in [
             ("subagent_id: ", "\n"),
@@ -140,10 +140,10 @@ fn result_ids(value: &Value, result: &mut BTreeSet<String>, required: bool) {
                 continue;
             }
             for (start, _) in text.match_indices(prefix) {
-                if let Some(id) = text[start + prefix.len()..].split_once(suffix).map(|v| v.0) {
-                    if !id.is_empty() {
-                        result.insert(id.into());
-                    }
+                if let Some(id) = text[start + prefix.len()..].split_once(suffix).map(|v| v.0)
+                    && !id.is_empty()
+                {
+                    result.insert(id.into());
                 }
             }
         }

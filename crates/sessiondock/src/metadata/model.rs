@@ -29,7 +29,11 @@ pub(super) struct Document {
     pub schema_version: u32,
     pub revision: u64,
     pub sessions: BTreeMap<String, Row>,
-    #[serde(default, alias = "label_catalog", skip_serializing_if = "GroupCatalog::is_empty")]
+    #[serde(
+        default,
+        alias = "label_catalog",
+        skip_serializing_if = "GroupCatalog::is_empty"
+    )]
     pub group_catalog: GroupCatalog,
 }
 
@@ -264,22 +268,43 @@ impl MetadataSnapshot {
 
     /// Compare-and-insert/remove exact clone rows; concurrent unrelated metadata
     /// remains in the latest document. Rollback never erases a changed row.
-    pub fn with_transfer_rows(&self, incoming: &BTreeMap<String, Value>, remove: bool) -> Result<Self, MetadataError> {
+    pub fn with_transfer_rows(
+        &self,
+        incoming: &BTreeMap<String, Value>,
+        remove: bool,
+    ) -> Result<Self, MetadataError> {
         self.change(|rows| {
             for (uid, value) in incoming {
                 validate_uid(uid)?;
-                let expected: Row = serde_json::from_value(value.clone()).map_err(|_|MetadataError::new(409,"move_metadata_invalid","复制元数据无效"))?;
-                if expected == Row::default() {continue;}
+                let expected: Row = serde_json::from_value(value.clone()).map_err(|_| {
+                    MetadataError::new(409, "move_metadata_invalid", "复制元数据无效")
+                })?;
+                if expected == Row::default() {
+                    continue;
+                }
                 if remove {
-                    if let Some(current)=rows.get(uid) {
-                        if current!=&expected {return Err(MetadataError::new(409,"move_recovery_required","克隆元数据已变化，保留现场等待恢复"));}
+                    if let Some(current) = rows.get(uid) {
+                        if current != &expected {
+                            return Err(MetadataError::new(
+                                409,
+                                "move_recovery_required",
+                                "克隆元数据已变化，保留现场等待恢复",
+                            ));
+                        }
                         rows.remove(uid);
                     }
                 } else {
-                    if rows.contains_key(uid) {return Err(MetadataError::new(409,"move_conflict","克隆元数据身份已存在"));}
-                    rows.insert(uid.clone(),expected);
+                    if rows.contains_key(uid) {
+                        return Err(MetadataError::new(
+                            409,
+                            "move_conflict",
+                            "克隆元数据身份已存在",
+                        ));
+                    }
+                    rows.insert(uid.clone(), expected);
                 }
-            }Ok(())
+            }
+            Ok(())
         })
     }
 
@@ -672,10 +697,10 @@ impl MetadataSnapshot {
             object.insert("starred".into(), json!(true));
             object.insert("starred_at".into(), json!(saved.starred_at));
         }
-        if let Some(saved) = saved {
-            if let Some(group) = &saved.group {
-                object.insert("group".into(), json!(group));
-            }
+        if let Some(saved) = saved
+            && let Some(group) = &saved.group
+        {
+            object.insert("group".into(), json!(group));
         }
         if let Some(parent) = saved.and_then(|row| row.spawned_by.as_ref()) {
             object.insert("spawned_by".into(), json!(parent));

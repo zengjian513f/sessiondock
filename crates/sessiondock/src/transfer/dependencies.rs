@@ -19,12 +19,11 @@ fn image(value: &Value, paths: &mut BTreeSet<String>) {
                 .or_else(|| value["file"][*k].as_str())
                 .is_some_and(|s| s.starts_with("image/"))
         }));
-    if typed {
-        if let Ok(Some(image)) = crate::media::NativeImage::from_block(value) {
-            if let Some(path) = image.file_ref() {
-                paths.insert(path.into());
-            }
-        }
+    if typed
+        && let Ok(Some(image)) = crate::media::NativeImage::from_block(value)
+        && let Some(path) = image.file_ref()
+    {
+        paths.insert(path.into());
     }
 }
 fn output(value: &Value, paths: &mut BTreeSet<String>) {

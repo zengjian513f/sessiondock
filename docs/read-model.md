@@ -69,6 +69,8 @@
   （`task_started`/`turn_started` 开、`task_complete`/`turn_complete`/`turn_aborted` 关）；
   回合边界不受头/尾窗口限制：Codex 冷读按块反向查找最近边界，只解码回合与
   最新问题调用的标量字段；后续仅检查上次 LF 后新增的完整记录，缓存标量状态。
+  扫描期间同一文件继续追加时保留已扫描前缀的状态和原 stamp，下次读取新增后缀；
+  不把普通追加当成不可读，也不让会话行暂时丢失。重写、截断与 inode 替换仍使缓存失效。
   半行不生效，截短、同尺寸重写或 inode 变化重建；主会话 `turn` 使用同一状态。
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
   （只有它算收尾），未收尾时再对照主会话里该子代理最近一次停止通知

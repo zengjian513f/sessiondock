@@ -43,7 +43,7 @@ MODULE_SUITES = {
     "assets": ["static_assets_*", "meta_*", "prefs_*"],
 }
 BROAD_MODULES = {"api", "main", "lib", "config", "security", "state", "error"}
-SELF_SCRIPTS = {"tests/check_docs_links.py", "tests/check_agents_md.py", "tests/deploy_dry_run.py"}
+SELF_SCRIPTS = {"tests/check_docs_links.py", "tests/check_agents_md.py"}
 say = lambda line: print(line, flush=True)   # noqa: E731  (progress must reach a redirected stdout live)
 
 
@@ -82,7 +82,7 @@ RULES = [
     ("crates/sessiondock/src/", module_rule),
     ("crates/sessiondock/tests/fixtures/", [FULL]), ("crates/sessiondock/tests/", RUST),
     ("legacy-web/", ["node_contracts", "*_browser*", "brand_names_check"]),
-    ("deploy/", ["deploy_*", "tests/deploy_dry_run.py"]),
+    ("deploy/", ["deploy_*"]),
     ("tests/", tests_rule),
     ("Cargo.toml", [FULL]), ("Cargo.lock", [FULL]), (".github/", [FULL]),
 ]

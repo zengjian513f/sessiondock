@@ -546,7 +546,11 @@ impl TrashService {
     /// Restore to the recorded paths when those paths are available.
     fn restorable(&self, manifest: &Manifest) -> Result<(), TrashError> {
         if manifest.run_state.detail.starts_with("move:") {
-            return Err(TrashError::new(409, "move_session_locked", "会话已迁出，请从目标机器复制或移动回来"));
+            return Err(TrashError::new(
+                409,
+                "move_session_locked",
+                "会话已迁出，请从目标机器复制或移动回来",
+            ));
         }
         for file in &manifest.files {
             match fs::symlink_metadata(&file.origin) {

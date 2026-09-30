@@ -2,8 +2,8 @@
 """Validation runner for the sessiondock workspace.
 
 Replaces ad-hoc shell scripts. Discovers Node contract files and Python
-HTTP/browser suites at runtime after the fixed Rust checks. ``cargo_test``
-is excluded unless ``--include-unit`` or ``--only cargo_test``. Never runs
+HTTP/browser suites at runtime after the fixed Rust checks. Unit suites
+are excluded unless ``--include-unit`` or explicitly selected with ``--only``. Never runs
 paid CLIs or touches production data; the underlying tests use synthetic
 fixtures and loopback listeners only.
 
@@ -58,7 +58,7 @@ RUST = [
     ("cargo_fmt", ["cargo", "fmt", "-p", "sessiondock", "-p", "ptyhost-client", "--check"], "rust", 120, ("rust",)),
     ("cargo_clippy", ["cargo", "clippy", "-p", "sessiondock", "-p", "ptyhost-client",
                       "--all-targets", "--locked", "--", "-D", "warnings"], "rust", 900, ("rust",)),
-    ("cargo_check_windows", ["cargo", "check", "--workspace", "--all-targets",
+    ("cargo_check_windows", ["cargo", *([] if os.name == "nt" else ["xwin"]), "check", "--workspace", "--all-targets",
                              "--target", "x86_64-pc-windows-msvc", "--locked"], "rust", 900, ("rust",)),
     ("cargo_build", ["cargo", "build", "--release", "-p", "sessiondock", "--locked"], "rust", 900, ("rust",)),
 ]
@@ -99,7 +99,7 @@ def suites(binary, python_source):
     contracts = sorted((ROOT / "tests").glob("*_contract.mjs"))
     node_argv = ["node", "--test"] + [str(p.relative_to(ROOT)) for p in contracts]
     items.append({"name": "node_contracts", "argv": node_argv, "kind": "node", "timeout": 120,
-                  "tags": ("node",), "skip": None if contracts else "no tests/*_contract.mjs"})
+                  "tags": ("node",), "skip": None if contracts else "no tests/*_contract.mjs", "unit": True})
 
     py_ok = source_exists(python_source)
     for path in sorted((ROOT / "tests").glob("*.py")):
@@ -129,7 +129,7 @@ def suites(binary, python_source):
             argv += ["--binary", binary]
         items.append({"name": path.stem, "argv": argv, "kind": "python", "timeout": 900,
                       "tags": ("python",), "skip": skip, "serial": serial, "browser": browser,
-                      "real": real})
+                      "real": real, "unit": bool(re.search(r"\bunittest\.main\(", text))})
         if path.name == "lifecycle_browser.py":
             items.append({"name": "lifecycle_browser_native_binding",
                           "argv": [sys.executable, rel, "--native-binding"],
@@ -220,7 +220,7 @@ def main(argv=None):
     parser.add_argument("--include-real", action="store_true",
                         help="also run the *_real paid-CLI operator suites (excluded by default)")
     parser.add_argument("--include-unit", action="store_true",
-                        help="also run cargo_test (cargo test --workspace; excluded by default)")
+                        help="also run unit suites (Cargo, Node contracts and Python unittest; excluded by default)")
     args = parser.parse_args(argv)
 
     wanted = set(csv(args.tags))

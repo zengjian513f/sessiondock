@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import time
 import tempfile
 import uuid
 
@@ -89,7 +90,11 @@ def run(browser, binary, renderer):
                 print('PASS', renderer, direction, 'stalled OPEN socket recovered; no input replay', flush=True)
 
             wait_for_events(page, root / 'audit', {'browser.terminal.heartbeat_timeout'})
-            rows = [r for r in audit_lines(root / 'audit') if r['event'] == 'browser.terminal.heartbeat_timeout']
+            deadline = time.monotonic() + 15
+            while True:
+                rows = [r for r in audit_lines(root / 'audit') if r['event'] == 'browser.terminal.heartbeat_timeout']
+                if len(rows) >= 2 or time.monotonic() >= deadline: break
+                page.wait_for_timeout(100)
             assert len(rows) == 2 and len({r['connection_id'] for r in rows}) == 2, rows
             assert all(r['data']['timeout_ms'] == 10000 for r in rows)
             assert corpus.paths[sid].read_bytes() == native

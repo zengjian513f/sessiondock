@@ -2,16 +2,16 @@
 //! Plans enumerate physical history independently from sidebar visibility.
 //! The offline stager never publishes; the service owns native import and recovery.
 
+pub mod bundle;
+mod code_mode;
 pub mod codex;
 mod codex_ids;
 mod codex_tools;
-mod code_mode;
-pub mod group;
-pub mod files;
 pub mod environment;
-pub mod bundle;
-pub mod native;
+pub mod files;
+pub mod group;
 pub mod moving;
+pub mod native;
 pub mod service;
 
 use serde::{Deserialize, Serialize};

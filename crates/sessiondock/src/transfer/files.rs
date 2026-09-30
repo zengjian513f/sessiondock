@@ -64,10 +64,10 @@ fn mint(
     Ok(())
 }
 fn rewrite_scalar(value: &mut Value, source: &str, map: &BTreeMap<String, String>) {
-    if let Some(id) = value.as_str() {
-        if let Some(new) = map.get(&key(source, id)) {
-            *value = Value::String(new.clone());
-        }
+    if let Some(id) = value.as_str()
+        && let Some(new) = map.get(&key(source, id))
+    {
+        *value = Value::String(new.clone());
     }
 }
 fn field(value: &mut Value, name: &str, source: &str, map: &BTreeMap<String, String>) {
@@ -97,19 +97,19 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
             visit(v);
         }
     }
-    if let Some(snapshot) = row.get_mut("snapshot") {
-        if let Some(id) = snapshot.get_mut("messageId") {
-            visit(id);
-        }
+    if let Some(snapshot) = row.get_mut("snapshot")
+        && let Some(id) = snapshot.get_mut("messageId")
+    {
+        visit(id);
     }
     if let Some(message) = row.get_mut("message") {
         // Claude's message.id is the API response identity, used by resume's
         // diagnostics.previous_message_id. It belongs to the server; the local
         // transcript identity is row.uuid and is remapped separately.
-        if source != "claude" {
-            if let Some(id) = message.get_mut("id") {
-                visit(id);
-            }
+        if source != "claude"
+            && let Some(id) = message.get_mut("id")
+        {
+            visit(id);
         }
         content_ids(message.get_mut("content"), visit);
     }
@@ -156,16 +156,14 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
 // Only the native checkpoint pointer is a path identity. Summary text and
 // reread_file_paths describe the workspace and remain unchanged.
 fn rewrite_checkpoint_paths(row: &mut Value, records: &BTreeMap<String, String>) {
-    if let Some(pointer) = row.get_mut("checkpoint_file") {
-        if let Some(id) = pointer
+    if let Some(pointer) = row.get_mut("checkpoint_file")
+        && let Some(id) = pointer
             .as_str()
             .and_then(|s| s.strip_prefix("compaction_checkpoints/"))
             .and_then(|s| s.strip_suffix(".json"))
-        {
-            if let Some(mapped) = records.get(&key("grok", id)) {
-                *pointer = format!("compaction_checkpoints/{mapped}.json").into();
-            }
-        }
+        && let Some(mapped) = records.get(&key("grok", id))
+    {
+        *pointer = format!("compaction_checkpoints/{mapped}.json").into();
     }
     for wrapper in ["params", "update", "_meta", "updateParams"] {
         if let Some(child) = row.get_mut(wrapper) {
@@ -239,16 +237,16 @@ pub(super) fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<Stri
         }
     }
     for block in row["message"]["content"].as_array().into_iter().flatten() {
-        if block["type"] == "tool_use" {
-            if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
-                names.insert(key(source, id), name.into());
-            }
-        }
-    }
-    if row["sessionUpdate"] == "tool_call" {
-        if let (Some(id), Some(name)) = (row["toolCallId"].as_str(), row["title"].as_str()) {
+        if block["type"] == "tool_use"
+            && let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str())
+        {
             names.insert(key(source, id), name.into());
         }
+    }
+    if row["sessionUpdate"] == "tool_call"
+        && let (Some(id), Some(name)) = (row["toolCallId"].as_str(), row["title"].as_str())
+    {
+        names.insert(key(source, id), name.into());
     }
     for wrapper in ["params", "update"] {
         if row[wrapper].is_object() {
@@ -281,17 +279,16 @@ fn agent_args(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
 }
 fn agent_text(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
     if let Some(text) = value.as_str() {
-        if source == "grok" {
-            if let Ok(mut parsed) = serde_json::from_str::<Value>(text) {
-                if parsed.is_object() || parsed.is_array() {
-                    let original = parsed.clone();
-                    agent_text(&mut parsed, source, ids);
-                    if parsed != original {
-                        *value = Value::String(parsed.to_string());
-                    }
-                    return;
-                }
+        if source == "grok"
+            && let Ok(mut parsed) = serde_json::from_str::<Value>(text)
+            && (parsed.is_object() || parsed.is_array())
+        {
+            let original = parsed.clone();
+            agent_text(&mut parsed, source, ids);
+            if parsed != original {
+                *value = Value::String(parsed.to_string());
             }
+            return;
         }
         let mut result = text.to_owned();
         for (id, new) in ids {
@@ -316,10 +313,10 @@ fn agent_text(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
         *value = Value::String(result);
     } else if let Some(items) = value.as_array_mut() {
         for item in items {
-            if item["type"] == "text" {
-                if let Some(text) = item.get_mut("text") {
-                    agent_text(text, source, ids);
-                }
+            if item["type"] == "text"
+                && let Some(text) = item.get_mut("text")
+            {
+                agent_text(text, source, ids);
             }
         }
     } else if let Some(object) = value.as_object_mut() {
@@ -414,10 +411,8 @@ fn rewrite_tools(
             }
         }
     }
-    if send_message_result {
-        if let Some(result) = row.get_mut("toolUseResult") {
-            rewrite_send_message_result(result, ids);
-        }
+    if send_message_result && let Some(result) = row.get_mut("toolUseResult") {
+        rewrite_send_message_result(result, ids);
     }
     for wrapper in ["params", "update"] {
         if let Some(child) = row.get_mut(wrapper) {
@@ -429,11 +424,12 @@ fn rewrite_tools(
 
 fn rewrite_send_message_result(value: &mut Value, ids: &BTreeMap<String, String>) {
     if let Some(text) = value.as_str() {
-        if let Ok(mut result) = serde_json::from_str::<Value>(text) {
-            if result.is_object() && result.get("resumedAgentId").is_some() {
-                rewrite_send_message_result(&mut result, ids);
-                *value = Value::String(result.to_string());
-            }
+        if let Ok(mut result) = serde_json::from_str::<Value>(text)
+            && result.is_object()
+            && result.get("resumedAgentId").is_some()
+        {
+            rewrite_send_message_result(&mut result, ids);
+            *value = Value::String(result.to_string());
         }
     } else if let Some(items) = value.as_array_mut() {
         for item in items {
@@ -441,19 +437,18 @@ fn rewrite_send_message_result(value: &mut Value, ids: &BTreeMap<String, String>
                 rewrite_send_message_result(&mut item["text"], ids);
             }
         }
-    } else if let Some(old) = value["resumedAgentId"].as_str().map(str::to_owned) {
-        if let Some(new) = ids.get(&key("claude", &old)) {
-            if value["message"]
-                == format!("Resuming agent {}", old.chars().take(7).collect::<String>())
-            {
-                value["message"] =
-                    format!("Resuming agent {}", new.chars().take(7).collect::<String>()).into();
-            }
-            field(value, "resumedAgentId", "claude", ids);
-            if let Some(pin) = value.get_mut("pin") {
-                field(pin, "id", "claude", ids);
-                field(pin, "name", "claude", ids);
-            }
+    } else if let Some(old) = value["resumedAgentId"].as_str().map(str::to_owned)
+        && let Some(new) = ids.get(&key("claude", &old))
+    {
+        if value["message"] == format!("Resuming agent {}", old.chars().take(7).collect::<String>())
+        {
+            value["message"] =
+                format!("Resuming agent {}", new.chars().take(7).collect::<String>()).into();
+        }
+        field(value, "resumedAgentId", "claude", ids);
+        if let Some(pin) = value.get_mut("pin") {
+            field(pin, "id", "claude", ids);
+            field(pin, "name", "claude", ids);
         }
     }
 }
@@ -531,10 +526,9 @@ fn mapped_path(path: &Path, source: &str, ids: &BTreeMap<String, String>) -> Pat
                     if let Some(id) = text
                         .strip_prefix(prefix)
                         .and_then(|s| s.strip_suffix(suffix))
+                        && let Some(new) = ids.get(&key(source, id))
                     {
-                        if let Some(new) = ids.get(&key(source, id)) {
-                            return Some(format!("{prefix}{new}{suffix}"));
-                        }
+                        return Some(format!("{prefix}{new}{suffix}"));
                     }
                 }
                 None
@@ -650,18 +644,19 @@ impl Plan {
             };
             if matches!(format, "json" | "jsonl") {
                 for mut row in parse(&raw, format)? {
-                    if source == "grok" && path.file_name().is_some_and(|s| s == "summary.json") {
-                        if let Some(agent) = row["agent_id"].as_str() {
-                            mint(&source, agent, &mut plan.sessions, new_ids)?;
-                        }
+                    if source == "grok"
+                        && path.file_name().is_some_and(|s| s == "summary.json")
+                        && let Some(agent) = row["agent_id"].as_str()
+                    {
+                        mint(&source, agent, &mut plan.sessions, new_ids)?;
                     }
                     collect_tools(&row, &source, &mut plan.tool_names);
                     let mut error = None;
                     record_ids(&mut row, &source, &mut |value| {
-                        if let Some(id) = value.as_str() {
-                            if let Err(e) = mint(&source, id, &mut plan.records, new_ids) {
-                                error = Some(e);
-                            }
+                        if let Some(id) = value.as_str()
+                            && let Err(e) = mint(&source, id, &mut plan.records, new_ids)
+                        {
+                            error = Some(e);
                         }
                     });
                     if let Some(e) = error {
@@ -689,15 +684,13 @@ impl Plan {
                     .source
                     .parent()
                     .is_some_and(|p| p.file_name().is_some_and(|s| s == "compaction_checkpoints"))
-            {
-                if let Some(id) = file
+                && let Some(id) = file
                     .source
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .and_then(|id| plan.records.get(&key("grok", id)))
-                {
-                    file.target.set_file_name(format!("{id}.json"));
-                }
+            {
+                file.target.set_file_name(format!("{id}.json"));
             }
         }
         Ok(plan)
@@ -821,10 +814,10 @@ impl Plan {
                     "output_file",
                     "transcriptPath",
                 ] {
-                    if let Some(v) = object.get_mut(name) {
-                        if let Some(mapped) = v.as_str().and_then(|s| paths.get(s)) {
-                            *v = mapped.clone().into();
-                        }
+                    if let Some(v) = object.get_mut(name)
+                        && let Some(mapped) = v.as_str().and_then(|s| paths.get(s))
+                    {
+                        *v = mapped.clone().into();
                     }
                 }
                 for name in ["content", "text", "stdout", "stderr"] {
@@ -836,28 +829,28 @@ impl Plan {
                 for item in items {
                     result(item, paths);
                 }
-            } else if let Some(text) = value.as_str() {
-                if text.contains("<persisted-output>") || text.starts_with("Full output saved to:")
-                {
-                    let mut rewritten = text.to_owned();
-                    for (old, new) in paths {
-                        // Match the native output pointer, not UUIDs or arbitrary
-                        // paths in a user's message / tool's ordinary output.
-                        for prefix in ["saved to: ", "Saved to: "] {
-                            for suffix in ["\n", "\r", "</persisted-output>"] {
-                                rewritten = rewritten.replace(
-                                    &format!("{prefix}{old}{suffix}"),
-                                    &format!("{prefix}{new}{suffix}"),
-                                );
-                            }
-                            if rewritten.ends_with(&format!("{prefix}{old}")) {
-                                rewritten.truncate(rewritten.len() - old.len());
-                                rewritten.push_str(new);
-                            }
+            } else if let Some(text) = value.as_str()
+                && (text.contains("<persisted-output>")
+                    || text.starts_with("Full output saved to:"))
+            {
+                let mut rewritten = text.to_owned();
+                for (old, new) in paths {
+                    // Match the native output pointer, not UUIDs or arbitrary
+                    // paths in a user's message / tool's ordinary output.
+                    for prefix in ["saved to: ", "Saved to: "] {
+                        for suffix in ["\n", "\r", "</persisted-output>"] {
+                            rewritten = rewritten.replace(
+                                &format!("{prefix}{old}{suffix}"),
+                                &format!("{prefix}{new}{suffix}"),
+                            );
+                        }
+                        if rewritten.ends_with(&format!("{prefix}{old}")) {
+                            rewritten.truncate(rewritten.len() - old.len());
+                            rewritten.push_str(new);
                         }
                     }
-                    *value = rewritten.into();
                 }
+                *value = rewritten.into();
             }
         }
         if let Some(output) = row.get_mut("toolUseResult") {

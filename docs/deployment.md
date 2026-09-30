@@ -96,7 +96,7 @@ stage，须重新构建，避免不同平台部署不同版本。
 | --- | --- | --- |
 | `none` | **1 不测试直接上线** | 打印 `tests skipped by --test none` 后继续；`build` 的默认值 |
 | `affected` | **2 只测本次改动影响到的组件** | 把 `git diff --name-only <base>..HEAD`（`--allow-dirty` 时并上未提交文件）按下表映射到套件，`python3 tests/run_validation.py --only <names> --binary <stage 的 bin/sessiondock，web-only 时退回 target/release/sessiondock>`；`deploy` 的默认值 |
-| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描（`*_real` 与 `cargo_test` 和 run_validation 一样默认排除） |
+| `full` | **3 全量测试** | `python3 tests/run_validation.py --binary …`，即默认全量扫描；付费 CLI 与单元测试（Cargo、Node contracts、Python unittest）默认排除 |
 
 `--web-only --test affected` 不纳入未随页面更新发布的 `crates/`、`Cargo.toml` 与
 `Cargo.lock` 改动；前端及对应浏览器测试仍走测试门。
@@ -109,10 +109,10 @@ base commit 及其来源、改动文件（数量 + 前 20 个及命中的规则�
 
 **测试按平台跑，一个平台一次，绝不按节点跑。** Linux：构建机上 push 之前跑一次，覆盖所有 `linux-node`
 和 Hub（它们拿的是同一个二进制）。macOS / Windows 在节点上原生构建，所以同一个模式（记录在 stage 的
-`test_mode` 里，随 `push` 传给处理器的 `DeployOptions.test_mode`）在它们的 `stage()` 里驱动一步原生测试：
-解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> test --workspace --locked -- --test-threads=1`
+`test_mode` 里，随 `push` 传给处理器的 `DeployOptions.test_mode`）在它们的 `stage()` 里驱动一步原生编译检查（不执行单元测试）：
+解出源码之后、构建之前，macOS 跑 `TMPDIR=/private/tmp/sdtest <cargo> check --workspace --all-targets --locked`
 （[deploy-macos.md](deploy-macos.md) §2），Windows 在 `build.cmd` 里跑
-`<toolchain_bin>\cargo.exe test -p sessiondock --locked`（`RUSTC`/`RUSTDOC` 指向同一工具链，
+`<toolchain_bin>\cargo.exe check -p sessiondock --all-targets --locked`（`RUSTC`/`RUSTDOC` 指向同一工具链，
 [deploy-windows.md](deploy-windows.md) §2）；失败即该目标 `FAILED`，在换入任何东西之前中止，错误信息带
 节点上的 `.deploy-test.log` 路径和本地的 `<stage>/logs/<name>.log`；`none` 则跳过。Python/浏览器套件只在
 Linux 构建机上跑。
@@ -141,9 +141,9 @@ stem 恰好是套件名则按套件跑；某条改动触发全量时这些脚本
 | `crates/sessiondock/src/api/**`、`main.rs`、`lib.rs`、`config.rs`、`security.rs`、`state.rs`、`error.rs` | 横切面 → 全量 |
 | `crates/sessiondock/tests/fixtures/**` | 全量（Python 套件也用这些 fixture） |
 | `crates/sessiondock/tests/**`（其它） | `cargo_*` |
-| `legacy-web/**` | `node_contracts` + 所有 `*_browser*` + `brand_names_check` |
-| `deploy/**` | `deploy_*`（`deploy_lock`、`deploy_native_handlers`、`deploy_testplan`）+ 脚本 `tests/deploy_dry_run.py` |
-| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → `node_contracts`；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py`、`deploy_dry_run.py` 改自己就跑自己 |
+| `legacy-web/**` | 所有 `*_browser*` + `brand_names_check`（Node 单元测试不自动运行） |
+| `deploy/**` | `deploy_*`（默认只含 `deploy_native_handlers`；单元测试 `deploy_lock`、`deploy_testplan` 不自动运行） |
+| `tests/<stem>.py` | 若 `<stem>` 是套件 → 该套件及 `<stem>_*`（如 `lifecycle_browser` 带上 `lifecycle_browser_native_binding`）；否则取同前缀的套件（`hub_fake_node.py` → `hub_*`）；仍没有（`fake_claude_cli.py`、`python_oracle.py`）→ 全量；`*.mjs` → 默认列出的同前缀套件（Node 单元测试不自动运行）；`tests/fixtures/**` → 全量；`check_docs_links.py`、`check_agents_md.py` 改自己就跑自己 |
 | `Cargo.toml`、`Cargo.lock`、`.github/**`、其它任何未命中路径（`web/**`、`reference/**` …） | 全量 |
 
 离线回归：`tests/deploy_testplan.py`（映射、base 规则、三种模式的 CLI 行为，runner 被替身替换）；
