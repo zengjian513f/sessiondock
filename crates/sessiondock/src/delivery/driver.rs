@@ -763,6 +763,46 @@ pub fn inspect_codex(capture: &ScreenCapture) -> ComposerView {
     }
 }
 
+/// Codex keeps busy-turn inputs in the TUI until the next tool boundary,
+/// without writing a native record. Only read the queue immediately above a
+/// recognized editor, not matching text elsewhere in the transcript.
+pub fn codex_queued_texts(capture: &ScreenCapture) -> Vec<String> {
+    if capture.lag.is_some_and(|lag| lag > 0) {
+        return Vec::new();
+    }
+    let normalized = capture.text.replace('\r', "");
+    let raw: Vec<&str> = normalized.lines().collect();
+    let clean: Vec<String> = raw.iter().map(|line| codex_plain(line)).collect();
+    let Some((editor, _)) = locate_codex(&raw, &clean, capture.cursor) else {
+        return Vec::new();
+    };
+    let header = "• Messages to be submitted after next tool call (press esc to interrupt and send immediately)";
+    let Some(start) = clean[..editor]
+        .iter()
+        .rposition(|line| line.trim_end() == header)
+    else {
+        return Vec::new();
+    };
+    let mut texts: Vec<String> = Vec::new();
+    for line in &clean[start + 1..editor] {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(text) = line.strip_prefix("  ↳ ") {
+            texts.push(text.to_owned());
+        } else if let Some(text) = line.strip_prefix("    ") {
+            let Some(last) = texts.last_mut() else {
+                return Vec::new();
+            };
+            last.push('\n');
+            last.push_str(text);
+        } else {
+            return Vec::new();
+        }
+    }
+    texts
+}
+
 /// A tall Codex draft scrolls its first row (including `›`) out of the
 /// editor viewport. Anchor the visible continuation to the cursor's painted
 /// background and the status bar, never to an arbitrary transcript block.

@@ -110,6 +110,7 @@ class Fake:
         self.buffer = ""
         self.transcript = []
         self.submitted = 0
+        self.queued = []
         self.turns = 0
         self.frame = 0
         self.path = find_rollout(os.environ.get("SESSIONDOCK_TEST_CODEX_ROOT", ""), self.sid)
@@ -199,6 +200,19 @@ class Fake:
         busy_warning = os.environ.get('SESSIONDOCK_TEST_BUSY_WARNING')
         if working or busy_warning:
             lines.append("• Working (1s • esc to interrupt)")
+        queue_file = os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')
+        if self.queued and queue_file and os.path.exists(queue_file):
+            from pathlib import Path
+            mode = Path(queue_file).read_text()
+            lines.append('• Messages to be submitted after next tool call (press esc to interrupt and send immediately)')
+            visible = self.queued[:1] if mode == 'one' else self.queued
+            for text in visible:
+                # Exercise CJK and wrapped queue rows without relying on PTY width.
+                chunks = [part[i:i+18] for part in text.split('\n') for i in range(0, len(part), 18)]
+                lines.append('  ↳ ' + chunks[0])
+                lines.extend('    ' + part for part in chunks[1:])
+            if mode == 'quoted':
+                lines.append('• This was quoted tool output, not the live queue')
         lines.append(self.particles())
         prompt_row = len(lines) + 1
         if self.buffer:
@@ -330,7 +344,11 @@ class Fake:
         if self.options["delay"] > 0:
             self.render(working=self.options["busy_footer"])
             time.sleep(self.options["delay"])
-        self.record(text.strip())
+        queue_file = os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')
+        if queue_file and os.path.exists(queue_file):
+            self.queued.append(text.strip())
+        else:
+            self.record(text.strip())
         self.render()
 
     def run(self):
@@ -343,7 +361,12 @@ class Fake:
             pending = b""
             paste = None
             while True:
-                if (os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING') or os.environ.get('SESSIONDOCK_TEST_STARTUP_DELAY')) and not select.select([fd], [], [], .03)[0]:
+                if (os.environ.get('SESSIONDOCK_TEST_ANIMATED_PADDING') or os.environ.get('SESSIONDOCK_TEST_STARTUP_DELAY') or os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')) and not select.select([fd], [], [], .03)[0]:
+                    queue_file = os.environ.get('SESSIONDOCK_TEST_QUEUE_FILE')
+                    if self.queued and queue_file and not os.path.exists(queue_file):
+                        for text in self.queued:
+                            self.record(text)
+                        self.queued.clear()
                     self.render()
                     continue
                 chunk = os.read(fd, 4096)

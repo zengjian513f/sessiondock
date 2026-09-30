@@ -274,6 +274,50 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
     }
 }
 
+impl super::Conversations {
+    /// Persist positive TUI queue evidence, without retiring the send. A
+    /// visible entry can match only one receipt, including already marked
+    /// receipts, so repeated observations cannot confirm extra duplicates.
+    pub(super) fn observe_screen_queue(
+        &self,
+        key: &str,
+        source: &str,
+        capture: &crate::delivery::driver::ScreenCapture,
+    ) -> Result<(), Failure> {
+        use crate::delivery::driver;
+        if source != "codex" {
+            return Ok(());
+        }
+        let queued = self.store.queued(key);
+        if !queued
+            .iter()
+            .any(|row| row.state == "queued" && row.cli_queued_at.is_none())
+        {
+            return Ok(());
+        }
+        let mut visible = driver::codex_queued_texts(capture);
+        let mut marks = Vec::new();
+        for row in queued {
+            if row.state != "queued" {
+                continue;
+            }
+            if let Some(index) = visible.iter().position(|text| {
+                !row.text.trim().is_empty()
+                    && driver::same_text_ignoring_whitespace(text, &row.text)
+            }) {
+                visible.remove(index);
+                if row.cli_queued_at.is_none() {
+                    marks.push((row.request_id, unix_now()));
+                }
+            }
+        }
+        if !marks.is_empty() {
+            self.store.mark_cli_queued(key, &marks)?;
+        }
+        Ok(())
+    }
+}
+
 /// A native record that answers a queued send: a user/command message
 /// (`enqueue == false`) or the CLI's own enqueue entry for the same text.
 #[derive(Clone, Debug, PartialEq)]

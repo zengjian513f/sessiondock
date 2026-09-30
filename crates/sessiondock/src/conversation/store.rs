@@ -33,8 +33,8 @@ pub struct QueuedSend {
     pub echo_hash: String,
     pub sent_at: f64,
     pub state: String,
-    /// Record time of the native entry showing the CLI holds the text in its
-    /// own input queue (Claude `queue-operation` enqueue); `null` until seen.
+    /// Native enqueue time (Claude), or first matched TUI queue observation
+    /// time (Codex); `null` until the CLI's own queue is observed.
     #[serde(default)]
     pub cli_queued_at: Option<f64>,
 }
