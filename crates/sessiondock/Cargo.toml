@@ -12,6 +12,7 @@ path = "src/bin/sessiondock-hub.rs"
 
 [dependencies]
 base64 = "0.22"
+tar = "0.4"
 # Raw WebSocket pass-through after the 101 (`hyper::upgrade` + `TokioIo`);
 # both are already in the lock file through axum.
 hyper = "1"

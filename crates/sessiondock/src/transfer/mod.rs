@@ -9,6 +9,7 @@ mod code_mode;
 pub mod group;
 pub mod files;
 pub mod environment;
+pub mod bundle;
 pub mod native;
 pub mod service;
 
