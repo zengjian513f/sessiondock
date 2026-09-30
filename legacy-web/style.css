@@ -1777,18 +1777,14 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   pointer-events: none;
 }
 .session-freeze-overlay[hidden] { display: none; }
-.session-freeze-card {
-  pointer-events: auto; width: min(360px, 100%); padding: 24px;
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  border: 1px solid var(--border); border-radius: 16px;
-  background: var(--panel); color: var(--text); text-align: center;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, .2);
+.session-freeze-line {
+  width: auto; flex-direction: row; align-items: center;
+  gap: 12px; padding: 10px 14px; font-size: 14px; white-space: nowrap;
 }
-.session-freeze-symbol > .ui-icon { width: 32px; height: 32px; }
-.session-freeze-card strong { font-size: 18px; }
-.session-freeze-card p { margin: 0; color: var(--muted); line-height: 1.6; }
-.session-freeze-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
-.session-freeze-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.session-freeze-line .btn {
+  width: 32px; height: 32px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 
 /* 已接管会话的输入框 */
 #composer {
