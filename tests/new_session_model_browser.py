@@ -16,6 +16,7 @@ import urllib.request
 
 from playwright.sync_api import expect, sync_playwright
 from history_parity import BINARY, REPO, Corpus, isolated_server
+from hub_http_suite import FakeNode, Hub
 
 OPENCODE_MODELS = [f"prov/model-{index:02d}" for index in range(12)] + ["prov/zeta-1", "other/deep/nested-2"]
 CODEX_CACHE = {"models": [
@@ -81,6 +82,51 @@ def row_geometry(page):
           return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })""")
 
 
+def check_shared_effort(browser, binary, root):
+    (root / "hub").mkdir(mode=0o700)
+    nodes = [FakeNode("a" * 32, "NodeA"), FakeNode("b" * 32, "NodeB")]
+    hub = Hub(binary.parent / "sessiondock-hub", root / "hub", nodes)
+    try:
+        hub.start()
+        context = browser.new_context(service_workers="block")
+        catalog = {"models": [
+            {"id": "shared-a", "name": "Shared A", "efforts": ["low", "high"], "default_effort": "low"},
+            {"id": "shared-b", "name": "Shared B", "efforts": ["low", "high"], "default_effort": "low"}],
+            "default_model": "shared-a"}
+        context.route("**/api/term/models?*", lambda route: route.fulfill(json=catalog))
+        page = context.new_page()
+        page.goto(f"http://127.0.0.1:{hub.port}/", wait_until="networkidle")
+        page.wait_for_function("T.listLoaded && Nodes.list.length === 2")
+        # Old machine-specific effort is not a model preference.
+        page.evaluate("""nid => store.set('newModel.' + nid + '|codex',
+            {model: 'shared-a', effort: 'low'})""", nodes[0].nid)
+        open_dialog(page)
+        page.locator("#new-node").select_option(nodes[0].nid)
+        pick_source(page, "codex")
+        expect(page.locator("#new-model-label")).to_have_text("Shared A")
+        expect(page.locator("#new-effort")).to_have_value("high")
+        assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
+        page.locator("#new-effort").select_option("low")
+        choose_model(page, "Shared B")
+        expect(page.locator("#new-effort")).to_have_value("high")
+        page.locator("#new-node").select_option(nodes[1].nid)
+        expect(page.locator("#new-model-label")).to_have_text("Shared A")
+        expect(page.locator("#new-effort")).to_have_value("low")
+        choose_model(page, "Shared B")
+        expect(page.locator("#new-effort")).to_have_value("high")
+        page.locator("#new-node").select_option(nodes[0].nid)
+        expect(page.locator("#new-model-label")).to_have_text("Shared B")
+        expect(page.locator("#new-effort")).to_have_value("high")
+        choose_model(page, "Shared A")
+        expect(page.locator("#new-effort")).to_have_value("low")
+        page.keyboard.press("Escape")
+        context.close()
+    finally:
+        hub.stop()
+        for node in nodes:
+            node.stop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=BINARY)
@@ -134,7 +180,7 @@ def main():
             open_dialog(page)
             pick_source(page, "claude")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
-            expect(page.locator("#new-effort")).to_have_value("medium")
+            expect(page.locator("#new-effort")).to_have_value("high")
             tops = page.evaluate("""() => ['.new-source', '#new-model', '.new-effort']
                 .map(s => Math.round(document.querySelector(s).getBoundingClientRect().top))""")
             assert len(set(tops)) == 1, tops
@@ -149,12 +195,17 @@ def main():
             expect(page.locator("#new-model-menu")).to_be_hidden()
             expect(page.locator("#new-session-dialog")).to_be_visible()
             body = create(page, work)
-            assert body["model"] == "opus" and body["effort"] == "medium", body
+            assert body["model"] == "opus" and body["effort"] == "high", body
             open_dialog(page)
             choose_model(page, "Opus")
             expect(page.locator("#new-model-label")).to_have_text("Opus")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts == ["选择强度", "low", "medium", "high", "xhigh", "max"], efforts
+            assert efforts == ["low", "medium", "high", "xhigh", "max"], efforts
+            expect(page.locator("#new-effort")).to_have_value("high")
+            page.locator("#new-effort").select_option("medium")
+            choose_model(page, "Sonnet")
+            expect(page.locator("#new-effort")).to_have_value("high")
+            choose_model(page, "Opus")
             expect(page.locator("#new-effort")).to_have_value("medium")
             page.locator("#new-effort").select_option("high")
             shot("claude")
@@ -184,7 +235,7 @@ def main():
             pick_source(page, "codex")
             expect(page.locator("#new-model-label")).to_have_text("GPT Fake B")
             efforts = page.locator("#new-effort option").all_inner_texts()
-            assert efforts == ["选择强度", "low", "medium", "xhigh"], efforts
+            assert efforts == ["low", "medium", "xhigh"], efforts
             expect(page.locator("#new-effort")).to_have_value("medium")
             body = create(page, work)
             assert body["model"] == "gpt-fake-b" and body["effort"] == "medium", body
@@ -194,9 +245,14 @@ def main():
             assert not any("Hidden" in name for name in names) and len(names) == 2, names
             page.keyboard.press("Escape")
             choose_model(page, "GPT Fake A")
-            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
-            expect(page.locator("#new-effort")).to_have_value("")
+            assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
+            expect(page.locator("#new-effort")).to_have_value("high")
             page.locator("#new-effort").select_option("low")
+            choose_model(page, "GPT Fake B")
+            expect(page.locator("#new-effort")).to_have_value("medium")
+            page.locator("#new-effort").select_option("xhigh")
+            choose_model(page, "GPT Fake A")
+            expect(page.locator("#new-effort")).to_have_value("low")
             body = create(page, work)
             assert body["model"] == "gpt-fake-a" and body["effort"] == "low", body
             argv = wait_argv(log, lambda a: "-m" in a and "gpt-fake-a" in a)
@@ -210,13 +266,16 @@ def main():
             wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'])
             assert any(a[-4:] == ["-m", "gpt-fake-a", "-c", 'model_reasoning_effort="low"'] for a in argv_lines(log)[count:])
 
-            # The report uses the same catalog, independently of the new-session selection.
+            # Model selection is independent, but effort is shared by model across dialogs.
             page.locator('[data-report-bug]:visible').first.click()
             expect(page.locator("#bug-report-model-label")).to_have_text("GPT Fake B")
-            expect(page.locator("#bug-report-effort")).to_have_value("medium")
+            expect(page.locator("#bug-report-effort")).to_have_value("xhigh")
+            page.locator("#bug-report-model").click()
+            page.locator("#bug-report-model-options [role=option]", has_text="GPT Fake A").click()
+            expect(page.locator("#bug-report-effort")).to_have_value("low")
             page.locator("#bug-report-dialog .modal-close").click()
 
-            # Without a configured effort, fall back to the model cache on refresh.
+            # Configuration changes do not override remembered model effort.
             (root / "codex-home/config.toml").write_text('model = "gpt-fake-b"\n[profiles.x]\nmodel_reasoning_effort = "high"\n')
             open_dialog(page)
             expect(page.locator("#new-effort")).to_have_value("low")
@@ -233,10 +292,10 @@ def main():
             (root / "codex-home/models_cache.json").write_text(json.dumps(cache))
             open_dialog(page)
             choose_model(page, "GPT Fake New")
-            expect(page.locator("#new-effort")).to_have_value("low")
+            expect(page.locator("#new-effort")).to_have_value("high")
             body = create(page, work)
-            assert body["model"] == "gpt-fake-new" and body["effort"] == "low", body
-            wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-new", "-c", 'model_reasoning_effort="low"'])
+            assert body["model"] == "gpt-fake-new" and body["effort"] == "high", body
+            wait_argv(log, lambda a: a[-4:] == ["-m", "gpt-fake-new", "-c", 'model_reasoning_effort="high"'])
             # Same-version remote catalogs remain authoritative, including removals.
             cache["client_version"] = "1.0"
             (root / "codex-home/models_cache.json").write_text(json.dumps(cache))
@@ -258,7 +317,7 @@ def main():
             expect(page.locator("#new-model-options [role=option]")).to_have_count(1)
             page.keyboard.press("Escape")
             choose_model(page, "Grok Fake")
-            assert page.locator("#new-effort option").all_inner_texts() == ["选择强度", "low", "high"]
+            assert page.locator("#new-effort option").all_inner_texts() == ["low", "high"]
             expect(page.locator("#new-effort")).to_have_value("high")
             page.locator("#new-effort").select_option("low")
             body = create(page, work)
@@ -344,9 +403,10 @@ def main():
             expect(page.locator('input[name="new-source"]:checked')).to_have_value("codex")
             assert not errors, errors
             context.close()
+        check_shared_effort(browser, args.binary.resolve(), root)
         browser.close()
         pw.stop()
-    print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, remembered choice, "
+    print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, per-model effort shared across nodes, "
           "steady row across sources, search above ten, argv and pre-created session carry the model, phone wrap, "
           "an uninstalled CLI cannot be picked")
 
