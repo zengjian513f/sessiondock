@@ -9588,11 +9588,12 @@ async function cloneSessionGroup(uid) {
   dialog.setAttribute('aria-labelledby', 'transfer-title');
   dialog.innerHTML = `
     <div class="transfer-head">
-      <div><h2 id="transfer-title">移动或复制会话组</h2><p class="transfer-origin">源机器：<strong class="transfer-source"></strong><span>包含关联分支、祖先历史和子代理</span></p></div>
+      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
       <button class="transfer-close" type="button" aria-label="关闭">×</button>
     </div>
     <div class="transfer-body">
       <div class="transfer-controls">
+        <label class="transfer-field"><span>源机器</span><select id="transfer-source" disabled></select></label>
         <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
         <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
           <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
@@ -9601,7 +9602,6 @@ async function cloneSessionGroup(uid) {
       </div>
       <div class="transfer-identity" hidden>
         <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
-        <p class="transfer-identity-help"></p>
       </div>
       <p class="transfer-notice" role="status" hidden></p>
       <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
@@ -9609,10 +9609,9 @@ async function cloneSessionGroup(uid) {
         <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
           <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
       </div>
-      <p class="transfer-scope-note">整组一起处理，工作目录不复制。</p>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
-    <div class="transfer-footer"><span class="transfer-footer-note"></span><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
   const $d = selector => dialog.querySelector(selector);
   const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
   const confirm = $d('.clone-confirm'), status = $d('.clone-status');
@@ -9622,12 +9621,12 @@ async function cloneSessionGroup(uid) {
     const option = document.createElement('option');
     option.value = node.id;
     const unavailable = node.online === false || node.enabled === false;
-    option.textContent = node.name + (node.id === sourceId ? ' · 来源机器' : '') + (unavailable ? ' · 不可用' : '');
+    option.textContent = node.name + (unavailable ? ' · 不可用' : '');
     option.disabled = unavailable && node.id !== sourceId;
     target.append(option);
   }
   target.value = sourceId;
-  $d('.transfer-source').textContent = sourceName;
+  $d('#transfer-source').append(new Option(sourceName, sourceId));
   let plan = null, busy = false, uncertain = false;
   const identityChoices = {clone:true, move:false};
   const mode = () => radios.find(r => r.checked).value;
@@ -9635,21 +9634,15 @@ async function cloneSessionGroup(uid) {
   const blockedReason = () => {
     const destination = machines.get(target.value);
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
-    if (machines.get(sourceId)?.online === false) return '来源机器已离线，无法执行操作。';
-    if (crossMachine()) return '跨机器传输尚未接入，当前不能执行此操作。';
-    if (mode() === 'move') return '移动需要选择另一台机器；当前机器上的会话无需移动。';
+    if (machines.get(sourceId)?.online === false) return '源机器已离线。';
+    if (crossMachine()) return '跨机器传输尚未接入。';
+    if (mode() === 'move') return '移动需要选择另一台机器。';
     return '';
   };
   const renderSelection = () => {
     const cross = crossMachine(), moving = mode() === 'move';
     $d('.transfer-identity').hidden = !cross;
     newIds.checked = identityChoices[mode()];
-    $d('.transfer-identity-help').textContent = newIds.checked
-      ? '为会话、子代理及历史生成新身份，组内引用同步更新。'
-      : '保留原生会话身份；目标机器上的 UID 仍会带目标节点前缀。';
-    $d('.transfer-footer-note').textContent = cross
-      ? `${moving ? '完成后移走源会话' : '原会话保留'} · ${newIds.checked ? '生成新身份' : '保留原生身份'}`
-      : (moving ? '请选择其他机器' : '原会话保留 · 生成新身份');
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
     confirm.textContent = busy ? '正在复制…' : uncertain ? '重试同一次复制' : moving ? '移动整组' : '复制整组';
     confirm.disabled = busy || !plan || !!reason;
