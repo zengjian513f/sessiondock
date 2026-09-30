@@ -272,19 +272,21 @@ def run(opener, base, root, repo):
                        {"description": "codex worker", "page_id": "page-1"}, want=202)
     worker2 = reply2.get("worker") or {}
     if worker2.get("source") != "codex" or worker2.get("sid") is not None:
-        fail("codex SEND without native history", "default source is codex with a pending identity", raw)
+        fail("codex rename then SEND", "default source is codex with a pending identity", raw)
     created.append(worker2)
-    check_bundle(reply2["path"], "codex SEND without native history")
+    check_bundle(reply2["path"], "codex rename then SEND")
     events2 = (Path(reply2["path"]) / "events.jsonl").read_text(encoding="utf-8")
     if reply["report_id"] not in events2:
-        fail("codex SEND without native history", "the first report's events are not in the page window")
-    final2 = wait_final(reply2["path"], "codex SEND without native history")
-    # Successful SEND belongs to the CLI even without a native rollout.
+        fail("codex rename then SEND", "the first report's events are not in the page window")
+    final2 = wait_final(reply2["path"], "codex rename then SEND")
+    # Native rename is confirmed before the ordinary one-shot task SEND.
     if final2.get("status") != "submitted" or (final2.get("injection") or {}).get("basis") != "SEND":
         fail("codex SEND", json.dumps(final2, ensure_ascii=False))
     if "confirmed_from" in final2:
         fail("codex SEND", "must not fabricate native confirmation")
-    passed("codex SEND without native history")
+    names = [json.loads(line) for line in (root / "session_index.jsonl").read_text().splitlines()]
+    assert names[-1]["thread_name"] == "BUG: codex worker", names
+    passed("codex rename then SEND")
 
     # Private attachments and diagnostics share stable report/session submission.
     owner='report:private-test'
@@ -348,6 +350,27 @@ def run(opener, base, root, repo):
     assert all(isinstance(row['payload'],str) and 'text' not in row['result'] for row in ledger['requests'].values())
     passed('update menu refusal, report draft restart, common first-task SEND and synchronized status')
 
+    # A rejected rename never reaches the model task and never gets retried.
+    (root / "rename-reject").touch()
+    refused, _ = call(opener, base, "POST", "/api/bug-report",
+                      {"description": "keep rejected rename draft", "source": "codex", "_build": build}, want=202)
+    created.append(refused["worker"])
+    failed = wait_final(refused["path"], "rename rejected")
+    assert failed["status"] == "failed" and "原生命名" in failed["error"], failed
+    uid = "tmux:" + refused["worker"]["name"]
+    saved, _ = call(opener, base, "GET", "/api/session/conversation?uid=" + uid)
+    draft = saved["draft"]
+    assert draft["value"]["text"] == "keep rejected rename draft", draft
+    retried, _ = call(opener, base, "POST", "/api/session/conversation/send", {
+        "uid": uid, "name": refused["worker"]["name"], "text": draft["value"]["text"],
+        "request_id": draft["value"]["requestId"], "draft_revision": draft["revision"],
+        "attachments": [], "quotes": [], "_build": build}, want=409)
+    assert "send_result_unknown" in json.dumps(retried), retried
+    assert (root / "rename-reject.attempts").read_text().splitlines() == ["/rename BUG: keep rejected rename draft"]
+    ledger = json.loads((root / "state/conversations/conversation-ledger.json").read_text())
+    assert not any(key.endswith("report-send:" + refused["report_id"]) for key in ledger["requests"])
+    passed("rename rejection retains draft, no task write and no duplicate command")
+
     health, raw = call(opener, base, "GET", "/api/health")
     audit = health.get("audit") or {}
     if audit.get("written_events", 0) < 4:
@@ -359,7 +382,7 @@ def run(opener, base, root, repo):
     passed("audit trail")
     for worker in created:
         kill(opener, base, worker)
-    return 10
+    return 11
 
 
 def main():
@@ -384,7 +407,7 @@ def main():
             path.chmod(0o700)
         shared = {"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TERM": "xterm-256color", "LANG": "C.UTF-8"}
         env_c = {**shared, "SESSIONDOCK_TEST_CLAUDE_ROOT": str(root / "claude"), "SESSIONDOCK_TEST_GATE": str(root / "gate"), "SESSIONDOCK_TEST_GATE_TRACE": str(root / "gate.trace")}
-        env_x = {**shared, "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex")}
+        env_x = {**shared, "SESSIONDOCK_TEST_CODEX_ROOT": str(root / "codex"), "SESSIONDOCK_TEST_RENAME_REJECT_FILE": str(root / "rename-reject")}
 
         def prof(pid, source, exe, args, env):
             return {"id": pid, "source": source, "executable": str(root / "bin" / exe), "args": args,
@@ -438,7 +461,7 @@ def main():
         alive = leftovers(root)
         if alive:
             fail("cleanup", f"fake CLI still alive pids={alive}")
-        print(f"PASS bug_report_http_suite: {n + 1} scenarios", flush=True)
+        print(f"PASS bug_report_http_suite: {n + 2} scenarios", flush=True)
 
 
 if __name__ == "__main__":
