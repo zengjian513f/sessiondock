@@ -1451,7 +1451,12 @@ function applyMigrationMeta(uid, agent, entry, meta) {
       } else S.sessions = S.sessions.map(row => row.uid === uid ? {...meta} : row);
     }
   }
-  if (!changed) return;
+  if (!changed) {
+    // The first native message changes an assigned launch from unused to
+    // populated even when its title and other header fields stay the same.
+    if (S.sel === uid && !S.agent) renderSessionAction(meta);
+    return;
+  }
   if (!agent) renderSide();
   if (S.sel !== uid || S.agent !== agent) return;
   const oldHead = $('#detail > .dhead');
@@ -6084,7 +6089,10 @@ function newAssignedLaunchFor(session) {
 function unusedNewAssignedLaunch(session) {
   const launch = newAssignedLaunchFor(session);
   if (!launch) return null;
-  if (Number(session.cursor?.end) > 0) return null;
+  // A catalog/header snapshot can predate the accepted conversation window.
+  // Its zero cursor cannot make an already populated launch unused again.
+  const accepted = cache.get(viewKey(session.uid, null));
+  if (Number(session.cursor?.end) > 0 || Number(accepted?.end) > 0) return null;
   return launch;
 }
 
