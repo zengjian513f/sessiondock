@@ -307,6 +307,7 @@ pub fn node_router() -> Router<AppState> {
         .route("/api/session/transfer/receive", post(transfer::receive_bundle).layer(axum::extract::DefaultBodyLimit::disable()))
         .route("/api/session/transfer/release", post(transfer::release_export))
         .route("/api/session/transfer/reserve", post(transfer::reserve_export))
+        .route("/api/session/transfer/abort", post(transfer::abort_move))
         .route("/api/session/transfer/switch", post(transfer::switch_source))
         .route("/api/session/transfer/activate", post(transfer::activate_target))
         .route("/api/session/transfer/retire", post(transfer::retire_source))

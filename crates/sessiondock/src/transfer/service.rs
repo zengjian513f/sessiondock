@@ -170,6 +170,14 @@ impl TransferService {
                 continue;
             }
             let mut operation: Operation = serde_json::from_slice(&fs::read(file)?)?;
+            if operation.phase == "aborting" && operation.incoming_digest.is_some() {
+                // The source already durably rejected future ownership switches.
+                if let Err(error) = service.abort_target(&operation.id) {
+                    operation.error = Some(error.message);
+                    service.save(&operation)?;
+                }
+                continue;
+            }
             if operation.phase == "complete" {
                 service.cleanup_markers(&operation)?;
                 service.reclaim_prior_moves(&operation)?;
@@ -218,6 +226,7 @@ impl TransferService {
                         | "verifying"
                         | "rollback_required"
                         | "ready"
+                        | "aborting"
                         | "moved"
                         | "retiring"
                         | "retired"
@@ -455,7 +464,7 @@ impl TransferService {
         }
         Ok(())
     }
-    pub(super) fn member_target_uid(
+    pub(crate) fn member_target_uid(
         &self,
         op: &Operation,
         member: &group::Member,
@@ -522,7 +531,7 @@ impl TransferService {
         }
         Ok(())
     }
-    fn rollback(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn rollback(&self, op: &Operation) -> Result<(), TransferError> {
         let files: Vec<_> = self
             .publications(op)
             .into_iter()

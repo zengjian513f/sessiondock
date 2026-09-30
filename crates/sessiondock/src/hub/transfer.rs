@@ -64,6 +64,102 @@ impl Transfers {
         .await
         .map_err(|e| TransferError::new("move_io", e.to_string()))?
     }
+    pub async fn cancel(
+        &self,
+        registry: Arc<Registry>,
+        client: Arc<Client>,
+        request: Request,
+    ) -> Result<Value, TransferError> {
+        let _guard = self.gate.lock().await;
+        let mut journal: Journal =
+            serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
+        if journal.request != request {
+            return Err(TransferError::new(
+                "move_conflict",
+                "操作已绑定其他迁移目标",
+            ));
+        }
+        self.abort(&registry, &client, &mut journal).await
+    }
+    async fn abort(
+        &self,
+        registry: &Registry,
+        client: &Client,
+        journal: &mut Journal,
+    ) -> Result<Value, TransferError> {
+        if journal.phase == "aborted" {
+            return Ok(json!({"phase":"aborted"}));
+        }
+        let (source_id, local_uid) = namespace::split(&journal.request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        let address = |id: &str| {
+            let node = registry
+                .get(id)
+                .ok_or_else(|| TransferError::new("move_node_unavailable", "迁移节点不可用"))?;
+            registry
+                .target(&node)
+                .map_err(|_| TransferError::new("move_node_unavailable", "迁移节点不可用"))
+        };
+        let source = address(&source_id)?;
+        let target = address(&journal.request.target_node)?;
+        let id = journal.request.operation_id.clone();
+        let source_state = call(
+            client,
+            &source,
+            "/api/session/transfer/status",
+            &json!({"operation_id":id}),
+            true,
+        )
+        .await?
+        .1;
+        if source_state["uid"] != local_uid || source_state["mode"] != "move" {
+            return Err(TransferError::new(
+                "move_plan_stale",
+                "操作与源会话或移动模式不符",
+            ));
+        }
+        // Source-first is essential: a delayed switch must be durably rejected
+        // before removing any verified target file. A lost reply is retryable.
+        call(
+            client,
+            &source,
+            "/api/session/transfer/abort",
+            &json!({"operation_id":id,"step":"source"}),
+            true,
+        )
+        .await?;
+        journal.phase = "aborting".into();
+        self.save(journal).await?;
+        let received = call(
+            client,
+            &target,
+            "/api/session/transfer/status",
+            &json!({"operation_id":id}),
+            false,
+        )
+        .await?;
+        if received.0 != 404 {
+            call(
+                client,
+                &target,
+                "/api/session/transfer/abort",
+                &json!({"operation_id":id,"step":"target"}),
+                true,
+            )
+            .await?;
+        }
+        call(
+            client,
+            &source,
+            "/api/session/transfer/abort",
+            &json!({"operation_id":id,"step":"finish"}),
+            true,
+        )
+        .await?;
+        journal.phase = "aborted".into();
+        self.save(journal).await?;
+        Ok(json!({"phase":"aborted"}))
+    }
     pub async fn execute(
         &self,
         registry: Arc<Registry>,
@@ -172,6 +268,15 @@ impl Transfers {
         )
         .await?
         .1;
+        if matches!(journal.phase.as_str(), "aborting" | "aborted")
+            || matches!(source_state["phase"].as_str(), Some("aborting" | "aborted"))
+        {
+            self.abort(&registry, &client, &mut journal).await?;
+            return Err(TransferError::new(
+                "move_cancelled",
+                "本次移动已撤回，请重新查看清单",
+            ));
+        }
         if source_state["uid"] != local_uid {
             return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
         }
@@ -259,14 +364,24 @@ impl Transfers {
         if moving && current.1["phase"] == "ready" {
             journal.phase = "switching".into();
             self.save(&journal).await?;
-            call(
+            if let Err(error) = call(
                 &client,
                 &source_address,
                 "/api/session/transfer/switch",
                 &operation,
                 true,
             )
-            .await?;
+            .await
+            {
+                if error.code == "move_plan_stale" {
+                    self.abort(&registry, &client, &mut journal).await?;
+                    return Err(TransferError::new(
+                        "move_cancelled",
+                        "源会话已变化，本次移动已撤回，请重新查看清单",
+                    ));
+                }
+                return Err(error);
+            }
             current = call(
                 &client,
                 &target_address,

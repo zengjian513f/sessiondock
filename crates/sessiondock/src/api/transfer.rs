@@ -42,7 +42,17 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Response> {
         .await
         .map_err(IntoResponse::into_response)?;
     for member in &op.group().members {
-        if matches!(live.state(&member.uid), RunState::Running(_)) {
+        let uid = if op.incoming_digest.is_some() {
+            match (&state.transfer, &op.staged) {
+                (Some(service), Some(staged)) => service
+                    .member_target_uid(op, member, staged)
+                    .map_err(failure)?,
+                _ => member.uid.clone(),
+            }
+        } else {
+            member.uid.clone()
+        };
+        if matches!(live.state(&uid), RunState::Running(_)) {
             return Err(failure(TransferError::new(
                 "move_session_running",
                 format!("会话仍在运行：{}", member.title),
@@ -101,6 +111,47 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         return e;
     }
     Json(TransferService::public(&op)).into_response()
+}
+
+pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortRequest>) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let guard = service.gate.clone().lock_owned().await;
+    if body.step == "target" {
+        let op = match service.load(&body.operation_id) {
+            Ok(op) => op,
+            Err(e) => return failure(e),
+        };
+        if let Err(e) = stopped(&state, &op).await {
+            return e;
+        }
+    }
+    // Compensation and its gate survive a disconnected Hub request.
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        match body.step.as_str() {
+            "source" => service.abort_source(&body.operation_id, false),
+            "target" => service.abort_target(&body.operation_id),
+            "finish" => service.abort_source(&body.operation_id, true),
+            _ => Err(TransferError::new("move_format", "未知的撤回步骤")),
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(op)) => {
+            let _ = state.reader.run(|store| store.list(true)).await;
+            Json(TransferService::public(&op)).into_response()
+        }
+        Ok(Err(e)) => failure(e),
+        Err(e) => failure(TransferError::new("move_io", e.to_string())),
+    }
+}
+#[derive(Deserialize)]
+pub struct AbortRequest {
+    operation_id: String,
+    step: String,
 }
 
 pub async fn switch_source(

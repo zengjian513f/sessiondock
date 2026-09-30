@@ -10062,7 +10062,7 @@ async function cloneSessionGroup(uid) {
       </div>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
-    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
   const $d = selector => dialog.querySelector(selector);
   const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
   const confirm = $d('.clone-confirm'), status = $d('.clone-status');
@@ -10104,6 +10104,8 @@ async function cloneSessionGroup(uid) {
     target.disabled = busy || uncertain;
     for (const radio of radios) radio.disabled = busy || uncertain;
     newIds.disabled = busy || uncertain;
+    $d('.transfer-abort').hidden = !uncertain || !moving;
+    $d('.transfer-abort').disabled = busy;
     dialog.setAttribute('aria-busy', String(busy));
   };
   target.onchange = () => {renderSelection(); refreshPlan();};
@@ -10116,8 +10118,19 @@ async function cloneSessionGroup(uid) {
   const request = async (path, body) => {
     const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || data.error || '操作失败');
+    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
     return data;
+  };
+  $d('.transfer-abort').onclick = async () => {
+    if (busy || !plan) return;
+    busy = true; error.hidden = true; renderSelection();
+    try {
+      await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value});
+      uncertain = false; plan = null; busy = false;
+      await refreshPlan();
+    } catch (failure) {
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {busy = false; if (dialog.isConnected) renderSelection();}
   };
   const renderMembers = data => {
     const members = new Map();
@@ -10181,7 +10194,8 @@ async function cloneSessionGroup(uid) {
       close(); await loadSessions(true); await openSession(result.target_uid);
       showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
     } catch (failure) {
-      uncertain = true;
+      uncertain = failure.code !== 'move_cancelled';
+      if (!uncertain) {plan = null; busy = false; await refreshPlan();}
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
     } finally {busy = false; if (dialog.isConnected) renderSelection();}
   };
