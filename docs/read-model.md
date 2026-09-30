@@ -65,8 +65,11 @@
   （`history_base`/`forked_from`）。规则与 [history-pages.md](history-pages.md)
   中记录的一致，输入改为摘要。
 - **子代理运行态与续写**（`index/agent_stops`）：`agent_items[].active`
-  ——Codex 看子代理 rollout 尾部最后一条回合边界 `event_msg`
+  ——Codex 看子代理 rollout 最后一条回合边界 `event_msg`
   （`task_started`/`turn_started` 开、`task_complete`/`turn_complete`/`turn_aborted` 关）；
+  回合边界不受头/尾窗口限制：Codex 冷读按块反向查找最近边界，只解码回合与
+  最新问题调用的标量字段；后续仅检查上次 LF 后新增的完整记录，缓存标量状态。
+  半行不生效，截短、同尺寸重写或 inode 变化重建；主会话 `turn` 使用同一状态。
   Claude 看 sidecar 尾部最后一条 user/assistant 记录是否为 assistant `end_turn`
   （只有它算收尾），未收尾时再对照主会话里该子代理最近一次停止通知
   （`<task-notification>` 的 `<task-id>` 或前台 Agent 的 `toolUseResult`，
