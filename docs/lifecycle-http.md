@@ -113,18 +113,25 @@ The catalog comes from each CLI's own data, read as its child would see it
 that command fall back to the cache). This avoids using an older CLI’s catalog
 after an upgrade or when versions share a home. Only `visibility: list` models
 are offered, with `supported_reasoning_levels`; `default_model` is
-`config.toml`'s top-level `model`; displayed default effort uses the top-level
+`config.toml`'s top-level `model`; the catalog's default effort uses the top-level
 `model_reasoning_effort` before the cache's `default_reasoning_level`, including
-when a model is explicitly selected. Both new-session and bug-report pickers
-select concrete model and effort values only when the catalog identifies their
-defaults or the user chooses them. An unknown default stays unselected and the
-corresponding override is omitted, letting the CLI use its own setting. Model
+when a model is explicitly selected. The new-session and bug-report pickers
+remember effort per source and model in browser storage, shared across machines
+and both dialogs. A model without a remembered supported effort starts at `high`;
+if it does not support `high`, the picker uses its supported catalog default or
+first supported level. Switching models restores that model's effort rather
+than carrying the previous model's level. There is no effort placeholder option;
+CLIs without effort support keep the control disabled and omit the override.
+An unknown default model stays unselected and its override is omitted, letting
+the CLI use its own setting. Model
 menus have no separate default entry. Claude reads the profile's
 `CLAUDE_CONFIG_DIR/settings.json` (or `HOME/.claude/settings.json`) for the saved
 model and per-model effort; the profile's `ANTHROPIC_MODEL` and
 `CLAUDE_CODE_EFFORT_LEVEL` take precedence. If the selected model is not one of
 the fixed aliases, it appears as an additional row. A previously chosen picker
-value takes precedence over these defaults. Grok `$GROK_HOME/models_cache.json`
+model value takes precedence over these defaults (model choice remains per
+machine and source; old machine-specific effort choices are ignored).
+Grok `$GROK_HOME/models_cache.json`
 (non-hidden, `reasoning_efforts`), OpenCode `opencode models` (bounded to 15 s;
 one `provider/model` per line), Claude its fixed aliases `fable`, `opus`,
 `sonnet`, `haiku` with `low`…`max`. The page asks again every time the dialog
