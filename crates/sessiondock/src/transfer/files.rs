@@ -184,7 +184,7 @@ fn session_ids(row: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
         }
     }
 }
-fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<String, String>) {
+pub(super) fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<String, String>) {
     for call in row["tool_calls"].as_array().into_iter().flatten() {
         if let (Some(id), Some(name)) = (call["id"].as_str(), call["name"].as_str()) {
             names.insert(key(source, id), name.into());
@@ -208,7 +208,7 @@ fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<String, String>
         }
     }
 }
-fn agent_tool(name: &str) -> bool {
+pub(super) fn agent_tool(name: &str) -> bool {
     matches!(
         name,
         "Agent"
@@ -289,6 +289,8 @@ fn rewrite_tools(
                     let mut args: Value = serde_json::from_str(raw)?;
                     agent_args(&mut args, source, ids);
                     call["arguments"] = serde_json::to_string(&args)?.into();
+                } else if let Some(args) = call.get_mut("arguments") {
+                    agent_args(args, source, ids);
                 }
             }
         }
@@ -513,6 +515,13 @@ impl Plan {
             plan.roots.insert(member.source.clone(), home);
             let mut owned = Vec::new();
             if member.source == "grok" {
+                let summary = member.path.parent().unwrap().join("summary.json");
+                if summary.is_file() {
+                    let row: Value = serde_json::from_slice(&fs::read(summary)?)?;
+                    if let Some(agent) = row["agent_id"].as_str() {
+                        mint("grok", agent, &mut plan.sessions, new_ids)?;
+                    }
+                }
                 walk(member.path.parent().unwrap(), &mut owned)?;
             } else {
                 walk(&member.path, &mut owned)?;
@@ -653,12 +662,27 @@ impl Plan {
             for row in &rows {
                 collect_tools(row, source, &mut local_names);
             }
+        } else if source == "grok" {
+            // Chat calls and update results share one session's namespace.
+            // Another session may legitimately reuse the same call ID.
+            for sibling in self.files.iter().filter(|candidate| {
+                candidate.provider == "grok"
+                    && candidate.owner == file.owner
+                    && matches!(candidate.format.as_str(), "json" | "jsonl")
+            }) {
+                let bytes = fs::read(&sibling.source)?;
+                if digest(&bytes) != sibling.sha256 {
+                    return Err(TransferError::new(
+                        "move_plan_stale",
+                        "原生文件在计划后发生变化",
+                    ));
+                }
+                for row in parse(&bytes, &sibling.format)? {
+                    collect_tools(&row, source, &mut local_names);
+                }
+            }
         }
-        let names = if source == "claude" {
-            &local_names
-        } else {
-            &self.tool_names
-        };
+        let names = &local_names;
         for mut row in rows {
             if let Some(links) = &links {
                 super::group::claude_tools::resolve(&mut row, links);

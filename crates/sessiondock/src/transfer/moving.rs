@@ -319,6 +319,18 @@ impl TransferService {
             }
             if e.source == "grok" {
                 if let Some(path) = &e.summary_path {
+                    let rows = super::group::grok_tools::rows(path.parent().unwrap())?;
+                    if super::group::grok_tools::references(&rows)
+                        .iter()
+                        .any(|id| {
+                            references("grok", id)
+                                || op.file_plan.as_ref().is_some_and(|plan| {
+                                    plan.sessions.contains_key(&format!("grok:{id}"))
+                                })
+                        })
+                    {
+                        return Err(changed());
+                    }
                     let mut paths = vec![path.clone()];
                     let agents = path.parent().unwrap().join("subagents");
                     if agents.is_dir() {
