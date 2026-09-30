@@ -24,7 +24,7 @@ def main():
     for path in config['roots'].values():Path(path).mkdir(parents=True,exist_ok=True)
     for cwd in config['cwds']:
         path=Path(cwd['path']);path.mkdir(parents=True,exist_ok=True);path.chmod(cwd['mode'])
-    for folder in ('state','proc','ids'):(destination/folder).mkdir(parents=True,exist_ok=True)
+    for folder in ('state','proc','ids','trash'):(destination/folder).mkdir(parents=True,exist_ok=True)
     for database,schema in config['schemas'].items():
         import sqlite3
         with sqlite3.connect(database) as db:db.executescript(schema)
@@ -37,6 +37,7 @@ def main():
     env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in config['roots'].items()})
     env.update(SESSIONDOCK_BIND=f'127.0.0.1:{web_port}',SESSIONDOCK_NODE_BIND=f'127.0.0.1:{node_port}',
         SESSIONDOCK_WEB_DIR=config['web'],SESSIONDOCK_STATE_DIR=str(destination/'state'),
+        SESSIONDOCK_TRASH_DIR=str(destination/'trash'),
         SESSIONDOCK_PROC_ROOT=str(destination/'proc'),SESSIONDOCK_NODE_TOKEN_FILE=str(token),
         SESSIONDOCK_NODE_ID_FILE=str(destination/'ids/node-id'),SESSIONDOCK_NODE_PEERS='127.0.0.0/8')
     process=None;log=tempfile.TemporaryFile();opener=build_opener(ProxyHandler({}))

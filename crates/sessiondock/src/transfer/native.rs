@@ -509,6 +509,50 @@ pub fn preflight_copy(native: &Native, reuse: bool) -> Result<(), TransferError>
 fn shared_table(name: &str) -> bool {
     matches!(name, "projects" | "project_roots" | "thread_sections")
 }
+/// Retire only captured source rows; the operation journal retains their full
+/// projection. Shared projects remain in place for unrelated source sessions.
+pub fn retire(native: &Native, apply: bool) -> Result<(), TransferError> {
+    for database in native.databases.iter().rev() {
+        let mut db =
+            Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        db.execute_batch("PRAGMA foreign_keys=ON")?;
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        for table in database
+            .tables
+            .iter()
+            .rev()
+            .filter(|t| !shared_table(&t.name))
+        {
+            let current = read(&tx, &table.name, &row_ids(table))?
+                .ok_or_else(|| TransferError::new("move_native_unsupported", "源端原生表不存在"))?;
+            if current.schema != table.schema
+                || current.rows.iter().any(|r| !table.rows.contains(r))
+            {
+                return Err(TransferError::new(
+                    "move_plan_stale",
+                    "源端原生记录已变化，保留清理现场",
+                ));
+            }
+            if apply {
+                for row in &current.rows {
+                    let clause = table
+                        .keys
+                        .iter()
+                        .map(|k| format!("{}=?", quote(k)))
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    tx.execute(
+                        &format!("DELETE FROM {} WHERE {clause}", quote(&table.name)),
+                        rusqlite::params_from_iter(table.keys.iter().map(|k| sql(&row[k]))),
+                    )?;
+                }
+            }
+        }
+        tx.commit()?;
+    }
+    Ok(())
+}
 #[derive(Serialize, Deserialize)]
 struct Receipt {
     planned: Database,

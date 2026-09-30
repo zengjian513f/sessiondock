@@ -47,6 +47,14 @@ pub struct Operation {
     pub export_lease_until: u64,
     #[serde(default)]
     pub reused_files: BTreeSet<PathBuf>,
+    #[serde(default)]
+    pub moving: bool,
+    #[serde(default)]
+    pub storage_probes: BTreeMap<String, super::environment::StorageProbe>,
+    #[serde(default)]
+    pub reclaimed_by: BTreeMap<String, String>,
+    #[serde(default)]
+    pub ownership_sequence: u64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Publication {
@@ -164,6 +172,7 @@ impl TransferService {
             let mut operation: Operation = serde_json::from_slice(&fs::read(file)?)?;
             if operation.phase == "complete" {
                 service.cleanup_markers(&operation)?;
+                service.reclaim_prior_moves(&operation)?;
             }
             if matches!(
                 operation.phase.as_str(),
@@ -202,17 +211,24 @@ impl TransferService {
                 continue;
             }
             let op: Operation = serde_json::from_slice(&fs::read(path)?)?;
-            if (matches!(
-                op.phase.as_str(),
-                "publishing" | "verifying" | "rollback_required"
-            ) || (op.phase == "exporting" && op.export_lease_until > super::bundle::now()))
+            if !op.reclaimed_by.contains_key(uid)
+                && (matches!(
+                    op.phase.as_str(),
+                    "publishing"
+                        | "verifying"
+                        | "rollback_required"
+                        | "ready"
+                        | "moved"
+                        | "retiring"
+                        | "retired"
+                ) || (op.phase == "exporting" && op.export_lease_until > super::bundle::now()))
                 && (op.group().members.iter().any(|m| m.uid == uid)
-                    || op.staged.as_ref().is_some_and(|s| {
-                        op.group()
-                            .members
-                            .iter()
-                            .any(|m| self.member_target_uid(&op, m, s).is_ok_and(|id| id == uid))
-                    }))
+                    || (!matches!(op.phase.as_str(), "moved" | "retiring" | "retired")
+                        && op.staged.as_ref().is_some_and(|s| {
+                            op.group().members.iter().any(|m| {
+                                self.member_target_uid(&op, m, s).is_ok_and(|id| id == uid)
+                            })
+                        })))
             {
                 return Ok(true);
             }
@@ -298,6 +314,10 @@ impl TransferService {
             incoming_digest: None,
             export_lease_until: 0,
             reused_files: BTreeSet::new(),
+            moving: false,
+            storage_probes: BTreeMap::new(),
+            reclaimed_by: BTreeMap::new(),
+            ownership_sequence: 0,
         };
         // Stage at planning time: every reference/offset/native row is validated
         // before confirmation, and retry always uses this exact identity map.
@@ -492,7 +512,7 @@ impl TransferService {
         }
         false
     }
-    fn cleanup_markers(&self, op: &Operation) -> Result<(), TransferError> {
+    pub(super) fn cleanup_markers(&self, op: &Operation) -> Result<(), TransferError> {
         for file in self.publications(op) {
             let marker = Self::marker(&op.id, &file.target);
             if fs::symlink_metadata(&marker).is_ok() {
@@ -535,7 +555,7 @@ impl TransferService {
         self.cleanup_markers(op)
     }
     pub fn execute(&self, mut op: Operation) -> Result<Operation, TransferError> {
-        if op.phase == "complete" {
+        if matches!(op.phase.as_str(), "complete" | "ready") {
             return Ok(op);
         }
         if op.phase == "failed" && op.incoming_digest.is_some() {
@@ -553,7 +573,7 @@ impl TransferService {
             ));
         }
         if op.incoming_digest.is_none() {
-            if !op.new_ids() {
+            if op.moving || !op.new_ids() {
                 return Err(TransferError::new(
                     "move_conflict",
                     "保留身份复制需要另一台机器",
@@ -705,7 +725,10 @@ impl TransferService {
             {
                 return Err(TransferError::new("move_verify", "克隆仍引用源组身份"));
             }
-            op.phase = "complete".into();
+            op.phase = if op.moving { "ready" } else { "complete" }.into();
+            if op.phase == "complete" {
+                op.ownership_sequence = self.next_ownership_sequence()?;
+            }
             self.save(&op)?;
             Ok(())
         })();
@@ -722,17 +745,20 @@ impl TransferService {
             self.save(&op)?;
             return Err(error);
         }
-        self.cleanup_markers(&op)?;
+        if op.phase == "complete" {
+            self.cleanup_markers(&op)?;
+            self.reclaim_prior_moves(&op)?;
+        }
         Ok(op)
     }
     pub fn public(op: &Operation) -> Value {
-        json!({"operation_id":op.id,"mode":"clone","new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
+        json!({"operation_id":op.id,"mode":if op.moving {"move"} else {"clone"},"new_ids":op.new_ids(),"phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
             "sessions":op.group().members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
                 "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).count()),
                 "bytes":op.plan.files.iter().filter(|f|f.source==m.path).map(|f|f.bytes).sum::<u64>()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().filter(|f|f.owner==m.uid).map(|f|f.bytes).sum::<u64>()),
                 "relations":op.group().edges.iter().filter(|e|e.from==m.uid||e.to==m.uid).map(|e|e.kind.as_str()).collect::<BTreeSet<_>>()
             })).collect::<Vec<_>>(),
             "session_count":op.group().members.iter().map(|m|(&m.source,&m.sid)).collect::<BTreeSet<_>>().len(),"file_count":op.plan.files.len()+op.file_plan.as_ref().map_or(0,|p|p.files.len()),"bytes":op.plan.files.iter().map(|f|f.bytes).sum::<u64>()+op.file_plan.as_ref().map_or(0,|p|p.files.iter().map(|f|f.bytes).sum::<u64>()),"error":op.error,
-            "warnings":["原会话保留；新旧会话共用工作目录和外部工具。"]})
+            "warnings":if op.moving { Vec::<&str>::new() } else { vec!["原会话保留；新旧会话共用工作目录和外部工具。"] }})
     }
 }

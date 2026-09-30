@@ -10087,7 +10087,7 @@ async function cloneSessionGroup(uid) {
     if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
     if (machines.get(sourceId)?.online === false) return '源机器已离线。';
     if (crossMachine()) {
-      if (mode() === 'move' || SessionDockCapabilities.config.session_clone_remote !== true) return '跨机器传输尚未接入。';
+      if (SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
       return '';
     }
     if (mode() === 'move') return '移动需要选择另一台机器。';
@@ -10098,7 +10098,7 @@ async function cloneSessionGroup(uid) {
     $d('.transfer-identity').hidden = !cross;
     newIds.checked = identityChoices[mode()];
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
-    confirm.textContent = busy ? '正在复制…' : uncertain ? '重试同一次复制' : moving ? '移动整组' : '复制整组';
+    confirm.textContent = busy ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
     confirm.disabled = busy || !plan || !!reason;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || uncertain;
@@ -10150,14 +10150,16 @@ async function cloneSessionGroup(uid) {
     status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
   };
   async function refreshPlan() {
-    if (busy || uncertain || mode() !== 'clone') return;
-    const fresh = !crossMachine() || identityChoices.clone;
-    if (plan && plan.new_ids === fresh) return;
+    if (busy || uncertain || (mode() === 'move' && !crossMachine())) return;
+    const fresh = !crossMachine() || identityChoices[mode()];
+    const selectedMode = mode();
+    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return;
     busy = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
     try {
-      const next = await request('api/session/clone/plan', {uid, new_ids:fresh});
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
+      if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       plan = next;
       if (dialog.isConnected) renderMembers(plan);
     } catch (failure) {
@@ -10177,7 +10179,7 @@ async function cloneSessionGroup(uid) {
       });
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
       close(); await loadSessions(true); await openSession(result.target_uid);
-      showSessionStopNotice('整组复制完成，原会话已保留。');
+      showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
     } catch (failure) {
       uncertain = true;
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
