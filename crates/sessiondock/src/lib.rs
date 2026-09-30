@@ -285,6 +285,8 @@ fn build_app(
     capabilities["terminal_complete_dir"] = serde_json::json!(lifecycle.is_some());
     // Stop a managed instance through its host (Ctrl-D → guarded stop); never
     // an external process. Needs the terminal transport and the lifecycle service.
+    capabilities["session_freeze"] =
+        serde_json::json!(cfg!(target_os = "linux") && lifecycle.is_some() && terminal.is_some());
     capabilities["session_stop"] = serde_json::json!(lifecycle.is_some() && terminal.is_some());
     capabilities["terminal_backend"] = serde_json::json!(terminal.is_some());
     // Raw HTTP text/key input under the page's terminal lease; not a send ledger.
