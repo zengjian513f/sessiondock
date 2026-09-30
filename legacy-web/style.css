@@ -1792,11 +1792,9 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #compose-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 #compose-items:empty { display: none; }
 #composer-question {
-  padding: 8px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--panel); font-size: 12px;
   max-height: 40vh; overflow: auto; flex-shrink: 0;
 }
-.composer-question-copy { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 6px; }
+#composer-question > .msg { max-width: 100%; margin: 0; }
 #composer-input-status {
   position: absolute; z-index: 10; bottom: calc(100% + 2px); left: 18px; right: 18px;
   display: flex; align-items: center; gap: 8px;
