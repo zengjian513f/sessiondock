@@ -8,6 +8,7 @@ mod codex_tools;
 mod code_mode;
 pub mod group;
 pub mod files;
+pub mod environment;
 pub mod native;
 pub mod service;
 

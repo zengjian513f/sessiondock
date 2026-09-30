@@ -17,6 +17,24 @@ Chromium 覆盖真实 Hub 页面确认、打开克隆组及子代理。离线入
 JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` 并退出 1。
 所有读取根目录必须显式提供，不自动发现日常 CLI home。
 
+### 跨节点环境核对
+
+`inspect_environment {cwd, dependencies: []}` 只读扫描明确指定的工作目录及外部附件，
+返回内容清单和本机文件 stamp。包含未跟踪、忽略文件、执行权限、链接目标及链接指向的内容；
+不以 Git 状态代替字节摘要，不扫描 `.git` 管理目录。文件流式计算 SHA-256，扫描后复核 stamp，
+目录链接环按已访问路径终止，断链和不可读路径保留实际文件系统错误。
+
+在另一节点调用 `compare_environment {snapshot}`，按相同绝对路径重新扫描并比较内容；
+不同机器的 inode、mtime 不参与内容相等判断。返回目标快照，供确认阶段调用
+`recheck_environment {snapshot}` 检查计划后写入。历史中外部附件路径的完整提取仍由来源适配器负责，
+不能把没有传入的依赖描述为已验证。
+
+`create_storage_probe {root}` 在明确指定的 CLI 根创建独占、权限 0600 的随机探针；
+目标在收到任何迁移文件前调用 `check_storage_probe {root, probe}`，识别是否能读到同一个随机值。
+它不使用跨机器 inode 相等或路径相等推断共享存储。调用方在结束时必须通过
+`remove_storage_probe {root, probe}` 清理；探针被修改时保留现场，不删除未知文件。
+这些命令只提供编排所需的证据，还未接入跨机发布或源端清理。
+
 ### 查看索引内的整组
 
 ```json
