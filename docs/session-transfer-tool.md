@@ -2,6 +2,8 @@
 
 `sessiondock-transfer` 是移动/克隆实现共用的 Rust 核心的离线入口。
 当前实现范围：索引快照上的连通组计算，Codex 历史计划/暂存，以及 Claude/Grok 文件包的初步计划/暂存。
+同节点服务现已复用 Claude/Grok 文件计划，进行持久化发布、校验、失败补偿和重启重试；
+Chromium 覆盖真实 Hub 页面确认、打开克隆组及子代理。离线入口仍不自行发布。
 它不发布 CLI 会话、不修改源文件、不导入数据库、不切换执行归属、不执行 trash。
 同节点 Codex 的 HTTP 编排与页面入口见 [当前克隆接口](session-clone.md#当前接口同节点-codex)，
 使用独立能力 `session_clone_local_codex`；完整 `session_move` / `session_clone` 尚未开启。
@@ -98,6 +100,9 @@ Grok 独立子会话同时由父目录 `subagents/<id>/meta.json` 纳入整组�
 Claude 收集 transcript、会话附属目录、子代理 sidecar 和标准 home 下的 `file-history`；
 Grok 收集整个会话目录，包括 updates、压缩记录和不解析的附件。
 已补齐原生代理工具的结构化参数、结果包中的身份指针、Grok ACP 事件以及 Claude 大输出路径。
+Claude 保留 API 响应的 `message.id`，仅重写本地记录身份；改写服务端 ID 会导致原生恢复返回 400。
+原生 Haiku low 实验覆盖真实 fork、子代理、新父会话及分支恢复、新旧组独立续聊；
+实验使用临时 home，未更改日常配置。包内符号链接指向新副本，外部链接保留原语义。
 普通消息及代理答复中的旧 ID 保持原文。所有 checkpoint 格式、Claude 原生恢复与发布事务
 仍未完成，不能将此输出发布为可恢复的生产会话。
 

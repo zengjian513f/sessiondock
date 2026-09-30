@@ -41,7 +41,7 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Response> {
     let (_, live) = super::trash::frozen_liveness(state)
         .await
         .map_err(IntoResponse::into_response)?;
-    for member in &op.plan.group.members {
+    for member in &op.group().members {
         if matches!(live.state(&member.uid), RunState::Running(_)) {
             return Err(failure(TransferError::new(
                 "move_session_running",
