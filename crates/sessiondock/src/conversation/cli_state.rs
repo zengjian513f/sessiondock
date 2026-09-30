@@ -288,9 +288,16 @@ impl super::Conversations {
         if source != "codex" {
             return Ok(());
         }
+        let queued = self.store.queued(key);
+        if !queued
+            .iter()
+            .any(|row| row.state == "queued" && row.cli_queued_at.is_none())
+        {
+            return Ok(());
+        }
         let mut visible = driver::codex_queued_texts(capture);
         let mut marks = Vec::new();
-        for row in self.store.queued(key) {
+        for row in queued {
             if row.state != "queued" {
                 continue;
             }
