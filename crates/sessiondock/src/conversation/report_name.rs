@@ -26,55 +26,52 @@ impl Conversations {
         }
         let title = note["title"].as_str().unwrap_or("BUG:");
         let request = format!("report-rename:{}", record.record_id());
-        if let Some(old) = self.store.request(&identity.key, &request) {
-            submission_result(&old)?;
-            return Ok(());
-        }
-        let command = format!("/rename {title}");
-        let before = self.driver.capture(lease).await.map_err(driver_error)?;
-        input::classify("codex", &before).result()?;
-        if let Some(old) = self
-            .store
-            .begin(&identity.key, &request, json!({"title":title}))?
-        {
-            submission_result(&old)?;
+        let previous = self.store.request(&identity.key, &request);
+        if previous.as_ref().is_some_and(|old| old.phase == "sent") {
             return Ok(());
         }
         let result = async {
-            self.driver
-                .paste(lease, &command)
-                .await
-                .map_err(driver_error)?;
-            input::wait_for_pasted_editor("codex", &command, &before, || async {
-                self.driver.capture(lease).await.map_err(driver_error)
-            })
-            .await?;
-            self.driver
-                .keys(lease, &["Enter"])
-                .await
-                .map_err(driver_error)?;
+            // A previous unconfirmed rename may already have succeeded. Never
+            // replay it: query this exact launch and reconcile its native name.
+            if previous.is_none() {
+                if let Some(old) =
+                    self.store
+                        .begin(&identity.key, &request, json!({"title":title}))?
+                {
+                    submission_result(&old)?;
+                    return Ok(());
+                }
+                self.report_local_command(identity, lease, &format!("/rename {title}"))
+                    .await?;
+            }
+            self.report_local_command(identity, lease, "/status")
+                .await?;
             let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+            static SESSION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+                regex::Regex::new(
+                    r"Session:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+                )
+                .unwrap()
+            });
             loop {
-                let listing = self
-                    .reader
-                    .run(|store| store.list(false))
+                // /status identifies the guarded TUI even when no rollout or
+                // process-to-native binding exists yet. Never match by title.
+                let history = self
+                    .driver
+                    .capture_history(lease)
                     .await
-                    .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
-                for row in listing["sessions"].as_array().into_iter().flatten() {
-                    if row["source"] != "codex" || row["renamed_to"] != title {
-                        continue;
-                    }
-                    let Some(uid) = row["uid"].as_str() else {
-                        continue;
-                    };
-                    if self
-                        .resolver
-                        .resolve(uid)
+                    .map_err(driver_error)?;
+                if let Some(sid) = SESSION
+                    .captures_iter(&history)
+                    .last()
+                    .map(|c| c[1].to_owned())
+                {
+                    let name = self
+                        .reader
+                        .run(move |store| store.codex_name(&sid))
                         .await
-                        .is_ok_and(|target| target.instance_id == lease.instance_id)
-                    {
-                        // Let the TUI consume its own name-updated notification.
-                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        .map_err(|e| Failure::new(e.status.as_u16(), e.code, e.message))?;
+                    if name.as_deref() == Some(title) {
                         self.ensure_sendable(identity, lease).await?;
                         return Ok(());
                     }
@@ -111,6 +108,42 @@ impl Conversations {
                 )?;
                 Err(error)
             }
+        }
+    }
+    async fn report_local_command(
+        &self,
+        identity: &Identity,
+        lease: &LeaseHandle,
+        command: &str,
+    ) -> Result<(), Failure> {
+        self.ensure_sendable(identity, lease).await?;
+        let before = self.driver.capture(lease).await.map_err(driver_error)?;
+        input::classify("codex", &before).result()?;
+        self.driver
+            .paste(lease, command)
+            .await
+            .map_err(driver_error)?;
+        input::wait_for_pasted_editor("codex", command, &before, || async {
+            self.driver.capture(lease).await.map_err(driver_error)
+        })
+        .await?;
+        self.driver
+            .keys(lease, &["Enter"])
+            .await
+            .map_err(driver_error)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let screen = self.driver.capture(lease).await.map_err(driver_error)?;
+            let status = input::classify("codex", &screen);
+            if status.ready() {
+                return Ok(());
+            }
+            if (status.code != input::INPUT_PENDING && status.state != input::InputState::Starting)
+                || tokio::time::Instant::now() >= deadline
+            {
+                return status.result();
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 }

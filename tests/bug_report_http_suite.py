@@ -365,7 +365,7 @@ def run(opener, base, root, repo):
         "uid": uid, "name": refused["worker"]["name"], "text": draft["value"]["text"],
         "request_id": draft["value"]["requestId"], "draft_revision": draft["revision"],
         "attachments": [], "quotes": [], "_build": build}, want=409)
-    assert "send_result_unknown" in json.dumps(retried), retried
+    assert "report_rename_unconfirmed" in json.dumps(retried), retried
     assert (root / "rename-reject.attempts").read_text().splitlines() == ["/rename BUG: keep rejected rename draft"]
     ledger = json.loads((root / "state/conversations/conversation-ledger.json").read_text())
     assert not any(key.endswith("report-send:" + refused["report_id"]) for key in ledger["requests"])
