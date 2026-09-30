@@ -26,7 +26,7 @@ import tempfile
 import time
 from types import SimpleNamespace
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout, expect, sync_playwright
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
 from hub_http_suite import FakeNode, Hub, free_port
@@ -71,9 +71,18 @@ esac
 
 
 def open_machines(page):
-    if not page.locator("#settings").is_visible():
-        page.locator("#header-more-btn").click()
-    page.click("#settings")
+    # A narrow header folds Settings into the More menu once the machine list has loaded,
+    # so a visibility check can go stale before the click: decide again on each attempt.
+    for attempt in range(5):
+        try:
+            if not page.locator("#settings").is_visible():
+                page.locator("#header-more-btn").click(timeout=3000)
+            page.locator("#settings").click(timeout=3000)
+            break
+        except PlaywrightTimeout:
+            if attempt == 4:
+                raise
+            page.keyboard.press("Escape")
     page.click(".settings-tab[data-tab='machines']")
     page.wait_for_selector("#settings-machines:not([hidden])")
 
@@ -146,7 +155,7 @@ def check_phone(page, base):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(base + "/")
     open_machines(page)
-    expect(page.locator("#client-matrix tbody tr")).to_have_count(2)
+    expect(page.locator("#client-matrix tbody tr")).to_have_count(2)   # Pavo and the offline Vega
     # The matrix may scroll inside its own box; the dialog and the page never scroll sideways.
     overflow = page.evaluate("""() => [document.scrollingElement, document.querySelector('#settings-machines')]
       .map(box => box.scrollWidth - box.clientWidth)""")
@@ -219,6 +228,13 @@ def main():
                         expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
                         expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "current")
                         print("PASS hub matrix through the explicit node proxy, with an empty cell")
+                        # A machine that cannot be reached reads 离线, never 失败.
+                        other.stop()
+                        page.goto(hub_base + "/")
+                        open_machines(page)
+                        expect(matrix_row(page, "Vega").locator("td.client-status")).to_have_text("离线", timeout=20000)
+                        expect(matrix_row(page, "Pavo").locator('td[data-client-source="codex"] .client-version')).to_have_text(NEW)
+                        print("PASS an unreachable machine reads 离线")
                         check_phone(page, hub_base)
                         print("PASS 390px machine row without horizontal overflow")
                     finally:

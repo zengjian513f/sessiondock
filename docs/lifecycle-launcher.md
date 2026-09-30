@@ -86,8 +86,9 @@ row per enabled machine, one column per client installed on at least one of
 them. A cell shows only the installed version and an `↑` update button, which
 is highlighted when a newer version is known; the newest version and the last
 update's outcome are in the cell's tooltip. `无` means that machine lacks the
-client; a whole row reads `离线`, `…` while loading, or `失败` (reason in the
-tooltip).
+client; a whole row reads `…` while loading and `离线` when the machine is
+offline or cannot be read (reason in the tooltip). An update fails only when
+its command exits non-zero, times out or cannot start.
 `GET /api/clients` runs each profile's executable with its fixed `args` plus
 `--version` (10 s each, in parallel, under lifecycle admission) and answers
 `{clients:[{id, source, version?, detail, installed, latest?, update?}]}`:
