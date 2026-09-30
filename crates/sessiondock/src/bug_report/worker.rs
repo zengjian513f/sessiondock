@@ -115,13 +115,14 @@ pub async fn launch(
                 .unwrap_or_default()
         ));
     }
+    let title = report.prompt.lines().next().unwrap_or("BUG:");
     ctx.service
-        .note_worker(record.record_id(), &report.report_id);
+        .note_worker(record.record_id(), &report.report_id, title);
     let declared_sid = record.declared_sid().map(str::to_owned);
     let worker = json!({
         "name": record.host_name(), "source": source_name(source), "sid": declared_sid,
         "cwd": record.spec().cwd(), "token": declared_sid.clone().unwrap_or_else(|| record.launch_id().to_owned()),
-        "title": format!("处理 {}", report.report_id), "kind": "bug-report",
+        "title": title, "kind": "bug-report",
         "report_id": report.report_id,
         "record_id": record.record_id(), "launch_id": record.launch_id(),
         "instance_id": record.instance_id(), "profile": record.spec().adapter_id(), "cols": cols, "rows": rows,
