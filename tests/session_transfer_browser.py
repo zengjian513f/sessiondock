@@ -107,6 +107,51 @@ def fixture(root, cwd=None):
     return corpus
 
 
+def environment_checks(transfer, root):
+    cwd=root/'workspace';cwd.mkdir()
+    (cwd/'.git').mkdir();(cwd/'.git/HEAD').write_text('first')
+    (cwd/'.gitignore').write_text('ignored\n')
+    (cwd/'ignored').write_text('ignored but required')
+    (cwd/'untracked').write_text('worktree bytes')
+    external=root/'attachment';external.write_bytes(b'attachment bytes')
+    (cwd/'a-link').symlink_to(cwd/'untracked')
+    (cwd/'outside').symlink_to(external)
+    (cwd/'cycle').symlink_to(cwd, target_is_directory=True)
+    inspect={'operation':'inspect_environment','cwd':str(cwd),'dependencies':[str(external)]}
+    snapshot=command(transfer,inspect)
+    assert 'untracked' in snapshot['entries'] and 'ignored' in snapshot['entries']
+    assert str(external) in snapshot['dependencies']
+    assert all('.git' not in Path(p).parts for p in snapshot['entries'])
+    compare={'operation':'compare_environment','snapshot':snapshot}
+    assert command(transfer,compare)['matches']
+    (cwd/'.git/HEAD').write_text('different git metadata')
+    assert command(transfer,compare)['matches']
+    for path,changed in [(cwd/'ignored',b'same dirty status, different bytes'),(external,b'changed attachment')]:
+        before=path.read_bytes();path.write_bytes(changed)
+        command(transfer,compare,error='move_cwd_mismatch')
+        command(transfer,{'operation':'recheck_environment','snapshot':snapshot},error='move_plan_stale')
+        path.write_bytes(before)
+    (cwd/'untracked').chmod(0o700)
+    command(transfer,compare,error='move_cwd_mismatch')
+    (cwd/'untracked').chmod(0o600)
+    (cwd/'added').write_text('new path')
+    command(transfer,compare,error='move_cwd_mismatch');(cwd/'added').unlink()
+    assert command(transfer,compare)['matches']
+    # Per-host inode and mtime differences are not content differences.
+    changed_stamp=json.loads(json.dumps(snapshot))
+    for stamp in changed_stamp['stamps'].values():stamp['inode']+=1
+    assert command(transfer,{'operation':'compare_environment','snapshot':changed_stamp})['matches']
+    source=root/'store';source.mkdir();target=root/'other-store';target.mkdir()
+    alias=root/'same-store';alias.symlink_to(source,target_is_directory=True)
+    probe=command(transfer,{'operation':'create_storage_probe','root':str(source)})
+    assert command(transfer,{'operation':'check_storage_probe','root':str(alias),'probe':probe})['shared']
+    assert not command(transfer,{'operation':'check_storage_probe','root':str(target),'probe':probe})['shared']
+    command(transfer,{'operation':'remove_storage_probe','root':str(source),'probe':probe})
+    assert not list(source.iterdir())
+    print('PASS content preflight: ignored/untracked files, executable bits, external links, cycles, stale scan; shared storage nonce')
+    return cwd
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
@@ -115,7 +160,8 @@ def main():
     transfer = args.transfer_binary or args.binary.with_name('sessiondock-transfer')
     with tempfile.TemporaryDirectory(prefix='sessiondock-transfer-') as temporary:
         root = Path(temporary)
-        source = fixture(root / 'source')
+        cwd=environment_checks(transfer,root)
+        source = fixture(root / 'source',cwd=cwd)
         roots = {'codex': str(source.root / 'codex')}
         original = fingerprint(source.root)
         wanted = {source.uid(key) for key in source.paths if key != 'unrelated'}

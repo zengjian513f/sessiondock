@@ -4,13 +4,35 @@
 use serde::Deserialize;
 use sessiondock::{
     sessions::{SessionRoots, SessionStore},
-    transfer::{TransferError, codex, files, group},
+    transfer::{TransferError, codex, environment, files, group},
 };
 use std::{io::Read, path::PathBuf};
 
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum Request {
+    InspectEnvironment {
+        cwd: PathBuf,
+        #[serde(default)]
+        dependencies: Vec<PathBuf>,
+    },
+    CompareEnvironment {
+        snapshot: environment::Snapshot,
+    },
+    RecheckEnvironment {
+        snapshot: environment::Snapshot,
+    },
+    CreateStorageProbe {
+        root: PathBuf,
+    },
+    CheckStorageProbe {
+        root: PathBuf,
+        probe: environment::StorageProbe,
+    },
+    RemoveStorageProbe {
+        root: PathBuf,
+        probe: environment::StorageProbe,
+    },
     Group {
         uid: String,
         roots: Roots,
@@ -69,6 +91,29 @@ fn run() -> Result<serde_json::Value, TransferError> {
     std::io::stdin().read_to_end(&mut raw)?;
     let request: Request = serde_json::from_slice(&raw)?;
     Ok(match request {
+        Request::InspectEnvironment { cwd, dependencies } => {
+            serde_json::to_value(environment::Snapshot::capture(&cwd, &dependencies)?)?
+        }
+        Request::CompareEnvironment { snapshot } => {
+            let paths = snapshot.dependencies.keys().cloned().collect::<Vec<_>>();
+            let target = environment::Snapshot::capture(&snapshot.cwd, &paths)?;
+            snapshot.compare(&target)?;
+            serde_json::json!({"matches":true,"snapshot":target})
+        }
+        Request::RecheckEnvironment { snapshot } => {
+            snapshot.recheck()?;
+            serde_json::json!({"unchanged":true})
+        }
+        Request::CreateStorageProbe { root } => {
+            serde_json::to_value(environment::StorageProbe::create(&root)?)?
+        }
+        Request::CheckStorageProbe { root, probe } => {
+            serde_json::json!({"shared":probe.shared(&root)?})
+        }
+        Request::RemoveStorageProbe { root, probe } => {
+            probe.remove(&root)?;
+            serde_json::json!({"removed":true})
+        }
         Request::Group { uid, roots } => serde_json::to_value(derive(&uid, roots)?)?,
         Request::PlanCodex { uid, roots, mode } => {
             serde_json::to_value(codex::plan(derive(&uid, roots)?, mode)?)?
