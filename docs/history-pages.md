@@ -66,6 +66,9 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   gives no field). An older Codex rollout generation (see *Codex rollout
   rotation*) carries `continued_in` = the latest generation's uid once that
   row's chain validates, so the list shows one row per native thread.
+  Codex generation lookup never applies to another source with the same sid.
+  The mixed-provider clone browser regression covers this collision together
+  with cross-provider `spawned_by` relationships.
 - **List cursor rule.** A supported row (and each supported `agent_items`
   entry) carries `cursor: {end, head}` — the offset after the last complete
   JSONL line and the `rs-m2-1` hash of the committed prefix's first 4 KiB,
