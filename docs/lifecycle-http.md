@@ -384,7 +384,10 @@ still deny native claim while guarded host status proves the child is alive.
 
 The main session's action menu offers **冻结现场** for a verified managed
 Linux instance. It becomes **恢复运行** while paused. The separate report
-button stays available: freeze first, then report the problem. Freezing does
+button stays available: freeze first, then report the problem. The header
+orders viewing controls before the paired freeze/report controls, then move/copy
+and stop/delete. Freeze and report stay together when folded into the menu.
+Freezing does
 not create a report or start an investigation automatically.
 
 `POST /api/session/freeze` takes `{uid, instance_id, frozen: true|false}`.
