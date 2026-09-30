@@ -83,8 +83,11 @@ unchanged. See the [official configuration reference](https://developers.openai.
 
 The Machines settings tab has an AI client matrix below the machine list: one
 row per enabled machine, one column per client installed on at least one of
-them. A cell shows the installed version, `最新` or `→ <newest>` when the newest
-version is known, and an Update button; `—` means that machine lacks the client.
+them. A cell shows only the installed version and an `↑` update button, which
+is highlighted when a newer version is known; the newest version and the last
+update's outcome are in the cell's tooltip. `无` means that machine lacks the
+client; a whole row reads `离线`, `…` while loading, or `失败` (reason in the
+tooltip).
 `GET /api/clients` runs each profile's executable with its fixed `args` plus
 `--version` (10 s each, in parallel, under lifecycle admission) and answers
 `{clients:[{id, source, version?, detail, installed, latest?, update?}]}`:
