@@ -120,6 +120,43 @@ class Peer:
             self.tunnel.terminate();self.tunnel.wait(timeout=10)
 
 
+def seed_move_receipts(source, provider, selected, binary, conversation):
+    """Finished private receipts: native binding, draft alias, old rollout and retry."""
+    root=source.root;cwd=root/('workspace' if provider=='codex' else 'cwd')
+    for name in ('host','lifecycle'):(root/name).mkdir(mode=0o700)
+    initialized=subprocess.run([str(binary.resolve()),'--initialize-lifecycle',str(root/'lifecycle')],capture_output=True,timeout=15)
+    assert initialized.returncode==0,initialized.stderr.decode()
+    path=root/'lifecycle/lifecycle-ledger.json';doc=json.loads(path.read_text())
+    sid=ident(10 if provider=='grok' else 2)
+    foreign='claude' if provider=='codex' else 'codex'
+    ids=[f'{1000+i:032x}' for i in range(6)]
+    for i,rid in enumerate(ids):
+        kind=foreign if i==4 else provider
+        binding={'spec':{'source':provider,'sid':sid,'uid':selected},'state':'confirmed',
+            'method':'operator','evidence':None,'bound_at':1} if i in (0,3) else None
+        launch={'kind':'resume','sid':sid,'uid':kind+':eeeeeeeeeeeeeeee'} if i in (2,4) else {'kind':'new_pending' if kind=='codex' else 'fixed'}
+        doc['records'][rid]={'record_id':rid,'request_id':'move-fixture-'+rid,
+            'spec':{'source':kind,'adapter_id':'synthetic-move','cwd':str(cwd),'launch':launch},
+            'launch_id':rid,'instance_id':rid,'host_name':'sessiondock-'+rid,'revision':i+1,
+            'state':'exited','failure':None,'cancel_requested':False,'binding':binding,'session_id':None,
+            'created_at':int(time.time())-10,'finished_at':int(time.time())-1,'discarded':i==3}
+    doc['revision']=6;path.write_text(json.dumps(doc))
+    drafts=json.loads(conversation.read_text())
+    drafts['aliases']={selected:'launch:'+ids[1]}
+    drafts['drafts']['launch:'+ids[1]]=drafts['drafts'].pop(selected)
+    unrelated=(source.uid('unrelated') if provider=='codex' else
+        uid('grok',root/'grok/project'/ident(10)) if provider=='claude' else
+        uid('claude',root/'claude/projects/project'/(ident(1)+'.jsonl')))
+    drafts['aliases'][unrelated]='launch:'+ids[2]
+    drafts['drafts']['launch:'+ids[2]]={'revision':1,'value':{'text':'shared with unrelated native session'}}
+    for i in (0,3,4,5):drafts['drafts']['launch:'+ids[i]]={'revision':1,'value':{'text':'receipt draft '+str(i)}}
+    conversation.write_text(json.dumps(drafts))
+    launcher=root/'launcher.json'
+    launcher.write_text(json.dumps({'host_binary':str(binary.resolve().with_name('ptyhost')),'host_dir':str(root/'host'),
+        'adapters':[{'id':'synthetic-move','source':provider,'executable':'/bin/sh','args':['-c','exit 0'],'env':{'PATH':'/usr/bin:/bin'}}]}))
+    return ids,{'host_dir':root/'host','lifecycle_dir':root/'lifecycle','launcher_config':launcher,'file_write_roots':(root,)}
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--peer',help='Opt-in SSH peer with shared checkout; all target data stays in private /tmp directories')
@@ -149,10 +186,12 @@ def main():
                     (corpus.root/'trash').mkdir()
                 originals={str(p):p.read_bytes() for kind in ('claude','codex','grok') for p in (source.root/kind).rglob('*') if p.is_file() and '.sqlite' not in p.name}
                 original_links={p:os.readlink(p) for p in originals if Path(p).is_symlink()}
+                receipt_options={};receipt_ids=[]
                 if args.move:
                     ledger=source.root/'state/conversations/conversation-ledger.json'
                     ledger.parent.mkdir()
                     ledger.write_text(json.dumps({'drafts':{selected:{'revision':1,'value':{'text':'source unsent draft'}},'codex:ffffffffffffffff':{'revision':1,'value':{'text':'unrelated draft'}}}}))
+                    if args.peer:receipt_ids,receipt_options=seed_move_receipts(source,provider,selected,args.binary,ledger)
                 hubroot=base_root/'hub';hubroot.mkdir();hub=None;completed=None;continued=None
                 peer=Peer(args.peer,base_root,source,roots,b,args.binary) if args.peer else None
                 read_target=peer.read if peer else lambda p:p.read_bytes()
@@ -164,7 +203,7 @@ def main():
                             env=node_env(corpus.root,node.port,'127.0.0.0/8')
                             env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in roots.items()})
                             env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
-                            stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',trash_dir=corpus.root/'trash',extra_env=env))
+                            stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',trash_dir=corpus.root/'trash',extra_env=env,**(receipt_options if node is a else {})))
                         if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b])
                         hub.start();stack.callback(hub.stop)
                         context=browser.new_context(service_workers='block');stack.callback(context.close)
@@ -196,6 +235,14 @@ def main():
                                 status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local,'new_ids':False,'mode':'move'});assert status==200,raw
                                 back=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':completed['target_uid'],'target_node':a.nid,'operation_id':json.loads(raw)['operation_id']})
                                 assert back.ok,back.text();assert back.json()['target_uid']==scoped(a.nid,target_local)
+                                returned_uid=back.json()['target_uid']
+                                restored=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/conversation',params={'uid':returned_uid})
+                                assert restored.ok,restored.text()
+                                saved=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/conversation',data={'uid':returned_uid,'revision':restored.json()['draft']['revision'],'value':{'text':'new draft after moving back'}})
+                                assert saved.ok,saved.text()
+                                status,raw=node_call(a,'/api/session/transfer/retire',{'operation_id':completed['operation_id']})
+                                assert status==200,raw
+                                assert any(row['value'].get('text')=='new draft after moving back' for row in json.loads(ledger.read_text())['drafts'].values())
                                 status,raw=node_call(a,'/api/session/clone/plan',{'uid':target_local});assert status==200,raw
                                 peer.call('stop');peer.call('start')
                                 status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local})
@@ -398,6 +445,19 @@ def main():
                             assert set(recovered)==moved and all(recovered[p]==(original_links[p] if p in original_links else originals[p]) for p in moved)
                             drafts=json.loads(ledger.read_text())['drafts']
                             assert selected not in drafts and drafts['codex:ffffffffffffffff']['value']['text']=='unrelated draft'
+                            if receipt_ids:
+                                receipts=json.loads((source.root/'lifecycle/lifecycle-ledger.json').read_text())['records']
+                                assert all(receipts[rid]['discarded'] for rid in receipt_ids[:4]),receipts
+                                assert all(not receipts[rid]['discarded'] for rid in receipt_ids[4:]),receipts
+                                assert all('launch:'+receipt_ids[i] not in drafts for i in (0,1,3)),drafts
+                                assert drafts['launch:'+receipt_ids[2]]['value']['text']=='shared with unrelated native session',drafts
+                                assert all('launch:'+rid in drafts for rid in receipt_ids[4:]),drafts
+                                page.reload(wait_until='networkidle')
+                                pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/term/list',params={'node':a.nid})
+                                assert pending.ok,pending.text()
+                                assert not any(str(row.get('record_id','')).endswith(rid) for row in pending.json()['pending'] for rid in receipt_ids[:4]),pending.text()
+                                page.wait_for_function('uid=>S.sel===uid',arg=completed['target_uid'])
+                                print('PASS '+provider+' move clears bound/aliased/old-rollout and already-discarded receipts; preserves unrelated and other-provider identities',flush=True)
                             for database in source_op['native']['databases']:
                                 with sqlite3.connect(database['path']) as db:
                                     for table in database['tables']:
