@@ -236,6 +236,7 @@ def main():
                         page.locator('#item-menu [data-act="clone"]').click()
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
+                        expect(dialog.locator('.transfer-head .transfer-source')).to_have_text(node.name)
                         expect(dialog.locator('.clone-status')).to_contain_text('整组 6 个会话')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
                         expect(dialog.locator('.clone-members thead')).to_contain_text('历史文件')
@@ -254,6 +255,9 @@ def main():
                         expect(dialog.locator('.transfer-identity-help')).to_contain_text('生成新身份')
                         expect(dialog.locator('.clone-confirm')).to_be_disabled()
                         expect(dialog.locator('.transfer-notice')).to_contain_text('跨机器传输尚未接入')
+                        assert dialog.locator('.transfer-notice').evaluate("e => getComputedStyle(e).backgroundColor")== 'rgba(0, 0, 0, 0)'
+                        assert dialog.locator('.transfer-notice').bounding_box()['height'] < 30
+                        expect(dialog.locator('.transfer-head .transfer-source')).to_have_text(node.name)
                         dialog.locator('.transfer-segments label').nth(0).click()
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
                         dialog.locator('#transfer-new-ids').uncheck()
