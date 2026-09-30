@@ -1036,6 +1036,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-links"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+]
+
+[[package]]
 name = "ptyhost"
 version = "0.1.0"
 dependencies = [
@@ -1354,6 +1362,7 @@ dependencies = [
  "memchr",
  "mime_guess",
  "native-tls",
+ "process-links",
  "ptyhost-client",
  "ptyhost-record",
  "ptyhost-screen",

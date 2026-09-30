@@ -126,7 +126,9 @@ background tick call `MetadataStore::record_spawn_parents`, which applies
 `with_spawn_parents`: the first relation is kept for good, a later different
 clue is ignored, and entries with an empty uid/source/sid are skipped. The value names the spawner's source
 and native session id, not a UID, and the spawner row may no longer exist.
-`enrich`/`enrich_one` put the object on the row as `spawned_by`; there is no
+Cross-node SSH discovery can also include `node_id` in that object; absent means
+the child's node. Its launch initiator is distinct from native creation ancestry
+([process-links](process-links.md)). `enrich`/`enrich_one` put the object on the row as `spawned_by`; there is no
 HTTP route to set or clear it, and stars/visibility/pins never touch it.
 `tests/meta_import.py` carries the identical key over unchanged.
 
