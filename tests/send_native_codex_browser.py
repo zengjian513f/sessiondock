@@ -59,6 +59,8 @@ def main():
                 'new_args': [], 'resume_args': ['resume', '{sid}'],
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
+                    'SESSIONDOCK_TEST_QUOTED_READY': '1',
+                    'SESSIONDOCK_TEST_BUSY_WARNING': '1',
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         initialize('--initialize-lifecycle', root / 'ledger')
         try:
@@ -78,6 +80,8 @@ def main():
                 on_popup(page, lambda dialog: (errors.append(dialog.message), dialog.accept()))
                 page.goto(base, wait_until='domcontentloaded')
                 resume_codex(page, uid)
+                xterm_includes(page, 'Context 32% used · Ready')
+                xterm_includes(page, 'Context 27% used · Working')
                 page.locator('#a-term').click()
                 for number in range(2):
                     page.wait_for_function("uid => composerUid === uid && composerDraft()?.inputStatus?.state === 'ready'", arg=uid)
