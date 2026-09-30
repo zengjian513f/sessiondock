@@ -692,7 +692,7 @@ const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
   const label = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
     class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
-    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
+    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? '?' : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -1948,19 +1948,19 @@ function sessionFrozen(uid) {
 }
 
 function paintStatusMarker(badge, frozen, count = 0, attention = '') {
+  const question = frozen || attention === 'question';
   badge.classList.toggle('frozen', frozen);
-  badge.classList.toggle('input-attention', !!attention);
-  badge.classList.toggle('input-question', attention === 'question');
+  badge.classList.toggle('input-attention', frozen || !!attention);
+  badge.classList.toggle('input-question', question);
   const marker = `${frozen}:${count}:${attention}`;
   if (badge.dataset.marker === marker) return;
   badge.dataset.marker = marker;
   const text = count > 99 ? '99+' : (count || '');
-  if (frozen) badge.innerHTML = uiIcon('pause') + esc(text);
-  else badge.textContent = (attention === 'question' ? '?' : attention ? '!' : '') + text;
+  badge.textContent = question ? '?' : text;
 }
 
 function sessionInputAttention(uid) {
-  if (!uid) return '';
+  if (!uid || sessionComposerEnded(uid)) return '';
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const cli = cache.get(uid)?.cli;
@@ -1972,12 +1972,9 @@ function sessionInputAttention(uid) {
       'cli_catching_up', 'cli_pasting'].includes(input?.code)) return '';
   const turn = sessionTurn(uid);
   if (input?.code === 'cli_question' || turn === 'waiting') return 'question';
-  const busy = (current ? draft?.cli : cli)?.instance?.busy;
-  if (busy === true || turn === 'working') return '';
-  return ['blocked', 'unknown'].includes(input?.state) ? 'blocked' : '';
+  return '';
 }
-const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答'
-  : attention ? ' · 输入受阻，请查看会话提示' : '';
+const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答' : '';
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */

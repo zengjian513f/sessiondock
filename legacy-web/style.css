@@ -750,13 +750,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   top: -5px; right: -9px; width: auto; min-width: 17px; height: 17px;
   padding: 0 4px; border-width: 2px;
 }
-/* 暂停用图标替代运行圆点，数字未读角标仍保留。 */
-.item-status.frozen {
-  width: 16px; height: 16px; min-width: 16px; padding: 0; border-radius: 4px;
-  background: var(--panel); color: var(--text); animation: none; box-shadow: none;
-}
-.item-status.frozen > .ui-icon { width: 12px; height: 12px; flex: none; }
-.item-status.frozen.counted { width: auto; gap: 2px; padding: 0 3px; }
+/* 暂停和等待回答共用黄色问号，未读数保留在悬停说明中。 */
+.item-status.frozen,
 .item-status.input-attention {
   width: 17px; height: 17px; min-width: 17px; border-radius: 5px;
   background: #fbbf24; color: #422006; font-size: 13px;
@@ -1864,12 +1859,11 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 #composer-input-status .composer-input-status-copy { flex: 1; min-width: 0; }
 #composer-input-status .btn { flex: none; }
 #composer-input-status.blocked { color: var(--danger); }
-#composer-input-status.input-attention::before {
-  content: '!'; display: grid; place-items: center; flex: none;
+#composer-input-status.input-question::before {
+  content: '?'; display: grid; place-items: center; flex: none;
   width: 22px; height: 22px; border-radius: 5px;
   background: #fbbf24; color: #422006; font: 800 17px/1 system-ui, sans-serif;
 }
-#composer-input-status.input-question::before { content: '?'; }
 #right.shell-session #composer-input-status { display: none; }
 /* 终端优先的页面里提示不能盖住终端底部（手机上是快捷键栏），放进输入区。 */
 #right.terminal-first #composer-input-status { position: static; box-shadow: none; }
