@@ -7869,7 +7869,71 @@ function eventNode(m) {
   return n;
 }
 
-function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = cancelCliQuestion} = {}) {
+const screenMenuTextDrafts = new Map();
+
+// Use the same question card as native history/hooks, while preserving each
+// screen menu's own toggle, text, and explicit Submit/Next semantics.
+function screenMenuControls(body, m, {answer, cancel, action, textAnswer}) {
+  const waiting = (m.state || 'waiting') === 'waiting';
+  const options = m.questions?.[0]?.options || [];
+  body.querySelectorAll('[data-question-option]').forEach(button => {
+    const option = options[+button.dataset.questionOption];
+    button.disabled = !waiting || !option?.keys?.length;
+    button.classList.toggle('selected', !!option?.selected);
+    button.setAttribute('aria-pressed', String(!!option?.selected));
+    button.onclick = () => answer(m.uid, +button.dataset.questionOption);
+  });
+  const actions = el('div', 'question-actions');
+  if (m.text && typeof m.text === 'object') {
+    const owner = composerDraftOwner(m.uid);
+    const key = `${owner}\0${m.id}`;
+    for (const saved of screenMenuTextDrafts.keys()) {
+      if (saved.startsWith(`${owner}\0`) && saved !== key) screenMenuTextDrafts.delete(saved);
+    }
+    const form = el('form', 'question-text-form');
+    const label = el('label', '', m.text.label || '回答');
+    const input = el(m.text.multiline ? 'textarea' : 'input', 'question-text-input');
+    if (!m.text.multiline) input.type = 'text';
+    input.setAttribute('aria-label', m.text.label || '回答');
+    input.value = screenMenuTextDrafts.get(key) ?? m.text.value ?? '';
+    input.disabled = !waiting;
+    input.oninput = () => screenMenuTextDrafts.set(key, input.value);
+    const submit = el('button', 'question-submit', m.text.submit_label || '提交文字');
+    submit.type = 'submit';
+    submit.disabled = !waiting;
+    form.onsubmit = event => {
+      event.preventDefault();
+      textAnswer?.(m.uid, input.value);
+    };
+    label.appendChild(input);
+    form.append(label, submit);
+    body.appendChild(form);
+  }
+  if (!waiting) actions.appendChild(el('small', 'question-settling', '正在处理，等待终端画面…'));
+  for (const [index, item] of (m.actions || []).entries()) {
+    const button = el('button', 'question-submit', item.label);
+    button.type = 'button';
+    button.dataset.questionAction = index;
+    button.disabled = !waiting || !item.keys?.length;
+    button.onclick = () => action?.(m.uid, index);
+    actions.appendChild(button);
+  }
+  const terminal = el('button', '', '打开终端');
+  terminal.type = 'button';
+  terminal.onclick = () => revealNativeTerminal(m.uid);
+  actions.appendChild(terminal);
+  if (m.cancel_keys?.length) {
+    const button = el('button', 'question-cancel', '取消');
+    button.type = 'button';
+    button.disabled = !waiting;
+    button.onclick = () => cancel(m.uid);
+    actions.appendChild(button);
+  }
+  body.appendChild(actions);
+}
+
+function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = cancelCliQuestion,
+  action, textAnswer} = {}) {
   const n = el('div', 'msg question');
   n.dataset.role = 'question';
   if (m.counted === false) n.dataset.counted = 'false';
@@ -7891,7 +7955,9 @@ function questionNode(m, {answer = answerCliQuestion, cancel: cancelAnswer = can
           class="question-option"><span>${j + 1}</span><div><b>${esc(o.label)}</b>
           ${o.description ? `<small>${esc(o.description)}</small>` : ''}</div></${live ? 'button' : 'div'}>`).join('')}</div>` : ''}
     </section>`).join('');
-  if (live) {
+  if (live && m.kind === 'screen_menu') {
+    screenMenuControls(body, m, {answer, cancel: cancelAnswer, action, textAnswer});
+  } else if (live) {
     const cli = sessiondockCli(m.source || m.uid);
     const cliName = cli?.name || 'CLI';
     const waiting = promptState === 'waiting';
