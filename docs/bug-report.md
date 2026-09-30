@@ -110,6 +110,12 @@ Codex, whose identity stays pending like any other launch); `token` is that sid 
 launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
+Worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
+The worker prompt starts with that same title so native session titles retain the
+readable description after binding. Report IDs remain in the task body and bundle
+metadata. Pending titles are recovered from `description.md` after a restart;
+explicit user renames are unchanged.
+
 ## Server input preservation
 
 Reports and ordinary messages use the same [conversation service](conversation.md).
