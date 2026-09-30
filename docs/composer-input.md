@@ -29,7 +29,7 @@ SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 re
 
 ## UI 与否决边界
 
-Codex 首次进入目录、尚无原生 JSONL 时，CHECK 从同一次当前 PTY 捕获返回 `prompt`（`kind: folder_trust`）。composer 展示目录与完整信任说明，并提供“信任并继续”和“退出”；点击前再检同一问题 ID，通过实例身份保护的 `/api/term/send` 发送原生按键（信任为 `1`、`Enter`，退出为 `2`），不清空或自动发送草稿。问题离开画面后题卡撤下，输入状态仍由 CHECK 决定；未识别的启动菜单仍提示使用终端。覆盖见 [startup_question_browser.py](../tests/startup_question_browser.py)。
+Claude/Codex 首次进入目录、尚无原生 JSONL 或 hooks 时，CHECK 从同一次当前 PTY 捕获返回 `prompt`（`kind: folder_trust`）。composer 展示目录与完整信任说明，并提供“信任并继续”和“退出”；点击前再检同一问题 ID，通过实例身份保护的 `/api/term/send` 发送原生按键（Codex 信任为 `1`、`Enter`，退出为 `2`；Claude 从再检画面的选中行定位信任选项，必要时按一次方向键再 `Enter`，退出为 `Escape`），不清空或自动发送草稿。问题离开画面后题卡撤下，输入状态仍由 CHECK 决定；未识别的启动菜单仍提示使用终端。覆盖见 [startup_question_browser.py](../tests/startup_question_browser.py) 与 [startup_claude_browser.py](../tests/startup_claude_browser.py)。
 
 发送按钮的可用性和原因文案以服务端 `input` 为准，浏览器不另做一套画面分类。原生历史或 hook 中的过期问题仍是展示与回答数据，不是独立的 SEND 否决。回答走终端键盘路径。Shell/SSH 与直接 PTY 键盘/回答控件保持原始输入语义，不经本分类器否决。
 
