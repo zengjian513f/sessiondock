@@ -2317,22 +2317,29 @@ header .btn[data-session-docked] { display: none; }
 #composer-question .question-text-input { display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 #composer-question .question-actions { flex-wrap:wrap; }
 
-/* Session-owned labels and groups. */
+/* Node-owned session groups. */
 #view button[hidden] { display: none; }
-#session-label-filters { margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-#session-label-filters[hidden] { display: none; }
-#session-label-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-#session-label-chips button, .session-row-labels span { border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: transparent; padding: 2px 6px; font-size: 11px; }
-#session-label-chips button { cursor: pointer; }
-#session-label-chips button.on { color: var(--accent); border-color: currentColor; }
-#session-label-filters label { font-size: 12px; color: var(--muted); }
-.session-row-labels { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
-.session-row-labels:empty { display: none; }
-#session-label-dialog { width: min(460px, calc(100vw - 24px)); }
-#session-label-form fieldset { margin: 12px 0; border: 1px solid var(--border); border-radius: 6px; }
-#session-label-options { display: flex; flex-wrap: wrap; gap: 10px; padding: 8px 0; }
-#session-label-options label { display: flex; align-items: center; gap: 4px; overflow-wrap: anywhere; }
-.label-create-row, .label-group-row { display: flex; gap: 8px; align-items: center; margin: 12px 0; }
-.label-create-row input, .label-group-row select { flex: 1; min-width: 0; }
-#session-label-note { min-height: 1.5em; color: var(--muted); overflow-wrap: anywhere; }
-#session-label-summary { overflow-wrap: anywhere; }
+#session-group-filters { margin: 6px 0; }
+#session-group-filters[hidden] { display: none; }
+#session-group-filters label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+#session-group-filter { flex: 1; min-width: 0; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
+.session-row-group { margin-top: 3px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.session-row-group:empty { display: none; }
+#session-group-dialog { width: min(440px, calc(100vw - 24px)); }
+#session-group-form { display: flex; flex-direction: column; gap: 18px; padding: 22px; box-sizing: border-box; max-height: inherit; overflow-y: auto; }
+#session-group-form > * { flex-shrink: 0; }
+#session-group-summary { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.group-field, .group-create { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.group-create { padding-top: 16px; border-top: 1px solid var(--border); }
+.group-create-row { display: flex; gap: 8px; }
+#session-group-form input, #session-group-form select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; border: 1px solid var(--border); border-radius: 7px; padding: 9px 11px; background: var(--bg); color: var(--text); font: inherit; }
+#session-group-form input:focus-visible, #session-group-form select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#session-group-form .btn { min-height: 36px; padding: 7px 14px; white-space: nowrap; }
+#session-group-form .modal-actions { padding-top: 16px; border-top: 1px solid var(--border); }
+#session-group-note { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+#session-group-note:empty { display: none; }
+@media (max-width: 480px) {
+  #session-group-form { padding: 18px; gap: 16px; }
+  .group-create-row { flex-wrap: wrap; }
+  .group-create-row .btn { width: 100%; }
+}
