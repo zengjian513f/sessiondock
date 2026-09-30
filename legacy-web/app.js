@@ -687,10 +687,13 @@ const icon = src => `<svg class="ico source-icon" data-source="${src}" aria-hidd
 // 会话头的图标：右上角的运行点和左栏列表一致（绿=直接进程，蓝=受管终端）
 const liveStatusTitle = tmux => !SessionDockCapabilities.allows('live') ? '运行状态未知，尚未实现进程探测'
   : tmux ? '运行于受管终端' : '运行中';
-const sessionIconMarkup = (src, live, tmux, turn = '') => `<span class="ico">${icon(src)}<span
-  class="item-status${live ? ' visible' : ''}${tmux ? ' tmux' : ''}${turn ? ` turn-${turn}` : ''}" id="dlive"
-  title="${esc(liveStatusTitle(tmux) + turnLabel(turn))}"
-  aria-label="${esc(liveStatusTitle(tmux) + turnLabel(turn))}"></span></span>`;
+const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
+  const frozen = sessionFrozen(uid);
+  const label = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
+  return `<span class="ico">${icon(src)}<span
+    class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
+    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
+};
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
 let staleBuildShown = false;
@@ -1925,6 +1928,21 @@ function saveUnread() {
   store.set('unread', [...S.unread].filter(([, row]) => (+row?.count || +row || 0) > 0));
 }
 
+function sessionFrozen(uid) {
+  return !!uid && typeof T !== 'undefined' && (T.list || []).some(row => !row.stale
+    && row.frozen === true && (row.uid === uid || row.current_uid === uid || `tmux:${row.name}` === uid));
+}
+
+function paintStatusMarker(badge, frozen, count = 0) {
+  badge.classList.toggle('frozen', frozen);
+  const marker = `${frozen}:${count}`;
+  if (badge.dataset.marker === marker) return;
+  badge.dataset.marker = marker;
+  const text = count > 99 ? '99+' : (count || '');
+  if (frozen) badge.innerHTML = uiIcon('pause') + esc(text);
+  else badge.textContent = text;
+}
+
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */
 function paintItemStatus(node) {
@@ -1936,17 +1954,18 @@ function paintItemStatus(node) {
   const pending = !!node.dataset.tmuxName && node.classList.contains('live');
   const active = pending || S.live.has(node.dataset.uid);
   const tmux = pending || S.liveTmux.has(node.dataset.uid);
-  badge.textContent = row.count > 99 ? '99+' : (row.count || '');
-  badge.classList.toggle('visible', active || row.count > 0);
+  const frozen = sessionFrozen(node.dataset.uid);
+  paintStatusMarker(badge, frozen, row.count);
+  badge.classList.toggle('visible', frozen || active || row.count > 0);
   badge.classList.toggle('counted', row.count > 0);
   badge.classList.toggle('tmux', tmux);
   badge.classList.toggle('idle', !active);
-  const turn = pending ? '' : sessionTurn(node.dataset.uid);
+  const turn = frozen || pending ? '' : sessionTurn(node.dataset.uid);
   badge.classList.toggle('turn-working', turn === 'working');
   badge.classList.toggle('turn-waiting', turn === 'waiting');
-  const running = (tmux ? '受管会话运行中' : '会话运行中') + turnLabel(turn);
+  const running = frozen ? '会话已暂停' : (tmux ? '受管会话运行中' : '会话运行中') + turnLabel(turn);
   badge.title = badge.ariaLabel = row.count
-    ? `${row.count} 条新内容，${!active ? '会话已退出' : running}`
+    ? `${row.count} 条新内容，${!active && !frozen ? '会话已退出' : running}`
     : running;
 }
 
@@ -1977,10 +1996,13 @@ function paintHeaderTurn() {
   if (!h) return;
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
   const tmux = row ? row.classList.contains('live-tmux') : S.liveTmux.has(S.sel);
-  const turn = row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
+  const frozen = sessionFrozen(S.sel);
+  paintStatusMarker(h, frozen);
+  h.classList.toggle('visible', frozen || (row ? row.classList.contains('live') : S.live.has(S.sel)));
+  const turn = frozen || row?.dataset.tmuxName ? '' : sessionTurn(S.sel);
   h.classList.toggle('turn-working', turn === 'working');
   h.classList.toggle('turn-waiting', turn === 'waiting');
-  h.title = h.ariaLabel = liveStatusTitle(tmux) + turnLabel(turn);
+  h.title = h.ariaLabel = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
 }
 
 function addUnread(uid, count) {
@@ -4803,6 +4825,7 @@ async function openSession(uid, agent = null, {exact = false, historyMode = 'pus
   }
   S.sel = uid;
   S.agent = selectedAgent;
+  syncSessionStopNotice();
   clearUnread(uid);
   store.set('sel', uid);
   store.set('agent', S.agent ? { uid, id: S.agent } : null);
@@ -5376,6 +5399,7 @@ function closeSessionActions(restoreFocus = false) {
 }
 
 function bindSessionActions(heading) {
+  syncSessionStopNotice();
   const button = heading.querySelector('#a-more');
   const menu = heading.querySelector('#session-actions-menu');
   if (!button || !menu) return;
@@ -6017,15 +6041,17 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
         instance_id:row.instance_id, frozen:!row.frozen});
       if (result.error || !result.ok) throw new Error(result.error || '请求失败');
       row.frozen = result.frozen;
+      paintTurn(m.uid);
       browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
         frozen:result.frozen, process_count:result.process_count});
       showSessionStopNotice(result.frozen
         ? '现场已冻结：会话及子进程已暂停，可报告问题；排查后点击“恢复运行”'
-        : '会话已恢复运行', result.frozen);
+        : '会话已恢复运行', false, m.uid);
     } catch (error) {
-      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true);
+      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true, m.uid);
     } finally {
       await loadTermList();
+      paintTurn(m.uid);
       renderSessionFreeze(m);
       button.disabled = false;
     }
@@ -6073,7 +6099,14 @@ function sessionStoppable(uid) {
     && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
 }
 let sessionStopNoticeTimer = 0;
-function showSessionStopNotice(text, sticky = false) {
+function syncSessionStopNotice() {
+  const notice = $('#session-stop-notice');
+  if (notice?.dataset.uid && notice.dataset.uid !== S.sel) {
+    clearTimeout(sessionStopNoticeTimer);
+    notice.hidden = true;
+  }
+}
+function showSessionStopNotice(text, sticky = false, uid = '') {
   // Batch progress owns stop feedback, including asynchronous terminal-exit
   // notices that arrive after an individual HTTP response.
   if (text && (sessionStopBusy || (S.picking && sessionStopProgress))) return;
@@ -6088,7 +6121,8 @@ function showSessionStopNotice(text, sticky = false) {
   const show = visible => { notice.hidden = !visible; };
   clearTimeout(sessionStopNoticeTimer);
   notice.textContent = text;
-  show(!!text);
+  notice.dataset.uid = uid;
+  show(!!text && (!uid || uid === S.sel));
   if (text && !sticky) sessionStopNoticeTimer = setTimeout(() => show(false), 8000);
 }
 const STOP_STAGE_TEXT = {
