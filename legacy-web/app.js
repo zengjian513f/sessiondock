@@ -692,7 +692,7 @@ const sessionIconMarkup = (src, live, tmux, turn = '', uid = S.sel) => {
   const label = frozen ? '会话已暂停' : liveStatusTitle(tmux) + turnLabel(turn);
   return `<span class="ico">${icon(src)}<span
     class="item-status${live || frozen ? ' visible' : ''}${tmux ? ' tmux' : ''}${frozen ? ' frozen' : turn ? ` turn-${turn}` : ''}" id="dlive"
-    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? '?' : ''}</span></span>`;
+    title="${esc(label)}" aria-label="${esc(label)}">${frozen ? uiIcon('pause') : ''}</span></span>`;
 };
 const uiIcon = name => `<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
@@ -1948,19 +1948,20 @@ function sessionFrozen(uid) {
 }
 
 function paintStatusMarker(badge, frozen, count = 0, attention = '') {
-  const question = frozen || attention === 'question';
+  const question = !frozen && attention === 'question';
   badge.classList.toggle('frozen', frozen);
-  badge.classList.toggle('input-attention', frozen || !!attention);
+  badge.classList.toggle('input-attention', !frozen && !!attention);
   badge.classList.toggle('input-question', question);
   const marker = `${frozen}:${count}:${attention}`;
   if (badge.dataset.marker === marker) return;
   badge.dataset.marker = marker;
   const text = count > 99 ? '99+' : (count || '');
-  badge.textContent = question ? '?' : text;
+  if (frozen) badge.innerHTML = uiIcon('pause');
+  else badge.textContent = question ? '?' : text;
 }
 
 function sessionInputAttention(uid) {
-  if (!uid || sessionComposerEnded(uid)) return '';
+  if (!uid || (typeof sessionComposerEnded === 'function' && sessionComposerEnded(uid))) return '';
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const cli = cache.get(uid)?.cli;
