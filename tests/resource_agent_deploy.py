@@ -14,6 +14,7 @@ def main():
     assert 'KillMode=control-group' in unit
     assert 'ProtectControlGroups=yes' in unit
     assert 'CPUQuota=25%' in unit
+    assert '--io-events off' in unit
     assert 'Before=ssh' not in unit and 'RequiredBy=' not in unit
     handler = object.__new__(ResourceAgentHandler)
     handler.t = SimpleNamespace(prefix='/opt/resource-agent')

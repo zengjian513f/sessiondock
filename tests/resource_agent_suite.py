@@ -51,6 +51,8 @@ def main():
         (proc/'100/io').write_text('read_bytes: 1024\nwrite_bytes: 2048\n')
         (root/'node-id').write_text('a'*32)
         argv=[str(args.binary.resolve().with_name('resource-agent')),'--node-id-file',str(root/'node-id'),'--uid',str(os.getuid()),'--socket',str(sock),'--state',str(root/'state.json'),'--proc-root',str(proc),'--events','off']
+        invalid=subprocess.run(argv + ['--io-events','invalid'],capture_output=True,text=True,timeout=5)
+        assert invalid.returncode != 0 and 'io-events must be on or off' in invalid.stderr
         # A workload does not belong to the collector's process group/cgroup.
         workload=subprocess.Popen(['sleep','60'])
         agent=None
@@ -74,7 +76,10 @@ def main():
                     sample=data['samples'][0]
                     assert sample['metrics']['memory_pss_bytes']['value']==47*1024
                     assert sample['metrics']['gpu_devices']['value'] is None
-                    assert sample['metrics']['network_receive_bytes_per_second']['value'] is None
+                    for key in ('network_receive_bytes_per_second', 'network_send_bytes_per_second',
+                                'disk_read_bytes_per_second', 'disk_write_bytes_per_second',
+                                'nfs_read_bytes_per_second', 'nfs_write_bytes_per_second'):
+                        assert sample['metrics'][key]['value'] is None
                     assert data['bindings'][0]['session']['sid']=='test'
                     assert data['sessions'][0]['metrics']['memory_pss_bytes']['value']==47*1024
                     # CPU and storage rates require two observations of the same incarnation.

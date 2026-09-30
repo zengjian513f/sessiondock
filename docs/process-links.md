@@ -119,6 +119,14 @@ probes loaded by a managed bpftrace child. It does not change the kernel image,
 load a kernel module, change SSH configuration, wrap commands, move workloads
 into cgroups, throttle workloads, or signal them. Its own cgroup has CPU/memory
 limits; stopping that cgroup stops only the collector and its tracer.
+These limits do not bound probe execution charged to monitored workloads.
+Per-call VFS/TCP tracing is therefore disabled by default and explicitly disabled
+in the supplied service unit. `--io-events on` opts into diagnostic tracing;
+`--events off` disables both lifecycle and I/O probes. Default collection retains
+lifecycle attribution, CPU, PSS, GPU and `/proc/PID/io` storage rates. Local-file,
+NFS and TCP logical rates are unavailable (null) when I/O probes are off.
+Do not enable them for production throughput workloads without a representative
+on/off overhead measurement; cached small reads can be dominated by probe cost.
 
 The opt-in `resource-agent` deploy target installs the root-owned binary under
 `/opt/resource-agent`, a system unit and a non-secret configuration file naming

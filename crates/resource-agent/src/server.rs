@@ -42,6 +42,7 @@ struct Config {
     socket: PathBuf,
     state: PathBuf,
     events: bool,
+    io_events: bool,
 }
 impl Config {
     fn load() -> io::Result<Self> {
@@ -50,7 +51,7 @@ impl Config {
         while let Some(key) = args.next() {
             if key == "--help" {
                 println!(
-                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off]\nLocal JSON-line API: health, report, resources, catalog, publish. Observes only; never signals or moves workloads."
+                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish. Observes only; never signals or moves workloads."
                 );
                 std::process::exit(0);
             }
@@ -61,6 +62,7 @@ impl Config {
                 "--state",
                 "--proc-root",
                 "--events",
+                "--io-events",
             ]
             .contains(&key.as_str())
             {
@@ -95,7 +97,15 @@ impl Config {
         if !["auto", "off"].contains(&event_mode) {
             return Err(io::Error::other("events must be auto or off"));
         }
+        let io_mode = options
+            .get("--io-events")
+            .map(String::as_str)
+            .unwrap_or("off");
+        if !["on", "off"].contains(&io_mode) {
+            return Err(io::Error::other("io-events must be on or off"));
+        }
         Ok(Self {
+            io_events: io_mode == "on",
             node_id,
             uid,
             proc_root: options
@@ -872,7 +882,7 @@ pub fn run() -> io::Result<()> {
         .into(),
         lost_events: 0,
     };
-    let io_enabled = config.events && config.proc_root == Path::new("/proc");
+    let io_enabled = config.events && config.io_events && config.proc_root == Path::new("/proc");
     let mut io_window = IoWindow::new(io_enabled);
     let mut sampler = ResourceSampler::default();
     let slow_cache = Arc::new(Mutex::new(SlowObservations::default()));
