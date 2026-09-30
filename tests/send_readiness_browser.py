@@ -81,6 +81,19 @@ def main():
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
                 expect(page.locator('#composer-input-status')).to_be_visible()
                 expect(page.locator('#dlive')).to_have_text('!')
+                page.evaluate('''() => {
+                    const item = document.querySelector('#side .item.sel');
+                    S.unread.set(item.dataset.uid, {count:2});
+                    paintItemStatus(item);
+                }''')
+                marker = page.locator('#side .item.sel > .ico > .item-status')
+                expect(marker).to_have_text('!')
+                expect(marker).to_have_attribute('title', re.compile('2 条新内容'))
+                page.evaluate('''() => {
+                    const item = document.querySelector('#side .item.sel');
+                    S.unread.delete(item.dataset.uid);
+                    paintItemStatus(item);
+                }''')
                 expect(page.locator('#dlive')).to_have_css('background-color', 'rgb(251, 191, 36)')
                 assert page.locator('#composer-input-status').evaluate(
                     "node => getComputedStyle(node, '::before').content") == '"!"'

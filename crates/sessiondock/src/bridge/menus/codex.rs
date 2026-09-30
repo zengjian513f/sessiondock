@@ -464,6 +464,38 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         .map(|line| line.trim())
         .collect::<Vec<_>>()
         .join("\n");
+    // The option buttons already carry their labels and descriptions. Keep the
+    // native disclosure above them without repeating the heading or numbered rows.
+    let display_question = if text_only {
+        question.clone()
+    } else {
+        block[1..choices[0].line]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_owned()
+    };
+    let hidden_before = block[..foot].iter().any(|line| line.trim() == "↑")
+        || choices
+            .first()
+            .and_then(|row| row.number.parse::<usize>().ok())
+            .is_some_and(|n| n > 1);
+    let hidden_after = block[..foot].iter().any(|line| line.trim() == "↓")
+        || foot_text.split('|').any(|segment| {
+            segment
+                .trim()
+                .strip_prefix("option ")
+                .and_then(|value| value.split_once('/'))
+                .and_then(|(_, total)| total.parse::<usize>().ok())
+                .is_some_and(|total| {
+                    choices
+                        .last()
+                        .and_then(|row| row.number.parse::<usize>().ok())
+                        .is_some_and(|last| last < total)
+                })
+        });
     let stable = block[..foot]
         .iter()
         .map(|line| {
@@ -483,7 +515,7 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         "id":format!("codex-screen:{}",digest(&stable)), "source":"codex",
         "kind":"screen_menu", "state":"waiting", "revision":digest(&question),
         "menu_type":if is_checkbox { "multi_select" } else if is_form { "request_user_input" } else if is_approval { "approval" } else { "selection" },
-        "questions":[{"header":title,"question":question,"options":options,"multiple":is_checkbox}],
+        "questions":[{"header":title,"question":display_question,"options":options,"multiple":is_checkbox}],
     });
     let cancel = if foot_text.contains("esc LM Studio") || notes.is_some() {
         "ctrl-c".into()
@@ -512,8 +544,12 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
             actions.push(json!({"label":"Move highlighted item earlier","keys":["Left"]}));
             actions.push(json!({"label":"Move highlighted item later","keys":["Right"]}));
         }
-        actions.push(json!({"label":"Previous options","keys":["Up"]}));
-        actions.push(json!({"label":"Next options","keys":["Down"]}));
+        if hidden_before || foot_text.contains("←/→ reorder") {
+            actions.push(json!({"label":"Previous options","keys":["Up"]}));
+        }
+        if hidden_after || foot_text.contains("←/→ reorder") {
+            actions.push(json!({"label":"Next options","keys":["Down"]}));
+        }
     }
     if let Some(page) = page {
         prompt["page"] = json!({"current":page[2].parse::<usize>().ok()?,"total":page[3].parse::<usize>().ok()?});
@@ -526,10 +562,16 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         actions.push(json!({"label":"Add notes to highlighted choice","keys":["Tab"]}));
     }
     if !is_approval && !is_checkbox && !text_only && title != "Folder access" {
-        actions.push(json!({"label":"Previous options","keys":["Up"]}));
-        actions.push(json!({"label":"Next options","keys":["Down"]}));
-        if !is_form {
+        if hidden_before {
+            actions.push(json!({"label":"Previous options","keys":["Up"]}));
+        }
+        if hidden_after {
+            actions.push(json!({"label":"Next options","keys":["Down"]}));
+        }
+        if !is_form && hidden_before {
             actions.push(json!({"label":"Previous page","keys":["PageUp"]}));
+        }
+        if !is_form && hidden_after {
             actions.push(json!({"label":"Next page","keys":["PageDown"]}));
         }
     }
