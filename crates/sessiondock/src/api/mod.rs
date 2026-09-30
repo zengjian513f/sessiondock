@@ -208,6 +208,7 @@ pub fn router() -> Router<AppState> {
                 request_body_limit("/api/term/kill"),
             )),
         )
+        .route("/session/freeze", post(lifecycle::freeze))
         // Stop the selected managed or precisely observed native CLI.
         .route(
             "/session/stop",

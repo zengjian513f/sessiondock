@@ -923,6 +923,10 @@ pub async fn list(
                     row["uid"] = json!(target.uid());
                     row["sid"] = json!(target.sid());
                     row["source"] = json!(target.source().as_str());
+                    if cfg!(target_os = "linux") && state.lifecycle.is_some()
+                        && let crate::runtime::ProcessEvidence::Verified { child, .. } = host.process {
+                        row["frozen"] = json!(crate::runtime::freeze::frozen(child));
+                    }
                     row["instance_id"] = json!(target.instance_id());
                     row["origin_launch_id"] = json!(target.origin_launch_id());
                     if let Some(recording) = recording_json(&host.summary.name) {
