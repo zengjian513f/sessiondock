@@ -1,21 +1,22 @@
-//! Nodes own label catalogs. The Hub caches their union and sends it back;
+//! Nodes own group catalogs. The Hub caches their union and sends it back;
 //! assignments never leave the session's node.
 use super::{Client, Registry};
-use crate::metadata::{LabelCatalog, MetadataSnapshot};
+use crate::metadata::{GroupCatalog, MetadataSnapshot};
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-pub struct Labels {
-    catalog: Mutex<LabelCatalog>,
+pub struct Groups {
+    catalog: Mutex<GroupCatalog>,
     cache: PathBuf,
 }
-impl Labels {
+impl Groups {
     pub fn open(cache: PathBuf) -> std::io::Result<Self> {
         fs::create_dir_all(cache.parent().unwrap())?;
         let catalog = fs::read(&cache)
+            .or_else(|_| fs::read(cache.with_file_name("labels.json")))
             .ok()
             .and_then(|raw| serde_json::from_slice(&raw).ok())
             .unwrap_or_default();
@@ -24,7 +25,7 @@ impl Labels {
             cache,
         })
     }
-    fn save(&self, catalog: &LabelCatalog) -> std::io::Result<()> {
+    fn save(&self, catalog: &GroupCatalog) -> std::io::Result<()> {
         let temporary = self.cache.with_extension("tmp");
         let mut options = fs::OpenOptions::new();
         options.write(true).create(true).truncate(true);
@@ -45,15 +46,14 @@ impl Labels {
         &self,
         registry: &Registry,
         client: &Client,
-        incoming: Option<LabelCatalog>,
+        incoming: Option<GroupCatalog>,
     ) -> Value {
         let mut catalog = self.catalog.lock().await;
         if let Some(incoming) = incoming {
             // Same normalization and validation as nodes, before any write.
-            match MetadataSnapshot::empty().with_label_catalog(&incoming) {
+            match MetadataSnapshot::empty().with_group_catalog(&incoming) {
                 Ok(snapshot) => {
-                    let incoming = snapshot.label_catalog();
-                    catalog.labels.extend(incoming.labels);
+                    let incoming = snapshot.group_catalog();
                     catalog.groups.extend(incoming.groups);
                 }
                 Err(error) => return json!({"ok": false, "error": error.message}),
@@ -64,7 +64,7 @@ impl Labels {
                 .request(
                     client,
                     &node,
-                    "/api/labels",
+                    "/api/groups",
                     "GET",
                     None,
                     Duration::from_secs(3),
@@ -79,15 +79,14 @@ impl Labels {
         let mut errors = Vec::new();
         for (node, result) in reads {
             if let Ok((200, value)) = result {
-                if let Ok(remote) = serde_json::from_value::<LabelCatalog>(value) {
-                    catalog.labels.extend(remote.labels);
+                if let Ok(remote) = serde_json::from_value::<GroupCatalog>(value) {
                     catalog.groups.extend(remote.groups);
                     ready.push(node);
                     continue;
                 }
             }
             errors
-                .push(json!({"node_id": node.id, "name": node.name, "error": "标签集合暂未同步"}));
+                .push(json!({"node_id": node.id, "name": node.name, "error": "分组集合暂未同步"}));
         }
         let body = json!(&*catalog);
         let writes = stream::iter(ready.into_iter().map(|node| {
@@ -97,7 +96,7 @@ impl Labels {
                     .request(
                         client,
                         &node,
-                        "/api/labels",
+                        "/api/groups",
                         "POST",
                         Some(body),
                         Duration::from_secs(3),
@@ -115,14 +114,14 @@ impl Labels {
                 synced += 1;
             } else {
                 errors.push(
-                    json!({"node_id": node.id, "name": node.name, "error": "标签集合下发未完成"}),
+                    json!({"node_id": node.id, "name": node.name, "error": "分组集合下发未完成"}),
                 );
             }
         }
         if let Err(error) = self.save(&catalog) {
-            errors.push(json!({"error": format!("标签缓存保存失败：{error}")}));
+            errors.push(json!({"error": format!("分组缓存保存失败：{error}")}));
         }
-        json!({"ok": synced > 0, "labels": catalog.labels, "groups": catalog.groups,
+        json!({"ok": synced > 0, "groups": catalog.groups,
             "synced_nodes": synced, "sync_errors": errors})
     }
     pub fn spawn(
