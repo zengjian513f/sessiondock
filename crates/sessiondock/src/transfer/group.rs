@@ -215,6 +215,113 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
             }
         }
     }
+    // Native Claude forks can copy message UUIDs without a session-level fork
+    // field. Resolve those shared records as well as explicit physical refs.
+    // Grok keeps its fork relationship in summary.json, outside chat history.
+    let mut claude_messages = BTreeMap::<String, String>::new();
+    for e in entries
+        .values()
+        .filter(|e| matches!(e.source, "claude" | "grok"))
+    {
+        let mut references = BTreeSet::<(String, String)>::new();
+        if e.source == "claude" {
+            let raw = match std::fs::read(&e.data) {
+                Ok(raw) => raw,
+                Err(error) => {
+                    blockers.push(Blocker {
+                        uid: e.uid.clone(),
+                        code: "move_io".into(),
+                        message: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
+                let row: Value = match serde_json::from_slice(line) {
+                    Ok(row) => row,
+                    Err(error) => {
+                        blockers.push(Blocker {
+                            uid: e.uid.clone(),
+                            code: "move_format".into(),
+                            message: error.to_string(),
+                        });
+                        continue;
+                    }
+                };
+                for key in [
+                    "parentSessionId",
+                    "forkedFromSessionId",
+                    "continuedInSessionId",
+                ] {
+                    if let Some(id) = row[key].as_str().filter(|id| !id.is_empty()) {
+                        references.insert((
+                            id.into(),
+                            if row["type"] == "fork-context-ref" {
+                                "history_base".into()
+                            } else {
+                                "fork".into()
+                            },
+                        ));
+                    }
+                }
+                if !e.is_agent() && row.get("parentUuid").is_some() {
+                    if let Some(id) = row["uuid"].as_str().filter(|id| !id.is_empty()) {
+                        if let Some(other) = claude_messages.get(id) {
+                            if other != &e.uid {
+                                edges.insert(Edge {
+                                    from: e.uid.clone(),
+                                    to: other.clone(),
+                                    kind: "fork".into(),
+                                });
+                            }
+                        } else {
+                            claude_messages.insert(id.into(), e.uid.clone());
+                        }
+                    }
+                }
+            }
+        } else if let Some(path) = &e.summary_path {
+            let row: Value = match std::fs::read(path)
+                .map_err(TransferError::from)
+                .and_then(|raw| Ok(serde_json::from_slice(&raw)?))
+            {
+                Ok(row) => row,
+                Err(error) => {
+                    blockers.push(Blocker {
+                        uid: e.uid.clone(),
+                        code: error.code,
+                        message: error.message,
+                    });
+                    continue;
+                }
+            };
+            if let Some(id) = row["parent_session_id"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+            {
+                references.insert((id.into(), "fork".into()));
+            }
+        }
+        for (sid, kind) in references {
+            if let Some(targets) = identities.get(&(e.source, sid.as_str())) {
+                for target in targets {
+                    if e.uid != *target {
+                        edges.insert(Edge {
+                            from: e.uid.clone(),
+                            to: (*target).into(),
+                            kind: kind.clone(),
+                        });
+                    }
+                }
+            } else {
+                blockers.push(Blocker {
+                    uid: e.uid.clone(),
+                    code: "move_group_incomplete".into(),
+                    message: format!("缺少 {kind} 关联的 {} 会话 {sid}", e.source),
+                });
+            }
+        }
+    }
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for edge in &edges {
         adjacency.entry(&edge.from).or_default().push(&edge.to);

@@ -1,7 +1,7 @@
 # 整组操作：离线计划与暂存工具
 
 `sessiondock-transfer` 是移动/克隆实现共用的 Rust 核心的离线入口。
-当前实现范围：索引快照上的连通组计算，以及 **Codex 原始历史文件**的计划和暂存。
+当前实现范围：索引快照上的连通组计算，Codex 历史计划/暂存，以及 Claude/Grok 文件包的初步计划/暂存。
 它不发布 CLI 会话、不修改源文件、不导入数据库、不切换执行归属、不执行 trash。
 同节点 Codex 的 HTTP 编排与页面入口见 [当前克隆接口](session-clone.md#当前接口同节点-codex)，
 使用独立能力 `session_clone_local_codex`；完整 `session_move` / `session_clone` 尚未开启。
@@ -32,8 +32,9 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 离线入口不加载 SessionDock 元数据，所以不能用它代替服务最终计划的关联审计。
 
 **此阶段的范围是已配置索引，不是完整原生文件审计**：Codex 的归档目录必须包含在显式根目录
-之内，不能只给 `sessions` 然后声称检查了相邻的 `archived_sessions`。Claude 跨文件 fork
-关系、继承历史中的工具/子代理引用、其他来源完整文件集及跨节点关联仍待来源适配器补齐。
+之内，不能只给 `sessions` 然后声称检查了相邻的 `archived_sessions`。Claude 已纳入共享消息 UUID、
+显式父会话、续接和 `fork-context-ref` 的父引用；Grok 纳入 summary 的 `parent_session_id`。
+继承历史中的全部工具/子代理引用、Grok 独立子会话元数据和跨节点关联仍在补齐。
 某个无关组存在断链，不会让所有其他组失败；选中的组有已知缺失则在 blockers 中列出。
 
 ### 生成 Codex 历史计划
@@ -86,9 +87,25 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
 原生元数据导入、完整身份引用审计、原生列表/恢复以及整组运行态重查实现并验收之前，
 不能把暂存目录直接发布到日常 CLI home。
 
+### Claude / Grok 文件包
+
+`plan_files {uid, roots, new_ids}` 返回固定的身份映射和文件清单；
+`stage_files {plan, destination}` 将清单写入一个全新的私有目录。
+输出按 `claude/`、`grok/` 分区，成功时写入 `manifest.json`，始终为 `publishable: false`。
+移动暂存保留原字节；新身份暂存修改已识别的结构化身份字段，保留普通正文中的旧 ID。
+
+Claude 收集 transcript、会话附属目录、子代理 sidecar 和标准 home 下的 `file-history`；
+Grok 收集整个会话目录，包括 updates、压缩记录和不解析的附件。
+当前仅验证文件包及 SessionDock 读取；原生工具结果中的完整身份/路径引用、所有 checkpoint
+格式、原生恢复与发布事务尚未完成，不能将此输出发布为可恢复的生产会话。
+
 ## 验证
 
 `python3 tests/session_transfer_browser.py` 调用真实 Rust 计划/暂存入口，用合成数据验证
 整个连通组、移动字节不变、克隆身份/偏移、源数据不变、固定计划重试、冲突/过期计划拒绝；
 随后启动隔离服务，通过 Chromium 点击暂存会话和子代理菜单，确认多层父历史仍可读取。
 它不调用模型，不使用真实会话，也不代替原生 CLI 新身份恢复验收。
+
+`python3 tests/session_files_browser.py` 构造 Claude 兄弟分支、子代理、工具结果和文件历史备份，
+以及 Grok 父子分支、updates 和压缩文件；验证整组范围与源数据不变，再用 Chromium
+打开移动/复制暂存后的各分支和 Claude 子代理。全部数据与服务使用私有临时目录。
