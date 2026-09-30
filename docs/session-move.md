@@ -397,22 +397,26 @@ Hub 的 `GET /api/session/transfers` 返回未结束的跨节点操作；
 - 文案用普通话，不暴露 plan_id、staging 这类内部概念。一致时不出任何提示。
 - 多选第一版不支持：一次选择一个 S，操作其整个连通组。
 
-## 接口草案（实现时可调整，调整后更新本文）
+## 当前接口
 
 Hub：
 
-- `POST /api/move/plan {uid, target, mode: "move" | "clone"}` → `{plan_id, mode, sessions[], files[], bytes, warnings[], blockers[]}`
-  文件清单包含物理身份、引用和组内关联；身份映射及内部边界保存在 manifest 中。
-- `POST /api/move {plan_id}` → `{move_id}`；`GET /api/move/{move_id}` → 当前步骤、进度、错误
-- `POST /api/move/{move_id}/retry-cleanup`：仅适用于移动，克隆不允许进入清理状态。
+- `POST /api/session/clone/plan {uid, mode, new_ids}`：从源节点取得整组清单及 `operation_id`。
+  清单按逻辑会话显示；各代物理历史、固定身份映射及引用边界保存在操作记录中。
+- `POST /api/session/clone {uid, operation_id}`：同机复制。
+- `POST /api/session/transfer/clone {uid, target_node, operation_id}`：跨机复制或移动，
+  操作类型及身份选项以已保存的计划为准。重试同一入口恢复原操作，包括移动的待完成清理。
+- `POST /api/session/transfer/progress`：读取同一操作的持久阶段、错误和传输字节。
+- `GET /api/session/transfers`：待处理任务；`POST /api/session/transfer/cancel`：撤回可撤回的操作。
 
 节点（只对 Hub 鉴权通道开放）：
 
-- `POST /api/move/node/plan`：返回闭包和文件清单（源节点）/前置条件检查结果（目标节点）
-- `POST /api/move/node/lock`、`/unlock`
-- `GET /api/move/node/export?plan_id=`：tar 流
-- `POST /api/move/node/import`：tar 流 → staging → publish，返回校验结果
-- `POST /api/move/node/retire`：交给 trash
+- `/api/session/transfer/manifest`、`/check`：源端清单与目标前置检查。
+- `/api/session/transfer/export`、`/receive`：传输并验证 tar 流，接收端持久暂存；
+  Hub 随后通过节点 `/api/session/clone` 发布同一计划。
+- `/api/session/transfer/reserve`、`/release`：源端预约与释放。
+- `/api/session/transfer/switch`、`/activate`、`/retire`：持久交接、目标开放和源端清理。
+- `/api/session/transfer/abort`、`/status`：撤回和读取状态。以上节点入口均使用 `POST`。
 
 ## 验证
 
@@ -423,11 +427,14 @@ Hub：
 Codex、Claude、Grok 的分支/子代理连为一个十四会话组，覆盖一次确认、跨适配器发布失败补偿、
 节点/Hub 重启后沿用原映射重试、跨来源归属重写及三种历史的页面打开。
 样本故意让不同来源拥有相同 SID，验证 Codex 多代历史不会把其他来源重定向到 Codex。
+[session_mixed_bundle_browser.py](../tests/session_mixed_bundle_browser.py) 将同一复杂组经
+两台 Linux 主机的独立临时目录传输，实际点击页面验证移动/复制与保留/重写身份四种组合。
+验证目标三种历史及跨来源归属、同 SID 两代 rollout，以及移动清理或复制保留源数据。
+运行时显式传入 `--peer`；不会读取或修改生产会话。
 
-- 新增 `tests/session_move_browser.py`：起两个隔离的节点服务，加一个 Hub（fixture 参照
-  `hub_bulk_browser.py`、`hub_nest_browser.py`、`trash_browser.py`）。两个节点使用
-  **不同的临时 CLI 根，但绝对路径形状相同**（例如用独立的 mount namespace 或 chroot 式前缀，
-  实现时选定），数据全部合成。在页面上点菜单 → 选目标 → 看清单 → 移动 → 在目标节点打开
+- [session_bundle_browser.py](../tests/session_bundle_browser.py)：起两个隔离的节点服务和一个 Hub。
+  使用 `--peer` 时通过 SSH 在两台主机创建**绝对路径相同、存储独立的临时 CLI 根**，
+  数据全部合成。在页面上点菜单 → 选目标 → 看清单 → 移动 → 在目标节点打开
   会话。覆盖以下场景：
   - Claude：带 subagents、tool-results、file-history，含 fork 链和 `continued_in` 续接链。
   - Codex：递归 `history_base` 的分页 fork、逻辑父会话与物理父历史不同、同 thread 多代 rollout、
