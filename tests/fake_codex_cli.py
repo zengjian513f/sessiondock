@@ -182,6 +182,15 @@ class Fake:
             self.write('\x1b[%d;%dH' % (len(lines), min(column, cols)))
             return
         lines = ["FAKE_CODEX_TUI sid=[%s]" % self.sid]
+        if os.environ.get('SESSIONDOCK_TEST_QUOTED_READY'):
+            lines.extend([
+                '• Ran diagnostic capture',
+                '  └',
+                '      GPT-6-Astra medium · /test · Context 32% used · Ready · Full Access',
+                '      ? for shortcuts                 ⚠ 1 warning · f2 to view',
+                '    + 20 lines (ctrl+t to expand)',
+                '',
+            ])
         for text in self.transcript[-4:]:
             parts = text.split("\n")
             lines.append("> " + parts[0])

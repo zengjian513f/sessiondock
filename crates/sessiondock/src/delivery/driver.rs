@@ -505,7 +505,15 @@ fn locate_codex(
             .rev()
             .find(|&index| CODEX_CONTEXT_FOOTER.is_match(&clean_lines[index]))
         {
-            status.push((ready, context));
+            // Tool output can quote a complete old Ready status bar. It is
+            // not the live footer when substantive screen rows follow it
+            // (for example the current Working editor and status bar).
+            if clean_lines[ready + 1..]
+                .iter()
+                .all(|line| !nonblank(line) || CODEX_HELP_FOOTER.is_match(line))
+            {
+                status.push((ready, context));
+            }
         }
     }
     let mut footer: Option<usize> = None;
