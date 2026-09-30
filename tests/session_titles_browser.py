@@ -24,7 +24,7 @@ def main():
         names=corpus.root/'names.jsonl'
         names.write_bytes(encoded({'id':'named-codex','thread_name':'Named first'}))
         (corpus.root/'grok').mkdir()
-        with isolated_server(corpus,args.binary,extra_env={'SESSIONDOCK_CODEX_INDEX':str(names)}) as (base,opener), sync_playwright() as pw:
+        with isolated_server(corpus,args.binary,extra_env={'SESSIONDOCK_CODEX_INDEX':str(names), 'SESSIONDOCK_SEARCH_WARMUP':'0'}) as (base,opener), sync_playwright() as pw:
             browser=pw.chromium.launch()
             page=browser.new_page()
             page.route(base+'/',lambda route:route.fulfill(content_type='text/html',body='''
@@ -42,7 +42,9 @@ def main():
                 page.wait_for_function('document.querySelector("pre").textContent.length>0')
                 return row,response.value.request.timing['responseEnd']
             cold,cold_ms=click()
-            assert cold['index_initialized'] is True,cold
+            # The background live inventory can initialize the index before the click.
+            assert isinstance(cold['index_initialized'], bool),cold
+            if not cold['index_initialized']: assert cold['summary_reads']==0,cold
             assert len(cold['sessions'])==2
             assert 'Original 0' in page.locator('#titles').inner_text()
             # A new file must NOT be discovered by a point query after bootstrap.

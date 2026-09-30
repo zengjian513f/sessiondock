@@ -26,7 +26,11 @@ pub(super) struct Document {
     pub schema_version: u32,
     pub revision: u64,
     pub sessions: BTreeMap<String, Row>,
-    #[serde(default, alias = "label_catalog", skip_serializing_if = "GroupCatalog::is_empty")]
+    #[serde(
+        default,
+        alias = "label_catalog",
+        skip_serializing_if = "GroupCatalog::is_empty"
+    )]
     pub group_catalog: GroupCatalog,
 }
 
@@ -645,10 +649,10 @@ impl MetadataSnapshot {
             object.insert("starred".into(), json!(true));
             object.insert("starred_at".into(), json!(saved.starred_at));
         }
-        if let Some(saved) = saved {
-            if let Some(group) = &saved.group {
-                object.insert("group".into(), json!(group));
-            }
+        if let Some(saved) = saved
+            && let Some(group) = &saved.group
+        {
+            object.insert("group".into(), json!(group));
         }
         if let Some(parent) = saved.and_then(|row| row.spawned_by.as_ref()) {
             object.insert("spawned_by".into(), json!(parent));

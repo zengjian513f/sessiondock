@@ -443,15 +443,15 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
     if rows.iter().all(|r| r.number.is_none()) && rows.len() == 1 {
         let focus = rows[0].line;
         let indent = lines[focus].find('❯')?;
-        for i in start..footer {
-            if i == focus || lines[i].trim().is_empty() || border(lines[i]) {
+        for (i, line) in lines.iter().enumerate().take(footer).skip(start) {
+            if i == focus || line.trim().is_empty() || border(line) {
                 continue;
             }
-            let s = lines[i].trim();
+            let s = line.trim();
             if s.len() > 250 {
                 continue;
             }
-            let leading = lines[i].len() - lines[i].trim_start().len();
+            let leading = line.len() - line.trim_start().len();
             if leading >= indent + 2
                 && (s.starts_with("Yes")
                     || s.starts_with("No")

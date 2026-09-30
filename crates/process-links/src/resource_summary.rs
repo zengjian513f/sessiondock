@@ -34,10 +34,10 @@ fn sum<'a>(items: impl Iterator<Item = &'a Value>, fallback: &Value, devices: bo
     let mut sampled_at: Option<f64> = None;
     for item in items {
         count += 1;
-        if !item["value"].is_null() {
-            if let Some(at) = item["sampled_at"].as_f64().filter(|at| at.is_finite()) {
-                sampled_at = Some(sampled_at.map_or(at, |old| old.min(at)));
-            }
+        if !item["value"].is_null()
+            && let Some(at) = item["sampled_at"].as_f64().filter(|at| at.is_finite())
+        {
+            sampled_at = Some(sampled_at.map_or(at, |old| old.min(at)));
         }
         if let Some(reason) = item["reason"].as_str() {
             reasons.insert(reason.to_owned());

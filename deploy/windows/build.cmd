@@ -34,7 +34,7 @@ if errorlevel 1 ( echo RUSTC_BROKEN & exit /b 15 )
 echo ===TEST===
 cd /d "%SRC%"
 if not "%TEST%"=="1" ( echo TEST_SKIPPED & goto build )
-"%TC%\cargo.exe" test -p sessiondock --locked > "%SRC%\.deploy-test.log" 2>&1
+"%TC%\cargo.exe" check -p sessiondock --all-targets --locked > "%SRC%\.deploy-test.log" 2>&1
 set "RC=%ERRORLEVEL%"
 powershell -NoProfile -Command "Get-Content -LiteralPath '%SRC%\.deploy-test.log' -Tail 40"
 if not "%RC%"=="0" ( echo TEST_FAILED rc=%RC% log=%SRC%\.deploy-test.log & exit /b 18 )

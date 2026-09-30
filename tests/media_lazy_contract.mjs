@@ -100,6 +100,7 @@ test('all Rust reset renders reconcile the published entry; Python keeps its old
     Object.assign(c,{cache,S:{sel:'u',agent:'a',cursors:new Map()},viewKey:(uid,agent)=>uid+':'+agent,
       migrationReadPaused:()=>false,markInterruptedTurn:()=>{},cachePut:(key,e)=>cache.set(key,e),
       renderSession:async(...args)=>rendered.push(args)});
+    load(c,'applyDiffPacket');
     load(c,'applyDiff');
     await c.applyDiff('u',{reset:true,meta:{uid:'u',agent_id:'a'},messages:[{role:'user',text:'old'}],
       version:{head:'h'},end:2,anchor:'anchor'},100,'a');
