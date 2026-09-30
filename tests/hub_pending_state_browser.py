@@ -114,7 +114,7 @@ def node_source_picker(browser, hub, node, other):
     page.locator('#new-session-form label:has(input[value="opencode"])').click()
     expect(opencode).to_be_checked()
     # The model list comes from the selected machine's own CLI.
-    expect(page.locator("#new-model-label")).to_have_text("默认模型")
+    expect(page.locator("#new-model-label")).to_have_text("选择模型")
     page.locator("#new-model").click()
     expect(page.locator("#new-model-options [role=option]", has_text=f"{other.name}-opencode")).to_be_visible()
     page.keyboard.press("Escape")
@@ -127,13 +127,16 @@ def node_source_picker(browser, hub, node, other):
         rows = page.evaluate("""() => new Set([...document.querySelectorAll('#new-session-form .new-source label')]
             .map(l => Math.round(l.getBoundingClientRect().top))).size""")
         assert rows == 1, (width, rows)
-        # The machine picker shares the directory's row, leaving the agent row to agents, model and effort.
+        # The machine picker is first, sharing the top row with the agent buttons.
         where = page.evaluate("""() => { const r = s => document.querySelector(s).getBoundingClientRect();
-            const node = r('#new-node-label'), cwd = r('#new-session-form .new-cwd-field'), dialog = r('#new-session-dialog');
-            return {top: Math.abs(node.top - cwd.top), order: node.right <= cwd.left + 0.5, inside: cwd.right <= dialog.right,
+            const node = r('#new-node-label'), agents = r('#new-session-form .new-source'),
+                  cwd = r('#new-session-form .new-cwd-field'), dialog = r('#new-session-dialog');
+            return {top: Math.abs(node.top - agents.top), order: node.right <= agents.left + 0.5,
+                    inside: cwd.right <= dialog.right, directory_below: cwd.top > node.bottom,
                     node_width: node.width, cwd_width: cwd.width,
-                    in_agent_row: !!document.querySelector('#new-session-form .new-row #new-node-label')}; }""")
-        assert where["top"] < 1 and where["order"] and where["inside"] and not where["in_agent_row"], (width, where)
+                    in_agent_row: document.querySelector('#new-session-form .new-row').firstElementChild.id === 'new-node-label'}; }""")
+        assert where["top"] < 1 and where["order"] and where["inside"] and where["in_agent_row"], (width, where)
+        assert where["directory_below"], (width, where)
         assert where["node_width"] <= 140 and where["cwd_width"] >= 180, (width, where)
         # Buttons never overlap, and each keeps a usable tap width.
         spans = page.evaluate("""() => [...document.querySelectorAll('#new-session-form .new-source label > span')]
@@ -227,7 +230,7 @@ def main():
     finally:
         for node in nodes:
             node.stop()
-    print("PASS hub_pending_state_browser: per-node OpenCode picker, machine select on the directory row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
+    print("PASS hub_pending_state_browser: per-node OpenCode picker, machine select on the first row, steady cwd list while typing, node switch keeps existing cwd, create, partial list, draft/reload, recovery, confirmed exit")
 
 
 if __name__ == "__main__":
