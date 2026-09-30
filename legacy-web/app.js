@@ -467,6 +467,7 @@ function browserStateSnapshot(reason = '') {
     name: T.name, uid: T.uid, mode: T.mode,
     visible: !$('#termpane')?.classList.contains('hidden'),
     connected: T.ws?.readyState ?? null,
+    frozen: (T.list || []).find(row => row.uid === S.sel)?.frozen ?? null,
   };
   return {
     data: {
@@ -5800,7 +5801,7 @@ function head(m, total) {
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
-        ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
+        ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button><button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
       <span id="mcount-total">${total} 条消息</span>
@@ -5979,7 +5980,45 @@ function unusedNewAssignedLaunch(session) {
   return launch;
 }
 
+function renderSessionFreeze(m, button = $('#a-session-freeze')) {
+  if (!button || m.uid !== S.sel) return;
+  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid
+    && row.instance_id && !row.stale && typeof row.frozen === 'boolean');
+  const wasHidden = button.hidden;
+  button.hidden = !row || (!HUB_MODE && SessionDockCapabilities.config.session_freeze !== true);
+  const heading = button.closest('.dhead');
+  if (wasHidden !== button.hidden && heading?.isConnected)
+    requestAnimationFrame(() => { if (heading.isConnected) layoutSessionHead(heading); });
+  if (button.hidden) return;
+  const label = row.frozen ? '恢复运行' : '冻结现场';
+  button.innerHTML = uiIcon(row.frozen ? 'play' : 'pause');
+  button.title = button.ariaLabel = label;
+  button.setAttribute('aria-pressed', String(row.frozen));
+  labelSessionAction(button);
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const result = await post('api/session/freeze', {uid:m.uid,
+        instance_id:row.instance_id, frozen:!row.frozen});
+      if (result.error || !result.ok) throw new Error(result.error || '请求失败');
+      row.frozen = result.frozen;
+      browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
+        frozen:result.frozen, process_count:result.process_count});
+      showSessionStopNotice(result.frozen
+        ? '现场已冻结：会话及子进程已暂停，可报告问题；排查后点击“恢复运行”'
+        : '会话已恢复运行', result.frozen);
+    } catch (error) {
+      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true);
+    } finally {
+      await loadTermList();
+      renderSessionFreeze(m);
+      button.disabled = false;
+    }
+  };
+}
+
 function renderSessionAction(m, button = $('#a-session-action')) {
+  renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
   if (!button || m.uid !== S.sel) return;
   if (m.fork_parent) {
     const shown = !!m.fork_parent_visible;
