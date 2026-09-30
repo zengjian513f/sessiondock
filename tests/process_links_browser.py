@@ -5,6 +5,8 @@ from contextlib import ExitStack
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import os
 import tempfile
 import time
 from types import SimpleNamespace
@@ -29,8 +31,9 @@ def wait_for(function, timeout=20):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, default=BINARY)
+    parser.add_argument("--with-agent", action="store_true")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='process-links-') as temporary, sync_playwright() as pw:
+    with tempfile.TemporaryDirectory(prefix='process-links-') as temporary, sync_playwright() as pw, ExitStack() as agents:
         root = Path(temporary)
         corpora, nodes, procs = [], [], []
         for index, name in enumerate(('a', 'b')):
@@ -64,6 +67,14 @@ def main():
             corpora.append(corpus)
             procs.append(proc)
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
+        if args.with_agent:
+            for corpus, proc in zip(corpora, procs):
+                agent = subprocess.Popen([str(args.binary.resolve().with_name('resource-agent')),
+                    '--uid', str(os.getuid()), '--node-id-file', str(corpus.root / 'ids/node-id'),
+                    '--socket', str(corpus.root / 'agent.sock'), '--state', str(corpus.root / 'agent-state.json'),
+                    '--proc-root', str(proc), '--events', 'off'])
+                agents.callback(lambda p=agent: (p.terminate(), p.wait(timeout=10)))
+                wait_for(lambda: (corpus.root / 'agent.sock').exists())
         hubroot = root / 'hub'
         hubroot.mkdir()
         hub = None
@@ -75,6 +86,8 @@ def main():
                     for corpus, node, proc in zip(corpora, nodes, procs):
                         environment = node_env(corpus.root, node.port, '127.0.0.0/8')
                         environment['SESSIONDOCK_PROC_ROOT'] = str(proc)
+                        if args.with_agent:
+                            environment['SESSIONDOCK_RESOURCE_AGENT_SOCKET'] = str(corpus.root / 'agent.sock')
                         local.append(stack.enter_context(isolated_server(corpus, args.binary,
                             state_dir=corpus.root / 'state', extra_env=environment)))
                     if not restarted:
@@ -84,6 +97,9 @@ def main():
                     base, opener = local[1]
                     report = wait_for(lambda: next((b for b in get_json(opener, base, '/api/process-links')['bindings']
                         if b['process']['pid'] == 300 and b['session']['node_id'] == nodes[0].nid), None))
+                    if args.with_agent:
+                        assert get_json(opener, base, '/api/process-links')['collector']['service'] == 'resource-agent'
+                        assert get_json(opener, base, '/api/resources')['availability'] == 'observed'
                     assert report['session']['sid'] == 'parent'
                     assert report['launch_chain'][0]['process']['node_id'] == nodes[0].nid
                     assert report['launch_chain'][0]['process']['process']['pid'] == 200

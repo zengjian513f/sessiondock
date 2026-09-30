@@ -1,8 +1,10 @@
 # Shared process attribution and session resource accounting
 
 `process-links` is the common attribution protocol and Rust library. SessionDock
-hosts its node API and fleet coordinator; Node Status consumes the same node
-bindings. The library does not collect CPU usage or depend on either UI.
+adapts native session identities and hosts the fleet coordinator. An independent
+`resource-agent` system service owns collection and durable attribution when
+installed; Node Status reads its local socket directly, including while
+SessionDock is stopped. The node API retains a polling compatibility path. The library does not collect CPU usage or depend on either UI.
 
 ## Identity and causality
 
@@ -47,7 +49,7 @@ the destination's authenticated node listener. Browser forwarding of
 `POST /api/process-links` is refused. Node Status needs only the local read API;
 it neither holds fleet credentials nor duplicates the connection matcher.
 
-The Linux adapter reads the current user's processes, selected identity variables,
+The Linux adapter reads the monitored user's processes, selected identity variables,
 SSH connection variables and socket descriptors. It excludes detected SSH master
 connections, ambiguous matches and receiver processes predating a new connection
 (with two seconds of clock skew tolerance). Shared tmux ancestors do not establish
@@ -109,3 +111,48 @@ The Node Status resolver has a separate consumer regression for start-time check
 
 Related contracts: [liveness](liveness.md#spawned_by),
 [metadata](metadata.md#spawned_by), [deployment](deployment.md).
+
+## Independent Linux service
+
+`resource-agent` is a user-space systemd service, with read-only eBPF lifecycle
+probes loaded by a managed bpftrace child. It does not change the kernel image,
+load a kernel module, change SSH configuration, wrap commands, move workloads
+into cgroups, throttle workloads, or signal them. Its own cgroup has CPU/memory
+limits; stopping that cgroup stops only the collector and its tracer.
+
+The opt-in `resource-agent` deploy target installs the root-owned binary under
+`/opt/resource-agent`, a system unit and a non-secret configuration file naming
+the monitored UID and existing node identity file. The local Unix socket
+`/run/resource-agent/agent.sock` is mode 0600, owned by that UID; the server also
+checks peer credentials. No TCP listener or new network credentials are added.
+The supplied unit bounds capabilities to BPF/performance tracing, reading process
+state, resource limits and socket ownership. It does not make either UI privileged.
+
+The newline-delimited JSON requests are `health`, `report`, `resources`,
+`catalog` (native session identities and process owners), and `publish` (verified
+SSH links), encoded as `{ "op": "report" }` or `{ "op": "catalog", "data": ... }`.
+Responses are `{ "ok": true, "result": ... }` or an explicit error. SessionDock
+refreshes its catalog in the background, while the service retains confirmed
+process bindings through application outages and service restarts within a boot.
+Catalog and link identities are local-node/boot/process scoped. A missing remote
+collector creates a gap in visibility, never a zero-resource observation or an
+SSH failure. Legacy nodes can still provide polling attribution.
+
+The initial resource endpoint supplies cumulative process CPU seconds, explicitly
+labelled RSS, and Linux `/proc/PID/io` byte counters. GPU, per-session network/NFS,
+PSS and complete exited-process accounting remain explicitly unavailable.
+Lifecycle events preserve inherited attribution after a parent exits. Polling
+repairs the live snapshot every two seconds; this is not yet complete historical
+resource accounting for short-lived processes or SSH connections. Event failure
+and loss are reported; polling continues without affecting workloads.
+
+The Hub still coordinates new cross-machine matches using node APIs. Existing
+bindings and local collection survive application/Hub outages; discovering new
+remote links requires both endpoint reports and a working coordinator. Kernel
+probes are local to each machine and do not remove that requirement.
+
+Validation: `tests/resource_agent_suite.py`, `tests/resource_agent_deploy.py`,
+and `tests/process_links_browser.py --with-agent` cover independent lifetime,
+restart recovery, no workload termination, PID reuse, unavailable metrics and the
+browser-visible cross-machine relation. Live BPF validation additionally checks
+that a short child fork and exit are observed without changing its command.

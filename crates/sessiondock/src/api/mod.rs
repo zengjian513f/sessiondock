@@ -59,6 +59,7 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
 pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
+        .route("/resources", get(process_links::resources))
         .route(
             "/process-links",
             get(process_links::get).post(process_links::post),
