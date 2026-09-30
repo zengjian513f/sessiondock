@@ -163,7 +163,14 @@ report is being written: switching it moves the description, the quotes and ever
 attachment this page still holds to the chosen machine's draft, empties the
 previous machine's draft and releases the bytes staged there. An attachment
 restored from the server after a refresh has no local bytes to re-upload; it
-stays in the previous machine's draft and the dialog says so. A failed staging keeps the File on its card
+stays in the previous machine's draft and the dialog says so. The page writes
+one report at a time: while a draft still holds text, quotes or attachments,
+browser storage remembers its machine and the dialog reopens there instead of
+switching to the open session's machine and a different, empty draft
+(`BUG-20260930-110656-a65368`). The problem machine still comes from the open
+session. Emptying or sending the draft forgets it; if that machine is offline
+the dialog opens on the default machine and says where the unsent draft is.
+A failed staging keeps the File on its card
 with a retry, and Send retries it too. Only a file whose staging never finished
 needs reselection after refresh; leaving with such bytes or an unfinished save
 warns. Removing a staged file discards its private bytes once the draft is
