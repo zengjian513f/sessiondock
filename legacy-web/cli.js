@@ -56,6 +56,7 @@ class ClaudeCli extends SessionDockCli {
   questionAnswerKeys(prompt, optionIndex) {
     const options = prompt?.questions?.[0]?.options || [];
     if (!options[optionIndex] || optionIndex >= 9) return null;
+    if (prompt?.kind === 'folder_trust') return options[optionIndex]?.keys || null;
     // 在真实选项行上按数字即选中并提交。
     return [...this.questionOptionRowKeys(options.length), String(optionIndex + 1)];
   }

@@ -577,9 +577,13 @@ impl Conversations {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
                 capture.map(|capture| {
-                    if identity.source == "codex" && capture.lag.is_none_or(|lag| lag == 0) {
-                        prompt = crate::bridge::codex::startup_prompt(&capture.text)
-                            .unwrap_or(Value::Null);
+                    if capture.lag.is_none_or(|lag| lag == 0) {
+                        prompt = match identity.source.as_str() {
+                            "codex" => crate::bridge::codex::startup_prompt(&capture.text),
+                            "claude" => crate::bridge::claude::startup_prompt(&capture.text),
+                            _ => None,
+                        }
+                        .unwrap_or(Value::Null);
                     }
                     transcript = cli_state::transcript(&identity.source, &capture);
                     (
