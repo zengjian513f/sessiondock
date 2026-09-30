@@ -46,14 +46,14 @@ def probe(args,root,auth):
         child=server.call('thread/revert',{'threadId':child['id'],'beforeTurnId':removed})['thread']
         grandchild=server.call('thread/fork',{**common,'threadId':child['id'],'excludeTurns':True})['thread']
         server.turn(grandchild['id'],'GRANDCHILD');print('Created branches, revert and grandchild',flush=True)
-        server.turn(parent['id'],prompt='This is an authorized isolated native CLI subagent test. '
+        server.turn(parent['id'],prompt='Ask one independent reviewer to explain an integer-overflow boundary case. '
             'Use spawn_agent to create exactly one subagent named clone_probe, with fresh context, '
             'model gpt-5.6-luna and reasoning effort low (or inherit these current settings if the '
-            'tool has no override). Its only task is to reply SUBAGENT_READY without tools. '
+            'tool has no override). Its task is to explain that boundary case briefly, without tools. '
             'If spawn_agent is deferred, first discover it using tool search. '
-            'Wait for its completion, then reply SUBAGENT_DONE. Do not use shell or web tools.')
+            'Wait for its completion and summarize the answer. Do not use shell or web tools.')
         agents=[t for t in server.listing() if t.get('parentThreadId')==parent['id']]
-        assert len(agents)==1,agents
+        assert len(agents)==1,(agents,json.dumps(server.pages(parent['id'])[-1])[-2400:])
         print('Created native code-mode subagent',flush=True)
         server.call('thread/name/set',{'threadId':child['id'],'name':'Complex clone child'})
         project=server.call('project/create',{'idempotencyKey':'complex-clone','name':'Clone project','roots':[{'path':str(cwd)}]})['project']
@@ -68,6 +68,21 @@ def probe(args,root,auth):
         native={t['id']:server.call('thread/read',{'threadId':t['id']})['thread'] for t in family}
     original=inventory(home)
     uid='codex:'+hashlib.sha1(parent['path'].encode()).hexdigest()[:16]
+    if args.production_peer:
+        from session_native_transfer import move_native
+        # Native fork ancestors are hidden in the normal sidebar. Start from
+        # the visible grandchild, as a user would, and require the whole family.
+        uid='codex:'+hashlib.sha1(native[grandchild['id']]['path'].encode()).hexdigest()[:16]
+        data={'pages':pages,'native':native,'metadata':{t['id']:native_metadata(home,t['id']) for t in family}}
+        unrelated_before=native_metadata(home,unrelated['id'])
+        result=move_native(root,home,'codex',uid,[child['id'],agents[0]['id']],args.production_peer,
+            args.binary,args.new_ids,codex_data=data)
+        assert inventory(home)==[row for row in original if row['sid']==unrelated['id']]
+        assert native_metadata(home,unrelated['id'])==unrelated_before
+        with sqlite3.connect(home/'state_5.sqlite') as db:
+            assert not set(data['pages']) & {row[0] for row in db.execute('SELECT id FROM threads')}
+        result['checks']+=['source_native_rows_retired','source_unrelated_preserved']
+        return result
     with isolated_server(Corpus(root),args.binary,state_dir=root/'state',extra_env={'SESSIONDOCK_PROC_ROOT':str(root/'proc')}) as (base,opener):
         def post(path,body):
             req=Request(base+path,data=json.dumps(body).encode(),headers={'Content-Type':'application/json'})
@@ -122,8 +137,11 @@ def main():
     parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--codex',default=shutil.which('codex'))
     parser.add_argument('--keep-workspace',action='store_true')
+    parser.add_argument('--production-peer',help='Use Chromium to move the native group to this SSH peer and resume there')
+    parser.add_argument('--new-ids',action='store_true',help='Rewrite identities during the cross-node move')
     parser.add_argument('--output',type=Path,default=Path('target/session-clone-service-real.json'))
     args=parser.parse_args();real=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex'))
+    args.output.unlink(missing_ok=True)
     if not args.codex or not (real/'auth.json').is_file():parser.error('Codex and controlled existing login required')
     before=digest(real/'config.toml');root=Path(tempfile.mkdtemp(prefix='sessiondock-clone-service-real-'))
     print('Synthetic workspace:',root,flush=True)
