@@ -334,7 +334,12 @@ fn cli_absent(profile: &CliProfile) -> bool {
     for name in DENIED_ENV {
         command.env_remove(name);
     }
-    if let Some(home) = profile.env.get("HOME").map(PathBuf::from).filter(|home| home.is_dir()) {
+    if let Some(home) = profile
+        .env
+        .get("HOME")
+        .map(PathBuf::from)
+        .filter(|home| home.is_dir())
+    {
         command.current_dir(home);
     }
     let mut child = match command
@@ -429,7 +434,10 @@ impl Launcher {
     /// The model catalog of the source's one CLI profile; empty when the
     /// source has no unique profile.
     pub fn models(&self, source: Source) -> super::models::Catalog {
-        let mut profiles = self.profiles.values().filter(|profile| profile.source == source);
+        let mut profiles = self
+            .profiles
+            .values()
+            .filter(|profile| profile.source == source);
         match (profiles.next(), profiles.next()) {
             (Some(profile), None) => super::models::catalog(profile),
             _ => super::models::Catalog::default(),
@@ -445,7 +453,11 @@ impl Launcher {
     }
     /// Claim the update slot of an agent CLI profile.
     pub fn begin_update(&self, id: &str) -> Result<(), super::clients::UpdateError> {
-        if !self.profiles.get(id).is_some_and(|profile| profile.source != Source::Shell) {
+        if !self
+            .profiles
+            .get(id)
+            .is_some_and(|profile| profile.source != Source::Shell)
+        {
             return Err(super::clients::UpdateError::Unknown);
         }
         self.updates.begin(id)
@@ -718,7 +730,11 @@ impl Launcher {
         let cwd = record.spec().cwd();
         let mut body = serde_json::json!({"id": sid, "location": {"directory": cwd}});
         // OpenCode's TUI has no model option; the session carries it.
-        if let Some((provider, model)) = record.spec().model().and_then(|model| model.split_once('/')) {
+        if let Some((provider, model)) = record
+            .spec()
+            .model()
+            .and_then(|model| model.split_once('/'))
+        {
             body["model"] = serde_json::json!({"providerID": provider, "id": model});
         }
         let (created, detail) = opencode_api(

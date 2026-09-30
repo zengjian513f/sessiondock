@@ -861,7 +861,14 @@ impl Registry {
             .target(node)
             .map_err(|_| ClientError::Invalid("invalid node url"))?;
         client
-            .json_idle(&target, "POST", path, Some(body), client.timeout, BULK_WRITE_TIMEOUT)
+            .json_idle(
+                &target,
+                "POST",
+                path,
+                Some(body),
+                client.timeout,
+                BULK_WRITE_TIMEOUT,
+            )
             .await
     }
 

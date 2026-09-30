@@ -8,10 +8,12 @@ python3 tests/run_validation.py            # --jobs 8, --browser-jobs 3 by defau
 python3 tests/run_validation.py --jobs 1   # fully serial (browser jobs forced to 1)
 python3 tests/run_validation.py --list
 python3 tests/run_validation.py --tags rust,node
-python3 tests/run_validation.py --only node_contracts,legacy_browser
+python3 tests/run_validation.py --only legacy_browser
 ```
 
-`--tags` defaults to `rust,node,python`. `--only NAME[,NAME…]` and `--skip`
+`--tags` defaults to `rust,node,python`. Unit suites (Cargo, Node contracts and
+Python unittest) are opt-in via `--include-unit` or an explicit `--only NAME`;
+default sweeps and deployment gates exclude them. `--only NAME[,NAME…]` and `--skip`
 filter by suite name. `--keep-going` continues after a failure. Per-suite logs
 go under `target/validation/<stamp>/`. Rust runs first as parallel lanes that
 share no cargo build directory (`cargo_clippy` with optional `cargo_test`;
@@ -49,6 +51,12 @@ headless browser suite that covers it.
 ## Prerequisites
 
 - `cargo` on `PATH`; the runner prepends `~/.cargo/bin` when needed
+- For the MSVC check on Linux/macOS, install `cargo-xwin` with
+  `cargo install cargo-xwin --locked`, plus LLVM (`clang-cl`, `llvm-lib`,
+  `lld-link`) on `PATH`. If the distro installs only `clang`, a `clang-cl`
+  symlink to it selects its MSVC driver. `cargo xwin check` downloads and
+  caches the Microsoft CRT/SDK and compiles bundled C dependencies; it does
+  not skip SQLite compilation. See the [cargo-xwin instructions](https://github.com/rust-cross/cargo-xwin).
 - Release `target/release/sessiondock` for Python suites that take `--binary`
   (the runner's `cargo_build` suite produces it first)
 - Built `target/debug/ptyhost` for terminal, lifecycle, and host suites
@@ -83,9 +91,9 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | cargo_test | `cargo test --workspace --locked` | Workspace unit and integration tests. Opt-in only (`--include-unit` / `--only cargo_test`). Opt-in ignored `launch_host` needs `SESSIONDOCK_TEST_PTYHOST_BINARY` | cargo | n/a |
 | cargo_fmt | `cargo fmt -p sessiondock -p ptyhost-client --check` | rustfmt on those two packages | cargo | n/a |
 | cargo_clippy | `cargo clippy -p sessiondock -p ptyhost-client --all-targets --locked -- -D warnings` | clippy, warnings denied | cargo | n/a |
-| cargo_check_windows | `cargo check --workspace --all-targets --target x86_64-pc-windows-msvc --locked` | Linux cross-compile to MSVC; not a Windows run | cargo | n/a |
+| cargo_check_windows | `cargo xwin check --workspace --all-targets --target x86_64-pc-windows-msvc --locked` | Linux/macOS cross-compile to MSVC with bundled C dependencies; native Windows uses `cargo check`; not a Windows run | cargo, cargo-xwin, LLVM, cached/downloadable CRT/SDK | n/a |
 | cargo_build | `cargo build --release -p sessiondock --locked` | Release server used by `--binary` Python suites | cargo | n/a |
-| node_contracts | `node --test tests/composer_input_contract.mjs tests/grid_facade_contract.mjs tests/grid_input_contract.mjs tests/grid_model_contract.mjs tests/grid_render_contract.mjs tests/history_pages_contract.mjs tests/legacy_contract.mjs tests/legacy_pure_contract.mjs tests/media_continuation_contract.mjs tests/media_lazy_contract.mjs` | `composer_input_contract.mjs` (PTY editor classification: ready/starting/blocked/unknown over the frame fixtures); `grid_facade_contract.mjs` (xterm-compatible `GridTerm` surface: write of JSON lines, buffer shim, selection, modes, resize/title events); `grid_model_contract.mjs` (grid wire decoder, snapshot/diff application, scrollback reflow, selection text); `grid_render_contract.mjs` (every row clipped to its own box, cell size on whole device pixels for fractional dpr); `grid_input_contract.mjs` (xterm-compatible key/mouse/paste/focus encoding); `legacy_contract.mjs` (capabilities, media tokens, terminal identity, SSE retry, batched audit flush via `auditPayload` / beacon gate); `legacy_pure_contract.mjs` (pure helpers incl. the nest tree `nestParentOf`/`nestTree`/`expandRows`/`agentRunning` degrade rules, continued-in hiding/no-nesting, unread badge state classes); `history_pages_contract.mjs` (gap cursor vs live checkpoint); `media_continuation_contract.mjs` (per-message pages); `media_lazy_contract.mjs` (lazy GET/diagnostics) | node | 0s |
+| node_contracts | `node --test tests/composer_input_contract.mjs tests/grid_facade_contract.mjs tests/grid_input_contract.mjs tests/grid_model_contract.mjs tests/grid_render_contract.mjs tests/history_pages_contract.mjs tests/legacy_contract.mjs tests/legacy_pure_contract.mjs tests/media_continuation_contract.mjs tests/media_lazy_contract.mjs` | `composer_input_contract.mjs` (PTY editor classification: ready/starting/blocked/unknown over the frame fixtures); `grid_facade_contract.mjs` (xterm-compatible `GridTerm` surface: write of JSON lines, buffer shim, selection, modes, resize/title events); `grid_model_contract.mjs` (grid wire decoder, snapshot/diff application, scrollback reflow, selection text); `grid_render_contract.mjs` (every row clipped to its own box, cell size on whole device pixels for fractional dpr); `grid_input_contract.mjs` (xterm-compatible key/mouse/paste/focus encoding); `legacy_contract.mjs` (capabilities, media tokens, terminal identity, SSE retry, batched audit flush via `auditPayload` / beacon gate); `legacy_pure_contract.mjs` (pure helpers incl. the nest tree `nestParentOf`/`nestTree`/`expandRows`/`agentRunning` degrade rules, continued-in hiding/no-nesting, unread badge state classes); `history_pages_contract.mjs` (gap cursor vs live checkpoint); `media_continuation_contract.mjs` (per-message pages); `media_lazy_contract.mjs` (lazy GET/diagnostics) | node (unit; opt-in only) | 0s |
 | advanced_parity | `python3 tests/advanced_parity.py --python-source PATH --binary target/release/sessiondock` | Compaction/rewind/sidechains, fork-of-fork, rich tools, Grok envelopes, batch-35 real-root shapes (copied `session_meta` forks, rewind past fork point, orphan agents hidden, torn line / missing leaf / cycle as warnings, `claude-missing-parent` now PASS); duplicate-key objects follow Python's last-key-wins behavior | binary, python-source | n/a |
 | agent_active_suite | `python3 tests/agent_active_suite.py --binary target/release/sessiondock` | `agent_items[].active/created/updated` for Claude sidecars (end_turn, stop notification, refusal) and Codex subagents (last event_msg), flips on append (grok-4.6 headless draft, reviewed) | binary | n/a |
 | agent_menu_browser | `python3 tests/agent_menu_browser.py --binary target/release/sessiondock` | Subagent title-bar menu (Python `agent_menu_e2e` port): end-time order and no running dot while the owner is not live, running-first with dot / open span from the backend's `agent_items[].active` (sidecar open turn), finish/resume as transcript edits reaching the next open; row geometry under a sticky turn toolbar at desktop + 390 px | binary, Chromium | 6s |
@@ -98,6 +106,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | bug_report_http_suite | `python3 tests/bug_report_http_suite.py --binary target/release/sessiondock` | `POST /api/bug-report` against the fake Claude and Codex CLIs — 501 unconfigured, 503 source without a CLI, validation, raw attachment upload, 202 shape, bundle files, Claude `submitted` from the synthetic native record, Codex `submitted_unconfirmed`, audit trail | binary, ptyhost | 12s |
 | bug_report_node_browser | `python3 tests/bug_report_node_browser.py` | Hub report dialog machine selection, named source buttons, two-up attachments on a 390px phone, disabled CLI choices and cross-machine capture/submit bodies against fake nodes; no CLI or real histories | hub binary, Chromium | n/a |
 | bug_report_real | `python3 tests/bug_report_real.py` | Real Claude worker (the suite pins the cheapest test model per the real-CLI rule) with a temporary config; verifies native confirmation and cleanup. | claude CLI, ptyhost | 25s |
+| bug_report_codex_browser_real | `python3 tests/bug_report_codex_browser_real.py` | Operator-only real Codex report dialog, native rename and first task confirmation; isolated home, Luna low, unchanged everyday defaults. | Codex CLI, ptyhost, Chromium | n/a |
 | check_config_suite | `python3 tests/check_config_suite.py --binary target/release/sessiondock` | Startup-validation matrix through `sessiondock --check-config` (no server start, no Chromium), including normal filesystem aliases and configuration. | binary | 2s |
 | claude_interrupt_parity | `python3 tests/claude_interrupt_parity.py --python-source PATH --binary target/release/sessiondock` | Interrupted-turn corpora (Python test cases, two-level offshoot, deferred abort) vs `ClaudeAdapter.read`: role/text/turn_id/interrupted sequence and final activity equal (grok-4.6 headless draft, reviewed) | binary, python-source | n/a |
 | claude_lineage_parity | `python3 tests/claude_lineage_parity.py --python-source PATH --binary target/release/sessiondock` | Claude torn NUL line, parent cycle, missing last-prompt leaf and duplicate-key objects vs the Python adapter `read`; `跳过无效的JSONL 记录 ×1` on the torn row (grok-4.6 headless draft, reviewed) | binary, python-source | n/a |
@@ -205,6 +214,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | rewind_cli_browser | `python3 tests/rewind_cli_browser.py` | A rewind made in Claude's own TUI (fake CLI, no native write) followed as a `cli` pin: rewound input and answer leave the view with the one-line notice, no Esc-return claim, reload keeps it, the next input settles it natively; recalling an answered input still on screen neither pins nor claims an Esc return. | debug binaries, Chromium, ptyhost | 30s |
 | rewind_http_suite | `python3 tests/rewind_http_suite.py --binary target/release/sessiondock` | HTTP-only contract of persisted Claude timeline pins (POST /api/session/rewind). | binary | n/a |
 | search_browser | `python3 tests/search_browser.py --binary target/release/sessiondock` | NDJSON search, flags, navigation, unsupported regex error and recovery | binary, Chromium | 4s |
+| search_no_fold_browser | `python3 tests/search_no_fold_browser.py --binary target/release/sessiondock` | Search opens folded date/project groups and exposes matching descendants and subagents through Chromium navigation. | binary, Chromium | n/a |
 | search_cache_suite | `python3 tests/search_cache_suite.py --binary target/release/sessiondock` | Search-text cache contract: cold/hot identity, append/rewrite invalidation, cached unsupported rows, eviction, ordinary directory aliases and permissions, warm-up, concurrent searches + list, NDJSON order, memory-only mode, `--check-config`. | binary | n/a |
 | search_suite | `python3 tests/search_suite.py --binary target/release/sessiondock` | Search contract coverage over 12 synthetic sessions; no Chromium. | binary | n/a |
 | security_suite | `python3 tests/security_suite.py --binary target/release/sessiondock` | Raw-socket checks of the local-only security middleware. | binary | n/a |

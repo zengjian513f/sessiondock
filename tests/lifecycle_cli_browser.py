@@ -159,11 +159,11 @@ def create_claude(page, context, base, work, expect_completion, full_argv=True, 
     expect(page.locator("#composer")).to_be_hidden()
     page.wait_for_function("T.ws?.readyState === WebSocket.OPEN")
     if full_argv:
-        xterm_includes(page, argv_lines("CLAUDE", ["--settings", SETTINGS, "--session-id", receipt["declared_sid"]]))
+        xterm_includes(page, argv_lines("CLAUDE", ["--settings", SETTINGS, "--session-id", receipt["declared_sid"], "--effort", "high"]))
         xterm_includes(page, "FAKE_CLAUDE_HOME [/synthetic/claude-home]")
     else:
         # The narrow mobile xterm clips wide rows; the identity rows fit.
-        xterm_includes(page, f"A2 [--session-id]\nA3 [{receipt['declared_sid']}]\nFAKE_CLAUDE_ARGV_END 4")
+        xterm_includes(page, f"A2 [--session-id]\nA3 [{receipt['declared_sid']}]\nA4 [--effort]\nA5 [high]\nFAKE_CLAUDE_ARGV_END 6")
     xterm_includes(page, "FAKE_CLAUDE_SID_ENV []")
     xterm_includes(page, f"SERVICE_WRAPPER [{wrapper}]")
     xterm_includes(page, "SERVICE_PATH [/usr/bin:/bin]")

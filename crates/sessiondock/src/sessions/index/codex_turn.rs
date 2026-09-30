@@ -115,7 +115,13 @@ pub(super) fn read(
             None => turn,
         };
     }
-    if file.stamp() != Some(stamp) {
+    // Appends do not invalidate the prefix just scanned. Cache the original
+    // stamp/committed LF so the next observation reads the new suffix. A
+    // rewrite, truncation or replacement still invalidates this observation.
+    if !file.stamp().is_some_and(|after| {
+        (after.dev, after.ino) == (stamp.dev, stamp.ino)
+            && (after == stamp || after.size > stamp.size)
+    }) {
         return Err(io::Error::other("Codex turn scan changed during read"));
     }
     Ok(Scan {

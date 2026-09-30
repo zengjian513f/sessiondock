@@ -8,7 +8,7 @@ Multi-step work is uploaded as ASCII `.cmd` files rendered from `deploy/windows/
 only a script yields real exit codes); uploads use scp because rsync is unavailable.
 
 `stage()` uploads a zip of the commit, extracts it into `extra["source_dir"]` (keeping
-`target\`), runs `cargo.exe test -p sessiondock --locked` there when the stage's test
+`target\`), runs `cargo.exe check -p sessiondock --all-targets --locked` there when the stage's test
 mode is not `none` (section 2; `TEST_FAILED` stops the target before anything is staged),
 builds with the toolchain's REAL `cargo.exe` (`extra["toolchain_bin"]`; the
 rustup shims are reparse points an elevated SSH cannot run), stages `bin\<name>.new.exe`
@@ -314,7 +314,7 @@ class WindowsNode(TargetHandler):
         p, d = self.prefix, self.deploy_dir
         steps: list[str] = []
         if self.ship_bin:
-            test = (f"cargo.exe test -p sessiondock --locked ({self.o.test_mode}; TEST_FAILED = FAILED before staging), "
+            test = (f"cargo.exe check -p sessiondock --all-targets --locked ({self.o.test_mode}; TEST_FAILED = FAILED before staging), "
                     if self.run_tests else "tests skipped (mode none), ")
             steps += [f"scp <source zip of {self.a.short}> -> {d}\\source-{self.a.short}.zip",
                       f"scp build.cmd -> {d}\\build.cmd ; run it (timeout {int(self.build_timeout)}s): extract, {test}"

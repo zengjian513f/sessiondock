@@ -134,7 +134,7 @@ class MappingTest(unittest.TestCase):
         self.assertEqual(s, BROWSERS | {"node_contracts", "brand_names_check"})
         self.assertTrue(s.isdisjoint(CARGO))
         s, sc, full = suites_of("deploy/deploy.py")
-        self.assertEqual((s, sc, full), ({"deploy_lock", "deploy_native_handlers", "deploy_testplan"}, {"tests/deploy_dry_run.py"}, False))
+        self.assertEqual((s, sc, full), ({"deploy_lock", "deploy_native_handlers", "deploy_testplan"}, set(), False))
         for doc in ("docs/deployment.md", "README.md", "crates/ptyhost-client/README.md"):
             s, sc, full = suites_of(doc)
             self.assertEqual((s, sc, full), (set(), {"tests/check_docs_links.py", "tests/check_agents_md.py"}, False), doc)
@@ -175,9 +175,10 @@ class MappingTest(unittest.TestCase):
         s = set(tp.plan_for("affected", ["crates/ptyhost/src/main.rs"], names)["suites"])
         self.assertTrue({"terminal_browser", "lifecycle_browser", "host_identity"} <= s, s)
         s = set(tp.plan_for("affected", ["legacy-web/index.html"], names)["suites"])
-        self.assertTrue({"node_contracts", "legacy_browser", "brand_names_check"} <= s and len(s) > 20, s)
+        self.assertTrue({"legacy_browser", "brand_names_check"} <= s and len(s) > 20, s)
         self.assertEqual(set(tp.plan_for("affected", ["deploy/sdtargets/linux.py"], names)["suites"]),
-                         {"deploy_lock", "deploy_native_handlers", "deploy_testplan"})
+                         {"deploy_native_handlers"})
+        self.assertTrue({"node_contracts", "cargo_test", "deploy_lock", "deploy_testplan"}.isdisjoint(names))
 
 
 class BaseCommitTest(unittest.TestCase):

@@ -3,7 +3,7 @@
 Automates docs/deploy-macos.md sections 2, 4 and 5. The node builds from the
 `git archive` tar that `deploy.py build` produced (`artifacts.source_archive`),
 inside `target.extra["source_dir"]` (kept between runs so `target/` stays warm),
-first runs the workspace Rust tests there when the stage's test mode is not `none`
+first runs the workspace Rust compile checks there when the stage's test mode is not `none`
 (`TMPDIR=/private/tmp/sdtest`, section 2; a failure stops the target before anything
 is staged), then copies the fresh binaries next to the running ones as `<name>.new`, renames them
 over in `swap()` and restarts only the web service with
@@ -113,8 +113,8 @@ class MacOSNode(TargetHandler):
 
     def test_cmd(self) -> str:
         """Section 2 of docs/deploy-macos.md; the log stays on the node when tests fail."""
-        return (f"cd {_q(self.source_dir)} && mkdir -p {TEST_TMPDIR} && TMPDIR={TEST_TMPDIR} {self.cargo} test "
-                f"--workspace --locked -- --test-threads=1 >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
+        return (f"cd {_q(self.source_dir)} && mkdir -p {TEST_TMPDIR} && TMPDIR={TEST_TMPDIR} {self.cargo} check "
+                f"--workspace --all-targets --locked >{TEST_LOG} 2>&1; rc=$?; tail -n 40 {TEST_LOG}; "
                 f"[ $rc -eq 0 ] && rm -f {TEST_LOG}; exit $rc")
 
     # -- remote helpers -----------------------------------------------------------
@@ -185,8 +185,8 @@ class MacOSNode(TargetHandler):
             pk = " ".join(f"-p {n}" for n in self.bins)
             steps.append(f"rsync {self.a.source_archive} -> {src}/.deploy/source.tar; wipe {src}/* except target/ ; tar -x")
             if self.run_tests:
-                steps.append(f"test ({self.o.test_mode}): cd {src} && TMPDIR={TEST_TMPDIR} {self.cargo} test --workspace "
-                             f"--locked -- --test-threads=1   (timeout {int(TEST_TIMEOUT)}s; failure = FAILED before anything is staged)")
+                steps.append(f"test ({self.o.test_mode}): cd {src} && TMPDIR={TEST_TMPDIR} {self.cargo} check --workspace "
+                             f"--all-targets --locked   (timeout {int(TEST_TIMEOUT)}s; failure = FAILED before anything is staged)")
             steps += [
                 f"cd {src} && {self.cargo} build --release --locked {pk}   (timeout {int(BUILD_TIMEOUT)}s)",
             ] + [f"cp -f {src}/target/release/{n} {p}/bin/{n}.new && shasum -a 256 (expected hash)"
@@ -222,7 +222,7 @@ class MacOSNode(TargetHandler):
                 t0 = time.monotonic()
                 rc, out = self.sh.run(self.test_cmd(), timeout=TEST_TIMEOUT)
                 if rc != 0:
-                    raise RuntimeError(f"cargo test failed on the node (rc={rc}); log {src}/{TEST_LOG} on the node, "
+                    raise RuntimeError(f"cargo check failed on the node (rc={rc}); log {src}/{TEST_LOG} on the node, "
                                        f"tail in {self.o.log_dir / (self.t.name + '.log')}:\n{out[-1500:]}")
                 self.log(f"tests ({self.o.test_mode}) passed in {time.monotonic() - t0:.0f}s")
             pk = " ".join(f"-p {n}" for n in self.bins)

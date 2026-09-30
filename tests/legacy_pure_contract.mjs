@@ -22,6 +22,11 @@ test('Codex current thread reconnects to the original guarded pane without movin
   assert.equal(context.linkedTermSession('codex:new').name, 'original');
 });
 function load(context, name, source = app) {
+  const dependencies = {expandRows:['sidebarNestClosed'], nestSize:['sidebarNestClosed'],
+    pendingTmuxSessions:['pendingNativeKey'],paintItemStatus:['paintStatusMarker']};
+  for (const dependency of dependencies[name] || []) {
+    if (typeof context[dependency] !== 'function') load(context, dependency, source);
+  }
   const fn = new RegExp(`^(?:async )?function ${name}\\(`, 'm').exec(source);
   let code;
   if (fn) {
@@ -52,6 +57,8 @@ const same = (actual, expected) => assert.equal(JSON.stringify(actual), JSON.str
 function ctx(globals = {}) {
   const context = vm.createContext({URL, URLSearchParams, SessionDockCapabilities: {config: {}, allows: () => false},
     HUB_MODE: false, APP_BASE: new URL('http://127.0.0.1:8080/sessiondock/'), DEBUG_RUN: '',
+    terminalListUncertain:()=>false, sessionFrozen:()=>false,
+    sessionInputAttention:()=>'',sessionTurn:()=>'',turnLabel:()=>'',
     selectedNodeIds: () => ['n1', 'n2'], newNodeId: () => 'nid', appUrl: x => x, el: element, ...globals});
   vm.runInContext('let sessionIndexRows = null, sessionIndex = null;', context);
   load(context, 'indexedSessions');
@@ -408,14 +415,15 @@ test('unread rows carry only a count; the badge colour comes from the current st
   same(context.unreadRow('u3'), {count: 0});
   same(context.unreadRow('none'), {count: 0});
   const badge = (uid, tmuxName = '') => {
-    const classes = new Set(), state = {textContent: '', title: '', ariaLabel: '',
+    const classes = new Set(), state = {dataset:{},textContent: '', title: '', ariaLabel: '',
       classList: {toggle: (name, on) => on ? classes.add(name) : classes.delete(name)}};
-    context.paintItemStatus({dataset: {uid, tmuxName}, querySelector: () => state});
+    context.paintItemStatus({dataset: {uid, tmuxName},
+      classList:{contains: name => name === 'live' && !!tmuxName},querySelector: () => state});
     return {classes: [...classes].sort(), text: String(state.textContent), title: state.title};   // the DOM stringifies
   };
   same(badge('u2'), {classes: ['counted', 'idle', 'visible'], text: '2', title: '2 条新内容，会话已退出'});
   S.live.add('u2');
-  same(badge('u2'), {classes: ['counted', 'visible'], text: '2', title: '2 条新内容，运行中'});
+  same(badge('u2'), {classes: ['counted', 'visible'], text: '2', title: '2 条新内容，会话运行中'});
   S.liveTmux.add('u2');
   same(badge('u2'), {classes: ['counted', 'tmux', 'visible'], text: '2', title: '2 条新内容，受管会话运行中'});
   same(badge('none'), {classes: ['idle'], text: '', title: '会话运行中'});   // not visible: neither live nor counted

@@ -146,6 +146,7 @@ def check_mouse(browser, base, uid):
     title = row.locator(".t")
     other_uid = row.get_attribute("data-uid")
     old_title = title.text_content()
+    title.scroll_into_view_if_needed()
     box = title.bounding_box()
     assert box and old_title, (box, old_title)
     page.evaluate("""() => {
@@ -159,7 +160,7 @@ def check_mouse(browser, base, uid):
     page.mouse.up()
     page.evaluate("clearInterval(window.__sidebarSelectionRenderRace)")
     selected = page.evaluate("getSelection().toString()")
-    assert selected.strip(), selected
+    assert selected.strip() and page.evaluate("sidebarTextSelectionActive()"), selected
     assert page.evaluate("S.sel") == uid, (uid, other_uid, page.evaluate("S.sel"))
     assert row.get_attribute("data-uid") == other_uid
 

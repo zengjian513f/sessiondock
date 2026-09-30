@@ -1223,10 +1223,15 @@ pub async fn stop(
         && let crate::runtime::ProcessEvidence::Verified { child, .. } = host.process
         && crate::runtime::freeze::frozen(child)
     {
-        crate::runtime::freeze::set(child, false).await.map_err(|error| {
-            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "freeze_resume_failed",
-                format!("停止前无法恢复冻结进程：{error}；请先恢复运行后重试"))
-        })?;
+        crate::runtime::freeze::set(child, false)
+            .await
+            .map_err(|error| {
+                ApiError::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "freeze_resume_failed",
+                    format!("停止前无法恢复冻结进程：{error}；请先恢复运行后重试"),
+                )
+            })?;
     }
     let session = observed.sessions.get(&uid);
     let candidate = match targets.as_slice() {

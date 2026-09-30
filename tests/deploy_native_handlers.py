@@ -110,9 +110,9 @@ class MacFake(base.Shell):
             d = cmd.split()[1]
             out = s["digest"].get(d, "") + "\n" if d in s["digest"] else ""
             rc = 0 if d in s["digest"] else 1
-        elif "cargo test" in cmd:
+        elif "cargo check" in cmd:
             rc = 0 if self.tests_pass else 101
-            out = "test result: ok. 12 passed\n" if self.tests_pass else "test result: FAILED. 1 failed\n"
+            out = "Finished `dev` profile\n" if self.tests_pass else "error: compile check failed\n"
         elif "cargo build" in cmd:
             out = "   Compiling sessiondock v0.1.0\n    Finished `release` profile [optimized] target(s) in 40.0s\n"
             files["/Users/example/sessiondock-src/target/release/sessiondock"] = SHA_NEW
@@ -162,15 +162,15 @@ def mac_handler(tmp, *, web_differs=True, opts=None, prefixed=False, web_only=Fa
 
 
 def test_macos_test_step(tmp: Path) -> None:
-    """test_mode != none: workspace tests run on the node after tar -x and before cargo build."""
+    """test_mode != none: workspace compile checks run on the node after tar -x and before cargo build."""
     src, p = "/Users/example/sessiondock-src", MAC_TARGET.prefix
     test_cmd = (f"cd {src} && mkdir -p /private/tmp/sdtest && TMPDIR=/private/tmp/sdtest /Users/example/.cargo/bin/cargo "
-                "test --workspace --locked -- --test-threads=1 >.deploy-test.log 2>&1; rc=$?; tail -n 40 .deploy-test.log; "
+                "check --workspace --all-targets --locked >.deploy-test.log 2>&1; rc=$?; tail -n 40 .deploy-test.log; "
                 "[ $rc -eq 0 ] && rm -f .deploy-test.log; exit $rc")
     h = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected", log_dir=tmp / "logs"))
     h.probe()
     plan = h.plan()
-    at = [i for i, s in enumerate(plan) if s.startswith("test (affected): ") and "cargo test --workspace --locked" in s]
+    at = [i for i, s in enumerate(plan) if s.startswith("test (affected): ") and "cargo check --workspace --all-targets --locked" in s]
     check(len(at) == 1, f"mac plan lacks the test step: {plan}")
     check(at and at[0] < next(i for i, s in enumerate(plan) if "cargo build" in s), "mac plan: test before build")
     h.sh.calls.clear()
@@ -178,10 +178,10 @@ def test_macos_test_step(tmp: Path) -> None:
     check(h.sh.calls[3] == test_cmd, f"mac test command {h.sh.calls[3]!r}")
     check("tar -xf" in h.sh.calls[2] and "cargo build" in h.sh.calls[4], f"mac test sits between tar -x and build: {h.sh.calls}")
     check(h.expected_sha == {"sessiondock": SHA_NEW}, "mac stage still stages after passing tests")
-    # mode none: the default full-cycle pin already proves no `cargo test` call; `full` behaves like affected
+    # mode none: the default full-cycle pin already proves no `cargo check` call; `full` behaves like affected
     h2 = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="full"))
     h2.probe(); h2.sh.calls.clear(); h2.stage()
-    check(sum("cargo test" in c for c in h2.sh.calls) == 1, "mac full mode runs the tests once")
+    check(sum("cargo check" in c for c in h2.sh.calls) == 1, "mac full mode runs the tests once")
     # a failing run stops stage() before anything is built or staged
     h3 = mac_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="affected", log_dir=tmp / "logs"), tests_pass=False)
     h3.probe(); h3.sh.calls.clear()
@@ -189,7 +189,7 @@ def test_macos_test_step(tmp: Path) -> None:
         h3.stage()
         check(False, "failing node tests must stop stage()")
     except RuntimeError as e:
-        check("cargo test failed on the node (rc=101)" in str(e) and f"{src}/.deploy-test.log" in str(e)
+        check("cargo check failed on the node (rc=101)" in str(e) and f"{src}/.deploy-test.log" in str(e)
               and str(tmp / "logs" / "macos-node.log") in str(e), f"mac test failure message {e}")
     check(not any("cargo build" in c or ".new" in c for c in h3.sh.calls) and h3.staged == [] and h3.expected_sha == {},
           f"nothing built or staged after failing tests: {h3.sh.calls}")
@@ -459,14 +459,14 @@ def test_windows_test_step(tmp: Path) -> None:
     h = win_handler(tmp, opts=DeployOptions(health_timeout=0, test_mode="full"))
     h.probe()
     plan = "\n".join(h.plan())
-    check("cargo.exe test -p sessiondock --locked (full; TEST_FAILED = FAILED before staging)" in plan
+    check("cargo.exe check -p sessiondock --all-targets --locked (full; TEST_FAILED = FAILED before staging)" in plan
           and f"timeout {int(windows.BUILD_TIMEOUT + windows.TEST_TIMEOUT)}s" in plan, f"win plan lacks the test step: {plan[:600]}")
     h.sh.calls.clear()
     h.stage()
     check(h.sh.rendered_test == "1" and h.expected_sha == {"sessiondock": SHA_NEW}, "win stage with tests on")
     text = (Path(h.tmp.name) / "build.cmd").read_bytes().decode("ascii")
     order = ["===EXTRACT===", "===TOOLCHAIN===", "===TEST===", 'if not "%TEST%"=="1" ( echo TEST_SKIPPED & goto build )',
-             '"%TC%\\cargo.exe" test -p sessiondock --locked > "%SRC%\\.deploy-test.log" 2>&1',
+             '"%TC%\\cargo.exe" check -p sessiondock --all-targets --locked > "%SRC%\\.deploy-test.log" 2>&1',
              "TEST_FAILED rc=%RC% log=%SRC%\\.deploy-test.log & exit /b 18", "echo TEST_OK", ":build", "===BUILD===",
              '"%TC%\\cargo.exe" build --release --locked -p sessiondock', "===STAGE==="]
     positions = [text.find(n) for n in order]

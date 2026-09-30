@@ -82,7 +82,7 @@ META_KEY = """e => e.id === 'mcount-total' ? e.id
   : e.querySelector('code') ? 'cwd' : e.textContent.includes('→') ? 'time'
   : /^[0-9.]+[BKM]$/.test(e.textContent.trim()) ? 'size' : 'model' """
 HEAD_STATE_JS = f"""() => {{
-  const id = b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : '');
+  const id = b => b.id || (b.hasAttribute('data-report-bug') ? 'report-bug' : b.hasAttribute('data-session-resources') ? 'session-resources' : '');
   const key = {META_KEY};
   const h2 = document.querySelector('.dhead h2'), brief = document.querySelector('.dbrief');
   const actions = document.querySelector('.dhead-actions'), more = document.querySelector('#a-more');
@@ -185,7 +185,7 @@ def check_head(page, width, tier, tiers, key, meta_order):
     where = f"{key}@{width}"
     action_order = state["globals"] + ACTION_ORDER
     priority = action_order + meta_order
-    inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more")]
+    inline_actions = [i for i in state["inline"] if i not in ("a-term", "a-more", "session-resources")]
     placed = inline_actions + state["brief"]
     assert placed == priority[:len(placed)], (where, placed, priority, state)
     assert state["brief"] + state["menu_meta"] == meta_order, (where, state)

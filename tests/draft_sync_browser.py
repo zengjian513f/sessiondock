@@ -93,7 +93,9 @@ def main():
                         on_popup(page, lambda dialog: dialog.accept())
                         if draft_route:
                             page.route('**/api/session/conversation?*', draft_route)
-                        page.goto(base, wait_until='networkidle')
+                        page.goto(base, wait_until='domcontentloaded')
+                        expect(page.locator('#side')).to_be_visible()
+                        page.wait_for_function('T.listLoaded')
                         return page
 
                     context = browser.new_context(viewport={'width': 1280, 'height': 900}, service_workers='block')
@@ -203,7 +205,11 @@ def main():
 
                     # A new page fails its first read, keeps edits, then merges
                     # the existing server text once networking returns.
-                    c = open_page(context, fail_draft)
+                    # A separate context represents another device. Sharing the
+                    # first two tabs' six HTTP/1 socket slots with two more SSE
+                    # feeds can queue every draft request before it reaches Rust.
+                    offline_context = browser.new_context(viewport={'width':1280,'height':900}, service_workers='block')
+                    c = open_page(offline_context, fail_draft)
                     open_session(c, a.evaluate("S.sel"))
                     c.wait_for_function('composerDraft().loadFailed === true')
                     c.fill('#cinput', 'early offline edit')
@@ -214,11 +220,11 @@ def main():
                     assert error_text.count('服务端草稿读取失败') == 1, error_text
                     assert '服务端草稿保存失败' not in error_text, error_text
                     c.unroute('**/api/session/conversation?*', fail_draft)
-                    c.wait_for_function('!composerDraft().loadFailed && !composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=10000)
+                    c.wait_for_function('!composerDraft().loadFailed && !composerDraft().storageError && composerDraft().savedVersion === composerDraft().editVersion', timeout=20000)
                     expect(c.locator('#cinput')).to_have_value('offline draft\nearly offline edit retained')
                     wait_server_text(context, base, uid, 'offline draft\nearly offline edit retained')
                     assert len(sends) == 1, sends
-                    c.close()
+                    offline_context.close()
 
                     # Deployment notice: the real meta-check path marks this
                     # page stale, but editing still saves with an old build ID.

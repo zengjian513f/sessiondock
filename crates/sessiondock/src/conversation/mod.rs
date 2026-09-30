@@ -586,8 +586,9 @@ impl Conversations {
                 capture.and_then(|capture| {
                     self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
                     if capture.lag.is_none_or(|lag| lag == 0) {
-                        prompt = crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
-                        .unwrap_or(Value::Null);
+                        prompt =
+                            crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
+                                .unwrap_or(Value::Null);
                     }
                     transcript = cli_state::transcript(&identity.source, &capture);
                     Ok((

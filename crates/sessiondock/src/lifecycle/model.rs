@@ -246,7 +246,11 @@ impl LaunchSpec {
     }
     /// The picker's model and effort for a new session. Only a new CLI
     /// launch takes them; OpenCode has no effort option.
-    pub fn with_choice(mut self, model: Option<String>, effort: Option<String>) -> Result<Self, Error> {
+    pub fn with_choice(
+        mut self,
+        model: Option<String>,
+        effort: Option<String>,
+    ) -> Result<Self, Error> {
         self.model = model.filter(|value| !value.is_empty());
         self.effort = effort.filter(|value| !value.is_empty());
         self.validate()?;
@@ -276,11 +280,8 @@ impl LaunchSpec {
         }
         if self.model.is_some() || self.effort.is_some() {
             let new = matches!(self.launch, Launch::NewPending | Launch::NewAssigned);
-            let valid = |value: &Option<String>| {
-                value
-                    .as_deref()
-                    .is_none_or(super::models::valid_choice)
-            };
+            let valid =
+                |value: &Option<String>| value.as_deref().is_none_or(super::models::valid_choice);
             if !new
                 || !valid(&self.model)
                 || !valid(&self.effort)

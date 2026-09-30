@@ -78,12 +78,12 @@ impl Groups {
         let mut ready = Vec::new();
         let mut errors = Vec::new();
         for (node, result) in reads {
-            if let Ok((200, value)) = result {
-                if let Ok(remote) = serde_json::from_value::<GroupCatalog>(value) {
-                    catalog.groups.extend(remote.groups);
-                    ready.push(node);
-                    continue;
-                }
+            if let Ok((200, value)) = result
+                && let Ok(remote) = serde_json::from_value::<GroupCatalog>(value)
+            {
+                catalog.groups.extend(remote.groups);
+                ready.push(node);
+                continue;
             }
             errors
                 .push(json!({"node_id": node.id, "name": node.name, "error": "分组集合暂未同步"}));

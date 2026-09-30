@@ -351,7 +351,7 @@ def main():
                 keyboard.press_sequentially("quit")
                 keyboard.press("Enter")
                 xterm_contains(page, "RS_SHELL_DONE")
-                page.wait_for_function("[...T.views.values()].some(v => v.ended)", timeout=10000)
+                page.wait_for_function("uid => T.ended.has(uid) && T.views.size === 0", arg=uid, timeout=10000)
                 for _ in range(100):
                     if process.poll() is not None:
                         break
@@ -367,7 +367,8 @@ def main():
                 page.wait_for_timeout(600)
                 assert len(sends) == before and not dialogs, (sends[before:], dialogs)
                 assert not claims, claims
-                assert "RS_SHELL_DONE" in page.evaluate(XTERM_TEXT)
+                assert page.evaluate("uid => T.ended.has(uid)", uid)
+                assert page.evaluate("T.views.size") == 0
                 assert page.evaluate("T.ws") is None or page.evaluate("T.ws.readyState") != 1
                 assert not errors, errors
                 context.close()

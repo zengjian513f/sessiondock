@@ -187,7 +187,11 @@ def scenario(root, browser, incomplete, renderer):
             outgoing = [event for state in observed["sockets"] for event in state["sent"] if event["binary"]]
             check("".join(event["text"] for event in outgoing) == "quit\r", "unexpected terminal input beyond the user's quit")
             check(not any(event["afterClose"] for event in outgoing), "terminal sent data after close")
-            check("RS_SHELL_DONE" in observed["text"], "final shell output was removed from xterm")
+            check("RS_SHELL_DONE" in observed["sockets"][0]["received"], "final output was not delivered before EOF")
+            if incomplete:
+                check("RS_SHELL_DONE" in observed["text"], "incomplete output lost its retained tail")
+            else:
+                check(not observed["paneVisible"] and not observed["text"], "an exited AI console was not disposed")
             if incomplete:
                 why = "PTY drain timeout"
                 check(why in close["reason"], "incomplete exit lost the specific wire reason")

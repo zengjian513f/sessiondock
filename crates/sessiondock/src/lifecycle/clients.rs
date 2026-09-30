@@ -177,9 +177,11 @@ pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Update
             .map(|profile| {
                 let probe = scope.spawn(move || {
                     let (installed, detail) = version(profile);
-                    let latest = installed
-                        .then(|| updates.latest(profile))
-                        .unwrap_or_default();
+                    let latest = if installed {
+                        updates.latest(profile)
+                    } else {
+                        Default::default()
+                    };
                     (installed, detail, latest)
                 });
                 (profile, probe)

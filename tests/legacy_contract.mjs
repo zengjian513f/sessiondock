@@ -72,7 +72,14 @@ test('literal search supports AND/OR, quoted phrases and safe per-term highlight
 function contextWithCapabilities(value, globals = {}) {
   const meta = value === undefined ? null
     : {content: typeof value === 'string' ? value : JSON.stringify(value)};
-  const context = vm.createContext({document: {querySelector: () => meta}, ...globals});
+  const context = vm.createContext({AbortController, performance, setTimeout, clearTimeout,
+    HUB_MODE: false, pendingUid: name => 'tmux:' + name, sessiondockCli: () => null,
+    sidebarPendingCursors: new Map(), browserAuditRetryAt: 0,
+    appConfirm: async message => globals.confirm?.(message) ?? true,
+    appAlert: async message => globals.alert?.(message),
+    document: {querySelector: () => meta}, ...globals,
+    T: globals.T || {listLoaded: true}});
+  if (context.T.listLoaded === undefined) context.T.listLoaded = true;
   vm.runInContext(capabilitiesSource, context);
   vm.runInContext('let sessionIndexRows = null, sessionIndex = null;', context);
   loadFunction(context, 'indexedSessions');
@@ -82,6 +89,14 @@ function contextWithCapabilities(value, globals = {}) {
 // Execute the real small top-level functions without inventing a second
 // implementation or loading the entire DOM-heavy application in a fake browser.
 function loadFunction(context, name, source = appSource) {
+  const dependencies = {
+    pendingPhase: ['terminalListUncertain'], pendingStageMessage: ['pendingPhase'],
+    pendingStateLabel: ['pendingPhase'], pendingTmuxSessions: ['terminalListUncertain'],
+    sessionComposerEnded: ['pendingPhase'],
+  };
+  for (const dependency of dependencies[name] || []) {
+    if (typeof context[dependency] !== 'function') loadFunction(context, dependency, source);
+  }
   const match = new RegExp(`^(?:async )?function ${name}\\(`, 'm').exec(source);
   assert.ok(match, `Function ${name} exists`);
   const end = source.indexOf('\n}\n', match.index);
@@ -245,7 +260,7 @@ test('claim timeout never forces ownership or attaches using an uncertain lease'
       const context = vm.createContext({T: {}, ConsoleUI, TERM_PAGE_ID: 'page', TERM_CLAIM_TIMEOUT_MS: 5000,
         renderTakeoverBtn: () => {},
         alert: () => assert.fail('timeout must clear the attempt without a modal'),
-        confirm: () => { assert.equal(auto, false); return true; },
+        appConfirm: async () => { assert.equal(auto, false); return true; },
         auditTermPane: () => {},
         post: async (_url, body, options) => {
           calls.push({body, options});
@@ -1109,13 +1124,15 @@ test('sidebar append reads retry transient failures with backoff and give up on 
   for (const [status, expected] of [[503, [1500, 3000, 6000]], [404, []]]) {
     const timers = [];
     const context = contextWithCapabilities(disabled, {
-      viewKey: (uid, agent) => agent ? `${uid}::${agent}` : uid, cache: new Map(), S: {cursors: new Map()},
+      viewKey: (uid, agent) => agent ? `${uid}::${agent}` : uid, cache: new Map(),
+      S: {cursors: new Map([['codex:fixture',{end:1,head:'h',anchor:''}]])},
       sidebarSyncing: new Set(), RETRY_BASE_MS: 1500, RETRY_MAX_MS: 15000,
       setTimeout: (callback, delay) => {timers.push({callback, delay}); return timers.length;},
-      fetchMessages: async () => {throw Object.assign(new Error('failed'), {status});},
+      fetchUnreadSummary: async () => {throw Object.assign(new Error('failed'), {status});},
       retryDelay: attempt => Math.min(15000, 1500 * 2 ** Math.max(0, attempt)),
     });
     loadFunction(context, 'transientReadFailure');
+    loadFunction(context, 'cleanCursor');
     const sync = loadFunction(context, 'syncSidebarView');
     const row = {uid: 'codex:fixture', agent: null};
     await sync(row, {end: 1, head: 'h', anchor: ''}, {end: 2, head: 'h', anchor: ''});
@@ -1579,7 +1596,7 @@ test('reading a cleared draft removes old submission markers, merges early keyst
   const context=vm.createContext({composerDraftOwner:uid=>uid,composerHydrations:new Map(),composerPendingSaves:new Map(),
     composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,importLegacyComposer:async()=>null,
     readServerComposerDraft:async()=>({revision:2,value:{text:'',attachments:[],quotes:[]}}),
-    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    nodeOf:()=>null,newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
     composerDraftRecord:(d,uid)=>({text:d.text,attachments:d.attachments,quotes:d.quotes,uid}),
     refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
   for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord','mergeEarlyComposerEdit','queueComposerSave']) loadFunction(context,name,read('term.js'));
@@ -1630,7 +1647,7 @@ test('an idle page follows a newer server draft and an editing page does not', a
   const context=vm.createContext({composerDraftOwner:uid=>uid,composerDrafts:new Map([['uid',draft]]),conversationSendEnabled:()=>true,
     composerSending:false,composerSaving:new Set(),composerPendingSaves:new Map(),performance:{now:()=>5000},
     readServerComposerDraft:async()=>row,refreshComposerDraft:uid=>refreshed.push(uid),syncComposerUnloadProtection:()=>{},
-    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    nodeOf:()=>null,newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
     URL:{revokeObjectURL:()=>{}}});
   for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord','adoptServerDraft']) loadFunction(context,name,read('term.js'));
   vm.runInContext('let composerFollowBusy=false, composerFollowedAt=0;',context);
@@ -1679,7 +1696,7 @@ test('a server-owned report SEND clears a clean viewer without overwriting local
   const revoked=[];
   const context=vm.createContext({composerDrafts:new Map([['uid',draft]]),composerDraftOwner:uid=>uid,
     composerSaving:new Set(),composerSending:false,
-    newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
+    nodeOf:()=>null,newComposerDraft:()=>({text:'',attachments:[],quotes:[],revision:0,editVersion:0,savedVersion:0,nextAttachmentNumber:1}),
     priorComposerSubmission:async ()=>({state:'sent',draft:{revision:2,value:{text:'',attachments:[],quotes:[]}}}),
     URL:{revokeObjectURL:url=>revoked.push(url)},refreshComposerDraft:()=>{},syncComposerUnloadProtection:()=>{}});
   for (const name of ['ensureComposerAttachmentNumbers','restoreComposerDraftRecord']) loadFunction(context,name,read('term.js'));
@@ -1741,9 +1758,10 @@ test('stale build disables composer and report send', () => {
   };
   const context = vm.createContext({
     staleBuildShown: false,
+    floatStack:()=>({appendChild(){}}),
     browserAuditEvent: (kind, detail) => audit.push([kind, detail.server_build]),
     document: {body: {classList: {add() {}}, appendChild() {}}},
-    el: () => ({setAttribute() {}, innerHTML: '', appendChild() {}, type: '', title: '', onclick: null}),
+    el: () => ({dataset:{},setAttribute() {}, innerHTML: '', appendChild() {}, append() {}, type: '', title: '', onclick: null}),
     $: sel => buttons[sel] || null,
   });
   loadFunction(context, 'markStaleBuild');

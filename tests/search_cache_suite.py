@@ -274,9 +274,10 @@ def run_memory_only(tmp, data):
         route, second, raw = expect_ok(opener, base, "zxneedle")
         if first.get("results") != second.get("results") or len(uids(first)) != 3:
             fail(route, "memory-only search differs between runs", raw)
-        if list(tmp.rglob("search-text*")) or any(p.name != "session-metadata.json" and not p.name.startswith(".") for p in state.iterdir()):
+        if list(tmp.rglob("search-text*")) or any(p.name != "session-metadata.json" and not (p.name == "transfers" and p.is_dir())
+                and not p.name.startswith(".") for p in state.iterdir()):
             fail("memory-only", f"a state dir with only SESSIONDOCK_STATE_DIR must stay the metadata store's: {list(state.iterdir())}")
-    passed("memory-only mode: a state dir alone persists nothing and stays pure")
+    passed("memory-only mode: search cache stays memory-only alongside metadata/transfer state")
 
 
 def main():
