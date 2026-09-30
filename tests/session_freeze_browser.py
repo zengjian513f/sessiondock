@@ -78,20 +78,27 @@ def check_freeze_overlay(page):
     expect(overlay).to_be_visible()
     expect(overlay).to_have_attribute('data-uid', page.evaluate('S.sel'))
     pane = page.locator('#right').bounding_box()
-    card = overlay.locator('.session-freeze-card').bounding_box()
+    card = overlay.locator('.session-freeze-line').bounding_box()
     assert abs(card['x'] + card['width'] / 2 - pane['x'] - pane['width'] / 2) < 2
     assert abs(card['y'] + card['height'] / 2 - pane['y'] - pane['height'] / 2) < 2
     assert card['x'] >= pane['x'] and card['width'] <= pane['width']
+    expect(overlay.locator('.session-freeze-line')).to_have_text('会话已暂停')
+    expect(overlay.locator('button')).to_have_count(1)
+    expect(overlay.locator('[data-freeze-resume]')).to_have_attribute('aria-label', '恢复运行')
+    expect(overlay.locator('[data-freeze-resume] use')).to_have_attribute('href', '#i-play')
+    label_box = overlay.locator('span').bounding_box()
+    play_box = overlay.locator('button').bounding_box()
+    assert play_box['x'] > label_box['x'] + label_box['width']
+    assert abs(play_box['y'] + play_box['height'] / 2 - label_box['y'] - label_box['height'] / 2) < 2
     shades = []
     for theme in ['light', 'dark']:
         page.evaluate('theme => applyTheme(theme)', theme)
         shades.append(overlay.evaluate('node => getComputedStyle(node).backgroundColor'))
-        card_colors = overlay.locator('.session-freeze-card').evaluate(
+        card_colors = overlay.locator('.session-freeze-line').evaluate(
             'node => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color]')
         assert card_colors == (['rgb(255, 255, 255)', 'rgb(28, 32, 36)'] if theme == 'light'
                                else ['rgb(28, 31, 38)', 'rgb(223, 227, 234)']), card_colors
         expect(overlay.locator('[data-freeze-resume]')).to_be_visible()
-        expect(overlay.locator('[data-freeze-report]')).to_be_visible()
     assert shades == ['rgba(15, 23, 42, 0.24)', 'rgba(0, 0, 0, 0.52)'], shades
     page.evaluate("applyTheme('light')")
 
@@ -209,7 +216,8 @@ def main():
                         'uid': uid, 'instance_id': 'replaced-instance', 'frozen': False})
                     assert refused.status == 409 and all(state(pid) == 'T' for pid in pids)
                     check_freeze_overlay(page)
-                    page.locator('[data-freeze-report]').click()
+                    freeze_button(page)
+                    page.locator('.dhead [data-report-bug]').click()
                     expect(page.locator('#bug-report-dialog')).to_be_visible()
                     page.locator('#bug-report-dialog .modal-close').click()
                     page.reload(wait_until='networkidle')
@@ -305,7 +313,7 @@ def main():
                 except OSError:
                     pass
     print('PASS freeze browser: real parent/child stop and progress resume, idempotency, stale instance refusal, '
-          'session-specific pause badges and unread counts, centered themed session overlay, mobile list hides overlay, central recovery/report controls, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
+          'session-specific pause badges and unread counts, centered themed session overlay, mobile list hides overlay, single-line pause message and play control, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
 
 
 if __name__ == '__main__':

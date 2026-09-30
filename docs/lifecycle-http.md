@@ -389,8 +389,9 @@ orders viewing controls before the paired freeze/report controls, then move/copy
 and stop/delete. Freeze and report stay together when folded into the menu. A paused session
 shows a pause glyph instead of the running dot at the top right of its sidebar
 and header icon; unread counts remain visible. The frozen scene is a centered
-overlay inside the selected session pane, with resume and report buttons. A theme-specific shade dims the pane in light and dark
-mode. The overlay persists while frozen, disappears when another session is
+overlay inside the selected session pane: one line, **会话已暂停**, followed by
+a play button to resume. It uses the shared popup styling. A theme-specific shade
+dims the pane in light and dark mode. The overlay persists while frozen, disappears when another session is
 selected, and is never shown on the mobile session list. It does not use the
 global notification stack.
 Freezing does
