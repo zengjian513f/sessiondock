@@ -137,7 +137,11 @@ thread ID、goal ID 以及历史 `thread_goal_updated` 的结构化引用，不�
 实时历史 `realtime_item` 与 `thread_realtime_items` 按同一映射处理记录 ID、语音会话 ID，
 以及关联普通消息的 turn/item ID；保留语音文本、顺序、时间和结束结果。这只复制持久历史，
 不会重建语音连接。合成复杂组浏览器核对 rollout 与数据库投影一致，包含仅存在于投影的记录。
-`thread_attachments` 的非空记录仍未适配，不能据此宣称全部原生状态可迁移。
+Codex `thread_attachments`（旧表名 `thread_artifacts`）按线程迁移；改身份时只重写
+关联记录 ID 和所属线程，保留客户端定义的类别、`identity_key`、payload 原文及创建时间。
+该表是附件关联元数据，不是附件字节存储，不对不透明 payload 中的同名字段或 UUID 做替换。
+原生隔离浏览器测试另验证父线程和两个分支的附件列表，以及删除复制组的关联不影响原组。
+外部附件字节的可用性仍按下文外部依赖检查，不能用关联记录存在代替内容验证。
 
 ### 第一步先做 Codex 实测
 

@@ -49,6 +49,16 @@ def prepare(root):
                 'Native ' + key, key == 'a', 'external-project', key == 'b', json.dumps(meta.get('source', 'cli')), 'pinned-section'))
         for parent, child in ((1,6),(2,7)):
             db.execute('INSERT INTO thread_spawn_edges VALUES (?,?,?)', (ident(parent), ident(child), 'completed'))
+    with sqlite3.connect(home / 'state_5.sqlite') as db:
+        for table,category in (('thread_attachments','attachment_type'),('thread_artifacts','artifact_type')):
+            db.execute(f'CREATE TABLE {table}(id TEXT PRIMARY KEY,thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,'
+                       f'{category} TEXT NOT NULL,identity_key TEXT NOT NULL,payload TEXT NOT NULL,created_at INTEGER NOT NULL,'
+                       f'UNIQUE(thread_id,{category},identity_key))')
+            for number in (2,8):
+                # Same client identity is legal on different threads. Its payload is opaque.
+                db.execute(f'INSERT INTO {table} VALUES (?,?,?,?,?,?)',
+                           (f'{table}-{number}',ident(number),'test.note','shared-external-key',
+                            json.dumps({'id':ident(number),'thread_id':ident(number),'text':'Literal '+ident(number)},indent=2),1234))
     with sqlite3.connect(home / 'thread_history_1.sqlite') as db:
         db.executescript('''
         CREATE TABLE thread_turns(thread_id TEXT, turn_id TEXT, rollout_ordinal INTEGER,
@@ -382,6 +392,13 @@ def main():
                         assert promoted['item_id']==goal_map['records']['exec-projection-only']
                         assert [row['payload'] for row in events if row['type']=='realtime_item']==[json.loads(row[3]) for row in projected[:4]]
                         print('PASS realtime rollout and projections share rewritten session/item/turn identities; text and ordering preserved',flush=True)
+                        with sqlite3.connect(corpus.root/'codex/state_5.sqlite') as db:
+                            for table in ('thread_attachments','thread_artifacts'):
+                                source=db.execute(f'SELECT * FROM {table} WHERE thread_id=?',(ident(2),)).fetchone()
+                                copied=db.execute(f'SELECT * FROM {table} WHERE thread_id=?',(goal_map['threads'][ident(2)],)).fetchone()
+                                assert copied==(goal_map['records'][source[0]],goal_map['threads'][ident(2)],*source[2:])
+                                assert copied[0]!=source[0]
+                        print('PASS attachment and legacy artifact membership IDs remapped; opaque payload bytes and client keys preserved',flush=True)
                         assert saved['phase']=='complete'
                         ids=saved['plan']['identities']['threads']
                         page.locator('#a-view-switch').click()

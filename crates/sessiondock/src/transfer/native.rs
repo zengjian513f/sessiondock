@@ -164,6 +164,7 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
                 "thread_dynamic_tools",
                 "thread_spawn_edges",
                 "thread_attachments",
+                "thread_artifacts",
                 "thread_goals",
                 "thread_goal_continuation_deferrals",
             ]
@@ -196,12 +197,6 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
                     owned(r, &ids)
                 }
             });
-            if !table.rows.is_empty() && *name == "thread_attachments" {
-                return Err(TransferError::new(
-                    "move_native_unsupported",
-                    format!("本组包含尚未适配的原生记录 {name}"),
-                ));
-            }
             if *name == "thread_spawn_edges"
                 && table.rows.iter().any(|r| {
                     ["parent_thread_id", "child_thread_id"]
@@ -354,6 +349,14 @@ pub fn rewrite(
                 mapped(row, "turn_id", &map.turns)?;
                 if table.name == "thread_goals" {
                     mapped(row, "goal_id", &map.records)?;
+                }
+                if matches!(
+                    table.name.as_str(),
+                    "thread_attachments" | "thread_artifacts"
+                ) {
+                    // These are client-defined metadata, not an attachment byte store.
+                    // Keep category, identity_key and opaque payload exactly as supplied.
+                    mapped(row, "id", &map.records)?;
                 }
                 for key in ["item_id", "first_user_item_id", "final_agent_item_id"] {
                     mapped(row, key, &map.records)?;
@@ -931,6 +934,18 @@ pub fn extend_identities(native: &Native, plan: &mut ClonePlan) -> Result<(), Tr
     for db in &native.databases {
         for table in &db.tables {
             for row in &table.rows {
+                if matches!(
+                    table.name.as_str(),
+                    "thread_attachments" | "thread_artifacts"
+                ) {
+                    if let Some(id) = row.get("id").and_then(Value::as_str) {
+                        if !plan.identities.records.contains_key(id) {
+                            plan.identities
+                                .records
+                                .insert(id.into(), super::codex::uuid()?);
+                        }
+                    }
+                }
                 if table.name == "thread_realtime_items" {
                     let mut item: Value = serde_json::from_str(
                         row.get("item_json")
