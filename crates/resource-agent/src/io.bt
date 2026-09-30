@@ -1,0 +1,109 @@
+// Application bytes, not block or wire traffic. Only synchronous regular-file
+// VFS paths and TCP sendmsg/recvmsg are covered (not mmap/io_uring/splice/UDP).
+// Alternate aggregation maps: userspace drains the inactive map before reuse.
+BEGIN { @generation = (uint64)0; printf("READY\n"); }
+kprobe:vfs_read,kprobe:vfs_readv,kprobe:vfs_iter_read,
+kprobe:vfs_write,kprobe:vfs_writev,kprobe:vfs_iter_write
+/uid == TARGET_UID/
+{
+    @depth[tid] = @depth[tid] + 1;
+    if (@depth[tid] == 1) {
+        $f = (struct file *)arg0;
+        if (($f->f_inode->i_mode & 0170000) == 0100000 &&
+            ($f->f_inode->i_sb->s_magic == 0x6969 || $f->f_inode->i_sb->s_bdev != 0)) {
+            @file[tid] = 1;
+            @dev[tid] = $f->f_inode->i_sb->s_dev;
+            @nfs[tid] = $f->f_inode->i_sb->s_magic == 0x6969;
+        }
+    }
+}
+kretprobe:vfs_read,kretprobe:vfs_readv,kretprobe:vfs_iter_read
+/uid == TARGET_UID && @depth[tid]/
+{
+    if (@depth[tid] == 1) {
+        if (@file[tid] && (int64)retval > 0) {
+            $write = 0;
+            $kind = (uint64)2 + (uint64)$write + (uint64)2 * @nfs[tid];
+            $start = curtask->group_leader->start_boottime;
+            $generation = @generation;
+            if ($generation % 2 == 0) {
+                @a[pid, $start, $kind, @dev[tid], $generation] = sum((uint64)retval);
+            } else {
+                @b[pid, $start, $kind, @dev[tid], $generation] = sum((uint64)retval);
+            }
+        }
+        delete(@file[tid]); delete(@dev[tid]); delete(@nfs[tid]);
+        delete(@depth[tid]);
+    } else { @depth[tid] = @depth[tid] - 1; }
+}
+kretprobe:vfs_write,kretprobe:vfs_writev,kretprobe:vfs_iter_write
+/uid == TARGET_UID && @depth[tid]/
+{
+    if (@depth[tid] == 1) {
+        if (@file[tid] && (int64)retval > 0) {
+            $write = 1;
+            $kind = (uint64)2 + (uint64)$write + (uint64)2 * @nfs[tid];
+            $start = curtask->group_leader->start_boottime;
+            $generation = @generation;
+            if ($generation % 2 == 0) {
+                @a[pid, $start, $kind, @dev[tid], $generation] = sum((uint64)retval);
+            } else {
+                @b[pid, $start, $kind, @dev[tid], $generation] = sum((uint64)retval);
+            }
+        }
+        delete(@file[tid]); delete(@dev[tid]); delete(@nfs[tid]);
+        delete(@depth[tid]);
+    } else { @depth[tid] = @depth[tid] - 1; }
+}
+kprobe:tcp_sendmsg /uid == TARGET_UID/ { @send[tid] = 1; }
+kprobe:tcp_recvmsg /uid == TARGET_UID && !(arg3 & 2)/ { @recv[tid] = 1; }
+kretprobe:tcp_sendmsg
+/uid == TARGET_UID/
+{
+    $receive = 0;
+    if ((!$receive && @send[tid]) || ($receive && @recv[tid])) {
+        if ((int32)retval > 0) {
+            $start = curtask->group_leader->start_boottime;
+            $generation = @generation;
+            if ($generation % 2 == 0) {
+                @a[pid, $start, $receive, 0, $generation] = sum((uint64)(int32)retval);
+            } else {
+                @b[pid, $start, $receive, 0, $generation] = sum((uint64)(int32)retval);
+            }
+        }
+    }
+    if ($receive) { delete(@recv[tid]); } else { delete(@send[tid]); }
+}
+kretprobe:tcp_recvmsg
+/uid == TARGET_UID/
+{
+    $receive = 1;
+    if ((!$receive && @send[tid]) || ($receive && @recv[tid])) {
+        if ((int32)retval > 0) {
+            $start = curtask->group_leader->start_boottime;
+            $generation = @generation;
+            if ($generation % 2 == 0) {
+                @a[pid, $start, $receive, 0, $generation] = sum((uint64)(int32)retval);
+            } else {
+                @b[pid, $start, $receive, 0, $generation] = sum((uint64)(int32)retval);
+            }
+        }
+    }
+    if ($receive) { delete(@recv[tid]); } else { delete(@send[tid]); }
+}
+tracepoint:sched:sched_process_exit /uid == TARGET_UID/
+{
+    delete(@depth[tid]); delete(@file[tid]); delete(@dev[tid]);
+    delete(@nfs[tid]); delete(@send[tid]); delete(@recv[tid]);
+}
+interval:s:2
+{
+    @generation = @generation + 1;
+    if (@generation % 2 == 1) { print(@a); clear(@a); }
+    else { print(@b); clear(@b); }
+    printf("TICK %llu\n", @generation);
+}
+END {
+    clear(@a); clear(@b); clear(@generation); clear(@depth);
+    clear(@file); clear(@dev); clear(@nfs); clear(@send); clear(@recv);
+}

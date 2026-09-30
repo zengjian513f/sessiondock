@@ -10,6 +10,7 @@ import os
 import tempfile
 import time
 from types import SimpleNamespace
+from urllib.parse import urlencode
 
 from playwright.sync_api import sync_playwright
 from history_parity import BINARY, Corpus, codex_row, isolated_server, get_json
@@ -64,6 +65,11 @@ def main():
                 proc_pid(proc, 300, 'python', ['python', 'train.py'], 100)
                 proc_pid(proc, 400, 'codex', ['codex', 'resume'], 100, fds={3: str(corpus.paths['older'])})
                 proc_pid(proc, 600, 'python', ['python', 'ambiguous.py'], 1, env=[('SSH_CONNECTION', '10.0.0.1 50001 10.0.0.2 50022')])
+            for entry in proc.iterdir():
+                if entry.name.isdigit():
+                    stat = entry / 'stat'
+                    stat.write_text(stat.read_text().rstrip() + ' 0 0\n')
+                    (entry / 'smaps_rollup').write_text(f'Pss: {entry.name} kB\n')
             corpora.append(corpus)
             procs.append(proc)
             nodes.append(SimpleNamespace(name=name, nid=name * 32, port=free_port(), token=TOKEN))
@@ -131,6 +137,32 @@ def main():
                         assert response.status == 403
                         response = context.request.post(base + '/api/process-links', data={'boot_id':'forged','links':[]})
                         assert response.status == 403
+                        if args.with_agent:
+                            resource_url = '/api/session/resources?' + urlencode({'uid': parent, 'scope': 'direct'})
+                            hubbase = f'http://127.0.0.1:{hub.port}'
+                            direct = wait_for(lambda: (lambda data: data if any(
+                                row['node_id'] == nodes[1].nid and
+                                row['metrics'].get('memory_pss_bytes', {}).get('value') == 400 * 1024
+                                for row in data['nodes']) else None)(get_json(opener, hubbase, resource_url)))
+                            inclusive = get_json(opener, hubbase, resource_url.replace('scope=direct', 'scope=inclusive'))
+                            remote = next(row for row in inclusive['nodes'] if row['node_id'] == nodes[1].nid)
+                            assert remote['metrics']['memory_pss_bytes']['value'] == 1000 * 1024, inclusive
+                            assert all(row['status'] == 'ok' for row in direct['nodes']), direct
+                            assert remote['metrics']['network_send_bytes_per_second']['value'] is None
+                            assert context.request.get(hubbase + resource_url.replace('scope=direct', 'scope=invalid')).status == 400
+                            local_resources = get_json(opener, base, '/api/session/resources?' + urlencode({'uid': corpora[1].uid('child')}))
+                            assert len(local_resources['nodes']) == 1
+                            assert local_resources['nodes'][0]['metrics']['memory_pss_bytes']['value'] == 200 * 1024
+                            page.locator(f'[data-uid="{parent}"]').first.click()
+                            page.get_by_role('button', name='查看会话资源').click()
+                            page.locator('.session-resources .sr-node').first.wait_for()
+                            assert page.locator('.session-resources .sr-node').count() == 2
+                            with page.expect_response(lambda response: '/api/session/resources?' in response.url and 'scope=inclusive' in response.url) as received:
+                                page.locator('.session-resources [data-scope="inclusive"]').click()
+                            rendered = received.value.json()
+                            assert next(row for row in rendered['nodes'] if row['node_id'] == nodes[1].nid)['metrics']['memory_pss_bytes']['value'] == 1000 * 1024
+                            page.get_by_role('button', name='关闭资源面板').click()
+                            print('PASS real session resources API, opaque UID resolution, remote direct/inclusive PSS, browser resource panel', flush=True)
                         # Persisted per-process identity survives no live SSH evidence.
                         shutil.rmtree(procs[0] / '200')
                         (procs[1] / '100/environ').write_bytes(b'')

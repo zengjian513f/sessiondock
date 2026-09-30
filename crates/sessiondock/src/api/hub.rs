@@ -66,6 +66,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/session/transfer/cancel"),
     ("POST", "/api/session/transfer/progress"),
     ("GET", "/api/session/transfers"),
+    ("GET", "/api/session/resources"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -439,7 +440,22 @@ async fn handle(
             "hostname": HUB_HOSTNAME, "capabilities": hub_capabilities()}),
         );
     }
-
+    if method == Method::GET && path == "/api/session/resources" {
+        let uid = pairs
+            .iter()
+            .find(|(key, _)| key == "uid")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or("");
+        let scope = pairs
+            .iter()
+            .find(|(key, _)| key == "scope")
+            .map(|(_, value)| value.as_str());
+        let inclusive = crate::hub::resources::inclusive(scope).map_err(Reply::Invalid)?;
+        let value = crate::hub::resources::get(registry, client, uid, inclusive)
+            .await
+            .map_err(Reply::Invalid)?;
+        return ok(&value);
+    }
     if method == Method::GET && path == "/api/session/transfers" {
         return match state.transfers.pending() {
             Ok(value) => ok(&value),
