@@ -733,6 +733,20 @@ impl Store {
     pub fn forget_launch(&self, record_id: &str) -> Result<bool> {
         self.forget_launch_unshared(record_id, None)
     }
+    /// Remove migrated native drafts and their launch aliases. Other native
+    /// sessions sharing a draft keep it; migration never drops unrelated input.
+    pub fn retire_drafts(&self, uids: &HashSet<String>) -> Result<()> {
+        self.update(|doc| {
+            let keys: HashSet<String> = uids.iter().map(|uid| doc.aliases.get(uid).unwrap_or(uid).clone()).collect();
+            for key in keys {
+                let shared = !key.starts_with("launch:") && !uids.contains(&key)
+                    || doc.aliases.iter().any(|(alias, target)| target == &key && !alias.starts_with("launch:") && !uids.contains(alias));
+                if !shared { doc.drafts.remove(&key); }
+            }
+            doc.aliases.retain(|alias, _| !uids.contains(alias));
+            Ok(())
+        })
+    }
     /// Same as [`Self::forget_launch`], but a native alias only counts as
     /// shared while that UID is still in the catalog. After the native
     /// session is trashed, the launch draft must go or `drafts` rebuilds

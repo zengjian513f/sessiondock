@@ -70,7 +70,10 @@ also covers the Claude/Grok file adapters. The source group is retained.
 The Hub separately declares `session_clone_remote` for cross-node copying with
 new or retained identities. Identical destination files/rows can be reused when retaining IDs;
 different data returns a conflict. The receiver checks Linux, configured root paths, worktree
-contents and native schema before publication. Move remains unavailable; the full `session_move` / `session_clone` flags
+contents and native schema before publication. The Hub's `session_move_remote` enables cross-node
+moves with either identity choice, requiring source trash and independent session storage.
+Target publication stays fenced until the source records the handoff; source cleanup can be retried.
+The full `session_move` / `session_clone` flags
 are not enabled. See [the clone contract](session-clone.md#当前接口同节点-codex).
 
 ## Unavailable controls

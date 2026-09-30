@@ -15,6 +15,7 @@ linked from [the documentation index](README.md).
 | Preferences and timeline | POST `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
 | Group copies | POST `/api/session/clone/plan`, `/api/session/clone`; Hub POST `/api/session/transfer/clone` | capability-gated |
 | Private transfer channel | POST `/api/session/transfer/manifest`, `/api/session/transfer/check`, `/api/session/transfer/reserve`, `/api/session/transfer/export`, `/api/session/transfer/receive`, `/api/session/transfer/status`, `/api/session/transfer/release` | authenticated node listener only |
+| Private move handoff | POST `/api/session/transfer/switch`, `/api/session/transfer/activate`, `/api/session/transfer/retire` | authenticated node listener only |
 | Creation and control | POST `/api/term/create`, `/api/term/takeover`, `/api/term/kill`, `/api/term/bind`, `/api/term/discard`, `/api/term/backend`, `/api/session/stop`, `/api/session/freeze`; GET `/api/term/new-status`, `/api/term/complete-dir`, `/api/term/models` | capability-gated |
 | Agent CLI versions | GET `/api/clients`; POST `/api/clients/update` (machine settings) | capability-gated |
 | Terminal transport | POST `/api/term/claim`, `/api/term/send`, `/api/term/scroll`; WS `/api/term/attach` (`mode=grid` streams the server grid); GET `/api/term/grid/history` | capability-gated |

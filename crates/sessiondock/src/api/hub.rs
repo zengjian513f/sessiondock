@@ -81,7 +81,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 /// `/api/nodes/<nid>/api/media/…` source before its hub check when set.
 pub fn hub_capabilities() -> Value {
     json!({
-        "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
+        "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
         "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true,
         "history_semantics": "limited_native"
     })
@@ -468,6 +468,11 @@ async fn handle(
     if let Some((nid, rest)) = proxy::explicit_node(&path) {
         explicit = Some(nid.to_string());
         path = rest.to_string();
+    }
+    // Move handoff is coordinated server-to-server. Do not let the generic
+    // browser proxy bypass target verification or the source ownership switch.
+    if path.starts_with("/api/session/transfer/") && path != "/api/session/transfer/clone" {
+        return Ok((StatusCode::NOT_FOUND, axum::Json(json!({"code":"private_transfer_route","error":"内部迁移接口不可通过浏览器调用"}))).into_response());
     }
     if method == Method::GET && path == "/api/session/file" {
         let accept = headers

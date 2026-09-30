@@ -263,9 +263,8 @@ def main():
                         expect(dialog.locator('#transfer-new-ids')).not_to_be_checked()
                         dialog.locator('#transfer-new-ids').check()
                         expect(dialog.locator('.clone-confirm')).to_be_disabled()
-                        expect(dialog.locator('.transfer-notice')).to_contain_text('跨机器传输尚未接入')
-                        assert dialog.locator('.transfer-notice').evaluate("e => getComputedStyle(e).backgroundColor")== 'rgba(0, 0, 0, 0)'
-                        assert dialog.locator('.transfer-notice').bounding_box()['height'] < 30
+                        expect(dialog.locator('.transfer-error')).to_contain_text('未配置回收站')
+                        expect(dialog.locator('.transfer-error')).to_be_visible()
                         expect(dialog.locator('#transfer-source')).to_be_disabled()
                         expect(dialog.locator('#transfer-source')).to_have_value(node.name)
                         expect(dialog.locator('#transfer-source')).to_have_attribute('type','text')

@@ -11,6 +11,7 @@ pub mod files;
 pub mod environment;
 pub mod bundle;
 pub mod native;
+pub mod moving;
 pub mod service;
 
 use serde::{Deserialize, Serialize};

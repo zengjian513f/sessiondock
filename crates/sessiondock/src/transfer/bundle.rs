@@ -278,6 +278,8 @@ impl TransferService {
             || op.phase != "planned"
             || op.incoming_digest.is_some()
             || !op.reused_files.is_empty()
+            || !op.reclaimed_by.is_empty()
+            || op.ownership_sequence != 0
         {
             return Err(invalid("迁移清单或操作标识无效"));
         }
@@ -286,6 +288,16 @@ impl TransferService {
                 "move_root_mismatch",
                 "两端 CLI 根目录路径不同",
             ));
+        }
+        if op.moving {
+            if op.storage_probes.keys().collect::<Vec<_>>() != manifest.roots.keys().collect::<Vec<_>>() {
+                return Err(invalid("缺少会话存储独立性核对"));
+            }
+            for (provider, probe) in &op.storage_probes {
+                if probe.shared(&manifest.roots[provider])? {
+                    return Err(TransferError::new("move_shared_storage", "两台机器共享会话存储，不能移动文件"));
+                }
+            }
         }
         let cwds = op
             .group()

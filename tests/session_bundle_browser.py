@@ -100,6 +100,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--binary',type=Path,default=BINARY)
     parser.add_argument('--peer',help='Opt-in SSH peer with shared checkout; all target data stays in private /tmp directories')
     parser.add_argument('--preserve',action='store_true',help='Exercise identity-preserving cross-node copies')
+    parser.add_argument('--move',action='store_true',help='Move groups, checking source retirement or shared-storage rejection')
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-bundle-browser-') as temporary, sync_playwright() as pw:
         root=Path(temporary)
@@ -121,7 +122,13 @@ def main():
                 b=SimpleNamespace(name='destination',nid='b'*32,port=free_port(),token=TOKEN)
                 for node,corpus in ((a,source),(b,destination)):
                     (corpus.root/'ids').mkdir();(corpus.root/'ids/node-id').write_text(node.nid+'\n')
+                    (corpus.root/'trash').mkdir()
                 originals={str(p):p.read_bytes() for kind in ('claude','codex','grok') for p in (source.root/kind).rglob('*') if p.is_file() and '.sqlite' not in p.name}
+                original_links={p:os.readlink(p) for p in originals if Path(p).is_symlink()}
+                if args.move:
+                    ledger=source.root/'state/conversations/conversation-ledger.json'
+                    ledger.parent.mkdir()
+                    ledger.write_text(json.dumps({'drafts':{selected:{'revision':1,'value':{'text':'source unsent draft'}},'codex:ffffffffffffffff':{'revision':1,'value':{'text':'unrelated draft'}}}}))
                 hubroot=base_root/'hub';hubroot.mkdir();hub=None;completed=None;continued=None
                 peer=Peer(args.peer,base_root,source,roots,b,args.binary) if args.peer else None
                 read_target=peer.read if peer else lambda p:p.read_bytes()
@@ -133,14 +140,17 @@ def main():
                             env=node_env(corpus.root,node.port,'127.0.0.0/8')
                             env.update({f'SESSIONDOCK_{k.upper()}_ROOT':v for k,v in roots.items()})
                             env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
-                            stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))
+                            stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',trash_dir=corpus.root/'trash',extra_env=env))
                         if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[a,b])
                         hub.start();stack.callback(hub.stop)
                         context=browser.new_context(service_workers='block');stack.callback(context.close)
                         page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                         source_uid=scoped(a.nid,selected)
                         if restart:
-                            if args.preserve:
+                            if args.move:
+                                locked,raw=node_call(a,'/api/session/clone/plan',{'uid':selected})
+                                assert locked==409 and json.loads(raw)['code']=='move_recovery_required',raw
+                            if args.preserve and not args.move:
                                 recovered=json.loads(read_target(reused_path))
                                 assert recovered['phase']=='failed',recovered['phase']
                                 assert read_target(continued[0])==continued[1]
@@ -148,7 +158,7 @@ def main():
                             result=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']})
                             assert result.ok,result.text();assert result.json()['target_uid']==completed['target_uid']
                             assert read_target(continued[0])==continued[1]
-                            if args.preserve and peer:
+                            if args.preserve and peer and not args.move:
                                 status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected,'new_ids':False})
                                 assert status==200,raw
                                 conflict=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':source_uid,'target_node':b.nid,'operation_id':json.loads(raw)['operation_id']})
@@ -157,6 +167,16 @@ def main():
                                 assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
                                 print('PASS '+provider+' changed destination rejects another preserved-ID copy without overwriting either side',flush=True)
                             print('PASS '+provider+' Hub/node restart retry preserves continued target and fixed identity',flush=True)
+                            if args.move:
+                                target_local=provider+':'+completed['target_uid'].split('~',1)[1]
+                                status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local,'new_ids':False,'mode':'move'});assert status==200,raw
+                                back=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={'uid':completed['target_uid'],'target_node':a.nid,'operation_id':json.loads(raw)['operation_id']})
+                                assert back.ok,back.text();assert back.json()['target_uid']==scoped(a.nid,target_local)
+                                status,raw=node_call(a,'/api/session/clone/plan',{'uid':target_local});assert status==200,raw
+                                peer.call('stop');peer.call('start')
+                                status,raw=node_call(b,'/api/session/clone/plan',{'uid':target_local})
+                                assert status==409 and json.loads(raw)['code']=='move_recovery_required',raw
+                                print('PASS '+provider+' moving back reclaims the original node; older receipts cannot unlock the new source after restart',flush=True)
                             continue
                         page.locator(f'#side .item[data-uid="{source_uid}"]').click()
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
@@ -166,7 +186,15 @@ def main():
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(count,timeout=20000)
                         dialog.locator('#transfer-target').select_option(b.nid)
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
-                        if args.preserve:
+                        if args.move:
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
+                                dialog.locator('.transfer-segments label').nth(1).click()
+                            assert move_plan.value.ok,move_plan.value.text()
+                            assert move_plan.value.json()['mode']=='move'
+                            if not args.preserve:
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')):
+                                    dialog.locator('#transfer-new-ids').check()
+                        elif args.preserve:
                             if provider=='codex':
                                 def old_plan(route):
                                     response=route.fetch();data=response.json();data.pop('new_ids',None)
@@ -182,17 +210,97 @@ def main():
                             assert preserved_plan.value.ok,preserved_plan.value.text()
                             assert preserved_plan.value.json()['new_ids'] is False
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                        cleanup_obstruction=None
+                        if args.move and args.preserve and peer and provider=='codex':
+                            operation=move_plan.value.json()['operation_id']
+                            for route in (f'/api/nodes/{a.nid}/api/session/transfer/switch','/api/session/transfer/switch'):
+                                forbidden=context.request.post(f'http://127.0.0.1:{hub.port}'+route,data={'uid':source_uid,'operation_id':operation})
+                                assert forbidden.status==404 and forbidden.json()['code']=='private_transfer_route',forbidden.text()
+                            status,raw=node_call(a,'/api/session/transfer/export',{'operation_id':operation});assert status==200,raw[:200]
+                            status,raw=node_call(b,'/api/session/transfer/receive',raw=raw);assert status==200,raw
+                            status,raw=node_call(b,'/api/session/clone',{'uid':selected,'operation_id':operation})
+                            assert status==200 and json.loads(raw)['phase']=='ready',raw
+                            status,raw=node_call(b,'/api/session/clone/plan',{'uid':selected})
+                            assert status==409 and json.loads(raw)['code']=='move_recovery_required',raw
+                            peer.call('stop');peer.call('start')
+                            status,raw=node_call(b,'/api/session/transfer/status',{'operation_id':operation})
+                            assert status==200 and json.loads(raw)['phase']=='ready',raw
+                            status,raw=node_call(a,'/api/session/transfer/switch',{'operation_id':operation});assert status==200,raw
+                            cleanup_obstruction=source.root/'trash'/f'move-{operation}-codex'/'files/1'
+                            cleanup_obstruction.mkdir(parents=True)
+                            print('PASS target remains fenced and ready across restart before source handoff',flush=True)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
                             dialog.locator('.clone-confirm').click()
-                        reply=response.value;assert reply.ok,reply.text();completed=reply.json()
+                        reply=response.value
+                        if cleanup_obstruction:
+                            assert reply.status==409 and reply.json()['code']=='move_cleanup_pending',reply.text()
+                            expect(dialog.locator('.transfer-error')).to_contain_text('源端清理待重试')
+                            expect(dialog.locator('#transfer-target')).to_be_disabled()
+                            partial=json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())
+                            assert partial['phase']=='retiring'
+                            manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())
+                            assert manifest['files'][0]['in_trash'] and not Path(manifest['files'][0]['origin']).exists()
+                            cleanup_obstruction.rmdir()
+                            late=source.root/'codex/sessions'/f'rollout-2026-10-01T00-00-00-{ident(999)}.jsonl'
+                            late.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(999),'forked_from_id':partial['full_group']['members'][0]['sid'],'cwd':str(source.root/'workspace'),'timestamp':'2026-10-01T00:00:00Z'}})+'\n'+json.dumps({'type':'event_msg','payload':{'type':'user_message','message':'Late fork'}})+'\n')
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                dialog.locator('.clone-confirm').click()
+                            assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                            assert late.exists() and (cleanup_obstruction.parent/'0').exists()
+                            late.unlink()
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
+                                dialog.locator('.clone-confirm').click()
+                            reply=response.value
+                            print('PASS Chromium retains a new outside fork dependency during partial cleanup and retries without republishing target or releasing source fence',flush=True)
+                        if args.move and not peer:
+                            assert reply.status==409 and reply.json()['code']=='move_shared_storage',reply.text()
+                            expect(dialog.locator('.transfer-error')).to_contain_text('共享会话存储')
+                            assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
+                            status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected})
+                            assert status==200,raw
+                            print('PASS '+provider+' Chromium rejects moving shared storage without removing source files',flush=True)
+                            break
+                        assert reply.ok,reply.text();completed=reply.json()
                         assert completed['phase']=='complete' and b.nid in completed['target_uid']
                         page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'],timeout=30000)
                         expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
-                        assert source_op['phase']=='exported' and target_op['phase']=='complete' and target_op['incoming_digest']
-                        assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
-                        if args.preserve:
+                        assert source_op['phase']==('retired' if args.move else 'exported') and target_op['phase']=='complete' and target_op['incoming_digest']
+                        if args.move:
+                            moved={f['source'] for f in source_op['plan']['files']}
+                            moved.update(f['source'] for f in (source_op['file_plan'] or {}).get('files',[]))
+                            assert all(not os.path.lexists(p) if p in moved else Path(p).read_bytes()==raw for p,raw in originals.items())
+                            recovered={}
+                            for manifest_path in (source.root/'trash').glob('move-*/manifest.json'):
+                                manifest=json.loads(manifest_path.read_text());assert manifest['state']=='trashed'
+                                blocked,raw=node_call(a,'/api/trash/restore',{'id':manifest['entry_id']})
+                                assert blocked==409 and json.loads(raw)['code']=='move_session_locked',raw
+                                for file in manifest['files']:
+                                    held=manifest_path.parent/'files'/file['name']
+                                    recovered[file['origin']]=os.readlink(held) if file['origin'] in original_links else held.read_bytes()
+                            assert set(recovered)==moved and all(recovered[p]==(original_links[p] if p in original_links else originals[p]) for p in moved)
+                            drafts=json.loads(ledger.read_text())['drafts']
+                            assert selected not in drafts and drafts['codex:ffffffffffffffff']['value']['text']=='unrelated draft'
+                            for database in source_op['native']['databases']:
+                                with sqlite3.connect(database['path']) as db:
+                                    for table in database['tables']:
+                                        for row in table['rows']:
+                                            clause=' AND '.join('"'+key.replace('"','""')+'" IS ?' for key in table['keys'])
+                                            remaining=db.execute('SELECT count(*) FROM "'+table['name']+'" WHERE '+clause,[row[key] for key in table['keys']]).fetchone()[0]
+                                            assert remaining==int(table['name'] in ('projects','project_roots','thread_sections')),(table['name'],row)
+                            locked,raw=node_call(a,'/api/session/clone/plan',{'uid':selected})
+                            assert locked==409 and json.loads(raw)['code']=='move_recovery_required',raw
+                            if not page.locator('#trash').is_visible():page.locator('#header-more-btn').click()
+                            page.locator('#trash').click()
+                            expect(page.locator('#trash-dialog')).to_be_visible()
+                            expect(page.locator('#trash-list .trash-item')).to_have_count(1)
+                            expect(page.locator('#trash-list button[data-act="restore"]')).to_be_disabled()
+                            expect(page.locator('#trash-list .trash-origin')).to_contain_text('会话已迁出')
+                            page.locator('#trash-done').click()
+                            print('PASS '+provider+' move retires the whole source group into verified trash and keeps source fenced',flush=True)
+                        else:assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
+                        if args.preserve and not args.move:
                             assert not completed['new_ids']
                             assert completed['target_uid']==scoped(b.nid,selected)
                             assert all(old==new for old,new in target_op['plan']['identities']['threads'].items())
@@ -238,10 +346,11 @@ def main():
                             page.locator(f'#side .item[data-uid="{scoped(b.nid,uid("grok",child_path))}"]').click()
                             expect(page.locator('#msgs')).to_contain_text('Grok answer 13')
                             changed=child_path/'chat_history.jsonl'
-                        if peer:peer.append(changed,b'\n')
-                        else:changed.write_bytes(changed.read_bytes()+b'\n')
+                        continuation=b'{"type":"sessiondock_fixture_continuation"}\n'
+                        if peer:peer.append(changed,continuation)
+                        else:changed.write_bytes(changed.read_bytes()+continuation)
                         continued=(changed,read_target(changed))
-                        print('PASS '+provider+' Chromium selects another node, streams whole family, publishes and opens clone/agent; source intact',flush=True)
+                        print('PASS '+provider+' Chromium selects another node, streams whole family, publishes and opens history/agent',flush=True)
                 if peer:peer.close()
         finally:
             if 'peer' in locals() and peer and peer.process.poll() is None:peer.close()

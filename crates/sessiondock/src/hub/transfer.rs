@@ -78,14 +78,35 @@ impl Transfers {
             if let Ok((source, _)) = namespace::split(&request.uid, true) {
                 if let Some(node) = registry.get(&source) {
                     if let Ok(target) = registry.target(&node) {
-                        let _ = call(
+                        let source_state = call(
                             &client,
                             &target,
-                            "/api/session/transfer/release",
-                            &json!({"operation_id":request.operation_id,"completed":false}),
+                            "/api/session/transfer/status",
+                            &json!({"operation_id":request.operation_id}),
                             true,
                         )
                         .await;
+                        let before_publication = self
+                            .path(&request.operation_id)
+                            .ok()
+                            .and_then(|p| fs::read(p).ok())
+                            .and_then(|raw| serde_json::from_slice::<Journal>(&raw).ok())
+                            .is_some_and(|j| {
+                                matches!(j.phase.as_str(), "planned" | "transferring")
+                            });
+                        if source_state
+                            .as_ref()
+                            .is_ok_and(|(_, value)| value["mode"] == "clone" || before_publication)
+                        {
+                            let _ = call(
+                                &client,
+                                &target,
+                                "/api/session/transfer/release",
+                                &json!({"operation_id":request.operation_id,"completed":false}),
+                                true,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -142,6 +163,19 @@ impl Transfers {
             .map_err(|_| TransferError::new("move_node_unavailable", "目标机器不可用"))?;
         self.save(&journal).await?;
         let operation = json!({"operation_id":request.operation_id});
+        let source_state = call(
+            &client,
+            &source_address,
+            "/api/session/transfer/status",
+            &operation,
+            true,
+        )
+        .await?
+        .1;
+        if source_state["uid"] != local_uid {
+            return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
+        }
+        let moving = source_state["mode"] == "move";
         let mut current = call(
             &client,
             &target_address,
@@ -156,7 +190,7 @@ impl Transfers {
                 "目标操作并非迁移接收记录",
             ));
         }
-        if current.1["phase"] != "complete" {
+        if current.1["phase"] != "complete" && current.1["phase"] != "ready" {
             let reserved = call(
                 &client,
                 &source_address,
@@ -182,7 +216,7 @@ impl Transfers {
                 )
                 .await?
                 .1;
-                call(
+                let checked = call(
                     &client,
                     &target_address,
                     "/api/session/transfer/check",
@@ -190,6 +224,12 @@ impl Transfers {
                     true,
                 )
                 .await?;
+                if moving && checked.1["move_handoff"] != true {
+                    return Err(TransferError::new(
+                        "move_group_unsupported",
+                        "目标版本不支持迁移归属交接",
+                    ));
+                }
                 journal.phase = "transferring".into();
                 self.save(&journal).await?;
                 self.stream(&client, &source_address, &target_address, &operation)
@@ -216,6 +256,26 @@ impl Transfers {
             )
             .await?;
         }
+        if moving && current.1["phase"] == "ready" {
+            journal.phase = "switching".into();
+            self.save(&journal).await?;
+            call(
+                &client,
+                &source_address,
+                "/api/session/transfer/switch",
+                &operation,
+                true,
+            )
+            .await?;
+            current = call(
+                &client,
+                &target_address,
+                "/api/session/transfer/activate",
+                &operation,
+                true,
+            )
+            .await?;
+        }
         if current.1["phase"] != "complete" {
             return Err(TransferError::new(
                 "move_recovery_required",
@@ -227,14 +287,35 @@ impl Transfers {
         journal.phase = "releasing".into();
         journal.result = Some(result.clone());
         self.save(&journal).await?;
-        call(
-            &client,
-            &source_address,
-            "/api/session/transfer/release",
-            &json!({"operation_id":request.operation_id,"completed":true}),
-            true,
-        )
-        .await?;
+        if moving {
+            journal.phase = "retiring".into();
+            self.save(&journal).await?;
+            if let Err(error) = call(
+                &client,
+                &source_address,
+                "/api/session/transfer/retire",
+                &operation,
+                true,
+            )
+            .await
+            {
+                journal.phase = "cleanup_pending".into();
+                self.save(&journal).await?;
+                return Err(TransferError::new(
+                    "move_cleanup_pending",
+                    format!("目标已可继续；源端清理待重试：{}", error.message),
+                ));
+            }
+        } else {
+            call(
+                &client,
+                &source_address,
+                "/api/session/transfer/release",
+                &json!({"operation_id":request.operation_id,"completed":true}),
+                true,
+            )
+            .await?;
+        }
         journal.phase = "complete".into();
         self.save(&journal).await?;
         Ok(result)

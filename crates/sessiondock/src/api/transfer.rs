@@ -54,11 +54,10 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Response> {
 #[derive(Deserialize)]
 pub struct PlanRequest {
     uid: String,
-    #[serde(default = "default_new_ids")]
-    new_ids: bool,
-}
-fn default_new_ids() -> bool {
-    true
+    #[serde(default)]
+    new_ids: Option<bool>,
+    #[serde(default)]
+    mode: Option<String>,
 }
 #[derive(Deserialize)]
 pub struct ExecuteRequest {
@@ -73,16 +72,171 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     let _guard = service.gate.clone().lock_owned().await;
     let copy = service.clone();
     let selected = body.uid;
-    let op =
-        match tokio::task::spawn_blocking(move || copy.plan_copy(&selected, body.new_ids)).await {
-            Ok(Ok(op)) => op,
-            Ok(Err(e)) => return failure(e),
-            Err(e) => return failure(TransferError::new("move_io", e.to_string())),
-        };
+    let moving = match body.mode.as_deref().unwrap_or("clone") {
+        "clone" => false,
+        "move" => true,
+        _ => return failure(TransferError::new("move_format", "未知的操作类型")),
+    };
+    if moving && state.trash.is_none() {
+        return failure(TransferError::new(
+            "move_group_unsupported",
+            "源机器未配置回收站",
+        ));
+    }
+    let new_ids = body.new_ids.unwrap_or(!moving);
+    let op = match tokio::task::spawn_blocking(move || {
+        if moving {
+            copy.plan_move(&selected, new_ids)
+        } else {
+            copy.plan_copy(&selected, new_ids)
+        }
+    })
+    .await
+    {
+        Ok(Ok(op)) => op,
+        Ok(Err(e)) => return failure(e),
+        Err(e) => return failure(TransferError::new("move_io", e.to_string())),
+    };
     if let Err(e) = stopped(&state, &op).await {
         return e;
     }
     Json(TransferService::public(&op)).into_response()
+}
+
+pub async fn switch_source(
+    State(state): State<AppState>,
+    Json(body): Json<TransferId>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let guard = service.gate.clone().lock_owned().await;
+    let op = match service.load(&body.operation_id) {
+        Ok(op) => op,
+        Err(e) => return failure(e),
+    };
+    if let Err(e) = stopped(&state, &op).await {
+        return e;
+    }
+    match tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        service.switch_source(&body.operation_id)
+    })
+    .await
+    {
+        Ok(Ok(op)) => Json(TransferService::public(&op)).into_response(),
+        Ok(Err(e)) => failure(e),
+        Err(e) => failure(TransferError::new("move_io", e.to_string())),
+    }
+}
+pub async fn activate_target(
+    State(state): State<AppState>,
+    Json(body): Json<TransferId>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let guard = service.gate.clone().lock_owned().await;
+    match tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        service.activate_target(&body.operation_id)
+    })
+    .await
+    {
+        Ok(Ok(op)) => Json(TransferService::public(&op)).into_response(),
+        Ok(Err(e)) => failure(e),
+        Err(e) => failure(TransferError::new("move_io", e.to_string())),
+    }
+}
+pub async fn retire_source(
+    State(state): State<AppState>,
+    Json(body): Json<TransferId>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let Some(trash) = state.trash.clone() else {
+        return failure(TransferError::new(
+            "move_group_unsupported",
+            "源机器未配置回收站",
+        ));
+    };
+    let guard = service.gate.clone().lock_owned().await;
+    let op = match service.load(&body.operation_id) {
+        Ok(op) => op,
+        Err(e) => return failure(e),
+    };
+    if let Err(e) = stopped(&state, &op).await {
+        return e;
+    }
+    // Keep both the journal gate and asynchronous receipt cleanup alive if
+    // the Hub disconnects while source retirement is in flight.
+    let task = tokio::spawn(async move {
+        let _guard = guard;
+        let copy = service.clone();
+        let mut op = tokio::task::spawn_blocking(move || {
+            copy.retire_source(&body.operation_id, trash.directory())
+        })
+        .await
+        .map_err(|e| TransferError::new("move_io", e.to_string()))??;
+        if let Some(lifecycle) = &state.lifecycle {
+            let records = lifecycle
+                .list(0, usize::MAX)
+                .await
+                .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?;
+            for record in records {
+                let belongs = op.group().members.iter().any(|m| {
+                    record.declared_uid() == Some(m.uid.as_str())
+                        || record.declared_sid() == Some(m.sid.as_str())
+                        || record.session_id() == Some(m.sid.as_str())
+                });
+                if belongs && !record.discarded() && record.discardable() {
+                    lifecycle
+                        .discard(
+                            record.record_id().to_owned(),
+                            record.instance_id().to_owned(),
+                        )
+                        .await
+                        .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?;
+                    super::lifecycle::forget_discarded_launch(&state, record.record_id())
+                        .await
+                        .map_err(|e| TransferError::new("move_cleanup", e.message))?;
+                }
+            }
+        }
+        if let Some(conversations) = &state.conversations {
+            let store = conversations.store.clone();
+            let uids = op.group().members.iter().map(|m| m.uid.clone()).collect();
+            tokio::task::spawn_blocking(move || store.retire_drafts(&uids))
+                .await
+                .map_err(|e| TransferError::new("move_io", e.to_string()))?
+                .map_err(|e| TransferError::new("move_cleanup", e.message))?;
+        } else if let Some(metadata) = &state.metadata {
+            // Drafts may outlive a temporarily disabled terminal subsystem.
+            let directory = metadata.directory().join("conversations");
+            let uids = op.group().members.iter().map(|m| m.uid.clone()).collect();
+            tokio::task::spawn_blocking(move || {
+                if directory.is_dir() {
+                    crate::conversation::store::Store::open(&directory)?.retire_drafts(&uids)?;
+                }
+                Ok::<_, crate::delivery::target::Failure>(())
+            })
+            .await
+            .map_err(|e| TransferError::new("move_io", e.to_string()))?
+            .map_err(|e| TransferError::new("move_cleanup", e.message))?;
+        }
+        op = service.finish_retirement(op)?;
+        let _ = state.reader.run(|store| store.list(true)).await;
+        Ok::<_, TransferError>(op)
+    });
+    match task.await {
+        Ok(Ok(op)) => Json(TransferService::public(&op)).into_response(),
+        Ok(Err(e)) => failure(e),
+        Err(e) => failure(TransferError::new("move_io", e.to_string())),
+    }
 }
 pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequest>) -> Response {
     let service = match service(&state) {
@@ -391,7 +545,7 @@ pub async fn check_bundle(
     })
     .await;
     match result {
-        Ok(Ok(())) => Json(json!({"ready":true})).into_response(),
+        Ok(Ok(())) => Json(json!({"ready":true,"move_handoff":true})).into_response(),
         Ok(Err(e)) => failure(e),
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
     }

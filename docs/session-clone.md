@@ -1,6 +1,6 @@
 # 会话整组克隆（设计稿）
 
-状态：**Codex、Claude、Grok 同机新身份克隆及跨节点可选身份复制已接入页面及发布事务；移动、目标前缀合并和完整格式审计仍在实现中**（2026-09-30）。
+状态：**Codex、Claude、Grok 同机克隆及跨节点可选身份的移动/复制已接入页面及发布事务；目标前缀合并和完整格式审计仍在实现中**（2026-09-30）。
 共同的范围计算、前置检查、锁、传输、验证和页面见 [session-move.md](session-move.md)。
 本文规定克隆特有的身份重写和失败处理，不能把普通原生 fork 或文件副本当作完整克隆。
 已实现的离线入口、浏览器验证及剩余限制见 [session-transfer-tool.md](session-transfer-tool.md)。
@@ -144,11 +144,11 @@ Hub 转发操作到所选会话的源节点，返回的新 uid 带同一节点�
 
 跨机器选择显示“生成新 UID”：复制默认开启，移动默认关闭；开关表示整组原生身份及内部
 引用是否重建。即使保留原生身份，目标机器的 SessionDock uid 仍带目标节点前缀。同机复制
-固定生成新身份。当前跨机复制已支持保留身份；移动仍会显示原因并禁用提交，不会
-调用本机克隆接口代替所选操作。执行中及结果不确定时锁定选项，重试沿用同一份计划。
+固定生成新身份。跨机移动使用源端配置的回收站，切换执行归属后清理；同机移动禁用。
+执行中及结果不确定时锁定选项，重试沿用同一份计划。
 不支持的来源或必要引用在计划阶段报错，不能只克隆组中的 Codex 部分。
 
-- `POST /api/session/clone/plan {uid, new_ids?: boolean}`：`new_ids` 默认 true；false 只用于跨节点复制。扫描活动与归档目录、各代 rollout 和原生代理工具引用，
+- `POST /api/session/clone/plan {uid, mode?: "clone"|"move", new_ids?: boolean}`：默认复制并改身份；移动默认保留身份，只允许跨节点。扫描活动与归档目录、各代 rollout 和原生代理工具引用，
   固定新身份与原生数据库快照，验证并暂存重写结果。返回 `operation_id`、`phase`、
   `target_uid`、`sessions`、`session_count`、`file_count`、`bytes`、`warnings`。
 - `POST /api/session/clone {uid, operation_id}`：核对原组关系、字节和元数据，拒绝运行中组，
