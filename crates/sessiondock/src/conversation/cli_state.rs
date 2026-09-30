@@ -379,6 +379,81 @@ pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
 }
 
 impl super::Conversations {
+    /// A confirmed Codex queue may be consumed by a steer, then interrupted
+    /// before any user record is written. Absence from a screen alone cannot
+    /// prove this: require a later native abort AND an idle, empty composer.
+    /// Keep the text as unconfirmed rather than dropping it or resending it.
+    pub(super) async fn observe_interrupted_queue(
+        &self,
+        identity: &super::Identity,
+        capture: &crate::delivery::driver::ScreenCapture,
+    ) -> Result<(), Failure> {
+        use crate::delivery::driver;
+        let queued = self.store.queued(&identity.key);
+        if identity.source != "codex"
+            || !queued
+                .iter()
+                .any(|row| row.state == "queued" && row.cli_queued_at.is_some())
+            || capture.lag.is_some_and(|lag| lag > 0)
+            || super::input::classify("codex", capture).state != super::input::InputState::Ready
+            || screen_busy("codex", capture) != Some(false)
+            || editor_text("codex", capture).is_none_or(|text| !text.trim().is_empty())
+            || !driver::codex_queued_texts(capture).is_empty()
+        {
+            return Ok(());
+        }
+        let observed_at = unix_now();
+        let uid = identity.uid.clone();
+        let native = self
+            .reader
+            .run(move |sessions| {
+                let snapshot = sessions.snapshot(&uid, "")?;
+                let mut echoes = Vec::new();
+                let mut status = None;
+                for event in snapshot.view.events() {
+                    let message = &event.message;
+                    let ts = message["ts"]
+                        .as_str()
+                        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+                        .map(|at| at.timestamp_millis() as f64 / 1000.0);
+                    if message["role"] == "status" {
+                        status = Some((message["state"] == "aborted", ts));
+                    } else if matches!(message["role"].as_str(), Some("user" | "command")) {
+                        echoes.push(Echo {
+                            hash: echo_hash(message["text"].as_str().unwrap_or("")),
+                            ts,
+                            enqueue: false,
+                        });
+                    }
+                }
+                Ok((echoes, status))
+            })
+            .await;
+        // A missing/unreadable native view is not evidence of interruption.
+        let Ok((echoes, Some((true, Some(aborted_at))))) = native else {
+            return Ok(());
+        };
+        if aborted_at > observed_at {
+            return Ok(());
+        }
+        // An echo wins, including one not in the browser's current page.
+        self.retire_echoes(&identity.uid, &echoes);
+        let interrupted: Vec<_> = self
+            .store
+            .queued(&identity.key)
+            .into_iter()
+            .filter(|row| {
+                row.state == "queued"
+                    && row.sent_at <= aborted_at
+                    && row.cli_queued_at.is_some_and(|at| at <= aborted_at)
+            })
+            .map(|row| row.request_id)
+            .collect();
+        if !interrupted.is_empty() {
+            self.store.mark_interrupted(&identity.key, &interrupted)?;
+        }
+        Ok(())
+    }
     /// Persist positive TUI queue evidence, without retiring the send. A
     /// visible entry can match only one receipt, including already marked
     /// receipts, so repeated observations cannot confirm extra duplicates.
