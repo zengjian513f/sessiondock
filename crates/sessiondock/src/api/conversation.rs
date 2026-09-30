@@ -200,9 +200,10 @@ pub async fn check(
     }
     let service = enabled(&s)?;
     let page = page_lease(q.lease.as_ref());
-    let (draft_revision, input, cli) = service.check(&q.uid, page.as_ref()).await.map_err(error)?;
+    let (draft_revision, input, cli, prompt) =
+        service.check(&q.uid, page.as_ref()).await.map_err(error)?;
     let mut body = json!({"ok":input.ready(), "draft_revision":draft_revision, "input":input,
-        "cli":cli.to_value()});
+        "cli":cli.to_value(), "prompt":prompt});
     let status = if input.ready() {
         StatusCode::OK
     } else {

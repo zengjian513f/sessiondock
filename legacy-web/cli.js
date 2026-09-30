@@ -108,6 +108,7 @@ class CodexCli extends SessionDockCli {
     if (!options[optionIndex] || optionIndex >= 9) return null;
     // Command approvals are TUI-only and advertise stable mnemonic keys.  Use
     // those instead of assuming they share request_user_input's numeric menu.
+    if (prompt?.kind === 'folder_trust') return options[optionIndex]?.keys || null;
     if (prompt?.kind === 'approval') {
       const key = options[optionIndex]?.key;
       return key ? [key] : null;
