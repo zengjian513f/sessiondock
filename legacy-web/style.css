@@ -2247,3 +2247,5 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 
 /* Global actions live in the session toolbar while the list is hidden. */
 header .btn[data-session-docked] { display: none; }
+
+#clone-group-dialog .clone-members { max-height: 40vh; overflow: auto; overflow-wrap: anywhere; }

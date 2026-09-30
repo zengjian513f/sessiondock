@@ -19,7 +19,7 @@ STATUS = dict(BAD_REQUEST=400, FORBIDDEN=403, NOT_FOUND=404, CONFLICT=409, GONE=
               INTERNAL_SERVER_ERROR=500, NOT_IMPLEMENTED=501, SERVICE_UNAVAILABLE=503)
 PHRASE = {v: k.replace("_", " ").title() for k, v in STATUS.items()}
 CALL_RE = re.compile(
-    r"(ApiError|SessionError|FileError)::(new|unavailable|unsupported|changed)\s*\(")
+    r"(ApiError|SessionError|FileError|TransferError)::(new|unavailable|unsupported|changed)\s*\(")
 SELF_RE, UNSUP_RE = re.compile(r"Self::new\s*\("), re.compile(r"\bunsupported\s*\(")
 FN_RE = re.compile(r"(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(")
 ROUTE_RE = re.compile(
@@ -101,7 +101,7 @@ def scan_file(path, table, rows):
     kinds = {n: {k: unquote(v) for k, v in FIELD_RE.findall(b)} for n, b in KIND_RE.findall(text)}
     hits = [(m.start(), m.group(1), m.group(2), m.end() - 1) for m in CALL_RE.finditer(text)]
     hits += [(m.start(), impl_ty(text, m.start()), "new", m.end() - 1) for m in SELF_RE.finditer(text)
-             if impl_ty(text, m.start()) in ("ApiError", "FileError", "SessionError")]
+             if impl_ty(text, m.start()) in ("ApiError", "FileError", "SessionError", "TransferError")]
     if "fn unsupported" in text:
         hits += [(m.start(), "SessionError", "helper", m.end() - 1) for m in UNSUP_RE.finditer(text)
                  if not (text[max(0, m.start() - 5):m.start()].endswith("fn ")
@@ -128,6 +128,12 @@ def scan_file(path, table, rows):
             if st is not None:
                 emit(rows, st, "unsupported_history" if st == 501 else "session_error",
                      msgs(inner, kinds), rel, line, handler, table)
+            continue
+        if recv == "TransferError":
+            code = found[0] if found else None
+            if code:
+                emit(rows, 500 if code in ("move_io", "move_native_database") else 409,
+                     code, found[1:], rel, line, handler, table)
             continue
         code = found[0] if found else None
         if st is None or code is None:

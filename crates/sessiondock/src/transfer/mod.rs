@@ -1,11 +1,14 @@
-//! Whole-group transfer foundations. No publishing, process launch or deletion.
+//! Whole-group planning and durable same-node Codex cloning.
 //! Plans enumerate physical history independently from sidebar visibility.
-//! Clone output is private staging only until native metadata import is verified.
+//! The offline stager never publishes; the service owns native import and recovery.
 
 pub mod codex;
 mod codex_ids;
 mod codex_tools;
+mod code_mode;
 pub mod group;
+pub mod native;
+pub mod service;
 
 use serde::{Deserialize, Serialize};
 

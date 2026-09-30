@@ -3235,6 +3235,7 @@ function openItemMenu(uid, x, y) {
   menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running && !unusedLaunch) || shellRunning;
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
+  menu.querySelector('[data-act="clone"]').hidden = !row || row.pending || SessionDockCapabilities.config.session_clone_local_codex !== true;
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
@@ -3374,6 +3375,7 @@ $('#item-menu').onclick = async e => {
   const uid = menuUid;
   closeItemMenu();
   if (!uid) return;
+  if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
     return;
@@ -5800,6 +5802,7 @@ function head(m, total) {
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? '<button class="session-menu-action" id="a-clone-group">复制整组…</button>' : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
@@ -5816,6 +5819,7 @@ function head(m, total) {
     </div>`;
   h.querySelector('.mobile-back').onclick = showMobileList;
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
+  h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
   const turnMode = h.querySelector('#a-turns');
   turnMode.onclick = () => {
     S.compactTurns = !S.compactTurns;
@@ -9550,3 +9554,51 @@ loadSessions(false).then(async ok => {
     if (pending) await openPendingSession(pending);
   }
 });
+
+
+/** Copy the entire server-derived connected group, including hidden ancestors.
+ * Retain the operation ID after an uncertain response so retry cannot create a
+ * second group. Closing the dialog never cancels a publishing transaction. */
+async function cloneSessionGroup(uid) {
+  closeSessionActions();
+  const dialog = document.createElement('dialog');
+  dialog.className = 'app-dialog app-popup'; dialog.id = 'clone-group-dialog';
+  dialog.innerHTML = '<div class="app-popup-panel"><div class="modal-head"><h2>复制整组会话</h2><button class="modal-close" type="button" aria-label="关闭">×</button></div><p>原会话保留，新组使用新的身份。工作目录不复制。</p><p class="clone-status" role="status">正在检查整组会话…</p><ul class="clone-members"></ul><div class="modal-actions"><button class="btn clone-cancel">取消</button><button class="btn primary clone-confirm" disabled>复制整组</button></div></div>';
+  document.body.appendChild(dialog); dialog.showModal();
+  const status = dialog.querySelector('.clone-status');
+  const confirm = dialog.querySelector('.clone-confirm');
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.querySelector('.modal-close').onclick = close;
+  dialog.querySelector('.clone-cancel').onclick = close;
+  dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
+  const request = async (path, body) => {
+    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error?.message || data.error || '复制失败');
+    return data;
+  };
+  let plan;
+  try {
+    plan = await request('api/session/clone/plan', {uid});
+    if (!dialog.isConnected) return;
+    status.textContent = `整组 ${plan.session_count} 个会话，${plan.file_count} 份历史文件，共 ${fmtSize(plan.bytes)}。复制到当前机器。`;
+    const seen = new Set();
+    for (const member of plan.sessions) {
+      if (seen.has(member.sid)) continue; seen.add(member.sid);
+      const li = document.createElement('li'); li.textContent = `${member.agent ? '子代理：' : ''}${member.title || member.sid}`;
+      dialog.querySelector('.clone-members').appendChild(li);
+    }
+    confirm.disabled = false;
+  } catch (error) { status.textContent = error.message; return; }
+  confirm.onclick = async () => {
+    confirm.disabled = true; status.textContent = '正在复制并检查完整历史…';
+    try {
+      const result = await request('api/session/clone', {uid, operation_id:plan.operation_id});
+      if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
+      close(); await loadSessions(true); await openSession(result.target_uid);
+      showSessionStopNotice('整组复制完成，原会话已保留。');
+    } catch (error) {
+      if (dialog.isConnected) {status.textContent = error.message; confirm.textContent = '重试同一次复制'; confirm.disabled = false;}
+    }
+  };
+}

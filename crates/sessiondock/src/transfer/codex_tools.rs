@@ -16,6 +16,7 @@ fn thread(v: &mut Value, map: &IdentityMap) -> Result<(), TransferError> {
 }
 
 pub(super) fn rewrite(row: &mut Value, map: &IdentityMap) -> Result<(), TransferError> {
+    super::code_mode::rewrite(row, map)?;
     if row["type"] != "response_item" {
         return Ok(());
     }
@@ -88,8 +89,12 @@ pub(super) fn audit(row: &Value, map: &IdentityMap) -> Option<String> {
         return None;
     }
     let p = &row["payload"];
-    if p["type"] == "custom_tool_call" && p["name"] == "exec" {
-        return Some("code-mode exec 中的代码和工具引用尚未适配".into());
+    if (p["type"] == "custom_tool_call" && p["name"] == "exec")
+        || p["type"] == "custom_tool_call_output"
+    {
+        return super::code_mode::rewrite(&mut row.clone(), map)
+            .err()
+            .map(|e| e.message);
     }
     let tool = p["call_id"].as_str().and_then(|id| map.tool_calls.get(id));
     if tool.is_some_and(|name| {
@@ -119,4 +124,89 @@ pub(super) fn audit(row: &Value, map: &IdentityMap) -> Option<String> {
         }
     }
     None
+}
+
+/// Native agent references create graph edges even if the UI has no parent link.
+pub(super) fn references(
+    row: &Value,
+    calls: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut refs = Vec::new();
+    let _ = super::codex_ids::visit(&mut row.clone(), &mut |kind, id| {
+        if matches!(kind, super::codex_ids::Identity::Thread) {
+            refs.push(id.to_owned());
+        }
+        Ok(id.into())
+    });
+    if row["type"] != "response_item" {
+        return refs;
+    }
+    let p = &row["payload"];
+    if p["type"] == "custom_tool_call" && p["name"] == "exec" {
+        if let Some(code) = p["input"].as_str() {
+            refs.extend(super::code_mode::references(code));
+        }
+    }
+    if matches!(
+        p["type"].as_str(),
+        Some("custom_tool_call_output" | "function_call_output")
+    ) && p["call_id"]
+        .as_str()
+        .and_then(|id| calls.get(id))
+        .is_some_and(|name| matches!(name.as_str(), "__code_agent" | "spawn_agent" | "wait"))
+    {
+        refs.extend(super::code_mode::result_references(&p["output"]));
+    }
+    if p["type"] == "function_call" && (p["namespace"].is_null() || p["namespace"] == "functions") {
+        if let Some(args) = p["arguments"]
+            .as_str()
+            .and_then(|s| serde_json::from_str::<Value>(s).ok())
+        {
+            match p["name"].as_str() {
+                Some("send_input" | "close_agent" | "resume_agent") => {
+                    if let Some(id) = args["id"].as_str() {
+                        refs.push(id.into());
+                    }
+                }
+                Some("wait") => {
+                    if let Some(ids) = args["ids"].as_array() {
+                        refs.extend(ids.iter().filter_map(Value::as_str).map(str::to_owned));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    refs
+}
+
+/// Associate outputs with native agent calls before deriving graph edges. An
+/// external tool may legitimately return an unrelated field named agent_id.
+pub(super) fn collect_call(row: &Value, calls: &mut std::collections::BTreeMap<String, String>) {
+    if row["type"] != "response_item" {
+        return;
+    }
+    let p = &row["payload"];
+    let Some(id) = p["call_id"].as_str() else {
+        return;
+    };
+    if p["type"] == "custom_tool_call"
+        && p["name"] == "exec"
+        && p["input"]
+            .as_str()
+            .is_some_and(super::code_mode::agent_call)
+    {
+        calls.insert(id.into(), "__code_agent".into());
+    } else if p["type"] == "function_call"
+        && (p["namespace"].is_null() || p["namespace"] == "functions")
+    {
+        if let Some(name) = p["name"].as_str().filter(|name| {
+            matches!(
+                *name,
+                "spawn_agent" | "wait" | "send_input" | "resume_agent" | "close_agent"
+            )
+        }) {
+            calls.insert(id.into(), name.into());
+        }
+    }
 }

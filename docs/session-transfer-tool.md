@@ -3,7 +3,8 @@
 `sessiondock-transfer` 是移动/克隆实现共用的 Rust 核心的离线入口。
 当前实现范围：索引快照上的连通组计算，以及 **Codex 原始历史文件**的计划和暂存。
 它不发布 CLI 会话、不修改源文件、不导入数据库、不切换执行归属、不执行 trash。
-HTTP 编排与页面入口尚未接入，`session_move` / `session_clone` 能力尚未开启。
+同节点 Codex 的 HTTP 编排与页面入口见 [当前克隆接口](session-clone.md#当前接口同节点-codex)，
+使用独立能力 `session_clone_local_codex`；完整 `session_move` / `session_clone` 尚未开启。
 
 设计见 [session-move.md](session-move.md)、[session-clone.md](session-clone.md)。
 
@@ -74,7 +75,7 @@ JSON 结果；失败输出 `{ "error": { "code": "…", "message": "…" } }` �
   原生 JSON 工具 `spawn_agent`、`send_input`、`wait`、`close_agent`、`resume_agent`
   的已知身份字段按工具格式重写；prompt、消息正文、完成状态正文和运行时句柄保持原文。
 - 计划与暂存结果的 `reference_issues` 列出已发现但尚未适配的工具引用，包括 code-mode
-  `exec` 中的 JavaScript，以及未适配工具参数/结果中的组内身份；只报告路径、ordinal 和
+  `exec` 中无法静态解析的身份引用，以及未适配工具参数/结果中的组内身份；只报告路径、ordinal 和
   原因，不把工具正文复制进诊断。没有列出问题也不表示完整审计通过。
   原生数据库投影及其他引用仍需要独立适配，不能把该列表为空当作发布许可。
 - 文件摘要在读入和全部暂存结束时重新核对，源文件变化则拒绝；关系和运行态须在未来发布流程

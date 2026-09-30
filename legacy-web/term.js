@@ -5555,6 +5555,9 @@ async function uploadComposerAttachment(attachment, uid, attachmentId = null,
       // This never retries the report launch or the conversation SEND.
       data = await sendUpload();
     }
+    // The request has finished. Keeping its abort handler while the draft is
+    // being saved makes the ready card's remove button abort a completed XHR.
+    delete attachment.cancelUpload;
     attachment.uploaded = {...data, uid, node}; attachment.status = 'ready'; render();
     // Uploaded references become durable before any publication or SEND.
     if (!await persistComposerDraft(uid)) throw new Error('附件已上传，草稿引用保存失败');

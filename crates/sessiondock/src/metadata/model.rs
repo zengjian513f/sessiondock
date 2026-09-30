@@ -28,6 +28,9 @@ fn zero(value: &u64) -> bool {
 pub(super) struct Row {
     #[serde(skip_serializing_if = "no")]
     starred: bool,
+    /// Private ownership proof for compensating a clone transaction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    clone_operation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     starred_at: Option<f64>,
     #[serde(skip_serializing_if = "no")]
@@ -235,6 +238,27 @@ impl MetadataSnapshot {
             next.document.revision = increment(self.revision())?
         }
         Ok(next)
+    }
+
+    /// Compare-and-insert/remove exact clone rows; concurrent unrelated metadata
+    /// remains in the latest document. Rollback never erases a changed row.
+    pub fn with_transfer_rows(&self, incoming: &BTreeMap<String, Value>, remove: bool) -> Result<Self, MetadataError> {
+        self.change(|rows| {
+            for (uid, value) in incoming {
+                validate_uid(uid)?;
+                let expected: Row = serde_json::from_value(value.clone()).map_err(|_|MetadataError::new(409,"move_metadata_invalid","复制元数据无效"))?;
+                if expected == Row::default() {continue;}
+                if remove {
+                    if let Some(current)=rows.get(uid) {
+                        if current!=&expected {return Err(MetadataError::new(409,"move_recovery_required","克隆元数据已变化，保留现场等待恢复"));}
+                        rows.remove(uid);
+                    }
+                } else {
+                    if rows.contains_key(uid) {return Err(MetadataError::new(409,"move_conflict","克隆元数据身份已存在"));}
+                    rows.insert(uid.clone(),expected);
+                }
+            }Ok(())
+        })
     }
 
     pub fn with_starred(&self, uid: &str, starred: bool, at: f64) -> Result<Self, MetadataError> {

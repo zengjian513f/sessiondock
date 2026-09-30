@@ -174,6 +174,47 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
         }
         // nest_parent is presentation, not ownership or native dependency.
     }
+    // Calls and outputs can fall in different generations of one thread.
+    // Scope call IDs to the owning thread, never to unrelated conversations.
+    let mut calls_by_thread = BTreeMap::<String, BTreeMap<String, String>>::new();
+    for e in entries.values().filter(|e| e.source == "codex") {
+        if let Ok(raw) = std::fs::read(&e.data) {
+            let calls = calls_by_thread.entry(e.summary.sid.clone()).or_default();
+            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
+                if let Ok(row) = serde_json::from_slice::<Value>(line) {
+                    super::codex_tools::collect_call(&row, calls);
+                }
+            }
+        }
+    }
+    for e in entries.values().filter(|e| e.source == "codex") {
+        if let Ok(raw) = std::fs::read(&e.data) {
+            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
+                let Ok(row) = serde_json::from_slice::<Value>(line) else {
+                    continue;
+                };
+                for id in super::codex_tools::references(&row, &calls_by_thread[&e.summary.sid]) {
+                    if let Some(targets) = identities.get(&("codex", id.as_str())) {
+                        for target in targets {
+                            if e.uid != *target {
+                                edges.insert(Edge {
+                                    from: e.uid.clone(),
+                                    to: (*target).into(),
+                                    kind: "agent_tool".into(),
+                                });
+                            }
+                        }
+                    } else {
+                        blockers.push(Blocker {
+                            uid: e.uid.clone(),
+                            code: "move_group_incomplete".into(),
+                            message: format!("工具引用的 Codex 会话 {id} 缺失"),
+                        });
+                    }
+                }
+            }
+        }
+    }
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for edge in &edges {
         adjacency.entry(&edge.from).or_default().push(&edge.to);

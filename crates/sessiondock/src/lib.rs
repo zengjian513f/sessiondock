@@ -272,6 +272,9 @@ fn build_app(
         .map_err(io::Error::other)?
         .map(Arc::new);
     let mut capabilities = state::capabilities();
+    capabilities["session_clone_local_codex"] = serde_json::json!(
+        cfg!(target_os = "linux") && config.state_dir.is_some() && config.roots.codex.is_some()
+    );
     capabilities["terminal_transport"] = serde_json::json!(terminal.is_some());
     capabilities["terminal"] = serde_json::json!(terminal.is_some());
     capabilities["terminal_records"] = serde_json::json!(terminal.is_some());
@@ -383,9 +386,26 @@ fn build_app(
         .opencode
         .as_ref()
         .and_then(|root| root.canonicalize().ok());
+    let transfer = if cfg!(target_os = "linux") && config.roots.codex.is_some() {
+        config
+            .state_dir
+            .as_ref()
+            .map(|dir| {
+                transfer::service::TransferService::open(
+                    dir.join("transfers"),
+                    config.roots.clone(),
+                    metadata.clone(),
+                )
+            })
+            .transpose()
+            .map_err(io::Error::other)?
+            .map(Arc::new)
+    } else {
+        None
+    };
     let reader = Reader {
         store: Arc::new(sessions::SessionStore::with_metadata_and_names(
-            config.roots,
+            config.roots.clone(),
             metadata.clone(),
             config.codex_index,
         )),
@@ -507,6 +527,7 @@ fn build_app(
         service
     });
     let state = AppState {
+        transfer,
         shell_env,
         opencode_root,
         conversations,
