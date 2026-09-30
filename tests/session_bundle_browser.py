@@ -410,6 +410,13 @@ def main():
                                     dialog.locator('.clone-confirm').click()
                                 assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
                                 assert (cleanup_obstruction.parent/'0').exists()
+                                # Keep no target in input: the persisted native reply alone
+                                # still references this agent after partial retirement.
+                                (late/'updates.jsonl').write_text(json.dumps({'params':{'update':{'toolCallId':'late-grok',
+                                    'rawOutput':json.dumps({'subagent_id':agent_id})}}})+'\n')
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                    dialog.locator('.clone-confirm').click()
+                                assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
                                 call=late/'chat_history.jsonl';call.write_text(call.read_text().replace('send_subagent_message','Bash'))
                                 with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
                                     dialog.locator('.clone-confirm').click()

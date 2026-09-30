@@ -68,6 +68,21 @@ def main():
         with (parent/'updates.jsonl').open('ab') as stream:
             stream.write(encoded({'params':{'update':{'toolCallId':'cross-grok','rawInput':{'subagent_id':grok_alias,'message':'Literal '+grok_alias},
                 'rawOutput':'=== Task '+grok_alias+' ===\n'}}}))
+        result_alias='ag1.resultonlyabcdefabcdefabcdefabcd'
+        isolated=corpus.root/'grok/project'/ident(82);isolated.mkdir()
+        (isolated/'summary.json').write_text(json.dumps({'info':{'id':ident(82),'cwd':str(corpus.root/'cwd')},
+            'generated_title':'Result-only agent','agent_id':result_alias}))
+        (isolated/'chat_history.jsonl').write_bytes(encoded({'type':'user','content':'Result-only question'})+
+            encoded({'type':'assistant','content':'Result-only answer'}))
+        with (parent/'chat_history.jsonl').open('ab') as stream:
+            stream.write(encoded({'type':'assistant','tool_calls':[{'id':'result-only','name':'spawn_subagent','arguments':'{}'}]}))
+        result={'subagent_id':result_alias,'text':'Literal '+result_alias}
+        with (parent/'updates.jsonl').open('ab') as stream:
+            stream.write(encoded({'params':{'update':{'toolCallId':'result-only','rawOutput':json.dumps(result)}}}))
+        with (grok_owner/'chat_history.jsonl').open('ab') as stream:
+            stream.write(encoded({'type':'assistant','tool_calls':[{'id':'result-only','name':'Bash','arguments':'{}'}]}))
+        with (grok_owner/'updates.jsonl').open('ab') as stream:
+            stream.write(encoded({'toolCallId':'result-only','rawOutput':json.dumps({'subagent_id':'missing-unrelated-agent'})}))
         (corpus.root/'state').mkdir();(corpus.root/'proc').mkdir()
         original={str(p):p.read_bytes() for folder in ('claude','grok') for p in (corpus.root/folder).rglob('*') if p.is_file()}
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
@@ -88,11 +103,23 @@ def main():
                         for source,selected in [('claude',uid('claude',claude[2])),('grok',uid('grok',corpus.root/'grok/project'/ident(10)))]:
                             selected=scoped(node.nid,selected)
                             page.reload(wait_until='networkidle')
+                            if source=='grok':
+                                history=parent/'updates.jsonl';saved_history=history.read_bytes()
+                                history.write_bytes(saved_history.replace(result_alias.encode(),b'missing-result-agent'))
+                                page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as missing:
+                                    page.locator('#item-menu [data-act="clone"]').click()
+                                assert missing.value.status==409,missing.value.text()
+                                expect(page.locator('#clone-group-dialog .transfer-error')).to_contain_text('missing-result-agent')
+                                expect(page.locator('#clone-group-dialog .clone-confirm')).to_be_disabled()
+                                page.locator('#clone-group-dialog .clone-cancel').click()
+                                history.write_bytes(saved_history)
+                                print('PASS Grok missing explicit result dependency blocks browser confirmation',flush=True)
                             page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                             page.locator('#item-menu [data-act="clone"]').click()
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
-                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
+                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 7)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                                 dialog.locator('.clone-confirm').click()
                             response=reply.value;assert response.ok,response.text();result=response.json()
@@ -127,7 +154,7 @@ def main():
                                 meta=corpus.root/'grok/project'/ids['grok:'+ident(80)]/'subagents'/ids['grok:'+grok_alias]/'meta.json'
                                 assert json.loads(meta.read_text())['child_session_id']==ids['grok:'+ident(81)]
                                 copied=corpus.root/'grok/project'/ids['grok:'+ident(10)]/'updates.jsonl'
-                                update=json.loads(copied.read_text().splitlines()[-1])['params']['update']
+                                update=json.loads(copied.read_text().splitlines()[-2])['params']['update']
                                 assert update['rawInput']['subagent_id']==ids['grok:'+grok_alias]
                                 assert update['rawInput']['message']=='Literal '+grok_alias
                                 assert update['rawOutput']=='=== Task '+ids['grok:'+grok_alias]+' ===\n'
@@ -135,6 +162,10 @@ def main():
                                 unrelated=json.loads(foreign.read_text().splitlines()[0])
                                 assert unrelated['rawInput']['subagent_id']==grok_alias
                                 assert unrelated['rawOutput']=='=== Task '+grok_alias+' ===\n'
+                                agent_result=json.loads(json.loads(copied.read_text().splitlines()[-1])['params']['update']['rawOutput'])
+                                assert agent_result=={'subagent_id':ids['grok:'+result_alias],'text':'Literal '+result_alias}
+                                assert 'missing-unrelated-agent' in foreign.read_text()
+                                print('PASS Grok result-only dependency included and serialized native identity rewritten; other-session Bash result unchanged',flush=True)
                                 print('PASS Grok cross-owner durable alias closes group; chat/update calls scoped to owner and ordinary tool data preserved',flush=True)
                                 rows=get_json(opener,base,'/api/sessions')['sessions']
                                 child=next(row for row in rows if row['sid']==ids['grok:'+ident(13)])
@@ -143,6 +174,9 @@ def main():
                                 foreign=next(row for row in rows if row['sid']==ids['grok:'+ident(81)])
                                 page.locator(f'#side .item[data-uid="{scoped(node.nid,foreign["uid"])}"]').click()
                                 expect(page.locator('#msgs')).to_contain_text('Foreign Grok answer 81')
+                                isolated=next(row for row in rows if row['sid']==ids['grok:'+ident(82)])
+                                page.locator(f'#side .item[data-uid="{scoped(node.nid,isolated["uid"])}"]').click()
+                                expect(page.locator('#msgs')).to_contain_text('Result-only answer')
                             assert all(Path(p).read_bytes()==raw for p,raw in original.items())
                             operations.append((selected,result,op))
                             print('PASS real Hub/Chromium '+source+' whole-family copy, opened new history/agent, source intact',flush=True)
