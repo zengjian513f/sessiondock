@@ -73,6 +73,29 @@ def check_pause_badges(page, uid):
     assert badge_box['y'] < icon_box['y'] + icon_box['height'] / 2
 
 
+def check_freeze_overlay(page):
+    overlay = page.locator('#session-freeze-overlay')
+    expect(overlay).to_be_visible()
+    expect(overlay).to_have_attribute('data-uid', page.evaluate('S.sel'))
+    pane = page.locator('#right').bounding_box()
+    card = overlay.locator('.session-freeze-card').bounding_box()
+    assert abs(card['x'] + card['width'] / 2 - pane['x'] - pane['width'] / 2) < 2
+    assert abs(card['y'] + card['height'] / 2 - pane['y'] - pane['height'] / 2) < 2
+    assert card['x'] >= pane['x'] and card['width'] <= pane['width']
+    shades = []
+    for theme in ['light', 'dark']:
+        page.evaluate('theme => applyTheme(theme)', theme)
+        shades.append(overlay.evaluate('node => getComputedStyle(node).backgroundColor'))
+        card_colors = overlay.locator('.session-freeze-card').evaluate(
+            'node => [getComputedStyle(node).backgroundColor, getComputedStyle(node).color]')
+        assert card_colors == (['rgb(255, 255, 255)', 'rgb(28, 32, 36)'] if theme == 'light'
+                               else ['rgb(28, 31, 38)', 'rgb(223, 227, 234)']), card_colors
+        expect(overlay.locator('[data-freeze-resume]')).to_be_visible()
+        expect(overlay.locator('[data-freeze-report]')).to_be_visible()
+    assert shades == ['rgba(15, 23, 42, 0.24)', 'rgba(0, 0, 0, 0.52)'], shades
+    page.evaluate("applyTheme('light')")
+
+
 def main():
     if not sys.platform.startswith('linux'):
         raise SystemExit('Linux process freeze suite')
@@ -156,10 +179,12 @@ def main():
                     assert response.value.status == 200 and answer['frozen'] and answer['process_count'] == 2, answer
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
-                    expect(page.locator('#session-stop-notice')).to_be_visible()
+                    check_freeze_overlay(page)
+                    expect(page.locator('#session-stop-notice')).to_be_hidden()
                     page.locator(f'#side .item[data-uid="{other_uid}"]').click()
                     page.wait_for_function('uid => S.sel === uid', arg=other_uid)
                     expect(page.locator('#session-stop-notice')).to_be_hidden()
+                    expect(page.locator('#session-freeze-overlay')).to_be_hidden()
                     expect(page.locator('#dlive.frozen')).to_have_count(0)
                     # The paused session retains its own marker and unread count.
                     page.evaluate('uid => addUnread(uid, 3)', uid)
@@ -183,10 +208,8 @@ def main():
                     refused = context.request.post(base + '/api/session/freeze', data={
                         'uid': uid, 'instance_id': 'replaced-instance', 'frozen': False})
                     assert refused.status == 409 and all(state(pid) == 'T' for pid in pids)
-                    report = page.locator('.dhead [data-report-bug]')
-                    if not report.is_visible():
-                        page.locator('#a-more').click()
-                    report.click()
+                    check_freeze_overlay(page)
+                    page.locator('[data-freeze-report]').click()
                     expect(page.locator('#bug-report-dialog')).to_be_visible()
                     page.locator('#bug-report-dialog .modal-close').click()
                     page.reload(wait_until='networkidle')
@@ -196,11 +219,12 @@ def main():
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
-                    button = freeze_button(page)
+                    check_freeze_overlay(page)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as response:
-                        button.click()
+                        page.locator('[data-freeze-resume]').click()
                     assert response.value.status == 200 and response.value.json()['frozen'] is False
                     expect(button).to_have_attribute('aria-label', '冻结现场')
+                    expect(page.locator('#session-freeze-overlay')).to_be_hidden()
                     expect(page.locator('#dlive.frozen')).to_have_count(0)
                     expect(page.locator(f'#side .item[data-uid="{uid}"] .item-status.frozen')).to_have_count(0)
                     deadline = time.monotonic() + 3
@@ -237,6 +261,18 @@ def main():
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     check_pause_badges(page, uid)
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
+                    page.keyboard.press('Escape')
+                    check_freeze_overlay(page)
+                    page.locator('.dhead .mobile-back').click()
+                    expect(page.locator('#session-freeze-overlay')).to_be_hidden()
+                    expect(page.locator('#side')).to_be_visible()
+                    expect(page.locator('#right')).to_be_hidden()
+                    page.set_viewport_size({'width': 1000, 'height': 900})
+                    check_freeze_overlay(page)
+                    page.set_viewport_size({'width': 390, 'height': 844})
+                    expect(page.locator('#session-freeze-overlay')).to_be_hidden()
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    check_freeze_overlay(page)
                     # Stop directly while frozen: the server must recover the
                     # tree before EOF, so the child can exit with its parent.
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/stop') as response:
@@ -269,7 +305,7 @@ def main():
                 except OSError:
                     pass
     print('PASS freeze browser: real parent/child stop and progress resume, idempotency, stale instance refusal, '
-          'session-specific pause badges and unread counts, switch clears notice, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
+          'session-specific pause badges and unread counts, centered themed session overlay, mobile list hides overlay, central recovery/report controls, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
 
 
 if __name__ == '__main__':
