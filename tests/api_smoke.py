@@ -200,9 +200,8 @@ def run(base, opener):
     passed(route)
 
     route = f"/api/session/outbox?uid={encoded}"
-    _, payload, raw = expect(opener, base, route, 501)
-    error_json(route, payload, raw)
-    passed("/api/session/outbox")
+    expect(opener, base, route, (404, 405))
+    passed("/api/session/outbox retired")
 
     route = "/api/__smoke_unknown__"
     _, payload, raw = expect(opener, base, route, 404)

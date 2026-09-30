@@ -353,20 +353,19 @@ pub fn screen_prompt(screen: &str) -> Option<Value> {
         if tail.contains("dismiss") {
             cancel = vec!["X"];
         }
-        if let Some(page) = PAGE.captures(&question) {
-            if &page[2] != "1" {
-                actions.push(json!({"label":"Previous question","keys":["Left"]}));
-                actions.push(json!({"label":"Next question","keys":["Right"]}));
-            }
+        if let Some(page) = PAGE.captures(&question)
+            && &page[2] != "1"
+        {
+            actions.push(json!({"label":"Previous question","keys":["Left"]}));
+            actions.push(json!({"label":"Next question","keys":["Right"]}));
         }
-        if multi {
-            if let Some((i, _)) = rows
+        if multi
+            && let Some((i, _)) = rows
                 .iter()
                 .enumerate()
                 .find(|(_, r)| r.2 == Some(true) && r.1 != "z")
-            {
-                actions.push(json!({"label":if question.contains("Enter:select"){"Next question with current choices"}else{"Submit current choices"},"keys":move_to(cursor,i,"Enter")}));
-            }
+        {
+            actions.push(json!({"label":if question.contains("Enter:select"){"Next question with current choices"}else{"Submit current choices"},"keys":move_to(cursor,i,"Enter")}));
         }
         if free.is_some() {
             actions.push(json!({"label":"Type another answer","keys":["z"]}));

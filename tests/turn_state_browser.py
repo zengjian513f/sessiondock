@@ -24,6 +24,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 from playwright.sync_api import sync_playwright, expect
 from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, encoded, isolated_server
@@ -277,6 +278,29 @@ def main():
                     agent_path.write_bytes(original)
                     agent_active(False)
                     expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    # A live CLI can append between metadata and scalar reads.
+                    # Refresh the real sidebar while it grows: the main row must
+                    # retain its native identity and committed open-turn state.
+                    append(codex_path, codex_row("event_msg", {"type":"task_started", "turn_id":"append-race"}))
+                    stop_append = threading.Event()
+                    suffix = encoded(codex_row("world_state", {"padding":"x" * 16384}))
+                    def grow_native():
+                        with codex_path.open("ab", buffering=0) as stream:
+                            for _ in range(2000):
+                                if stop_append.is_set(): break
+                                stream.write(suffix)
+                                stop_append.wait(.003)
+                    writer = threading.Thread(target=grow_native)
+                    writer.start()
+                    try:
+                        for _ in range(30):
+                            page.evaluate("async () => await loadSessions(true)")
+                            expect(page.locator(f'#side .item[data-uid="{codex_uid}"]:not(.agent)')).to_have_count(1)
+                            row = page.evaluate("uid => S.sessions.find(row => row.uid === uid)", codex_uid)
+                            assert row and row["sid"] == CODEX_SID and row["turn"] == "working", row
+                    finally:
+                        stop_append.set(); writer.join(timeout=5)
+                    append(codex_path, codex_row("event_msg", {"type":"task_complete", "turn_id":"append-race"}))
                     page.locator(f'#side .item[data-uid="{claude_uid}"]:not(.agent)').click()
 
                     # ---- Claude open, quiet screen: a finished turn waiting on its background

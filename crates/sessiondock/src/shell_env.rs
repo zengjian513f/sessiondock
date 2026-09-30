@@ -203,12 +203,20 @@ impl ShellEnv {
 }
 
 /// Names added, removed or given another value, sorted.
-fn changed_names(before: &BTreeMap<String, String>, after: &BTreeMap<String, String>) -> Vec<String> {
+fn changed_names(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Vec<String> {
     let mut names: Vec<String> = before
         .iter()
         .filter(|(key, value)| after.get(*key) != Some(value))
         .map(|(key, _)| key.clone())
-        .chain(after.keys().filter(|key| !before.contains_key(*key)).cloned())
+        .chain(
+            after
+                .keys()
+                .filter(|key| !before.contains_key(*key))
+                .cloned(),
+        )
         .collect();
     names.sort();
     names.dedup();

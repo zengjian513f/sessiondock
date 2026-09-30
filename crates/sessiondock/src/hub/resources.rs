@@ -26,10 +26,10 @@ impl RelatedNodes {
             .or_default();
         known.insert(session.node_id.clone());
         for row in &rows {
-            if row["session_related"] == true {
-                if let Some(id) = row["node_id"].as_str() {
-                    known.insert(id.to_owned());
-                }
+            if row["session_related"] == true
+                && let Some(id) = row["node_id"].as_str()
+            {
+                known.insert(id.to_owned());
             }
         }
         rows.into_iter()
