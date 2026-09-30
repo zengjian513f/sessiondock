@@ -140,8 +140,9 @@ html, body {
   display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
   border: 1px solid var(--border); border-radius: 13px;
   background: var(--panel); color: var(--text); box-shadow: 0 24px 70px rgba(0, 0, 0, .28);
-  font-size: 13px; line-height: 1.45;
+  font-size: 13px; line-height: 1.45; overflow-wrap: anywhere;
 }
+.app-float > * { flex-shrink: 0; min-width: 0; }
 .app-float.warn { border-left: 4px solid #d39a24; }
 .app-float[hidden] { display: none; }
 .app-float-head { display: flex; align-items: center; gap: 10px; }
@@ -379,9 +380,6 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 #bug-report-add.on { color: var(--accent); border-color: var(--accent); }
 .report-row { margin-top: 0; }
 .report-form.dragover { outline: 2px dashed var(--accent); outline-offset: -8px; }
-.bug-report-toast { flex-direction: row; align-items: center; }
-.bug-report-toast > span { min-width: 0; line-height: 1.4; }
-.bug-report-toast .btn { flex: none; white-space: nowrap; }
 .setting-row {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 190px);
   align-items: center; gap: 18px; padding: 11px 0; border-bottom: 1px solid var(--border);
