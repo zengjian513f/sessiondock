@@ -299,7 +299,7 @@ def check_report_layout(page):
     page.locator("#bug-report-effort").select_option("high")
     # Back to the default machine; the choice stays remembered for NodeB's Codex.
     page.select_option("#bug-report-node", NID["a"])
-    expect(page.locator("#bug-report-model-label")).to_have_text("默认模型")
+    expect(page.locator("#bug-report-model-label")).to_have_text("选择模型")
     page.evaluate("document.querySelector('#bug-report-dialog').close()")
 
     # Phone: two attachments share one row instead of stacking at 100% width.
@@ -561,6 +561,12 @@ def main():
                     page.wait_for_function("!document.querySelector('#bug-report-toast').classList.contains('hidden')")
                     toast = page.locator("#bug-report-toast").inner_text()
                     assert "已保存到 NodeB" in toast, toast
+                    # Dismissing the receipt leaves the worker and current selection alone.
+                    receipt_state = page.evaluate("({selected: S.sel, pending: T.pending})")
+                    page.locator('#bug-report-toast').get_by_role('button', name='忽略', exact=True).click()
+                    expect(page.locator('#bug-report-toast')).to_be_hidden()
+                    assert page.evaluate("({selected: S.sel, pending: T.pending})") == receipt_state
+                    assert [p for p, _ in boundary.calls] == ['bug-report']
                     assert page.evaluate("localStorage.getItem('sessiondock.hub./.bugReportNode')") == json.dumps(NID["b"])
                     boundary.calls.clear()
 
@@ -589,6 +595,21 @@ def main():
                     assert report["captured"]["events"] == [{"event": "browser.click"}], report["captured"]
                     toast = page.locator("#bug-report-toast").inner_text()
                     assert "已保存到 Vega" in toast, toast
+                    # A later receipt reappears, with both actions reachable on a phone.
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    receipt = page.locator('#bug-report-toast')
+                    expect(receipt).to_be_visible()
+                    expect(receipt.get_by_role('button', name='打开', exact=True)).to_be_in_viewport()
+                    ignore = receipt.get_by_role('button', name='忽略', exact=True)
+                    expect(ignore).to_be_in_viewport()
+                    receipt_state = page.evaluate("({selected: S.sel, pending: T.pending})")
+                    ignore.focus()
+                    ignore.press('Enter')
+                    expect(receipt).to_be_hidden()
+                    assert page.evaluate("({selected: S.sel, pending: T.pending})") == receipt_state
+                    assert [p for p, _ in boundary.calls] == ['bug-report/capture', 'bug-report']
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
                     boundary.calls.clear()
 
                     # 3. The problem's machine is unreachable: the report still goes out with
