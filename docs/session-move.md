@@ -313,6 +313,13 @@ Hub 的 `GET /api/session/transfers` 返回未结束的跨节点操作；
 回收站字节、源锁重启保持、再次移回，以及目标 ready 重启、部分清理中断和新增外部引用保护。
 去掉 `--preserve` 验证移动同时改身份；去掉 `--peer` 验证共享存储拒绝。
 
+`session_clone_service_real.py --production-peer <SSH 别名>` 从真实 Codex 的可见孙分支经 Chromium
+迁移整个五会话组；加 `--new-ids` 验证身份重写。Codex 0.159.2 / Luna low 实测包含分页 fork、
+归档兄弟、revert 多代 rollout 和 code-mode 子代理，两种身份模式均通过目标原生列表、完整
+分页历史、当前文件、名称/置顶/项目/归档元数据及分支/子代理续聊检查。目标 CLI 自行初始化
+临时数据库，生产导入不调用测试 SQL 导入器；两端无关会话和日常默认配置保持不变，源端会话行
+与历史清理完成。该验证不代表跨版本、所有工具/附件格式或运行回执清理已经完成。
+
 | 状态 | 处理 |
 |---|---|
 | `session-metadata.json` 的行（星标、fork 可见性、`nest_parent`、`independent`、`spawned_by`） | 移动写入目标，切换后从源删除；克隆保留源行，并按新 uid 重建组内关系，组外展示挂靠不冒充新组的父关系 |

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,14 +21,37 @@ from urllib.request import build_opener, ProxyHandler
 def main():
     config=json.loads(sys.stdin.readline());root=Path(config['root'])
     root.mkdir(parents=True,mode=0o700,exist_ok=False)
+    try:
+        serve(config,root)
+    finally:
+        shutil.rmtree(root)
+
+
+def serve(config,root):
+    native_baseline=None
     source=root/'source';destination=root/'destination'
     for path in config['roots'].values():Path(path).mkdir(parents=True,exist_ok=True)
     for cwd in config['cwds']:
         path=Path(cwd['path']);path.mkdir(parents=True,exist_ok=True);path.chmod(cwd['mode'])
     for folder in ('state','proc','ids','trash'):(destination/folder).mkdir(parents=True,exist_ok=True)
     for database,schema in config['schemas'].items():
-        import sqlite3
         with sqlite3.connect(database) as db:db.executescript(schema)
+    if config.get('native_codex'):
+        from session_move_codex_real import AppServer, MODEL, EFFORT, digest, inventory, native_metadata
+        home=Path(config['roots']['codex']);login=home/'auth.json'
+        defaults=Path.home()/'.codex/config.toml';before=digest(defaults)
+        login.symlink_to(Path.home()/'.codex/auth.json')
+        try:
+            with AppServer(str(Path.home()/'.local/bin/codex'),home,
+                           Path(config['cwds'][0]['path']),root/'native-initialize.log') as server:
+                thread=server.call('thread/start',{'model':MODEL,'config':{'model_reasoning_effort':EFFORT},
+                    'cwd':config['cwds'][0]['path'],'historyMode':'paginated',
+                    'approvalPolicy':'never','sandbox':'read-only'})['thread']
+                server.turn(thread['id'],'TARGET_UNRELATED_KEEP')
+            native_baseline={'sid':thread['id'],'files':inventory(home),'metadata':native_metadata(home,thread['id'])}
+        finally:
+            login.unlink(missing_ok=True)
+            assert digest(defaults)==before,'daily configuration changed'
     (destination/'ids/node-id').write_text(config['node_id']+'\n')
     token=destination/'token';token.write_text(config['token']+'\n');token.chmod(0o600)
     def port():
@@ -52,7 +76,7 @@ def main():
         path=Path(path)
         if not path.resolve().is_relative_to(root.resolve()):raise ValueError('outside private fixture')
         return path
-    print(json.dumps({'node_port':node_port}),flush=True)
+    print(json.dumps({'node_port':node_port,'native_baseline':native_baseline}),flush=True)
     try:
         for line in sys.stdin:
             request=json.loads(line);op=request['operation'];result={}
@@ -88,7 +112,7 @@ def main():
                 print(json.dumps({'ok':True,**result}),flush=True)
             except Exception as error:print(json.dumps({'ok':False,'error':str(error)}),flush=True)
     finally:
-        stop();log.close();shutil.rmtree(root)
+        stop();log.close()
 
 
 if __name__=='__main__':main()
