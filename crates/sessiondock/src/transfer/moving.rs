@@ -158,6 +158,21 @@ impl TransferService {
             .map(|m| (m.source.as_str(), m.sid.as_str()))
             .collect();
         let references = |source: &str, id: &str| !id.is_empty() && ids.contains(&(source, id));
+        // A tool call and its result can live in different rollout generations.
+        // Resolve call IDs within each outside thread, never across threads.
+        let mut calls_by_thread = BTreeMap::<String, BTreeMap<String, String>>::new();
+        for e in snapshot
+            .index()
+            .candidates()
+            .filter(|e| e.source == "codex" && !uids.contains(e.uid.as_str()))
+        {
+            let calls = calls_by_thread.entry(e.summary.sid.clone()).or_default();
+            for line in fs::read(&e.data)?.split(|b| *b == b'\n') {
+                if let Ok(row) = serde_json::from_slice::<Value>(line) {
+                    super::codex_tools::collect_call(&row, calls);
+                }
+            }
+        }
         for e in snapshot
             .index()
             .candidates()
@@ -190,13 +205,9 @@ impl TransferService {
                     .split(|b| *b == b'\n')
                     .filter_map(|line| serde_json::from_slice(line).ok())
                     .collect();
-                let mut calls = BTreeMap::new();
-                for row in &rows {
-                    super::codex_tools::collect_call(row, &mut calls);
-                }
                 for row in &rows {
                     if e.source == "codex"
-                        && super::codex_tools::references(row, &calls)
+                        && super::codex_tools::references(row, &calls_by_thread[&e.summary.sid])
                             .iter()
                             .any(|id| references("codex", id))
                     {

@@ -248,9 +248,31 @@ def main():
                             assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
                             assert late.exists() and (cleanup_obstruction.parent/'0').exists()
                             late.unlink()
+                            # Neither generation has a parent edge. Only the call in
+                            # the archived generation identifies the result as an agent.
+                            generations=[]
+                            for index,record in enumerate((
+                                {'type':'function_call','name':'spawn_agent','call_id':'late-call','arguments':'{}'},
+                                {'type':'function_call_output','call_id':'late-call','output':json.dumps({'agent_id':partial['full_group']['members'][0]['sid']})},
+                            )):
+                                folder=source.root/'codex'/('archived_sessions' if index==0 else 'sessions')
+                                folder.mkdir(exist_ok=True)
+                                path=folder/f'rollout-2026-10-02T00-00-0{index}-{ident(998)}.jsonl'
+                                path.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(998),'rollout_id':ident(990+index),'cwd':str(source.root/'workspace'),'timestamp':f'2026-10-02T00:00:0{index}Z'}})+'\n'+json.dumps({'type':'response_item','payload':record})+'\n')
+                                generations.append(path)
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                dialog.locator('.clone-confirm').click()
+                            assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                            assert all(path.exists() for path in generations) and (cleanup_obstruction.parent/'0').exists()
+                            # An identical call ID in an unrelated thread is not an edge.
+                            first=generations[0]
+                            first.write_text(first.read_text().replace(ident(998),ident(997)))
                             with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
                                 dialog.locator('.clone-confirm').click()
                             reply=response.value
+                            assert reply.ok,reply.text()
+                            for path in generations:path.unlink()
+                            print('PASS Chromium protects cross-generation agent results and scopes call IDs to their thread',flush=True)
                             print('PASS Chromium retains a new outside fork dependency during partial cleanup and retries without republishing target or releasing source fence',flush=True)
                         if args.move and not peer:
                             assert reply.status==409 and reply.json()['code']=='move_shared_storage',reply.text()
