@@ -309,6 +309,8 @@ pub struct Launcher {
     /// installed (the wrapper could not find the command). Empty until the
     /// first probe, so nothing is hidden on an unanswered probe.
     missing: std::sync::Mutex<BTreeSet<String>>,
+    /// Latest manual update of each profile's CLI (machine settings).
+    updates: super::clients::Updates,
 }
 
 /// Upper bound of one `--version` probe (a wrapper may first load a shell rc).
@@ -388,6 +390,7 @@ impl Launcher {
             profiles,
             entries,
             missing: std::sync::Mutex::new(BTreeSet::new()),
+            updates: super::clients::Updates::default(),
         })
     }
 
@@ -434,6 +437,24 @@ impl Launcher {
     }
     pub fn entries(&self) -> &[Entry] {
         &self.entries
+    }
+    /// Every agent CLI profile with its version and latest manual update.
+    /// Blocking; runs each `--version` in parallel.
+    pub fn clients(&self) -> Vec<super::clients::Client> {
+        super::clients::list(self.profiles.values(), &self.updates)
+    }
+    /// Claim the update slot of an agent CLI profile.
+    pub fn begin_update(&self, id: &str) -> Result<(), super::clients::UpdateError> {
+        if !self.profiles.get(id).is_some_and(|profile| profile.source != Source::Shell) {
+            return Err(super::clients::UpdateError::Unknown);
+        }
+        self.updates.begin(id)
+    }
+    /// Run a claimed update to its end. Blocking for minutes.
+    pub fn run_update(&self, id: &str) {
+        if let Some(profile) = self.profiles.get(id) {
+            super::clients::update(profile, &self.updates);
+        }
     }
 
     /// Synchronous filesystem checks; async callers run this in bounded blocking

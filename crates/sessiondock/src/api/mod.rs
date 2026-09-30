@@ -49,6 +49,7 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
         | "/api/trash/purge"
         | "/api/sessions/delete"
         | "/api/session/resolve-files" => 4 * 1024 * 1024,
+        "/api/clients/update" => 64 * 1024,
         _ => usize::MAX,
     }
 }
@@ -179,6 +180,14 @@ pub fn router() -> Router<AppState> {
         )
         .route("/term/complete-dir", get(lifecycle::complete_dir))
         .route("/term/models", get(lifecycle::models))
+        // Machine settings: installed CLI versions and a manual update.
+        .route("/clients", get(lifecycle::clients))
+        .route(
+            "/clients/update",
+            post(lifecycle::client_update).layer(axum::extract::DefaultBodyLimit::max(
+                request_body_limit("/api/clients/update"),
+            )),
+        )
         .route(
             "/term/backend",
             post(lifecycle::backend).layer(axum::extract::DefaultBodyLimit::max(

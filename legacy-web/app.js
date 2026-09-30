@@ -9085,6 +9085,7 @@ function setMachineNote(text, isError = false) {
 }
 
 function renderMachineSettings() {
+  renderClientMatrix();
   const rows = $('#machine-rows');
   const targets = machineTargets();
   const active = document.activeElement;
@@ -9264,6 +9265,199 @@ function machineRow(target) {
   fields.append(renderer);
   row.append(fields);
   return row;
+}
+
+// ---- AI 客户端矩阵：每台机器 × 每种客户端的版本、是否最新与手动更新 ----
+// 每台机器自己回答 api/clients（中央经 api/nodes/<id>/ 直连那台机器），连同它查到
+// 的最新版本号。更新在那台机器上后台跑 CLI 自带的 update，不经过任何会话；页面
+// 每 2 秒轮询到它结束。
+const machineClients = new Map();        // 机器 id → {clients, error, loading, seq}
+const machineClientPolls = new Map();    // 机器 id → 轮询定时器
+const CLIENT_POLL_MS = 2000;
+
+function machineApi(target, path) {
+  return target.local ? path : `api/nodes/${target.id}/${path}`;
+}
+
+function clientName(client) {
+  return SOURCES[client.source]?.name || client.source;
+}
+
+function clientUpdateSummary(target, client) {
+  const update = client.update || {};
+  const name = `${target.name}：${clientName(client)}`;
+  if (update.ok) {
+    return update.before && update.after && update.before !== update.after
+      ? `${name} 已更新 ${update.before} → ${update.after}。`
+      : `${name} 已是最新版本${update.after ? ` ${update.after}` : ''}。`;
+  }
+  const last = String(update.output || '').trim().split('\n').pop() || '';
+  const code = update.code == null ? '' : `（退出码 ${update.code}）`;
+  return `${name} 更新失败${code}${last ? `：${last}` : '。'}`;
+}
+
+function scheduleMachineClients(target) {
+  clearTimeout(machineClientPolls.get(target.id));
+  machineClientPolls.delete(target.id);
+  if (!(machineClients.get(target.id)?.clients || []).some(client => client.update?.running)) return;
+  machineClientPolls.set(target.id, setTimeout(() => void loadMachineClients(target), CLIENT_POLL_MS));
+}
+
+function machineClientEntry(target) {
+  const entry = machineClients.get(target.id) || {clients: null, error: '', seq: 0};
+  machineClients.set(target.id, entry);
+  return entry;
+}
+
+async function loadMachineClients(target) {
+  const entry = machineClientEntry(target);
+  // 更新开始后才发出的答复才算数：早先那次读取若晚到，会把本地刚标上的
+  // "更新中"当成已结束，报出上一次更新的结果
+  const seq = ++entry.seq;
+  entry.loading = true;
+  if (!entry.clients) renderClientMatrix();
+  try {
+    const response = await fetch(appUrl(machineApi(target, 'api/clients')), {cache: 'no-store'});
+    const data = await response.json().catch(() => ({}));
+    if (seq !== entry.seq) return;
+    if (response.status === 404 && !data.code) throw new Error('这台机器的 SessionDock 版本不支持查看客户端');
+    if (!response.ok || data.error) throw new Error(data.error || `请求失败（HTTP ${response.status}）`);
+    const before = new Map((entry.clients || []).map(client => [client.id, client]));
+    entry.clients = Array.isArray(data.clients) ? data.clients : [];
+    entry.error = '';
+    // 本页看着跑完的更新才报结果；打开设置时早已结束的只留在悬停提示里
+    for (const client of entry.clients) {
+      if (before.get(client.id)?.update?.running && client.update && !client.update.running) {
+        setMachineNote(clientUpdateSummary(target, client), !client.update.ok);
+      }
+    }
+  } catch (error) {
+    if (seq !== entry.seq) return;
+    entry.error = error.message || String(error);
+  } finally {
+    if (seq === entry.seq) entry.loading = false;
+  }
+  renderClientMatrix();
+  scheduleMachineClients(target);
+}
+
+// 版本号按数字段比较；核心相同时带预发布后缀的更旧。无法比较时当作相同。
+function compareVersions(a, b) {
+  const parts = v => String(v).split('-')[0].split('.').map(n => parseInt(n, 10));
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (Number.isNaN(d)) return 0;
+    if (d) return Math.sign(d);
+  }
+  return String(a).includes('-') === String(b).includes('-') ? 0 : String(a).includes('-') ? -1 : 1;
+}
+
+// 列只含至少一台机器装了的客户端；行是启用的机器，机器列表的顺序
+function renderClientMatrix() {
+  const box = $('#client-matrix');
+  if (!box) return;
+  const machines = machineTargets().filter(target => target.enabled !== false);
+  const installed = entry => (entry?.clients || []).filter(client => client.installed);
+  const sources = Object.keys(SESSIONDOCK_CLIS).filter(source =>
+    machines.some(target => installed(machineClients.get(target.id)).some(client => client.source === source)));
+  box.textContent = '';
+  if (!machines.length) return;
+  const table = document.createElement('table');
+  table.className = 'client-matrix';
+  const head = table.createTHead().insertRow();
+  for (const label of ['机器', ...sources.map(source => SOURCES[source]?.name || source)]) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    head.append(th);
+  }
+  const body = table.createTBody();
+  for (const target of machines) {
+    const row = body.insertRow();
+    row.dataset.machine = target.id;
+    const name = document.createElement('th');
+    name.scope = 'row';
+    const swatch = document.createElement('span');
+    swatch.className = 'machine-swatch';
+    swatch.dataset.nodeColor = target.color;
+    name.append(swatch, document.createTextNode(target.name));
+    row.append(name);
+    const entry = machineClients.get(target.id);
+    const status = target.online === false ? '离线'
+      : !entry || (entry.loading && !entry.clients) ? '正在读取…'
+      : entry.error && !entry.clients ? `无法读取：${entry.error}` : '';
+    if (status) {
+      const cell = row.insertCell();
+      cell.colSpan = Math.max(1, sources.length);
+      cell.className = 'client-status';
+      cell.textContent = status;
+      continue;
+    }
+    for (const source of sources) {
+      const client = installed(entry).find(item => item.source === source);
+      const cell = row.insertCell();
+      cell.dataset.clientSource = source;
+      if (client) fillClientCell(cell, target, client);
+      else {
+        cell.className = 'client-missing';
+        cell.textContent = '—';
+        cell.title = '这台机器未安装';
+      }
+    }
+  }
+  box.append(table);
+}
+
+function fillClientCell(cell, target, client) {
+  const running = !!client.update?.running;
+  const outdated = client.version && client.latest && compareVersions(client.version, client.latest) < 0;
+  cell.dataset.state = running ? 'running' : outdated ? 'outdated'
+    : client.version && client.latest ? 'current' : 'unknown';
+  const version = document.createElement('code');
+  version.className = 'client-version';
+  version.textContent = client.version || client.detail || '版本未知';
+  const mark = document.createElement('span');
+  mark.className = 'client-latest';
+  mark.textContent = outdated ? `→ ${client.latest}` : cell.dataset.state === 'current' ? '最新' : '';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'client-update';
+  button.textContent = running ? '更新中…' : '更新';
+  button.disabled = running;
+  button.setAttribute('aria-label', `更新 ${target.name} 上的 ${clientName(client)}`);
+  button.onclick = () => void updateMachineClient(target, client, button);
+  const tips = [client.detail || '',
+    client.latest ? `最新版本：${client.latest}` : '未能查到最新版本'];
+  if (client.update && !running) {
+    tips.push(clientUpdateSummary(target, client));
+    if (client.update.output) tips.push(client.update.output);
+  }
+  cell.title = tips.filter(Boolean).join('\n\n');
+  cell.append(version, mark, button);
+}
+
+async function updateMachineClient(target, client, button) {
+  button.disabled = true;
+  button.textContent = '更新中…';
+  setMachineNote(`${target.name}：正在更新 ${clientName(client)}…`);
+  try {
+    const response = await fetch(appUrl(machineApi(target, 'api/clients/update')), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: client.id}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.error) throw new Error(data.error || `请求失败（HTTP ${response.status}）`);
+    // 先在本地记成进行中：更新快到第一次轮询前就结束时，结果照样能报出来
+    client.update = {...client.update, running: true};
+    const entry = machineClientEntry(target);
+    entry.seq++;
+    entry.loading = false;
+  } catch (error) {
+    setMachineNote(`${target.name}：${clientName(client)} 更新失败：${error.message || error}`, true);
+  }
+  renderClientMatrix();
+  scheduleMachineClients(target);
 }
 
 // 两类请求的路径不同：展示属性是中央自己的接口，终端后端要转发给那台机器。
@@ -9448,7 +9642,13 @@ function showSettingsTab(name) {
     ? '机器设置保存在中央服务端，所有浏览器一致'
     : name === 'features' ? '功能偏好保存在此浏览器' : '界面偏好保存在浏览器';
   store.set('settingsTab', name);
-  if (name === 'machines') renderMachineSettings();
+  if (name === 'machines') {
+    renderMachineSettings();
+    for (const target of machineTargets()) {
+      if (target.enabled !== false && target.online !== false
+          && !machineClientPolls.has(target.id)) void loadMachineClients(target);
+    }
+  }
 }
 
 for (const tab of document.querySelectorAll('.settings-tab')) {

@@ -150,6 +150,11 @@ class NodeHandler(BaseHTTPRequestHandler):
             model = s["name"] + "-" + q.get("source", [""])[0]
             return self._json({"models": [{"id": model, "name": model, "efforts": ["low", "high"]}],
                                "efforts": ["low", "high"]})
+        if u.path == "/api/clients":
+            # One Codex only, already current: the settings matrix leaves this machine's Claude cell empty.
+            return self._json({"clients": s.get("clients", [
+                {"id": "codex-cli-v1", "source": "codex", "version": "0.1.0", "detail": "codex-cli 0.1.0",
+                 "installed": True, "latest": "0.1.0"}])})
         if u.path == "/api/term/complete-dir":
             if "dirs" in s:
                 path = q.get("path", [""])[0]
