@@ -21,6 +21,13 @@ def main():
     if sys.argv[1:] == ["--version"]:
         print("fake-model-cli 1.0")
         return 0
+    if sys.argv[1:] == ["debug", "models", "--bundled"]:
+        catalog = os.environ.get("SESSIONDOCK_TEST_CODEX_BUNDLED")
+        if not catalog or not os.path.exists(catalog):
+            return 1
+        with open(catalog) as source:
+            print(source.read())
+        return 0
     if sys.argv[1:2] == ["models"]:
         print(os.environ.get("SESSIONDOCK_TEST_MODELS", ""))
         return 0
