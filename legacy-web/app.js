@@ -9097,6 +9097,7 @@ function setMachineNote(text, isError = false) {
 }
 
 function renderMachineSettings() {
+  renderClientMatrix();
   const rows = $('#machine-rows');
   const targets = machineTargets();
   const active = document.activeElement;
@@ -9275,17 +9276,13 @@ function machineRow(target) {
       + 'xterm.js 由浏览器自己解析。部署前启动的旧宿主只能用 xterm.js，会自动回落。重新打开控制台后生效。';
   fields.append(renderer);
   row.append(fields);
-  const clients = document.createElement('div');
-  clients.className = 'machine-clients';
-  clients.dataset.machineClients = target.id;
-  row.append(clients);
-  fillMachineClients(target, clients);
   return row;
 }
 
-// ---- 机器上的 AI 客户端：当前版本与手动更新 ----
-// 每台机器自己回答 api/clients（中央经 api/nodes/<id>/ 直连那台机器）。更新在那台
-// 机器上后台跑 CLI 自带的 update，不经过任何会话；页面每 2 秒轮询到它结束。
+// ---- AI 客户端矩阵：每台机器 × 每种客户端的版本、是否最新与手动更新 ----
+// 每台机器自己回答 api/clients（中央经 api/nodes/<id>/ 直连那台机器），连同它查到
+// 的最新版本号。更新在那台机器上后台跑 CLI 自带的 update，不经过任何会话；页面
+// 每 2 秒轮询到它结束。
 const machineClients = new Map();        // 机器 id → {clients, error, loading, seq}
 const machineClientPolls = new Map();    // 机器 id → 轮询定时器
 const CLIENT_POLL_MS = 2000;
@@ -9330,7 +9327,7 @@ async function loadMachineClients(target) {
   // "更新中"当成已结束，报出上一次更新的结果
   const seq = ++entry.seq;
   entry.loading = true;
-  if (!entry.clients) fillMachineClients(target);
+  if (!entry.clients) renderClientMatrix();
   try {
     const response = await fetch(appUrl(machineApi(target, 'api/clients')), {cache: 'no-store'});
     const data = await response.json().catch(() => ({}));
@@ -9352,53 +9349,104 @@ async function loadMachineClients(target) {
   } finally {
     if (seq === entry.seq) entry.loading = false;
   }
-  fillMachineClients(target);
+  renderClientMatrix();
   scheduleMachineClients(target);
 }
 
-function fillMachineClients(target, box = $(`[data-machine-clients="${target.id}"]`)) {
-  if (!box) return;
-  box.textContent = '';
-  if (target.enabled === false || target.online === false) return;
-  const entry = machineClients.get(target.id);
-  const note = text => {
-    const span = document.createElement('span');
-    span.className = 'machine-clients-note';
-    span.textContent = text;
-    box.append(span);
-  };
-  if (!entry || (entry.loading && !entry.clients)) return note('正在读取客户端版本…');
-  if (entry.error && !entry.clients) return note(`无法读取客户端：${entry.error}`);
-  const installed = (entry.clients || []).filter(client => client.installed);
-  if (!installed.length) return note('未配置 AI 客户端');
-  for (const client of installed) box.append(machineClient(target, client));
+// 版本号按数字段比较；核心相同时带预发布后缀的更旧。无法比较时当作相同。
+function compareVersions(a, b) {
+  const parts = v => String(v).split('-')[0].split('.').map(n => parseInt(n, 10));
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] || 0) - (y[i] || 0);
+    if (Number.isNaN(d)) return 0;
+    if (d) return Math.sign(d);
+  }
+  return String(a).includes('-') === String(b).includes('-') ? 0 : String(a).includes('-') ? -1 : 1;
 }
 
-function machineClient(target, client) {
-  const item = document.createElement('span');
-  item.className = 'machine-client';
-  item.dataset.clientSource = client.source;
+// 列只含至少一台机器装了的客户端；行是启用的机器，机器列表的顺序
+function renderClientMatrix() {
+  const box = $('#client-matrix');
+  if (!box) return;
+  const machines = machineTargets().filter(target => target.enabled !== false);
+  const installed = entry => (entry?.clients || []).filter(client => client.installed);
+  const sources = Object.keys(SESSIONDOCK_CLIS).filter(source =>
+    machines.some(target => installed(machineClients.get(target.id)).some(client => client.source === source)));
+  box.textContent = '';
+  if (!machines.length) return;
+  const table = document.createElement('table');
+  table.className = 'client-matrix';
+  const head = table.createTHead().insertRow();
+  for (const label of ['机器', ...sources.map(source => SOURCES[source]?.name || source)]) {
+    const th = document.createElement('th');
+    th.scope = 'col';
+    th.textContent = label;
+    head.append(th);
+  }
+  const body = table.createTBody();
+  for (const target of machines) {
+    const row = body.insertRow();
+    row.dataset.machine = target.id;
+    const name = document.createElement('th');
+    name.scope = 'row';
+    const swatch = document.createElement('span');
+    swatch.className = 'machine-swatch';
+    swatch.dataset.nodeColor = target.color;
+    name.append(swatch, document.createTextNode(target.name));
+    row.append(name);
+    const entry = machineClients.get(target.id);
+    const status = target.online === false ? '离线'
+      : !entry || (entry.loading && !entry.clients) ? '正在读取…'
+      : entry.error && !entry.clients ? `无法读取：${entry.error}` : '';
+    if (status) {
+      const cell = row.insertCell();
+      cell.colSpan = Math.max(1, sources.length);
+      cell.className = 'client-status';
+      cell.textContent = status;
+      continue;
+    }
+    for (const source of sources) {
+      const client = installed(entry).find(item => item.source === source);
+      const cell = row.insertCell();
+      cell.dataset.clientSource = source;
+      if (client) fillClientCell(cell, target, client);
+      else {
+        cell.className = 'client-missing';
+        cell.textContent = '—';
+        cell.title = '这台机器未安装';
+      }
+    }
+  }
+  box.append(table);
+}
+
+function fillClientCell(cell, target, client) {
   const running = !!client.update?.running;
-  const name = document.createElement('b');
-  name.textContent = clientName(client);
+  const outdated = client.version && client.latest && compareVersions(client.version, client.latest) < 0;
+  cell.dataset.state = running ? 'running' : outdated ? 'outdated'
+    : client.version && client.latest ? 'current' : 'unknown';
   const version = document.createElement('code');
-  version.className = 'machine-client-version';
+  version.className = 'client-version';
   version.textContent = client.version || client.detail || '版本未知';
+  const mark = document.createElement('span');
+  mark.className = 'client-latest';
+  mark.textContent = outdated ? `→ ${client.latest}` : cell.dataset.state === 'current' ? '最新' : '';
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'btn machine-client-update';
+  button.className = 'client-update';
   button.textContent = running ? '更新中…' : '更新';
   button.disabled = running;
   button.setAttribute('aria-label', `更新 ${target.name} 上的 ${clientName(client)}`);
   button.onclick = () => void updateMachineClient(target, client, button);
-  const tips = [client.detail || ''];
+  const tips = [client.detail || '',
+    client.latest ? `最新版本：${client.latest}` : '未能查到最新版本'];
   if (client.update && !running) {
     tips.push(clientUpdateSummary(target, client));
     if (client.update.output) tips.push(client.update.output);
   }
-  item.title = tips.filter(Boolean).join('\n\n');
-  item.append(name, version, button);
-  return item;
+  cell.title = tips.filter(Boolean).join('\n\n');
+  cell.append(version, mark, button);
 }
 
 async function updateMachineClient(target, client, button) {
@@ -9420,7 +9468,7 @@ async function updateMachineClient(target, client, button) {
   } catch (error) {
     setMachineNote(`${target.name}：${clientName(client)} 更新失败：${error.message || error}`, true);
   }
-  fillMachineClients(target);
+  renderClientMatrix();
   scheduleMachineClients(target);
 }
 
