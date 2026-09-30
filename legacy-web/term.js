@@ -824,16 +824,14 @@ function syncBugReportSources() {
   if (fallback) fallback.checked = true;
 }
 
-// 处理会话的机器下拉与新建会话一样列出全部机器。报告只有一份：还有没发出
-// 的草稿时回到草稿所在的机器；否则默认选问题所在的机器（当前会话的机器），
-// 其次上次的选择，再次唯一筛选中的机器。
+// 处理会话的机器下拉与新建会话一样列出全部机器；默认选问题所在的机器
+// （当前会话的机器），其次上次的选择，再次唯一筛选中的机器。
 function prepareBugReportNode() {
   if (!HUB_MODE) return;
   const select = $('#bug-report-node');
   const origin = bugReportOriginNode();
   const selected = selectedNodeIds();
-  const drafted = store.get('bugReportDraftNode', '');
-  const preferred = [drafted, origin, store.get('bugReportNode', ''),
+  const preferred = [origin, store.get('bugReportNode', ''),
     selected.length === 1 ? selected[0] : ''].filter(Boolean);
   select.replaceChildren();
   for (const n of Nodes.list) {
@@ -846,21 +844,6 @@ function prepareBugReportNode() {
   const usable = id => [...select.options].some(o => o.value === id && !o.disabled);
   select.value = preferred.find(usable) || [...select.options].find(o => !o.disabled)?.value || '';
   $('#bug-report-node-label').hidden = false;
-  if (drafted && select.value !== drafted && Nodes.list.some(n => n.id === drafted)) {
-    $('#bug-report-error').textContent =
-      `${bugReportNodeName(drafted)} 离线，上面没发出的报告草稿要等它恢复后才能打开`;
-  }
-}
-
-// 记下正写着未发送内容的那份报告草稿在哪台机器上；清空或发出后忘掉。
-function noteBugReportDraftNode() {
-  const node = nodeOf(BUG_REPORT_DRAFT_UID), draft = composerDrafts.get(BUG_REPORT_DRAFT_UID);
-  if (!node || !draft || draft.loading) return;
-  if (draft.text.trim() || draft.quotes.length || draft.attachments.length) {
-    store.set('bugReportDraftNode', node);
-  } else if (store.get('bugReportDraftNode', '') === node) {
-    store.set('bugReportDraftNode', '');
-  }
 }
 
 function bugReportNodeName(id = bugReportNode()) {
@@ -924,7 +907,7 @@ let bugReportSending = false;
 const bugReportDraftObject = () => composerDraft(BUG_REPORT_DRAFT_UID);
 
 /** 下拉选的是跑处理会话的机器，不是另一份报告：正在写的描述、引用和附件
- *  跟着这次选择走，切换机器不清空输入框。服务端存储仍按机器分（附件的字节
+ *  跟着这次选择走，切换机器不清空输入框。草稿本身仍然一机一份（附件的字节
  *  暂存在处理机器上），所以这里把内容搬到新机器的草稿上，再把原机器那份清
  *  空；目标机器上已有的服务端草稿由 hydrate 的早期编辑合并规则接上，两边
  *  都不丢。本页仍握着 File 的附件在新机器上重新暂存，原机器的暂存字节随
@@ -1215,7 +1198,6 @@ function completeBugReportSubmission(data,node) {
     composerSaveQueues.delete(draft);composerPendingSaves.delete(draft);composerSaving.delete(draft);
   }
   composerDrafts.delete(oldUid);composerHydrations.delete(oldUid);
-  if (store.get('bugReportDraftNode', '') === node) store.set('bugReportDraftNode', '');
   store.set('reportDraftId.'+node,crypto.randomUUID());bindBugReportDraft();
   $('#bug-report-description').value='';
   showBugReportToast(data.report_id,data.worker);$('#bug-report-dialog').close();
@@ -4521,7 +4503,7 @@ function refreshComposerDraft(uid) {
   }
   if (uid === BUG_REPORT_DRAFT_UID) {
     const ta = $('#bug-report-description'),text=composerDrafts.get(uid)?.text || ''; if (ta.value!==text) ta.value=text;
-    renderBugReportItems(); autoGrow(ta); noteBugReportDraftNode();
+    renderBugReportItems(); autoGrow(ta);
   }
 }
 const composerPendingSaves=new Map();
@@ -4534,7 +4516,6 @@ function persistComposerDraft(uid = composerUid) {
   uid = composerDraftOwner(uid);
   const draft = composerDrafts.get(uid);
   if (!draft) return Promise.resolve(false);
-  if (uid === BUG_REPORT_DRAFT_UID) noteBugReportDraftNode();
   // Draft storage remains available across deployments; only SEND is build-gated.
   queueComposerSave(draft, uid);
   if (composerSaving.has(draft)) return composerSaveQueues.get(draft);
