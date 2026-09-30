@@ -750,13 +750,8 @@ button.machine-swatch:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--nod
   top: -5px; right: -9px; width: auto; min-width: 17px; height: 17px;
   padding: 0 4px; border-width: 2px;
 }
-/* 暂停用图标替代运行圆点，数字未读角标仍保留。 */
-.item-status.frozen {
-  width: 16px; height: 16px; min-width: 16px; padding: 0; border-radius: 4px;
-  background: var(--panel); color: var(--text); animation: none; box-shadow: none;
-}
-.item-status.frozen > .ui-icon { width: 12px; height: 12px; flex: none; }
-.item-status.frozen.counted { width: auto; gap: 2px; padding: 0 3px; }
+/* 暂停和等待回答共用黄色问号，未读数保留在悬停说明中。 */
+.item-status.frozen,
 .item-status.input-attention {
   width: 17px; height: 17px; min-width: 17px; border-radius: 5px;
   background: #fbbf24; color: #422006; font-size: 13px;
