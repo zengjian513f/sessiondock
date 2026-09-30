@@ -113,6 +113,7 @@ class Fake:
         self.queued = []
         self.turns = 0
         self.frame = 0
+        self.model_menu = False
         self.path = find_rollout(os.environ.get("SESSIONDOCK_TEST_CODEX_ROOT", ""), self.sid)
         self.out = sys.stdout
         self.ready_at = time.monotonic() + float(os.environ.get("SESSIONDOCK_TEST_STARTUP_DELAY", "0"))
@@ -131,6 +132,13 @@ class Fake:
         return '\x1b[48;2;30;30;30m' + GREY + '⠁' * count + ' ' * (20 - count) + RESET
 
     def render(self, working=False):
+        if self.model_menu:
+            self.write('\x1b[2J\x1b[H' + '\r\n'.join([
+                '  Select Model and Effort', '',
+                '› 1. GPT-5.6-Luna (current)  Older fast and efficient model.',
+                '  2. GPT-6-Luna             Fast and affordable model.', '',
+                '  enter select · esc back']))
+            return
         if time.monotonic() < self.ready_at:
             # Codex 0.155.1 exposes its editable composer before startup has
             # completed. Paste works here, but Enter does not submit it.
@@ -292,6 +300,11 @@ class Fake:
         if not text.strip():
             self.render()
             return
+        if text.rstrip() == '/model':
+            # Like Codex, open a local menu without writing a native turn.
+            self.model_menu = True
+            self.render()
+            return
         if text.startswith('/rename '):
             # Real Codex persists the name before creating any rollout.
             # A local command must not manufacture native history/binding.
@@ -326,6 +339,28 @@ class Fake:
             self.transcript.append('Session: ' + self.sid)
             self.render()
             return
+        if os.environ.get('SESSIONDOCK_TEST_COMMAND_DISPATCH'):
+            from pathlib import Path
+            manifest = json.loads((Path(__file__).parent / 'fixtures' / 'codex_send_commands.json').read_text())
+            commands = {row['name']: row['inline_args'] for row in manifest['commands']}
+            commands.update({'fast': False, 'goooal': True})
+            first = text.split('\n', 1)[0].split(maxsplit=1)
+            name = first[0][1:] if first and first[0].startswith('/') and text.startswith('/') else ''
+            if name in commands and (len(first) == 1 or commands[name]):
+                if trace := os.environ.get('SESSIONDOCK_TEST_COMMAND_LOG'):
+                    with open(trace, 'a') as stream:
+                        stream.write(json.dumps({'text': text}) + '\n')
+                # Commands may invoke work, but native input is transformed.
+                args = text[len(name) + 1:].strip()
+                if name == 'init':
+                    self.record('Synthetic initialization prompt')
+                elif name == 'plan' and args:
+                    self.record(args)
+                elif name == 'review' and args:
+                    self.record('Synthetic review: ' + args)
+                self.transcript.append('LOCAL_COMMAND ' + text.split('\n', 1)[0])
+                self.render()
+                return
         if not self.path and getattr(self, 'thread_name', None):
             from pathlib import Path
             root = Path(os.environ['SESSIONDOCK_TEST_CODEX_ROOT'])
@@ -392,6 +427,9 @@ class Fake:
                         continue
                     byte = pending[:1]
                     if byte == b"\x1b":
+                        if self.model_menu:
+                            self.model_menu = False
+                            self.render()
                         cut = 1
                         if len(pending) > 1 and pending[1:2] == b"[":
                             cut = 2
@@ -402,6 +440,10 @@ class Fake:
                         continue
                     if byte in (b"\r", b"\n"):
                         pending = pending[1:]
+                        if self.model_menu:
+                            self.model_menu = False
+                            self.render()
+                            continue
                         self.submit()
                         continue
                     if byte == b"\x15":  # C-u
