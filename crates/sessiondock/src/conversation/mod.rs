@@ -832,15 +832,16 @@ impl Conversations {
             result.clone(),
             input.draft_revision,
         )?;
-        // Only turn input waits for a native echo. TUI-only commands such
-        // as Codex /model do not create native user/command records.
+        // Codex command dispatch does not echo the original command text.
         self.remember_cli_identity(&input.uid, identity);
         if cli_state::expects_native_echo(&identity.source, &prompt) {
             self.store.enqueue(
                 &identity.key,
                 store::QueuedSend {
                     request_id: input.request_id.clone(),
-                    text: prompt.trim().to_owned(),
+                    // Leading whitespace escapes Codex command dispatch.
+                    // Keep it so later observations cannot reclassify input.
+                    text: prompt.clone(),
                     echo_hash: cli_state::echo_hash(&prompt),
                     sent_at: cli_state::unix_now(),
                     state: "queued".into(),

@@ -50,8 +50,8 @@ def main():
             codex_row('session_meta', {'id': CODEX_SID, 'cwd': str(root / 'work')}),
             codex_message('user', 'Synthetic codex prompt')], [])
         uid = corpus.uid(CODEX_SID)
-        # A previous server release incorrectly waited for a native /model
-        # echo. Load that persisted state before starting this server.
+        # Load historical command sends, plus escaped input whose trimmed
+        # text looks like a command. Receipt digests prove the distinction.
         conversations = root / 'state' / 'conversations'
         conversations.mkdir(mode=0o700)
         ledger = conversations / 'conversation-ledger.json'
@@ -61,9 +61,21 @@ def main():
                        for request_id, text, state in (
                            ('old-model', '/model', 'queued'),
                            ('old-lost-model', '/model', 'lost'),
+                           ('old-status', '/status', 'queued'),
+                           ('old-rename', '/rename New title', 'queued'),
+                           ('old-plan', '/plan Original task', 'queued'),
+                           ('escaped-status', '/status', 'lost'),
                            ('ordinary-model-text', '/model is mentioned here', 'lost'))]
         legacy_key = 'launch:legacy-model-menu'
-        ledger.write_text(json.dumps({'aliases': {uid: legacy_key}, 'queued': {legacy_key: legacy_rows}}))
+        requests = {}
+        for row in legacy_rows:
+            original = ' /status' if row['request_id'] == 'escaped-status' else row['text']
+            payload = {'text': original, 'attachments': [], 'quotes': []}
+            # serde_json preserves insertion order for submission fingerprints.
+            digest = hashlib.sha256(json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+            requests[legacy_key + '\0' + row['request_id']] = {'key': legacy_key, 'id': row['request_id'],
+                'payload': digest, 'attachments': [], 'phase': 'sent', 'result': {'ok': True, 'state': 'sent'}}
+        ledger.write_text(json.dumps({'aliases': {uid: legacy_key}, 'queued': {legacy_key: legacy_rows}, 'requests': requests}))
         launcher = root / 'launcher.json'
         launcher.touch(mode=0o600)
         launcher.write_text(json.dumps({'schema': 2,
@@ -77,6 +89,8 @@ def main():
                     'SESSIONDOCK_TEST_QUOTED_READY': '1',
                     'SESSIONDOCK_TEST_QUEUE_FILE': str(root / 'queue'),
                     'SESSIONDOCK_TEST_BUSY_WARNING': '1',
+                    'SESSIONDOCK_TEST_COMMAND_DISPATCH': '1',
+                    'SESSIONDOCK_TEST_COMMAND_LOG': str(root / 'command-log'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         initialize('--initialize-lifecycle', root / 'ledger')
         try:
@@ -102,15 +116,17 @@ def main():
                 page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
                 build = context.request.get(base + '/api/meta').json()['build']
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
-                assert [r['request_id'] for r in checked['cli']['queued']] == ['ordinary-model-text'], (checked, json.loads(ledger.read_text()))
+                survivors = ['escaped-status', 'ordinary-model-text']
+                assert [r['request_id'] for r in checked['cli']['queued']] == survivors, (checked, json.loads(ledger.read_text()))
                 persisted = json.loads(ledger.read_text())
-                assert [r['request_id'] for rows in persisted['queued'].values() for r in rows] == ['ordinary-model-text'], persisted['queued']
-                dismissed = context.request.post(base + '/api/session/conversation/queued/dismiss',
-                    data={'uid': uid, 'request_id': 'ordinary-model-text', '_build': build})
-                assert dismissed.status == 200, dismissed.text()
+                assert [r['request_id'] for rows in persisted['queued'].values() for r in rows] == survivors, persisted['queued']
+                for request_id in survivors:
+                    dismissed = context.request.post(base + '/api/session/conversation/queued/dismiss',
+                        data={'uid': uid, 'request_id': request_id, '_build': build})
+                    assert dismissed.status == 200, dismissed.text()
                 # Exercise the actual composer -> SEND -> local CLI menu path.
                 before_model = rollout.read_bytes()
-                page.locator('#cinput').fill('  /model  ')
+                page.locator('#cinput').fill('/model  ')
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
                     page.locator('#csend').click()
                 assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
@@ -136,6 +152,28 @@ def main():
                 page.locator('#termpane .xterm-helper-textarea').press('Escape')
                 page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
                 page.locator('#a-term').click()
+                # Audit every known built-in and each opted-in argument form
+                # by typing and submitting through the real composer.
+                manifest = json.loads((REPO / 'tests/fixtures/codex_send_commands.json').read_text())
+                commands = ['/' + row['name'] for row in manifest['commands'] if row['name'] != 'model']
+                commands += ['/' + row['name'] + ' argument text' for row in manifest['commands'] if row['inline_args']]
+                commands += ['/fast', '/goooal Task', '/model\nAdditional text']
+                for command in commands:
+                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.locator('#cinput').fill(command)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                        page.locator('#csend').click()
+                    assert sent.value.status == 200, (command, sent.value.text())
+                    expect(page.locator('#cinput')).to_have_value('')
+                    checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                    assert checked['cli']['queued'] == [], (command, checked)
+                    expect(page.locator('#queued-sends .queued-send')).to_have_count(0)
+                assert any(r['content'][0]['text'] == 'argument text' for r in user_records(rollout)), 'Inline /plan must submit transformed input'
+                dispatched = [json.loads(line)['text'] for line in (root / 'command-log').read_text().splitlines()]
+                assert dispatched == [command for command in commands
+                    if command != '/status' and not command.startswith('/rename ')], dispatched
+                print(f'PASS Codex command sends: {len(commands) + 1} bare/inline/alias/multiline forms', flush=True)
+                native_count = len(user_records(rollout))
                 for number in range(2):
                     page.wait_for_function("uid => composerUid === uid && composerDraft()?.inputStatus?.state === 'ready'", arg=uid)
                     text = f'native conversation send {number}'
@@ -160,11 +198,29 @@ def main():
                     # Replaying a completed request only reads its receipt.
                     replay = context.request.post(base + '/api/session/conversation/send', data=body)
                     assert replay.status == 200 and replay.json()['state'] == 'sent', replay.text()
-                    assert len(user_records(rollout)) == number + 2
+                    assert len(user_records(rollout)) == native_count + number + 1
                 # Codex's busy queue is TUI-only: no native record until released.
                 queue_file = root / 'queue'
+                # Non-inline command arguments and paths are ordinary input.
+                # Hold their native echoes so an incorrect classifier cannot
+                # be hidden by an immediately retired queued row.
+                literal_inputs = ['/model is mentioned here', '/tmp/file', ' /model']
+                for text in literal_inputs:
+                    queue_file.write_text('quoted')
+                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.locator('#cinput').fill(text)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                        page.locator('#csend').click()
+                    assert sent.value.status == 200, sent.value.text()
+                    expect(page.locator('#queued-sends .queued-send')).to_have_count(1)
+                    checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                    assert checked['cli']['queued'][0]['text'] == text, checked
+                    queue_file.unlink()
+                    expect(page.locator('#queued-sends .queued-send')).to_have_count(0, timeout=15000)
+                    assert [r['content'][0]['text'] for r in user_records(rollout)].count(text.strip()) == 1
+                native_count += len(literal_inputs)
                 queue_file.write_text('quoted')
-                queued_text = '/model is mentioned in an ordinary input\n第二行保留完整正文'
+                queued_text = ' /status\n第二行保留完整正文'
                 for _ in range(2):
                     page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
                     page.locator('#cinput').fill(queued_text)
@@ -176,7 +232,7 @@ def main():
                 expect(bubbles).to_have_count(2)
                 checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': context.request.get(base + '/api/meta').json()['build']}).json()
                 assert all(r['cli_queued_at'] is None for r in checked['cli']['queued']), checked
-                assert len(user_records(rollout)) == 3
+                assert len(user_records(rollout)) == native_count + 2
                 queue_file.write_text('one')
                 expect(page.locator('#queued-sends [data-cli-queued="1"]')).to_have_count(1, timeout=15000)
                 for _ in range(3):
@@ -190,16 +246,16 @@ def main():
                 page.reload(wait_until='domcontentloaded')
                 page.locator(f'#side .item[data-uid="{uid}"]').click()
                 expect(page.locator('#queued-sends [data-cli-queued="1"]')).to_have_count(2, timeout=15000)
-                assert len(user_records(rollout)) == 3
+                assert len(user_records(rollout)) == native_count + 2
                 queue_file.unlink()
                 expect(page.locator('#queued-sends .queued-send')).to_have_count(0, timeout=15000)
-                assert [r['content'][0]['text'] for r in user_records(rollout)].count(queued_text) == 2
+                assert [r['content'][0]['text'] for r in user_records(rollout)].count(queued_text.strip()) == 2
                 assert not errors, errors
                 context.close()
                 browser.close()
         finally:
             cleanup_hosts(root)
-    print('PASS native Codex browser: local /model menu without native echo, persisted legacy repair, reload/replay, resumed identity, cwd, repeated composer sends, exact native records, TUI queue evidence, duplicate/wrapped sends, native retirement')
+    print('PASS native Codex browser: built-in command dispatch without original echo, /model menu, persisted receipt-verified repair, literal command escapes, reload/replay, resumed identity, cwd, repeated composer sends, exact native records, TUI queue evidence, duplicate/wrapped sends, native retirement')
 
 
 if __name__ == '__main__':

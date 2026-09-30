@@ -274,13 +274,108 @@ pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCaptur
     }
 }
 
-/// Codex handles a bare /model in the TUI: it opens a settings menu and
-/// never emits a native user/command echo. This says only that SEND handed
-/// the command to the terminal, not that the user finished choosing a model.
-/// Match the full delivered prompt so quotes, attachments and ordinary
-/// messages mentioning /model still use native echo reconciliation.
+/// Whether the full delivered text can be echoed unchanged as native input.
+/// Codex dispatches built-in commands separately: even /init, /review and
+/// /plan with arguments submit different input or an operation, not the
+/// original slash command. SEND acknowledges terminal delivery only.
+/// Follow its composer parser (first-line bare commands and opted-in inline
+/// arguments); leading whitespace and arguments to non-inline commands are
+/// ordinary input. See docs/codex-commands.md for the source audit.
 pub(super) fn expects_native_echo(source: &str, text: &str) -> bool {
-    !(source == "codex" && text.trim() == "/model")
+    if source != "codex" {
+        return true;
+    }
+    let Some(rest) = text.strip_prefix('/') else {
+        return true;
+    };
+    let name = rest.split_whitespace().next().unwrap_or("");
+    // A slash must immediately precede the name; paths remain user input.
+    if name.is_empty() || rest.starts_with(char::is_whitespace) || name.contains('/') {
+        return true;
+    }
+    let inline = matches!(
+        name,
+        "review"
+            | "rename"
+            | "new"
+            | "clear"
+            | "fork"
+            | "plan"
+            | "goal"
+            | "voice"
+            | "ide"
+            | "keymap"
+            | "mcp"
+            | "export"
+            | "raw"
+            | "cd"
+            | "pwd"
+            | "cwd"
+            | "usage"
+            | "pets"
+            | "pet"
+            | "side"
+            | "btw"
+            | "resume"
+    ) || name
+        .strip_prefix('g')
+        .and_then(|s| s.strip_suffix("al"))
+        .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b == b'o'));
+    let builtin = inline
+        || matches!(
+            name,
+            "model"
+                | "permissions"
+                | "vim"
+                | "setup-default-sandbox"
+                | "experimental"
+                | "approve"
+                | "auto-review"
+                | "memories"
+                | "skills"
+                | "import"
+                | "hooks"
+                | "archive"
+                | "delete"
+                | "worktree"
+                | "app"
+                | "init"
+                | "compact"
+                | "recap"
+                | "agents"
+                | "copy"
+                | "tui"
+                | "diff"
+                | "mention"
+                | "status"
+                | "daemon"
+                | "warnings"
+                | "debug-config"
+                | "title"
+                | "statusline"
+                | "theme"
+                | "apps"
+                | "plugins"
+                | "logout"
+                | "quit"
+                | "exit"
+                | "feedback"
+                | "rollout"
+                | "ps"
+                | "stop"
+                | "clean"
+                | "test-approval"
+                | "subagents"
+                | "debug-m-drop"
+                | "debug-m-update"
+                | "fast"
+        );
+    if !builtin {
+        return true;
+    }
+    let first_line = text.lines().next().unwrap_or("");
+    let bare = first_line[1 + name.len()..].trim().is_empty();
+    !(bare || inline)
 }
 
 impl super::Conversations {
@@ -298,12 +393,19 @@ impl super::Conversations {
             return Ok(());
         }
         let queued = self.store.queued(key);
-        // Older versions enqueued this TUI-only command. Correct the ledger
-        // through the normal observation path, including after a restart;
-        // no screen change or elapsed timeout can stand in for a native echo.
+        // Older versions trimmed queue text. Prove the original submission
+        // was this command using its receipt digest before retiring it;
+        // an escaped command (leading space) must keep waiting for its echo.
         let local: Vec<_> = queued
             .iter()
-            .filter(|row| !expects_native_echo(source, &row.text))
+            .filter(|row| {
+                !expects_native_echo(source, &row.text)
+                    && self.store.request(key, &row.request_id).is_some_and(|request| {
+                        request.phase == "sent" && request.payload == super::store::fingerprint(
+                            &serde_json::json!({"text":row.text,"attachments":[],"quotes":[]})
+                        )
+                    })
+            })
             .map(|row| row.request_id.clone())
             .collect();
         if !local.is_empty() {
