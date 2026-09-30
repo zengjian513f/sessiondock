@@ -237,8 +237,9 @@ def main():
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
                         expect(dialog.locator('#transfer-source')).to_be_disabled()
-                        expect(dialog.locator('#transfer-source option')).to_have_text(node.name)
-                        expect(dialog.locator('#transfer-source')).to_have_value(node.nid)
+                        expect(dialog.locator('#transfer-source')).to_have_value(node.name)
+                        expect(dialog.locator('#transfer-source')).to_have_attribute('type','text')
+                        assert float(dialog.locator('#transfer-source').evaluate('e => getComputedStyle(e).opacity')) < 1
                         expect(dialog.locator('.clone-status')).to_contain_text('整组 6 个会话')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
                         expect(dialog.locator('.clone-members thead')).to_contain_text('历史文件')
@@ -259,8 +260,9 @@ def main():
                         assert dialog.locator('.transfer-notice').evaluate("e => getComputedStyle(e).backgroundColor")== 'rgba(0, 0, 0, 0)'
                         assert dialog.locator('.transfer-notice').bounding_box()['height'] < 30
                         expect(dialog.locator('#transfer-source')).to_be_disabled()
-                        expect(dialog.locator('#transfer-source option')).to_have_text(node.name)
-                        expect(dialog.locator('#transfer-source')).to_have_value(node.nid)
+                        expect(dialog.locator('#transfer-source')).to_have_value(node.name)
+                        expect(dialog.locator('#transfer-source')).to_have_attribute('type','text')
+                        assert float(dialog.locator('#transfer-source').evaluate('e => getComputedStyle(e).opacity')) < 1
                         dialog.locator('.transfer-segments label').nth(0).click()
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
                         dialog.locator('#transfer-new-ids').uncheck()
