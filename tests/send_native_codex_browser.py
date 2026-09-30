@@ -60,6 +60,7 @@ def main():
                 'env': {'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home'),
                     'TERM': 'xterm-256color', 'LANG': 'C.UTF-8',
                     'SESSIONDOCK_TEST_QUOTED_READY': '1',
+                    'SESSIONDOCK_TEST_QUEUE_FILE': str(root / 'queue'),
                     'SESSIONDOCK_TEST_BUSY_WARNING': '1',
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         initialize('--initialize-lifecycle', root / 'ledger')
@@ -108,12 +109,45 @@ def main():
                     replay = context.request.post(base + '/api/session/conversation/send', data=body)
                     assert replay.status == 200 and replay.json()['state'] == 'sent', replay.text()
                     assert len(user_records(rollout)) == number + 2
+                # Codex's busy queue is TUI-only: no native record until released.
+                queue_file = root / 'queue'
+                queue_file.write_text('quoted')
+                queued_text = '另外，网卡可以再增加个RDMA上下行（如果有的话）\n第二行保留完整正文'
+                for _ in range(2):
+                    page.wait_for_function("() => composerDraft()?.inputStatus?.state === 'ready'")
+                    page.locator('#cinput').fill(queued_text)
+                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                        page.locator('#csend').click()
+                    assert sent.value.status == 200, sent.value.text()
+                    expect(page.locator('#cinput')).to_have_value('')
+                bubbles = page.locator('#queued-sends .queued-send')
+                expect(bubbles).to_have_count(2)
+                checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': context.request.get(base + '/api/meta').json()['build']}).json()
+                assert all(r['cli_queued_at'] is None for r in checked['cli']['queued']), checked
+                assert len(user_records(rollout)) == 3
+                queue_file.write_text('one')
+                expect(page.locator('#queued-sends [data-cli-queued="1"]')).to_have_count(1, timeout=15000)
+                for _ in range(3):
+                    checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': context.request.get(base + '/api/meta').json()['build']}).json()
+                    assert sum(r['cli_queued_at'] is not None for r in checked['cli']['queued']) == 1, checked
+                queue_file.write_text('all')
+                expect(page.locator('#queued-sends [data-cli-queued="1"]')).to_have_count(2, timeout=15000)
+                expect(bubbles.first.locator('.queued-send-state')).to_have_text('已进入 CLI 队列，当前步骤结束后处理')
+                # Persisted evidence survives reopening the page; the fake CLI
+                # still has not written either queued prompt into JSONL.
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(page.locator('#queued-sends [data-cli-queued="1"]')).to_have_count(2, timeout=15000)
+                assert len(user_records(rollout)) == 3
+                queue_file.unlink()
+                expect(page.locator('#queued-sends .queued-send')).to_have_count(0, timeout=15000)
+                assert [r['content'][0]['text'] for r in user_records(rollout)].count(queued_text) == 2
                 assert not errors, errors
                 context.close()
                 browser.close()
         finally:
             cleanup_hosts(root)
-    print('PASS native Codex browser: resumed identity, cwd, repeated composer sends, exact native records, replay without writes')
+    print('PASS native Codex browser: resumed identity, cwd, repeated composer sends, exact native records, replay without writes, TUI queue evidence, duplicate/wrapped sends, reload, native retirement')
 
 
 if __name__ == '__main__':

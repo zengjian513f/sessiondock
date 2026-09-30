@@ -152,13 +152,14 @@ impl Conversations {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
-                capture.map(|capture| {
+                capture.and_then(|capture| {
+                    self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
                     transcript = cli_state::transcript(&identity.source, &capture);
-                    (
+                    Ok((
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
                         cli_state::screen_busy(&identity.source, &capture),
-                    )
+                    ))
                 })
             }
             Err(error) => Err(error),
@@ -576,17 +577,18 @@ impl Conversations {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
-                capture.map(|capture| {
+                capture.and_then(|capture| {
+                    self.observe_screen_queue(&identity.key, &identity.source, &capture)?;
                     if capture.lag.is_none_or(|lag| lag == 0) {
                         prompt = crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
                         .unwrap_or(Value::Null);
                     }
                     transcript = cli_state::transcript(&identity.source, &capture);
-                    (
+                    Ok((
                         input::classify(&identity.source, &capture),
                         cli_state::editor_text(&identity.source, &capture),
                         cli_state::screen_busy(&identity.source, &capture),
-                    )
+                    ))
                 })
             }
             Err(error) => Err(error),
