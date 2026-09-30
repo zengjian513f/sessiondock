@@ -220,6 +220,11 @@ pub async fn retire_source(
         Ok(op) => op,
         Err(e) => return failure(e),
     };
+    // A late retry must not clean receipts or drafts created after this group
+    // returned to the source under a newer operation.
+    if op.phase == "retired" && op.moving && op.incoming_digest.is_none() {
+        return Json(TransferService::public(&op)).into_response();
+    }
     if let Err(e) = stopped(&state, &op).await {
         return e;
     }
@@ -233,38 +238,66 @@ pub async fn retire_source(
         })
         .await
         .map_err(|e| TransferError::new("move_io", e.to_string()))??;
+        let mut retired_launches = std::collections::HashSet::new();
         if let Some(lifecycle) = &state.lifecycle {
+            let aliases = if let Some(conversations) = &state.conversations {
+                let store = conversations.store.clone();
+                let uids: Vec<_> = op.group().members.iter().map(|m| m.uid.clone()).collect();
+                tokio::task::spawn_blocking(move || {
+                    uids.iter()
+                        .flat_map(|uid| store.launch_records_for(uid))
+                        .collect::<std::collections::HashSet<_>>()
+                })
+                .await
+                .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?
+            } else {
+                Default::default()
+            };
             let records = lifecycle
                 .list(0, usize::MAX)
                 .await
                 .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?;
             for record in records {
+                use crate::lifecycle::model::{BindingState, Source};
                 let belongs = op.group().members.iter().any(|m| {
                     record.declared_uid() == Some(m.uid.as_str())
-                        || record.declared_sid() == Some(m.sid.as_str())
-                        || record.session_id() == Some(m.sid.as_str())
-                });
-                if belongs && !record.discarded() && record.discardable() {
-                    lifecycle
-                        .discard(
-                            record.record_id().to_owned(),
-                            record.instance_id().to_owned(),
-                        )
-                        .await
-                        .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?;
-                    super::lifecycle::forget_discarded_launch(&state, record.record_id())
-                        .await
-                        .map_err(|e| TransferError::new("move_cleanup", e.message))?;
+                        || (matches!(
+                            (record.spec().source(), m.source.as_str()),
+                            (Source::Codex, "codex")
+                                | (Source::Claude, "claude")
+                                | (Source::Grok, "grok")
+                        ) && (record.declared_sid() == Some(m.sid.as_str())
+                            || record.session_id() == Some(m.sid.as_str())))
+                        || record.binding().is_some_and(|binding| {
+                            binding.state() == BindingState::Confirmed
+                                && binding.spec().uid() == m.uid
+                        })
+                }) || aliases.contains(record.record_id());
+                if belongs && record.discardable() {
+                    if !record.discarded() {
+                        lifecycle
+                            .discard(
+                                record.record_id().to_owned(),
+                                record.instance_id().to_owned(),
+                            )
+                            .await
+                            .map_err(|e| TransferError::new("move_cleanup", e.to_string()))?;
+                    }
+                    // Discard can have succeeded before draft cleanup failed.
+                    // Retry that cleanup even for an already discarded receipt.
+                    retired_launches.insert(record.record_id().to_owned());
                 }
             }
         }
         if let Some(conversations) = &state.conversations {
             let store = conversations.store.clone();
             let uids = op.group().members.iter().map(|m| m.uid.clone()).collect();
-            tokio::task::spawn_blocking(move || store.retire_drafts(&uids))
-                .await
-                .map_err(|e| TransferError::new("move_io", e.to_string()))?
-                .map_err(|e| TransferError::new("move_cleanup", e.message))?;
+            tokio::task::spawn_blocking(move || {
+                store.retire_drafts_and_launches(&uids, &retired_launches)
+            })
+            .await
+            .map_err(|e| TransferError::new("move_io", e.to_string()))?
+            .map_err(|e| TransferError::new("move_cleanup", e.message))?;
         } else if let Some(metadata) = &state.metadata {
             // Drafts may outlive a temporarily disabled terminal subsystem.
             let directory = metadata.directory().join("conversations");
