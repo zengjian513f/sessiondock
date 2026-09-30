@@ -10220,7 +10220,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   } else await refreshPlan();
   const pollProgress = async () => {
     if (!dialog.isConnected) {clearInterval(progressTimer); return;}
-    if (!operationStarted || !crossMachine() || !plan || progressLoading) return;
+    if (!operationStarted || !HUB_MODE || !plan || progressLoading) return;
     const id = plan.operation_id;
     progressLoading = true;
     try {
@@ -10233,7 +10233,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   confirm.onclick = async () => {
     if (busy || !plan || blockedReason()) return;
     busy = true; operationStarted = true; error.hidden = true; renderSelection();
-    if (crossMachine()) paintProgress({phase:'planned'});
+    if (HUB_MODE) paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
@@ -10251,7 +10251,8 @@ async function cloneSessionGroup(uid, resumed = null) {
 
 
 function transferPhaseLabel(task) {
-  const labels = {planned:'检查环境', transferring:'传输历史', publishing:'发布并验证',
+  const labels = {planned:'检查环境', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+    failed:'复制失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
   let label = labels[task.phase] || '等待继续';

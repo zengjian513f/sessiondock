@@ -132,6 +132,31 @@ impl Transfers {
                 "/api/session/clone",
             ));
         }
+        let (source_id, local_uid) = namespace::split(&request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        if source_id == request.target_node && journal.phase != "complete" {
+            // Read the node's durable publication stage without acquiring the
+            // execution gate. Offline nodes leave the saved preview available.
+            if let Some(node) = registry.get(&source_id)
+                && let Ok(address) = registry.target(&node)
+                && let Ok((_, status)) = call(
+                    client,
+                    &address,
+                    "/api/session/transfer/status",
+                    &json!({"operation_id":request.operation_id}),
+                    true,
+                )
+                .await
+                && status["uid"] == local_uid
+            {
+                if let Some(phase) = status["phase"].as_str() {
+                    journal.phase = phase.into();
+                }
+                if let Some(error) = status["error"].as_str() {
+                    journal.error = Some(error.into());
+                }
+            }
+        }
         Ok(Self::public(&journal))
     }
     async fn record_error(&self, request: &Request, error: &TransferError) {
@@ -256,7 +281,9 @@ impl Transfers {
             .await;
         if let Err(error) = &result {
             self.record_error(&request, error).await;
-            if let Ok((source, _)) = namespace::split(&request.uid, true) {
+            if let Ok((source, _)) = namespace::split(&request.uid, true)
+                && source != request.target_node
+            {
                 if let Some(node) = registry.get(&source) {
                     if let Ok(target) = registry.target(&node) {
                         let source_state = call(
@@ -328,12 +355,6 @@ impl Transfers {
         }
         let (source_id, local_uid) = namespace::split(&request.uid, true)
             .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
-        if source_id == request.target_node {
-            return Err(TransferError::new(
-                "move_conflict",
-                "跨机复制需要另一台机器",
-            ));
-        }
         let source = registry
             .get(&source_id)
             .ok_or_else(|| TransferError::new("move_node_unavailable", "源机器不可用"))?;
@@ -347,7 +368,9 @@ impl Transfers {
             .target(&target)
             .map_err(|_| TransferError::new("move_node_unavailable", "目标机器不可用"))?;
         journal.error = None;
-        self.save(&journal).await?;
+        if source_id != request.target_node {
+            self.save(&journal).await?;
+        }
         let operation = json!({"operation_id":request.operation_id});
         let source_state = call(
             &client,
@@ -376,6 +399,39 @@ impl Transfers {
             "/api/session/clone",
         ));
         self.save(&journal).await?;
+        if source_id == request.target_node {
+            if source_state["mode"] != "clone"
+                || source_state["new_ids"] != true
+                || source_state["incoming"] == true
+            {
+                return Err(TransferError::new(
+                    "move_conflict",
+                    "同机操作只支持生成新身份的复制",
+                ));
+            }
+            journal.phase = "publishing".into();
+            self.save(&journal).await?;
+            let result = call(
+                &client,
+                &source_address,
+                "/api/session/clone",
+                &json!({"uid":local_uid,"operation_id":request.operation_id}),
+                true,
+            )
+            .await?
+            .1;
+            if result["phase"] != "complete" || !result["target_uid"].is_string() {
+                return Err(TransferError::new(
+                    "move_recovery_required",
+                    "本机复制结果尚未确认",
+                ));
+            }
+            let result = namespace::public_payload(result, &source, "/api/session/clone");
+            journal.phase = "complete".into();
+            journal.result = Some(result.clone());
+            self.save(&journal).await?;
+            return Ok(result);
+        }
         let moving = source_state["mode"] == "move";
         let mut current = call(
             &client,
