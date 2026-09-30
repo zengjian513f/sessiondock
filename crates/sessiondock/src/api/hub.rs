@@ -62,6 +62,8 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/session/file"),
     ("POST", "/api/session/transfer/clone"),
     ("POST", "/api/session/transfer/cancel"),
+    ("POST", "/api/session/transfer/progress"),
+    ("GET", "/api/session/transfers"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -197,7 +199,13 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         shutdown,
         public_hosts: Arc::new(config.public_hosts.clone()),
         ui_events: Arc::new(EventBus::default()),
-        transfers: Arc::new(crate::hub::transfer::Transfers::open(config.nodes_file.parent().unwrap_or_else(|| std::path::Path::new(".")).join("transfers"))?),
+        transfers: Arc::new(crate::hub::transfer::Transfers::open(
+            config
+                .nodes_file
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join("transfers"),
+        )?),
     };
     Ok(HubApp {
         router: hub_router(state),
@@ -420,6 +428,12 @@ async fn handle(
             "hostname": HUB_HOSTNAME, "capabilities": hub_capabilities()}),
         );
     }
+    if method == Method::GET && path == "/api/session/transfers" {
+        return match state.transfers.pending() {
+            Ok(value) => ok(&value),
+            Err(e) => Ok(error_json(StatusCode::CONFLICT, &e.message, &e.code)),
+        };
+    }
     if method == Method::GET && path == "/api/nodes" {
         return ok(
             &json!({"mode": "hub", "nodes": registry.public(), "machines": registry.machines()}),
@@ -472,7 +486,7 @@ async fn handle(
     }
     // Move handoff is coordinated server-to-server. Do not let the generic
     // browser proxy bypass target verification or the source ownership switch.
-    if path.starts_with("/api/session/transfer/") && !matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel") {
+    if path.starts_with("/api/session/transfer/") && !matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel" | "/api/session/transfer/progress") {
         return Ok((StatusCode::NOT_FOUND, axum::Json(json!({"code":"private_transfer_route","error":"内部迁移接口不可通过浏览器调用"}))).into_response());
     }
     if method == Method::GET && path == "/api/session/file" {
@@ -514,7 +528,7 @@ async fn handle(
         }
     }
     if explicit.is_none() {
-        if method == Method::POST && matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel") {
+        if method == Method::POST && matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel" | "/api/session/transfer/progress") {
             let request = serde_json::from_value::<crate::hub::transfer::Request>(Value::Object(
                 body.unwrap_or_default(),
             ))
@@ -524,8 +538,10 @@ async fn handle(
             let client = state.client.clone();
             // Publication survives the browser closing or losing its connection.
             let cancel = path == "/api/session/transfer/cancel";
+            let progress = path == "/api/session/transfer/progress";
             let result = tokio::spawn(async move {
-                if cancel { transfers.cancel(registry, client, request).await }
+                if progress { transfers.progress(&registry, &client, &request).await }
+                else if cancel { transfers.cancel(registry, client, request).await }
                 else { transfers.execute(registry, client, request).await }
             }).await;
             return match result {

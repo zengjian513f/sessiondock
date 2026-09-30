@@ -35,6 +35,29 @@ def node_call(node,path,value=None,raw=None):
     response=connection.getresponse();result=(response.status,response.read());connection.close();return result
 
 
+def reopen_transfer(page, hub, operation):
+    page.reload(wait_until='networkidle')
+    page.wait_for_function("!document.querySelector('#transfer-tasks').hidden",timeout=15000)
+    button=page.locator('#transfer-tasks:visible, #a-global-transfer-tasks:visible')
+    if not button.count():
+        menu=page.locator('#header-more-btn:visible, #a-more:visible').last
+        menu.click()
+        button=page.locator('#transfer-tasks:visible, #a-global-transfer-tasks:visible')
+    button.first.click()
+    row=page.locator(f'#transfer-tasks-dialog tr[data-operation="{operation}"]')
+    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/progress')) as restored:
+        row.get_by_role('button',name='继续处理').click()
+    assert restored.value.ok,restored.value.text()
+    data=restored.value.json()
+    assert data['request']['operation_id']==operation and data['plan']['operation_id']==operation
+    dialog=page.locator('#clone-group-dialog')
+    expect(dialog.locator('#transfer-target')).to_be_disabled()
+    expect(dialog.locator('#transfer-target')).to_have_value(data['request']['target_node'])
+    expect(dialog.locator('.transfer-progress')).to_be_visible()
+    expect(dialog.locator('.transfer-progress')).to_have_attribute('data-phase',data['phase'])
+    return dialog
+
+
 def rejected_bundles(source,target,operation):
     status,raw=node_call(source,'/api/session/transfer/manifest',{'operation_id':operation});assert status==200,raw
     manifest=json.loads(raw)
@@ -235,7 +258,17 @@ def main():
                                     status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected});assert status==409,raw
                                     peer.call('stop');peer.call('start')
                                     assert read_target(target_file)==target_before+change
-                                    hub.stop();hub.start()
+                                    hub.stop()
+                                    if provider=='claude':
+                                        journal=hubroot/'transfers'/f'{abandoned}.json'
+                                        old=json.loads(journal.read_text())
+                                        for key in ('preview','bytes_sent','bytes_total','error'):old.pop(key,None)
+                                        journal.write_text(json.dumps(old))
+                                    hub.start()
+                                    if provider=='codex':page.set_viewport_size({'width':390,'height':844})
+                                    dialog=reopen_transfer(page,hub,abandoned)
+                                    if provider=='codex':page.set_viewport_size({'width':1280,'height':720})
+                                    expect(dialog.locator('.transfer-progress')).to_contain_text('撤回待完成')
                                     peer.write(target_file,target_before)
                                     source_file.write_bytes(before)
                                     with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
@@ -287,6 +320,8 @@ def main():
                             with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/cancel')) as too_late:
                                 dialog.locator('.transfer-abort').click()
                             assert too_late.value.status==409 and too_late.value.json()['code']=='move_recovery_required',too_late.value.text()
+                            dialog=reopen_transfer(page,hub,operation)
+                            expect(dialog.locator('.transfer-progress')).to_contain_text('源端清理待重试')
                             partial=json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())
                             assert partial['phase']=='retiring'
                             manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())
@@ -334,6 +369,13 @@ def main():
                             print('PASS '+provider+' Chromium rejects moving shared storage without removing source files',flush=True)
                             break
                         assert reply.ok,reply.text();completed=reply.json()
+                        task_request={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']}
+                        progress=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/progress',data=task_request)
+                        assert progress.ok and progress.json()['phase']=='complete',progress.text()
+                        if not (args.move and args.preserve and peer and provider=='codex'):
+                            assert progress.json()['bytes_sent']==progress.json()['bytes_total']>0,progress.text()
+                        pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
+                        assert pending.ok and all(t['request']['operation_id']!=completed['operation_id'] for t in pending.json()['operations']),pending.text()
                         assert completed['phase']=='complete' and b.nid in completed['target_uid']
                         page.wait_for_function('(uid)=>S.sel===uid',arg=completed['target_uid'],timeout=30000)
                         expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
