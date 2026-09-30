@@ -9430,15 +9430,15 @@ function renderClientMatrix() {
     name.append(swatch, document.createTextNode(target.name));
     row.append(name);
     const entry = machineClients.get(target.id);
-    const status = target.online === false ? '离线'
-      : !entry || (entry.loading && !entry.clients) ? '…'
-      : entry.error && !entry.clients ? '失败' : '';
+    // 连不上这台机器就是离线；"失败"只留给更新命令本身（退出码非 0）
+    const unreachable = target.online === false || (entry?.error && !entry.clients);
+    const status = unreachable ? '离线' : !entry || (entry.loading && !entry.clients) ? '…' : '';
     if (status) {
       const cell = row.insertCell();
       cell.colSpan = Math.max(1, sources.length);
       cell.className = 'client-status';
       cell.textContent = status;
-      if (status === '失败') cell.title = entry.error;
+      if (entry?.error) cell.title = entry.error;
       continue;
     }
     for (const source of sources) {
