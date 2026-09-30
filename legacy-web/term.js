@@ -1644,7 +1644,7 @@ function fetchModelCatalog(node, source) {
   return modelCatalogs.get(key);
 }
 
-/** `source()`/`node()` 给出当前选择；选择按 `storeKey.<机器|来源>` 记住。 */
+/** 模型按机器和来源记住；强度按来源和模型共享，不区分机器或弹窗。 */
 function createModelPicker(prefix, {source, node, storeKey}) {
   const el = name => document.getElementById(`${prefix}-${name}`);
   const button = el('model'), label = el('model-label'), menu = el('model-menu');
@@ -1657,23 +1657,25 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     button.title = title;
     button.disabled = !enabled;
   };
-  picker.apply = (model, effort, persist = false, savedEmptyEffort = false) => {
+  picker.apply = (model, effort, persist = false) => {
     const catalog = picker.catalog, chosen = info(model);
     const shown = chosen || info(catalog?.default_model);
     picker.model = shown?.id || '';
     const efforts = shown?.efforts || catalog?.efforts || [];
-    picker.effort = efforts.includes(effort) ? effort : savedEmptyEffort && !effort ? ''
-      : efforts.includes(shown?.default_effort) ? shown.default_effort : '';
+    const effortKey = `modelEffort.${source()}|${picker.model}`;
+    const remembered = store.get(effortKey, '');
+    picker.effort = efforts.includes(effort) ? effort : efforts.includes(remembered) ? remembered
+      : efforts.includes('high') ? 'high'
+      : efforts.includes(shown?.default_effort) ? shown.default_effort : efforts[0] || '';
     const name = shown ? shown.name || shown.id : catalog?.models.length ? '选择模型' : '模型不可用';
     controls(name, shown && shown.name !== shown.id ? `${shown.name}（${shown.id}）` : '模型：' + name,
       !!catalog?.models.length);
-    const placeholder = new Option('选择强度', '');
-    placeholder.disabled = placeholder.hidden = true;
-    select.replaceChildren(placeholder, ...efforts.map(value => new Option(value, value)));
+    select.replaceChildren(...efforts.map(value => new Option(value, value)));
     select.value = picker.effort;
     select.disabled = !efforts.length;
     select.parentElement.title = efforts.length ? '推理强度' : '该 CLI 不支持选择推理强度';
-    if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model, effort: picker.effort});
+    if (persist) store.set(`${storeKey}.${picker.key}`, {model: picker.model});
+    if (persist && effort && picker.model && efforts.includes(effort)) store.set(effortKey, effort);
   };
   picker.refresh = async () => {
     const current = source(), where = node(), seq = ++picker.seq;
@@ -1691,8 +1693,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
     if (seq !== picker.seq) return;
     picker.catalog = catalog;
     const saved = store.get(`${storeKey}.${picker.key}`, {}) || {};
-    picker.apply(saved.model || '', saved.effort || '', false,
-      !!saved.model && Object.hasOwn(saved, 'effort'));
+    picker.apply(saved.model || '', '');
     if (!catalog) controls('模型不可用', '该机器没有返回模型列表，将使用 CLI 默认模型', false);
   };
   /** 请求体里的具体选择；目录不可用时才由 CLI 自行决定。 */
@@ -1781,7 +1782,7 @@ function createModelPicker(prefix, {source, node, storeKey}) {
   const choose = index => {
     const model = picker.rows[index];
     if (!model) return;
-    picker.apply(model.id, picker.effort, true);
+    picker.apply(model.id, '', true);
     picker.close(true);
   };
   button.onclick = () => (menu.hidden ? open() : picker.close());
