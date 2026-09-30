@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native paused-goal forks, Chromium clone, then native goal read/update isolation.
+"""Native paused-goal forks, Chromium clone, then native goal/attachment isolation.
 No model turns, login material or active goals are created. Run explicitly.
 """
 # run_validation: skip
@@ -30,7 +30,7 @@ def main():
         (home/'config.toml').write_text('[features]\ngoals=true\n')
         common={'model':MODEL,'config':{'model_reasoning_effort':EFFORT},'cwd':str(corpus.root/'cwd'),
                 'approvalPolicy':'never','sandbox':'read-only'}
-        expected={}
+        expected={};attachments={}
         with AppServer(args.codex,home,corpus.root/'cwd',root/'create.log') as native:
             started=native.call('thread/start',common)
             assert started['model']==MODEL and started['reasoningEffort']==EFFORT,started
@@ -44,6 +44,10 @@ def main():
                     'threadId':thread['id'],'objective':'Native branch goal '+thread['id'],
                     'status':'paused','tokenBudget':6000+index*1000})['goal']
             assert all(goal and goal['status']=='paused' for goal in expected.values())
+            for sid in expected:
+                attachments[sid]=native.call('thread/attachment/add',{'threadId':sid,
+                    'attachmentType':'test.note','identityKey':'shared-external-key',
+                    'payload':{'text':'Literal '+sid,'resourceId':'external-resource','thread_id':sid}})['attachment']
         print('PASS native CLI creates three paused-goal fork snapshots without model requests',flush=True)
         paths={}
         for path in home.rglob('*.jsonl'):
@@ -75,6 +79,16 @@ def main():
                 cloned=native.call('thread/goal/get',{'threadId':mapping[old]})['goal']
                 assert cloned=={**goal,'threadId':mapping[old]},(goal,cloned)
                 assert native.call('thread/goal/get',{'threadId':old})['goal']==goal
+            for old,attachment in attachments.items():
+                expected_attachment={**attachment,'id':op['plan']['identities']['records'][attachment['id']]}
+                assert expected_attachment['id']!=attachment['id']
+                assert native.call('thread/attachment/list',{'threadId':mapping[old]})['data']==[expected_attachment]
+                assert native.call('thread/attachment/list',{'threadId':old})['data']==[attachment]
+            native.call('thread/attachment/remove',{'threadId':mapping[child['id']],
+                'attachmentType':'test.note','identityKey':'shared-external-key'})
+            assert native.call('thread/attachment/list',{'threadId':mapping[child['id']]})['data']==[]
+            assert native.call('thread/attachment/list',{'threadId':child['id']})['data']==[attachments[child['id']]]
+            print('PASS native attachment lists preserve opaque metadata; deleting cloned membership leaves original intact',flush=True)
             changed=native.call('thread/goal/set',{'threadId':mapping[child['id']],'status':'paused','tokenBudget':7000})['goal']
             assert changed['tokenBudget']==7000
             assert native.call('thread/goal/get',{'threadId':child['id']})['goal']==expected[child['id']]

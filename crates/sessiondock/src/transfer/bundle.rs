@@ -366,6 +366,7 @@ impl TransferService {
                         | "thread_dynamic_tools"
                         | "thread_spawn_edges"
                         | "thread_attachments"
+                        | "thread_artifacts"
                         | "thread_turns"
                         | "thread_items"
                         | "thread_history_projection_state"
