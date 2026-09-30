@@ -29,7 +29,24 @@ SEND 使用同一分类器与同一否决。`starting` 在 CHECK 上仍是非 re
 
 ## UI 与否决边界
 
-Claude/Codex 首次进入目录、尚无原生 JSONL 或 hooks 时，CHECK 从同一次当前 PTY 捕获返回 `prompt`（`kind: folder_trust`）。composer 展示目录与完整信任说明，并提供“信任并继续”和“退出”；点击前再检同一问题 ID，通过实例身份保护的 `/api/term/send` 发送原生按键（Codex 信任为 `1`、`Enter`，退出为 `2`；Claude 从再检画面的选中行定位信任选项，必要时按一次方向键再 `Enter`，退出为 `Escape`），不清空或自动发送草稿。问题离开画面后题卡撤下，输入状态仍由 CHECK 决定；未识别的启动菜单仍提示使用终端。覆盖见 [startup_question_browser.py](../tests/startup_question_browser.py) 与 [startup_claude_browser.py](../tests/startup_claude_browser.py)。
+CHECK 从同一次当前 PTY 捕获返回可回答的 `prompt`，不依赖原生 JSONL 或 hooks 已经出现。Claude/Codex 原有目录信任使用 `kind: folder_trust`；四个客户端的其他菜单使用 `kind: screen_menu`。composer 复用历史问题的题卡样式，保留原生目录、命令、审批范围、警告与选项说明。普通选择、多选、当前页文本输入、下一页、返回、检查答案和提交分别提供原生操作，不自动作答或记住授权默认值。多选按钮同步原生勾选状态，另点 Submit/Next 才提交；不是把网页上选择的数字一次性灌进 CLI。
+
+`screen_menu` 的 `questions` 只描述当前可见页；选项携带 `keys`，多选另带 `toggle`/`selected`，不可选项没有可执行按键。`actions` 为原生页内操作，`cancel_keys` 只在语义已核对时给出；原生“保存并关闭”显示其真实作用。可编辑的 `text` 带 `before_keys`、`after_keys`、`mode` 与原生当前值；只有源代码证明能替换原有文字，或原生输入确实为空时才提供。密钥、凭据、无法区分秘密字段的 MCP 文本和任意快捷键捕获保留原生终端路径。
+
+点击前重新 CHECK 同一语义 ID，再按新画面的焦点计算按键；`revision` 区分勾选、输入或页内状态变化。显示后菜单已消失、切换会话或目标选项已变化时不写入。每次操作在再检前固定终端实例身份，通过 `/api/term/send` 的所有权与实例校验写入；文本操作的多次写入都使用同一身份。部分写入不自动重试。题卡输入独立于消息草稿，轮询不会清空正在填写的答案；问题离开画面后题卡撤下，输入状态仍由 CHECK 决定。
+
+导航或纯筛选写入后再观察一次即可继续操作，方向键在列表边界没有改变画面时也不锁住整张题卡；不自动重发按键。提交、授权和多选切换仍等待原生状态变化。
+
+源码清单与浏览器画面分别记录已支持和原生回退项；它们是对应版本的审计记录，不宣称未来版本的所有菜单都能被画面启发式识别。所有 CLI 必须使用同一识别结果否决 SEND，不能只加网页按钮而把底层菜单当成空编辑区。
+
+| 客户端 | 源码/二进制审计清单 | 画面夹具 |
+| --- | --- | --- |
+| Claude | [cli_menu_inventory_claude.json](../tests/fixtures/cli_menu_inventory_claude.json) | [cli_menus_claude.json](../tests/fixtures/cli_menus_claude.json) |
+| Codex | [cli_menu_inventory_codex.json](../tests/fixtures/cli_menu_inventory_codex.json) | [cli_menus_codex.json](../tests/fixtures/cli_menus_codex.json) |
+| Grok | [cli_menu_inventory_grok.json](../tests/fixtures/cli_menu_inventory_grok.json) | [cli_menus_grok.json](../tests/fixtures/cli_menus_grok.json) |
+| OpenCode | [cli_menu_inventory_opencode.json](../tests/fixtures/cli_menu_inventory_opencode.json) | [cli_menus_opencode.json](../tests/fixtures/cli_menus_opencode.json) |
+
+逐项点击、输入与原生按键验证见 [cli_menus_browser.py](../tests/cli_menus_browser.py)；原有目录信任回归见 [startup_question_browser.py](../tests/startup_question_browser.py) 与 [startup_claude_browser.py](../tests/startup_claude_browser.py)。
 
 发送按钮的可用性和原因文案以服务端 `input` 为准，浏览器不另做一套画面分类。原生历史或 hook 中的过期问题仍是展示与回答数据，不是独立的 SEND 否决。回答走终端键盘路径。Shell/SSH 与直接 PTY 键盘/回答控件保持原始输入语义，不经本分类器否决。
 
@@ -47,7 +64,7 @@ Claude/Codex 首次进入目录、尚无原生 JSONL 或 hooks 时，CHECK 从�
 
 ## 识别摘要
 
-Claude/Codex 按父合同复用各自 composer 识别。Grok 匹配框式编辑区结构、框内光标、以及非空页脚标签；不依赖特定模型名子串。OpenCode（1.18.32 与 2.0.18 布局相同）匹配只有左边框 `┃` 的连续行块、其下 `╹▀` 底边、块内最后一行的「agent · 模型」标签，且光标在标签行之上的块内；命令面板和对话框会把光标移出，补全弹层左右都有边框，均不算编辑区。OpenCode 的提问表单和权限确认会取代编辑区，按屏幕底部 `┃` 行上的按键提示识别（提问：`enter submit` 与 `esc dismiss`；权限：`Allow once`、`Reject` 与 `enter confirm`，2.0.18 实测），归为 `blocked`（`cli_question`）；命令面板、模型选择等其余弹层仍为 `unknown`。CLI 布局变化导致无法识别时，状态为 `unknown`，须用 PTY。
+Claude/Codex 按父合同复用各自 composer 识别。Grok 匹配框式编辑区结构、框内光标、以及非空页脚标签；不依赖特定模型名子串。OpenCode（1.18.32 与 2.0.18 编辑区布局相同）匹配只有左边框 `┃` 的连续行块、其下 `╹▀` 底边、块内最后一行的「agent · 模型」标签，且光标在标签行之上的块内；命令面板和对话框会把光标移出，补全弹层左右都有边框，均不算编辑区。四个客户端的可识别菜单优先归为 `blocked`（`cli_question`）。OpenCode 2.0.18 的权限、表单与模态选择同时核对 SGR 样式：`●` 是配置值，不能当作键盘焦点；从同一次 styled 捕获推算当前焦点，避免误把“允许一次”按成“始终允许”。未识别或证据不完整的界面保留 `unknown`/原生 PTY 路径。
 
 Codex 多行编辑区可以持续隐藏页脚，光标停在下一空行；不能据此判断仍在粘贴，也不等待状态栏恢复。SEND 仍须确认消息末尾或折叠占位符已经出现，并连续稳定 200ms；编辑区中的空段落不会截断识别。当前状态栏的 `tab to queue message … 100% context left` 与旧版 `Context … used / Ready` 都作为编辑区的边界，而非消息正文。
 

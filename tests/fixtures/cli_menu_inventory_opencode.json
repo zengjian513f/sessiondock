@@ -1,0 +1,1463 @@
+{
+  "source": "opencode",
+  "installed_version": "2.0.18",
+  "version_command": "opencode --version",
+  "executable_identifier": "opencode standalone Linux x64 compiled executable",
+  "source_repository": "https://github.com/anomalyco/opencode",
+  "source_tag": "v2.0.18",
+  "source_commit": "cd9a14a6b688d4021bee381dfd39d2cef9c0f862",
+  "source_root": "packages/tui/src",
+  "audited_source_files": [
+    "packages/tui/src/component/command-palette.tsx",
+    "packages/tui/src/component/dialog-agent.tsx",
+    "packages/tui/src/component/dialog-config.tsx",
+    "packages/tui/src/component/dialog-debug.tsx",
+    "packages/tui/src/component/dialog-error-details.tsx",
+    "packages/tui/src/component/dialog-experiments.tsx",
+    "packages/tui/src/component/dialog-image-preview.tsx",
+    "packages/tui/src/component/dialog-integration.tsx",
+    "packages/tui/src/component/dialog-mcp.tsx",
+    "packages/tui/src/component/dialog-model.tsx",
+    "packages/tui/src/component/dialog-open.tsx",
+    "packages/tui/src/component/dialog-pair.tsx",
+    "packages/tui/src/component/dialog-session-list.tsx",
+    "packages/tui/src/component/dialog-session-rename.tsx",
+    "packages/tui/src/component/dialog-shell-output.tsx",
+    "packages/tui/src/component/dialog-skill.tsx",
+    "packages/tui/src/component/dialog-stash.tsx",
+    "packages/tui/src/component/dialog-status.tsx",
+    "packages/tui/src/component/dialog-theme-list.tsx",
+    "packages/tui/src/component/dialog-update.tsx",
+    "packages/tui/src/component/dialog-variant.tsx",
+    "packages/tui/src/component/dialog-workspace-file-changes.tsx",
+    "packages/tui/src/component/dialog-workspaces.tsx",
+    "packages/tui/src/component/dialog-worktree-name.tsx",
+    "packages/tui/src/context/permission.tsx",
+    "packages/tui/src/routes/session/dialog-execute.tsx",
+    "packages/tui/src/routes/session/dialog-fork.tsx",
+    "packages/tui/src/routes/session/dialog-message.tsx",
+    "packages/tui/src/routes/session/dialog-timeline.tsx",
+    "packages/tui/src/routes/session/form.tsx",
+    "packages/tui/src/routes/session/permission.tsx",
+    "packages/tui/src/ui/dialog-alert.tsx",
+    "packages/tui/src/ui/dialog-confirm.tsx",
+    "packages/tui/src/ui/dialog-export-options.tsx",
+    "packages/tui/src/ui/dialog-export-result.tsx",
+    "packages/tui/src/ui/dialog-help.tsx",
+    "packages/tui/src/ui/dialog-prompt.tsx",
+    "packages/tui/src/ui/dialog-select.tsx",
+    "packages/tui/src/ui/dialog.tsx",
+    "packages/tui/src/ui/working-directory-actions.tsx"
+  ],
+  "capture_contract": "Live complete styled current screen, including SGR and CSI blank-run expansion; no transcript/memory/config secrets read",
+  "key_semantics": {
+    "numbered_form": "1–9 select immediately, multi toggles immediately; >9 uses fresh highlighted row arrows then Enter",
+    "permission": "Left/Right or h/l wrap; Enter replies selected; full-TUI Always allow saves project permission patterns immediately; no mini-mode always confirmation assumed",
+    "permission_reject": "Main-session reject replies immediately; child-session reject opens reason textbox. Expanded Escape minimizes first. Rejection button keys always navigate exact fresh selection",
+    "picker": "Up/Down wrap; PageUp/PageDown move 10; Home/End select absolute ends; Enter invokes native selected option; ● configured value is not focus; visible footer shortcuts may be remapped",
+    "text_clear": "Single-line DialogPrompt/Input Ctrl+a=home and Ctrl+k=delete-to-end; Form/Reject prompt.clear/app.exit Ctrl+c only when nonempty clears entire editor; empty Ctrl+c would dismiss, so never emitted then",
+    "form_navigation": "Tab moves next field, Left previous field only outside text edit; current field native validation, conditional future fields and final Review remain native",
+    "workspace_confirm": "Dedicated left/right clamps no/yes; generic DialogConfirm arrows toggle, so SGR focus required"
+  },
+  "categories": [
+    {
+      "category": "permission_shell",
+      "fixture": "permission_shell",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_edit",
+      "fixture": "permission_edit",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_read",
+      "fixture": "permission_read",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_list",
+      "fixture": "permission_list",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_glob",
+      "fixture": "permission_glob",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_grep",
+      "fixture": "permission_grep",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_subagent",
+      "fixture": "permission_subagent",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_webfetch",
+      "fixture": "permission_webfetch",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_websearch",
+      "fixture": "permission_websearch",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_lsp",
+      "fixture": "permission_lsp",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_external_directory",
+      "fixture": "permission_external_directory",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_doom_loop",
+      "fixture": "permission_doom_loop",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_plugin_tool",
+      "fixture": "permission_plugin_tool",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_question_gate",
+      "fixture": "permission_question_gate",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx",
+        "packages/tui/src/util/permission.ts"
+      ],
+      "status": "supported",
+      "reason": "once=one request; always=saved project action/resource pattern; reject=reject main request or opens subagent rejection reason"
+    },
+    {
+      "category": "permission_scope",
+      "fixture": "permission_selected_always_scope",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "supported",
+      "reason": "Preserve the currently shown persistent grant patterns; do not automatically confirm"
+    },
+    {
+      "category": "permission_without_always",
+      "fixture": "permission_no_saved_scope",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "supported",
+      "reason": "Always is absent when request.save is empty"
+    },
+    {
+      "category": "subagent_permission_rejection",
+      "fixture": "permission_reject_reason",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "supported",
+      "reason": "Enter sends reject with optional reason; Escape returns to permission choices"
+    },
+    {
+      "category": "subagent_permission_rejection_existing",
+      "fixture": "permission_reject_existing_reason",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "supported",
+      "reason": "app.exit Ctrl+c clears a nonempty rejection textarea instead of canceling"
+    },
+    {
+      "category": "question_single",
+      "fixture": "form_single",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Digit immediately replies when one boolean/string-options field; no additional Enter"
+    },
+    {
+      "category": "question_boolean",
+      "fixture": "form_boolean",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Native order is read from screen; never assume Yes is first"
+    },
+    {
+      "category": "question_custom",
+      "fixture": "form_custom",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "3 opens answer editor; paste then Enter submits single choice"
+    },
+    {
+      "category": "question_multiple",
+      "fixture": "form_multiple",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Digits toggle current native selection; Tab advances to explicit review and Enter there submits"
+    },
+    {
+      "category": "question_multiple_custom",
+      "fixture": "form_multiple_custom",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Custom Enter commits custom choice and stays on field; Next field is a separate native action"
+    },
+    {
+      "category": "question_multi_page",
+      "fixture": "form_multi_question_page",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Digit commits this field and advances one tab; conditional future fields are never guessed"
+    },
+    {
+      "category": "question_review",
+      "fixture": "form_review",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Enter validates all active fields and submits only on explicit Submit click"
+    },
+    {
+      "category": "question_validation",
+      "fixture": "form_required_error",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Keep required/invalid native messages visible; native Enter preserves validation"
+    },
+    {
+      "category": "question_string",
+      "fixture": "form_text_string",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_email",
+      "fixture": "form_text_email",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_uri",
+      "fixture": "form_text_uri",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_date",
+      "fixture": "form_text_date",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_datetime",
+      "fixture": "form_text_datetime",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_number",
+      "fixture": "form_text_number",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_integer",
+      "fixture": "form_text_integer",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/util/form.ts"
+      ],
+      "status": "supported",
+      "reason": "Enter commits textarea and advances to review; native field validation controls accepted value"
+    },
+    {
+      "category": "question_text_existing",
+      "fixture": "form_text_existing",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx",
+        "packages/tui/src/config/keybind.ts"
+      ],
+      "status": "supported",
+      "reason": "Form prompt.clear Ctrl+c source clears entire nonempty textarea; it is not sent for empty text"
+    },
+    {
+      "category": "question_custom_edit",
+      "fixture": "form_custom_edit",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Escape closes custom editor without dismissing form"
+    },
+    {
+      "category": "question_more_than_nine",
+      "fixture": "form_tenth_option",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Only 1–9 are direct shortcuts; option 10 uses fresh styled selected row and two Down then Enter"
+    },
+    {
+      "category": "external_action_open",
+      "fixture": "form_external_open",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Open link, I finished, Continue and Copy are distinct native actions; never acknowledge completion automatically"
+    },
+    {
+      "category": "external_action_finish",
+      "fixture": "form_external_finish",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Open link, I finished, Continue and Copy are distinct native actions; never acknowledge completion automatically"
+    },
+    {
+      "category": "external_action_acknowledged",
+      "fixture": "form_external_acknowledged",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "supported",
+      "reason": "Open link, I finished, Continue and Copy are distinct native actions; never acknowledge completion automatically"
+    },
+    {
+      "category": "picker_commands",
+      "fixture": "select_commands",
+      "source": [
+        "packages/tui/src/component/command-palette.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_select model",
+      "fixture": "select_select_model",
+      "source": [
+        "packages/tui/src/component/dialog-model.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_select variant",
+      "fixture": "select_select_variant",
+      "source": [
+        "packages/tui/src/component/dialog-variant.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_select agent",
+      "fixture": "select_select_agent",
+      "source": [
+        "packages/tui/src/component/dialog-agent.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_sessions",
+      "fixture": "select_sessions",
+      "source": [
+        "packages/tui/src/component/dialog-session-list.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_themes",
+      "fixture": "select_themes",
+      "source": [
+        "packages/tui/src/component/dialog-theme-list.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_connect an integration",
+      "fixture": "select_connect_an_integration",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_connect example service",
+      "fixture": "select_connect_example_service",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_example service",
+      "fixture": "select_example_service",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_settings",
+      "fixture": "select_settings",
+      "source": [
+        "packages/tui/src/component/dialog-config.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_experiments",
+      "fixture": "select_experiments",
+      "source": [
+        "packages/tui/src/component/dialog-experiments.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_mcp servers",
+      "fixture": "select_mcp_servers",
+      "source": [
+        "packages/tui/src/component/dialog-mcp.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_skills",
+      "fixture": "select_skills",
+      "source": [
+        "packages/tui/src/component/dialog-skill.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_stash",
+      "fixture": "select_stash",
+      "source": [
+        "packages/tui/src/component/dialog-stash.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_worktrees",
+      "fixture": "select_worktrees",
+      "source": [
+        "packages/tui/src/component/dialog-workspaces.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_open",
+      "fixture": "select_open",
+      "source": [
+        "packages/tui/src/component/dialog-open.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_example project / worktrees",
+      "fixture": "select_example_project_worktrees",
+      "source": [
+        "packages/tui/src/component/dialog-open.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_message actions",
+      "fixture": "select_message_actions",
+      "source": [
+        "packages/tui/src/routes/session/dialog-message.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_fork session",
+      "fixture": "select_fork_session",
+      "source": [
+        "packages/tui/src/routes/session/dialog-fork.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_timeline",
+      "fixture": "select_timeline",
+      "source": [
+        "packages/tui/src/routes/session/dialog-timeline.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_queued prompts",
+      "fixture": "select_queued_prompts",
+      "source": [
+        "packages/tui/src/routes/session/index.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_plugins",
+      "fixture": "select_plugins",
+      "source": [
+        "packages/tui/src/feature-plugins/system/plugins.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_base branch",
+      "fixture": "select_base_branch",
+      "source": [
+        "packages/tui/src/feature-plugins/system/diff-viewer.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_diff source",
+      "fixture": "select_diff_source",
+      "source": [
+        "packages/tui/src/feature-plugins/system/diff-viewer.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_working directory",
+      "fixture": "select_working_directory",
+      "source": [
+        "packages/tui/src/ui/working-directory-actions.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_pending steer",
+      "fixture": "select_pending_steer",
+      "source": [
+        "packages/tui/src/routes/session/index.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_permissions",
+      "fixture": "select_permissions",
+      "source": [
+        "packages/tui/src/component/dialog-config.tsx",
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Visible option deltas from fresh SGR focus; default Up/Down wrap, Home/End, pages; hidden rows remain accessible through native navigation"
+    },
+    {
+      "category": "picker_grouping",
+      "fixture": "select_groups_and_current",
+      "source": [
+        "packages/tui/src/ui/dialog-select.tsx"
+      ],
+      "status": "supported",
+      "reason": "Accent bold category rows are not options; ● denotes configured model, not keyboard focus"
+    },
+    {
+      "category": "login_nonsecret_multiselect",
+      "fixture": "select_multiselect_integration",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx"
+      ],
+      "status": "supported",
+      "reason": "Native remount toggles checkboxes; Continue validates required/maxItems; no implicit submit"
+    },
+    {
+      "category": "session_delete_confirmation",
+      "fixture": "select_double_delete",
+      "source": [
+        "packages/tui/src/component/dialog-session-list.tsx"
+      ],
+      "status": "supported",
+      "reason": "Native Ctrl+d deletion is a two-step confirmation; Enter selects session, not delete"
+    },
+    {
+      "category": "mcp_toggle",
+      "fixture": "select_footer_actions",
+      "source": [
+        "packages/tui/src/component/dialog-mcp.tsx"
+      ],
+      "status": "supported",
+      "reason": "Enter may view error/auth; Ctrl+d uses shown native disconnect/retry/connect action"
+    },
+    {
+      "category": "native_offline_capture",
+      "fixture": "native_commands_v2_0_18",
+      "source": [
+        "packages/tui/src/component/command-palette.tsx"
+      ],
+      "status": "supported",
+      "reason": "Captured installed v2.0.18 --standalone in temporary home; no request initiated for this capture"
+    },
+    {
+      "category": "confirmation_confirm action",
+      "fixture": "confirm_confirm_action",
+      "source": [
+        "packages/tui/src/ui/dialog-confirm.tsx",
+        "packages/tui/src/component/dialog-update.tsx"
+      ],
+      "status": "supported",
+      "reason": "Confirm follows current SGR focus; horizontal arrows wrap and Escape closes without confirming"
+    },
+    {
+      "category": "confirmation_update available",
+      "fixture": "confirm_update_available",
+      "source": [
+        "packages/tui/src/ui/dialog-confirm.tsx",
+        "packages/tui/src/component/dialog-update.tsx"
+      ],
+      "status": "supported",
+      "reason": "Confirm follows current SGR focus; horizontal arrows wrap and Escape closes without confirming"
+    },
+    {
+      "category": "confirmation_update",
+      "fixture": "confirm_update",
+      "source": [
+        "packages/tui/src/ui/dialog-confirm.tsx",
+        "packages/tui/src/component/dialog-update.tsx"
+      ],
+      "status": "supported",
+      "reason": "Confirm follows current SGR focus; horizontal arrows wrap and Escape closes without confirming"
+    },
+    {
+      "category": "worktree_confirmation",
+      "fixture": "workspace_file_changes_found",
+      "source": [
+        "packages/tui/src/component/dialog-workspace-file-changes.tsx"
+      ],
+      "status": "supported",
+      "reason": "Dedicated source clamps Left to no and Right to yes, independent of current focus; show warnings/files"
+    },
+    {
+      "category": "worktree_confirmation",
+      "fixture": "workspace_delete_worktree",
+      "source": [
+        "packages/tui/src/component/dialog-workspace-file-changes.tsx"
+      ],
+      "status": "supported",
+      "reason": "Dedicated source clamps Left to no and Right to yes, independent of current focus; show warnings/files"
+    },
+    {
+      "category": "alert_notice",
+      "fixture": "alert_notice",
+      "source": [
+        "packages/tui/src/ui/dialog-alert.tsx",
+        "packages/tui/src/ui/dialog-export-result.tsx"
+      ],
+      "status": "supported",
+      "reason": "Native Enter invokes acknowledgement/close; no inferred affirmative policy"
+    },
+    {
+      "category": "alert_session exported",
+      "fixture": "alert_session_exported",
+      "source": [
+        "packages/tui/src/ui/dialog-alert.tsx",
+        "packages/tui/src/ui/dialog-export-result.tsx"
+      ],
+      "status": "supported",
+      "reason": "Native Enter invokes acknowledgement/close; no inferred affirmative policy"
+    },
+    {
+      "category": "text_rename session",
+      "fixture": "text_rename_session",
+      "source": [
+        "packages/tui/src/ui/dialog-prompt.tsx",
+        "packages/tui/src/component/dialog-worktree-name.tsx"
+      ],
+      "status": "supported",
+      "reason": "Source one-line textarea/input: Ctrl+a line start, Ctrl+k delete to end, paste full replacement then Enter; no everyday defaults changed"
+    },
+    {
+      "category": "text_rename account",
+      "fixture": "text_rename_account",
+      "source": [
+        "packages/tui/src/ui/dialog-prompt.tsx",
+        "packages/tui/src/component/dialog-worktree-name.tsx"
+      ],
+      "status": "supported",
+      "reason": "Source one-line textarea/input: Ctrl+a line start, Ctrl+k delete to end, paste full replacement then Enter; no everyday defaults changed"
+    },
+    {
+      "category": "text_name worktree",
+      "fixture": "text_name_worktree",
+      "source": [
+        "packages/tui/src/ui/dialog-prompt.tsx",
+        "packages/tui/src/component/dialog-worktree-name.tsx"
+      ],
+      "status": "supported",
+      "reason": "Source one-line textarea/input: Ctrl+a line start, Ctrl+k delete to end, paste full replacement then Enter; no everyday defaults changed"
+    },
+    {
+      "category": "text_example project / new worktree",
+      "fixture": "text_example_project_new_worktree",
+      "source": [
+        "packages/tui/src/ui/dialog-prompt.tsx",
+        "packages/tui/src/component/dialog-worktree-name.tsx"
+      ],
+      "status": "supported",
+      "reason": "Source one-line textarea/input: Ctrl+a line start, Ctrl+k delete to end, paste full replacement then Enter; no everyday defaults changed"
+    },
+    {
+      "category": "session_recovery",
+      "fixture": "session_location_unavailable",
+      "source": [
+        "packages/tui/src/routes/session/location-missing.tsx"
+      ],
+      "status": "supported",
+      "reason": "Only Choose directory; no Escape rejection is implemented by SessionQuestion without escapeKey"
+    },
+    {
+      "category": "fallback_api_key",
+      "fixture": "fallback_api_key",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Secret API key remains native; no composer text/value exposure"
+    },
+    {
+      "category": "fallback_oauth_code",
+      "fixture": "fallback_oauth_code",
+      "source": [
+        "packages/tui/src/component/dialog-integration.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Authorization code/token entry remains native"
+    },
+    {
+      "category": "fallback_pair",
+      "fixture": "fallback_pair",
+      "source": [
+        "packages/tui/src/component/dialog-pair.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Pair URLs carry one-time authentication material; remain native"
+    },
+    {
+      "category": "fallback_export_options",
+      "fixture": "fallback_export_options",
+      "source": [
+        "packages/tui/src/ui/dialog-export-options.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Saved format/check state and active focus can share style under user themes; Tab-only cycle has no unambiguous screen-only anchor"
+    },
+    {
+      "category": "fallback_unknown_text",
+      "fixture": "fallback_unknown_text",
+      "source": [
+        "packages/tui/src/plugin/api.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Plugin text may contain secrets; unknown field schema is not inferred"
+    },
+    {
+      "category": "fallback_update_busy",
+      "fixture": "fallback_update_busy",
+      "source": [
+        "packages/tui/src/component/dialog-update.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Installing has no enabled actions; wait in native terminal"
+    },
+    {
+      "category": "fallback_image_preview",
+      "fixture": "fallback_image_preview",
+      "source": [
+        "packages/tui/src/component/dialog-image-preview.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Viewer has no selection/question; native Escape and image arrows"
+    },
+    {
+      "category": "fallback_status_view",
+      "fixture": "fallback_status_view",
+      "source": [
+        "packages/tui/src/component/dialog-status.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Information viewer has no answer choices"
+    },
+    {
+      "category": "fallback_debug_view",
+      "fixture": "fallback_debug_view",
+      "source": [
+        "packages/tui/src/component/dialog-debug.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Diagnostic view may expose machine/runtime info; native only"
+    },
+    {
+      "category": "fallback_help_view",
+      "fixture": "fallback_help_view",
+      "source": [
+        "packages/tui/src/ui/dialog-help.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Reference view is not an answerable question"
+    },
+    {
+      "category": "fallback_error_details",
+      "fixture": "fallback_error_details",
+      "source": [
+        "packages/tui/src/component/dialog-error-details.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Error viewer may expose diagnostic details; no Enter selection; source actions remain in terminal"
+    },
+    {
+      "category": "fallback_shell_output",
+      "fixture": "fallback_shell_output",
+      "source": [
+        "packages/tui/src/component/dialog-shell-output.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Output viewer and process kill actions are native; not an answer menu"
+    },
+    {
+      "category": "fallback_execute_view",
+      "fixture": "fallback_execute_view",
+      "source": [
+        "packages/tui/src/routes/session/dialog-execute.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Code execution viewer is not a selection/question"
+    },
+    {
+      "category": "fallback_mini_permission",
+      "fixture": "fallback_mini_permission",
+      "source": [
+        "packages/tui/src/mini/footer.permission.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Direct run mini UI has different always confirmation and reject-text stages, not managed full TUI; source never interpreted as full TUI"
+    },
+    {
+      "category": "fallback_mini_always",
+      "fixture": "fallback_mini_always",
+      "source": [
+        "packages/tui/src/mini/permission.shared.ts"
+      ],
+      "status": "native_fallback",
+      "reason": "Direct mini mode requires separate state protocol; never reuse full-TUI always semantics"
+    },
+    {
+      "category": "fallback_autocomplete",
+      "fixture": "fallback_autocomplete",
+      "source": [
+        "packages/tui/src/prompt/autocomplete.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Autocomplete is an editor aid, has no menu header/confirmation footer; composer readiness owns it"
+    },
+    {
+      "category": "negative_incomplete",
+      "fixture": "negative_permission_incomplete",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "No complete native footer means no answer card"
+    },
+    {
+      "category": "negative_obsolete",
+      "fixture": "negative_obsolete_permission",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Later visible output invalidates a tail panel"
+    },
+    {
+      "category": "negative_plain_quote",
+      "fixture": "negative_plain_quoted_permission",
+      "source": [
+        "packages/tui/src/routes/session/permission.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Plain copied/history text has no native styled selection evidence"
+    },
+    {
+      "category": "negative_plain_question_quote",
+      "fixture": "negative_plain_quoted_form",
+      "source": [
+        "packages/tui/src/routes/session/form.tsx"
+      ],
+      "status": "native_fallback",
+      "reason": "Quoted box characters/numbered lists do not supply live SGR panel structure"
+    }
+  ],
+  "not_present_in_version": [
+    {
+      "category": "folder trust onboarding",
+      "evidence": "No folder-trust consent component/callsite in matching v2.0.18 TUI. Startup exposes integration picker/model picker rather than inferred trust card"
+    },
+    {
+      "category": "undo/reset/clear confirmation",
+      "evidence": "routes/session/index.tsx Undo/Revert/Redo and app.tsx Clear session are command actions with native behavior; no separate confirmation dialog. They appear in command/message pickers and are not wrapped in invented approval."
+    },
+    {
+      "category": "provider legacy auth CLI wizard",
+      "evidence": "v2.0.18 full TUI uses Connect an integration. Separate effect CLI --wizard/auth command prompts are not session TUI; source packages/cli outside managed composer launcher surface."
+    }
+  ],
+  "limitations": [
+    "Custom remapped hidden navigation/submit bindings cannot be inferred from styled screen; fixture sequences follow matching installed default keybind.ts. Visible footer action labels use native shown keys.",
+    "Generic pickers expose rendered viewport plus native scrolling/filtering; they do not enumerate hidden server records.",
+    "Permission Always focus changes displayed body to saved pattern disclosure; IDs change when disclosures change, requiring a fresh check before answering.",
+    "Export options and credential/unknown secret-capable text prompts intentionally use native terminal fallback.",
+    "Only full TUI is parsed; direct-run mini/monochrome permission stages are inventoried and stay native."
+  ],
+  "fixtures_count": 103,
+  "source_coverage": [
+    {
+      "source": "packages/tui/src/component/command-palette.tsx",
+      "fixtures": [
+        "select_commands",
+        "native_commands_v2_0_18"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-agent.tsx",
+      "fixtures": [
+        "select_select_agent"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-config.tsx",
+      "fixtures": [
+        "select_settings",
+        "select_permissions"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-debug.tsx",
+      "fixtures": [
+        "fallback_debug_view"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-error-details.tsx",
+      "fixtures": [
+        "fallback_error_details"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-experiments.tsx",
+      "fixtures": [
+        "select_experiments"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-image-preview.tsx",
+      "fixtures": [
+        "fallback_image_preview"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-integration.tsx",
+      "fixtures": [
+        "select_connect_an_integration",
+        "select_connect_example_service",
+        "select_example_service",
+        "select_multiselect_integration",
+        "fallback_api_key",
+        "fallback_oauth_code"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-mcp.tsx",
+      "fixtures": [
+        "select_mcp_servers",
+        "select_footer_actions"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-model.tsx",
+      "fixtures": [
+        "select_select_model"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-open.tsx",
+      "fixtures": [
+        "select_open",
+        "select_example_project_worktrees"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-pair.tsx",
+      "fixtures": [
+        "fallback_pair"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-session-list.tsx",
+      "fixtures": [
+        "select_sessions",
+        "select_double_delete"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-session-rename.tsx",
+      "fixtures": [
+        "text_rename_session"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-shell-output.tsx",
+      "fixtures": [
+        "fallback_shell_output"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-skill.tsx",
+      "fixtures": [
+        "select_skills"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-stash.tsx",
+      "fixtures": [
+        "select_stash"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-status.tsx",
+      "fixtures": [
+        "fallback_status_view"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-theme-list.tsx",
+      "fixtures": [
+        "select_themes"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-update.tsx",
+      "fixtures": [
+        "confirm_confirm_action",
+        "confirm_update_available",
+        "confirm_update",
+        "fallback_update_busy"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-variant.tsx",
+      "fixtures": [
+        "select_select_variant"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-workspace-file-changes.tsx",
+      "fixtures": [
+        "workspace_file_changes_found",
+        "workspace_delete_worktree"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-workspaces.tsx",
+      "fixtures": [
+        "select_worktrees"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/component/dialog-worktree-name.tsx",
+      "fixtures": [
+        "text_rename_session",
+        "text_rename_account",
+        "text_name_worktree",
+        "text_example_project_new_worktree"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/context/permission.tsx",
+      "fixtures": [
+        "permission_shell"
+      ],
+      "role": "permission mode context, shared session grant state; not a standalone dialog"
+    },
+    {
+      "source": "packages/tui/src/routes/session/dialog-execute.tsx",
+      "fixtures": [
+        "fallback_execute_view"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/routes/session/dialog-fork.tsx",
+      "fixtures": [
+        "select_fork_session"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/routes/session/dialog-message.tsx",
+      "fixtures": [
+        "select_message_actions"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/routes/session/dialog-timeline.tsx",
+      "fixtures": [
+        "select_timeline"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/routes/session/form.tsx",
+      "fixtures": [
+        "form_single",
+        "form_boolean",
+        "form_custom",
+        "form_multiple",
+        "form_multiple_custom",
+        "form_multi_question_page",
+        "form_review",
+        "form_required_error",
+        "form_text_string",
+        "form_text_email",
+        "form_text_uri",
+        "form_text_date",
+        "form_text_datetime",
+        "form_text_number",
+        "form_text_integer",
+        "form_text_existing",
+        "form_custom_edit",
+        "form_tenth_option",
+        "form_external_open",
+        "form_external_finish",
+        "form_external_acknowledged",
+        "negative_plain_quoted_form"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/routes/session/permission.tsx",
+      "fixtures": [
+        "permission_shell",
+        "permission_edit",
+        "permission_read",
+        "permission_list",
+        "permission_glob",
+        "permission_grep",
+        "permission_subagent",
+        "permission_webfetch",
+        "permission_websearch",
+        "permission_lsp",
+        "permission_external_directory",
+        "permission_doom_loop",
+        "permission_plugin_tool",
+        "permission_question_gate",
+        "permission_selected_always_scope",
+        "permission_no_saved_scope",
+        "permission_reject_reason",
+        "permission_reject_existing_reason",
+        "negative_permission_incomplete",
+        "negative_obsolete_permission",
+        "negative_plain_quoted_permission"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-alert.tsx",
+      "fixtures": [
+        "alert_notice",
+        "alert_session_exported"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-confirm.tsx",
+      "fixtures": [
+        "confirm_confirm_action",
+        "confirm_update_available",
+        "confirm_update"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-export-options.tsx",
+      "fixtures": [
+        "fallback_export_options"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-export-result.tsx",
+      "fixtures": [
+        "alert_notice",
+        "alert_session_exported"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-help.tsx",
+      "fixtures": [
+        "fallback_help_view"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-prompt.tsx",
+      "fixtures": [
+        "text_rename_session",
+        "text_rename_account",
+        "text_name_worktree",
+        "text_example_project_new_worktree"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog-select.tsx",
+      "fixtures": [
+        "select_commands",
+        "select_select_model",
+        "select_select_variant",
+        "select_select_agent",
+        "select_sessions",
+        "select_themes",
+        "select_connect_an_integration",
+        "select_connect_example_service",
+        "select_example_service",
+        "select_settings",
+        "select_experiments",
+        "select_mcp_servers",
+        "select_skills",
+        "select_stash",
+        "select_worktrees",
+        "select_open",
+        "select_example_project_worktrees",
+        "select_message_actions",
+        "select_fork_session",
+        "select_timeline",
+        "select_queued_prompts",
+        "select_plugins",
+        "select_base_branch",
+        "select_diff_source",
+        "select_working_directory",
+        "select_pending_steer",
+        "select_permissions",
+        "select_groups_and_current"
+      ],
+      "role": "audited menu or viewer"
+    },
+    {
+      "source": "packages/tui/src/ui/dialog.tsx",
+      "fixtures": [
+        "select_commands"
+      ],
+      "role": "shared modal/selection/confirmation primitive"
+    },
+    {
+      "source": "packages/tui/src/ui/working-directory-actions.tsx",
+      "fixtures": [
+        "select_working_directory"
+      ],
+      "role": "audited menu or viewer"
+    }
+  ],
+  "explicit_additional_callsites": [
+    {
+      "source": "packages/tui/src/plugin/api.tsx",
+      "scope": "Public DialogSelect/Confirm/Prompt/Alert API; select/confirm/alert primitives covered; unknown text fallback"
+    },
+    {
+      "source": "packages/tui/src/routes/session/index.tsx",
+      "scope": "Queued prompts, Pending steer, Timeline/Message Actions, Undo/Redo/Export callsites"
+    },
+    {
+      "source": "packages/tui/src/app.tsx",
+      "scope": "Global command registrations incl login/model/provider/settings/recovery; Clear session has no extra confirmation"
+    },
+    {
+      "source": "packages/tui/src/feature-plugins/system/storybook/session-tabs.tsx",
+      "scope": "Developer-only fixture session picker/rename, uses generic primitives; storybook interactive state simulation is not production question"
+    }
+  ]
+}

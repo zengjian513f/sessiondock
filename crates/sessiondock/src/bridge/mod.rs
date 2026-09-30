@@ -8,6 +8,7 @@
 pub mod claude;
 pub mod codex;
 pub mod live;
+pub mod menus;
 
 pub use claude::{HOOK_SUBCOMMAND, PROMPTS_DIRNAME, PromptStore};
 pub use live::{CodexProbe, LivePrompts, PromptScope};

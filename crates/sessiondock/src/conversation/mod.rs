@@ -578,11 +578,7 @@ impl Conversations {
                 self.driver.release(lease).await;
                 capture.map(|capture| {
                     if capture.lag.is_none_or(|lag| lag == 0) {
-                        prompt = match identity.source.as_str() {
-                            "codex" => crate::bridge::codex::startup_prompt(&capture.text),
-                            "claude" => crate::bridge::claude::startup_prompt(&capture.text),
-                            _ => None,
-                        }
+                        prompt = crate::bridge::menus::screen_prompt(&identity.source, &capture.text)
                         .unwrap_or(Value::Null);
                     }
                     transcript = cli_state::transcript(&identity.source, &capture);

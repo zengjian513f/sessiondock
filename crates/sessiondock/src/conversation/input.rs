@@ -88,7 +88,10 @@ fn classify_with(source: &str, capture: &ScreenCapture, draft_allowed: bool) -> 
     if driver::strip_ansi(&capture.text).trim().is_empty() {
         return InputStatus::new(Starting, "cli_starting", "CLI 正在启动，输入已保留");
     }
-    if super::screen_question(capture) || (source == "opencode" && opencode_dialog(capture)) {
+    if crate::bridge::menus::screen_prompt(source, &capture.text).is_some()
+        || super::screen_question(capture)
+        || (source == "opencode" && opencode_dialog(capture))
+    {
         return InputStatus::new(
             Blocked,
             "cli_question",

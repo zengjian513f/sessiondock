@@ -2301,3 +2301,8 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 
 /* Global actions live in the session toolbar while the list is hidden. */
 header .btn[data-session-docked] { display: none; }
+
+#composer-question .question-text-form { display:flex; align-items:flex-end; gap:8px; margin:10px 0; }
+#composer-question .question-text-form label { flex:1; min-width:0; }
+#composer-question .question-text-input { display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
+#composer-question .question-actions { flex-wrap:wrap; }

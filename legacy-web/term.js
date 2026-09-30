@@ -4169,6 +4169,8 @@ function acceptComposerServerRevision(draft,row) {
 function applyCliState(uid, cli, {status = true} = {}) {
   const draft = composerDrafts.get(composerDraftOwner(uid));
   if (!draft || !cli || typeof cli !== 'object') return;
+  if (Number.isFinite(cli.observed_at) && Number.isFinite(draft.cli?.observed_at)
+      && cli.observed_at < draft.cli.observed_at) return;
   draft.cli = cli;
   if (status && cli.input && takenOver(uid)) {
     updateComposerInputStatus(uid, {ok: cli.input.state === 'ready', input: cli.input});
@@ -4864,6 +4866,11 @@ function migrateComposerDraft(fromUid, toUid) {
   const target = composerDrafts.get(toUid);
   if (target?.editVersion && (target.text || target.attachments.length || target.quotes.length)) return;
   composerDrafts.set(toUid, draft);
+  for (const [key, value] of screenMenuTextDrafts) {
+    if (!key.startsWith(`${fromUid}\0`)) continue;
+    screenMenuTextDrafts.set(`${toUid}\0${key.slice(fromUid.length + 1)}`, value);
+    screenMenuTextDrafts.delete(key);
+  }
   composerDraftAliases.set(fromUid, toUid);
   composerDrafts.delete(fromUid);
   if (composerHydrations.has(fromUid)) composerHydrations.set(toUid, composerHydrations.get(fromUid));
@@ -5109,13 +5116,23 @@ function updateComposerInputStatus(uid, data) {
   if (!draft) return;
   draft.inputProbe = (draft.inputProbe || 0) + 1;
   const status = composerInputStatus(data);
-  const prompt = status.code === 'cli_question' && data?.prompt?.kind === 'folder_trust'
-    ? data.prompt : null;
+  // Watch packets carry only cli.input, whereas CHECK explicitly carries
+  // prompt (including null). A partial status must not erase a live card or
+  // cancel its pending answer before the clicked control's own fresh CHECK.
+  const prompt = status.code === 'cli_question'
+    ? Object.hasOwn(data || {}, 'prompt')
+      ? ['folder_trust','screen_menu'].includes(data?.prompt?.kind) ? data.prompt : null
+      : draft.inputPrompt || null
+    : null;
   const changed = JSON.stringify(draft.inputStatus) !== JSON.stringify(status)
     || JSON.stringify(draft.inputPrompt) !== JSON.stringify(prompt);
   draft.inputStatus = status;
   draft.inputPrompt = prompt;
-  if (draft.inputAnswer !== prompt?.id) draft.inputAnswer = null;
+  if (draft.inputAnswer && (typeof draft.inputAnswer === 'string'
+      ? draft.inputAnswer !== prompt?.id
+      : draft.inputAnswer.id !== prompt?.id
+        || (draft.inputAnswer.sent && draft.inputAnswer.revision !== screenMenuRevision(prompt))))
+    draft.inputAnswer = null;
   if (changed && composerDraftOwner(composerUid) === owner) renderComposerInputStatus();
 }
 
@@ -5202,32 +5219,147 @@ function renderComposerQuestion(draft) {
   const signature = JSON.stringify([composerUid, prompt, draft?.inputAnswer]);
   if (box.dataset.signature === signature) return;
   box.dataset.signature = signature;
+  const focused = box.querySelector('.question-text-input');
+  const restore = focused && document.activeElement === focused
+    ? {start:focused.selectionStart, end:focused.selectionEnd} : null;
   box.replaceChildren();
   box.classList.toggle('hidden', !prompt);
-  if (!prompt) return;
+  if (!prompt) {
+    if (draft?.inputStatus?.state === 'ready' || sessionComposerEnded(composerUid)) {
+      const prefix = `${composerDraftOwner(composerUid)}\0`;
+      for (const key of screenMenuTextDrafts.keys()) {
+        if (key.startsWith(prefix)) screenMenuTextDrafts.delete(key);
+      }
+    }
+    return;
+  }
   const uid = composerUid;
   box.appendChild(questionNode({
     ...prompt, uid, call_id: prompt.id, live: true,
     state: draft.inputAnswer ? 'submitted' : 'waiting',
   }, {
     answer: (uid, index) => answerComposerQuestion(uid, prompt.id, index),
-    cancel: uid => answerComposerQuestion(uid, prompt.id, 1),
+    cancel: uid => prompt.kind === 'screen_menu'
+      ? answerComposerScreenMenu(uid, prompt.id, 'cancel') : answerComposerQuestion(uid, prompt.id, 1),
+    action: (uid, index) => answerComposerScreenMenu(uid, prompt.id, 'action', index),
+    textAnswer: (uid, value) => answerComposerScreenMenu(uid, prompt.id, 'text', value),
   }));
+  if (restore) {
+    const input = box.querySelector('.question-text-input');
+    if (input && !input.disabled) {
+      input.focus({preventScroll:true});
+      input.setSelectionRange(restore.start, restore.end);
+    }
+  }
 }
 
 async function answerComposerQuestion(uid, id, index) {
-  const draft = composerDraft(uid, false);
+  if (composerDraft(uid, false)?.inputPrompt?.kind === 'screen_menu')
+    return answerComposerScreenMenu(uid, id, 'option', index);
+  const draft = composerDraft(uid, false), name = takenOver(uid);
   if (!draft || draft.inputPrompt?.id !== id || draft.inputAnswer) return false;
+  const binding = termInputBody(name, {name, keys:[], uid});
+  if (!binding) return false;
   draft.inputAnswer = id;
   renderComposerQuestion(draft);
   // Recheck the same live menu before writing, including pre-rollout launches.
   const current = await probeComposerInput(uid);
-  if (current?.prompt?.id !== id || composerUid !== uid) return false;
+  if (current?.prompt?.id !== id || composerUid !== uid || takenOver(uid) !== name) {
+    if (draft.inputAnswer === id) draft.inputAnswer = null;
+    if (composerUid === uid) renderComposerQuestion(draft);
+    return false;
+  }
   const keys = sessiondockCli(current.prompt.source)?.questionAnswerKeys(current.prompt, index);
-  const ok = keys?.length && await sendToSession(null, keys, uid);
-  if (!ok) { draft.inputAnswer = null; renderComposerQuestion(draft); }
+  let ok = false;
+  try { ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys}); }
+  catch (error) { await appAlert('回答未完成，请检查终端后继续：' + (error.message || error)); }
+  if (!ok) { draft.inputAnswer = null; if (composerUid === uid) renderComposerQuestion(draft); }
   else pollComposerInput();
   return !!ok;
+}
+
+function screenMenuRevision(prompt) {
+  return prompt?.revision || JSON.stringify([prompt?.questions, prompt?.text, prompt?.actions]);
+}
+
+async function writeComposerMenuInput(name, uid, binding, payload) {
+  if (takenOver(uid) !== name || composerUid !== uid) return false;
+  const response = await post('api/term/send', {...binding, ...payload});
+  if (response.error) throw new Error(response.error);
+  S.live.add(uid); S.liveTmux.add(uid); S.lastSync = 0; S.syncGap = FAST_MIN;
+  paintLive();
+  return true;
+}
+
+async function answerComposerScreenMenu(uid, id, kind, value) {
+  const draft = composerDraft(uid, false), shown = draft?.inputPrompt, name = takenOver(uid);
+  if (!name || shown?.id !== id || draft.inputAnswer || composerUid !== uid) return false;
+  const binding = termInputBody(name, {name, keys:[], uid});
+  if (!binding) return false;
+  delete binding.keys;
+  const pending = {id, revision:screenMenuRevision(shown), sent:false};
+  draft.inputAnswer = pending;
+  renderComposerQuestion(draft);
+  let ok = false;
+  let refreshOnly = false;
+  try {
+    const current = await probeComposerInput(uid), prompt = current?.prompt;
+    if (prompt?.id !== id || composerUid !== uid || takenOver(uid) !== name
+        || draft.inputAnswer !== pending) return false;
+    let keys;
+    if (kind === 'option') {
+      const prior = shown.questions?.[0]?.options?.[value];
+      const option = prompt.questions?.[0]?.options?.[value];
+      if (!option || option.label !== prior?.label
+          || (option.toggle && option.selected !== prior.selected)) return false;
+      keys = option.keys;
+    } else if (kind === 'action') {
+      const item = prompt.actions?.[value];
+      if (item?.label !== shown.actions?.[value]?.label) return false;
+      keys = item?.keys;
+      const navigation = new Set(['Up','Down','Left','Right','Home','End','Tab','BTab',
+        'PageUp','PageDown','ctrl-n','ctrl-p','C-n','C-p']);
+      refreshOnly = !!keys?.length && keys.every(key => navigation.has(key));
+    } else if (kind === 'cancel') keys = prompt.cancel_keys;
+    else if (kind === 'text') {
+      if (!prompt.text || prompt.text.label !== shown.text?.label) return false;
+      refreshOnly = !prompt.text.after_keys?.length;
+      // Pin every write to the same instance. Native field text is separate
+      // from the message draft, and a partial write is never retried.
+      const write = payload => writeComposerMenuInput(name, uid, binding, payload);
+      if (prompt.text.before_keys?.length && !await write({keys:prompt.text.before_keys})) return false;
+      const payload = prompt.text.mode === 'data' ? {data:String(value)} : {paste:String(value)};
+      if (String(value) && !await write(payload)) return false;
+      if (String(value) && prompt.text.mode !== 'data') await new Promise(resolve => setTimeout(resolve, 600));
+      if (prompt.text.after_keys?.length && !await write({keys:prompt.text.after_keys})) return false;
+      ok = true;
+    }
+    if (kind !== 'text') ok = !!keys?.length && await writeComposerMenuInput(name, uid, binding, {keys});
+    if (ok) {
+      pending.sent = true;
+      pending.revision = screenMenuRevision(prompt);
+      S.lastSync = 0;
+      if (refreshOnly) {
+        // Navigation at a boundary may legitimately leave the screen unchanged.
+        // Reobserve once, then allow the next explicit operation; never resend.
+        await new Promise(resolve => setTimeout(resolve, 200));
+        await probeComposerInput(uid);
+        if (draft.inputAnswer === pending) {
+          draft.inputAnswer = null;
+          if (composerUid === uid) renderComposerQuestion(draft);
+        }
+      } else pollComposerInput();
+    }
+    return !!ok;
+  } catch (error) {
+    await appAlert('回答未完成，请检查终端后继续：' + (error.message || error));
+    return false;
+  } finally {
+    if (!ok && draft.inputAnswer === pending) {
+      draft.inputAnswer = null;
+      if (composerUid === uid) renderComposerQuestion(draft);
+    }
+  }
 }
 
 async function reconcileComposerSubmission(uid) {
