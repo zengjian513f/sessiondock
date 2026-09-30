@@ -162,7 +162,9 @@ def main():
     parser.add_argument('--peer',help='Opt-in SSH peer with shared checkout; all target data stays in private /tmp directories')
     parser.add_argument('--preserve',action='store_true',help='Exercise identity-preserving cross-node copies')
     parser.add_argument('--move',action='store_true',help='Move groups, checking source retirement or shared-storage rejection')
+    parser.add_argument('--dependencies',action='store_true',help='Check native external media/output/link contents on an SSH peer')
     args=parser.parse_args()
+    if args.dependencies and not args.peer:parser.error('--dependencies requires --peer')
     with tempfile.TemporaryDirectory(prefix='sessiondock-bundle-browser-') as temporary, sync_playwright() as pw:
         root=Path(temporary)
         browser=pw.chromium.launch(headless=True,**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
@@ -184,6 +186,10 @@ def main():
                 for node,corpus in ((a,source),(b,destination)):
                     (corpus.root/'ids').mkdir();(corpus.root/'ids/node-id').write_text(node.nid+'\n')
                     (corpus.root/'trash').mkdir()
+                external={}
+                if args.dependencies:
+                    from session_dependency_fixtures import add_external_dependencies
+                    external=add_external_dependencies(source,provider)
                 originals={str(p):p.read_bytes() for kind in ('claude','codex','grok') for p in (source.root/kind).rglob('*') if p.is_file() and '.sqlite' not in p.name}
                 original_links={p:os.readlink(p) for p in originals if Path(p).is_symlink()}
                 receipt_options={};receipt_ids=[]
@@ -195,6 +201,9 @@ def main():
                 hubroot=base_root/'hub';hubroot.mkdir();hub=None;completed=None;continued=None
                 peer=Peer(args.peer,base_root,source,roots,b,args.binary) if args.peer else None
                 read_target=peer.read if peer else lambda p:p.read_bytes()
+                if external:
+                    peer.call('seed_cwd',path=str(base_root/'external'),entries=[
+                        {'relative':p.name,'kind':'file','mode':0o600,'bytes':base64.b64encode(raw).decode()} for p,raw in external.items()])
                 for restart in (False,True):
                     with ExitStack() as stack:
                         for node,corpus in ((a,source),(b,destination)):
@@ -339,6 +348,22 @@ def main():
                                 assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
                                 expect(dialog.locator('.clone-confirm')).to_be_enabled()
                             print('PASS '+provider+' stale handoff compensates; interrupted withdrawal preserves changed target, survives restart and resumes from Chromium',flush=True)
+                        if external:
+                            # Each failure is driven by the actual confirmation button.
+                            # Equal-length changes prove byte comparison, not just size.
+                            for path,raw in external.items():
+                                peer.call('unlink',path=str(path))
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as missing:
+                                    dialog.locator('.clone-confirm').click()
+                                assert missing.value.status==409 and missing.value.json()['code']=='move_io',missing.value.text()
+                                assert str(path) in missing.value.text(),missing.value.text()
+                                peer.write(path,bytes([raw[0]^1])+raw[1:])
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as mismatch:
+                                    dialog.locator('.clone-confirm').click()
+                                assert mismatch.value.status==409 and mismatch.value.json()['code']=='move_cwd_mismatch',mismatch.value.text()
+                                peer.write(path,raw)
+                            assert all(p.read_bytes()==raw for p,raw in external.items())
+                            print('PASS '+provider+' Chromium rejects changed external image/output/link bytes; ignores ordinary path examples',flush=True)
                         cleanup_obstruction=None
                         if args.move and args.preserve and peer and provider in ('codex','claude'):
                             operation=move_plan.value.json()['operation_id']
@@ -453,6 +478,12 @@ def main():
                         source_op=json.loads((source.root/'state/transfers'/completed['operation_id']/'operation.json').read_text())
                         target_op=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'operation.json'))
                         assert source_op['phase']==('retired' if args.move else 'exported') and target_op['phase']=='complete' and target_op['incoming_digest']
+                        if external:
+                            environment=json.loads(read_target(destination.root/'state/transfers'/completed['operation_id']/'incoming-environment.json'))
+                            dependencies={path:value for snapshot in environment for path,value in snapshot['dependencies'].items()}
+                            assert set(map(str,external))<=set(dependencies),dependencies
+                            assert not any('/missing/' in path for path in dependencies)
+                            assert all(read_target(path)==raw and path.read_bytes()==raw for path,raw in external.items())
                         if args.move:
                             moved={f['source'] for f in source_op['plan']['files']}
                             moved.update(f['source'] for f in (source_op['file_plan'] or {}).get('files',[]))

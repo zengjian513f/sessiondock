@@ -96,6 +96,7 @@ def serve(config,root):
                 elif op=='append':
                     with owned(request['path']).open('ab') as out:out.write(base64.b64decode(request['bytes']))
                 elif op=='write':owned(request['path']).write_bytes(base64.b64decode(request['bytes']))
+                elif op=='unlink':owned(request['path']).unlink()
                 elif op=='link':owned(request['path']).hardlink_to(owned(request['source']))
                 elif op=='seed_cwd':
                     cwd=owned(request['path'])
