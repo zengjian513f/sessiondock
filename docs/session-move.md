@@ -126,6 +126,16 @@ Codex 支持配置 cwd，但迁移仍须检查本次历史涉及的工作目录�
 MCP 服务或权限。计划列出依赖及目标端检查结果；缺失时明确提示，不能据定义存在就承诺工具可用。
 不复制认证凭据或机器级工具运行状态。
 
+Codex 的 `thread_goals` 和 `thread_goal_continuation_deferrals` 已纳入按线程导入、
+补偿与源端清理，兼容独立 `goals_*.sqlite` 和旧版状态库中的对应表（仍须核对目标 schema）。
+保留目标正文、状态、可空预算、累计 token/时间、时间戳和已有续接延迟标记；改身份时重写
+thread ID、goal ID 以及历史 `thread_goal_updated` 的结构化引用，不替换正文中的 ID 字样。
+原生隔离测试 [session_goals_native_browser.py](../tests/session_goals_native_browser.py)
+为父线程及两个 fork 显式设置暂停目标，经 Chromium 复制后用原生接口读取并单独修改新目标，
+确认原组不变；该测试不发送模型请求，也不证明 fork 自动继承目标。
+合成复杂组另覆盖共享 goal ID、空预算、非零用量和续接延迟记录。
+`thread_attachments`、`thread_realtime_items` 的非空记录仍未适配，不能据此宣称全部原生状态可迁移。
+
 ### 第一步先做 Codex 实测
 
 2026-09-30 已做一次有限实测：Codex CLI 0.157.0，在临时 `CODEX_HOME` A 中创建普通会话并 fork，

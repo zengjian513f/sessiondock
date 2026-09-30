@@ -62,6 +62,25 @@ def prepare(root):
         db.execute('INSERT INTO thread_items VALUES (?,?,?,?)', (ident(7),ident(20),'exec-projection-only',json.dumps({
             'type':'collabAgentToolCall','id':'exec-projection-only','senderThreadId':ident(7),
             'receiverThreadIds':[ident(6)],'agentsStates':{ident(6):{'status':'completed','message':ident(6)}}})))
+    with sqlite3.connect(home / 'goals_1.sqlite') as db:
+        db.executescript("""
+        CREATE TABLE thread_goals (
+          thread_id TEXT PRIMARY KEY NOT NULL, goal_id TEXT NOT NULL, objective TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('active','paused','blocked','usage_limited','budget_limited','complete')),
+          token_budget INTEGER, tokens_used INTEGER NOT NULL DEFAULT 0, time_used_seconds INTEGER NOT NULL DEFAULT 0,
+          created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL);
+        CREATE TABLE thread_goal_continuation_deferrals (
+          thread_id TEXT PRIMARY KEY NOT NULL REFERENCES thread_goals(thread_id) ON DELETE CASCADE);
+        """)
+        for key,status,budget in (('parent','paused',10000),('a','blocked',None),('unrelated','complete',5000)):
+            sid=json.loads(corpus.paths[key].read_text().splitlines()[0])['payload']['id']
+            db.execute('INSERT INTO thread_goals VALUES (?,?,?,?,?,?,?,?,?)',
+                (sid,ident(850 if key!='unrelated' else 851),'Goal literal '+sid,status,budget,123,45,1000,2000))
+        db.execute('INSERT INTO thread_goal_continuation_deferrals VALUES (?)',(ident(2),))
+    with corpus.paths['a'].open('a') as stream:
+        stream.write(json.dumps({'type':'event_msg','payload':{'type':'thread_goal_updated','threadId':ident(2),
+            'goal':{'threadId':ident(2),'objective':'Goal literal '+ident(2),'status':'blocked','tokenBudget':None,
+                    'tokensUsed':123,'timeUsedSeconds':45,'createdAt':1000,'updatedAt':2000}}})+'\n')
     # Current Codex serializes native function outputs as content arrays too.
     # Preserve each item's envelope, ordinary text and non-text content.
     agent = corpus.paths['a-agent']
@@ -101,7 +120,7 @@ def prepare(root):
 
 def native_rows(home):
     result = {}
-    for name in ('state_5.sqlite','thread_history_1.sqlite'):
+    for name in ('state_5.sqlite','thread_history_1.sqlite','goals_1.sqlite'):
         with sqlite3.connect(home / name) as db:
             for table, in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall():
                 result[name,table] = db.execute('SELECT * FROM '+table).fetchall()
@@ -313,6 +332,19 @@ def main():
                         expect(page.locator('#msgs')).not_to_contain_text('Discarded old branch tail')
                         # The confirmation really published files, not a staging-only receipt.
                         saved=json.loads((corpus.root/'state/transfers'/operation/'operation.json').read_text())
+                        goal_map=saved['plan']['identities']
+                        with sqlite3.connect(corpus.root/'codex/goals_1.sqlite') as db:
+                            goal=db.execute('SELECT goal_id,objective,status,token_budget,tokens_used,time_used_seconds FROM thread_goals WHERE thread_id=?',
+                                (goal_map['threads'][ident(2)],)).fetchone()
+                            assert goal==(goal_map['records'][ident(850)],'Goal literal '+ident(2),'blocked',None,123,45),goal
+                            assert goal[0]!=ident(850)
+                            assert db.execute('SELECT count(*) FROM thread_goal_continuation_deferrals WHERE thread_id=?',(goal_map['threads'][ident(2)],)).fetchone()[0]==1
+                        rollout=next(f for f in saved['staged']['files'] if f['source']==str(corpus.paths['a']))
+                        events=[json.loads(line) for line in (corpus.root/'codex'/rollout['relative']).read_text().splitlines()]
+                        event=next(row['payload'] for row in events if row.get('payload',{}).get('type')=='thread_goal_updated')
+                        assert event['threadId']==event['goal']['threadId']==goal_map['threads'][ident(2)]
+                        assert event['goal']['objective']=='Goal literal '+ident(2)
+                        print('PASS cloned native goals preserve status/budget/accounting/deferrals and remap goal and event identities',flush=True)
                         assert saved['phase']=='complete'
                         ids=saved['plan']['identities']['threads']
                         page.locator('#a-view-switch').click()
