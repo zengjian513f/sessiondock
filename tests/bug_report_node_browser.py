@@ -599,6 +599,15 @@ def main():
                     page.set_viewport_size({"width": 390, "height": 844})
                     receipt = page.locator('#bug-report-toast')
                     expect(receipt).to_be_visible()
+                    expect(receipt.locator('.app-float-head strong')).to_have_text('缺陷报告已提交')
+                    expect(receipt.locator('.app-float-actions .primary')).to_have_text('打开')
+                    layout = receipt.evaluate("""card => {
+                        const body = card.querySelector(':scope > span').getBoundingClientRect();
+                        const actions = card.querySelector('.app-float-actions').getBoundingClientRect();
+                        return {column: getComputedStyle(card).flexDirection,
+                            below: actions.top >= body.bottom, fits: card.scrollWidth <= card.clientWidth};
+                    }""")
+                    assert layout == {"column": "column", "below": True, "fits": True}, layout
                     expect(receipt.get_by_role('button', name='打开', exact=True)).to_be_in_viewport()
                     ignore = receipt.get_by_role('button', name='忽略', exact=True)
                     expect(ignore).to_be_in_viewport()
