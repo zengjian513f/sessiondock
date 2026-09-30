@@ -28,18 +28,25 @@ def prepare(root):
     with sqlite3.connect(home / 'state_5.sqlite') as db:
         db.executescript('''
         CREATE TABLE threads(id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, name TEXT,
-          is_pinned INTEGER, project_id TEXT, archived INTEGER, source TEXT);
+          is_pinned INTEGER, project_id TEXT REFERENCES projects(id), archived INTEGER, source TEXT,
+          thread_section_id TEXT REFERENCES thread_sections(id));
         CREATE TABLE thread_spawn_edges(parent_thread_id TEXT, child_thread_id TEXT PRIMARY KEY, status TEXT);
         CREATE TABLE thread_dynamic_tools(thread_id TEXT, position INTEGER, name TEXT,
           description TEXT, input_schema TEXT, PRIMARY KEY(thread_id, position));
         CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT);
+        CREATE TABLE project_roots(project_id TEXT REFERENCES projects(id), position INTEGER, path TEXT,
+          PRIMARY KEY(project_id,position));
+        CREATE TABLE thread_sections(id TEXT PRIMARY KEY, name TEXT);
         ''')
         db.execute('INSERT INTO projects VALUES (?,?)', ('external-project', 'Keep this project'))
+        db.execute('INSERT INTO projects VALUES (?,?)', ('unrelated-project', 'Do not transfer'))
+        db.execute('INSERT INTO project_roots VALUES (?,?,?)', ('external-project', 0, str(cwd)))
+        db.execute('INSERT INTO thread_sections VALUES (?,?)', ('pinned-section', 'Pinned'))
         for key in ('parent', 'a', 'b', 'grandchild', 'parent-agent', 'a-agent', 'unrelated'):
             p = corpus.paths[key]
             meta = json.loads(p.read_text().splitlines()[0])['payload']
-            db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?)', (meta['id'], str(p),
-                'Native ' + key, key == 'a', 'external-project', key == 'b', json.dumps(meta.get('source', 'cli'))))
+            db.execute('INSERT INTO threads VALUES (?,?,?,?,?,?,?,?)', (meta['id'], str(p),
+                'Native ' + key, key == 'a', 'external-project', key == 'b', json.dumps(meta.get('source', 'cli')), 'pinned-section'))
         for parent, child in ((1,6),(2,7)):
             db.execute('INSERT INTO thread_spawn_edges VALUES (?,?,?)', (ident(parent), ident(child), 'completed'))
     with sqlite3.connect(home / 'thread_history_1.sqlite') as db:
@@ -331,6 +338,11 @@ def main():
                             row=db.execute('SELECT name,is_pinned,project_id FROM threads WHERE id=?',(ids[ident(2)],)).fetchone()
                             assert row==('Native a',1,'external-project'),row
                             assert db.execute('SELECT parent_thread_id FROM thread_spawn_edges WHERE child_thread_id=?',(ids[ident(7)],)).fetchone()==(ids[ident(2)],)
+                            receipt=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(operation,)).fetchone()[0])
+                            shared={'projects','project_roots','thread_sections'}
+                            assert all(not t['rows'] for t in receipt['inserted']['tables'] if t['name'] in shared)
+                            projects=next(t['rows'] for t in receipt['planned']['tables'] if t['name']=='projects')
+                            assert [r['id'] for r in projects]==['external-project']
                         print('PASS Chromium/Hub confirms complex group clone, opens new history and agent; native metadata and code-mode references',flush=True)
                     else:
                         # Retry after process restart must return the same group and
@@ -358,6 +370,10 @@ def main():
                     if not restart:
                         interrupted=journal
                         next_op['phase']='publishing'
+                        # Reproduce the legacy journal shape, which did not
+                        # include shared association rows, for upgrade recovery.
+                        for database in next_op['rewritten']['databases']:
+                            database['tables']=[t for t in database['tables'] if t['name'] not in {'projects','project_roots','thread_sections'}]
                         journal.write_text(json.dumps(next_op))
                         f=next_op['staged']['files'][0]
                         target=corpus.root/'codex'/f['relative'];target.parent.mkdir(parents=True,exist_ok=True)
