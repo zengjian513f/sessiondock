@@ -458,6 +458,7 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 .client-matrix .client-update:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .client-matrix td[data-state="outdated"] .client-update { border-color: var(--accent); color: var(--accent); }
 .client-matrix .client-update:disabled { cursor: default; }
+.client-matrix td[data-state="unknown"] .client-update { opacity: .4; }
 .client-matrix .client-missing, .client-matrix .client-status { color: var(--muted); }
 .machine-color { position: relative; display: flex; flex: none; }
 .machine-swatch {

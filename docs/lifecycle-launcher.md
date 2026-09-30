@@ -83,15 +83,20 @@ unchanged. See the [official configuration reference](https://developers.openai.
 
 The Machines settings tab has an AI client matrix below the machine list: one
 row per enabled machine, one column per client installed on at least one of
-them. A cell shows only the installed version and an `↑` update button, which
-is highlighted when a newer version is known; the newest version and the last
-update's outcome are in the cell's tooltip. `无` means that machine lacks the
+them. A cell shows only the installed version and an `↑` update button:
+highlighted when a newer version is known, plain when the version is the
+newest, and faded while that is unknown; the newest version, the lookup state
+and the last update's outcome are in the cell's tooltip. A client is judged
+against the highest of every machine's newest version and installed version
+for that client, so a machine whose own lookup failed, or that runs an older
+build than another machine, still shows as upgradable; it shows as newest only
+when some machine's lookup answered. `无` means that machine lacks the
 client; a whole row reads `…` while loading and `离线` when the machine is
 offline or cannot be read (reason in the tooltip). An update fails only when
 its command exits non-zero, times out or cannot start.
 `GET /api/clients` runs each profile's executable with its fixed `args` plus
 `--version` (10 s each, in parallel, under lifecycle admission) and answers
-`{clients:[{id, source, version?, detail, installed, latest?, update?}]}`:
+`{clients:[{id, source, version?, detail, installed, latest?, latest_state?, update?}]}`:
 `detail` is the first output line and `version` its first `1.2.3`-shaped word.
 A profile whose command is missing (the picker's 126/127 rule) is
 `installed:false` and gets no cell. `latest` is the newest version on the
@@ -99,9 +104,14 @@ channel the CLI's own updater follows, looked up with `curl` in the profile's
 environment (so its proxy applies): Claude's npm dist-tag named by
 `autoUpdatesChannel` in its `settings.json` (default `latest`), Codex's npm
 `latest`, OpenCode's `opencode.ai/update/api/latest/cli/npm`, and Grok's own
-`update --check --json`. An answer is reused for 10 minutes, a failed lookup is
-retried after 1 minute, and a missing `latest` only means the cell cannot say
-whether it is current. The page compares versions by numeric parts.
+`update --check --json`. The lookup crosses the network, so it runs on its own
+thread and the answer never waits for it: `latest` is the last answer that
+arrived (a failed lookup never erases it), and `latest_state` is `pending`
+while a lookup runs or `failed` when the last one failed. A lookup starts when
+the answer is older than 10 minutes, or 1 minute after a failure; curl
+connects within 4 s, gives up after 8 s and retries twice. The page keeps
+polling every 2 s while any lookup is pending, and compares versions by
+numeric parts.
 
 `POST /api/clients/update {id}` claims that profile's update slot (404
 `unknown_client` for an unknown or shell ID, 409 `client_update_running` while
