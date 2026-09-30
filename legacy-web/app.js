@@ -9378,7 +9378,9 @@ function clientUpdateSummary(target, client) {
 function scheduleMachineClients(target) {
   clearTimeout(machineClientPolls.get(target.id));
   machineClientPolls.delete(target.id);
-  if (!(machineClients.get(target.id)?.clients || []).some(client => client.update?.running)) return;
+  // 更新在跑、或那台机器还在查最新版本（走外网，可能慢）时继续轮询
+  if (!(machineClients.get(target.id)?.clients || [])
+    .some(client => client.update?.running || client.latest_state === 'pending')) return;
   machineClientPolls.set(target.id, setTimeout(() => void loadMachineClients(target), CLIENT_POLL_MS));
 }
 
@@ -9442,6 +9444,20 @@ function renderClientMatrix() {
     machines.some(target => installed(machineClients.get(target.id)).some(client => client.source === source)));
   box.textContent = '';
   if (!machines.length) return;
+  // 同一个软件的参照版本：各机器查到的最新版本与各机器已装版本中最大的。一台
+  // 机器没查到（外网慢或失败）时借用别的机器的结果；别的机器装得更新也说明能升级。
+  const reference = {};
+  const published = new Set();   // 至少一台机器查到了最新版本的软件
+  for (const target of machines) {
+    for (const client of installed(machineClients.get(target.id))) {
+      if (client.latest) published.add(client.source);
+      for (const version of [client.latest, client.version]) {
+        if (version && (!reference[client.source] || compareVersions(version, reference[client.source]) > 0)) {
+          reference[client.source] = version;
+        }
+      }
+    }
+  }
   const table = document.createElement('table');
   table.className = 'client-matrix';
   const head = table.createTHead().insertRow();
@@ -9478,7 +9494,7 @@ function renderClientMatrix() {
       const client = installed(entry).find(item => item.source === source);
       const cell = row.insertCell();
       cell.dataset.clientSource = source;
-      if (client) fillClientCell(cell, target, client);
+      if (client) fillClientCell(cell, target, client, reference[source], published.has(source));
       else {
         cell.className = 'client-missing';
         cell.textContent = '无';
@@ -9489,11 +9505,13 @@ function renderClientMatrix() {
 }
 
 // 格子只有版本号和一个 ↑：有新版时 ↑ 高亮；最新版本号、更新结果都在悬停提示里
-function fillClientCell(cell, target, client) {
+// 能不能升级看参照版本；自己的最新版本还没查到但别的机器已给出参照时照样能判断。
+// 只有这台机器和别的机器都没给出更高版本、自己又没查到时才是 unknown（↑ 变淡）。
+function fillClientCell(cell, target, client, reference, published) {
   const running = !!client.update?.running;
-  const outdated = client.version && client.latest && compareVersions(client.version, client.latest) < 0;
+  const outdated = client.version && reference && compareVersions(client.version, reference) < 0;
   cell.dataset.state = running ? 'running' : outdated ? 'outdated'
-    : client.version && client.latest ? 'current' : 'unknown';
+    : client.version && published ? 'current' : 'unknown';
   const version = document.createElement('code');
   version.className = 'client-version';
   version.textContent = client.version || '?';
@@ -9504,8 +9522,12 @@ function fillClientCell(cell, target, client) {
   button.disabled = running;
   button.setAttribute('aria-label', `更新 ${target.name} 上的 ${clientName(client)}`);
   button.onclick = () => void updateMachineClient(target, client, button);
+  const lookup = client.latest_state === 'pending' ? '正在查询最新版本'
+    : client.latest_state === 'failed' ? '最新版本查询失败' : '';
   const tips = [client.detail || '',
-    !client.latest ? '未查到最新版本' : outdated ? `可更新到 ${client.latest}` : `已是最新（${client.latest}）`];
+    outdated ? `可更新到 ${reference}` : cell.dataset.state === 'current' ? `已是最新（${reference}）`
+      : '未查到最新版本',
+    lookup];
   if (client.update && !running) {
     tips.push(clientUpdateSummary(target, client));
     if (client.update.output) tips.push(client.update.output);
