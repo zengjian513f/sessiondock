@@ -5,6 +5,7 @@ Only a free fake CLI and loopback server in private temporary directories.
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 from urllib.parse import urlsplit
@@ -79,6 +80,10 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY')
                 expect(page.locator('#composer-input-status')).to_be_visible()
+                expect(page.locator('#dlive')).to_have_text('!')
+                expect(page.locator('#dlive')).to_have_css('background-color', 'rgb(251, 191, 36)')
+                assert page.locator('#composer-input-status').evaluate(
+                    "node => getComputedStyle(node, '::before').content") == '"!"'
                 # No submission is needed to show or retain the reason. Enter
                 # follows the disabled button and leaves the draft editable.
                 trace = screen.with_suffix('.trace')
@@ -114,11 +119,31 @@ def main():
                 expect(page.locator('#csend')).to_be_disabled()
                 page.evaluate('restoreInputChecks()')
                 expect(page.locator('#composer-input-status')).to_contain_text('PTY', timeout=10000)
+                # Temporary non-ready states and a genuinely busy process are
+                # normal progress, not a yellow exclamation mark.
+                transitions = page.evaluate('''() => {
+                    const draft=composerDraft(), previous=draft.cli;
+                    const results=[];
+                    for (const code of ['input_check_pending','cli_starting','cli_catching_up','cli_pasting']) {
+                        updateComposerInputStatus(composerUid, {input:{state:code === 'input_check_pending'
+                            ? 'unknown' : 'starting',code,message:'progress'}});
+                        results.push([code,document.querySelector('#dlive').classList.contains('input-attention'),
+                            document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                    }
+                    applyCliState(composerUid, {...previous,instance:{running:true,busy:true},
+                        input:{state:'unknown',code:'cli_not_ready',message:'processing'}});
+                    results.push(['working',document.querySelector('#dlive').classList.contains('input-attention'),
+                        document.querySelector('#composer-input-status').classList.contains('input-attention')]);
+                    applyCliState(composerUid, previous);
+                    return results;
+                }''')
+                assert all(not header and not composer for _, header, composer in transitions), transitions
                 assert not dialogs, dialogs
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
                 screen.write_text('custom')
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'")
+                expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 page.locator('#cinput').click()
                 screen.write_text('login')
                 page.wait_for_function("composerDraft()?.inputStatus?.state === 'unknown'")
@@ -401,6 +426,9 @@ def main():
                 trace.unlink()
                 screen.write_text('')
                 wait_code('cli_starting')
+                page.wait_for_function("composerDraft()?.inputStatus?.state === 'starting'")
+                expect(page.locator('#dlive')).not_to_have_class(re.compile(r'\binput-attention\b'))
+                expect(page.locator('#composer-input-status')).not_to_have_class(re.compile(r'\binput-attention\b'))
                 response = post('send', text='still starting', request_id='startup-timeout')
                 assert response.status == 409 and response.json()['code'] == 'cli_starting', response.text()
                 assert not trace.exists()
