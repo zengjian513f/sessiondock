@@ -4,6 +4,8 @@
 
 #[path = "claude_tools.rs"]
 pub(super) mod claude_tools;
+#[path = "grok_tools.rs"]
+pub(super) mod grok_tools;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -58,6 +60,18 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
     if !entries.contains_key(selected) {
         return Err(TransferError::new("not_found", "会话不在当前索引中"));
     }
+    let mut grok_aliases = Vec::new();
+    for e in entries.values().filter(|e| e.source == "grok") {
+        if let Some(path) = &e.summary_path {
+            if let Ok(raw) = std::fs::read(path) {
+                if let Ok(row) = serde_json::from_slice::<Value>(&raw) {
+                    if let Some(alias) = row["agent_id"].as_str().filter(|s| !s.is_empty()) {
+                        grok_aliases.push((alias.to_owned(), e.summary.sid.clone()));
+                    }
+                }
+            }
+        }
+    }
     let mut identities: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
     for e in entries.values() {
         if !e.summary.sid.is_empty() {
@@ -65,6 +79,16 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
                 .entry((e.source, &e.summary.sid))
                 .or_default()
                 .push(&e.uid);
+        }
+    }
+    for (alias, sid) in &grok_aliases {
+        if alias != sid {
+            if let Some(targets) = identities.get(&("grok", sid.as_str())).cloned() {
+                identities
+                    .entry(("grok", alias.as_str()))
+                    .or_default()
+                    .extend(targets);
+            }
         }
     }
     let mut edges = BTreeSet::new();
@@ -298,6 +322,22 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
                 }
             }
         } else if let Some(path) = &e.summary_path {
+            match grok_tools::rows(path.parent().unwrap()) {
+                Ok(rows) => {
+                    for id in grok_tools::references(&rows) {
+                        // The same tool also accepts shell task IDs and failed lookups.
+                        // Only indexed durable agents establish a history relationship.
+                        if identities.contains_key(&("grok", id.as_str())) {
+                            references.insert((id, "agent_tool".into()));
+                        }
+                    }
+                }
+                Err(error) => blockers.push(Blocker {
+                    uid: e.uid.clone(),
+                    code: error.code,
+                    message: error.message,
+                }),
+            }
             let row: Value = match std::fs::read(path)
                 .map_err(TransferError::from)
                 .and_then(|raw| Ok(serde_json::from_slice(&raw)?))

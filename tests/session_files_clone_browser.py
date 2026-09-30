@@ -45,6 +45,29 @@ def main():
             stream.write(encoded(row(ident(2),'assistant',807,ident(806),[{'type':'tool_use','id':'not-send','name':'Bash','input':{'command':'synthetic'}}])))
             stream.write(encoded(row(ident(2),'user',808,ident(807),[{'type':'tool_result','tool_use_id':'not-send',
                 'content':json.dumps({'success':True,'resumedAgentId':'missing-unrelated-agent'})}])))
+        # A Grok agent owned by an otherwise independent family, referenced by
+        # its durable alias through an update stream. Call IDs are session-local.
+        grok_alias='ag1.abcdefabcdefabcdefabcdefabcdefab'
+        for number in (80,81):
+            folder=corpus.root/'grok/project'/ident(number);folder.mkdir(parents=True)
+            (folder/'summary.json').write_text(json.dumps({'info':{'id':ident(number),'cwd':str(corpus.root/'cwd')},
+                'generated_title':'Foreign Grok '+str(number),'agent_id':grok_alias if number==81 else 'ag1.foreign-owner'}))
+            (folder/'chat_history.jsonl').write_bytes(encoded({'type':'user','content':'Foreign Grok question'})+
+                encoded({'type':'assistant','content':'Foreign Grok answer '+str(number),
+                         'tool_calls':[{'id':'cross-grok','name':'Bash','arguments':'{}'}]})+
+                encoded({'type':'tool_result','tool_call_id':'cross-grok','content':'Synthetic completed tool'})+
+                encoded({'type':'assistant','content':'Foreign Grok answer '+str(number)}))
+            (folder/'updates.jsonl').write_bytes(encoded({'toolCallId':'cross-grok','rawInput':{'subagent_id':grok_alias},
+                'rawOutput':'=== Task '+grok_alias+' ===\n'}))
+        grok_owner=corpus.root/'grok/project'/ident(80)
+        meta=grok_owner/'subagents'/grok_alias/'meta.json';meta.parent.mkdir(parents=True)
+        meta.write_text(json.dumps({'subagent_id':grok_alias,'parent_session_id':ident(80),'child_session_id':ident(81)}))
+        parent=corpus.root/'grok/project'/ident(10)
+        with (parent/'chat_history.jsonl').open('ab') as stream:
+            stream.write(encoded({'type':'assistant','tool_calls':[{'id':'cross-grok','name':'send_subagent_message','arguments':'{}'}]}))
+        with (parent/'updates.jsonl').open('ab') as stream:
+            stream.write(encoded({'params':{'update':{'toolCallId':'cross-grok','rawInput':{'subagent_id':grok_alias,'message':'Literal '+grok_alias},
+                'rawOutput':'=== Task '+grok_alias+' ===\n'}}}))
         (corpus.root/'state').mkdir();(corpus.root/'proc').mkdir()
         original={str(p):p.read_bytes() for folder in ('claude','grok') for p in (corpus.root/folder).rglob('*') if p.is_file()}
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
@@ -69,7 +92,7 @@ def main():
                             page.locator('#item-menu [data-act="clone"]').click()
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
-                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 4)
+                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                                 dialog.locator('.clone-confirm').click()
                             response=reply.value;assert response.ok,response.text();result=response.json()
@@ -101,10 +124,25 @@ def main():
                                 expect(page.locator('#msgs')).to_contain_text('Foreign agent answer')
                                 print('PASS Claude cross-owner SendMessage includes parent/agent and rewrites resolved short destination',flush=True)
                             else:
+                                meta=corpus.root/'grok/project'/ids['grok:'+ident(80)]/'subagents'/ids['grok:'+grok_alias]/'meta.json'
+                                assert json.loads(meta.read_text())['child_session_id']==ids['grok:'+ident(81)]
+                                copied=corpus.root/'grok/project'/ids['grok:'+ident(10)]/'updates.jsonl'
+                                update=json.loads(copied.read_text().splitlines()[-1])['params']['update']
+                                assert update['rawInput']['subagent_id']==ids['grok:'+grok_alias]
+                                assert update['rawInput']['message']=='Literal '+grok_alias
+                                assert update['rawOutput']=='=== Task '+ids['grok:'+grok_alias]+' ===\n'
+                                foreign=corpus.root/'grok/project'/ids['grok:'+ident(80)]/'updates.jsonl'
+                                unrelated=json.loads(foreign.read_text().splitlines()[0])
+                                assert unrelated['rawInput']['subagent_id']==grok_alias
+                                assert unrelated['rawOutput']=='=== Task '+grok_alias+' ===\n'
+                                print('PASS Grok cross-owner durable alias closes group; chat/update calls scoped to owner and ordinary tool data preserved',flush=True)
                                 rows=get_json(opener,base,'/api/sessions')['sessions']
                                 child=next(row for row in rows if row['sid']==ids['grok:'+ident(13)])
                                 page.locator(f'#side .item[data-uid="{scoped(node.nid,child["uid"])}"]').click()
                                 expect(page.locator('#msgs')).to_contain_text('Grok answer 13')
+                                foreign=next(row for row in rows if row['sid']==ids['grok:'+ident(81)])
+                                page.locator(f'#side .item[data-uid="{scoped(node.nid,foreign["uid"])}"]').click()
+                                expect(page.locator('#msgs')).to_contain_text('Foreign Grok answer 81')
                             assert all(Path(p).read_bytes()==raw for p,raw in original.items())
                             operations.append((selected,result,op))
                             print('PASS real Hub/Chromium '+source+' whole-family copy, opened new history/agent, source intact',flush=True)

@@ -365,7 +365,7 @@ def main():
                             assert all(p.read_bytes()==raw for p,raw in external.items())
                             print('PASS '+provider+' Chromium rejects changed external image/output/link bytes; ignores ordinary path examples',flush=True)
                         cleanup_obstruction=None
-                        if args.move and args.preserve and peer and provider in ('codex','claude'):
+                        if args.move and args.preserve and peer and provider in ('codex','claude','grok'):
                             operation=move_plan.value.json()['operation_id']
                             for route in (f'/api/nodes/{a.nid}/api/session/transfer/switch','/api/session/transfer/switch'):
                                 forbidden=context.request.post(f'http://127.0.0.1:{hub.port}'+route,data={'uid':source_uid,'operation_id':operation})
@@ -400,7 +400,24 @@ def main():
                             manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())
                             assert manifest['files'][0]['in_trash'] and not Path(manifest['files'][0]['origin']).exists()
                             cleanup_obstruction.rmdir()
-                            if provider=='claude':
+                            if provider=='grok':
+                                late=source.root/'grok/project'/ident(999);late.mkdir(parents=True)
+                                (late/'summary.json').write_text(json.dumps({'info':{'id':ident(999),'cwd':str(source.root/'cwd')},'generated_title':'Late Grok ref'}))
+                                agent_id=ident(13)
+                                (late/'chat_history.jsonl').write_text(json.dumps({'type':'assistant','tool_calls':[{'id':'late-grok','name':'send_subagent_message','arguments':'{}'}]})+'\n')
+                                (late/'updates.jsonl').write_text(json.dumps({'params':{'update':{'toolCallId':'late-grok','rawInput':{'subagent_id':agent_id}}}})+'\n')
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                    dialog.locator('.clone-confirm').click()
+                                assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                                assert (cleanup_obstruction.parent/'0').exists()
+                                call=late/'chat_history.jsonl';call.write_text(call.read_text().replace('send_subagent_message','Bash'))
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
+                                    dialog.locator('.clone-confirm').click()
+                                reply=response.value;assert reply.ok,reply.text()
+                                for path in late.iterdir():path.unlink()
+                                late.rmdir()
+                                print('PASS Grok late chat/update agent reference protects partially retired group; ordinary tool input does not block cleanup',flush=True)
+                            elif provider=='claude':
                                 agent_id=next(m['sid'] for m in partial['full_group']['members'] if m['agent'])
                                 late=source.root/'claude/projects/project'/(ident(999)+'.jsonl')
                                 for short in (False,True):
@@ -468,7 +485,7 @@ def main():
                         task_request={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']}
                         progress=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/progress',data=task_request)
                         assert progress.ok and progress.json()['phase']=='complete',progress.text()
-                        if not (args.move and args.preserve and peer and provider in ('codex','claude')):
+                        if not (args.move and args.preserve and peer and provider in ('codex','claude','grok')):
                             assert progress.json()['bytes_sent']==progress.json()['bytes_total']>0,progress.text()
                         pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
                         assert pending.ok and all(t['request']['operation_id']!=completed['operation_id'] for t in pending.json()['operations']),pending.text()

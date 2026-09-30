@@ -53,6 +53,10 @@ NFS，也可以是各自本地的目录；工作目录共享与会话存储共�
   调用和结果按各自 transcript 匹配，不把其他工具输出或普通消息中的同名字段当成关系。
 - Codex `forked_from_id`、`parent_thread_id`，以及各代 rollout 的所属线程。
 - Claude `continued_in` 续接链（[history-pages.md](history-pages.md)）。
+- Grok 子代理工具参数指向已索引的 session/agent ID 时，纳入其所属会话及整组关系；
+  合并同一会话的 chat/update 流解析调用，不跨会话复用工具调用 ID。
+  移动的部分清理阶段也检查新出现的这类引用；普通工具输入、消息正文和未解析的 shell task ID
+  不作为子代理关系。克隆提前收集 agent 别名，使引用及子代理目录一起改写。
 - 跨 CLI 的 `spawned_by`；纯展示用的 `nest_parent` 不自动视为历史依赖。
 - 所有物理历史依赖及其反向引用，包括指向旧 rollout、归档文件的固定前缀。
 - 继承历史中需要实际子代理记录才能解析的身份引用，也须通过来源适配器解析，不能只扫当前树。
