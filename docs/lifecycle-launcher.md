@@ -74,9 +74,36 @@ A node offers OpenCode only when its launcher configuration names exactly one
 Managed Codex profiles append `-c check_for_update_on_startup=false` for new,
 resume and report-worker launches. An interactive startup update exits Codex
 before native session creation, abandoning the pending session. Update Codex
-from an external terminal instead; this per-invocation override leaves user
-configuration and model/effort defaults untouched. Fixed-argv adapters are
+outside managed sessions instead (the machine settings below, a scheduled
+`codex update`, or an external terminal); this per-invocation override leaves
+user configuration and model/effort defaults untouched. Fixed-argv adapters are
 unchanged. See the [official configuration reference](https://developers.openai.com/codex/config-reference).
+
+## Client versions and manual updates
+
+The Machines settings tab shows, under each machine, every installed agent
+CLI profile with its version and an Update button. `GET /api/clients` runs each
+profile's executable with its fixed `args` plus `--version` (10 s each, in
+parallel, under lifecycle admission) and answers
+`{clients:[{id, source, version?, detail, installed, update?}]}`: `detail` is
+the first output line and `version` its first `1.2.3`-shaped word. A profile
+whose command is missing (the picker's 126/127 rule) is `installed:false` and
+the page leaves it out. `POST /api/clients/update {id}` claims that profile's
+update slot (404 `unknown_client` for an unknown or shell ID, 409
+`client_update_running` while one runs) and answers `{started:true}` at once.
+The update runs on its own thread, holds no admission, and executes the
+profile's executable, `args` and environment plus `update`: Claude, Codex, Grok
+and OpenCode all install without asking under that name. Stdin is closed, the
+working directory is the profile's `HOME`, the whole process group is killed
+after 600 s, and output pipes left open by a background process are read for
+at most 5 s after exit. The latest outcome per profile
+(`running, started_at, finished_at, ok, code, before, after, output`, where
+`output` is the last 4000 characters of stdout then stderr with terminal
+escapes and carriage-return redraws removed) stays in memory until the service
+restarts. The page polls every 2 s while an update runs and reports the
+finished result in the Machines note; the Hub reaches each machine through the
+explicit `/api/nodes/<id>/api/clients…` proxy. Running sessions keep the
+binary they started with; new launches resolve the executable again.
 
 The child inherits the service environment, then applies `env` and
 `env_remove`. Session-lineage variables are cleared:
