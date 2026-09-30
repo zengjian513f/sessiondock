@@ -25,7 +25,7 @@ struct Document {
     queued: BTreeMap<String, Vec<QueuedSend>>,
 }
 /// One SEND the terminal accepted whose native user/command record has not
-/// been seen yet. `state` is `queued` or `lost` (the instance went away).
+/// been seen yet. `state` is `queued`, `interrupted` or `lost`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct QueuedSend {
     pub request_id: String,
@@ -467,6 +467,17 @@ impl Store {
                 }
             }
             Ok(true)
+        })
+    }
+    /// Keeps selected sends whose processing an interrupted CLI did not confirm.
+    pub fn mark_interrupted(&self, key: &str, request_ids: &[String]) -> Result<()> {
+        self.update(|doc| {
+            for row in doc.queued.get_mut(key).into_iter().flatten() {
+                if row.state == "queued" && request_ids.contains(&row.request_id) {
+                    row.state = "interrupted".into();
+                }
+            }
+            Ok(())
         })
     }
     /// Marks every queued send of the key with `state` (e.g. `lost`).

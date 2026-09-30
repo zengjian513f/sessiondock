@@ -89,6 +89,7 @@ def main():
                     'SESSIONDOCK_TEST_QUOTED_READY': '1',
                     'SESSIONDOCK_TEST_QUEUE_FILE': str(root / 'queue'),
                     'SESSIONDOCK_TEST_BUSY_WARNING': '1',
+                    'SESSIONDOCK_TEST_QUEUE_INTERRUPT': '1',
                     'SESSIONDOCK_TEST_COMMAND_DISPATCH': '1',
                     'SESSIONDOCK_TEST_COMMAND_LOG': str(root / 'command-log'),
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
@@ -250,12 +251,72 @@ def main():
                 queue_file.unlink()
                 expect(page.locator('#queued-sends .queued-send')).to_have_count(0, timeout=15000)
                 assert [r['content'][0]['text'] for r in user_records(rollout)].count(queued_text.strip()) == 2
+                # BUG-20260930-172002-bc4cf4: Esc consumes a TUI-only
+                # queue as a steer, then Esc aborts before any native echo.
+                queue_file.write_text('all')
+                text = 'queued steer interrupted before native user record'
+                page.locator('#cinput').fill(text)
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                    page.locator('#csend').click()
+                assert sent.value.status == 200, sent.value.text()
+                submission = sent.value.request.post_data_json
+                bubble = page.locator('#queued-sends .queued-send').filter(has_text=text)
+                expect(bubble).to_have_attribute('data-cli-queued', '1', timeout=15000)
+                # An idle screen without the queue is insufficient evidence
+                # when no native abort followed this send.
+                queue_file.write_text('idle-hidden')
+                time.sleep(2)
+                checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                assert checked['cli']['instance']['busy'] is False, checked
+                assert checked['cli']['queued'][0]['state'] == 'queued', checked
+                queue_file.write_text('all')
+                page.locator('#cesc').click()
+                # The first abort starts the steer: a working turn with an
+                # off-screen queue must still retain its confirmation.
+                time.sleep(2)
+                expect(bubble).to_have_attribute('data-state', 'queued')
+                page.locator('#cesc').click()
+                expect(bubble).to_have_attribute('data-state', 'interrupted', timeout=15000)
+                expect(bubble.locator('.queued-send-state')).to_contain_text('CLI 已中断，未确认处理')
+                assert text not in [r['content'][0]['text'] for r in user_records(rollout)]
+                # Persisted status survives reload and does not resend.
+                page.reload(wait_until='domcontentloaded')
+                page.locator(f'#side .item[data-uid="{uid}"]').click()
+                expect(bubble).to_have_attribute('data-state', 'interrupted', timeout=15000)
+                replay = context.request.post(base + '/api/session/conversation/send', data=submission)
+                assert replay.status == 200, replay.text()
+                expect(bubble).to_have_attribute('data-state', 'interrupted')
+                persisted = json.loads(ledger.read_text())
+                assert any(r['state'] == 'interrupted' and r['text'] == text
+                           for rows in persisted['queued'].values() for r in rows)
+                # A send after the abort is a new queue, not an interrupted
+                # receipt. A later echo also overrides interrupted evidence.
+                page.locator('#cinput').fill('new input after interrupt')
+                with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as sent:
+                    page.locator('#csend').click()
+                assert sent.value.status == 200, sent.value.text()
+                new_bubble = page.locator('#queued-sends .queued-send').filter(has_text='new input after interrupt')
+                expect(new_bubble).to_have_attribute('data-cli-queued', '1', timeout=15000)
+                expect(new_bubble).to_have_attribute('data-state', 'queued')
+                queue_file.write_text('idle-hidden')
+                time.sleep(2)
+                checked = context.request.post(base + '/api/session/conversation/check', data={'uid': uid, '_build': build}).json()
+                assert checked['cli']['instance']['busy'] is False, checked
+                assert next(r for r in checked['cli']['queued'] if r['text'] == 'new input after interrupt')['state'] == 'queued', checked
+                queue_file.write_text('all')
+                late_echo = codex_message('user', text)
+                late_echo['timestamp'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                with rollout.open('a') as stream:
+                    stream.write(json.dumps(late_echo) + '\n')
+                expect(bubble).to_have_count(0, timeout=15000)
+                queue_file.unlink()
+                expect(new_bubble).to_have_count(0, timeout=15000)
                 assert not errors, errors
                 context.close()
                 browser.close()
         finally:
             cleanup_hosts(root)
-    print('PASS native Codex browser: built-in command dispatch without original echo, /model menu, persisted receipt-verified repair, literal command escapes, reload/replay, resumed identity, cwd, repeated composer sends, exact native records, TUI queue evidence, duplicate/wrapped sends, native retirement')
+    print('PASS native Codex browser: built-in commands, resumed identity, TUI queues, duplicate/wrapped sends, native retirement, interrupted steer without echo, idle/old-abort negatives, persisted status, replay without resend, late echo')
 
 
 if __name__ == '__main__':
