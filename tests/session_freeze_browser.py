@@ -2,6 +2,7 @@
 """Freeze/resume a real private fake CLI process tree through Chromium."""
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import socket
@@ -12,7 +13,7 @@ import time
 from urllib.parse import urlsplit
 from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
-from history_parity import REPO, BINARY, Corpus, codex_row, codex_message, isolated_server
+from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_message, isolated_server
 from session_stop_browser import CODEX_SID, session_action, wait_xterm
 from popups import on_popup
 from hub_http_suite import Hub, free_port, scoped
@@ -57,6 +58,21 @@ def freeze_button(page):
     return button
 
 
+def check_pause_badges(page, uid):
+    side = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
+    header = page.locator('#dlive')
+    for badge in [side, header]:
+        expect(badge).to_have_class(re.compile(r'\bfrozen\b'))
+        expect(badge.locator('use')).to_have_attribute('href', '#i-pause')
+        expect(badge).to_have_attribute('aria-label', re.compile('已暂停'))
+        expect(badge).to_have_css('animation-name', 'none')
+    expect(header).to_be_visible()
+    badge_box = header.bounding_box()
+    icon_box = header.locator('..').bounding_box()
+    assert badge_box['x'] >= icon_box['x'] + icon_box['width'] / 2
+    assert badge_box['y'] < icon_box['y'] + icon_box['height'] / 2
+
+
 def main():
     if not sys.platform.startswith('linux'):
         raise SystemExit('Linux process freeze suite')
@@ -68,6 +84,10 @@ def main():
         corpus.put(CODEX_SID, 'codex', [codex_row('session_meta', {'id': CODEX_SID, 'cwd': str(root / 'work')}),
                    codex_message('user', 'Freeze diagnostic fixture')], [])
         uid = corpus.uid(CODEX_SID)
+        other_sid = 'freeze-unrelated-session'
+        corpus.put(other_sid, 'claude', [claude_row(other_sid, 'user', 'u0', None,
+                   'Unrelated session without a paused process')], [])
+        other_uid = corpus.uid(other_sid)
         native = {name: path.read_bytes() for name, path in corpus.paths.items()}
         (root / 'bin/cli.py').write_text(CLI)
         (root / 'bin/child.py').write_text("import sys,time\nfrom pathlib import Path\np=Path(sys.argv[1])\nwhile True:\n p.write_text(str(time.monotonic()))\n time.sleep(.03)\n")
@@ -135,6 +155,21 @@ def main():
                     answer = response.value.json()
                     assert response.value.status == 200 and answer['frozen'] and answer['process_count'] == 2, answer
                     expect(button).to_have_attribute('aria-label', '恢复运行')
+                    check_pause_badges(page, uid)
+                    expect(page.locator('#session-stop-notice')).to_be_visible()
+                    page.locator(f'#side .item[data-uid="{other_uid}"]').click()
+                    page.wait_for_function('uid => S.sel === uid', arg=other_uid)
+                    expect(page.locator('#session-stop-notice')).to_be_hidden()
+                    expect(page.locator('#dlive.frozen')).to_have_count(0)
+                    # The paused session retains its own marker and unread count.
+                    page.evaluate('uid => addUnread(uid, 3)', uid)
+                    paused_side = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
+                    expect(paused_side).to_have_class(re.compile(r'\bfrozen\b'))
+                    expect(paused_side).to_have_text('3')
+                    expect(paused_side.locator('use')).to_have_attribute('href', '#i-pause')
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    check_pause_badges(page, uid)
+                    expect(page.locator('#session-stop-notice')).to_be_hidden()
                     assert all(state(pid) == 'T' for pid in pids), [(pid, state(pid)) for pid in pids]
                     ticks = [(root / name).read_text() for name in ['main-tick', 'child-tick']]
                     time.sleep(.2)
@@ -159,12 +194,15 @@ def main():
                     page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === true)', arg=uid)
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '恢复运行')
+                    check_pause_badges(page, uid)
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
                     button = freeze_button(page)
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze') as response:
                         button.click()
                     assert response.value.status == 200 and response.value.json()['frozen'] is False
                     expect(button).to_have_attribute('aria-label', '冻结现场')
+                    expect(page.locator('#dlive.frozen')).to_have_count(0)
+                    expect(page.locator(f'#side .item[data-uid="{uid}"] .item-status.frozen')).to_have_count(0)
                     deadline = time.monotonic() + 3
                     while time.monotonic() < deadline and any((root / name).read_text() == tick
                             for name, tick in zip(['main-tick', 'child-tick'], ticks)):
@@ -197,6 +235,7 @@ def main():
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze'):
                         button.click()
                     expect(button).to_have_attribute('aria-label', '恢复运行')
+                    check_pause_badges(page, uid)
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
                     # Stop directly while frozen: the server must recover the
                     # tree before EOF, so the child can exit with its parent.
@@ -230,7 +269,7 @@ def main():
                 except OSError:
                     pass
     print('PASS freeze browser: real parent/child stop and progress resume, idempotency, stale instance refusal, '
-          'report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
+          'session-specific pause badges and unread counts, switch clears notice, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
 
 
 if __name__ == '__main__':

@@ -386,7 +386,10 @@ The main session's action menu offers **冻结现场** for a verified managed
 Linux instance. It becomes **恢复运行** while paused. The separate report
 button stays available: freeze first, then report the problem. The header
 orders viewing controls before the paired freeze/report controls, then move/copy
-and stop/delete. Freeze and report stay together when folded into the menu.
+and stop/delete. Freeze and report stay together when folded into the menu. A paused session
+shows a pause glyph instead of the running dot at the top right of its sidebar
+and header icon; unread counts remain visible. Freeze/resume feedback belongs
+to that session and disappears when another session is selected.
 Freezing does
 not create a report or start an investigation automatically.
 
