@@ -2104,6 +2104,8 @@ function paintLive() {
     renderSessionAction(selected);
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
+  paintTransferAvailability($('#a-clone-group'), S.sel);
+  if (menuUid) paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
   renderSessionCounts();
   syncActiveOnlyList();
   if (S.picking) renderPickBar();
@@ -3236,6 +3238,7 @@ function openItemMenu(uid, x, y) {
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
   menu.querySelector('[data-act="pick"]').hidden = parent;
   menu.querySelector('[data-act="clone"]').hidden = !row || row.pending || SessionDockCapabilities.config.session_clone_local_codex !== true;
+  paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
@@ -3641,6 +3644,8 @@ function applySourceFilterChange() {
 
 function selectOnlySource(source) {
   if (!Object.hasOwn(SOURCES, source)) return false;
+  const control = document.querySelector(`#chips button[data-source="${CSS.escape(source)}"]`);
+  if (control?.dataset.unavailableReason) { showUnavailableTooltip(control); return false; }
   S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
   applySourceFilterChange();
   return true;
@@ -3649,7 +3654,7 @@ function selectOnlySource(source) {
 function selectOnlyNodeFilter(id) {
   const node = Nodes.list.find(item => item.id === id);
   if (!node) return false;
-  if (node.online === false) { appAlert(nodeOfflineReason(node)); return false; }
+  if (node.online === false) { showUnavailableTooltip(document.querySelector(`#node-chips button[data-node="${CSS.escape(id)}"]`), nodeOfflineReason(node)); return false; }
   Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
   store.set('nodesOff', [...Nodes.off]);
   renderNodes(); renderChips(); renderSide();
@@ -3687,6 +3692,7 @@ function renderChips() {
     c.querySelector(':scope > b').textContent = n;
     c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
     c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
+    setControlUnavailable(c, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
   }
 }
 
@@ -3699,6 +3705,7 @@ function filterButton(target) {
 }
 
 function selectOnlyFilter(button) {
+  if (button.dataset.unavailableReason) { showUnavailableTooltip(button); return false; }
   if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
   if (button.dataset.source) return selectOnlySource(button.dataset.source);
   return false;
@@ -5820,6 +5827,7 @@ function head(m, total) {
   h.querySelector('.mobile-back').onclick = showMobileList;
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
   h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
+  paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
   const turnMode = h.querySelector('#a-turns');
   turnMode.onclick = () => {
     S.compactTurns = !S.compactTurns;
@@ -9558,7 +9566,18 @@ loadSessions(false).then(async ok => {
 
 /** Whole-group transfer preview. A confirmed local clone keeps its operation ID
  * across uncertain responses; unsupported selections never use the local API. */
+function transferUnavailableReason(uid) {
+  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+}
+function paintTransferAvailability(button, uid) {
+  setControlUnavailable(button, transferUnavailableReason(uid));
+}
 async function cloneSessionGroup(uid) {
+  const reason = transferUnavailableReason(uid);
+  if (reason) {
+    const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
+    paintTransferAvailability(control, uid); showUnavailableTooltip(control, reason); return;
+  }
   closeSessionActions();
   document.querySelector('#clone-group-dialog')?.remove();
   const sourceId = nodeOf(uid);

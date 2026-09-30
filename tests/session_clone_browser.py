@@ -134,7 +134,7 @@ def main():
                     stack.enter_context(isolated_server(destination,args.binary,state_dir=destination.root/'state',extra_env=target_env))
                     if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node,destination_node])
                     hub.start();stack.callback(hub.stop)
-                    context=browser.new_context(service_workers='block',viewport={'width':1280,'height':900});stack.callback(context.close)
+                    context=browser.new_context(service_workers='block',has_touch=True,viewport={'width':1280,'height':900});stack.callback(context.close)
                     page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                     selected=scoped(node.nid,corpus.uid('a'))
                     if restart and interrupted:
@@ -146,6 +146,67 @@ def main():
                         page.locator(f'#side .item[data-uid="{selected}"]').click()
                         expect(page.locator('#a-clone-group svg use')).to_have_attribute('href','#i-transfer')
                         expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','移动 / 复制整组')
+                        # Real browser input must explain unavailable actions at
+                        # their anchor, with no modal and no clone-plan request.
+                        plans=[]
+                        page.on('request',lambda r:plans.append(r.url) if r.url.endswith('/api/session/clone/plan') else None)
+                        running={'value':True}
+                        def live_reply(route):
+                            response=route.fetch()
+                            data=response.json();data['uids']=[selected] if running['value'] else []
+                            route.fulfill(response=response,json=data)
+                        page.route('**/api/live*',live_reply)
+                        page.evaluate('async () => await pollLive(true)')
+                        action=page.locator('#a-clone-group')
+                        expect(action).to_have_attribute('aria-disabled','true')
+                        if not action.is_visible():page.locator('#a-more').click()
+                        action.hover()
+                        tip=page.locator('#control-unavailable-tooltip')
+                        expect(tip).to_be_visible();expect(tip).to_contain_text('正在运行')
+                        a=action.bounding_box();t=tip.bounding_box()
+                        assert t['x']>=0 and t['x']+t['width']<=1280,t
+                        assert action.evaluate("b => getComputedStyle(b).opacity")=='.55' or action.evaluate("b => getComputedStyle(b).opacity")=='0.55'
+                        page.screenshot(path='target/unavailable-tooltip.png')
+                        assert abs(t['y']-(a['y']+a['height']))<=12 or abs(a['y']-(t['y']+t['height']))<=12,(a,t)
+                        action.click(force=True)
+                        expect(page.locator('dialog[open]')).to_have_count(0)
+                        action.focus();page.keyboard.press('Enter');expect(tip).to_be_visible()
+                        page.keyboard.press('Escape');expect(tip).to_be_hidden()
+                        page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
+                        menu_action=page.locator('#item-menu [data-act="clone"]')
+                        expect(menu_action).to_have_attribute('aria-disabled','true')
+                        menu_action.hover();expect(tip).to_contain_text('正在运行')
+                        menu_action.tap(force=True);expect(tip).to_be_visible()
+                        assert not plans,'running action must not open a plan'
+                        running['value']=False
+                        page.evaluate('async () => await pollLive(true)')
+                        expect(action).not_to_have_attribute('aria-disabled','true')
+                        expect(menu_action).not_to_have_attribute('aria-disabled','true')
+                        expect(tip).to_be_hidden()
+                        page.keyboard.press('Escape')
+                        # Offline machines and empty agent-type filters use the
+                        # same tooltip; no toggle/solo action or alert is sent.
+                        page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=false; renderNodes();}",destination_node.nid)
+                        machine=page.locator(f'#node-chips button[data-node="{destination_node.nid}"]')
+                        expect(machine).to_have_attribute('aria-disabled','true')
+                        off=page.evaluate('[...Nodes.off]')
+                        machine.hover();expect(tip).to_contain_text('离线')
+                        machine.tap(force=True);expect(tip).to_be_visible()
+                        machine.click(button='right',force=True)
+                        assert page.evaluate('[...Nodes.off]')==off
+                        agent=page.locator('#chips button[data-source="claude"]')
+                        expect(agent).to_have_attribute('aria-disabled','true')
+                        sources=page.evaluate('[...S.off]')
+                        agent.hover();expect(tip).to_contain_text('没有会话')
+                        agent.tap(force=True);expect(tip).to_be_visible()
+                        agent.focus();page.keyboard.press('Enter')
+                        assert page.evaluate('[...S.off]')==sources
+                        expect(page.locator('dialog[open]')).to_have_count(0)
+                        page.keyboard.press('Escape');expect(tip).to_be_hidden()
+                        page.evaluate("id => {Nodes.list.find(n=>n.id===id).online=true; renderNodes();}",destination_node.nid)
+                        expect(machine).not_to_have_attribute('aria-disabled','true')
+                        print('PASS anchored unavailable tooltips: running action/menu, offline machine, empty agent; hover/touch/keyboard and live recovery',flush=True)
+
                         # Both a flat toolbar and its overflow menu use the same
                         # icon + managed label, never a naked wrapping text node.
                         for width in (1280,440,390,320):

@@ -67,6 +67,18 @@ on its current node; the source group is retained. Unsupported node/source plans
 return a concrete error. This flag does not advertise cross-node transfer or
 other CLI support. See [the clone contract](session-clone.md#当前接口同节点-codex).
 
+## Unavailable controls
+
+Running sessions show a grey move/copy action in the title bar and sidebar menu.
+Offline machine filters and agent-type filters with no sessions in the selected
+machines use the same treatment. They carry `aria-disabled=true` while remaining
+focusable: hover, focus, click or touch displays a `role=tooltip` beside the control.
+The tooltip explains the reason without opening a modal or a central toast.
+Unavailable controls do not change filters or request a clone plan, including
+right-click/long-press shortcuts. Escape, outside interaction, scrolling or resize
+hides the tooltip. Live status/filter refresh restores availability automatically;
+the backend still rechecks group liveness before publishing.
+
 ## Flags
 
 | Flag | Value | Legacy UI (`config.<flag>` / `allows('<flag>')`) | Doc |

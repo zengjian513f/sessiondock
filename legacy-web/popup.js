@@ -96,4 +96,73 @@
     }
     return stack;
   };
+
+  // Unavailable controls stay focusable so their reason is reachable on touch
+  // screens and with a keyboard. One anchored tooltip serves all such controls.
+  let tip = null, anchor = null, timer = 0;
+  const tipId = 'control-unavailable-tooltip';
+  function hideTip() {
+    clearTimeout(timer);
+    if (anchor) {
+      const ids = (anchor.getAttribute('aria-describedby') || '').split(/\s+/).filter(id => id && id !== tipId);
+      if (ids.length) anchor.setAttribute('aria-describedby', ids.join(' '));
+      else anchor.removeAttribute('aria-describedby');
+    }
+    anchor = null;
+    if (tip) { if (tip.matches(':popover-open')) tip.hidePopover(); tip.hidden = true; }
+  }
+  function placeTip() {
+    if (!anchor?.isConnected || !anchor.getClientRects().length) return hideTip();
+    const box = anchor.getBoundingClientRect(), rect = tip.getBoundingClientRect();
+    const width = document.documentElement.clientWidth, height = innerHeight;
+    const left = Math.max(8, Math.min(width - rect.width - 8, box.left + (box.width - rect.width) / 2));
+    const below = box.bottom + 8;
+    const top = below + rect.height <= height - 8 ? below : Math.max(8, box.top - rect.height - 8);
+    tip.style.left = left + 'px'; tip.style.top = top + 'px';
+  }
+  globalThis.showUnavailableTooltip = (control, reason = control?.dataset.unavailableReason, temporary = true) => {
+    if (!control || !reason) return;
+    hideTip();
+    if (!tip) {
+      tip = document.createElement('div'); tip.id = tipId; tip.setAttribute('role', 'tooltip');
+      tip.setAttribute('popover', 'manual'); document.body.appendChild(tip);
+    }
+    anchor = control; tip.textContent = reason; tip.hidden = false;
+    const ids = new Set((control.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
+    ids.add(tipId); control.setAttribute('aria-describedby', [...ids].join(' '));
+    if (tip.showPopover) tip.showPopover();
+    placeTip();
+    if (temporary) timer = setTimeout(hideTip, 5000);
+  };
+  globalThis.setControlUnavailable = (control, reason) => {
+    if (!control) return;
+    if (reason) {
+      control.dataset.unavailableReason = reason; control.setAttribute('aria-disabled', 'true');
+      control.title = ''; // Avoid a second native title tooltip.
+    } else {
+      delete control.dataset.unavailableReason; control.removeAttribute('aria-disabled');
+      if (anchor === control) hideTip();
+    }
+  };
+  const unavailable = event => event.target.closest?.('[data-unavailable-reason]');
+  document.addEventListener('pointerover', event => {
+    const control = unavailable(event);
+    if (control && event.pointerType !== 'touch' && !control.contains(event.relatedTarget))
+      showUnavailableTooltip(control, undefined, false);
+  });
+  document.addEventListener('pointerout', event => {
+    if (anchor && anchor.contains(event.target) && !anchor.contains(event.relatedTarget)) hideTip();
+  });
+  document.addEventListener('focusin', event => {
+    const control = unavailable(event); if (control) showUnavailableTooltip(control, undefined, false);
+  });
+  document.addEventListener('focusout', event => { if (anchor === event.target) hideTip(); });
+  for (const type of ['click', 'dblclick', 'contextmenu']) document.addEventListener(type, event => {
+    const control = unavailable(event); if (!control) return;
+    event.preventDefault(); event.stopImmediatePropagation(); showUnavailableTooltip(control);
+  }, true);
+  document.addEventListener('pointerdown', event => { if (anchor && !anchor.contains(event.target)) hideTip(); }, true);
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') hideTip(); }, true);
+  document.addEventListener('scroll', hideTip, true);
+  addEventListener('resize', hideTip);
 })();

@@ -239,7 +239,7 @@ function renderNodes() {
     const reason = nodeChipReason(n);
     const item = button(n.id, `${n.name} ${count}`,
       !Nodes.off.has(n.id), e => {
-        if (n.online === false) return appAlert(nodeOfflineReason(n));
+        if (n.online === false) return showUnavailableTooltip(e.currentTarget, nodeOfflineReason(n));
         Nodes.off.has(n.id) ? Nodes.off.delete(n.id) : Nodes.off.add(n.id);
         change();
       }, reason || '点击选择或取消；双击只选这台机器');
@@ -257,6 +257,7 @@ function renderNodes() {
     item.dataset.node = n.id;
     item.dataset.nodeColor = n.color || '';
     item.classList.toggle('node-offline', n.online === false);
+    setControlUnavailable(item, n.online === false ? nodeOfflineReason(n) : '');
     item.classList.toggle('node-issue', n.online !== false && !!reason);
     item.ariaLabel = `${n.name} ${count}` + (reason ? `，${reason}` : '');
     item.ondblclick = () => {
