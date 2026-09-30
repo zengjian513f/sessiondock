@@ -487,7 +487,11 @@ impl TransferService {
     }
     pub fn public(op: &Operation) -> Value {
         json!({"operation_id":op.id,"mode":"clone","phase":op.phase,"uid":op.uid,"target_uid":op.target_uid,
-            "sessions":op.plan.group.members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source})).collect::<Vec<_>>(),
+            "sessions":op.plan.group.members.iter().map(|m|json!({"uid":m.uid,"sid":m.sid,"title":m.title,"agent":m.agent,"source":m.source,
+                "cwd":m.cwd,"file_count":op.plan.files.iter().filter(|f|f.source==m.path).count(),
+                "bytes":op.plan.files.iter().filter(|f|f.source==m.path).map(|f|f.bytes).sum::<u64>(),
+                "relations":op.plan.group.edges.iter().filter(|e|e.from==m.uid||e.to==m.uid).map(|e|e.kind.as_str()).collect::<BTreeSet<_>>()
+            })).collect::<Vec<_>>(),
             "session_count":op.plan.identities.threads.len(),"file_count":op.plan.files.len(),"bytes":op.plan.files.iter().map(|f|f.bytes).sum::<u64>(),"error":op.error,
             "warnings":["原会话保留；新旧会话共用工作目录和外部工具。"]})
     }

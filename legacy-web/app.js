@@ -5802,7 +5802,7 @@ function head(m, total) {
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
-        ${SessionDockCapabilities.config.session_clone_local_codex === true ? '<button class="session-menu-action" id="a-clone-group">复制整组…</button>' : ''}
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
@@ -9556,49 +9556,158 @@ loadSessions(false).then(async ok => {
 });
 
 
-/** Copy the entire server-derived connected group, including hidden ancestors.
- * Retain the operation ID after an uncertain response so retry cannot create a
- * second group. Closing the dialog never cancels a publishing transaction. */
+/** Whole-group transfer preview. A confirmed local clone keeps its operation ID
+ * across uncertain responses; unsupported selections never use the local API. */
 async function cloneSessionGroup(uid) {
   closeSessionActions();
+  document.querySelector('#clone-group-dialog')?.remove();
+  const sourceId = nodeOf(uid);
+  const machines = new Map();
+  for (const node of [...Nodes.machines, ...Nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
+  const sourceName = machines.get(sourceId)?.name || (HUB_MODE ? '来源机器' : '当前机器');
+  if (!machines.has(sourceId)) machines.set(sourceId, {id:sourceId, name:sourceName});
   const dialog = document.createElement('dialog');
-  dialog.className = 'app-dialog app-popup'; dialog.id = 'clone-group-dialog';
-  dialog.innerHTML = '<div class="app-popup-panel"><div class="modal-head"><h2>复制整组会话</h2><button class="modal-close" type="button" aria-label="关闭">×</button></div><p>原会话保留，新组使用新的身份。工作目录不复制。</p><p class="clone-status" role="status">正在检查整组会话…</p><ul class="clone-members"></ul><div class="modal-actions"><button class="btn clone-cancel">取消</button><button class="btn primary clone-confirm" disabled>复制整组</button></div></div>';
-  document.body.appendChild(dialog); dialog.showModal();
-  const status = dialog.querySelector('.clone-status');
-  const confirm = dialog.querySelector('.clone-confirm');
-  const close = () => { dialog.close(); dialog.remove(); };
-  dialog.querySelector('.modal-close').onclick = close;
-  dialog.querySelector('.clone-cancel').onclick = close;
+  dialog.className = 'app-dialog transfer-dialog'; dialog.id = 'clone-group-dialog';
+  dialog.setAttribute('aria-labelledby', 'transfer-title');
+  dialog.innerHTML = `
+    <div class="transfer-head">
+      <div><h2 id="transfer-title">移动或复制会话组</h2><p>包含关联分支、祖先历史和子代理</p></div>
+      <button class="transfer-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="transfer-body">
+      <div class="transfer-controls">
+        <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
+        <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
+          <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
+          <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
+        </div></fieldset>
+      </div>
+      <div class="transfer-identity" hidden>
+        <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
+        <p class="transfer-identity-help"></p>
+      </div>
+      <div class="transfer-summary"><span class="transfer-source"></span><span aria-hidden="true">→</span><strong class="transfer-destination"></strong><span class="transfer-effect"></span></div>
+      <p class="transfer-notice" role="status" hidden></p>
+      <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
+      <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
+        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
+          <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
+      </div>
+      <p class="transfer-scope-note">整组一起处理，工作目录不复制。</p>
+      <p class="transfer-error" role="alert" hidden></p>
+    </div>
+    <div class="transfer-footer"><span class="transfer-footer-note"></span><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+  const $d = selector => dialog.querySelector(selector);
+  const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
+  const confirm = $d('.clone-confirm'), status = $d('.clone-status');
+  const notice = $d('.transfer-notice'), error = $d('.transfer-error');
+  const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
+  for (const node of machines.values()) {
+    const option = document.createElement('option');
+    option.value = node.id;
+    const unavailable = node.online === false || node.enabled === false;
+    option.textContent = node.name + (node.id === sourceId ? ' · 来源机器' : '') + (unavailable ? ' · 不可用' : '');
+    option.disabled = unavailable && node.id !== sourceId;
+    target.append(option);
+  }
+  target.value = sourceId;
+  $d('.transfer-source').textContent = sourceName;
+  let plan = null, busy = false, uncertain = false;
+  const identityChoices = {clone:true, move:false};
+  const mode = () => radios.find(r => r.checked).value;
+  const crossMachine = () => target.value !== sourceId;
+  const blockedReason = () => {
+    const destination = machines.get(target.value);
+    if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
+    if (machines.get(sourceId)?.online === false) return '来源机器已离线，无法执行操作。';
+    if (crossMachine()) return '跨机器传输尚未接入，当前不能执行此操作。';
+    if (mode() === 'move') return '移动需要选择另一台机器；当前机器上的会话无需移动。';
+    return '';
+  };
+  const renderSelection = () => {
+    const cross = crossMachine(), moving = mode() === 'move';
+    $d('.transfer-identity').hidden = !cross;
+    newIds.checked = identityChoices[mode()];
+    $d('.transfer-identity-help').textContent = newIds.checked
+      ? '为会话、子代理及历史生成新身份，组内引用同步更新。'
+      : '保留原生会话身份；目标机器上的 UID 仍会带目标节点前缀。';
+    $d('.transfer-destination').textContent = machines.get(target.value)?.name || '请选择目标';
+    $d('.transfer-effect').textContent = moving ? '完成后从来源机器移走' : '原会话保留';
+    $d('.transfer-footer-note').textContent = cross
+      ? (newIds.checked ? '生成新身份' : '保留原生身份')
+      : (moving ? '请选择其他机器' : '同机复制将生成新身份');
+    const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
+    confirm.textContent = busy ? '正在复制…' : uncertain ? '重试同一次复制' : moving ? '移动整组' : '复制整组';
+    confirm.disabled = busy || !plan || !!reason;
+    // Keep the chosen operation fixed while its publication result is uncertain.
+    target.disabled = busy || uncertain;
+    for (const radio of radios) radio.disabled = busy || uncertain;
+    newIds.disabled = busy || uncertain;
+    dialog.setAttribute('aria-busy', String(busy));
+  };
+  target.onchange = renderSelection;
+  radios.forEach(r => r.onchange = renderSelection);
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
+  const close = () => {dialog.close(); dialog.remove();};
+  $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
   dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
   const request = async (path, body) => {
     const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error?.message || data.error || '复制失败');
+    if (!response.ok) throw new Error(data.error?.message || data.error || '操作失败');
     return data;
   };
-  let plan;
+  const renderMembers = data => {
+    const members = new Map();
+    for (const member of data.sessions) {
+      const key = `${member.source}:${member.sid}`;
+      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
+      const row = members.get(key);
+      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
+      row.selected ||= member.uid === uid;
+      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
+      for (const relation of member.relations || []) row.relations.add(relation);
+    }
+    const body = $d('.clone-members tbody'); body.replaceChildren();
+    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
+    for (const member of ordered) {
+      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
+      const title = document.createElement('td');
+      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
+      title.append(name);
+      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
+      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
+      const relation = document.createElement('td');
+      const badge = document.createElement('span'); badge.className = 'transfer-badge';
+      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
+      relation.append(badge);
+      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
+      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
+      tr.append(title,source,relation,files,bytes); body.append(tr);
+    }
+    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
+  };
   try {
     plan = await request('api/session/clone/plan', {uid});
     if (!dialog.isConnected) return;
-    status.textContent = `整组 ${plan.session_count} 个会话，${plan.file_count} 份历史文件，共 ${fmtSize(plan.bytes)}。复制到当前机器。`;
-    const seen = new Set();
-    for (const member of plan.sessions) {
-      if (seen.has(member.sid)) continue; seen.add(member.sid);
-      const li = document.createElement('li'); li.textContent = `${member.agent ? '子代理：' : ''}${member.title || member.sid}`;
-      dialog.querySelector('.clone-members').appendChild(li);
-    }
-    confirm.disabled = false;
-  } catch (error) { status.textContent = error.message; return; }
+    renderMembers(plan); renderSelection();
+  } catch (failure) {
+    if (!dialog.isConnected) return;
+    status.textContent = '清单读取失败'; $d('.transfer-empty').textContent = '暂时无法列出会话组';
+    error.textContent = failure.message; error.hidden = false; return;
+  }
   confirm.onclick = async () => {
-    confirm.disabled = true; status.textContent = '正在复制并检查完整历史…';
+    if (busy || !plan || blockedReason()) return;
+    busy = true; error.hidden = true; renderSelection();
     try {
       const result = await request('api/session/clone', {uid, operation_id:plan.operation_id});
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
       close(); await loadSessions(true); await openSession(result.target_uid);
       showSessionStopNotice('整组复制完成，原会话已保留。');
-    } catch (error) {
-      if (dialog.isConnected) {status.textContent = error.message; confirm.textContent = '重试同一次复制'; confirm.disabled = false;}
-    }
+    } catch (failure) {
+      uncertain = true;
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {busy = false; if (dialog.isConnected) renderSelection();}
   };
 }

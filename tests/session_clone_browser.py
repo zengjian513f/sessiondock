@@ -112,6 +112,11 @@ def main():
         db_before=native_rows(corpus.root/'codex')
         node=SimpleNamespace(name='test',nid='a'*32,port=free_port(),token=TOKEN)
         (corpus.root/'ids').mkdir();(corpus.root/'ids/node-id').write_text(node.nid+'\n')
+        destination=prepare(root/'destination')
+        destination_node=SimpleNamespace(name='destination',nid='b'*32,port=free_port(),token=TOKEN)
+        (destination.root/'ids').mkdir();(destination.root/'ids/node-id').write_text(destination_node.nid+'\n')
+        destination_before={str(p):p.read_bytes() for p in destination.paths.values()}
+        destination_db_before=native_rows(destination.root/'codex')
         hubroot=root/'hub';hubroot.mkdir()
         hub=None
         launch={'headless':True}
@@ -124,7 +129,10 @@ def main():
                     env=node_env(corpus.root,node.port,'127.0.0.0/8')
                     env['SESSIONDOCK_PROC_ROOT']=str(corpus.root/'proc')
                     base,opener=stack.enter_context(isolated_server(corpus,args.binary,state_dir=corpus.root/'state',extra_env=env))
-                    if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node])
+                    target_env=node_env(destination.root,destination_node.port,'127.0.0.0/8')
+                    target_env['SESSIONDOCK_PROC_ROOT']=str(destination.root/'proc')
+                    stack.enter_context(isolated_server(destination,args.binary,state_dir=destination.root/'state',extra_env=target_env))
+                    if hub is None:hub=Hub(args.binary.resolve().with_name('sessiondock-hub'),hubroot,[node,destination_node])
                     hub.start();stack.callback(hub.stop)
                     context=browser.new_context(service_workers='block',viewport={'width':1280,'height':900});stack.callback(context.close)
                     page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
@@ -135,12 +143,76 @@ def main():
                         assert all(not (corpus.root/'codex'/f['relative']).exists() for f in recovered['staged']['files'])
                         print('PASS restart compensates an interrupted publication with a committed native database',flush=True)
                     if not restart:
+                        page.locator(f'#side .item[data-uid="{selected}"]').click()
+                        expect(page.locator('#a-clone-group svg use')).to_have_attribute('href','#i-transfer')
+                        expect(page.locator('#a-clone-group')).to_have_attribute('aria-label','移动 / 复制整组')
+                        # Both a flat toolbar and its overflow menu use the same
+                        # icon + managed label, never a naked wrapping text node.
+                        for width in (1280,440,390,320):
+                            page.set_viewport_size({'width':width,'height':900})
+                            page.evaluate('showMobileDetail(); layoutSessionHead()')
+                            button=page.locator('#a-clone-group')
+                            assert button.evaluate("b => [...b.childNodes].filter(n => n.nodeType===Node.TEXT_NODE).every(n => !n.textContent.trim())")
+                            if button.is_visible():
+                                bounds=button.bounding_box()
+                                assert bounds['height']<=36 and bounds['width']<=36,bounds
+                            else:
+                                page.locator('#a-more').click()
+                                expect(button).to_be_visible()
+                                expect(button.locator('span')).to_have_text('移动 / 复制整组')
+                                page.locator('#a-more').click()
+                        page.set_viewport_size({'width':440,'height':900})
+                        page.evaluate('showMobileDetail(); layoutSessionHead()')
+                        page.screenshot(path='target/transfer-toolbar-mobile.png')
+                        button=page.locator('#a-clone-group')
+                        if not button.is_visible():page.locator('#a-more').click()
+                        button.click()
+                        expect(page.locator('#clone-group-dialog')).to_be_visible()
+                        page.locator('#clone-group-dialog .clone-cancel').click()
+                        page.set_viewport_size({'width':1280,'height':900})
                         page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                         page.locator('#item-menu [data-act="clone"]').click()
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
                         expect(dialog.locator('.clone-status')).to_contain_text('整组 6 个会话')
-                        expect(dialog.locator('.clone-members li')).to_have_count(6)
+                        expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
+                        expect(dialog.locator('.clone-members thead')).to_contain_text('历史文件')
+                        expect(dialog.locator('.transfer-selected .transfer-number').first).to_have_text('2')
+                        expect(dialog.locator('.transfer-identity')).to_be_hidden()
+                        expect(dialog.locator('#transfer-target')).to_have_value(node.nid)
+                        requests=[]
+                        page.on('request',lambda r:requests.append(r.url) if r.url.endswith('/api/session/clone') else None)
+                        dialog.locator('.transfer-segments label').nth(1).click()
+                        expect(dialog.locator('.clone-confirm')).to_be_disabled()
+                        expect(dialog.locator('.transfer-notice')).to_contain_text('需要选择另一台机器')
+                        dialog.locator('#transfer-target').select_option(destination_node.nid)
+                        expect(dialog.locator('.transfer-identity')).to_be_visible()
+                        expect(dialog.locator('#transfer-new-ids')).not_to_be_checked()
+                        dialog.locator('#transfer-new-ids').check()
+                        expect(dialog.locator('.transfer-identity-help')).to_contain_text('生成新身份')
+                        expect(dialog.locator('.clone-confirm')).to_be_disabled()
+                        expect(dialog.locator('.transfer-notice')).to_contain_text('跨机器传输尚未接入')
+                        dialog.locator('.transfer-segments label').nth(0).click()
+                        expect(dialog.locator('#transfer-new-ids')).to_be_checked()
+                        dialog.locator('#transfer-new-ids').uncheck()
+                        expect(dialog.locator('.transfer-identity-help')).to_contain_text('保留原生会话身份')
+                        assert not requests,'unsupported selections must never execute a local clone'
+                        page.evaluate("document.documentElement.dataset.theme='dark'")
+                        Path('target').mkdir(exist_ok=True)
+                        dialog.screenshot(path='target/transfer-panel-desktop.png')
+                        page.set_viewport_size({'width':390,'height':844})
+                        box=dialog.bounding_box()
+                        assert box['x']>=0 and box['x']+box['width']<=391,box
+                        assert box['y']>=0 and box['y']+box['height']<=845,box
+                        expect(dialog.locator('.clone-cancel')).to_be_visible()
+                        dialog.screenshot(path='target/transfer-panel-mobile.png')
+                        dialog.locator('#transfer-target').select_option(node.nid)
+                        expect(dialog.locator('.transfer-identity')).to_be_hidden()
+                        expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                        page.set_viewport_size({'width':1280,'height':900})
+                        assert native_rows(destination.root/'codex')==destination_db_before
+                        assert all(Path(p).read_bytes()==content for p,content in destination_before.items())
+                        print('PASS transfer table, machine/mode/identity controls, unsupported-action guard and mobile layout',flush=True)
                         for text in ('Branch B','Common ancestor','Parent agent','A agent','Fork of revert'):
                             expect(dialog).to_contain_text(text)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
