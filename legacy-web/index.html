@@ -31,6 +31,16 @@
     } catch {}
     document.documentElement.dataset.theme = choice === 'system'
       ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : choice;
+    // 手机刷新时上次停在会话页（或带 ?sid= 深链）就直接从会话页起步，
+    // 不先画列表、等列表接口回来再翻到会话页。app.js 恢复不了时再退回列表。
+    try {
+      const read = key => JSON.parse(localStorage.getItem(prefix + key));
+      if (matchMedia('(max-width: 720px)').matches
+          && ((new URLSearchParams(location.search).get('sid') || '').trim()
+            || (read('mobilePage') === 'detail' && read('sel')))) {
+        document.documentElement.dataset.bootPage = 'detail';
+      }
+    } catch {}
   })();
 </script>
 <link rel="stylesheet" href="typography.css?v=__SESSIONDOCK_ASSET_VERSION__">
@@ -44,6 +54,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>🗂</text></svg>">
 </head>
 <body>
+<script>if (document.documentElement.dataset.bootPage === 'detail') document.body.classList.add('mobile-detail');</script>
 <svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
   <!-- Transparent, single-colour brand marks. Keep their native 24px viewBox so
        dark/light themes only need to change currentColor, never the artwork. -->

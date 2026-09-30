@@ -9953,8 +9953,19 @@ addEventListener('popstate', () => {
   const route = routeSession(new URL(location.href).searchParams.get('sid') || '');
   if (route) openSession(route.uid, route.agent, {exact: true, historyMode: 'none'});
 });
+// index.html 在首帧前就按上次停留的页面进了手机会话页；列表回来前先占位，
+// 恢复不了（列表失败、会话已不在）时退回列表，不写 mobilePage，下次刷新照旧恢复。
+if (document.body.classList.contains('mobile-detail') && !S.sel) {
+  $('#detail').innerHTML = '<div class="spin">正在读取会话…</div>';
+}
+function leaveBootDetail() {
+  if (S.sel || !document.body.classList.contains('mobile-detail')) return;
+  document.body.classList.remove('mobile-detail');
+  $('#detail').innerHTML = '<div class="empty">从左侧选择一个会话</div>';
+  layoutHeader();
+}
 loadSessions(false).then(async ok => {
-  if (!ok) return;
+  if (!ok) return leaveBootDetail();
   const route = routeSession(DEEP_SID);
   if (route) { openSession(route.uid, route.agent, {exact: true, historyMode: 'replace'}); return; }
   const last = store.get('sel', null);       // 恢复上次看的会话
@@ -9982,5 +9993,6 @@ loadSessions(false).then(async ok => {
     const pending = T.pending.find(row => pendingUid(row.name) === last)
       || pendingTmuxSessions().find(row => row.uid === last);
     if (pending) await openPendingSession(pending);
-  }
+    else leaveBootDetail();
+  } else leaveBootDetail();
 });
