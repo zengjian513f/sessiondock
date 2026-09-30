@@ -185,13 +185,12 @@ def main():
                         button.click()
                     expect(button).to_have_attribute('aria-label', '恢复运行')
                     assert page.evaluate("browserStateSnapshot('fixture').data.terminal.frozen") is True
-                    button = freeze_button(page)
-                    with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/freeze'):
-                        button.click()
-                    expect(button).to_have_attribute('aria-label', '冻结现场')
+                    # Stop directly while frozen: the server must recover the
+                    # tree before EOF, so the child can exit with its parent.
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/stop') as response:
                         session_action(page).click()
-                    assert response.value.status == 200 and response.value.json()['stopped'], response.value.text()
+                    assert response.value.status == 200 and response.value.json()['stage'] == 'graceful', response.value.text()
+                    assert all(not Path(f'/proc/{pid}').exists() for pid in pids)
                     assert not errors, errors
                     assert {name: path.read_bytes() for name, path in corpus.paths.items()} == native
                     browser.close()

@@ -408,11 +408,13 @@ outside the CLI tree are outside this operation.
 refresh or Web service restart retains the recovery control. The pause retains
 memory, terminal output and native files; it is not a durable snapshot across
 machine restart. Network timeouts and external services continue to advance.
+Stopping a frozen session first resumes the verified tree, then uses the
+ordinary guarded EOF/stop sequence so descendants can exit normally.
 Do not type into a frozen CLI: PTY input can queue and be consumed on resume.
 
 Validation: `python3 tests/session_freeze_browser.py` uses a temporary host,
 a fake CLI with a ticking child and headless Chromium; it exercises freeze,
 idempotent freeze, wrong-instance refusal, report dialog access, refresh,
-resume authenticated Hub/mobile controls and the ordinary stop action, checking real
+resume authenticated Hub/mobile controls and stopping directly while frozen, checking real
 OS states and progress. Freeze state joins the browser report snapshot and
 `session.freeze` audit events include the instance and process count.
