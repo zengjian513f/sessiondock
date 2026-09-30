@@ -69,7 +69,7 @@ pub fn catalog(profile: &CliProfile) -> Catalog {
 
 /// The CLI's home as its child process would see it: the profile's
 /// environment over the service's, then the conventional directory.
-fn cli_home(profile: &CliProfile, variable: &str, fallback: &str) -> PathBuf {
+pub(super) fn cli_home(profile: &CliProfile, variable: &str, fallback: &str) -> PathBuf {
     let removed = |name: &str| profile.env_remove.iter().any(|removed| removed == name);
     let value = |name: &str| {
         profile
