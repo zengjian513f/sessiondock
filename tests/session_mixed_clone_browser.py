@@ -52,6 +52,9 @@ def main():
                     context=browser.new_context();stack.callback(context.close)
                     page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}',wait_until='networkidle')
                     if not restart:
+                        loaded=json.loads(metadata.read_text())
+                        assert loaded['sessions']==before['sessions']
+                        before=loaded  # Include startup catalog migration before testing rollback.
                         page.goto(f'http://127.0.0.1:{hub.port}/?'+urlencode({'sid':'claude:'+ident(2),'node':node.nid}),wait_until='networkidle')
                         expect(page.locator('#msgs')).to_contain_text('Branch A final')
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
