@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+pub mod agent;
+pub mod engine;
 pub mod linux;
 #[cfg(test)]
 mod tests;
@@ -111,6 +113,8 @@ pub struct Report {
     pub outgoing: Vec<Outgoing>,
     pub incoming: Vec<Incoming>,
     pub bindings: Vec<Binding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collector: Option<agent::CollectorStatus>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

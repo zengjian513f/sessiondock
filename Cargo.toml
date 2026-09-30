@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/sessiondock", "crates/process-links", "crates/ptyhost", "crates/ptyhost-client", "crates/ptyhost-record", "crates/ptyhost-screen"]
+members = ["crates/sessiondock", "crates/process-links", "crates/resource-agent", "crates/ptyhost", "crates/ptyhost-client", "crates/ptyhost-record", "crates/ptyhost-screen"]
 default-members = ["crates/sessiondock"]
 resolver = "3"
 
