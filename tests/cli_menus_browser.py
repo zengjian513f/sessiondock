@@ -239,6 +239,12 @@ def main():
                             raise AssertionError((source, fixture['name'], error.args)) from error
                         expect(card).to_be_visible()
                         expect(page.locator('#csend')).to_be_disabled()
+                        expect(page.locator('#dlive')).to_have_text('?')
+                        expect(page.locator('#dlive')).to_have_css('background-color', 'rgb(251, 191, 36)')
+                        expect(page.locator('#composer-input-status')).to_be_visible()
+                        expect(page.locator('#composer-input-status')).to_contain_text('等待用户回答')
+                        assert page.locator('#composer-input-status').evaluate(
+                            "node => getComputedStyle(node, '::before').content") == '"?"'
                         assert not page.evaluate('T.openViews.size'), 'Composer answers must not require terminal attach'
                         prompt = result['prompt']
                         # The history watch contains CLI status but no CHECK
