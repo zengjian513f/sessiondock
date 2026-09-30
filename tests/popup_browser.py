@@ -87,6 +87,30 @@ def main():
                 centered(page, card, width, height)
                 card.get_by_role("button", name="稍后").click()
                 expect(card).to_be_hidden()
+                # All operation notices use the update card's panel and vertical layout.
+                reference = card.evaluate("""d => { const s = getComputedStyle(d);
+                    return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                            s.padding, s.fontSize, s.flexDirection]; }""")
+                for selector, trigger, clear in (
+                    ('#bug-report-toast', "showBugReportToast('BUG-' + '1234567890'.repeat(8), {source:'codex', name:'fixture'})",
+                     None),
+                    ('#console-toast', "showConsoleToast('合成控制台通知')", "showConsoleToast('')"),
+                    ('#session-stop-notice', "showSessionStopNotice('合成会话停止通知', true)", "showSessionStopNotice('')"),
+                ):
+                    page.evaluate(trigger)
+                    notice = page.locator(selector)
+                    expect(notice).to_be_visible()
+                    centered(page, notice, width, height)
+                    appearance = notice.evaluate("""d => { const s = getComputedStyle(d);
+                        return [s.width, s.borderRadius, s.backgroundColor, s.boxShadow,
+                                s.padding, s.fontSize, s.flexDirection]; }""")
+                    assert appearance == reference, (selector, appearance, reference)
+                    assert notice.evaluate('(d) => d.scrollWidth <= d.clientWidth')
+                    if clear:
+                        page.evaluate(clear)
+                    else:
+                        notice.get_by_role('button', name='忽略').click()
+                    expect(notice).to_be_hidden()
                 assert not native, native
                 assert not errors, errors
                 context.close()
