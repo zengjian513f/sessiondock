@@ -112,11 +112,16 @@ open the pending console exactly as after `term/create`.
 
 Worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
 Before the first Codex report task, the server submits `/rename <title>` as a
-separate local CLI command, waits for the native name index to confirm the title
-on the same managed instance, then submits the task. This prevents Codex's
+separate local CLI command, queries `/status` on that guarded terminal to obtain
+its native session ID, and confirms that ID's title directly in the native name
+index before submitting the task. This works before a rollout JSONL exists:
+Codex creates that file only after the first task, so native-history discovery
+or process-to-rollout binding cannot be a prerequisite for this first SEND. This prevents Codex's
 first-turn automatic naming from replacing it. Both operations use the same
 conversation lock and separate durable request IDs. An unconfirmed rename stops
-the task and retains the draft; it is never blindly resent. A restarted worker
+the task and retains the draft; it is never blindly resent. Retrying a retained
+draft queries the existing name again and can reconcile an earlier unconfirmed
+rename without repeating the rename or an attempted task. A restarted worker
 gets its own rename operation. The worker prompt also starts with that title. Report IDs remain in the task body and bundle
 metadata. Pending titles are recovered from `description.md` after a restart;
 explicit user renames are unchanged.
@@ -344,6 +349,11 @@ window's dates line by line (≤ 100 000 rows).
   a line and Enter submits).
 - `python3 tests/check_config_suite.py` (`bug_report_*` cases) and
   `python3 tests/meta_capabilities_suite.py`.
+- `python3 tests/bug_report_codex_browser_real.py --binary target/release/sessiondock`
+  (operator-only): clicks the report dialog with a real Codex in a temporary
+  home and repository, confirms the exact native task and assistant reply,
+  native name after the first response, actual Luna low, and unchanged everyday
+  configuration. The synthetic repository instructs the model to reply only OK.
 - `python3 tests/bug_report_real.py` (`# run_validation: real-cli`): the real
   Claude worker with `claude-haiku-4-5-20251001 --effort low` in a temporary
   `CLAUDE_CONFIG_DIR`, prompt confirmed from the real `user` record, model id

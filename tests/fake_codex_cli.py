@@ -279,8 +279,8 @@ class Fake:
             self.render()
             return
         if text.startswith('/rename '):
-            # A local TUI command, not a model/user turn. Keep the native file
-            # open so production process evidence can bind this exact host.
+            # Real Codex persists the name before creating any rollout.
+            # A local command must not manufacture native history/binding.
             from pathlib import Path
             root = Path(os.environ['SESSIONDOCK_TEST_CODEX_ROOT'])
             if rejected := os.environ.get('SESSIONDOCK_TEST_RENAME_REJECT_FILE'):
@@ -290,21 +290,35 @@ class Fake:
                     self.transcript.append('Rename failed')
                     self.render()
                     return
-            if not self.path:
+            if not self.sid:
                 self.sid = str(uuid.uuid4())
-                self.path = root / ('rollout-' + self.sid + '.jsonl')
-                self.path.write_text(json.dumps({'type': 'session_meta', 'payload': {
-                    'id': self.sid, 'cwd': os.getcwd(), 'timestamp': self.stamp()}}) + '\n')
-                self.native_hold = self.path.open('a')
             self.thread_name = text[len('/rename '):].strip()
             with (root.parent / 'session_index.jsonl').open('a') as stream:
                 stream.write(json.dumps({'id': self.sid, 'thread_name': self.thread_name,
                                          'updated_at': self.stamp()}, ensure_ascii=False) + '\n')
             if trace := os.environ.get('SESSIONDOCK_TEST_SUBMISSIONS'):
                 with open(trace + '.commands', 'a') as stream:
-                    stream.write(json.dumps({'command': text, 'sid': self.sid}) + '\n')
+                    stream.write(json.dumps({'command': text, 'sid': self.sid, 'rollout_exists': bool(self.path)}) + '\n')
             self.render()
             return
+        if text == '/status':
+            from pathlib import Path
+            if hidden := os.environ.get('SESSIONDOCK_TEST_STATUS_HIDE_FILE'):
+                if Path(hidden).exists():
+                    self.render()
+                    return
+            if not self.sid:
+                self.sid = str(uuid.uuid4())
+            self.transcript.append('Session: ' + self.sid)
+            self.render()
+            return
+        if not self.path and getattr(self, 'thread_name', None):
+            from pathlib import Path
+            root = Path(os.environ['SESSIONDOCK_TEST_CODEX_ROOT'])
+            self.path = root / ('rollout-' + self.sid + '.jsonl')
+            self.path.write_text(json.dumps({'type': 'session_meta', 'payload': {
+                'id': self.sid, 'cwd': os.getcwd(), 'timestamp': self.stamp()}}) + '\n')
+            self.native_hold = self.path.open('a')
         if trace := os.environ.get('SESSIONDOCK_TEST_SUBMISSIONS'):
             with open(trace, 'a', encoding='utf-8') as stream:
                 stream.write(json.dumps({'text': text}) + '\n')
