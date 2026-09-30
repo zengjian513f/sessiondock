@@ -156,6 +156,8 @@ def main():
                     # back to delete.
                     page.wait_for_function("uid => T.ended.has(uid)", arg=codex_uid, timeout=15000)
                     expect(page.locator("#termpane")).to_be_hidden()
+                    assert page.evaluate("name => !T.views.has(name) && !T.openViews.has(name)", resumed["name"])
+                    assert "保留" not in page.evaluate("uid => T.ended.get(uid).reason", codex_uid)
                     expect(page.locator("#a-term")).to_have_attribute("data-unavailable", "false", timeout=15000)
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
@@ -170,6 +172,24 @@ def main():
                     assert not list((root / "host").glob("*.json")), "host record must be cleaned after the exit"
                     live = json.loads(opener.open(base + "/api/live?force=1", timeout=10).read())
                     assert live["managed"]["sessions"][codex_uid]["state"] == "exited", live["managed"]["sessions"]
+
+                    # Exit from the actual terminal, as in the diagnostic audit:
+                    # no /session/stop response can overwrite the host-exit notice.
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover") as taken:
+                        page.locator("#a-term").click()
+                    direct = taken.value.json()
+                    wait_xterm(page, "RS_SHELL_READY")
+                    page.locator("#termpane .xterm-helper-textarea").focus()
+                    page.keyboard.type("quit")
+                    page.keyboard.press("Enter")
+                    page.wait_for_function("name => !T.views.has(name)", arg=direct["name"])
+                    expect(notice).to_contain_text("CLI 已退出，终端已关闭")
+                    expect(notice).not_to_contain_text("保留")
+                    expect(page.locator("#termpane")).to_be_hidden()
+                    assert page.evaluate("name => !T.openViews.has(name)", direct["name"])
+                    page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid)
+                    page.evaluate("refreshLive(true)")
+                    page.evaluate("showSessionStopNotice('')")
 
                     # ---- A session without any running instance:
                     # stopping succeeds as a no-op and the stale live marker clears.
@@ -388,6 +408,10 @@ def main():
                     item.dispatch_event("pointerdown", {"pointerType": "touch", "clientX": box["x"] + 20, "clientY": box["y"] + 10, "bubbles": True})
                     menu = page.locator("#item-menu")
                     expect(menu).to_be_visible(timeout=3000)
+                    # Complete the long-press gesture, including its suppressed
+                    # click, so the next deliberate row click can open a session.
+                    item.dispatch_event("pointerup", {"pointerType": "touch", "bubbles": True})
+                    item.dispatch_event("click", {"bubbles": True})
                     stop_item = menu.locator('[data-act="stop"]')
                     expect(stop_item).to_be_visible()
                     bounds = menu.bounding_box()
@@ -400,12 +424,24 @@ def main():
                     expect(page.locator("#session-stop-notice")).to_contain_text("CLI 已在收到 Ctrl-D 后退出")
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert not errors, errors
+                    # Wait for the stop refresh before opening another menu;
+                    # paintLive closes a menu rendered from the old running row.
+                    page.wait_for_function("uid => !sessionStoppable(uid)", arg=codex_uid)
+                    # Use a fresh real host for the mobile bulk stop. A synthetic
+                    # S.live marker can be removed by the concurrent live poll.
+                    item.click()
+                    if not page.locator("#a-term").is_visible():
+                        page.locator("#a-more").click()
+                    with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/takeover"):
+                        page.locator("#a-term").click()
+                    wait_xterm(page, "RS_SHELL_READY")
+                    page.wait_for_function("uid => sessionStoppable(uid)", arg=codex_uid)
+                    page.locator(".mobile-back").first.click()
                     # The multi-select stop action fits the mobile toolbar.
                     item.click(button="right")
                     page.locator('#item-menu [data-act="pick"]').click()
                     expect(page.locator("#side-pick-stop")).to_be_visible()
-                    expect(page.locator("#side-pick-stop")).to_be_disabled()
-                    page.evaluate("uid => { S.live.add(uid); paintLive(); }", codex_uid)
+                    expect(page.locator("#side-pick-stop")).to_be_enabled()
                     page.locator("#side-pick-stop").click()
                     expect(page.locator("#side-pick-stop")).to_have_text("已停止 1/1")
                     page.wait_for_function("!sessionStopBusy")

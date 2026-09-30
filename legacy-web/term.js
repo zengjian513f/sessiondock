@@ -3363,12 +3363,12 @@ function recordHostExit(view, uid, event) {
   if (SessionDockCapabilities.config.backend !== 'rust') return false;
   const incomplete = event.code === 1011 && event.reason.startsWith('host output incomplete');
   if (!incomplete && !(event.code === 1000 && event.reason === 'host exited')) return false;
-  const reason = incomplete
-    ? `终端输出不完整：${event.reason}。已保留收到的尾部输出，不会自动重新连接。`
-    : '终端进程已退出，已保留收到的输出。';
   const pendingRow = (T.pending || []).find(item => item.name === view.name);
   const shell = pendingRow?.source === 'shell'
     || (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid));
+  const reason = incomplete
+    ? `终端输出不完整：${event.reason}。已保留收到的尾部输出，不会自动重新连接。`
+    : shell ? '终端进程已退出，已保留收到的输出。' : 'CLI 已退出，终端已关闭。';
   const keepPane = shell && T.name === view.name;
   view.ended = true;
   view.revoked = true; // An explicitly exited instance must never be auto-claimed.
@@ -3391,9 +3391,8 @@ function recordHostExit(view, uid, event) {
     // AI sessions close the pane and return to the conversation. SSH/shell
     // keeps the console and, when a recording exists, switches it to
     // read-only replay with the timeline — the live tail is not the archive.
-    view.keepOutput = true;
-    if (T.name === view.name && !shell)
-      closeTermPane(true);
+    view.keepOutput = shell;
+    if (!shell) disposeTermView(view.name);
     else if (keepPane) {
       T.mode = 'full';
       if (typeof rememberTermLayout === 'function') rememberTermLayout(view.name);
@@ -3850,9 +3849,9 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
       // The host-performed stop (`session/stop` escalation, `term/kill`)
       // retires the lease before the exit is observed: AI sessions close the
       // pane like a host exit; SSH/shell keeps the retained PTY.
-      view.keepOutput = true;
-      if (T.name === name && !(typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid)))
-        closeTermPane(true);
+      view.keepOutput = (T.pending || []).some(row => row.name === name && row.source === 'shell')
+        || (typeof sessionTerminalFirst === 'function' && sessionTerminalFirst(uid));
+      if (T.name === name && !view.keepOutput) closeTermPane();
       const stopNotice = document.querySelector('#session-stop-notice');
       if (uid === S.sel && typeof showSessionStopNotice === 'function'
           && (!stopNotice || stopNotice.hidden)) showSessionStopNotice(reason);
