@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Browser send of text plus two PNG attachments to an isolated fake Codex PTY."""
+import argparse
 import base64
 import json
 import os
@@ -18,6 +19,9 @@ from popups import on_popup  # noqa: E402
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=BINARY)
+    binary = parser.parse_args().binary.resolve(strict=True)
     with tempfile.TemporaryDirectory(prefix='sessiondock-codex-images-') as temporary:
         root = Path(temporary).resolve()
         for name in ('host', 'work', 'ledger', 'delivery', 'state', 'home', 'claude', 'codex', 'grok', 'audit', 'reports'):
@@ -56,7 +60,7 @@ def main():
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
-        with isolated_server(Corpus(root), BINARY, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
+        with isolated_server(Corpus(root), binary, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, state_dir=root / 'state',
                 audit_dir=root / 'audit', extra_env={
                     'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
@@ -211,6 +215,8 @@ def main():
                         page.locator('#bug-report-go').click()
                     assert report.value.status == 202, report.value.text()
                     worker = report.value.json()['worker']
+                    expected_title = 'BUG: ' + description.strip().splitlines()[0].strip()
+                    assert worker['title'] == expected_title, worker
                     bundle = Path(report.value.json()['path'])
                     if index == 3:
                         staged_uploads = len(uploads)
@@ -225,7 +231,7 @@ def main():
                         page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         # Refresh loses all File objects and frontend aliases.
                         page.reload(wait_until='domcontentloaded')
-                        page.locator('#side .item').filter(has_text='处理 ' + report.value.json()['report_id']).click()
+                        page.locator('#side .item').filter(has_text=expected_title).click()
                         expect(page.locator('#cinput')).to_have_value(description)
                         page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as retried:
@@ -244,7 +250,7 @@ def main():
                         expect(page.locator('#cinput')).to_have_value(description)
                         # Reload exercises recovery from server-owned report input.
                         page.reload(wait_until='domcontentloaded')
-                        page.locator('#side .item').filter(has_text='处理 ' + report.value.json()['report_id']).click()
+                        page.locator('#side .item').filter(has_text=expected_title).click()
                         expect(page.locator('#cinput')).to_have_value(description)
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/restart') as recovered:
                             page.get_by_role('button', name='重新启动', exact=True).click()
@@ -267,6 +273,7 @@ def main():
                     assert len(submissions) == 5 + index, submissions
                     worker_prompt = (bundle / 'worker-prompt.md').read_text()
                     assert (len(worker_prompt) > 1000) == (index == 1), 'cover expanded and collapsed reports'
+                    assert worker_prompt.splitlines()[0] == expected_title
                     assert submissions[-1] == worker_prompt
                     assert '随后立即 push' in worker_prompt
                     assert 'python3 deploy/deploy.py deploy --all' in worker_prompt
