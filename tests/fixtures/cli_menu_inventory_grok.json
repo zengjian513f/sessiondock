@@ -1,0 +1,1351 @@
+{
+  "client": "grok",
+  "version": "1.0.41 (4220f3b224a6) [stable]",
+  "artifact": "grok-1.0.41-linux-x86_64 stripped native Rust ELF",
+  "artifact_sha256": "9ce03ed23e16ea01072b4496263d6213a27899e1e3e107f008d36edf82e70407",
+  "source_method": "Read-only inspection of installed ELF strings (including embedded user guide and source renderer paths), then full public official source renderer/input-handler audit. The installed build commit is not in the public repository history; public source is a synced monorepo snapshot, so exact installed-source equality is not claimed.",
+  "public_source_commit": "2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8",
+  "public_source_url": "https://github.com/xai-org/grok-build/tree/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8",
+  "primary_sources": [
+    "https://github.com/xai-org/grok-build",
+    "https://docs.x.ai/build/features/permissions",
+    "https://docs.x.ai/build/modes-and-commands"
+  ],
+  "fixture_method": "Synthetic native frames built from audited public renderer shapes and input handlers, cross-checked against installed embedded string labels. Fixtures are not native-binary captured screenshots or proof of exact binary/source identity.",
+  "coverage_statement": "All discovered menu families are inventoried. Supported means the complete stated native renderer shape is projected; remaining families stay in PTY with explicit reasons. This is not a claim of 100% installed-binary menu coverage.",
+  "keybinding_caveat": "Question/permission/picker keys are literal handlers in the audited source. Custom action bindings, optional feature gates and arbitrary input schemas are not inferred. Native fields with existing drafts remain in PTY except the one-line command-pattern editor, whose Ctrl-U clear() is source-proven.",
+  "categories": [
+    {
+      "category": "shell_command_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "file_edit_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "mcp_tool_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "web_domain_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "classifier_risk_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "hook_or_reference_approval",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "Digits explicitly answer the indexed native permission option; Ctrl-C cancels. Left/Right change disclosed remembered scope; e opens the command-pattern editor. No grants or defaults are inferred or saved by SessionDock.",
+      "callsites": [
+        "render_permission_view",
+        "handle_permission_key"
+      ]
+    },
+    {
+      "category": "permission_command_pattern",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native. Pattern editor only, identifiable source-specific input field.",
+      "key_semantics": "Ctrl-U calls PatternEditState.clear() and clears the entire one-line draft. Text is then native data input; Enter saves the edited pattern. Saving a pattern does not grant approval.",
+      "callsites": [
+        "PatternEditState.clear",
+        "PermissionFocus::PatternEdit"
+      ]
+    },
+    {
+      "category": "permission_reject_feedback",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/permission_view.rs",
+          "sha256": "d5916c689662bc47596aea2758ac3d58fad6668e9013b3144c719d0d6e31f847",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/permission_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "FollowupInput replaces the options with a multiline prompt; neither an arbitrary existing draft nor configured Enter-to-submit policy is provable from the frame.",
+      "key_semantics": "Native terminal preserves the rejection feedback draft.",
+      "callsites": [
+        "PermissionFocus::FollowupInput"
+      ]
+    },
+    {
+      "category": "ask_user_question",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native. Multi-select requires one styled focused label. Empty Other answers can enter the native editor; nonempty hidden Other drafts stay in PTY.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "AskUserQuestion"
+      ]
+    },
+    {
+      "category": "plan_interview",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native. Multi-select requires one styled focused label. Empty Other answers can enter the native editor; nonempty hidden Other drafts stay in PTY.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "AskUserQuestionMode::Plan"
+      ]
+    },
+    {
+      "category": "question_multi_select",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native. Multi-select requires one styled focused label. Empty Other answers can enter the native editor; nonempty hidden Other drafts stay in PTY.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "QuestionSelection::Multi"
+      ]
+    },
+    {
+      "category": "question_text_empty",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native. InputMode is proved by native Enter:submit footer and empty z-marker ❯ field. Any text or continuation beneath that field disables web text input.",
+      "key_semantics": "Paste only into a source-proven empty native field, then Enter. No clearing or replacement keys guessed.",
+      "callsites": [
+        "QuestionFocus::InputMode"
+      ]
+    },
+    {
+      "category": "new_session_worktree",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs",
+          "sha256": "280a51c2649dd9a13f8f7566e1d0efd80203a513630f6600c54f5179fee46471",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "open_new_session_question"
+      ]
+    },
+    {
+      "category": "fork_worktree",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs",
+          "sha256": "b36e8e2972ead8635227afbd54e7e86bff7cf52b6eb2ba035b90ae747938109f",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/session/fork.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "open_fork_question"
+      ]
+    },
+    {
+      "category": "model_agent_mismatch",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs",
+          "sha256": "280a51c2649dd9a13f8f7566e1d0efd80203a513630f6600c54f5179fee46471",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "open_agent_type_mismatch_question"
+      ]
+    },
+    {
+      "category": "delete_current_session",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs",
+          "sha256": "280a51c2649dd9a13f8f7566e1d0efd80203a513630f6600c54f5179fee46471",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/session/lifecycle.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "open_delete_current_session_question"
+      ]
+    },
+    {
+      "category": "doctor_fix",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs",
+          "sha256": "d2f904d8c323f99c1e18187b254b0cfecc8882b5f026e66f382205defec724ca",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/prompt.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "open_doctor_fix_question"
+      ]
+    },
+    {
+      "category": "credit_limit_upsell",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs",
+          "sha256": "d89fd8f305ea0a58290211eed12e069203a20ed22272892d7ddffcbd0a3b7ed1",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "dispatch_credit_limit_upsell"
+      ]
+    },
+    {
+      "category": "free_usage_upsell",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs",
+          "sha256": "d89fd8f305ea0a58290211eed12e069203a20ed22272892d7ddffcbd0a3b7ed1",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/dispatch/billing.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "dispatch_free_usage_upsell"
+      ]
+    },
+    {
+      "category": "user_prompt_hook_block",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/question_view.rs",
+          "sha256": "818f0dcb22618d1dc2c95df2a3bb2faada567fc00999d7e4d6594a4fcec5af9b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/question_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-9/a-f choose+advance or submit; Tab/Up/Down walk rows; z enters Other input. Space toggles without submitting. Multi cursor comes from the source-rendered bold label; checked state never supplies cursor. Submit focuses an already checked visible row then Enter, preserving checkbox state. Left/Right change questions, Ctrl-F expands, X dismisses where advertised. Only current visible question is exposed.",
+      "callsites": [
+        "PromptBlocked"
+      ]
+    },
+    {
+      "category": "stop_running_subagents",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live accent-bar card and source-specific native footer at capture tail. Full currently disclosed command, path, question, warning and scope retained. Quoted, fenced, clipped, stale and incomplete frames remain native.",
+      "key_semantics": "1-4 select the explicit stop/continue/always-stop/always-continue option; Escape backs out. This is an explicit native choice, including its persistence wording.",
+      "callsites": [
+        "CancelTurnChoice::ALL",
+        "render_cancel_turn_panel"
+      ]
+    },
+    {
+      "category": "workspace_trust",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/welcome/mod.rs",
+          "sha256": "7b58b3e9a53e7f72e3875824d29886a96898b09f05f3ffe793e927bce244a466",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/welcome/menu.rs",
+          "sha256": "ee511117ccccbe960fb79501bf0fc7932f7bed3491ff9052fcae1ff0aab35a37",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/welcome/menu.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/app_view.rs",
+          "sha256": "370665faa1786317ef3825554f291d6014d24e8516e3754d905e3eabf7d4e562",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/app_view.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete current native welcome trust question, full workspace path, both native warning lines, both y/n rows, and only the version badge after the rows.",
+      "key_semantics": "y trusts explicitly; n or Escape exits. No automatic answer.",
+      "callsites": [
+        "render_trust_welcome",
+        "TrustState::Pending"
+      ]
+    },
+    {
+      "category": "command_palette",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal_window.rs",
+          "sha256": "176da0bf53b61653efdd8fe0120136eb4f1940a16280dd2d2417d83a9389589c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal_window.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete ModalWindow boundary and native Enter select / Esc footer; visible leaf/fold rows and exactly one styled native label focus.",
+      "key_semantics": "Fresh cursor-relative Up/Down + Enter. Moving to another page never chooses a hidden row. SessionDock does not persist defaults.",
+      "callsites": [
+        "ActiveModal::CommandPalette"
+      ]
+    },
+    {
+      "category": "model_picker",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal_window.rs",
+          "sha256": "176da0bf53b61653efdd8fe0120136eb4f1940a16280dd2d2417d83a9389589c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal_window.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete ModalWindow boundary and native Enter select / Esc footer; visible leaf/fold rows and exactly one styled native label focus.",
+      "key_semantics": "Fresh cursor-relative Up/Down + Enter. Moving to another page never chooses a hidden row. SessionDock does not persist defaults.",
+      "callsites": [
+        "ActiveModal::ArgPicker(model)"
+      ]
+    },
+    {
+      "category": "reasoning_effort_picker",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal_window.rs",
+          "sha256": "176da0bf53b61653efdd8fe0120136eb4f1940a16280dd2d2417d83a9389589c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal_window.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete ModalWindow boundary and native Enter select / Esc footer; visible leaf/fold rows and exactly one styled native label focus.",
+      "key_semantics": "Fresh cursor-relative Up/Down + Enter. Moving to another page never chooses a hidden row. SessionDock does not persist defaults.",
+      "callsites": [
+        "ActiveModal::ArgPicker(model effort)"
+      ]
+    },
+    {
+      "category": "theme_picker",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal_window.rs",
+          "sha256": "176da0bf53b61653efdd8fe0120136eb4f1940a16280dd2d2417d83a9389589c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal_window.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete ModalWindow boundary and native Enter select / Esc footer; visible leaf/fold rows and exactly one styled native label focus.",
+      "key_semantics": "Fresh cursor-relative Up/Down + Enter. Moving to another page never chooses a hidden row. SessionDock does not persist defaults.",
+      "callsites": [
+        "ActiveModal::ArgPicker(theme)"
+      ]
+    },
+    {
+      "category": "command_argument_picker",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal_window.rs",
+          "sha256": "176da0bf53b61653efdd8fe0120136eb4f1940a16280dd2d2417d83a9389589c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal_window.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete ModalWindow boundary and native Enter select / Esc footer; visible leaf/fold rows and exactly one styled native label focus.",
+      "key_semantics": "Fresh cursor-relative Up/Down + Enter. Moving to another page never chooses a hidden row. SessionDock does not persist defaults.",
+      "callsites": [
+        "ActiveModal::ArgPicker(other)"
+      ]
+    },
+    {
+      "category": "settings_enum",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs",
+          "sha256": "168784acf67cce5e1c351fec9d686d5edcdfd05a85b14f24c431a6960a7ee3a6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs",
+          "sha256": "03fd443a00f57a6ac2754831df7cd187baac3f3299887ac2d625bb11dc1dd401",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs",
+          "sha256": "fab545fbe12ef1352a28eb4fad0e4daee76e44bfd5a5ebbcb979bcc2c8f5b96c",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/state.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete Settings breadcrumb chooser, ○/● radio rows, native Enter select and Esc cancel/revert footer, exactly one styled label focus.",
+      "key_semantics": "Fresh Up/Down + Enter; native preview behavior and cancellation are preserved. Radio current value is independent of keyboard focus.",
+      "callsites": [
+        "SettingsMode::PickingEnum"
+      ]
+    },
+    {
+      "category": "settings_integer_stepper",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs",
+          "sha256": "168784acf67cce5e1c351fec9d686d5edcdfd05a85b14f24c431a6960a7ee3a6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs",
+          "sha256": "03fd443a00f57a6ac2754831df7cd187baac3f3299887ac2d625bb11dc1dd401",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete current Settings breadcrumb plus native arrow-step footer, value and Enter commit / Esc cancel.",
+      "key_semantics": "Up/Down changes one native range-aware step; Left/Right changes larger step; Enter commits the current displayed value. No text editor fabricated.",
+      "callsites": [
+        "SettingsMode::EditingInt",
+        "handle_int_stepper"
+      ]
+    },
+    {
+      "category": "settings_reset",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs",
+          "sha256": "168784acf67cce5e1c351fec9d686d5edcdfd05a85b14f24c431a6960a7ee3a6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete reset overlay with exact setting/default disclosure and y reset / n cancel / Esc cancel footer.",
+      "key_semantics": "y resets; n or Escape cancels.",
+      "callsites": [
+        "ActiveModal::ResetSettingsConfirm"
+      ]
+    },
+    {
+      "category": "queued_prompt_edit_confirm",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        }
+      ],
+      "status": "supported",
+      "support_condition": "Complete live Save changes? or Save and send? tail bar containing all y/n/x labels.",
+      "key_semantics": "y saves (and sends only where explicitly disclosed), n discards edits (and sends only where disclosed), x deletes the queued prompt; Escape returns to editing.",
+      "callsites": [
+        "ActiveModal::EditConfirm"
+      ]
+    },
+    {
+      "category": "auth_login_and_token",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/welcome/mod.rs",
+          "sha256": "7b58b3e9a53e7f72e3875824d29886a96898b09f05f3ffe793e927bce244a466",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/app_view.rs",
+          "sha256": "370665faa1786317ef3825554f291d6014d24e8516e3754d905e3eabf7d4e562",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/app_view.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Authentication launch and token/browser/device/command login modes are left in the native terminal. Never expose credential text inputs, account tokens, browser cookies or session secrets.",
+      "callsites": [
+        "AuthState::Pending",
+        "AuthState::Authenticating",
+        "AuthState::TokenInput"
+      ]
+    },
+    {
+      "category": "startup_consent_and_access_gate",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/welcome/mod.rs",
+          "sha256": "7b58b3e9a53e7f72e3875824d29886a96898b09f05f3ffe793e927bce244a466",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/privacy_banner.rs",
+          "sha256": "693bad95869cb85b37e05849bfceddbf3d78ff85b0206c3b5f35909fb23c5b42",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/privacy_banner.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/app_view.rs",
+          "sha256": "370665faa1786317ef3825554f291d6014d24e8516e3754d905e3eabf7d4e562",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/app_view.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Consent/account/team-managed/ZDR notices use separate welcome banners and link actions, not the audited question or picker card. The installed feature-gate rendering and full disclosure must be verified before projection.",
+      "callsites": [
+        "ConsentState",
+        "workspace_mode_ack_pending",
+        "has_access",
+        "is_zdr_blocked"
+      ]
+    },
+    {
+      "category": "settings_browse_group_string_filter",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs",
+          "sha256": "168784acf67cce5e1c351fec9d686d5edcdfd05a85b14f24c431a6960a7ee3a6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs",
+          "sha256": "03fd443a00f57a6ac2754831df7cd187baac3f3299887ac2d625bb11dc1dd401",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/settings_modal/input.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Browse/filter/group rows use custom tables, mixed inline toggles and state-dependent editors; arbitrary fields may contain sensitive values. Enum, integer and reset subdialogs are supported separately.",
+      "callsites": [
+        "SettingsMode::Browse",
+        "SettingsMode::FilterFocused",
+        "SettingsMode::PickingGroup",
+        "SettingsMode::EditingString"
+      ]
+    },
+    {
+      "category": "mcp_elicitation_form",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/elicitation_view/render.rs",
+          "sha256": "76c13f515cfee4703d1822d2e7945a344e9bedcaa72947fad19d6d53d6a1afba",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/elicitation_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/elicitation_view/state.rs",
+          "sha256": "34495510af939b872efd292863db9f1fb279182a120b9bb3c785008584fa46cc",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/elicitation_view/state.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/elicitation.rs",
+          "sha256": "40b4eab9c2695f0c1e68d81a9acb2b1ebc3f0bb0590ea3727b1a1b6cadf130a5",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/elicitation.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Arbitrary schema fields, validation errors, focus and secret classification are unavailable in screen-only form projection; preserve native fields and explicit Accept/Decline.",
+      "callsites": [
+        "ElicitationStage::Form"
+      ]
+    },
+    {
+      "category": "mcp_elicitation_url",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/elicitation_view/render.rs",
+          "sha256": "76c13f515cfee4703d1822d2e7945a344e9bedcaa72947fad19d6d53d6a1afba",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/elicitation_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/elicitation_view/state.rs",
+          "sha256": "34495510af939b872efd292863db9f1fb279182a120b9bb3c785008584fa46cc",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/elicitation_view/state.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/elicitation.rs",
+          "sha256": "40b4eab9c2695f0c1e68d81a9acb2b1ebc3f0bb0590ea3727b1a1b6cadf130a5",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/elicitation.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "URL consent/waiting modes have scrolling URL bodies, invalid/credential-bearing targets and separate action focus. A clipped URL or spoofing warning must never become an approval card.",
+      "callsites": [
+        "ElicitationStage::UrlConsent",
+        "ElicitationStage::UrlWaiting"
+      ]
+    },
+    {
+      "category": "plan_approval_preview_comment",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/plan_approval_view.rs",
+          "sha256": "3fc43da50f514ed083009d5357fb051c4554846800b414e6e475f002c2ed88b7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/plan_approval_view.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs",
+          "sha256": "38d3a8c859189281a448fa3e21df6d1c39fa2022117224ef42d348ea7e72db3b",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/interactions.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Full plan disclosure and existing comment drafts live in a separately scrollable preview; cannot infer complete plan from a clipped prompt.",
+      "callsites": [
+        "PlanApprovalFocus::Prompt",
+        "PlanApprovalFocus::Preview",
+        "PlanApprovalFocus::Commenting"
+      ]
+    },
+    {
+      "category": "rewind_picker_cancel_confirmation",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/rewind.rs",
+          "sha256": "ef9b91bc04182fe2a1d5f8f85ff895a4d3a36539d5502754bd7451cab6dc72ad",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/rewind.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+          "sha256": "7069a0d3e4b794d5f4195d52d75cbcb6d22ffa1bf67d0b74b65686459fccbd39",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Rewind uses an OverlayList and phase-specific full-screen flow; dedicated tail-marker recognition is still required. Current partial/clipped turn previews stay native.",
+      "callsites": [
+        "RewindPhase::Picker",
+        "RewindPhase::CancelOffer",
+        "RewindPhase::Confirm",
+        "RewindPhase::Error",
+        "RewindPhase::Loading",
+        "RewindPhase::Executing"
+      ]
+    },
+    {
+      "category": "resume_search_delete",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/session_picker.rs",
+          "sha256": "298c243359fb0c7d1ce61129729e21e687bd565b43911298e97964ade07c8195",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/session_picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/session_picker_surface.rs",
+          "sha256": "d8aee716f45fd98beed90b410a2ff585249dce9684871b951acd957632b8cc80",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/session_picker_surface.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/picker.rs",
+          "sha256": "f51879d1ce1c355b7733b3af7c4256c27c46284936c23aced2041f95e858ff99",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/picker.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/modals.rs",
+          "sha256": "932d8f48fbfa630faa6f4f3b8be16f4f25c822d53a2ee318f7fd22ae63535c24",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/modals.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Session picker contains expandable history cards and asynchronously loaded lanes; complete native row boundaries and delete disclosure are not represented by generic model-choice rows.",
+      "callsites": [
+        "ActiveModal::SessionPicker",
+        "PendingDelete"
+      ]
+    },
+    {
+      "category": "extensions_plugins_skills_marketplace_mcp",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/extensions_modal.rs",
+          "sha256": "3b8270e3b04a4bdad52f4137f59f84d0b37715f91e2141372306836c3b835446",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/extensions_modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/extensions_modal/skills_tab.rs",
+          "sha256": "4834d7ae8577d4ad7f35bf5270d32c77bc5ef4c539dbb7b30d164fdce00ec0a0",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/extensions_modal/skills_tab.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/mcps_modal.rs",
+          "sha256": "2e4ef1b52c6cc6bec0217011a6c1eddd3dbef5c697a94f35188ce30231f93d81",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/mcps_modal.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Tabbed hierarchical entries expose enable/disable, install/uninstall, source editors, managed connectors, authentication and independent focus; retain native flow.",
+      "callsites": [
+        "ExtensionsTab",
+        "ExtensionsMode"
+      ]
+    },
+    {
+      "category": "import_settings_multi_select",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/import_claude_modal.rs",
+          "sha256": "84e82d24f54b109b273078f8e612677b8d075df84b4e503dc2721bcc9f88ca63",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/import_claude_modal.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Hierarchical folds and selected group semantics differ from question checkbox rows; native import confirmation requires its own source-specific projection.",
+      "callsites": [
+        "ImportClaudeModal"
+      ]
+    },
+    {
+      "category": "agents_personas_and_details",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/agents_modal.rs",
+          "sha256": "3a205e275da9a4656a78fc7824ef2da0763ef10513710347e584dcece284bc73",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/agents_modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/persona_detail.rs",
+          "sha256": "2dbe1249ec060fd4ff089603379725c4dd4662d5309f040a14155a4016859bd6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/persona_detail.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Persona detail field editors, bundled read-only records and external editor actions require separate value/secret rules.",
+      "callsites": [
+        "AgentsModal",
+        "PersonaDetail"
+      ]
+    },
+    {
+      "category": "feedback_report_trace_drafts",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/feedback_modal/mod.rs",
+          "sha256": "07c1068611bde3c72c9cd6fdd01a9e974a4cb12db414308f8d5dc26f00c32f83",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/feedback_modal/mod.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/feedback_modal/render.rs",
+          "sha256": "6e8936d5646a7d74d739ad7659bfc3df37669dc011fbc10f7934f26a45526d05",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/feedback_modal/render.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/feedback_modal/drafts.rs",
+          "sha256": "ac13a88b62ec36c67f7c33992198337778a028281d12a20ae438229cda225593",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/feedback_modal/drafts.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/feedback_modal/enum_picker.rs",
+          "sha256": "345b4064077e3726ec944473240e450e5b7fc8a8a45de5495003a02da4b2d67f",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/feedback_modal/enum_picker.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Feedback reports contain multiline drafts, images, remote-unknown recovery states, saved draft deletion and sensitive trace-consent choices. Preserve native review flow.",
+      "callsites": [
+        "FeedbackTab",
+        "trace consent",
+        "delete draft",
+        "discard composition"
+      ]
+    },
+    {
+      "category": "dashboard_dispatch_close_archive_delete",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/dashboard/state.rs",
+          "sha256": "862f2994105673a1a1659d52fadbcf7ed2001de96f70b637262425548319c97e",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/dashboard/state.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/dashboard/render.rs",
+          "sha256": "a907ba052cb504b497665ce5c896601d1275189b1a346c11f3682fb7ef67be48",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/dashboard/render.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Dashboard is a multi-pane independent app with agent/session focus, pinned/reordered rows and confirmation timers; no ordinary composer menu fabricated.",
+      "callsites": [
+        "New Agent",
+        "Open Previous",
+        "confirm close",
+        "confirm archive",
+        "confirm delete"
+      ]
+    },
+    {
+      "category": "workflow_tasks_goal_panels",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/workflows.rs",
+          "sha256": "2552e72c87a35a1142bcf2c82a542ae8ab5b883fef249f376dd11420d98e8370",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/workflows.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/goal_detail.rs",
+          "sha256": "7f72e2fa5ae3782f0cee8be33297f4545aa61531c9a1128fb58adc0a99b87edb",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/goal_detail.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/tasks_pane.rs",
+          "sha256": "345f467c552d05819542ec600da83469bd9c574037f258607410098e78096963",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/tasks_pane.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Task/workflow/goal panes select running entities and own transport actions; native focus is distinct from composer questions.",
+      "callsites": [
+        "Workflow Runs",
+        "Goal detail",
+        "Tasks"
+      ]
+    },
+    {
+      "category": "docs_tutorial_shortcuts_memory_usage",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/tutorial.rs",
+          "sha256": "00104a3a05b11bd0b85be9e0ef70438c38464484d9452959a45e1bf71c8cb68f",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/tutorial.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/shortcuts_help.rs",
+          "sha256": "1577f0e0211f268f245a29d6eb5c948887c22948f4e12b9c8775821451cafd2d",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/shortcuts_help.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/memory_modal.rs",
+          "sha256": "669d33d089679ca9ae8024babce7ade67c86b1aa5c031330a70d888b053d751a",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/memory_modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/usage_modal.rs",
+          "sha256": "407289266433cf599882b35a1af5977ce4b0fb5a45e4c6f62d20ecc2a317186f",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/usage_modal.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/modal.rs",
+          "sha256": "79d8921a15d765682afa869a9b6234de3b8b8a67fd21694728f6168d035825e7",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/modal.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Read-only or hierarchical navigators use scrolling documents, key capture and independent value editors. No model or approval question is implied.",
+      "callsites": [
+        "ActiveModal::DocPicker",
+        "ActiveModal::DocViewer",
+        "ActiveModal::ShortcutsHelp",
+        "ActiveModal::MemoryBrowser",
+        "ActiveModal::UsageInfo",
+        "ActiveModal::RememberNoteReview"
+      ]
+    },
+    {
+      "category": "new_worktree_name",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/new_worktree_dialog.rs",
+          "sha256": "cda2eb9205b998fa76cfac32c1c04ef31da87a6db201e9b4d905e9d70fa0b0b6",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/new_worktree_dialog.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/app/app_view.rs",
+          "sha256": "370665faa1786317ef3825554f291d6014d24e8516e3754d905e3eabf7d4e562",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/app/app_view.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Current label may be clipped and source clearing behavior has not been established for this dialog; retain native label editing.",
+      "callsites": [
+        "NewWorktreeDialogState"
+      ]
+    },
+    {
+      "category": "cli_update_announcements",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/announcements.rs",
+          "sha256": "b0ec78c821a3cfaa5f94aa1100bdd46e3c869a816d9e69a2bf338924c3ced508",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/announcements.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/welcome/mod.rs",
+          "sha256": "7b58b3e9a53e7f72e3875824d29886a96898b09f05f3ffe793e927bce244a466",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/welcome/mod.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Installed binary embeds announcement/update UI but no complete ordinary choose/update dialog was established. Informational update progress is not a question.",
+      "callsites": [
+        "announcements",
+        "version badge"
+      ]
+    },
+    {
+      "category": "search_jump_queue_editor",
+      "source": [
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/history_search.rs",
+          "sha256": "7732aff0807bd9d9e4333d21507f4c54783dd2922bc27138c6ea4f5bfa85697a",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/history_search.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/jump.rs",
+          "sha256": "ad69d0c7410e07f7b1a5730f445b2f090ff1997f0eaa5127332a358206d90aa4",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/jump.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/queue_pane.rs",
+          "sha256": "726025e8b8d9aeea18c80a63eefca9b6677df64dab8f073b73494ae7c02fcd76",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/queue_pane.rs"
+        },
+        {
+          "path": "crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs",
+          "sha256": "dd82d59095a68f39e7b2f6b76459212449a51cd509ab60486dbf47484eb20bdf",
+          "url": "https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-pager/src/views/prompt_widget/mod.rs"
+        }
+      ],
+      "status": "native_fallback",
+      "native_fallback_reason": "Interactive search/turn jump/editor suggestions have state-dependent keys and text drafts; these are native navigation/editor surfaces.",
+      "callsites": [
+        "history search",
+        "Jump to which turn",
+        "queue edit"
+      ]
+    }
+  ]
+}

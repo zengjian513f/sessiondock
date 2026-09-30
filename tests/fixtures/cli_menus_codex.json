@@ -1,0 +1,1976 @@
+[
+  {
+    "name": "approval_command",
+    "category": "approval",
+    "screen": "\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n› 1. Yes, proceed (y)                                                                               \n  2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "p"
+              ]
+            },
+            {
+              "keys": [
+                "Escape"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__approval_modal_exec.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "approval_patch",
+    "category": "approval",
+    "screen": "\n\n  Would you like to make the following edits?\n\n  Description: The model wants to apply changes\n  Destination: /tmp/project/README.md\n\n\n› 1. Yes, proceed (y)                                                           \n  2. Yes, and don't ask again for these files (a)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "a"
+              ]
+            },
+            {
+              "keys": [
+                "Escape"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__approval_modal_patch.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "approval_permissions",
+    "category": "approval",
+    "screen": "\n  Would you like to grant these permissions?\n\n  Reason: need workspace access\n\n  Permission rule: network; read `/tmp/readme.txt`; write `/tmp/out.txt`\n\n\n› 1. Yes, grant these permissions for this turn (y)\n  2. Yes, grant for this turn with strict auto review (r)\n  3. Yes, grant these permissions for this session (a)\n  4. No, continue without permissions (d)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "r"
+              ]
+            },
+            {
+              "keys": [
+                "a"
+              ]
+            },
+            {
+              "keys": [
+                "d"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__approval_overlay__tests__approval_overlay_permissions_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "approval_additional_permissions",
+    "category": "approval",
+    "screen": "\n  Would you like to run the following command?\n\n  Reason: need filesystem access\n\n  Permission rule: network; read `/tmp/readme.txt`; write `/tmp/out.txt`\n\n  $ cat /tmp/readme.txt\n\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "Escape"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__approval_overlay__tests__approval_overlay_additional_permissions_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "approval_cross_thread",
+    "category": "approval",
+    "screen": "\n  Would you like to run the following command?\n\n  Thread: Robie [explorer]\n\n  $ echo hi\n\n\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel or o to open thread\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "Escape"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__approval_overlay__tests__approval_overlay_cross_thread_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "approval_destination_unavailable",
+    "category": "approval",
+    "screen": "\n  Would you like to make the following edits?\n\n  Description: Apply proposed file edits\n  Destination: unavailable\n\n\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for these files (a)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "a"
+              ]
+            },
+            {
+              "keys": [
+                "Escape"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__approval_overlay__tests__approval_overlay_patch_destination_unavailable.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "trust_initial",
+    "category": "trust",
+    "screen": "\n  Folder access\n  /workspace/project                                                \n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue                                               \n  2. Quit\n\n  enter continue and create sandbox · esc quit\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_git_repo.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "trust_existing_restricted",
+    "category": "trust",
+    "screen": "\n  Folder access\n  /workspace/project                                                \n\n  This existing task may retain settings and history, including\n  project configuration or hooks loaded while it was trusted. To use\n  restricted settings, start a new task. The folder's trust setting\n  will not change.\n\n› 1. Open existing task                                               \n  2. Back to Agent Command Center\n\n  enter continue · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__existing_untrusted_task.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "trust_open_restricted",
+    "category": "trust",
+    "screen": "\n  Folder access\n  /workspace/project                                                \n\n  Config, hooks, and exec policies from untrusted folders stay\n  disabled. Trusted project folders can still contribute settings.\n  Skills still load, and tools follow your permission settings.\n  Opening will not change saved trust.\n\n› 1. Open restricted                                                  \n  2. Back to Agent Command Center\n\n  enter continue · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_restricted_folder.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "trust_error_context",
+    "category": "trust",
+    "screen": "\n  Folder access\n  /workspace/project                                                \n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue                                               \n  2. Quit\n\n  Failed to set trust for /workspace/project: config/batchWrite     \n  failed in TUI: Invalid configuration: features.fast_mode=true is  \n  not supported; allowed set [fast_mode=false]                      \n\n  enter continue · esc quit\n",
+    "expected": {
+      "kind": "folder_trust",
+      "source": "codex",
+      "state": "waiting",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_trust_error.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "trust_repository_scope",
+    "category": "trust",
+    "screen": "\n  Folder access\n  /srv/remote/project/nested\n\n  Note: You’re in a subdirectory of a Git project. Trusting will\n  apply to the repository root:\n  /srv/remote/project\n\n  Trust this folder? Codex can read, edit, and run files here,\n  subject to your permission settings. Folder settings can run code\n  automatically, even without a model request. Continue only if you\n  trust these files. Your trust decision will be saved.\n\n› 1. Trust and continue\n  2. Back to Agent Command Center\n\n  enter continue · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "onboarding/snapshots/codex_tui__onboarding__trust_directory__tests__renders_snapshot_for_remote_git_subdirectory.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "model_picker",
+    "category": "model",
+    "screen": "  Select Model and Effort\n\n\n  1. GPT-6.1-Sol (default)  Latest workhorse model for coding and everyday work.\n  2. GPT-6-Astra            Frontier intelligence for the most demanding work.\n  3. GPT-6-Sol              Previous generation workhorse model.\n  4. GPT-6-Luna             Fast and affordable model for easier tasks.\n  5. GPT-5.6-Sol            Older generation workhorse model.\n  6. GPT-5.6-Terra          Older balanced model for straightforward work.\n  7. GPT-5.6-Luna           Older fast and efficient model.\n› 8. GPT-5.5 (current)      Legacy coding model.\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            },
+            {
+              "keys": [
+                "5"
+              ]
+            },
+            {
+              "keys": [
+                "6"
+              ]
+            },
+            {
+              "keys": [
+                "7"
+              ]
+            },
+            {
+              "keys": [
+                "8"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__model_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "effort_picker",
+    "category": "effort",
+    "screen": "  Select Reasoning Level for GPT-5.5\n\n\n  1. Low               Fast responses with lighter reasoning\n  2. Medium (default)  Balances speed and reasoning depth for everyday tasks\n› 3. High (current)    Greater reasoning depth for complex problems\n  4. Extra high        Extra high reasoning depth for complex problems\n  5. Persistent        Continue working until put to sleep\n  6. More reasoning…   Max and Ultra consume usage limits faster\n\n  enter default · s session · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            },
+            {
+              "keys": [
+                "5"
+              ]
+            },
+            {
+              "keys": [
+                "6"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__model_reasoning_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "effort_advanced",
+    "category": "effort",
+    "screen": "  Advanced Reasoning\n  ⚠ Consumes usage limits faster\n\n\n  1. Max              For difficult problems when quality matters more than\n                      speed · higher usage\n› 2. Ultra (current)  For demanding work using multiple agents · highest usage\n\n  enter apply · s session · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__model_advanced_reasoning_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "effort_only_advanced",
+    "category": "effort",
+    "screen": "  Select Reasoning Level for GPT-5.5\n\n\n› 1. More reasoning…  Ultra consumes usage limits faster\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__advanced_only_reasoning_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "permissions_picker",
+    "category": "permissions",
+    "screen": "  Update Model Permissions\n\n\n› 1. Ask for approval (current)  Read and edit workspace files and run commands,\n                                 with approval required for internet access or\n                                 edits outside the workspace\n  2. Approve for me              Only ask for actions detected as potentially\n                                 unsafe\n  3. Full Access                 Use with caution: Codex can edit files outside\n                                 this workspace and access the internet without\n                                 approval\n  4. Read Only                   Read workspace files, with approval required\n                                 for edits or internet access\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__profile_permissions_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "permissions_disabled",
+    "category": "permissions",
+    "screen": "  Update Model Permissions\n\n\n  1. Ask for approval        Read and edit workspace files and run commands,\n                             with approval required for internet access or edits\n                             outside the workspace\n  2. Approve for me          Only ask for actions detected as potentially unsafe\n     Full Access (disabled)  Use with caution: Codex can edit files outside this\n                             workspace and access the internet without approval\n                             (disabled: Disabled by requirements)\n› 3. Read Only (current)     Read workspace files, with approval required for\n                             edits or internet access\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [],
+              "disabled": true
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__profile_permissions_selection_popup_with_disallowed_full_access.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "permissions_custom",
+    "category": "permissions",
+    "screen": "  Update Model Permissions\n\n\n  1. Ask for approval        Read and edit workspace files and run commands,\n                             with approval required for internet access or edits\n                             outside the workspace\n  2. Approve for me          Only ask for actions detected as potentially unsafe\n  3. Full Access             Use with caution: Codex can edit files outside this\n                             workspace and access the internet without approval\n  4. Read Only               Read workspace files, with approval required for\n                             edits or internet access\n› 5. locked-down (current)   Inspect and patch only approved workspace files.\n     web-enabled (disabled)  Workspace profile with network access. (disabled:\n                             Disabled by requirements)\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            },
+            {
+              "keys": [
+                "5"
+              ]
+            },
+            {
+              "keys": [],
+              "disabled": true
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__profile_permissions_selection_popup_with_custom_profiles.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "feedback_categories",
+    "category": "feedback",
+    "screen": "  How was this?\n\n\n› 1. bug           Crash, error message, hang, or broken UI/behavior\n  2. bad result    Output was off-target, incorrect, incomplete, or unhelpful\n  3. good result   Helpful, correct, high‑quality, or delightful result worth\n                   celebrating\n  4. safety check  Benign usage blocked due to safety checks or refusals\n  5. other         Slowness, feature suggestion, UX feedback, or anything else\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            },
+            {
+              "keys": [
+                "5"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__feedback_selection_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "feedback_empty_text",
+    "category": "feedback",
+    "screen": "▌ Tell us more (bug)\n▌\n▌ Your feedback can be used to improve ChatGPT. Learn more.\n▌\n▌ (optional) Write a short description to help us further\n\nPress enter to submit or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": []
+        }
+      ],
+      "text": {
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "value": "",
+        "mode": "paste"
+      }
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__feedback_note_view__tests__feedback_view_bug.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_options",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Choose an option.                                                                                                     \n                                                                                                                        \n  › 1. Option 1           First choice.                                                                                 \n    2. Option 2           Second choice.                                                                                \n    3. Option 3           Third choice.                                                                                 \n    4. None of the above  Optionally, add details in notes (tab)                                                        \n                                                                                                                        \n  tab to add notes | enter to submit answer | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_options.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_page_first",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/2 (2 unanswered)                                                                                           \n  Choose an option.                                                                                                     \n                                                                                                                        \n  › 1. Option 1  First choice.                                                                                          \n    2. Option 2  Second choice.                                                                                         \n    3. Option 3  Third choice.                                                                                          \n                                                                                                                        \n  tab to add notes | enter to submit answer | ←/→ to navigate questions | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_multi_question_first.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_page_last",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 2/2 (2 unanswered)                                                                                           \n  Share details.                                                                                                        \n                                                                                                                        \n  › Type your answer (optional)                                                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit all | ctrl+p / ctrl+n change question | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": []
+        }
+      ],
+      "text": {
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "value": "",
+        "mode": "paste"
+      }
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_multi_question_last.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_freeform",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Share details.                                                                                                        \n                                                                                                                        \n  › Type your answer (optional)                                                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit answer | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": []
+        }
+      ],
+      "text": {
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "value": "",
+        "mode": "paste"
+      }
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_freeform.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_remapped_submit",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Share details.                                                                                                        \n                                                                                                                        \n  › Type your answer (optional)                                                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  ctrl+j to submit answer | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": []
+        }
+      ],
+      "text": {
+        "after_keys": [
+          "ctrl-j"
+        ]
+      }
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_freeform_remapped_submit.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_remapped_interrupt",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Share details.                                                                                                        \n                                                                                                                        \n  › Type your answer (optional)                                                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit answer | f12 to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": []
+        }
+      ],
+      "cancel_keys": [
+        "f12"
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_freeform_remapped_interrupt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_notes",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Choose an option.                                                                                                     \n                                                                                                                        \n  › 1. Option 1  First choice.                                                                                          \n    2. Option 2  Second choice.                                                                                         \n    3. Option 3  Third choice.                                                                                          \n                                                                                                                        \n  › Add notes                                                                                                           \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  tab or esc to clear notes | enter to submit answer\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Tab",
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "Tab",
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "Tab",
+                "3"
+              ]
+            }
+          ]
+        }
+      ],
+      "text": {
+        "before_keys": [],
+        "after_keys": [
+          "Enter"
+        ],
+        "value": "",
+        "mode": "paste"
+      }
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_options_notes_visible.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_unanswered_confirmation",
+    "category": "request",
+    "screen": "                                                                                \n  Submit with unanswered questions?                                             \n  2 unanswered questions                                                        \n                                                                                \n  › 1. Proceed  Submit with 2 unanswered questions                              \n    2. Go back  Return to the first unanswered question                         \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n  Press enter to confirm or esc to go back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "2",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_unanswered_confirmation.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_hidden_options",
+    "category": "request",
+    "screen": "                                                                                \n  Question 1/1 (1 unanswered)                                                   \n  What would you like to do next?                                               \n                                                                                \n    2. Run tests      Pick a crate and run its tests.                           \n    3. Review a diff  Summarize or review current changes.                      \n  › 4. Refactor       Tighten structure and remove dead code.                   \n                                                                                \n  option 4/5 | tab to add notes | enter to submit answer | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_hidden_options_footer.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "request_auto_resolution",
+    "category": "request",
+    "screen": "                                                                                                                        \n  Question 1/3 (3 unanswered) · auto-resolves in 1m 00s                                                                 \n  Choose an option.                                                                                                     \n                                                                                                                        \n  › 1. Option 1  First choice.                                                                                          \n    2. Option 2  Second choice.                                                                                         \n    3. Option 3  Third choice.                                                                                          \n                                                                                                                        \n  tab to add notes | enter to submit answer | ←/→ to navigate questions | esc to interrupt\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/request_user_input/snapshots/codex_tui__bottom_pane__request_user_input__tests__request_user_input_auto_resolution_countdown.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "mcp_approval",
+    "category": "mcp",
+    "screen": "                                                                                                                        \n  Field 1/1                                                                                                             \n  Allow this request?                                                                                                   \n  › 1. Allow   Run the tool and continue                                                                                \n    2. Cancel  Cancel this tool call                                                                                    \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit | esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__mcp_server_elicitation__tests__mcp_server_elicitation_approval_form_without_schema.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "mcp_persistent_approval",
+    "category": "mcp",
+    "screen": "                                                                                                                        \n  Field 1/1                                                                                                             \n  Allow this request?                                                                                                   \n  › 1. Allow                   Run the tool and continue                                                                \n    2. Allow for this session  Run the tool and remember this choice for this session                                   \n    3. Always allow            Run the tool and remember this choice for future tool calls                              \n    4. Cancel                  Cancel this tool call                                                                    \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit | esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "request_user_input",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__mcp_server_elicitation__tests__mcp_server_elicitation_approval_form_with_session_persist.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "checkbox_experiments",
+    "category": "checkbox",
+    "screen": "\n  Experimental features\n  Checked features are configured on. Some experimental features take effect only in new tasks or\n  after restarting the Codex server.\n\n\n› [x] Server network_proxy       Description supplied by the server.\n  [x] Server future_feature      Description supplied by the server.\n  [x] Server prevent_idle_sleep  Description supplied by the server.\n\n\n  space toggle · enter save · esc save/close\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "multi_select",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Space"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Space"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Space"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__experimental_features_view__tests__experimental_features_server_discovery.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "update_startup",
+    "category": "update",
+    "screen": "\n  Update available · 0.0.0 → 9.9.9\n  Release notes: https://github.com/openai/codex/releases/latest\n\n› 1. Update now (runs `npm install -g @openai/codex`)                           \n  2. Skip\n  3. Skip until next version\n\n  enter continue · esc skip\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "snapshots/codex_tui__update_prompt__tests__update_prompt_modal.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "update_conversation",
+    "category": "update",
+    "screen": "  ✨ New version available! Would you like to update?\n\n  Full release notes: https://github.com/openai/codex/releases/latest\n\n\n› 1. Yes, update now\n  2. No, not now\n  3. Don't remind me\n\n  Press enter to confirm or esc to go back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__update_popup.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "sandbox_setup",
+    "category": "sandbox",
+    "screen": "  Your organization requires the default Codex agent sandbox to continue. Set it up to protect your files and control\n  network access.\n  Learn more <https://developers.openai.com/codex/windows>\n\n\n› 1. Set up default sandbox (requires Administrator permissions)\n  2. Quit\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_required_enable_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "sandbox_setup_failed",
+    "category": "sandbox",
+    "screen": "  Couldn't set up your sandbox with Administrator permissions\n\n  Your organization requires the default sandbox before Codex can continue.\n  Learn more <https://developers.openai.com/codex/windows>\n\n\n› 1. Try setting up admin sandbox again\n  2. Quit\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__windows_sandbox_required_fallback_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "provider_picker",
+    "category": "provider",
+    "screen": "\n  Select an open-source provider\n  Choose a local AI server for this session.\n\n  1. LM Studio · ● Running\n› 2. Ollama · ● Running                                                         \n\n  Local Ollama server (Responses API, default port 11434)\n\n  ↑/↓ choose · enter select · esc LM Studio · ctrl+c exit\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            }
+          ]
+        }
+      ],
+      "cancel_keys": [
+        "ctrl-c"
+      ]
+    },
+    "native_source": "snapshots/codex_tui__oss_selection__presentation_tests__oss_providers_running.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "hooks_review",
+    "category": "hooks",
+    "screen": "\n  Hooks need review\n  2 hooks are new or changed.\n  Hooks can run outside the sandbox\n  after you trust them.\n\n\n› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting (hooks\n     won't run)\n\n  enter confirm · esc skip\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "state": "waiting",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "snapshots/codex_tui__startup_hooks_review__tests__startup_hooks_review_prompt.snap",
+    "native_outcome": "Only explicit choice keys act; recapture after every native action."
+  },
+  {
+    "name": "negative_history_output",
+    "category": "negative",
+    "screen": "\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n› 1. Yes, proceed (y)                                                                               \n  2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n\nThe process continued.\n",
+    "expected": null
+  },
+  {
+    "name": "negative_quoted",
+    "category": "negative",
+    "screen": "> \n> \n>   Would you like to run the following command?\n> \n>   Reason: this is a test reason such as one that would be produced by the model\n> \n>   $ echo hello world\n> \n> \n> › 1. Yes, proceed (y)                                                                               \n>   2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n>   3. No, and tell Codex what to do differently (esc)\n> \n>   Press enter to confirm or esc to cancel",
+    "expected": null
+  },
+  {
+    "name": "negative_fenced",
+    "category": "negative",
+    "screen": "```text\n\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n› 1. Yes, proceed (y)                                                                               \n  2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n```\n",
+    "expected": null
+  },
+  {
+    "name": "negative_partial_footer",
+    "category": "negative",
+    "screen": "\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n› 1. Yes, proceed (y)                                                                               \n  2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  ",
+    "expected": null
+  },
+  {
+    "name": "negative_no_cursor",
+    "category": "negative",
+    "screen": "\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n  1. Yes, proceed (y)                                                                               \n  2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "negative_duplicate_cursors",
+    "category": "negative",
+    "screen": "\n\n  Would you like to run the following command?\n\n  Reason: this is a test reason such as one that would be produced by the model\n\n  $ echo hello world\n\n\n› 1. Yes, proceed (y)                                                                               \n› 2. Yes, and don't ask again for commands that start with `echo hello world` (p)\n  3. No, and tell Codex what to do differently (esc)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": null
+  },
+  {
+    "name": "negative_native_draft",
+    "category": "negative",
+    "screen": "                                                                                                                        \n  Question 1/1 (1 unanswered)                                                                                           \n  Share details.                                                                                                        \n                                                                                                                        \n  › Existing typed draft                                                                                         \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n  enter to submit answer | esc to interrupt\n",
+    "expected": null
+  },
+  {
+    "name": "fallback_resume",
+    "category": "fallback",
+    "screen": "Resume a previous session  Sort: Created at\nType to search\n  Created at  Updated at  Branch  CWD  Conversation\nNo sessions yet\n\n\n\n\nenter to resume     esc to start new     ctrl + c to quit     tab to toggle sort\n",
+    "expected": null,
+    "native_source": "snapshots/codex_tui__resume_picker__tests__resume_picker_screen.snap"
+  },
+  {
+    "name": "fallback_mcp_custom_chord",
+    "category": "fallback",
+    "screen": "\n  Field 1/1 (1 required unanswered)\n  Enter a name\n\n  Name\n\n  › Type your answer\n\n  ctrl+x enter to submit | esc to cancel\n",
+    "expected": null,
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__mcp_server_elicitation__tests__mcp_server_elicitation_text_configured_key_chords.snap"
+  },
+  {
+    "name": "fallback_feedback_nonempty",
+    "category": "fallback",
+    "screen": "▌ Tell us more (bug)\n▌\n▌ Your feedback can be used to improve ChatGPT. Learn more.\n▌\n▌ foo\n▌ bar\n\nPress enter to submit or esc to cancel\n",
+    "expected": null,
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__feedback_note_view__tests__feedback_multiline_paste.snap"
+  },
+  {
+    "name": "verification_dynamic",
+    "category": "verification",
+    "screen": "\n  Production deployment needs your approval.\n\n  Server: deployments\n\n  Approve deploying the reviewed release?\n\n\n› 1. Verify and approve (y)\n  2. Cancel this request (c)\n\n  Press enter to confirm or esc to cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "menu_type": "approval",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "y"
+              ]
+            },
+            {
+              "keys": [
+                "c"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "bottom_pane/snapshots/codex_tui__bottom_pane__user_verification__tests__user_verification_prompt.snap"
+  },
+  {
+    "name": "negative_clipped_disclosure",
+    "category": "negative",
+    "screen": "\n  Would you like to run the following command?\n\n  Environment: local\n\n  Reason: A reason requiring review.A reason requiring review.A reason\n  requiring review.A reason requiring review.A reason requiring review.A\n  reason requiring review.A reason requiring review.A reason requiring\n  review.A reason requiring review.A reason requiring review.A reason\n  requiring review.A reason requiring review.A reason requiring review.A\n  [… 34 lines] ctrl+g view all\n› 1. Yes, proceed (y)\n  2. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel\n\n",
+    "expected": null,
+    "native_source": "bottom_pane/approval_overlay/snapshots/codex_tui__bottom_pane__approval_overlay__clipping_tests__clipped_exec_approval_opens_the_complete_command.snap"
+  },
+  {
+    "name": "memories_settings",
+    "category": "memories",
+    "screen": "  Memories\n  Choose how Codex uses and creates memories. Changes are saved to config.toml\n\n\n› [x] Use memories       Use memories starting with the next thread\n  [ ] Generate memories  Generate memories from this thread and future threads\n  Reset all memories     Clear local memory files and summaries without changing\n                         existing threads\n\n\n  Learn more: https://developers.openai.com/codex/memories\n\n  space toggle · enter save/select · esc cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "menu_type": "multi_select",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Space"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Space"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__memories_settings_popup.snap"
+  },
+  {
+    "name": "memories_reset",
+    "category": "memories",
+    "screen": "  Reset all memories?\n  This clears local memory files and rollout summaries for the current Codex\n  home.\n\n\n› Reset all memories  Delete local memory files and rollout summaries\n  Go back             Return to memory settings\n\n\n\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "chatwidget/snapshots/codex_tui__chatwidget__tests__memories_reset_confirmation.snap"
+  },
+  {
+    "name": "daemon_recovery",
+    "category": "daemon",
+    "screen": "\n  Background server has incompatible feature settings\n  This session requires api_key_model_discovery to be enabled\n  Restart will use these shared feature settings:\n    api_key_model_discovery = true\n    mcp_oauth_refresh_coordination = false\n  These settings persist and can disable functionality for other clients. Restart may\n  interrupt active or queued work.\n\n\n  1. Run without daemon this time\n  2. Restart with these settings\n› 3. Cancel\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "snapshots/codex_tui__daemon_recovery__tests__daemon_recovery_menu.snap"
+  },
+  {
+    "name": "keymap_actions",
+    "category": "keymap",
+    "screen": "  Edit Shortcut\n  Toggle Voice · Chat\n  Current f8 · Default keymap\n  Config `tui.keymap.chat.toggle_voice`\n  Start or stop a voice conversation.\n\n\n› 1. Replace binding                   Capture a replacement key for `f8`\n  2. Add alternate binding             Keep `f8` and add another key\n  3. Replace with key chord            Replace `f8` with a two-stroke key chord\n  4. Add alternate key chord           Keep `f8` and add a two-stroke key chord\n  –  Remove custom binding (disabled)  No custom root override to remove\n  5. Back to shortcuts                 Return to the shortcut list\n\n  Changes write the root `tui.keymap.*` override.\n  enter select · esc back\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "1"
+              ]
+            },
+            {
+              "keys": [
+                "2"
+              ]
+            },
+            {
+              "keys": [
+                "3"
+              ]
+            },
+            {
+              "keys": [
+                "4"
+              ]
+            },
+            {
+              "keys": [],
+              "disabled": true
+            },
+            {
+              "keys": [
+                "5"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "snapshots/codex_tui__keymap_setup__tests__keymap_voice_toggle.snap"
+  },
+  {
+    "name": "keymap_picker",
+    "category": "keymap",
+    "screen": "\n  Keymap\n  All configurable shortcuts.\n  150 actions, 0 customized, 5 unbound.\n\n   All   Common   Customized (0)   Unbound (5)   App   Composer   Editor   Vim   Navigation   Agents   Approval      ›\n\n  Type to search shortcuts\n\n› Global       - Open Agents                unbound\n  Global         Open Transcript            ctrl-t\n  Global         Find Transcript            f3\n  Global         Focus Activity             f4\n  Global         Open External Editor       ctrl-g\n  Global         Copy                       ctrl-o\n  Global         Clear Terminal             ctrl-l\n  Global       - Toggle Vim Mode            unbound\n  Global         Toggle Raw Output          alt-r\n  Global         Toggle Side Conversation   ctrl-/\n  Chat           Interrupt Turn             esc\n  Chat           Decrease Reasoning Effort  alt-,, shift-down\n  Chat           Increase Reasoning Effort  alt-., shift-up\n  Chat         - Previous Permission Mode   unbound\n  Chat         - Next Permission Mode       unbound\n  Chat           Edit Queued Message        shift-left, alt-up\n  Chat           Prompt Stack Back          shift-right, alt-down\n  Chat           Skip Question              ctrl-]\n  Chat           Toggle Voice               f8\n  Chat           Toggle Voice Mute          ctrl-x\n  Composer       Submit                     enter\n  Composer       Queue                      tab\n  Composer       Toggle Shortcuts           ?, shift-?\n  Composer       History Search Previous    ctrl-r\n↓\n  left/right group · enter edit shortcut · * custom · - unbound · esc close\n",
+    "expected": {
+      "kind": "screen_menu",
+      "source": "codex",
+      "menu_type": "selection",
+      "questions": [
+        {
+          "options": [
+            {
+              "keys": [
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            },
+            {
+              "keys": [
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Down",
+                "Enter"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "native_source": "snapshots/codex_tui__keymap_setup__tests__keymap_picker_wide.snap"
+  },
+  {
+    "name": "negative_keymap_clipped_header",
+    "category": "negative",
+    "screen": "  150 actions, 0 customized, 5 unbound.\n\n   All   Common   Customized (0)   Unbound (5)   App   Composer   Editor   Vim   Navigation   Agents   Approval      ›\n\n  Type to search shortcuts\n\n› Global       - Open Agents                unbound\n  Global         Open Transcript            ctrl-t\n  Global         Find Transcript            f3\n  Global         Focus Activity             f4\n  Global         Open External Editor       ctrl-g\n  Global         Copy                       ctrl-o\n  Global         Clear Terminal             ctrl-l\n  Global       - Toggle Vim Mode            unbound\n  Global         Toggle Raw Output          alt-r\n  Global         Toggle Side Conversation   ctrl-/\n  Chat           Interrupt Turn             esc\n  Chat           Decrease Reasoning Effort  alt-,, shift-down\n  Chat           Increase Reasoning Effort  alt-., shift-up\n  Chat         - Previous Permission Mode   unbound\n  Chat         - Next Permission Mode       unbound\n  Chat           Edit Queued Message        shift-left, alt-up\n  Chat           Prompt Stack Back          shift-right, alt-down\n  Chat           Skip Question              ctrl-]\n  Chat           Toggle Voice               f8\n  Chat           Toggle Voice Mute          ctrl-x\n  Composer       Submit                     enter\n  Composer       Queue                      tab\n  Composer       Toggle Shortcuts           ?, shift-?\n  Composer       History Search Previous    ctrl-r\n↓\n  left/right group · enter edit shortcut · * custom · - unbound · esc close\n",
+    "expected": null,
+    "native_source": "snapshots/codex_tui__keymap_setup__tests__keymap_picker_wide.snap",
+    "native_outcome": "A 32-row PTY clips the native heading from this 35-row Keymap snapshot; missing current dialog identity requires terminal fallback."
+  }
+]
