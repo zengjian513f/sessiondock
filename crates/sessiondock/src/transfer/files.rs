@@ -103,8 +103,13 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
         }
     }
     if let Some(message) = row.get_mut("message") {
-        if let Some(id) = message.get_mut("id") {
-            visit(id);
+        // Claude's message.id is the API response identity, used by resume's
+        // diagnostics.previous_message_id. It belongs to the server; the local
+        // transcript identity is row.uuid and is remapped separately.
+        if source != "claude" {
+            if let Some(id) = message.get_mut("id") {
+                visit(id);
+            }
         }
         content_ids(message.get_mut("content"), visit);
     }
@@ -545,6 +550,43 @@ impl Plan {
                 "原生文件在计划后发生变化",
             ));
         }
+        if self.new_ids && file.format == "symlink" {
+            let link = PathBuf::from(
+                String::from_utf8(raw.to_vec())
+                    .map_err(|e| TransferError::new("move_path", e.to_string()))?,
+            );
+            let absolute = if link.is_absolute() {
+                link
+            } else {
+                file.source.parent().unwrap().join(link)
+            };
+            let mut normalized = PathBuf::new();
+            for component in absolute.components() {
+                match component {
+                    Component::ParentDir => {
+                        normalized.pop();
+                    }
+                    Component::CurDir => {}
+                    _ => normalized.push(component.as_os_str()),
+                }
+            }
+            // Only rewrite targets belonging to this bundle. External links
+            // retain their original meaning, including relative spelling.
+            if self
+                .files
+                .iter()
+                .any(|f| f.provider == file.provider && f.source.starts_with(&normalized))
+            {
+                let root = &self.roots[&file.provider];
+                if let Ok(relative) = normalized.strip_prefix(root) {
+                    let mapped = root.join(mapped_path(relative, &file.provider, &self.sessions));
+                    if mapped != normalized {
+                        return Ok(mapped.to_string_lossy().as_bytes().to_vec());
+                    }
+                }
+            }
+            return Ok(raw.to_vec());
+        }
         if !self.new_ids || !matches!(file.format.as_str(), "json" | "jsonl") {
             return Ok(raw.to_vec());
         }
@@ -640,6 +682,19 @@ impl Plan {
             }
         }
     }
+    pub fn member_target(&self, member: &super::group::Member) -> Result<PathBuf, TransferError> {
+        let root = &self.roots[&member.source];
+        let relative = member
+            .path
+            .strip_prefix(root)
+            .map_err(|_| TransferError::new("move_path", "会话不在原生根目录中"))?;
+        let path = root.join(mapped_path(relative, &member.source, &self.sessions));
+        Ok(if member.source == "grok" {
+            path.parent().unwrap().to_owned()
+        } else {
+            path
+        })
+    }
     pub fn stage(&self, destination: &Path) -> Result<(), TransferError> {
         if destination.exists() {
             return Err(TransferError::new("move_conflict", "暂存目录已存在"));
@@ -695,7 +750,13 @@ impl Plan {
                     "此平台不支持迁移符号链接",
                 ));
             } else {
-                fs::write(target, output)?;
+                fs::write(&target, output)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let executable = fs::metadata(&file.source)?.permissions().mode() & 0o111;
+                    fs::set_permissions(&target, fs::Permissions::from_mode(0o600 | executable))?;
+                }
             }
         }
         for file in &self.files {

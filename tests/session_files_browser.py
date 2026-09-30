@@ -26,7 +26,9 @@ def fixture(root):
               claude_row(sid,'assistant',ident(102),ident(101),'Shared answer'),
               claude_row(sid,'user',ident(110+i),ident(102),label),
               claude_row(sid,'assistant',ident(120+i),ident(110+i),label+' answer')]
-        for row in rows:row['cwd']=str(root/'cwd')
+        for row in rows:
+            row['cwd']=str(root/'cwd')
+            if row['type']=='assistant':row['message']['id']='msg_api_response_'+row['uuid']
         path.write_bytes(b''.join(map(encoded,rows)));main[i]=path
     agent='a1234567890abcdef'
     side=project/ident(2)/'subagents'/('agent-'+agent+'.jsonl');side.parent.mkdir(parents=True)
@@ -34,6 +36,8 @@ def fixture(root):
         for kind,n,parent,text in [('user',130,None,'Agent question'),('assistant',131,ident(130),'Agent answer')]))
     side.with_suffix('.meta.json').write_text(json.dumps({'agentId':agent,'parentSessionId':ident(2),'agentType':'explore'}))
     output=project/ident(2)/'tool-results/result.txt';output.parent.mkdir();output.write_bytes(b'opaque result '+ident(1).encode())
+    output.chmod(0o700)
+    (output.parent/'result-link.txt').symlink_to(output)
     with main[2].open('ab') as stream:
         stream.write(encoded(claude_row(ident(2),'assistant',ident(150),ident(122),[{'type':'tool_use','id':'toolu_fixture','name':'Bash','input':{'command':'synthetic'}}],cwd=str(root/'cwd'))))
         stream.write(encoded(claude_row(ident(2),'user',ident(151),ident(150),[{'type':'tool_result','tool_use_id':'toolu_fixture','content':'<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'}],toolUseResult={'outputFile':str(output)},cwd=str(root/'cwd'))))
@@ -82,6 +86,11 @@ def main():
                         for file in plan['files']:assert (destination/file['provider']/file['target']).read_bytes()==Path(file['source']).read_bytes()
                     if source=='claude':
                         mapping=plan['sessions'];new=mapping['claude:'+ident(2)];new_agent=mapping['claude:'+agent]
+                        link=destination/'claude/projects/project'/new/'tool-results/result-link.txt'
+                        expected=root/'source/claude/projects/project'/new/'tool-results/result.txt'
+                        assert link.readlink()==expected
+                        cloned_rows=[json.loads(line) for line in (destination/'claude/projects/project'/(new+'.jsonl')).read_text().splitlines()]
+                        assert any(row.get('message',{}).get('id')=='msg_api_response_'+ident(102) for row in cloned_rows)
                         assert (destination/'claude/file-history'/new/'abcdef@v1').read_bytes()==b'original file\x00bytes'
                         assert (destination/'claude/projects/project'/new/'tool-results/result.txt').read_bytes()==b'opaque result '+ident(1).encode()
                         rows=[json.loads(line) for line in (destination/'claude/projects/project'/(new+'.jsonl')).read_text().splitlines()]

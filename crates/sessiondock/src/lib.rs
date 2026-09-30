@@ -388,7 +388,7 @@ fn build_app(
         .opencode
         .as_ref()
         .and_then(|root| root.canonicalize().ok());
-    let transfer = if cfg!(target_os = "linux") && config.roots.codex.is_some() {
+    let transfer = if cfg!(target_os = "linux") && (config.roots.codex.is_some() || config.roots.claude.is_some() || config.roots.grok.is_some()) {
         config
             .state_dir
             .as_ref()
