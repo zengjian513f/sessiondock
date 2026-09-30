@@ -378,3 +378,41 @@ The `--native-binding` browser variant additionally binds through
 (pending socket released, native console claimed through the native lease),
 and cancels it from a temporary browser storage. Its free shell deliberately ignores HUP: a subsequent Web restart must
 still deny native claim while guarded host status proves the child is alive.
+
+
+## Freeze a diagnostic scene (Linux)
+
+The main session's action menu offers **冻结现场** for a verified managed
+Linux instance. It becomes **恢复运行** while paused. The separate report
+button stays available: freeze first, then report the problem. Freezing does
+not create a report or start an investigation automatically.
+
+`POST /api/session/freeze` takes `{uid, instance_id, frozen: true|false}`.
+It requires lifecycle configuration and a unique verified instance; a stale
+instance is `409 freeze_instance_changed`. A failed OS operation is
+`503 freeze_failed`. The response includes `ok`, `frozen`, `instance_id` and
+`process_count`. `capabilities.session_freeze` is advertised only on Linux
+with lifecycle and terminal transport enabled. Supported `term/list` rows
+carry `frozen`, which also gates the Hub button per node; other nodes have no button.
+
+The server pins each process incarnation with a Linux pidfd, checks its start
+time, stops the CLI with SIGSTOP and recursively stops its descendants.
+Parents stop before their children are enumerated, including children created
+by other threads. Resume sends SIGCONT to descendants before the CLI.
+A failed freeze resumes only the processes newly stopped by that request.
+The independent ptyhost stays responsive to capture and attach; existing host
+protocols and sessions need no restart. Detached processes already reparented
+outside the CLI tree are outside this operation.
+
+`term/list` reports `frozen` from the verified CLI's actual OS state, so a page
+refresh or Web service restart retains the recovery control. The pause retains
+memory, terminal output and native files; it is not a durable snapshot across
+machine restart. Network timeouts and external services continue to advance.
+Do not type into a frozen CLI: PTY input can queue and be consumed on resume.
+
+Validation: `python3 tests/session_freeze_browser.py` uses a temporary host,
+a fake CLI with a ticking child and headless Chromium; it exercises freeze,
+idempotent freeze, wrong-instance refusal, report dialog access, refresh,
+resume authenticated Hub/mobile controls and the ordinary stop action, checking real
+OS states and progress. Freeze state joins the browser report snapshot and
+`session.freeze` audit events include the instance and process count.
