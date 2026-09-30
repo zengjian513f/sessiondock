@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Operator-only Grok native family clone experiment in a private GROK_HOME.
-Offline staging is not production publication. Requires an existing controlled
-Grok login; no authentication contents or everyday model defaults are changed.
+Default mode uses offline staging; --production-peer exercises a real Chromium
+move and native continuation, optionally --new-ids. Requires a controlled Grok
+login on each executor; authentication is not transferred or printed.
 """
 import argparse
 import hashlib
@@ -27,7 +28,12 @@ def main():
     parser.add_argument('--grok',type=Path,default=Path.home()/'.local/bin/grok')
     parser.add_argument('--transfer-binary',type=Path,default=Path('target/debug/sessiondock-transfer'))
     parser.add_argument('--report',type=Path,default=Path('target/session-files-grok-report.json'))
+    parser.add_argument('--production-peer',help='Opt-in SSH peer for a real browser move and native resume')
+    parser.add_argument('--binary',type=Path,default=Path('target/debug/sessiondock'))
+    parser.add_argument('--return-before-resume',action='store_true',help='Move back through the browser before native resume on the final target')
+    parser.add_argument('--new-ids',action='store_true',help='Rewrite identities during the production move')
     args=parser.parse_args()
+    args.report.unlink(missing_ok=True)
     real=Path(os.environ.get('GROK_HOME',Path.home()/'.grok'))
     auth=real/'auth.json';config=real/'config.toml'
     if not auth.is_file():parser.error('Existing controlled Grok login required')
@@ -68,6 +74,12 @@ def main():
             child=next(sid for sid,p in original.items() if json.loads(p.read_text()).get('session_kind')=='subagent')
             models();before=fingerprint([p.parent for p in original.values()])
             selected='grok:'+hashlib.sha1(str(original[parent].parent).encode()).hexdigest()[:16]
+            if args.production_peer:
+                from session_native_transfer import move_native
+                report=move_native(base,home,'grok',selected,[parent,fork,child],args.production_peer,args.binary,args.new_ids,args.return_before_resume)
+                args.report.parent.mkdir(parents=True,exist_ok=True)
+                args.report.write_text(json.dumps(report,indent=2)+'\n')
+                return
             plan=command({'operation':'plan_files','roots':{'grok':str(home/'sessions')},'uid':selected,'new_ids':True})
             assert {m['sid'] for m in plan['group']['members']}=={parent,fork,child}
             stage=base/'stage';result=command({'operation':'stage_files','plan':plan,'destination':str(stage)})

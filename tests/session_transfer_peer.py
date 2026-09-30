@@ -72,6 +72,14 @@ def main():
                 elif op=='append':
                     with owned(request['path']).open('ab') as out:out.write(base64.b64decode(request['bytes']))
                 elif op=='write':owned(request['path']).write_bytes(base64.b64decode(request['bytes']))
+                elif op=='seed_cwd':
+                    cwd=owned(request['path'])
+                    for entry in request['entries']:
+                        path=owned(cwd/entry['relative']);path.parent.mkdir(parents=True,exist_ok=True)
+                        if entry['kind']=='directory':path.mkdir(exist_ok=True)
+                        elif entry['kind']=='symlink':path.symlink_to(entry['target'])
+                        else:path.write_bytes(base64.b64decode(entry['bytes']))
+                        if entry['kind']!='symlink':path.chmod(entry['mode'])
                 elif op=='receipt':
                     with sqlite3.connect(owned(request['path'])) as db:
                         result['receipt']=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()[0])

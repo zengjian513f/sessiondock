@@ -1,7 +1,7 @@
 //! Native file bundles for Claude and Grok. Only structured native identity
 //! fields are rewritten; message text, source files and arbitrary attachments
 //! are never treated as identity strings.
-use super::{TransferError, codex, group::Group};
+use super::{codex, group::Group, TransferError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -212,6 +212,7 @@ fn agent_tool(name: &str) -> bool {
     matches!(
         name,
         "Agent"
+            | "SendMessage"
             | "Task"
             | "TaskOutput"
             | "spawn_subagent"
@@ -280,6 +281,7 @@ fn rewrite_tools(
     ids: &BTreeMap<String, String>,
     names: &BTreeMap<String, String>,
 ) -> Result<(), TransferError> {
+    let mut send_message_result = false;
     if let Some(calls) = row.get_mut("tool_calls").and_then(Value::as_array_mut) {
         for call in calls {
             if call["name"].as_str().is_some_and(agent_tool) {
@@ -311,6 +313,12 @@ fn rewrite_tools(
         .and_then(Value::as_array_mut)
     {
         for item in items {
+            // SendMessage resumes an existing Claude subagent. Its destination
+            // is an identity only in this tool's structured input; ordinary
+            // message text and other tools' `to` fields remain unchanged.
+            if source == "claude" && item["type"] == "tool_use" && item["name"] == "SendMessage" {
+                field(&mut item["input"], "to", source, ids);
+            }
             if item["type"] == "tool_use" && item["name"].as_str().is_some_and(agent_tool) {
                 agent_args(&mut item["input"], source, ids);
             }
@@ -320,8 +328,23 @@ fn rewrite_tools(
                     .and_then(|id| names.get(&key(source, id)))
                     .is_some_and(|s| agent_tool(s))
             {
-                agent_text(&mut item["content"], source, ids);
+                if source == "claude"
+                    && item["tool_use_id"]
+                        .as_str()
+                        .and_then(|id| names.get(&key(source, id)))
+                        .is_some_and(|name| name == "SendMessage")
+                {
+                    rewrite_send_message_result(&mut item["content"], ids);
+                    send_message_result = true;
+                } else {
+                    agent_text(&mut item["content"], source, ids);
+                }
             }
+        }
+    }
+    if send_message_result {
+        if let Some(result) = row.get_mut("toolUseResult") {
+            rewrite_send_message_result(result, ids);
         }
     }
     for wrapper in ["params", "update"] {
@@ -330,6 +353,37 @@ fn rewrite_tools(
         }
     }
     Ok(())
+}
+
+fn rewrite_send_message_result(value: &mut Value, ids: &BTreeMap<String, String>) {
+    if let Some(text) = value.as_str() {
+        if let Ok(mut result) = serde_json::from_str::<Value>(text) {
+            if result.is_object() && result.get("resumedAgentId").is_some() {
+                rewrite_send_message_result(&mut result, ids);
+                *value = Value::String(result.to_string());
+            }
+        }
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            if item["type"] == "text" {
+                rewrite_send_message_result(&mut item["text"], ids);
+            }
+        }
+    } else if let Some(old) = value["resumedAgentId"].as_str().map(str::to_owned) {
+        if let Some(new) = ids.get(&key("claude", &old)) {
+            if value["message"]
+                == format!("Resuming agent {}", old.chars().take(7).collect::<String>())
+            {
+                value["message"] =
+                    format!("Resuming agent {}", new.chars().take(7).collect::<String>()).into();
+            }
+            field(value, "resumedAgentId", "claude", ids);
+            if let Some(pin) = value.get_mut("pin") {
+                field(pin, "id", "claude", ids);
+                field(pin, "name", "claude", ids);
+            }
+        }
+    }
 }
 fn parse(raw: &[u8], format: &str) -> Result<Vec<Value>, TransferError> {
     if format == "json" {
