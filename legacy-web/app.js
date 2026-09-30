@@ -1956,7 +1956,7 @@ function paintStatusMarker(badge, frozen, count = 0, attention = '') {
   badge.dataset.marker = marker;
   const text = count > 99 ? '99+' : (count || '');
   if (frozen) badge.innerHTML = uiIcon('pause') + esc(text);
-  else badge.textContent = (attention === 'question' ? '?' : attention ? '!' : '') + text;
+  else badge.textContent = attention === 'question' ? '?' : text;
 }
 
 function sessionInputAttention(uid) {
@@ -1972,16 +1972,9 @@ function sessionInputAttention(uid) {
       'cli_catching_up', 'cli_pasting'].includes(input?.code)) return '';
   const turn = sessionTurn(uid);
   if (input?.code === 'cli_question' || turn === 'waiting') return 'question';
-  const busy = (current ? draft?.cli : cli)?.instance?.busy;
-  if (busy === true || turn === 'working') return '';
-  // A failed observation or an unfamiliar screen does not prove an input
-  // problem. Only these native editor states require user intervention.
-  const running = (current ? draft?.cli : cli)?.instance?.running;
-  return running === true && input?.state === 'blocked'
-    && ['cli_input_pending', 'cli_input_returned'].includes(input.code) ? 'blocked' : '';
+  return '';
 }
-const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答'
-  : attention ? ' · 输入受阻，请查看会话提示' : '';
+const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答' : '';
 
 /** 角标颜色只说现在：绿 = 在跑，蓝 = 在跑且在受管终端里，灰 = 已退出但还有没看的新内容。
  *  颜色不随计数固化——以前把计数时的 tmux 态存进 localStorage，会话退出后角标还是蓝的。 */

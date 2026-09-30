@@ -149,11 +149,11 @@ def main():
                     return results;
                 }''')
                 assert all(not header and not composer for _, header, composer in transitions), transitions
-                whitelist = page.evaluate('''() => {
+                ordinary_states = page.evaluate('''() => {
                     const draft=composerDraft(), previous=draft.cli, results=[];
                     for (const [state,code,running,expected] of [
-                        ['blocked','cli_input_pending',true,'blocked'],
-                        ['blocked','cli_input_returned',true,'blocked'],
+                        ['blocked','cli_input_pending',true,''],
+                        ['blocked','cli_input_returned',true,''],
                         ['unknown','cli_not_ready',true,''],
                         ['unknown','input_check_failed',true,''],
                         ['blocked','new_unknown_block',true,''],
@@ -170,7 +170,7 @@ def main():
                     return results;
                 }''')
                 assert all(row['attention'] == row['expected'] and row['shown'] == bool(row['expected'])
-                           for row in whitelist), whitelist
+                           for row in ordinary_states), ordinary_states
                 assert not dialogs, dialogs
                 # Exercise focus through actual CHECK polling and keyboard
                 # input, not only synchronous DOM changes in one JS turn.
