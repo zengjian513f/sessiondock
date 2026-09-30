@@ -32,6 +32,7 @@ from history_parity import REPO, BINARY, Corpus, claude_row, codex_row, codex_me
 # outside instance of the next run's sessions.
 CLAUDE_SID = str(uuid.uuid4())
 CODEX_SID = str(uuid.uuid4())
+CODEX_AGENT = str(uuid.uuid4())
 FAKE_CLI = """#!/bin/sh
 exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\\n"; while IFS= read -r line; do case "$line" in busy) printf "Working (3s - esc to interrupt)\\n" ;; idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;; *) printf "RS_INPUT_OK\\n" ;; esac; done'
 """
@@ -94,6 +95,19 @@ def main():
             codex_row("session_meta", {"id": CODEX_SID, "cwd": work}),
             codex_message("user", "Synthetic Codex turn target")], [])
         claude_uid, codex_uid = corpus.uid(CLAUDE_SID), corpus.uid(CODEX_SID)
+        # Inherited closed turn in the head, resumed turn in the middle, and
+        # one record larger than the tail window: reproduces the report's
+        # active:false / detail activity:working disagreement on a cold index.
+        agent_meta = codex_row("session_meta", {"id": CODEX_AGENT, "cwd": work,
+            "thread_source": "subagent", "parent_thread_id": CODEX_SID,
+            "source": {"subagent": {"thread_spawn": {
+                "parent_thread_id": CODEX_SID, "agent_path": "/root/long_turn"}}}})
+        padding = codex_row("world_state", {"padding": "x" * (1200 * 1024)})
+        agent_rows = [agent_meta,
+            codex_row("event_msg", {"type": "task_complete", "turn_id": "inherited"}),
+            codex_row("world_state", {"padding": "x" * (110 * 1024)}),
+            codex_row("event_msg", {"type": "task_started", "turn_id": "long-agent"}),
+            codex_message("assistant", "Synthetic long agent working"), padding]
         (root / "bin/fake-cli").write_text(FAKE_CLI)
         (root / "bin/fake-cli").chmod(0o700)
         environment = {"PATH": "/usr/bin:/bin", "TERM": "xterm-256color"}
@@ -194,6 +208,7 @@ def main():
                     page.locator(f'#side .item[data-uid="{claude_uid}"]').click()
                     expect(page.locator("#msgs")).to_contain_text("Synthetic final answer")
                     append(codex_path, codex_row("event_msg", {"type": "task_started", "turn_id": "t1"}, 2))
+                    append(codex_path, padding)
                     expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"), timeout=20000)
                     append(codex_path, codex_row("response_item", {"type": "function_call", "name": "request_user_input",
                         "call_id": "call_ask", "arguments": json.dumps({"questions": [{"question": "Go?",
@@ -202,8 +217,67 @@ def main():
                     append(codex_path,
                         codex_row("response_item", {"type": "function_call_output", "call_id": "call_ask", "output": "Yes"}, 4),
                         codex_row("event_msg", {"type": "task_complete", "turn_id": "t1"}, 5))
+                    append(codex_path, padding)
                     expect(badge(codex_uid)).not_to_have_class(TURN, timeout=20000)
                     assert row_turn(opener, base, codex_uid, codex_path.stat().st_size) == "idle"
+
+                    # ---- Long Codex subagent: native/list/detail agree and
+                    # both the sidebar and the view menu display its green dot.
+                    agent_path = corpus.put(CODEX_AGENT, "codex", agent_rows, [], parent=CODEX_SID)
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]:not(.agent)').click()
+                    expect(page.locator("#msgs")).to_contain_text("Synthetic Codex turn target")
+                    agent_dot = page.locator(f'#side .item.agent[data-agent="{CODEX_AGENT}"] .item-status')
+                    expect(agent_dot).to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    page.locator("#a-view-switch").click()
+                    choice = page.locator(f'#session-view-menu button[data-agent="{CODEX_AGENT}"]')
+                    expect(choice.locator(".view-live")).to_be_visible()
+                    choice.click()
+                    expect(page.locator("#msgs")).to_contain_text("Synthetic long agent working")
+                    page.wait_for_function("cache.get(viewKey(S.sel,S.agent))?.activity?.state === 'working'")
+
+                    def agent_active(expected):
+                        rows = json.loads(opener.open(base + "/api/sessions?force=1", timeout=10).read())["sessions"]
+                        row = next(row for row in rows if row["uid"] == codex_uid)
+                        agent = next(item for item in row["agent_items"] if item["id"] == CODEX_AGENT)
+                        assert agent["active"] is expected, agent
+
+                    agent_active(True)
+                    append(agent_path, codex_row("event_msg", {"type": "task_complete", "turn_id": "long-agent"}), padding)
+                    agent_active(False)
+                    expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    page.locator("#a-view-switch").click()
+                    expect(choice.locator(".view-live")).to_have_count(0)
+                    page.locator('#session-view-menu button[data-agent=""]').click()
+                    # A partial start record changes nothing until its LF is committed.
+                    start = encoded(codex_row("event_msg", {"type": "turn_started", "turn_id": "wake"}))
+                    with agent_path.open("ab") as stream:
+                        stream.write(start[:-1])
+                    agent_active(False)
+                    with agent_path.open("ab") as stream:
+                        stream.write(b"\n")
+                    append(agent_path, padding)
+                    agent_active(True)
+                    expect(agent_dot).to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    # Replacing the inode resets the saved boundary, including
+                    # when the replacement has a completion buried in its middle.
+                    replacement = agent_path.with_suffix(".replacement")
+                    replacement.write_bytes(encoded(agent_meta) + encoded(codex_row("world_state", {
+                        "padding": "x" * (110 * 1024)})) + encoded(codex_row("event_msg", {
+                            "type": "turn_aborted", "turn_id": "replacement"})) + encoded(padding))
+                    replacement.replace(agent_path)
+                    agent_active(False)
+                    expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    # Same-size rewrites also invalidate the scalar cache.
+                    original = agent_path.read_bytes()
+                    rewritten = original.replace(b'"turn_aborted"', b'"task_started"')
+                    assert len(rewritten) == len(original)
+                    agent_path.write_bytes(rewritten)
+                    agent_active(True)
+                    expect(agent_dot).to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    agent_path.write_bytes(original)
+                    agent_active(False)
+                    expect(agent_dot).not_to_have_class(re.compile(r"\bvisible\b"), timeout=20000)
+                    page.locator(f'#side .item[data-uid="{claude_uid}"]:not(.agent)').click()
 
                     # ---- Claude open, quiet screen: a finished turn waiting on its background
                     # tasks (a Monitor watch, a backgrounded command) keeps turning.
