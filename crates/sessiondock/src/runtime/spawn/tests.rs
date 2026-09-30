@@ -167,6 +167,7 @@ fn owned(sessions: &[SessionRow], pids: &[i64]) -> IndexMap<String, Vec<i64>> {
 
 fn parent(source: &str, sid: &str) -> SpawnedBy {
     SpawnedBy {
+        node_id: None,
         source: source.into(),
         sid: sid.into(),
     }

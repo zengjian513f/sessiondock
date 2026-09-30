@@ -142,6 +142,7 @@ pub fn spawn_parents(
         found.insert(
             uid.clone(),
             SpawnedBy {
+                node_id: None,
                 source: parent.source.clone(),
                 sid: parent.sid.clone(),
             },
@@ -155,6 +156,7 @@ pub fn spawn_parents(
             found.insert(
                 child.uid.clone(),
                 SpawnedBy {
+                    node_id: None,
                     source: parent.source.clone(),
                     sid: parent.sid.clone(),
                 },
@@ -296,6 +298,9 @@ impl SpawnWatcher {
             .iter()
             .filter_map(|child| {
                 let parent = snapshot.spawned_by(&child.uid)?;
+                if parent.node_id.is_some() {
+                    return None;
+                }
                 let row = by_key.get(&(parent.source.as_str(), parent.sid.as_str()))?;
                 newer_than_child(row, child).then(|| (child.uid.clone(), parent.clone()))
             })

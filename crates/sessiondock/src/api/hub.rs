@@ -185,6 +185,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         .clone()
         .map(|directory| Arc::new(HubAudit::new(directory)));
     let monitor = Monitor::spawn(registry.clone(), client.clone(), shutdown.clone());
+    crate::hub::process_links::spawn(registry.clone(), client.clone(), shutdown.clone());
     let state = HubState {
         registry: registry.clone(),
         client: client.clone(),
@@ -465,6 +466,9 @@ async fn handle(
     if let Some((nid, rest)) = proxy::explicit_node(&path) {
         explicit = Some(nid.to_string());
         path = rest.to_string();
+    }
+    if method == Method::POST && path == "/api/process-links" {
+        return Ok((StatusCode::FORBIDDEN, axum::Json(json!({"code":"private_process_links_route","error":"进程关联由 Hub 后台协调"}))).into_response());
     }
     if method == Method::GET && path == "/api/session/file" {
         let accept = headers

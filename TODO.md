@@ -5,10 +5,10 @@
 
 ## Runtime and platform coverage
 
-- [ ] 实现 SSH 跨机器自动父会话发现：普通直连可匹配两端连接四元组和本地
-  SSH 进程祖先；连接复用、跳板、NAT 需要逐次启动的父会话标记或额外证据。
-  保留原生创建时间校验，不能仅凭目标机器/目录/时间邻近猜测。现状与边界见
-  [liveness.md](docs/liveness.md#ssh-boundary)；跨机器手工挂载已支持。
+- [ ] 扩展公共进程归属层的平台覆盖与资源计量：Linux 普通 SSH 直连已接入
+  `process-links`，macOS/Windows 采集器、短命进程生命周期事件，以及 GPU、内存、
+  磁盘、网络和 NFS 的统一会话计量仍待实现。连接复用、跳板、NAT 需要额外证据。
+  现行接口与后续计量口径见 [process-links.md](docs/process-links.md)。
 
 - [ ] 为 Windows/macOS 的外部（非 ptyhost 管理）CLI 补齐进程发现与强身份验证。
   Windows 的受管 ptyhost 路径已经过实机验证，不应与此外部进程缺口混为一谈。

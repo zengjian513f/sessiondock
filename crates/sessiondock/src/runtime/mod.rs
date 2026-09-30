@@ -28,6 +28,7 @@ use tokio::time::{Instant, timeout_at};
 
 pub mod freeze;
 pub mod process;
+pub mod process_links;
 pub mod procscan;
 pub mod spawn;
 use process::ProcClock;

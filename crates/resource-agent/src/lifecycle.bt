@@ -1,0 +1,16 @@
+BEGIN { printf("READY\n"); }
+rawtracepoint:sched_process_fork
+/uid == TARGET_UID/
+{
+    $p = (struct task_struct *)arg0;
+    $c = (struct task_struct *)arg1;
+    if ($c->pid == $c->tgid) {
+        printf("F %d %llu %d %llu\n", $p->tgid, $p->group_leader->start_boottime, $c->tgid, $c->start_boottime);
+    }
+}
+tracepoint:sched:sched_process_exec
+/uid == TARGET_UID && pid == tid/
+{ printf("E %d %llu\n", pid, curtask->start_boottime); }
+tracepoint:sched:sched_process_exit
+/uid == TARGET_UID && pid == tid/
+{ printf("X %d %llu\n", pid, curtask->start_boottime); }

@@ -280,8 +280,8 @@ is the sole exception to write-once discovery.
 
 ### SSH boundary
 
-Automatic discovery currently stops at the local process tree; it does not infer
-cross-machine parents. OpenSSH exposes `SSH_CONNECTION` on the remote side as
+Linux direct SSH discovery uses the shared [process-links](process-links.md)
+node reports and Hub coordinator. OpenSSH exposes `SSH_CONNECTION` on the remote side as
 client address/port and server address/port ([ssh(1)](https://man.openbsd.org/ssh.1)).
 That tuple is connection evidence, not a parent session identity. A direct,
 unshared connection could be correlated with the launching node's SSH socket and
@@ -289,13 +289,14 @@ its process ancestry while both sides remain alive. `ControlMaster` shares one
 connection across multiple sessions, so the tuple alone cannot identify a channel's
 launcher; jump hosts and NAT also require additional evidence.
 
-A per-launch parent identity passed explicitly to the remote command would cover
-these cases more reliably. Ordinary session variables are not automatically
+A per-launch parent identity could extend coverage to these ambiguous cases.
+The current collector skips them. Ordinary session variables are not automatically
 forwarded: `SendEnv` needs the server's `AcceptEnv`, and neither changes the
 meaning of an existing CLI's own identity variables
-([ssh_config(5)](https://man.openbsd.org/ssh_config.5)). Any implementation needs a
-separate SessionDock parent marker, node-scoped resolution, native creation-order
-checks and persistence before short-lived processes exit. See [TODO](../TODO.md).
+([ssh_config(5)](https://man.openbsd.org/ssh_config.5)). Direct connections need no
+forwarded marker. Node-scoped resolution, native creation-order checks and durable
+process incarnations protect the recorded relationships. Complete short-lived
+process coverage and non-Linux adapters remain in [TODO](../TODO.md).
 
 The launcher refuses `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and `CLAUDE_PID`
 in profile environments in addition to the session ids, so a web-created

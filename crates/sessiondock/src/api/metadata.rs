@@ -249,6 +249,9 @@ fn display_parent_uid(uid: &str, rows: &[Value], snapshot: &MetadataSnapshot) ->
         return lookup_nest_parent(rows, uid, &parent.source, &parent.sid);
     }
     let spawned = snapshot.spawned_by(uid)?;
+    if spawned.node_id.is_some() {
+        return None;
+    }
     lookup_nest_parent(rows, uid, &spawned.source, &spawned.sid)
 }
 

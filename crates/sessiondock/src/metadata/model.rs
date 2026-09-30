@@ -66,6 +66,8 @@ pub(super) struct Row {
 pub struct SpawnedBy {
     pub source: String,
     pub sid: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
 }
 
 /// Manual display parent; an absent node keeps the historical local meaning.
@@ -305,6 +307,7 @@ impl MetadataSnapshot {
             for (uid, parent) in found {
                 let uid = uid.trim();
                 let parent = SpawnedBy {
+                    node_id: parent.node_id.clone(),
                     source: parent.source.trim().to_owned(),
                     sid: parent.sid.trim().to_owned(),
                 };
@@ -577,10 +580,7 @@ impl MetadataSnapshot {
             object.insert("starred_at".into(), json!(saved.starred_at));
         }
         if let Some(parent) = saved.and_then(|row| row.spawned_by.as_ref()) {
-            object.insert(
-                "spawned_by".into(),
-                json!({"source": parent.source, "sid": parent.sid}),
-            );
+            object.insert("spawned_by".into(), json!(parent));
         }
         if let Some(parent) = saved.and_then(|row| row.nest_parent.as_ref()) {
             object.insert("nest_parent".into(), json!(parent));
