@@ -192,7 +192,7 @@ def main():
                             assert move_plan.value.ok,move_plan.value.text()
                             assert move_plan.value.json()['mode']=='move'
                             if not args.preserve:
-                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')):
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
                                     dialog.locator('#transfer-new-ids').check()
                         elif args.preserve:
                             if provider=='codex':
@@ -210,6 +210,54 @@ def main():
                             assert preserved_plan.value.ok,preserved_plan.value.text()
                             assert preserved_plan.value.json()['new_ids'] is False
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                        if args.move and peer:
+                            for interrupted in (False,True):
+                                abandoned=move_plan.value.json()['operation_id']
+                                status,raw=node_call(a,'/api/session/transfer/export',{'operation_id':abandoned});assert status==200,raw[:200]
+                                status,raw=node_call(b,'/api/session/transfer/receive',raw=raw);assert status==200,raw
+                                status,raw=node_call(b,'/api/session/clone',{'uid':selected,'operation_id':abandoned});assert status==200,raw
+                                source_record=json.loads((source.root/'state/transfers'/abandoned/'operation.json').read_text())
+                                source_file=Path((source_record['plan']['files'] or source_record['file_plan']['files'])[0]['source'])
+                                before=source_file.read_bytes()
+                                change=b'{"type":"sessiondock_fixture_continuation"}\n' if source_file.suffix=='.jsonl' else b'\n'
+                                source_file.write_bytes(before+change)
+                                if interrupted:
+                                    target_record=json.loads(read_target(destination.root/'state/transfers'/abandoned/'operation.json'))
+                                    published=(target_record['staged']['files'] or target_record['file_publications'])[0]
+                                    target_file=source.root/'codex'/published['relative'] if provider=='codex' else Path(published['target'])
+                                    target_before=read_target(target_file)
+                                    peer.write(target_file,target_before+change)
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as cancelled:
+                                        dialog.locator('.clone-confirm').click()
+                                    assert cancelled.value.status==409 and cancelled.value.json()['code']=='move_recovery_required',cancelled.value.text()
+                                    assert json.loads((source.root/'state/transfers'/abandoned/'operation.json').read_text())['phase']=='aborting'
+                                    status,raw=node_call(a,'/api/session/transfer/switch',{'operation_id':abandoned});assert status==409,raw
+                                    status,raw=node_call(a,'/api/session/clone/plan',{'uid':selected});assert status==409,raw
+                                    peer.call('stop');peer.call('start')
+                                    assert read_target(target_file)==target_before+change
+                                    hub.stop();hub.start()
+                                    peer.write(target_file,target_before)
+                                    source_file.write_bytes(before)
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
+                                        dialog.locator('.transfer-abort').click()
+                                else:
+                                    def restore_before_replan(route):
+                                        source_file.write_bytes(before)
+                                        route.continue_()
+                                    page.route('**/api/session/clone/plan',restore_before_replan,times=1)
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
+                                        with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as cancelled:
+                                            dialog.locator('.clone-confirm').click()
+                                    assert cancelled.value.status==409 and cancelled.value.json()['code']=='move_cancelled',cancelled.value.text()
+                                assert move_plan.value.ok,move_plan.value.text()
+                                for node in (a,b):
+                                    status,raw=node_call(node,'/api/session/transfer/status',{'operation_id':abandoned})
+                                    assert status==200 and json.loads(raw)['phase']=='aborted',raw
+                                status,raw=node_call(b,'/api/session/clone',{'uid':selected,'operation_id':abandoned})
+                                assert status==409,raw
+                                assert all(Path(p).read_bytes()==raw for p,raw in originals.items())
+                                expect(dialog.locator('.clone-confirm')).to_be_enabled()
+                            print('PASS '+provider+' stale handoff compensates; interrupted withdrawal preserves changed target, survives restart and resumes from Chromium',flush=True)
                         cleanup_obstruction=None
                         if args.move and args.preserve and peer and provider=='codex':
                             operation=move_plan.value.json()['operation_id']
@@ -236,6 +284,9 @@ def main():
                             assert reply.status==409 and reply.json()['code']=='move_cleanup_pending',reply.text()
                             expect(dialog.locator('.transfer-error')).to_contain_text('源端清理待重试')
                             expect(dialog.locator('#transfer-target')).to_be_disabled()
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/cancel')) as too_late:
+                                dialog.locator('.transfer-abort').click()
+                            assert too_late.value.status==409 and too_late.value.json()['code']=='move_recovery_required',too_late.value.text()
                             partial=json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())
                             assert partial['phase']=='retiring'
                             manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())

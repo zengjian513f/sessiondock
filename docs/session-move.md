@@ -279,6 +279,11 @@ sha256 摘要只是数据证据：记进 manifest 和 journal，用来判断传�
 
 Hub 使用已绑定源会话和目标节点的同一操作记录驱动移动。目标发布验证后进入 `ready`，
 历史可读但受管启动被锁定；源节点重新检查停止状态、历史和关系，再持久化 `moved`。
+若交接前源快照失效，Hub 自动撤回本次移动；页面也可撤回尚未交接的失败操作。
+撤回先在源端持久化 `aborting`，拒绝迟到的交接请求，再补偿目标本次发布，最后两端记为
+`aborted` 并解除源锁。目标原有复用数据保留；本次文件若已被改写，则保留现场和锁，恢复后
+可继续撤回。Hub 或节点重启后仍可重试；已交接的操作拒绝撤回。页面撤回成功后重新读取清单。
+
 此后目标 `activate` 开放继续，源节点 `retire` 清理。`moved`、`retiring`、`retired` 不因
 导出租约超时或节点重启而解锁；接收节点在 `ready` 重启也不会误当作未完成复制而回滚。
 
@@ -295,7 +300,9 @@ Hub 使用已绑定源会话和目标节点的同一操作记录驱动移动。�
 
 当前内部节点接口为 `POST /api/session/transfer/switch`、`activate`、`retire`，只存在于鉴权
 节点监听器，Hub 的浏览器通用代理也拒绝转发内部迁移接口；Hub 入口沿用
-`/api/session/transfer/clone`，按源计划中的 `mode` 执行。
+`/api/session/transfer/clone`，按源计划中的 `mode` 执行。Hub 的
+`POST /api/session/transfer/cancel` 按已绑定的源/目标撤回操作；节点私有
+`POST /api/session/transfer/abort` 负责持久决定、目标补偿及最终解锁。
 `session_bundle_browser.py --move --preserve --peer <SSH 别名>` 覆盖三种来源的复杂组移动、
 回收站字节、源锁重启保持、再次移回，以及目标 ready 重启、部分清理中断和新增外部引用保护。
 去掉 `--preserve` 验证移动同时改身份；去掉 `--peer` 验证共享存储拒绝。

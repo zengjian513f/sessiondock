@@ -43,6 +43,72 @@ impl TransferService {
         self.save(&op)?;
         Ok(op)
     }
+    /// Persist the decision before compensating the receiver. A concurrent or
+    /// delayed switch can never succeed after this point, even after restart.
+    pub fn abort_source(&self, id: &str, finished: bool) -> Result<Operation, TransferError> {
+        let mut op = self.load(id)?;
+        if !op.moving
+            || op.incoming_digest.is_some()
+            || !matches!(
+                op.phase.as_str(),
+                "planned" | "exporting" | "aborting" | "aborted"
+            )
+        {
+            return Err(TransferError::new(
+                "move_recovery_required",
+                "执行归属已交接，不能撤回；请继续完成移动",
+            ));
+        }
+        if op.phase == "aborted" {
+            return Ok(op);
+        }
+        if finished && op.phase != "aborting" {
+            return Err(TransferError::new(
+                "move_recovery_required",
+                "源端尚未记录撤回决定",
+            ));
+        }
+        op.phase = if finished { "aborted" } else { "aborting" }.into();
+        op.export_lease_until = 0;
+        self.save(&op)?;
+        if finished {
+            for (provider, root) in self.bundle_roots(&op)? {
+                if let Some(probe) = op.storage_probes.get(&provider) {
+                    let _ = probe.remove(&root);
+                }
+            }
+        }
+        Ok(op)
+    }
+    pub fn abort_target(&self, id: &str) -> Result<Operation, TransferError> {
+        let mut op = self.load(id)?;
+        if !op.moving
+            || op.incoming_digest.is_none()
+            || !matches!(
+                op.phase.as_str(),
+                "planned" | "failed" | "ready" | "rollback_required" | "aborting" | "aborted"
+            )
+        {
+            return Err(TransferError::new(
+                "move_recovery_required",
+                "目标已开放继续，不能撤回",
+            ));
+        }
+        if op.phase == "aborted" {
+            return Ok(op);
+        }
+        if matches!(
+            op.phase.as_str(),
+            "ready" | "rollback_required" | "aborting"
+        ) {
+            op.phase = "aborting".into();
+            self.save(&op)?;
+            self.rollback(&op)?;
+        }
+        op.phase = "aborted".into();
+        self.save(&op)?;
+        Ok(op)
+    }
     pub fn switch_source(&self, id: &str) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
         if !op.moving || op.incoming_digest.is_some() {

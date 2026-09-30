@@ -61,6 +61,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/audit/browser"),
     ("GET", "/api/session/file"),
     ("POST", "/api/session/transfer/clone"),
+    ("POST", "/api/session/transfer/cancel"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -471,7 +472,7 @@ async fn handle(
     }
     // Move handoff is coordinated server-to-server. Do not let the generic
     // browser proxy bypass target verification or the source ownership switch.
-    if path.starts_with("/api/session/transfer/") && path != "/api/session/transfer/clone" {
+    if path.starts_with("/api/session/transfer/") && !matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel") {
         return Ok((StatusCode::NOT_FOUND, axum::Json(json!({"code":"private_transfer_route","error":"内部迁移接口不可通过浏览器调用"}))).into_response());
     }
     if method == Method::GET && path == "/api/session/file" {
@@ -513,16 +514,28 @@ async fn handle(
         }
     }
     if explicit.is_none() {
-        if method==Method::POST && path=="/api/session/transfer/clone" {
-            let request=serde_json::from_value::<crate::hub::transfer::Request>(Value::Object(body.unwrap_or_default()))
-                .map_err(|e| Reply::Invalid(e.to_string()))?;
-            let transfers=state.transfers.clone();let registry=state.registry.clone();let client=state.client.clone();
+        if method == Method::POST && matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel") {
+            let request = serde_json::from_value::<crate::hub::transfer::Request>(Value::Object(
+                body.unwrap_or_default(),
+            ))
+            .map_err(|e| Reply::Invalid(e.to_string()))?;
+            let transfers = state.transfers.clone();
+            let registry = state.registry.clone();
+            let client = state.client.clone();
             // Publication survives the browser closing or losing its connection.
-            let result=tokio::spawn(async move {transfers.execute(registry,client,request).await}).await;
+            let cancel = path == "/api/session/transfer/cancel";
+            let result = tokio::spawn(async move {
+                if cancel { transfers.cancel(registry, client, request).await }
+                else { transfers.execute(registry, client, request).await }
+            }).await;
             return match result {
-                Ok(Ok(value))=>ok(&value),
-                Ok(Err(e))=>Ok(error_json(StatusCode::CONFLICT,&e.message,&e.code)),
-                Err(e)=>Ok(error_json(StatusCode::INTERNAL_SERVER_ERROR,&e.to_string(),"move_io")),
+                Ok(Ok(value)) => ok(&value),
+                Ok(Err(e)) => Ok(error_json(StatusCode::CONFLICT, &e.message, &e.code)),
+                Err(e) => Ok(error_json(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                    "move_io",
+                )),
             };
         }
         if path == "/api/sessions/delete" {
