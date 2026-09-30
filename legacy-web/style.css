@@ -2268,8 +2268,8 @@ header .btn[data-session-docked] { display: none; }
 .transfer-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(140px, .7fr); gap: 16px; }
 .transfer-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .transfer-field > span, .transfer-mode legend { font-size: 12px; font-weight: 600; color: var(--muted); }
-.transfer-field select { width: 100%; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
-#transfer-source:disabled { opacity: 1; color: var(--text); -webkit-text-fill-color: var(--text); cursor: default; }
+.transfer-field select, #transfer-source { box-sizing: border-box; width: 100%; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
+#transfer-source:disabled { opacity: .65; color: var(--muted); -webkit-text-fill-color: var(--muted); cursor: default; }
 .transfer-mode { padding: 0; margin: 0; border: 0; min-width: 0; }
 .transfer-mode legend { padding: 0; margin-bottom: 5px; }
 .transfer-segments { display: flex; padding: 3px; height: 34px; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }

@@ -9635,7 +9635,7 @@ async function cloneSessionGroup(uid) {
     </div>
     <div class="transfer-body">
       <div class="transfer-controls">
-        <label class="transfer-field"><span>源机器</span><select id="transfer-source" disabled></select></label>
+        <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
         <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
         <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
           <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
@@ -9668,7 +9668,7 @@ async function cloneSessionGroup(uid) {
     target.append(option);
   }
   target.value = sourceId;
-  $d('#transfer-source').append(new Option(sourceName, sourceId));
+  $d('#transfer-source').value = sourceName;
   let plan = null, busy = false, uncertain = false;
   const identityChoices = {clone:true, move:false};
   const mode = () => radios.find(r => r.checked).value;
