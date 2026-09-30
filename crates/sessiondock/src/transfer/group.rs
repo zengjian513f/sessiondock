@@ -2,6 +2,9 @@
 //! A logical thread may own several physical candidates. Never collapse those
 //! files to the row currently visible in the sidebar before walking dependencies.
 
+#[path = "claude_tools.rs"]
+pub(super) mod claude_tools;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -236,6 +239,20 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
                     continue;
                 }
             };
+            let tool_rows: Vec<Value> = raw
+                .split(|b| *b == b'\n')
+                .filter_map(|line| serde_json::from_slice(line).ok())
+                .collect();
+            let links = claude_tools::links(&tool_rows);
+            for id in links.requests {
+                // Teammate names and failed lookups are not persisted histories.
+                if identities.contains_key(&("claude", id.as_str())) {
+                    references.insert((id, "agent_tool".into()));
+                }
+            }
+            for id in links.resumed.into_values() {
+                references.insert((id, "agent_tool".into()));
+            }
             for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
                 let row: Value = match serde_json::from_slice(line) {
                     Ok(row) => row,

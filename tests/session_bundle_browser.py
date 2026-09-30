@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, Corpus, isolated_server
 from session_clone_browser import prepare
-from session_files_browser import fixture, uid
+from session_files_browser import fixture, uid, claude_row, encoded
 from session_transfer_browser import ident
 from hub_http_suite import Hub, free_port, scoped
 from node_auth_suite import node_env, TOKEN
@@ -340,7 +340,7 @@ def main():
                                 expect(dialog.locator('.clone-confirm')).to_be_enabled()
                             print('PASS '+provider+' stale handoff compensates; interrupted withdrawal preserves changed target, survives restart and resumes from Chromium',flush=True)
                         cleanup_obstruction=None
-                        if args.move and args.preserve and peer and provider=='codex':
+                        if args.move and args.preserve and peer and provider in ('codex','claude'):
                             operation=move_plan.value.json()['operation_id']
                             for route in (f'/api/nodes/{a.nid}/api/session/transfer/switch','/api/session/transfer/switch'):
                                 forbidden=context.request.post(f'http://127.0.0.1:{hub.port}'+route,data={'uid':source_uid,'operation_id':operation})
@@ -355,7 +355,7 @@ def main():
                             status,raw=node_call(b,'/api/session/transfer/status',{'operation_id':operation})
                             assert status==200 and json.loads(raw)['phase']=='ready',raw
                             status,raw=node_call(a,'/api/session/transfer/switch',{'operation_id':operation});assert status==200,raw
-                            cleanup_obstruction=source.root/'trash'/f'move-{operation}-codex'/'files/1'
+                            cleanup_obstruction=source.root/'trash'/f'move-{operation}-{provider}'/'files/1'
                             cleanup_obstruction.mkdir(parents=True)
                             print('PASS target remains fenced and ready across restart before source handoff',flush=True)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
@@ -375,39 +375,62 @@ def main():
                             manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())
                             assert manifest['files'][0]['in_trash'] and not Path(manifest['files'][0]['origin']).exists()
                             cleanup_obstruction.rmdir()
-                            late=source.root/'codex/sessions'/f'rollout-2026-10-01T00-00-00-{ident(999)}.jsonl'
-                            late.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(999),'forked_from_id':partial['full_group']['members'][0]['sid'],'cwd':str(source.root/'workspace'),'timestamp':'2026-10-01T00:00:00Z'}})+'\n'+json.dumps({'type':'event_msg','payload':{'type':'user_message','message':'Late fork'}})+'\n')
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
-                                dialog.locator('.clone-confirm').click()
-                            assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
-                            assert late.exists() and (cleanup_obstruction.parent/'0').exists()
-                            late.unlink()
-                            # Neither generation has a parent edge. Only the call in
-                            # the archived generation identifies the result as an agent.
-                            generations=[]
-                            for index,record in enumerate((
-                                {'type':'function_call','name':'spawn_agent','call_id':'late-call','arguments':'{}'},
-                                {'type':'function_call_output','call_id':'late-call','output':json.dumps({'agent_id':partial['full_group']['members'][0]['sid']})},
-                            )):
-                                folder=source.root/'codex'/('archived_sessions' if index==0 else 'sessions')
-                                folder.mkdir(exist_ok=True)
-                                path=folder/f'rollout-2026-10-02T00-00-0{index}-{ident(998)}.jsonl'
-                                path.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(998),'rollout_id':ident(990+index),'cwd':str(source.root/'workspace'),'timestamp':f'2026-10-02T00:00:0{index}Z'}})+'\n'+json.dumps({'type':'response_item','payload':record})+'\n')
-                                generations.append(path)
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
-                                dialog.locator('.clone-confirm').click()
-                            assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
-                            assert all(path.exists() for path in generations) and (cleanup_obstruction.parent/'0').exists()
-                            # An identical call ID in an unrelated thread is not an edge.
-                            first=generations[0]
-                            first.write_text(first.read_text().replace(ident(998),ident(997)))
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
-                                dialog.locator('.clone-confirm').click()
-                            reply=response.value
-                            assert reply.ok,reply.text()
-                            for path in generations:path.unlink()
-                            print('PASS Chromium protects cross-generation agent results and scopes call IDs to their thread',flush=True)
-                            print('PASS Chromium retains a new outside fork dependency during partial cleanup and retries without republishing target or releasing source fence',flush=True)
+                            if provider=='claude':
+                                agent_id=next(m['sid'] for m in partial['full_group']['members'] if m['agent'])
+                                late=source.root/'claude/projects/project'/(ident(999)+'.jsonl')
+                                for short in (False,True):
+                                    call={'type':'tool_use','id':'late-send','name':'SendMessage','input':{'to':agent_id[:7] if short else agent_id,'message':'late'}}
+                                    rows=[claude_row(ident(999),'assistant',ident(991),None,[call],cwd=str(source.root/'cwd'))]
+                                    if short:
+                                        result={'success':True,'resumedAgentId':agent_id}
+                                        rows.append(claude_row(ident(999),'user',ident(992),ident(991),[{'type':'tool_result','tool_use_id':'late-send','content':json.dumps(result)}],toolUseResult=result,cwd=str(source.root/'cwd')))
+                                    late.write_bytes(b''.join(encoded(row) for row in rows))
+                                    with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                        dialog.locator('.clone-confirm').click()
+                                    assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                                    assert late.exists() and (cleanup_obstruction.parent/'0').exists()
+                                # Same shaped output from a different tool is ordinary data.
+                                call['name']='Bash'
+                                late.write_bytes(b''.join(encoded(row) for row in rows))
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
+                                    dialog.locator('.clone-confirm').click()
+                                reply=response.value;assert reply.ok,reply.text()
+                                late.unlink()
+                                print('PASS Claude partial cleanup retains late SendMessage dependencies, including resolved short IDs; ignores unrelated tool output',flush=True)
+                            else:
+                                late=source.root/'codex/sessions'/f'rollout-2026-10-01T00-00-00-{ident(999)}.jsonl'
+                                late.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(999),'forked_from_id':partial['full_group']['members'][0]['sid'],'cwd':str(source.root/'workspace'),'timestamp':'2026-10-01T00:00:00Z'}})+'\n'+json.dumps({'type':'event_msg','payload':{'type':'user_message','message':'Late fork'}})+'\n')
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                    dialog.locator('.clone-confirm').click()
+                                assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                                assert late.exists() and (cleanup_obstruction.parent/'0').exists()
+                                late.unlink()
+                                # Neither generation has a parent edge. Only the call in
+                                # the archived generation identifies the result as an agent.
+                                generations=[]
+                                for index,record in enumerate((
+                                    {'type':'function_call','name':'spawn_agent','call_id':'late-call','arguments':'{}'},
+                                    {'type':'function_call_output','call_id':'late-call','output':json.dumps({'agent_id':partial['full_group']['members'][0]['sid']})},
+                                )):
+                                    folder=source.root/'codex'/('archived_sessions' if index==0 else 'sessions')
+                                    folder.mkdir(exist_ok=True)
+                                    path=folder/f'rollout-2026-10-02T00-00-0{index}-{ident(998)}.jsonl'
+                                    path.write_text(json.dumps({'type':'session_meta','payload':{'id':ident(998),'rollout_id':ident(990+index),'cwd':str(source.root/'workspace'),'timestamp':f'2026-10-02T00:00:0{index}Z'}})+'\n'+json.dumps({'type':'response_item','payload':record})+'\n')
+                                    generations.append(path)
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                    dialog.locator('.clone-confirm').click()
+                                assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                                assert all(path.exists() for path in generations) and (cleanup_obstruction.parent/'0').exists()
+                                # An identical call ID in an unrelated thread is not an edge.
+                                first=generations[0]
+                                first.write_text(first.read_text().replace(ident(998),ident(997)))
+                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
+                                    dialog.locator('.clone-confirm').click()
+                                reply=response.value
+                                assert reply.ok,reply.text()
+                                for path in generations:path.unlink()
+                                print('PASS Chromium protects cross-generation agent results and scopes call IDs to their thread',flush=True)
+                                print('PASS Chromium retains a new outside fork dependency during partial cleanup and retries without republishing target or releasing source fence',flush=True)
                         if args.move and not peer:
                             assert reply.status==409 and reply.json()['code']=='move_shared_storage',reply.text()
                             expect(dialog.locator('.transfer-error')).to_contain_text('共享会话存储')
@@ -420,7 +443,7 @@ def main():
                         task_request={'uid':source_uid,'target_node':b.nid,'operation_id':completed['operation_id']}
                         progress=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/progress',data=task_request)
                         assert progress.ok and progress.json()['phase']=='complete',progress.text()
-                        if not (args.move and args.preserve and peer and provider=='codex'):
+                        if not (args.move and args.preserve and peer and provider in ('codex','claude')):
                             assert progress.json()['bytes_sent']==progress.json()['bytes_total']>0,progress.text()
                         pending=context.request.get(f'http://127.0.0.1:{hub.port}/api/session/transfers')
                         assert pending.ok and all(t['request']['operation_id']!=completed['operation_id'] for t in pending.json()['operations']),pending.text()

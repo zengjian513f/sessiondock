@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright, expect
 from history_parity import Corpus, BINARY, isolated_server, get_json
 from hub_http_suite import Hub, free_port, scoped
 from node_auth_suite import node_env, TOKEN
-from session_files_browser import fixture, uid
+from session_files_browser import fixture, uid, claude_row, encoded
 from session_transfer_browser import ident
 
 
@@ -20,6 +20,31 @@ def main():
     args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='sessiondock-files-publish-') as tmp, sync_playwright() as pw:
         root=Path(tmp);roots,claude,side,agent=fixture(root/'node');corpus=Corpus(root/'node')
+        # A separate parent owns the resumed agent; no shared message UUIDs or
+        # fork fields connect it to the selected family.
+        foreign_agent='aabcdef1234567890';foreign_parent=ident(80)
+        owner=claude[2].parent/(foreign_parent+'.jsonl')
+        def row(sid,kind,n,parent,text,**extra):
+            return claude_row(sid,kind,ident(n),parent,text,cwd=str(corpus.root/'cwd'),**extra)
+        owner.write_bytes(encoded(row(foreign_parent,'user',801,None,'Independent agent owner'))+
+                          encoded(row(foreign_parent,'assistant',802,ident(801),'Independent owner answer')))
+        with owner.open('ab') as stream:
+            stream.write(encoded(row(foreign_parent,'assistant',809,ident(802),[{'type':'tool_use','id':'cross-send','name':'Bash','input':{'command':'synthetic'}}])))
+            stream.write(encoded(row(foreign_parent,'user',810,ident(809),[{'type':'tool_result','tool_use_id':'cross-send',
+                'content':json.dumps({'success':True,'resumedAgentId':'missing-unrelated-agent'})}])))
+        foreign_side=owner.with_suffix('')/'subagents'/('agent-'+foreign_agent+'.jsonl')
+        foreign_side.parent.mkdir(parents=True)
+        foreign_side.write_bytes(encoded(row(foreign_parent,'user',803,None,'Foreign agent question',isSidechain=True,agentId=foreign_agent))+
+                                encoded(row(foreign_parent,'assistant',804,ident(803),'Foreign agent answer',isSidechain=True,agentId=foreign_agent)))
+        with claude[2].open('ab') as stream:
+            stream.write(encoded(row(ident(2),'assistant',805,ident(154),[{'type':'tool_use','id':'cross-send','name':'SendMessage',
+                'input':{'to':foreign_agent[:7],'message':'Cross owner request literal '+foreign_agent[:7]}}])))
+            reply={'success':True,'resumedAgentId':foreign_agent,'message':'Resuming agent '+foreign_agent[:7]}
+            stream.write(encoded(row(ident(2),'user',806,ident(805),[{'type':'tool_result','tool_use_id':'cross-send','content':json.dumps(reply)}],toolUseResult=reply)))
+            # An unrelated tool's JSON and literal user text must not be edges.
+            stream.write(encoded(row(ident(2),'assistant',807,ident(806),[{'type':'tool_use','id':'not-send','name':'Bash','input':{'command':'synthetic'}}])))
+            stream.write(encoded(row(ident(2),'user',808,ident(807),[{'type':'tool_result','tool_use_id':'not-send',
+                'content':json.dumps({'success':True,'resumedAgentId':'missing-unrelated-agent'})}])))
         (corpus.root/'state').mkdir();(corpus.root/'proc').mkdir()
         original={str(p):p.read_bytes() for folder in ('claude','grok') for p in (corpus.root/folder).rglob('*') if p.is_file()}
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
@@ -39,11 +64,12 @@ def main():
                     if not restart:
                         for source,selected in [('claude',uid('claude',claude[2])),('grok',uid('grok',corpus.root/'grok/project'/ident(10)))]:
                             selected=scoped(node.nid,selected)
+                            page.reload(wait_until='networkidle')
                             page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
                             page.locator('#item-menu [data-act="clone"]').click()
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
-                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(4)
+                            expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 4)
                             with page.expect_response(lambda r:r.url.endswith('/api/session/clone') and r.request.method=='POST') as reply:
                                 dialog.locator('.clone-confirm').click()
                             response=reply.value;assert response.ok,response.text();result=response.json()
@@ -57,6 +83,23 @@ def main():
                                 page.locator(f'#session-view-menu button[data-agent="{ids["claude:"+agent]}"]').click()
                                 expect(page.locator('#msgs')).to_contain_text('Agent answer')
                                 assert (corpus.root/'claude/file-history'/ids['claude:'+ident(2)]/'abcdef@v1').is_file()
+                                clone=claude[2].with_name(ids['claude:'+ident(2)]+'.jsonl')
+                                rows=[json.loads(line) for line in clone.read_text().splitlines()]
+                                call=next(block for row in rows for block in row.get('message',{}).get('content',[]) if isinstance(block,dict)
+                                          and block.get('name')=='SendMessage' and block.get('input',{}).get('message','').startswith('Cross owner request'))
+                                assert call['input']['to']==ids['claude:'+foreign_agent]
+                                assert call['input']['message']=='Cross owner request literal '+foreign_agent[:7]
+                                resumed=[row['toolUseResult']['resumedAgentId'] for row in rows if row.get('toolUseResult',{}).get('resumedAgentId')]
+                                assert ids['claude:'+foreign_agent] in resumed and foreign_agent not in resumed
+                                owner_clone=owner.with_name(ids['claude:'+foreign_parent]+'.jsonl')
+                                assert 'missing-unrelated-agent' in owner_clone.read_text()
+                                sessions=get_json(opener,base,'/api/sessions')['sessions']
+                                foreign=next(row for row in sessions if row['sid']==ids['claude:'+foreign_parent])
+                                page.locator(f'#side .item[data-uid="{scoped(node.nid,foreign["uid"])}"]').click()
+                                page.locator('#a-view-switch').click()
+                                page.locator(f'#session-view-menu button[data-agent="{ids["claude:"+foreign_agent]}"]').click()
+                                expect(page.locator('#msgs')).to_contain_text('Foreign agent answer')
+                                print('PASS Claude cross-owner SendMessage includes parent/agent and rewrites resolved short destination',flush=True)
                             else:
                                 rows=get_json(opener,base,'/api/sessions')['sessions']
                                 child=next(row for row in rows if row['sid']==ids['grok:'+ident(13)])

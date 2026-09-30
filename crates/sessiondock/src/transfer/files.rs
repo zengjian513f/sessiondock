@@ -1,7 +1,7 @@
 //! Native file bundles for Claude and Grok. Only structured native identity
 //! fields are rewritten; message text, source files and arbitrary attachments
 //! are never treated as identity strings.
-use super::{codex, group::Group, TransferError};
+use super::{TransferError, codex, group::Group};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -646,9 +646,25 @@ impl Plan {
         }
         let source = &file.provider;
         let mut output = Vec::new();
-        for mut row in parse(raw, &file.format)? {
+        let rows = parse(raw, &file.format)?;
+        let links = (source == "claude").then(|| super::group::claude_tools::links(&rows));
+        let mut local_names = BTreeMap::new();
+        if source == "claude" {
+            for row in &rows {
+                collect_tools(row, source, &mut local_names);
+            }
+        }
+        let names = if source == "claude" {
+            &local_names
+        } else {
+            &self.tool_names
+        };
+        for mut row in rows {
+            if let Some(links) = &links {
+                super::group::claude_tools::resolve(&mut row, links);
+            }
             session_ids(&mut row, source, &self.sessions);
-            rewrite_tools(&mut row, source, &self.sessions, &self.tool_names)?;
+            rewrite_tools(&mut row, source, &self.sessions, names)?;
             self.tool_paths(&mut row, source);
             record_ids(&mut row, source, &mut |value| {
                 rewrite_scalar(value, source, &self.records)
