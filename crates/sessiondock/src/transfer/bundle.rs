@@ -1,5 +1,8 @@
 //! A manifest-first tar stream. Archive paths are numbered slots, never native
 //! absolute paths. Only validated, configured native roots can receive files.
+#[path = "dependencies.rs"]
+mod dependencies;
+
 use super::{
     TransferError,
     environment::Snapshot,
@@ -142,6 +145,7 @@ impl TransferService {
         }
         self.recheck(op)?;
         let roots = self.bundle_roots(op)?;
+        let dependencies = dependencies::collect(self, op)?;
         let mut environment = Vec::new();
         for cwd in op
             .group()
@@ -151,7 +155,11 @@ impl TransferService {
             .filter(|s| !s.is_empty())
             .collect::<BTreeSet<_>>()
         {
-            environment.push(Snapshot::capture(Path::new(cwd), &[])?);
+            let external = dependencies
+                .get(Path::new(cwd))
+                .map(|paths| paths.iter().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            environment.push(Snapshot::capture(Path::new(cwd), &external)?);
         }
         let publications = self.publications(op);
         let mut files = Vec::new();

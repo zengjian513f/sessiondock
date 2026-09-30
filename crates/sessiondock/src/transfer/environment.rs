@@ -93,7 +93,10 @@ impl Snapshot {
         let mut seen = BTreeSet::new();
         result.walk(cwd, true, &mut seen)?;
         for path in dependencies {
-            result.walk(path, false, &mut seen)?;
+            result.walk(path, false, &mut seen).map_err(|mut error| {
+                error.message = format!("外部历史依赖 {}：{}", path.display(), error.message);
+                error
+            })?;
         }
         result.recheck()?;
         Ok(result)
