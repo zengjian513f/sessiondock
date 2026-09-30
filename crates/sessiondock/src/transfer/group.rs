@@ -301,6 +301,34 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
             {
                 references.insert((id.into(), "fork".into()));
             }
+            // Grok children have independent directories and need not carry a
+            // parent_session_id in their own summary. The owner records them.
+            let agents = path.parent().unwrap().join("subagents");
+            if agents.is_dir() {
+                for entry in std::fs::read_dir(agents)? {
+                    let metadata = entry?.path().join("meta.json");
+                    if !metadata.is_file() {
+                        continue;
+                    }
+                    match std::fs::read(&metadata)
+                        .map_err(TransferError::from)
+                        .and_then(|raw| Ok(serde_json::from_slice::<Value>(&raw)?))
+                    {
+                        Ok(meta) => {
+                            for name in ["child_session_id", "parent_session_id"] {
+                                if let Some(id) = meta[name].as_str().filter(|id| !id.is_empty()) {
+                                    references.insert((id.into(), "subagent".into()));
+                                }
+                            }
+                        }
+                        Err(error) => blockers.push(Blocker {
+                            uid: e.uid.clone(),
+                            code: error.code,
+                            message: error.message,
+                        }),
+                    }
+                }
+            }
         }
         for (sid, kind) in references {
             if let Some(targets) = identities.get(&(e.source, sid.as_str())) {

@@ -29,6 +29,8 @@ pub struct Plan {
     /// Keys include provider to keep equal IDs in different CLIs separate.
     pub sessions: BTreeMap<String, String>,
     pub records: BTreeMap<String, String>,
+    #[serde(default)]
+    pub tool_names: BTreeMap<String, String>,
     pub roots: BTreeMap<String, PathBuf>,
     pub files: Vec<File>,
 }
@@ -47,7 +49,16 @@ fn mint(
     if !id.is_empty() && !map.contains_key(&key(source, id)) {
         map.insert(
             key(source, id),
-            if fresh { codex::uuid()? } else { id.into() },
+            if fresh {
+                let next = codex::uuid()?;
+                if id.starts_with("ag1.") {
+                    format!("ag1.{}", next.replace('-', ""))
+                } else {
+                    next
+                }
+            } else {
+                id.into()
+            },
         );
     }
     Ok(())
@@ -100,6 +111,11 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
     content_ids(row.get_mut("content"), visit);
     // Grok/OpenAI chat messages store calls separately from content blocks.
     if source == "grok" {
+        for name in ["id", "eventId", "chunkId", "prompt_id", "parent_prompt_id"] {
+            if let Some(value) = row.get_mut(name) {
+                visit(value);
+            }
+        }
         if let Some(calls) = row.get_mut("tool_calls").and_then(Value::as_array_mut) {
             for call in calls {
                 if let Some(id) = call.get_mut("id") {
@@ -110,8 +126,10 @@ fn record_ids(row: &mut Value, source: &str, visit: &mut impl FnMut(&mut Value))
         if let Some(update) = row.get_mut("update") {
             record_ids(update, source, visit);
         }
-        if let Some(update) = row.get_mut("params") {
-            record_ids(update, source, visit);
+        for wrapper in ["params", "_meta", "updateParams"] {
+            if let Some(update) = row.get_mut(wrapper) {
+                record_ids(update, source, visit);
+            }
         }
     }
 }
@@ -133,6 +151,180 @@ fn content_ids(content: Option<&mut Value>, visit: &mut impl FnMut(&mut Value)) 
             }
         }
     }
+}
+fn session_ids(row: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
+    for name in [
+        "sessionId",
+        "session_id",
+        "parentSessionId",
+        "parent_session_id",
+        "forkedFromSessionId",
+        "continuedInSessionId",
+        "agentId",
+        "parentAgentId",
+        "agent_id",
+        "subagent_id",
+        "child_session_id",
+    ] {
+        field(row, name, source, ids);
+    }
+    if source == "grok" {
+        if let Some(info) = row.get_mut("info") {
+            field(info, "id", source, ids);
+        }
+    }
+    for wrapper in ["params", "update", "toolUseResult"] {
+        if let Some(child) = row.get_mut(wrapper) {
+            session_ids(child, source, ids);
+        }
+    }
+}
+fn collect_tools(row: &Value, source: &str, names: &mut BTreeMap<String, String>) {
+    for call in row["tool_calls"].as_array().into_iter().flatten() {
+        if let (Some(id), Some(name)) = (call["id"].as_str(), call["name"].as_str()) {
+            names.insert(key(source, id), name.into());
+        }
+    }
+    for block in row["message"]["content"].as_array().into_iter().flatten() {
+        if block["type"] == "tool_use" {
+            if let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) {
+                names.insert(key(source, id), name.into());
+            }
+        }
+    }
+    if row["sessionUpdate"] == "tool_call" {
+        if let (Some(id), Some(name)) = (row["toolCallId"].as_str(), row["title"].as_str()) {
+            names.insert(key(source, id), name.into());
+        }
+    }
+    for wrapper in ["params", "update"] {
+        if row[wrapper].is_object() {
+            collect_tools(&row[wrapper], source, names);
+        }
+    }
+}
+fn agent_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "Agent"
+            | "Task"
+            | "TaskOutput"
+            | "spawn_subagent"
+            | "send_subagent_message"
+            | "get_command_or_subagent_output"
+            | "kill_subagent"
+    )
+}
+fn agent_args(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
+    for name in ["resume", "resume_from", "subagent_id", "task_id"] {
+        field(value, name, source, ids);
+    }
+    if let Some(list) = value.get_mut("task_ids").and_then(Value::as_array_mut) {
+        for id in list {
+            rewrite_scalar(id, source, ids);
+        }
+    }
+}
+fn agent_text(value: &mut Value, source: &str, ids: &BTreeMap<String, String>) {
+    if let Some(text) = value.as_str() {
+        let mut result = text.to_owned();
+        for (id, new) in ids {
+            if let Some(old) = id.strip_prefix(&format!("{source}:")) {
+                // Native result envelopes only. Literal IDs in prompts and agent
+                // answer bodies stay untouched.
+                for (prefix, suffix) in [
+                    ("subagent_id: ", "\n"),
+                    ("agentId: ", " "),
+                    ("=== Task ", " ==="),
+                    ("<subagent_meta>id=", ","),
+                    ("resume_from=\"", "\""),
+                    ("task_ids=[\"", "\"]"),
+                ] {
+                    result = result.replace(
+                        &format!("{prefix}{old}{suffix}"),
+                        &format!("{prefix}{new}{suffix}"),
+                    );
+                }
+            }
+        }
+        *value = Value::String(result);
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            if item["type"] == "text" {
+                if let Some(text) = item.get_mut("text") {
+                    agent_text(text, source, ids);
+                }
+            }
+        }
+    } else if let Some(object) = value.as_object_mut() {
+        for name in ["subagent_id", "child_session_id", "task_id", "agentId"] {
+            if let Some(value) = object.get_mut(name) {
+                rewrite_scalar(value, source, ids);
+            }
+        }
+        for name in ["text", "output", "Result"] {
+            if let Some(value) = object.get_mut(name) {
+                agent_text(value, source, ids);
+            }
+        }
+    }
+}
+fn rewrite_tools(
+    row: &mut Value,
+    source: &str,
+    ids: &BTreeMap<String, String>,
+    names: &BTreeMap<String, String>,
+) -> Result<(), TransferError> {
+    if let Some(calls) = row.get_mut("tool_calls").and_then(Value::as_array_mut) {
+        for call in calls {
+            if call["name"].as_str().is_some_and(agent_tool) {
+                if let Some(raw) = call["arguments"].as_str() {
+                    let mut args: Value = serde_json::from_str(raw)?;
+                    agent_args(&mut args, source, ids);
+                    call["arguments"] = serde_json::to_string(&args)?.into();
+                }
+            }
+        }
+    }
+    let name = row["tool_call_id"]
+        .as_str()
+        .or_else(|| row["toolCallId"].as_str())
+        .and_then(|id| names.get(&key(source, id)));
+    if name.is_some_and(|s| agent_tool(s)) {
+        if let Some(args) = row.get_mut("rawInput") {
+            agent_args(args, source, ids);
+        }
+        for field in ["content", "rawOutput"] {
+            if let Some(value) = row.get_mut(field) {
+                agent_text(value, source, ids);
+            }
+        }
+    }
+    if let Some(items) = row
+        .get_mut("message")
+        .and_then(|m| m.get_mut("content"))
+        .and_then(Value::as_array_mut)
+    {
+        for item in items {
+            if item["type"] == "tool_use" && item["name"].as_str().is_some_and(agent_tool) {
+                agent_args(&mut item["input"], source, ids);
+            }
+            if item["type"] == "tool_result"
+                && item["tool_use_id"]
+                    .as_str()
+                    .and_then(|id| names.get(&key(source, id)))
+                    .is_some_and(|s| agent_tool(s))
+            {
+                agent_text(&mut item["content"], source, ids);
+            }
+        }
+    }
+    for wrapper in ["params", "update"] {
+        if let Some(child) = row.get_mut(wrapper) {
+            rewrite_tools(child, source, ids, names)?;
+        }
+    }
+    Ok(())
 }
 fn parse(raw: &[u8], format: &str) -> Result<Vec<Value>, TransferError> {
     if format == "json" {
@@ -233,6 +425,7 @@ impl Plan {
             new_ids,
             sessions: BTreeMap::new(),
             records: BTreeMap::new(),
+            tool_names: BTreeMap::new(),
             roots: BTreeMap::new(),
             files: Vec::new(),
         };
@@ -312,6 +505,12 @@ impl Plan {
             };
             if matches!(format, "json" | "jsonl") {
                 for mut row in parse(&raw, format)? {
+                    if source == "grok" && path.file_name().is_some_and(|s| s == "summary.json") {
+                        if let Some(agent) = row["agent_id"].as_str() {
+                            mint(&source, agent, &mut plan.sessions, new_ids)?;
+                        }
+                    }
+                    collect_tools(&row, &source, &mut plan.tool_names);
                     let mut error = None;
                     record_ids(&mut row, &source, &mut |value| {
                         if let Some(id) = value.as_str() {
@@ -352,31 +551,9 @@ impl Plan {
         let source = &file.provider;
         let mut output = Vec::new();
         for mut row in parse(raw, &file.format)? {
-            for name in [
-                "sessionId",
-                "session_id",
-                "parentSessionId",
-                "parent_session_id",
-                "forkedFromSessionId",
-                "continuedInSessionId",
-                "agentId",
-                "parentAgentId",
-                "agent_id",
-                "subagent_id",
-                "child_session_id",
-            ] {
-                field(&mut row, name, source, &self.sessions);
-            }
-            if source == "grok" {
-                if let Some(info) = row.get_mut("info") {
-                    field(info, "id", source, &self.sessions);
-                }
-            }
-            if let Some(result) = row.get_mut("toolUseResult") {
-                for name in ["agentId", "sessionId"] {
-                    field(result, name, source, &self.sessions);
-                }
-            }
+            session_ids(&mut row, source, &self.sessions);
+            rewrite_tools(&mut row, source, &self.sessions, &self.tool_names)?;
+            self.tool_paths(&mut row, source);
             record_ids(&mut row, source, &mut |value| {
                 rewrite_scalar(value, source, &self.records)
             });
@@ -384,6 +561,84 @@ impl Plan {
             output.push(b'\n');
         }
         Ok(output)
+    }
+    fn tool_paths(&self, row: &mut Value, source: &str) {
+        let paths = self
+            .files
+            .iter()
+            .filter(|f| f.provider == source)
+            .map(|f| {
+                (
+                    f.source.to_string_lossy().into_owned(),
+                    self.roots[source]
+                        .join(&f.target)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        fn result(value: &mut Value, paths: &BTreeMap<String, String>) {
+            if let Some(object) = value.as_object_mut() {
+                for name in [
+                    "filePath",
+                    "file_path",
+                    "outputFile",
+                    "output_file",
+                    "transcriptPath",
+                ] {
+                    if let Some(v) = object.get_mut(name) {
+                        if let Some(mapped) = v.as_str().and_then(|s| paths.get(s)) {
+                            *v = mapped.clone().into();
+                        }
+                    }
+                }
+                for name in ["content", "text", "stdout", "stderr"] {
+                    if let Some(v) = object.get_mut(name) {
+                        result(v, paths);
+                    }
+                }
+            } else if let Some(items) = value.as_array_mut() {
+                for item in items {
+                    result(item, paths);
+                }
+            } else if let Some(text) = value.as_str() {
+                if text.contains("<persisted-output>") || text.starts_with("Full output saved to:")
+                {
+                    let mut rewritten = text.to_owned();
+                    for (old, new) in paths {
+                        // Match the native output pointer, not UUIDs or arbitrary
+                        // paths in a user's message / tool's ordinary output.
+                        for prefix in ["saved to: ", "Saved to: "] {
+                            for suffix in ["\n", "\r", "</persisted-output>"] {
+                                rewritten = rewritten.replace(
+                                    &format!("{prefix}{old}{suffix}"),
+                                    &format!("{prefix}{new}{suffix}"),
+                                );
+                            }
+                            if rewritten.ends_with(&format!("{prefix}{old}")) {
+                                rewritten.truncate(rewritten.len() - old.len());
+                                rewritten.push_str(new);
+                            }
+                        }
+                    }
+                    *value = rewritten.into();
+                }
+            }
+        }
+        if let Some(output) = row.get_mut("toolUseResult") {
+            result(output, &paths);
+        }
+        if let Some(content) = row
+            .get_mut("message")
+            .and_then(|m| m.get_mut("content"))
+            .and_then(Value::as_array_mut)
+        {
+            for item in content {
+                if item["type"] == "tool_result" {
+                    result(&mut item["content"], &paths);
+                }
+            }
+        }
     }
     pub fn stage(&self, destination: &Path) -> Result<(), TransferError> {
         if destination.exists() {

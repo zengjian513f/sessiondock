@@ -34,15 +34,28 @@ def fixture(root):
         for kind,n,parent,text in [('user',130,None,'Agent question'),('assistant',131,ident(130),'Agent answer')]))
     side.with_suffix('.meta.json').write_text(json.dumps({'agentId':agent,'parentSessionId':ident(2),'agentType':'explore'}))
     output=project/ident(2)/'tool-results/result.txt';output.parent.mkdir();output.write_bytes(b'opaque result '+ident(1).encode())
+    with main[2].open('ab') as stream:
+        stream.write(encoded(claude_row(ident(2),'assistant',ident(150),ident(122),[{'type':'tool_use','id':'toolu_fixture','name':'Bash','input':{'command':'synthetic'}}],cwd=str(root/'cwd'))))
+        stream.write(encoded(claude_row(ident(2),'user',ident(151),ident(150),[{'type':'tool_result','tool_use_id':'toolu_fixture','content':'<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'}],toolUseResult={'outputFile':str(output)},cwd=str(root/'cwd'))))
+        stream.write(encoded(claude_row(ident(2),'assistant',ident(152),ident(151),'Branch A final',cwd=str(root/'cwd'))))
     history=root/'claude/file-history'/ident(2)/'abcdef@v1';history.parent.mkdir(parents=True);history.write_bytes(b'original file\x00bytes')
-    for i in (10,11,12):
+    for i in (10,11,12,13):
         path=root/'grok/project'/ident(i);path.mkdir(parents=True)
         summary={'info':{'id':ident(i),'cwd':str(root/'cwd')},'generated_title':f'Grok branch {i}',
-                 'parent_session_id':ident(10) if i!=10 else None}
+                 'parent_session_id':ident(10) if i in (11,12) else None,
+                 'agent_id':ident(13) if i==13 else 'ag1.'+str(i)*16,'reasoning_effort':'low'}
         (path/'summary.json').write_text(json.dumps(summary))
         (path/'chat_history.jsonl').write_bytes(encoded({'type':'user','content':f'Grok question {i}'})+encoded({'type':'assistant','content':f'Grok answer {i}'}))
         (path/'updates.jsonl').write_bytes(encoded({'session_id':ident(i),'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'literal '+ident(i)}}}))
         (path/'compaction_checkpoints').mkdir();(path/'compaction_checkpoints/opaque.bin').write_bytes(b'checkpoint')
+    parent=root/'grok/project'/ident(10)
+    meta=parent/'subagents'/ident(13)/'meta.json';meta.parent.mkdir(parents=True)
+    meta.write_text(json.dumps({'subagent_id':ident(13),'parent_session_id':ident(10),'child_session_id':ident(13),'status':'completed'}))
+    with (parent/'chat_history.jsonl').open('ab') as stream:
+        stream.write(encoded({'type':'assistant','tool_calls':[{'id':'call_native','name':'get_command_or_subagent_output','arguments':json.dumps({'task_ids':[ident(13)]})}]}))
+        stream.write(encoded({'type':'tool_result','tool_call_id':'call_native','content':'=== Task '+ident(13)+' ===\nLiteral '+ident(13)+'\n<subagent_result>\nsubagent_id: '+ident(13)+'\n</subagent_result>'}))
+    with (parent/'updates.jsonl').open('ab') as stream:
+        stream.write(encoded({'method':'session/update','params':{'sessionId':ident(10),'_meta':{'eventId':'event_native'},'update':{'sessionUpdate':'subagent_spawned','subagent_id':ident(13),'parent_session_id':ident(10)}}}))
     return roots,main,side,agent
 
 
@@ -54,7 +67,7 @@ def main():
         browser=pw.chromium.launch(headless=True,**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
         try:
             for source,selected in [('claude',uid('claude',claude[2])),('grok',uid('grok',root/'source/grok/project'/ident(11)))]:
-                expected=4 if source=='claude' else 3
+                expected=4
                 group=command(transfer,{'operation':'group','uid':selected,'roots':roots})
                 assert len(group['members'])==expected,group
                 for member in group['members']:
@@ -71,11 +84,29 @@ def main():
                         mapping=plan['sessions'];new=mapping['claude:'+ident(2)];new_agent=mapping['claude:'+agent]
                         assert (destination/'claude/file-history'/new/'abcdef@v1').read_bytes()==b'original file\x00bytes'
                         assert (destination/'claude/projects/project'/new/'tool-results/result.txt').read_bytes()==b'opaque result '+ident(1).encode()
+                        rows=[json.loads(line) for line in (destination/'claude/projects/project'/(new+'.jsonl')).read_text().splitlines()]
+                        result=next(r for r in rows if r.get('toolUseResult'))
+                        expected_path=str(root/'source/claude/projects/project'/new/'tool-results/result.txt')
+                        assert result['toolUseResult']['outputFile']==expected_path
+                        assert expected_path in result['message']['content'][0]['content']
+                    if source=='grok':
+                        ids=plan['sessions'];parent=destination/'grok/project'/ids['grok:'+ident(10)]
+                        child=ids['grok:'+ident(13)]
+                        meta=json.loads((parent/'subagents'/child/'meta.json').read_text())
+                        assert meta['child_session_id']==child and meta['parent_session_id']==ids['grok:'+ident(10)]
+                        chat=[json.loads(line) for line in (parent/'chat_history.jsonl').read_text().splitlines()]
+                        assert json.loads(chat[-2]['tool_calls'][0]['arguments'])['task_ids']==[child]
+                        assert '=== Task '+child+' ===' in chat[-1]['content']
+                        assert 'Literal '+ident(13) in chat[-1]['content']
+                        assert chat[-1]['tool_call_id']==chat[-2]['tool_calls'][0]['id']
+                        event=json.loads((parent/'updates.jsonl').read_text().splitlines()[-1])
+                        assert event['params']['sessionId']==ids['grok:'+ident(10)]
+                        assert event['params']['update']['subagent_id']==child
                     corpus=Corpus(destination)
                     with isolated_server(corpus,args.binary,extra_env={'SESSIONDOCK_CLAUDE_ROOT':str(destination/'claude/projects')}) as (base,opener):
                         rows=get_json(opener,base,'/api/sessions')['sessions'];context=browser.new_context(service_workers='block');page=context.new_page()
                         page.goto(base,wait_until='networkidle')
-                        for old in ((1,2,3) if source=='claude' else (10,11,12)):
+                        for old in ((1,2,3) if source=='claude' else (10,11,12,13)):
                             new=plan['sessions'][source+':'+ident(old)]
                             row=next(r for r in rows if r['sid']==new)
                             page.locator(f'#side .item[data-uid="{row["uid"]}"]').click()
