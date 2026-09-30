@@ -131,6 +131,11 @@ def main():
                 expect(card).to_be_visible(timeout=15000)
                 expect(card).to_contain_text(str(root / 'work'))
                 expect(card).to_contain_text(DISCLOSURE)
+                expect(card.locator('.msg.question.live-question > .question-body')).to_have_count(1)
+                expect(card.locator('.question-item > .question-header')).to_have_text('目录信任确认')
+                expect(card.locator('.question-options > button > span')).to_have_text(['1', '2'])
+                expect(card.locator('.question-options > button b')).to_have_text(['信任并继续', '退出'])
+                expect(card.locator('.question-actions button')).to_have_text(['打开终端', '取消'])
                 expect(page.locator('#termpane')).to_be_hidden()
                 assert page.evaluate('T.views.size === 0')
                 assert not list((root / 'codex').rglob('*.jsonl'))
@@ -163,6 +168,11 @@ def main():
                 page.set_viewport_size({'width': 390, 'height': 844})
                 page.evaluate('showMobileDetail()')
                 expect(card).to_be_visible()
+                buttons = card.locator('.question-options > button').all()
+                first, second = [button.bounding_box() for button in buttons]
+                assert first and second and second['y'] >= first['y'] + first['height'], (first, second)
+                assert abs(first['width'] - second['width']) < 1, (first, second)
+                assert first['x'] >= 0 and first['x'] + first['width'] <= 390, first
                 card.locator('[data-question-option="0"]').click()
                 expect(card).to_be_hidden(timeout=10000)
                 expect(page.locator('#csend')).to_be_enabled(timeout=10000)
@@ -183,7 +193,7 @@ def main():
                 expect(card).to_be_visible(timeout=10000)
                 page.locator('#cinput').fill('retain after quit')
                 page.evaluate('async () => await composerDraftWrites')
-                card.locator('[data-question-option="1"]').click()
+                card.locator('.question-cancel').click()
                 page.wait_for_function("sessionComposerEnded(S.sel)", timeout=15000)
                 assert screen.with_suffix('.outcome').read_text() == 'quit'
                 assert writes[-1]['keys'] == ['2']

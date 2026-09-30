@@ -5205,23 +5205,14 @@ function renderComposerQuestion(draft) {
   box.replaceChildren();
   box.classList.toggle('hidden', !prompt);
   if (!prompt) return;
-  const question = prompt.questions?.[0];
-  box.append(el('strong', '', question.header), el('div', 'composer-question-copy', question.question));
-  const actions = el('div', 'question-actions');
-  for (const [index, option] of question.options.entries()) {
-    const button = el('button', 'question-option', option.label);
-    button.type = 'button';
-    button.dataset.questionOption = index;
-    button.disabled = !!draft.inputAnswer;
-    button.onclick = () => answerComposerQuestion(composerUid, prompt.id, index);
-    actions.appendChild(button);
-  }
-  if (draft.inputAnswer) actions.appendChild(el('small', '', '已提交选择，等待终端更新…'));
-  const terminal = el('button', '', '打开终端');
-  terminal.type = 'button';
-  terminal.onclick = () => revealNativeTerminal(composerUid);
-  actions.appendChild(terminal);
-  box.appendChild(actions);
+  const uid = composerUid;
+  box.appendChild(questionNode({
+    ...prompt, uid, call_id: prompt.id, live: true,
+    state: draft.inputAnswer ? 'submitted' : 'waiting',
+  }, {
+    answer: (uid, index) => answerComposerQuestion(uid, prompt.id, index),
+    cancel: uid => answerComposerQuestion(uid, prompt.id, 1),
+  }));
 }
 
 async function answerComposerQuestion(uid, id, index) {
