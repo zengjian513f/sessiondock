@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::{
     error::ApiError,
     metadata::{
-        LabelCatalog, MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids,
+        GroupCatalog, MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids,
     },
     sessions::SessionStore,
     state::{AppState, JsonBytes},
@@ -150,12 +150,8 @@ async fn write(
 }
 
 #[derive(Deserialize)]
-pub struct LabelsRequest {
+pub struct GroupRequest {
     uid: String,
-    #[serde(default)]
-    add_labels: BTreeSet<String>,
-    #[serde(default)]
-    remove_labels: BTreeSet<String>,
     #[serde(default)]
     set_group: bool,
     #[serde(default)]
@@ -164,30 +160,30 @@ pub struct LabelsRequest {
     diagnostics: Diagnostics,
 }
 
-pub async fn labels(State(state): State<AppState>) -> Result<JsonBytes, ApiError> {
+pub async fn groups(State(state): State<AppState>) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     write(state, move |_| {
-        Ok(json!(metadata.snapshot()?.label_catalog()))
+        Ok(json!(metadata.snapshot()?.group_catalog()))
     })
     .await
 }
 
-pub async fn merge_labels(
+pub async fn merge_groups(
     State(state): State<AppState>,
-    body: Result<Json<LabelCatalog>, JsonRejection>,
+    body: Result<Json<GroupCatalog>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
     write(state, move |_| {
-        Ok(json!(metadata.merge_label_catalog(&body)?.label_catalog()))
+        Ok(json!(metadata.merge_group_catalog(&body)?.group_catalog()))
     })
     .await
 }
 
-pub async fn session_labels(
+pub async fn session_group(
     State(state): State<AppState>,
     hub: Option<Extension<super::node_auth::AuthenticatedHub>>,
-    body: Result<Json<LabelsRequest>, JsonRejection>,
+    body: Result<Json<GroupRequest>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;
@@ -197,11 +193,10 @@ pub async fn session_labels(
         if !list["sessions"].as_array().is_some_and(|rows| rows.iter().any(|row| row["uid"] == body.uid)) {
             return Err(ApiError::new(StatusCode::NOT_FOUND, "session_missing", "会话不存在"));
         }
-        let snapshot = metadata.set_labels(&body.uid, &body.add_labels, &body.remove_labels,
+        let snapshot = metadata.set_group(&body.uid,
             body.set_group.then_some(body.group))?;
         let row = snapshot.row(&body.uid);
-        Ok(json!({"ok": true, "uid": body.uid, "labels": row["labels"].as_array().cloned().unwrap_or_default(),
-            "group": row["group"], "metadata_revision": snapshot.revision()}))
+        Ok(json!({"ok": true, "uid": body.uid, "group": row["group"], "metadata_revision": snapshot.revision()}))
     }).await
 }
 
