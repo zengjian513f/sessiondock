@@ -907,6 +907,18 @@ function visualKeyboardOpen() {
   }
   return visualKeyboardWasOpen = visualLayoutHeight - height >= VISUAL_KEYBOARD_INSET_MIN;
 }
+// PTY 行列按键盘收起时的布局测量：界面缩放等真实布局变化照常重排，
+// 软键盘让出的高度不计入。临时写回满高度只影响这次同步测量，不会绘制。
+function measureKeyboardClosedLayout(measure) {
+  if (!visualKeyboardOpen()) return measure();
+  const root = document.documentElement.style;
+  const saved = root.getPropertyValue('--visual-viewport-height');
+  root.setProperty('--visual-viewport-height', `${visualLayoutHeight}px`);
+  try { return measure(); } finally {
+    if (saved) root.setProperty('--visual-viewport-height', saved);
+    else root.removeProperty('--visual-viewport-height');
+  }
+}
 let viewportFrame = 0;
 function syncMobileViewport() {
   cancelAnimationFrame(viewportFrame);
