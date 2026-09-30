@@ -1081,7 +1081,7 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
 .session-menu-action.star-toggle.on { color: var(--star); }
 .session-menu-action.danger { color: #e5484d; }
 .session-menu-action:disabled { opacity: .5; cursor: default; }
-.session-menu-search { border-block: 1px solid var(--border); padding-block: 4px; margin-block: 4px; }
+.session-menu-search, .session-menu-diagnostics { border-block: 1px solid var(--border); padding-block: 4px; margin-block: 4px; }
 .session-menu-search > b { display: block; padding: 4px 10px; color: var(--muted); font-size: 12px; font-weight: 500; }
 .session-actions-menu .dmeta {
   display: flex; flex-flow: row wrap; align-items: center; gap: 6px 10px;
@@ -1106,19 +1106,19 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   background: transparent; color: var(--star);
 }
 .dhead-actions > .session-menu-action.danger:hover { background: #e5484d; color: #fff; }
-.dhead-actions > .session-menu-search {
+.dhead-actions > :is(.session-menu-search, .session-menu-diagnostics) {
   display: flex; align-items: center; gap: 2px; margin: 0; padding: 0; border: 0;
 }
 .dhead-actions > .session-menu-search > b {
   display: inline-block; padding: 0 3px; color: var(--muted);
   font-size: 11.5px; font-weight: 500; font-variant-numeric: tabular-nums;
 }
-.dhead-actions > .session-menu-search > .session-menu-action {
+.dhead-actions > :is(.session-menu-search, .session-menu-diagnostics) > .session-menu-action {
   width: 28px; height: 28px; min-height: 0; padding: 0; gap: 0;
   justify-content: center; border-radius: 6px; color: var(--muted);
 }
-.dhead-actions > .session-menu-search > .session-menu-action > span { display: none; }
-.dhead-actions > .session-menu-search > .session-menu-action:hover { background: var(--hover); color: var(--text); }
+.dhead-actions > :is(.session-menu-search, .session-menu-diagnostics) > .session-menu-action > span { display: none; }
+.dhead-actions > :is(.session-menu-search, .session-menu-diagnostics) > .session-menu-action:hover { background: var(--hover); color: var(--text); }
 .iconbtn {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   border: 0; background: transparent; color: var(--muted); cursor: pointer;
