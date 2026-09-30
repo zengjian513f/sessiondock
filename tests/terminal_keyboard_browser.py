@@ -130,6 +130,27 @@ def run(browser, renderer, scale=100):
             assert page.evaluate('keyboardResizes') == []
             after = page.evaluate(GEOMETRY)
             assert (after['rows'], after['cols']) == (before['rows'], before['cols'])
+            # Interface zoom with the keyboard up is a real layout change: the PTY
+            # follows it, measured at keyboard-closed height, and zooming back
+            # restores the exact pre-keyboard size.
+            other = 130 if scale == 100 else 100
+            page.evaluate('(s) => applyInterfaceScale(s, true)', other)
+            page.wait_for_timeout(300)
+            zoomed = page.evaluate(GEOMETRY)
+            assert page.evaluate('visualKeyboardOpen()')
+            assert (zoomed['rows'], zoomed['cols']) != (before['rows'], before['cols']), (scale, zoomed, before)
+            assert json.loads(page.evaluate('keyboardResizes.at(-1)')) == {
+                't': 'resize', 'cols': zoomed['cols'], 'rows': zoomed['rows']}, zoomed
+            page.evaluate('(s) => applyInterfaceScale(s, true)', scale)
+            page.wait_for_timeout(300)
+            restored = page.evaluate(GEOMETRY)
+            assert (restored['rows'], restored['cols']) == (before['rows'], before['cols']), (restored, before)
+            # Real CLIs redraw after SIGWINCH; the fake one repaints on a key.
+            keys.press('t')
+            fixture.xterm_contains(page, 'Enter to confirm')
+            page.wait_for_timeout(150)
+            assert abs(page.evaluate(GEOMETRY)['top']) < 1, page.evaluate(GEOMETRY)
+            page.evaluate('keyboardResizes.length = 0')
             # Reopen with the keyboard already up and restore the active screen.
             page.locator('#a-term').click()
             page.locator('#a-term').click()
