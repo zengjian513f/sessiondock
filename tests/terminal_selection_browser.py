@@ -175,7 +175,7 @@ def check_surface(pw, surface, mobile=False):
                     screen.click(button='right', position={'x': 30, 'y': 12})
                     page.locator('.term-context-menu:visible').wait_for()
                 menu()
-                assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '复制全部', '查找']
+                assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
                 # Reuse the existing menu surface, with menu rows rather than
                 # individually bordered form buttons, in both themes.
                 for theme in ['dark', 'light']:
@@ -191,11 +191,7 @@ def check_surface(pw, surface, mobile=False):
                     assert appearance['background'] == 'rgba(0, 0, 0, 0)', appearance
                     assert appearance['size'] == '13px' and appearance['width'] >= 150, appearance
                 page.get_by_role('menuitem', name='粘贴', exact=True).press('ArrowDown')
-                assert page.get_by_role('menuitem', name='复制全部', exact=True).evaluate('e => e === document.activeElement')
-                page.get_by_role('menuitem', name='复制全部', exact=True).click()
-                page.wait_for_function("navigator.clipboard.readText().then(t => t.includes('SELECT_FIRST second_word') && t.includes('NEXT_LINE'))")
-                page.wait_for_function("selectionTerm.getSelection() === ''")
-                menu()
+                assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
                 page.get_by_role('menuitem', name='查找', exact=True).click()
                 page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
                 page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
@@ -278,8 +274,12 @@ def check_surface(pw, surface, mobile=False):
                 page.evaluate("[...T.views.values()][0].replay = true")
                 menu()
                 assert page.get_by_role('menuitem', name='粘贴', exact=True).is_disabled()
-                page.get_by_role('menuitem', name='复制全部', exact=True).click()
-                print('PASS', surface, 'context menu copy all / find / paste / read-only', flush=True)
+                assert page.get_by_role('menuitem', name='查找', exact=True).evaluate('e => e === document.activeElement')
+                page.get_by_role('menuitem', name='查找', exact=True).click()
+                page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
+                page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
+                page.get_by_role('searchbox', name='查找终端输出').press('Escape')
+                print('PASS', surface, 'context menu without copy all / find / paste / read-only', flush=True)
             assert not errors, errors
             context.close()
             browser.close()
@@ -334,6 +334,7 @@ def check_touch(page, context, root, keyboard, surface):
         print('PASS', surface, mode, 'mobile long press + drag + copy, cancel, swipe, no PTY input', flush=True)
     page.get_by_role('button', name='终端菜单', exact=True).tap()
     page.locator('.term-context-menu:visible').wait_for()
+    assert page.locator('.term-context-menu:visible button').all_text_contents() == ['粘贴', '查找']
     page.get_by_role('menuitem', name='查找', exact=True).tap()
     page.get_by_role('searchbox', name='查找终端输出').fill('second_word')
     page.wait_for_function("selectionTerm.getSelection() === 'second_word'")
