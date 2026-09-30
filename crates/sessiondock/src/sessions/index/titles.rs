@@ -100,7 +100,10 @@ impl Index {
                     cached.summary.clone()
                 } else {
                     reads += 1;
-                    let Some(outcome) = read_candidate(&candidate) else {
+                    let Some(outcome) = read_candidate(
+                        &candidate,
+                        cached.and_then(|cached| cached.codex_turn.as_ref()),
+                    ) else {
                         break;
                     };
                     if !outcome.transient {
@@ -109,6 +112,7 @@ impl Index {
                             Cached {
                                 key: outcome.key,
                                 summary: outcome.summary.clone(),
+                                codex_turn: outcome.codex_turn,
                             },
                         );
                     }
