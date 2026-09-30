@@ -15,6 +15,7 @@ mod lifecycle;
 mod media;
 mod metadata;
 pub(crate) mod node_auth;
+mod process_links;
 mod read;
 mod records;
 pub(crate) mod runtime;
@@ -58,6 +59,10 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
 pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
+        .route(
+            "/process-links",
+            get(process_links::get).post(process_links::post),
+        )
         .route("/meta", get(meta))
         .route("/nodes", get(nodes))
         .route("/sessions", get(read::list))

@@ -542,6 +542,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
     let parent = SpawnedBy {
+        node_id: None,
         source: "claude".into(),
         sid: "parent-sid".into(),
     };
@@ -562,6 +563,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
             .record_spawn_parents(&[(
                 "grok:child".into(),
                 SpawnedBy {
+                    node_id: None,
                     source: "codex".into(),
                     sid: "other".into()
                 }
@@ -576,6 +578,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
                 (
                     "codex:bad".into(),
                     SpawnedBy {
+                        node_id: None,
                         source: String::new(),
                         sid: String::new()
                     }
@@ -615,14 +618,17 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
     // Parent strings are retained as supplied, after trimming.
     for parent_value in [
         SpawnedBy {
+            node_id: None,
             source: "claude".into(),
             sid: "with space".into(),
         },
         SpawnedBy {
+            node_id: None,
             source: "x".repeat(33),
             sid: "sid".into(),
         },
         SpawnedBy {
+            node_id: None,
             source: "claude".into(),
             sid: "bad\u{7}".into(),
         },
@@ -642,6 +648,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
         .with_spawn_parents(&[(
             " codex:new ".into(),
             SpawnedBy {
+                node_id: None,
                 source: " codex ".into(),
                 sid: " sid-1 ".into(),
             },
@@ -650,6 +657,7 @@ fn spawn_parent_is_recorded_once_and_enriches_rows() {
     assert_eq!(
         trimmed.spawned_by("codex:new"),
         Some(&SpawnedBy {
+            node_id: None,
             source: "codex".into(),
             sid: "sid-1".into()
         })
@@ -674,6 +682,7 @@ fn nest_display_overrides_spawned_by_and_clears() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
     let spawned = SpawnedBy {
+        node_id: None,
         source: "claude".into(),
         sid: "parent-sid".into(),
     };
