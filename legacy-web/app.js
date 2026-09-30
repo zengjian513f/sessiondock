@@ -950,6 +950,7 @@ function showMobileDetail() {
     store.set('mobilePage', 'detail');
     layoutSessionHead();
   }
+  syncSessionFreezeOverlay();
 }
 
 function showMobileList() {
@@ -958,6 +959,7 @@ function showMobileList() {
   if (MOBILE.matches) store.set('mobilePage', 'list');
   layoutSessionHead();
   layoutHeader();
+  syncSessionStopNotice();
 }
 
 function fmtSize(n) {
@@ -1992,6 +1994,7 @@ function paintTurn(uid) {
 }
 
 function paintHeaderTurn() {
+  syncSessionFreezeOverlay();
   const h = $('#dlive');
   if (!h) return;
   const row = document.querySelector(`.item[data-uid="${CSS.escape(S.sel || '')}"]`);
@@ -6032,9 +6035,7 @@ function renderSessionFreeze(m, button = $('#a-session-freeze')) {
       paintTurn(m.uid);
       browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
         frozen:result.frozen, process_count:result.process_count});
-      showSessionStopNotice(result.frozen
-        ? '现场已冻结：会话及子进程已暂停，可报告问题；排查后点击“恢复运行”'
-        : '会话已恢复运行', false, m.uid);
+      syncSessionFreezeOverlay();
     } catch (error) {
       showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true, m.uid);
     } finally {
@@ -6087,9 +6088,40 @@ function sessionStoppable(uid) {
     && (T.list || []).some(row => row.uid === uid && !!row.instance_id && !row.stale);
 }
 let sessionStopNoticeTimer = 0;
+// Keep the frozen scene inside the selected session pane, never in global floats.
+function syncSessionFreezeOverlay() {
+  const right = $('#right');
+  if (!right) return;
+  let overlay = $('#session-freeze-overlay');
+  const visible = sessionFrozen(S.sel)
+    && (!MOBILE.matches || document.body.classList.contains('mobile-detail'));
+  if (!overlay && visible) {
+    overlay = el('div', 'session-freeze-overlay');
+    overlay.id = 'session-freeze-overlay';
+    overlay.innerHTML = `<div class="session-freeze-card" role="status" aria-live="polite">
+      <span class="session-freeze-symbol">${uiIcon('pause')}</span>
+      <strong>现场已冻结</strong>
+      <p>会话及子进程已暂停，可以报告问题保留现场。</p>
+      <div class="session-freeze-actions">
+        <button type="button" data-freeze-resume>${uiIcon('play')}恢复运行</button>
+        <button type="button" data-freeze-report>${uiIcon('bug')}报告问题</button>
+      </div>
+    </div>`;
+    overlay.querySelector('[data-freeze-resume]').onclick = () => $('#a-session-freeze')?.click();
+    overlay.querySelector('[data-freeze-report]').onclick = () =>
+      $('#detail .dhead [data-report-bug]')?.click();
+    right.appendChild(overlay);
+  }
+  if (overlay) {
+    overlay.hidden = !visible;
+    overlay.dataset.uid = visible ? S.sel : '';
+  }
+}
 function syncSessionStopNotice() {
+  syncSessionFreezeOverlay();
   const notice = $('#session-stop-notice');
-  if (notice?.dataset.uid && notice.dataset.uid !== S.sel) {
+  if (notice?.dataset.uid && (notice.dataset.uid !== S.sel
+      || (MOBILE.matches && !document.body.classList.contains('mobile-detail')))) {
     clearTimeout(sessionStopNoticeTimer);
     notice.hidden = true;
   }
@@ -8680,6 +8712,7 @@ MOBILE.addEventListener?.('change', e => {
   } else {
     document.body.classList.remove('mobile-detail');
   }
+  syncSessionStopNotice();
   syncMobileViewport();
   setSideWidth(store.get('width', SIDE_DEFAULT));
   setSideCollapsed(store.get('sideCollapsed', false), false);
