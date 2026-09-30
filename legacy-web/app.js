@@ -3857,7 +3857,7 @@ for (const host of [$('#node-chips'), $('#chips')]) {
 }
 
 /* ---------- 分层：发起关系 ---------- */
-// spawned_by 来自本机进程树；手工 nest_parent 可显式指定另一台机器。
+// spawned_by 来自本机进程树或经验证的 SSH 关联；两类父关系都可指定机器。
 // 都按机器、来源和原生 sid 解析，避免不同机器的同名会话串线。
 const spawnKey = (nodeId, source, sid) => JSON.stringify([nodeId || '', source, String(sid)]);
 

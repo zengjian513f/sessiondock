@@ -1,0 +1,10 @@
+[package]
+name = "process-links"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Read-only process identities and direct SSH lineage protocol"
+
+[dependencies]
+serde.workspace = true
+libc = "0.2"
