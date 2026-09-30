@@ -92,8 +92,10 @@ fn read(
         .map(|(k, _)| k.clone())
         .collect();
     let columns: Vec<_> = columns.into_iter().map(|(k, _)| k).collect();
-    let identity_columns: Vec<_> = if name == "threads" {
+    let identity_columns: Vec<_> = if matches!(name, "threads" | "projects" | "thread_sections") {
         vec!["id"]
+    } else if name == "project_roots" {
+        vec!["project_id"]
     } else {
         ["thread_id", "parent_thread_id", "child_thread_id"]
             .into_iter()
@@ -220,8 +222,48 @@ pub fn capture(home: &Path, plan: &ClonePlan) -> Result<Native, TransferError> {
             }
             tables.push(table);
         }
-        // Project/section associations are shared objects in same-store clones.
-        // Retain their existing IDs; cloning never inserts or changes shared objects.
+        // Shared objects retain their IDs. Capture only associations required by
+        // the selected threads, so another node can import missing objects.
+        let mut shared = Vec::new();
+        for (column, names) in [
+            ("project_id", &["projects", "project_roots"][..]),
+            ("thread_section_id", &["thread_sections"][..]),
+        ] {
+            let required: BTreeSet<_> = tables
+                .iter()
+                .filter(|t| t.name == "threads")
+                .flat_map(|t| &t.rows)
+                .filter_map(|r| r.get(column).and_then(Value::as_str))
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if required.is_empty() {
+                continue;
+            }
+            for name in names {
+                let table = read(&tx, name, &required)?;
+                if *name != "project_roots" {
+                    let found: BTreeSet<_> = table
+                        .as_ref()
+                        .into_iter()
+                        .flat_map(|t| &t.rows)
+                        .filter_map(|r| r.get("id").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect();
+                    if found != required {
+                        return Err(TransferError::new(
+                            "move_group_incomplete",
+                            "原生项目或分组关联缺失",
+                        ));
+                    }
+                }
+                if let Some(table) = table {
+                    shared.push(table);
+                }
+            }
+        }
+        shared.extend(tables);
+        let tables = shared;
         tx.commit()?;
         result.databases.push(Database { path, tables });
     }
@@ -429,11 +471,14 @@ pub fn preflight(native: &Native) -> Result<(), TransferError> {
                 ));
             }
             for row in &table.rows {
-                if current
+                if let Some(existing) = current
                     .rows
                     .iter()
-                    .any(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
+                    .find(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
                 {
+                    if shared_table(&table.name) && existing == row {
+                        continue;
+                    }
                     return Err(TransferError::new(
                         "move_conflict",
                         "新身份已存在于原生数据库",
@@ -443,6 +488,14 @@ pub fn preflight(native: &Native) -> Result<(), TransferError> {
         }
     }
     Ok(())
+}
+fn shared_table(name: &str) -> bool {
+    matches!(name, "projects" | "project_roots" | "thread_sections")
+}
+#[derive(Serialize, Deserialize)]
+struct Receipt {
+    planned: Database,
+    inserted: Database,
 }
 /// Each database commits independently; the durable caller journal compensates
 /// across databases. Inserts never replace another session's rows.
@@ -454,8 +507,35 @@ pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
         db.execute_batch("PRAGMA foreign_keys=ON")?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS _sessiondock_clone_journal (operation_id TEXT PRIMARY KEY, receipt TEXT NOT NULL)")?;
-        for table in &database.tables {
+        let mut inserted = database.clone();
+        for table in &mut inserted.tables {
+            table.rows.clear();
+        }
+        for (table_index, table) in database.tables.iter().enumerate() {
+            let current = read(&tx, &table.name, &row_ids(table))?
+                .ok_or_else(|| TransferError::new("move_native_unsupported", "目标表不存在"))?;
+            if current.schema != table.schema {
+                return Err(TransferError::new(
+                    "move_plan_stale",
+                    "原生数据库结构已变化",
+                ));
+            }
             for row in &table.rows {
+                if shared_table(&table.name) {
+                    if let Some(existing) = current
+                        .rows
+                        .iter()
+                        .find(|r| table.keys.iter().all(|k| r.get(k) == row.get(k)))
+                    {
+                        if existing == row {
+                            continue;
+                        }
+                        return Err(TransferError::new(
+                            "move_conflict",
+                            "目标已有不同的项目或分组关联",
+                        ));
+                    }
+                }
                 let columns = table
                     .columns
                     .iter()
@@ -480,11 +560,18 @@ pub fn insert(native: &Native, operation: &str) -> Result<(), TransferError> {
                     ),
                     rusqlite::params_from_iter(values),
                 )?;
+                inserted.tables[table_index].rows.push(row.clone());
             }
         }
         tx.execute(
             "INSERT INTO _sessiondock_clone_journal VALUES (?,?)",
-            [operation, &serde_json::to_string(database)?],
+            [
+                operation,
+                &serde_json::to_string(&Receipt {
+                    planned: database.clone(),
+                    inserted,
+                })?,
+            ],
         )?;
         tx.commit()?;
     }
@@ -496,6 +583,7 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
     for database in native.databases.iter().rev() {
         let mut db =
             Connection::open_with_flags(&database.path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        db.execute_batch("PRAGMA foreign_keys=ON")?;
         let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let exists:i64=tx.query_row("SELECT count(*) FROM sqlite_master WHERE name='_sessiondock_clone_journal' AND type='table'",[],|r|r.get(0))?;
         if exists == 0 {
@@ -506,18 +594,33 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
             [operation],
             |r| r.get::<_, String>(0),
         );
-        match receipt {
+        let inserted = match receipt {
             Err(rusqlite::Error::QueryReturnedNoRows) => continue,
-            Ok(value) if value == serde_json::to_string(database)? => {}
-            Ok(_) => {
-                return Err(TransferError::new(
-                    "move_recovery_required",
-                    "数据库复制凭据不匹配",
-                ));
+            Ok(value) => {
+                if let Ok(receipt) = serde_json::from_str::<Receipt>(&value) {
+                    if receipt.planned != *database {
+                        return Err(TransferError::new(
+                            "move_recovery_required",
+                            "数据库复制凭据不匹配",
+                        ));
+                    }
+                    receipt.inserted
+                } else {
+                    // Journals written before shared-object imports recorded all
+                    // rows as inserted. Keep recovery compatible with them.
+                    let previous: Database = serde_json::from_str(&value)?;
+                    if previous != *database {
+                        return Err(TransferError::new(
+                            "move_recovery_required",
+                            "数据库复制凭据不匹配",
+                        ));
+                    }
+                    previous
+                }
             }
             Err(e) => return Err(e.into()),
-        }
-        for table in database.tables.iter().rev() {
+        };
+        for table in inserted.tables.iter().rev() {
             let current = read(&tx, &table.name, &row_ids(table))?
                 .ok_or_else(|| TransferError::new("move_native_unsupported", "回滚所需表缺失"))?;
             for row in &table.rows {
@@ -530,6 +633,12 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
                         return Err(TransferError::new(
                             "move_recovery_required",
                             "克隆数据库记录已变化，保留现场等待恢复",
+                        ));
+                    }
+                    if shared_referenced(&tx, &table.name, row)? {
+                        return Err(TransferError::new(
+                            "move_recovery_required",
+                            "本次导入的项目或分组已被其他记录引用，保留现场",
                         ));
                     }
                     let clause = table
@@ -553,6 +662,37 @@ pub fn rollback(native: &Native, operation: &str) -> Result<(), TransferError> {
         tx.commit()?;
     }
     Ok(())
+}
+
+fn shared_referenced(db: &Connection, name: &str, row: &Row) -> Result<bool, TransferError> {
+    let references: &[(&str, &str)] = match name {
+        "projects" => &[("threads", "project_id"), ("project_roots", "project_id")],
+        "thread_sections" => &[("threads", "thread_section_id")],
+        _ => return Ok(false),
+    };
+    for (table, column) in references {
+        let exists: i64 = db.query_row(
+            "SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2",
+            [table, column],
+            |r| r.get(0),
+        )?;
+        if exists == 0 {
+            continue;
+        }
+        let count: i64 = db.query_row(
+            &format!(
+                "SELECT count(*) FROM {} WHERE {}=?1",
+                quote(table),
+                quote(column)
+            ),
+            [sql(&row["id"])],
+            |r| r.get(0),
+        )?;
+        if count != 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Projection-only IDs (including code-mode collaboration calls) are not always
@@ -592,9 +732,15 @@ fn row_ids(table: &Table) -> BTreeSet<String> {
         .rows
         .iter()
         .flat_map(|r| {
-            ["id", "thread_id", "parent_thread_id", "child_thread_id"]
-                .into_iter()
-                .filter_map(|k| r.get(k).and_then(Value::as_str).map(str::to_owned))
+            [
+                "id",
+                "thread_id",
+                "parent_thread_id",
+                "child_thread_id",
+                "project_id",
+            ]
+            .into_iter()
+            .filter_map(|k| r.get(k).and_then(Value::as_str).map(str::to_owned))
         })
         .collect()
 }
