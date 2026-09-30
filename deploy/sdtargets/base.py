@@ -297,7 +297,7 @@ def handler_for(kind: str) -> type[TargetHandler]:
     # Import lazily so a broken optional module (e.g. windows.py) never blocks Linux.
     if kind not in HANDLERS:
         import importlib
-        mod = {"linux-node": "linux", "hub": "hub", "macos-node": "macos",
+        mod = {"resource-agent": "resource_agent", "linux-node": "linux", "hub": "hub", "macos-node": "macos",
                "windows-node": "windows"}.get(kind)
         if mod is None:
             raise KeyError(f"unknown target kind {kind!r}")

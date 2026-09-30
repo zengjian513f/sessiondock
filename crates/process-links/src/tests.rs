@@ -10,6 +10,7 @@ fn report(node: &str) -> Report {
         outgoing: vec![],
         incoming: vec![],
         bindings: vec![],
+        collector: None,
     }
 }
 
@@ -122,4 +123,82 @@ fn multihop_keeps_causality_after_original_launcher_disappears() {
     assert_eq!(chain[0].session.sid, "child");
     assert_eq!(chain[1].process, original.process);
     assert_eq!(chain[1].session.sid, "parent");
+}
+
+#[test]
+fn event_fork_preserves_orphan_attribution_without_application() {
+    use crate::{
+        agent::{Catalog, CollectorStatus, Owner},
+        engine::Engine,
+        linux::{Entry, Snapshot},
+    };
+    let parent = Process {
+        pid: 10,
+        start: 100,
+    };
+    let child = Process {
+        pid: 11,
+        start: 101,
+    };
+    let session = Session {
+        node_id: "a".into(),
+        source: "codex".into(),
+        sid: "native".into(),
+        title: None,
+        created: Some(1.0),
+    };
+    let entry = |process: Process, parent| Entry {
+        process,
+        parent,
+        started_at: 1.0,
+        connection: None,
+        identities: vec![],
+        sockets: vec![],
+        multiplexed: false,
+        shared_parent: false,
+    };
+    let mut snapshot = Snapshot {
+        boot_id: "boot".into(),
+        entries: BTreeMap::from([(10, entry(parent.clone(), 1))]),
+    };
+    let mut engine = Engine::new("a".into(), "boot".into(), None);
+    assert!(engine.catalog(Catalog {
+        node_id: "a".into(),
+        boot_id: "boot".into(),
+        sessions: vec![session.clone()],
+        owners: vec![Owner {
+            process: parent.clone(),
+            session
+        }]
+    }));
+    engine.update(&snapshot, 2.0, CollectorStatus::default());
+    engine.fork(&parent, child.clone(), 3.0);
+    engine.exit(&parent);
+    snapshot.entries = BTreeMap::from([(11, entry(child.clone(), 1))]);
+    let report = engine.update(&snapshot, 4.0, CollectorStatus::default());
+    assert_eq!(report.bindings[0].session.sid, "native");
+    let mut recovered = Engine::new("a".into(), "boot".into(), Some(engine.saved()));
+    assert_eq!(
+        recovered
+            .update(&snapshot, 5.0, CollectorStatus::default())
+            .bindings
+            .len(),
+        1
+    );
+    snapshot.entries = BTreeMap::from([(
+        11,
+        entry(
+            Process {
+                pid: 11,
+                start: 102,
+            },
+            1,
+        ),
+    )]);
+    assert!(
+        recovered
+            .update(&snapshot, 6.0, CollectorStatus::default())
+            .bindings
+            .is_empty()
+    );
 }

@@ -93,6 +93,15 @@ def posix_inner(t: Target, hasher: str) -> str:
 
 
 def inner_command(t: Target) -> str:
+    if t.kind == "resource-agent":
+        from sdtargets.resource_agent import HEALTH
+        q = shlex.quote
+        return "\n".join([
+            "python3 -c " + q(HEALTH),
+            "printf 'active=%s\\n' \"$(systemctl is-active resource-agent.service)\"",
+            "printf 'sha_resource-agent=%s\\n' \"$(sha256sum " + q(t.prefix + "/bin/resource-agent") + " 2>/dev/null | cut -c1-12)\"",
+            "printf 'commit=%s\\n' \"$(cat " + q(t.prefix + "/deployed-commit") + " 2>/dev/null)\"",
+        ])
     if t.kind in ("linux-node", "hub"):
         return posix_inner(t, "sha256sum")
     if t.kind == "macos-node":

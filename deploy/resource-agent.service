@@ -1,0 +1,36 @@
+[Unit]
+Description=Shared read-only session resource collector
+After=local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/resource-agent.env
+ExecStart=/opt/resource-agent/bin/resource-agent --uid ${MONITOR_UID} --node-id-file ${NODE_ID_FILE}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillMode=control-group
+RuntimeDirectory=resource-agent
+RuntimeDirectoryMode=0755
+StateDirectory=resource-agent
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_CHOWN
+ReadWritePaths=/run/resource-agent /var/lib/resource-agent
+TasksMax=128
+MemoryMax=512M
+CPUQuota=25%
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

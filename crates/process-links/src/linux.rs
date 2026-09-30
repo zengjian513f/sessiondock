@@ -16,6 +16,7 @@ pub const IDENTITIES: [(&str, &str); 5] = [
     ("CODEX_SESSION_ID", "codex"),
 ];
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Entry {
     pub process: Process,
     pub started_at: f64,
@@ -27,6 +28,7 @@ pub struct Entry {
     pub shared_parent: bool,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
     pub boot_id: String,
     pub entries: BTreeMap<u32, Entry>,
@@ -114,6 +116,14 @@ fn unix_listeners(root: &Path) -> BTreeSet<u64> {
 }
 
 pub fn collect(root: &Path) -> Snapshot {
+    #[cfg(unix)]
+    let uid = unsafe { libc::geteuid() };
+    #[cfg(not(unix))]
+    let uid = 0;
+    collect_uid(root, uid)
+}
+
+pub fn collect_uid(root: &Path, uid: u32) -> Snapshot {
     let mut entries = BTreeMap::new();
     let sockets = socket_table(root);
     let listeners = unix_listeners(root);
@@ -143,7 +153,7 @@ pub fn collect(root: &Path) -> Snapshot {
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if dir.metadata().ok().map(|m| m.uid()) != Some(unsafe { libc::geteuid() }) {
+            if dir.metadata().ok().map(|m| m.uid()) != Some(uid) {
                 continue;
             }
         }
