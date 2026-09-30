@@ -111,8 +111,13 @@ launch id. The extra identity fields let the legacy page
 open the pending console exactly as after `term/create`.
 
 Worker titles use `BUG: <first nonempty line of the user description>` (trimmed).
-The worker prompt starts with that same title so native session titles retain the
-readable description after binding. Report IDs remain in the task body and bundle
+Before the first Codex report task, the server submits `/rename <title>` as a
+separate local CLI command, waits for the native name index to confirm the title
+on the same managed instance, then submits the task. This prevents Codex's
+first-turn automatic naming from replacing it. Both operations use the same
+conversation lock and separate durable request IDs. An unconfirmed rename stops
+the task and retains the draft; it is never blindly resent. A restarted worker
+gets its own rename operation. The worker prompt also starts with that title. Report IDs remain in the task body and bundle
 metadata. Pending titles are recovered from `description.md` after a restart;
 explicit user renames are unchanged.
 
