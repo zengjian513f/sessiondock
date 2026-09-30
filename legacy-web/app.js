@@ -10078,6 +10078,7 @@ async function cloneSessionGroup(uid, resumed = null) {
         <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
       </div>
       <p class="transfer-notice" role="status" hidden></p>
+      <p class="transfer-environment" role="status" hidden></p>
       <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
       <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
         <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
@@ -10104,6 +10105,8 @@ async function cloneSessionGroup(uid, resumed = null) {
   $d('#transfer-source').value = sourceName;
   let plan = resumed?.plan || null, busy = false, uncertain = !!resumed;
   let operationStarted = !!resumed, progressTimer = null, progressLoading = false;
+  let environmentLoading = false, environmentSequence = 0;
+  const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
   if (resumed) {
     if (!machines.has(resumed.request.target_node)) {
@@ -10133,7 +10136,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     newIds.checked = identityChoices[mode()];
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
     confirm.textContent = busy ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
-    confirm.disabled = busy || !plan || !!reason;
+    confirm.disabled = busy || environmentLoading || !plan || !!reason;
     // Keep the chosen operation fixed while its publication result is uncertain.
     target.disabled = busy || uncertain;
     for (const radio of radios) radio.disabled = busy || uncertain;
@@ -10142,7 +10145,7 @@ async function cloneSessionGroup(uid, resumed = null) {
     $d('.transfer-abort').disabled = busy;
     dialog.setAttribute('aria-busy', String(busy));
   };
-  target.onchange = () => {renderSelection(); refreshPlan();};
+  target.onchange = () => {renderSelection(); refreshPlan(); refreshEnvironment();};
   radios.forEach(r => r.onchange = () => {renderSelection(); refreshPlan();});
   newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection(); refreshPlan();};
   const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
@@ -10197,6 +10200,47 @@ async function cloneSessionGroup(uid, resumed = null) {
     }
     status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
   };
+  async function refreshEnvironment() {
+    const sequence = ++environmentSequence;
+    const note = $d('.transfer-environment');
+    if (!plan) {environmentLoading = false; note.hidden = true; renderSelection(); return;}
+    const destinationId = target.value, currentPlan = plan;
+    const clients = id => {
+      if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
+        try {
+          const path = HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
+          const response = await fetch(appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
+          const data = await response.json();
+          if (!response.ok || !Array.isArray(data.clients)) throw new Error('clients unavailable');
+          return data.clients;
+        } catch {return null;}
+      })());
+      return environmentClients.get(id);
+    };
+    environmentLoading = true; note.hidden = false; note.textContent = '正在核对目标 CLI…'; note.title = '';
+    renderSelection();
+    const [sourceClients, targetClients] = await Promise.all([clients(sourceId), clients(destinationId)]);
+    if (!dialog.isConnected || sequence !== environmentSequence) return;
+    const messages = [], cross = destinationId !== sourceId;
+    if (!targetClients) messages.push('未核验目标 CLI');
+    if (cross && !sourceClients) messages.push('未核验源 CLI 版本');
+    for (const provider of new Set(currentPlan.sessions.map(member => member.source))) {
+      const name = SOURCES[provider]?.name || provider;
+      const installed = (targetClients || []).filter(client => client.source === provider && client.installed);
+      if (targetClients && !installed.length) {messages.push(`目标未配置可用的 ${name} CLI`); continue;}
+      if (!cross || !targetClients || !sourceClients) continue;
+      const versions = rows => rows.map(client => client.version).filter(version => typeof version === 'string' && /^\d+(?:\.\d+)+/.test(version));
+      const targetVersions = versions(installed);
+      const sourceVersions = versions(sourceClients.filter(client => client.source === provider && client.installed));
+      if (!targetVersions.length || !sourceVersions.length) messages.push(`未核验 ${name} 版本差异`);
+      else if (targetVersions.some(to => sourceVersions.some(from => compareVersions(to, from) < 0))) messages.push(`目标 ${name} 存在较旧版本`);
+    }
+    const tools = Array.isArray(currentPlan.dynamic_tools) ? currentPlan.dynamic_tools : [];
+    if (!Array.isArray(currentPlan.dynamic_tools)) messages.push('未核验动态工具依赖');
+    if (tools.length) messages.push(`${tools.length} 个动态工具执行器未核验`);
+    note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
+    environmentLoading = false; renderSelection();
+  }
   async function refreshPlan() {
     if (busy || uncertain || (mode() === 'move' && !crossMachine())) return;
     const fresh = !crossMachine() || identityChoices[mode()];
@@ -10209,7 +10253,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       plan = next;
-      if (dialog.isConnected) renderMembers(plan);
+      if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
     } catch (failure) {
       if (dialog.isConnected) {
         status.textContent = '清单读取失败';
@@ -10224,6 +10268,7 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
   if (resumed) {
     renderMembers(plan); paintProgress(resumed); renderSelection();
+    refreshEnvironment();
     if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
   } else await refreshPlan();
   const pollProgress = async () => {
