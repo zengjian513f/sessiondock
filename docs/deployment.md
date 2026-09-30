@@ -210,3 +210,17 @@ kind 的处理模块缺失或坏掉记 `UNSUPPORTED`，不会让整轮崩溃。
 真实清单不入库：Hub 自身无鉴权，Hub↔节点走 WireGuard 私网，地址、端口与防火墙规则按
 [AGENTS.md](../AGENTS.md#scope-and-boundaries) 的规定不进仓库；`.gitignore` 已排除
 `deploy/targets.local.json`。
+
+## Optional Linux resource collector
+
+A `resource-agent` target installs the independent system service documented in
+[process-links](process-links.md#independent-linux-service). Add `resource-agent`
+to `build.packages`, and add one opt-in target per monitored Linux host with
+`kind: resource-agent`, `prefix: /opt/resource-agent`, `binaries: [resource-agent]`,
+the same explicit SSH routing/hostname checks as its node, and
+`extra.node_id_file` pointing to that node's existing identity file. The deployment
+SSH user is the monitored UID; sudo is required for installing the system unit.
+The target verifies the local socket, binary hash and active BPF event capture;
+a failed installation restores the previous collector, or disables/removes a
+new installation. It never restarts SSH or workload/session hosts. Non-Linux
+nodes without a collector retain the compatibility API.

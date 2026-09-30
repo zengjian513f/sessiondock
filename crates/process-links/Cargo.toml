@@ -8,3 +8,4 @@ description = "Read-only process identities and direct SSH lineage protocol"
 [dependencies]
 serde.workspace = true
 libc = "0.2"
+serde_json.workspace = true

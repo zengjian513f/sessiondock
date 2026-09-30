@@ -20,3 +20,7 @@ pub async fn post(
     let count = crate::runtime::process_links::publish(&state, body).await?;
     Ok(Json(serde_json::json!({"linked":count})))
 }
+
+pub async fn resources(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(crate::runtime::process_links::resources(&state).await)
+}

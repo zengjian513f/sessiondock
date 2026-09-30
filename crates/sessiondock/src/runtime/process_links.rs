@@ -34,7 +34,7 @@ fn now() -> f64 {
         .as_secs_f64()
 }
 
-pub async fn report(state: &AppState) -> Result<Report, ApiError> {
+async fn legacy_report(state: &AppState) -> Result<Report, ApiError> {
     let node_id = state
         .node
         .as_ref()
@@ -58,6 +58,7 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
             outgoing: vec![],
             incoming: vec![],
             bindings: vec![],
+            collector: None,
         });
     };
     let document = state
@@ -249,6 +250,7 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
             outgoing,
             incoming,
             bindings,
+            collector: None,
         };
         cache.report = Some((Instant::now(), report.clone()));
         report
@@ -263,8 +265,8 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
     })
 }
 
-pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
-    let current = report(state).await?;
+async fn legacy_publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
+    let current = legacy_report(state).await?;
     let Some(scanner) = &state.proc_scan else {
         return Ok(0);
     };
@@ -385,4 +387,208 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
             "进程关联失败",
         )
     })?
+}
+
+fn agent_socket(state: &AppState) -> Option<std::path::PathBuf> {
+    let configured = std::env::var_os("SESSIONDOCK_RESOURCE_AGENT_SOCKET");
+    let path = configured
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(process_links::agent::socket_path);
+    // Private proc fixtures must never talk to a production collector.
+    if state.proc_scan.as_ref()?.root() != std::path::Path::new("/proc")
+        && configured.is_none()
+        && std::env::var_os("RESOURCE_AGENT_SOCKET").is_none()
+    {
+        return None;
+    }
+    path.exists().then_some(path)
+}
+async fn agent_catalog(state: &AppState) -> Result<process_links::agent::Catalog, ApiError> {
+    use process_links::agent::{Catalog, Owner};
+    let node_id = state
+        .node
+        .as_ref()
+        .map(|n| n.node_id.clone())
+        .unwrap_or_default();
+    let document = state
+        .reader
+        .run_wait(&state.shutdown, |store| store.list_recent())
+        .await?;
+    let rows = SessionRow::from_list(&document);
+    let scanner = state.proc_scan.as_ref().ok_or_else(|| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "collector_unavailable",
+            "采集器不可用",
+        )
+    })?;
+    let scanned = scanner.snapshot(false).await.map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "process_scan_failed",
+            "进程采样失败",
+        )
+    })?;
+    let owned = scanned.scan.active_processes(&rows).owned;
+    let titles: HashMap<_, _> = document["sessions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| Some((v["uid"].as_str()?, v["title"].as_str()?)))
+        .collect();
+    let sessions: HashMap<_, _> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.uid.clone(),
+                Session {
+                    node_id: node_id.clone(),
+                    source: r.source.clone(),
+                    sid: r.sid.clone(),
+                    title: titles.get(r.uid.as_str()).map(|s| (*s).to_owned()),
+                    created: parse_created(&r.created),
+                },
+            )
+        })
+        .collect();
+    let mut owners = Vec::new();
+    for (uid, pids) in owned {
+        if let Some(session) = sessions.get(&uid) {
+            for pid in pids {
+                if let Ok(pid) = u32::try_from(pid)
+                    && let Some((process, _)) = linux::identity(scanner.root(), pid)
+                {
+                    owners.push(Owner {
+                        process,
+                        session: session.clone(),
+                    });
+                }
+            }
+        }
+    }
+    let boot_id = std::fs::read_to_string(scanner.root().join("sys/kernel/random/boot_id"))
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    owners.sort_by(|a, b| a.process.cmp(&b.process));
+    let mut sessions: Vec<_> = sessions.into_values().collect();
+    sessions.sort_by(|a, b| (&a.source, &a.sid).cmp(&(&b.source, &b.sid)));
+    Ok(Catalog {
+        node_id,
+        boot_id,
+        owners,
+        sessions,
+    })
+}
+async fn remember_agent_parents(state: &AppState, report: &Report) -> Result<(), ApiError> {
+    let Some(metadata) = &state.metadata else {
+        return Ok(());
+    };
+    let document = state
+        .reader
+        .run_wait(&state.shutdown, |store| store.list_recent())
+        .await?;
+    let rows = SessionRow::from_list(&document);
+    let uids: HashMap<_, _> = rows
+        .iter()
+        .map(|r| ((r.source.as_str(), r.sid.as_str()), r.uid.as_str()))
+        .collect();
+    let parents: Vec<_> = report
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            let parent = binding.initiator.as_ref()?;
+            let child = &binding.session;
+            if child.node_id != report.node_id
+                || (parent.node_id == child.node_id
+                    && parent.source == child.source
+                    && parent.sid == child.sid)
+                || parent.created? > child.created?
+            {
+                return None;
+            }
+            Some((
+                uids.get(&(child.source.as_str(), child.sid.as_str()))?
+                    .to_string(),
+                crate::metadata::SpawnedBy {
+                    source: parent.source.clone(),
+                    sid: parent.sid.clone(),
+                    node_id: (parent.node_id != child.node_id).then(|| parent.node_id.clone()),
+                },
+            ))
+        })
+        .collect();
+    let metadata = metadata.clone();
+    tokio::task::spawn_blocking(move || metadata.record_spawn_parents(&parents))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "collector_metadata_failed",
+                "关联保存失败",
+            )
+        })?
+        .map_err(ApiError::from)?;
+    Ok(())
+}
+pub async fn report(state: &AppState) -> Result<Report, ApiError> {
+    if let Some(path) = agent_socket(state) {
+        let catalog = agent_catalog(state).await?;
+        let node_id = catalog.node_id.clone();
+        let boot_id = catalog.boot_id.clone();
+        if let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
+            process_links::agent::request(&path, &process_links::agent::Request::Catalog(catalog))
+        })
+        .await
+            && let Ok(report) = serde_json::from_value::<Report>(value)
+            && report.node_id == node_id
+            && report.boot_id == boot_id
+        {
+            remember_agent_parents(state, &report).await?;
+            return Ok(report);
+        }
+    }
+    legacy_report(state).await
+}
+pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
+    if let Some(path) = agent_socket(state) {
+        let payload = published.clone();
+        if let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
+            process_links::agent::request(&path, &process_links::agent::Request::Publish(payload))
+        })
+        .await
+            && let Ok(report) = serde_json::from_value::<Report>(value)
+            && Some(report.node_id.as_str()) == state.node.as_ref().map(|n| n.node_id.as_str())
+        {
+            remember_agent_parents(state, &report).await?;
+            return Ok(report.bindings.len());
+        }
+    }
+    legacy_publish(state, published).await
+}
+pub async fn resources(state: &AppState) -> serde_json::Value {
+    if let Some(path) = agent_socket(state)
+        && let Ok(Ok(value)) = tokio::task::spawn_blocking(move || {
+            process_links::agent::request(&path, &process_links::agent::Request::Resources)
+        })
+        .await
+        && value["node_id"].as_str() == state.node.as_ref().map(|n| n.node_id.as_str())
+    {
+        return value;
+    }
+    serde_json::json!({"version":1,"availability":"unavailable","reason":"collector_not_available","samples":null})
+}
+/// Keep the independent collector's session catalog fresh without requiring an
+/// open browser or a running fleet Hub. Failure is isolated to monitoring.
+pub fn spawn(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = state.shutdown.cancelled() => break,
+                _ = async { if agent_socket(&state).is_some() { let _ = report(&state).await; } } => {},
+            }
+            tokio::select! { _ = state.shutdown.cancelled() => break, _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {} }
+        }
+    });
 }
