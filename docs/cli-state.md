@@ -25,7 +25,7 @@
 | `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`，与投递前判忙同一规则；Claude、Codex）；读失败、尚未读到或 Grok、OpenCode 为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex）；Grok、OpenCode 尚无提取，为 `null` |
-| `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued` 或 `lost` |
+| `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`interrupted` 或 `lost` |
 | `queued[].cli_queued_at` | 确认该正文进入 CLI 自己输入队列的时间：Claude 原生 enqueue 时间，或 Codex 画面首次观察时间；尚未看到为 `null` |
 
 题卡/审批仍是同级的 `prompt` 字段，不重复放进对象。
@@ -41,6 +41,7 @@
 - **退回**：回显退掉排队项时记住最后一条的正文（仅内存）。之后读到的编辑区文字与它或仍在排队的正文忽略空白后相同，且分类为 `cli_input_pending`，则 `input` 改为 `cli_input_returned`。原生历史里这条输入之后已有回答（assistant、thinking、工具）时不算退回（见下条），记忆随之清掉。
 - **终端回滚**：Claude Code 2.1.284 的双 Esc "恢复对话"只改进程内的叶子，下一条输入之前 JSONL 一字不写；被回滚的那条输入回到编辑区，画面重画到它之前（BUG-20260929-075643-bc6def）。watcher 每次读屏后（编辑区文字、分类或主视图变化时）用编辑区上方的画面核对 `conversation/rewind.rs`：编辑区文字与视图里最后一条同文的已回答用户输入 X 相同；X 及其后的记录都不在画面上；X 之前 64 条内至少一条在画面上。可见的判定只看字母和数字：长文（≥48 个）按 48 个一窗、每半窗取一段在画面里找；短的用户输入要与画面上某个 `❯` 提示行（连同缩进续行）完全相同；短的助手文字不参与。三条都满足即为终端回滚，服务端以 X 为 target 写一个 `cli: true` 的 timeline pin（与"回到此处"同一校验与固定机制，[metadata](metadata.md)），并记一条 `cli.rewind.followed` 审计事件；X 本身或其后仍在画面上（上键调出历史）只清掉退回记忆，不固定。下一条原生输入写入后 pin 按原有规则失效，以原生分支为准。
 - **丢失**：实例连续 30 秒读不到画面（已退出、宿主不可达）时，`queued` 全部标为 `lost`。用户可用 `POST /api/session/conversation/queued/dismiss {uid, request_id}` 关闭一条；不自动重发。
+- **Codex 中断后未确认处理**：TUI 已确认入队的正文可能被 Esc 消费为 steer，再被 Esc 中断，原生 user 记录尚未写入（BUG-20260930-172002-bc4cf4）。观察和 CHECK 同时确认当前画面无滞后、编辑区就绪且为空、CLI 空闲、无可见队列，并读取同一会话的完整原生视图：先对账 user/command 回显；最新原生状态须为入队确认之后的 `aborted`，且不晚于读屏时间。仍无回显的对应项持久化为 `interrupted`，保留正文，标注“CLI 已中断，未确认处理，请到终端查看”并提供关闭。队列离屏、仍在工作、未知画面、缺少中断时间或发送之前的中断都不能触发；新发送不受旧中断影响，后续同文原生回显仍可退掉该项。不自动重发，也不宣称模型从未收到。
 
 ## 前端
 
@@ -58,6 +59,6 @@
 | 范围 | 文件 |
 | --- | --- |
 | 忙碌 SEND 排队气泡、CHECK 响应携带 `cli.queued`、回显退掉 | [send_browser.py](../tests/send_browser.py) |
-| Codex TUI 入队确认、折行与同文多次发送、引用画面不误认、刷新恢复与原生回显退掉 | [send_native_codex_browser.py](../tests/send_native_codex_browser.py) |
+| Codex TUI 入队确认、折行与同文多次发送、引用画面不误认、中断后未确认处理、离屏与旧中断不误判、刷新恢复与迟到原生回显退掉 | [send_native_codex_browser.py](../tests/send_native_codex_browser.py) |
 | 终端回滚同步到对话、刷新保留、下一条输入后以原生分支为准、调出已回答的输入既不回滚也不算 Esc 退回 | [rewind_cli_browser.py](../tests/rewind_cli_browser.py) |
 | 刷新后排队气泡由服务端恢复、Grok 无时间记录按摘要退掉 | [grok_send_echo_browser.py](../tests/grok_send_echo_browser.py) |
