@@ -164,6 +164,10 @@ fn parse(bytes: &[u8]) -> Result<BTreeMap<String, Name>, SessionError> {
 }
 
 impl NameIndex {
+    pub fn name(&self, sid: &str) -> Option<String> {
+        self.names.get(sid).map(|name| name.title.clone())
+    }
+
     /// Titles over summary rows: own name first,
     /// otherwise the first named ancestor along the `forked_from_id`
     /// lineage (`graph::lineage`), otherwise the root's base title the

@@ -52,6 +52,7 @@ def main():
                     'SESSIONDOCK_TEST_ANIMATED_PADDING': '1',
                     'SESSIONDOCK_TEST_BUSY_WARNING': '1',
                     'SESSIONDOCK_TEST_STARTUP_DELAY': '5',
+                    'SESSIONDOCK_TEST_STATUS_HIDE_FILE': str(root / 'hide-status'),
                     'SESSIONDOCK_TEST_COLLAPSED_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTERLESS_PASTE': '1',
                     'SESSIONDOCK_TEST_FOOTER_PASTE_FILE': str(root / 'footer-paste'),
@@ -198,9 +199,12 @@ def main():
                 page.locator('#a-term').click()
                 xterm_includes(page, '> Please read the text file')
                 (root / 'footer-paste').touch()
-                for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告', 'trust 后发送图片报告']):
+                for index, description in enumerate(['没回车\n' * 8, '多段落任务没有提交\n' + '这是用于覆盖长文本折叠占位符的诊断描述。' * 20, '更新退出后保留报告', 'trust 后发送图片报告', '恢复已改名但未确认的报告']):
                     # Submit an actual report through the dialog. The worker must
                     # consume its whole task once without a manual terminal Enter.
+                    if index == 4:
+                        (root / 'trust-gate').unlink()
+                        (root / 'hide-status').touch()
                     if index == 3:
                         (root / 'trust-gate').touch()
                     if not page.locator('#report-bug').is_visible():
@@ -260,6 +264,26 @@ def main():
                         with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as resent:
                             page.locator('#csend').click()
                         assert resent.value.status == 200, resent.value.text()
+                    if index == 4:
+                        deadline = time.monotonic() + 30
+                        while time.monotonic() < deadline:
+                            failed = json.loads((bundle / 'manifest.json').read_text())
+                            if failed['status'] == 'failed':
+                                break
+                            page.wait_for_timeout(100)
+                        assert failed['status'] == 'failed' and '原生命名' in failed['error'], failed
+                        commands_before = (root / 'submissions.jsonl.commands').read_text()
+                        sid = json.loads(commands_before.splitlines()[-1])['sid']
+                        assert not (root / 'codex' / ('rollout-' + sid + '.jsonl')).exists()
+                        (root / 'hide-status').unlink()
+                        page.locator('#side .item').filter(has_text=expected_title).click()
+                        expect(page.locator('#cinput')).to_have_value(description)
+                        page.wait_for_function("composerDraft()?.inputStatus?.state === 'ready'", timeout=15000)
+                        with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send') as retried:
+                            page.locator('#csend').click()
+                        assert retried.value.status == 200, retried.value.text()
+                        assert (root / 'submissions.jsonl.commands').read_text() == commands_before
+                        print('PASS previously unconfirmed native rename: retained draft retries without duplicate rename/task', flush=True)
                     deadline = time.monotonic() + 15
                     while time.monotonic() < deadline:
                         manifest = json.loads((bundle / 'manifest.json').read_text())
@@ -279,6 +303,7 @@ def main():
                     assert names[-1]['thread_name'] == expected_title, names
                     commands = [json.loads(line) for line in (root / 'submissions.jsonl.commands').read_text().splitlines()]
                     assert commands[-1]['command'] == '/rename ' + expected_title, commands
+                    assert commands[-1]['rollout_exists'] is False, commands
                     native = root / 'codex' / ('rollout-' + commands[-1]['sid'] + '.jsonl')
                     users = [json.loads(line) for line in native.read_text().splitlines() if json.loads(line).get('type') == 'response_item']
                     assert len(users) == 1 and users[0]['payload']['content'][0]['text'] == worker_prompt.strip(), users

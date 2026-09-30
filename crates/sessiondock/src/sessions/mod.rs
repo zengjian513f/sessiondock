@@ -635,6 +635,10 @@ impl SessionStore {
     /// whose cached view is the same file version the index published;
     /// `sig` covers the index rows and metadata only, so opening a session
     /// never changes the signature.
+    pub(crate) fn codex_name(&self, sid: &str) -> Result<Option<String>, SessionError> {
+        self.index.codex_name(sid)
+    }
+
     pub fn titles(&self, ids: &[String]) -> Result<Value, SessionError> {
         self.index.titles(ids)
     }
