@@ -236,7 +236,9 @@ def main():
                         page.locator('#item-menu [data-act="clone"]').click()
                         dialog=page.locator('#clone-group-dialog')
                         expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
-                        expect(dialog.locator('.transfer-head .transfer-source')).to_have_text(node.name)
+                        expect(dialog.locator('#transfer-source')).to_be_disabled()
+                        expect(dialog.locator('#transfer-source option')).to_have_text(node.name)
+                        expect(dialog.locator('#transfer-source')).to_have_value(node.nid)
                         expect(dialog.locator('.clone-status')).to_contain_text('整组 6 个会话')
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(6)
                         expect(dialog.locator('.clone-members thead')).to_contain_text('历史文件')
@@ -252,20 +254,29 @@ def main():
                         expect(dialog.locator('.transfer-identity')).to_be_visible()
                         expect(dialog.locator('#transfer-new-ids')).not_to_be_checked()
                         dialog.locator('#transfer-new-ids').check()
-                        expect(dialog.locator('.transfer-identity-help')).to_contain_text('生成新身份')
                         expect(dialog.locator('.clone-confirm')).to_be_disabled()
                         expect(dialog.locator('.transfer-notice')).to_contain_text('跨机器传输尚未接入')
                         assert dialog.locator('.transfer-notice').evaluate("e => getComputedStyle(e).backgroundColor")== 'rgba(0, 0, 0, 0)'
                         assert dialog.locator('.transfer-notice').bounding_box()['height'] < 30
-                        expect(dialog.locator('.transfer-head .transfer-source')).to_have_text(node.name)
+                        expect(dialog.locator('#transfer-source')).to_be_disabled()
+                        expect(dialog.locator('#transfer-source option')).to_have_text(node.name)
+                        expect(dialog.locator('#transfer-source')).to_have_value(node.nid)
                         dialog.locator('.transfer-segments label').nth(0).click()
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
                         dialog.locator('#transfer-new-ids').uncheck()
-                        expect(dialog.locator('.transfer-identity-help')).to_contain_text('保留原生会话身份')
                         assert not requests,'unsupported selections must never execute a local clone'
                         page.evaluate("document.documentElement.dataset.theme='dark'")
                         Path('target').mkdir(exist_ok=True)
                         dialog.screenshot(path='target/transfer-panel-desktop.png')
+                        page.set_viewport_size({'width':390,'height':844})
+                        for width in (1280,390,320):
+                            page.set_viewport_size({'width':width,'height':844})
+                            source_box=dialog.locator('#transfer-source').bounding_box()
+                            target_box=dialog.locator('#transfer-target').bounding_box()
+                            assert abs(source_box['y']-target_box['y']) < 1,(source_box,target_box)
+                            assert abs(source_box['width']-target_box['width']) < 1,(source_box,target_box)
+                            assert source_box['x']+source_box['width'] <= target_box['x']
+                            expect(dialog.locator('.transfer-identity-help, .transfer-scope-note, .transfer-footer-note, .transfer-origin')).to_have_count(0)
                         page.set_viewport_size({'width':390,'height':844})
                         box=dialog.bounding_box()
                         assert box['x']>=0 and box['x']+box['width']<=391,box
