@@ -56,7 +56,7 @@ pub fn supports_effort(source: Source) -> bool {
 pub fn catalog(profile: &CliProfile) -> Catalog {
     let mut catalog = match profile.source {
         Source::Claude => claude(profile),
-        Source::Codex => codex(&cli_home(profile, "CODEX_HOME", ".codex")),
+        Source::Codex => codex_profile(profile),
         Source::Grok => grok(&cli_home(profile, "GROK_HOME", ".grok")),
         Source::Opencode => opencode(profile),
         Source::Shell => Catalog::default(),
@@ -155,16 +155,44 @@ fn text(value: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// A cache written by another installed CLI version is not its model catalog.
+/// Newer CLIs can expose their bundled catalog without network access or writes
+/// to the CLI home. Older CLIs retain the read-only cache fallback.
+fn codex_profile(profile: &CliProfile) -> Catalog {
+    let home = cli_home(profile, "CODEX_HOME", ".codex");
+    let cache = read_json(&home.join("models_cache.json"));
+    let bundled = run_bounded(
+        profile, &home, &["debug", "models", "--bundled"], Duration::from_secs(3),
+    )
+        .and_then(|output| serde_json::from_str::<serde_json::Value>(&output).ok())
+        .filter(|value| value.get("models").is_some_and(serde_json::Value::is_array));
+    let catalog = if let Some(bundled) = bundled {
+        let version = run_bounded(profile, &home, &["--version"], Duration::from_secs(3));
+        let version = version.as_deref().and_then(|value| value.split_whitespace().nth(1));
+        if version.is_some()
+            && cache.as_ref().and_then(|value| value.get("client_version"))
+                .and_then(serde_json::Value::as_str) == version
+        {
+            cache
+        } else {
+            Some(bundled)
+        }
+    } else {
+        cache
+    };
+    codex_catalog(&home, catalog)
+}
+
 /// `$CODEX_HOME/models_cache.json`: listed models only, with their
 /// reasoning levels; the default model is `config.toml`'s top-level `model`.
-pub(super) fn codex(home: &Path) -> Catalog {
+fn codex_catalog(home: &Path, catalog: Option<serde_json::Value>) -> Catalog {
     let config = std::fs::read_to_string(home.join("config.toml")).unwrap_or_default();
     let default_model = toml_top_level_string(&config, "model");
     // An omitted launch effort inherits the user's configuration, even when
     // the picker explicitly selects a different model. The cache only supplies
     // the fallback; treating it as the effective default mislabels the launch.
     let configured_effort = toml_top_level_string(&config, "model_reasoning_effort");
-    let models = read_json(&home.join("models_cache.json"))
+    let models = catalog
         .and_then(|cache| cache.get("models")?.as_array().cloned())
         .unwrap_or_default()
         .iter()

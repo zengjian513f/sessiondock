@@ -108,10 +108,14 @@ the catalog, the CLI decides.
 
 The catalog comes from each CLI's own data, read as its child would see it
 (profile environment over the service's): Codex `$CODEX_HOME/models_cache.json`
-(`visibility: list` only, `supported_reasoning_levels`; `default_model` is
+(when `client_version` matches the installed CLI; otherwise its read-only
+`debug models --bundled` catalog, with a 3 s command timeout; older CLIs without
+that command fall back to the cache). This avoids using an older CLI’s catalog
+after an upgrade or when versions share a home. Only `visibility: list` models
+are offered, with `supported_reasoning_levels`; `default_model` is
 `config.toml`'s top-level `model`; displayed default effort uses the top-level
 `model_reasoning_effort` before the cache's `default_reasoning_level`, including
-when a model is explicitly selected). Both new-session and bug-report pickers
+when a model is explicitly selected. Both new-session and bug-report pickers
 select concrete model and effort values only when the catalog identifies their
 defaults or the user chooses them. An unknown default stays unselected and the
 corresponding override is omitted, letting the CLI use its own setting. Model
