@@ -300,7 +300,7 @@ class Fake:
         if not text.strip():
             self.render()
             return
-        if text.strip() == '/model':
+        if text.rstrip() == '/model':
             # Like Codex, open a local menu without writing a native turn.
             self.model_menu = True
             self.render()
@@ -339,6 +339,28 @@ class Fake:
             self.transcript.append('Session: ' + self.sid)
             self.render()
             return
+        if os.environ.get('SESSIONDOCK_TEST_COMMAND_DISPATCH'):
+            from pathlib import Path
+            manifest = json.loads((Path(__file__).parent / 'fixtures' / 'codex_send_commands.json').read_text())
+            commands = {row['name']: row['inline_args'] for row in manifest['commands']}
+            commands.update({'fast': False, 'goooal': True})
+            first = text.split('\n', 1)[0].split(maxsplit=1)
+            name = first[0][1:] if first and first[0].startswith('/') and text.startswith('/') else ''
+            if name in commands and (len(first) == 1 or commands[name]):
+                if trace := os.environ.get('SESSIONDOCK_TEST_COMMAND_LOG'):
+                    with open(trace, 'a') as stream:
+                        stream.write(json.dumps({'text': text}) + '\n')
+                # Commands may invoke work, but native input is transformed.
+                args = text[len(name) + 1:].strip()
+                if name == 'init':
+                    self.record('Synthetic initialization prompt')
+                elif name == 'plan' and args:
+                    self.record(args)
+                elif name == 'review' and args:
+                    self.record('Synthetic review: ' + args)
+                self.transcript.append('LOCAL_COMMAND ' + text.split('\n', 1)[0])
+                self.render()
+                return
         if not self.path and getattr(self, 'thread_name', None):
             from pathlib import Path
             root = Path(os.environ['SESSIONDOCK_TEST_CODEX_ROOT'])
