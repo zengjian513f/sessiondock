@@ -1960,7 +1960,7 @@ function paintStatusMarker(badge, frozen, count = 0, attention = '') {
 }
 
 function sessionInputAttention(uid) {
-  if (!uid) return '';
+  if (!uid || sessionComposerEnded(uid)) return '';
   const draft = typeof composerDrafts !== 'undefined'
     ? composerDrafts.get(composerDraftOwner(uid)) : null;
   const cli = cache.get(uid)?.cli;
@@ -1974,7 +1974,11 @@ function sessionInputAttention(uid) {
   if (input?.code === 'cli_question' || turn === 'waiting') return 'question';
   const busy = (current ? draft?.cli : cli)?.instance?.busy;
   if (busy === true || turn === 'working') return '';
-  return ['blocked', 'unknown'].includes(input?.state) ? 'blocked' : '';
+  // A failed observation or an unfamiliar screen does not prove an input
+  // problem. Only these native editor states require user intervention.
+  const running = (current ? draft?.cli : cli)?.instance?.running;
+  return running === true && input?.state === 'blocked'
+    && ['cli_input_pending', 'cli_input_returned'].includes(input.code) ? 'blocked' : '';
 }
 const inputAttentionLabel = attention => attention === 'question' ? ' · 等待回答'
   : attention ? ' · 输入受阻，请查看会话提示' : '';

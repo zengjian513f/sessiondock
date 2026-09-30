@@ -137,6 +137,16 @@ def main():
                     page.wait_for_function("uid => (T.list || []).some(row => row.uid === uid && row.instance_id)", arg=codex_uid)
                     action = session_action(page)
                     expect(action).to_have_attribute("aria-label", "停止会话")
+                    page.evaluate('''() => {
+                        window.stopAttentionFlashes=[];
+                        window.stopAttentionObserver=new MutationObserver(() => {
+                            for (const node of document.querySelectorAll('#dlive, #side .item.sel > .ico > .item-status, #composer-input-status')) {
+                                if (node.classList.contains('input-attention') && !node.classList.contains('input-question'))
+                                    stopAttentionFlashes.push({id:node.id,text:node.textContent});
+                            }
+                        });
+                        stopAttentionObserver.observe(document.body,{subtree:true,childList:true,attributes:true});
+                    }''')
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
                         action.click()
                     # No turn event yet (state unknown): the stop still asks first.
@@ -162,6 +172,9 @@ def main():
                     page.wait_for_function("uid => !(T.list || []).some(row => row.uid === uid)", arg=codex_uid, timeout=15000)
                     assert page.evaluate("uid => S.live.has(uid)", codex_uid) is False
                     expect(session_action(page)).to_have_attribute("aria-label", "删除会话")
+                    page.wait_for_timeout(1200)
+                    assert page.evaluate('stopAttentionFlashes') == [], page.evaluate('stopAttentionFlashes')
+                    page.evaluate('stopAttentionObserver.disconnect()')
                     page.keyboard.press("Escape")
                     # The notice really hides (the shared toast class forces display:flex).
                     page.evaluate("showSessionStopNotice('')")
