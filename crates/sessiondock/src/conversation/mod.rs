@@ -562,7 +562,7 @@ impl Conversations {
         &self,
         uid: &str,
         page: Option<&PageLease>,
-    ) -> Result<(u64, InputStatus, cli_state::CliState), Failure> {
+    ) -> Result<(u64, InputStatus, cli_state::CliState, Value), Failure> {
         let identity = self.identity(uid).await?;
         let lock = self.lock(&identity.key);
         let (_guard, waited) = match lock.try_lock() {
@@ -571,11 +571,16 @@ impl Conversations {
         };
         self.remember_cli_identity(uid, &identity);
         let mut transcript = None;
+        let mut prompt = Value::Null;
         let observation: cli_state::Observation = match self.lease(&identity, page, waited).await {
             Ok(lease) => {
                 let capture = self.driver.capture(&lease).await.map_err(driver_error);
                 self.driver.release(lease).await;
                 capture.map(|capture| {
+                    if identity.source == "codex" && capture.lag.is_none_or(|lag| lag == 0) {
+                        prompt = crate::bridge::codex::startup_prompt(&capture.text)
+                            .unwrap_or(Value::Null);
+                    }
                     transcript = cli_state::transcript(&identity.source, &capture);
                     (
                         input::classify(&identity.source, &capture),
@@ -595,7 +600,12 @@ impl Conversations {
         }
         // The recorded state may name a returned prompt more precisely.
         let status = state.input.unwrap_or(observation?.0);
-        Ok((self.store.draft(&identity.key).revision, status, state))
+        Ok((
+            self.store.draft(&identity.key).revision,
+            status,
+            state,
+            prompt,
+        ))
     }
     /// Drops staged bytes the editor removed before SEND published them.
     pub async fn discard_upload(&self, uid: &str, id: &str) -> Result<bool, Failure> {
