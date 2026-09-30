@@ -437,6 +437,17 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
   background: var(--panel-2); color: var(--text); font: inherit;
 }
 .machine-row select:focus { outline: none; border-color: var(--accent); }
+/* 客户端版本占机器行的第二行：名称 + 版本号 + 更新，窄屏自动换行 */
+.machine-row .machine-clients {
+  grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center;
+  padding-left: 26px; font-size: 12px; color: var(--muted);
+}
+.machine-row .machine-clients:empty { display: none; }
+.machine-client { display: inline-flex; align-items: center; gap: 6px; }
+.machine-client b { color: var(--text); font-weight: 600; }
+.machine-client .machine-client-version { font-size: 11.5px; color: var(--text); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+.machine-client .machine-client-update { padding: 1px 8px; font-size: 12px; }
+.machine-row.machine-off .machine-clients { opacity: .5; }
 .machine-color { position: relative; display: flex; flex: none; }
 .machine-swatch {
   width: 14px; height: 14px; padding: 0; border: 0; border-radius: 4px; flex: none;
