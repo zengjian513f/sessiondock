@@ -54,6 +54,11 @@ async fn stopped(state: &AppState, op: &Operation) -> Result<(), Response> {
 #[derive(Deserialize)]
 pub struct PlanRequest {
     uid: String,
+    #[serde(default = "default_new_ids")]
+    new_ids: bool,
+}
+fn default_new_ids() -> bool {
+    true
 }
 #[derive(Deserialize)]
 pub struct ExecuteRequest {
@@ -68,11 +73,12 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     let _guard = service.gate.clone().lock_owned().await;
     let copy = service.clone();
     let selected = body.uid;
-    let op = match tokio::task::spawn_blocking(move || copy.plan(&selected)).await {
-        Ok(Ok(op)) => op,
-        Ok(Err(e)) => return failure(e),
-        Err(e) => return failure(TransferError::new("move_io", e.to_string())),
-    };
+    let op =
+        match tokio::task::spawn_blocking(move || copy.plan_copy(&selected, body.new_ids)).await {
+            Ok(Ok(op)) => op,
+            Ok(Err(e)) => return failure(e),
+            Err(e) => return failure(TransferError::new("move_io", e.to_string())),
+        };
     if let Err(e) = stopped(&state, &op).await {
         return e;
     }
@@ -377,7 +383,10 @@ pub async fn check_bundle(
                 &dependencies,
             )?)?;
         }
-        crate::transfer::native::preflight(manifest.operation.rewritten.as_ref().unwrap())?;
+        crate::transfer::native::preflight_copy(
+            manifest.operation.rewritten.as_ref().unwrap(),
+            !manifest.operation.new_ids(),
+        )?;
         Ok::<_, TransferError>(())
     })
     .await;

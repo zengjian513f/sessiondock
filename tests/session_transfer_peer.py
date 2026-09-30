@@ -70,6 +70,10 @@ def main():
                 elif op=='read':result['bytes']=base64.b64encode(owned(request['path']).read_bytes()).decode()
                 elif op=='append':
                     with owned(request['path']).open('ab') as out:out.write(base64.b64decode(request['bytes']))
+                elif op=='write':owned(request['path']).write_bytes(base64.b64decode(request['bytes']))
+                elif op=='receipt':
+                    with sqlite3.connect(owned(request['path'])) as db:
+                        result['receipt']=json.loads(db.execute('SELECT receipt FROM _sessiondock_clone_journal WHERE operation_id=?',(request['operation_id'],)).fetchone()[0])
                 elif op=='finish':stop();print(json.dumps({'ok':True}),flush=True);break
                 else:raise ValueError('unknown fixture command')
                 print(json.dumps({'ok':True,**result}),flush=True)

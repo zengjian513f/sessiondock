@@ -1956,7 +1956,7 @@ function paintStatusMarker(badge, frozen, count = 0, attention = '') {
   badge.dataset.marker = marker;
   const text = count > 99 ? '99+' : (count || '');
   if (frozen) badge.innerHTML = uiIcon('pause') + esc(text);
-  else badge.textContent = (attention === 'question' ? '?' : attention ? '!' : '') + text;
+  else badge.textContent = attention === 'question' ? '?' : attention ? '!' : text;
 }
 
 function sessionInputAttention(uid) {
@@ -10085,7 +10085,6 @@ async function cloneSessionGroup(uid) {
     if (machines.get(sourceId)?.online === false) return '源机器已离线。';
     if (crossMachine()) {
       if (mode() === 'move' || SessionDockCapabilities.config.session_clone_remote !== true) return '跨机器传输尚未接入。';
-      if (!identityChoices.clone) return '保留 UID 的跨机复制尚未接入。';
       return '';
     }
     if (mode() === 'move') return '移动需要选择另一台机器。';
@@ -10104,9 +10103,9 @@ async function cloneSessionGroup(uid) {
     newIds.disabled = busy || uncertain;
     dialog.setAttribute('aria-busy', String(busy));
   };
-  target.onchange = renderSelection;
-  radios.forEach(r => r.onchange = renderSelection);
-  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
+  target.onchange = () => {renderSelection(); refreshPlan();};
+  radios.forEach(r => r.onchange = () => {renderSelection(); refreshPlan();});
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection(); refreshPlan();};
   const close = () => {dialog.close(); dialog.remove();};
   $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
   dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
@@ -10147,15 +10146,25 @@ async function cloneSessionGroup(uid) {
     }
     status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
   };
-  try {
-    plan = await request('api/session/clone/plan', {uid});
-    if (!dialog.isConnected) return;
-    renderMembers(plan); renderSelection();
-  } catch (failure) {
-    if (!dialog.isConnected) return;
-    status.textContent = '清单读取失败'; $d('.transfer-empty').textContent = '暂时无法列出会话组';
-    error.textContent = failure.message; error.hidden = false; return;
+  async function refreshPlan() {
+    if (busy || uncertain || mode() !== 'clone') return;
+    const fresh = !crossMachine() || identityChoices.clone;
+    if (plan && plan.new_ids === fresh) return;
+    busy = true; plan = null; error.hidden = true; renderSelection();
+    status.textContent = '正在读取清单…';
+    try {
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh});
+      if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
+      plan = next;
+      if (dialog.isConnected) renderMembers(plan);
+    } catch (failure) {
+      if (dialog.isConnected) {
+        status.textContent = '清单读取失败';
+        error.textContent = failure.message; error.hidden = false;
+      }
+    } finally {busy = false; if (dialog.isConnected) renderSelection();}
   }
+  await refreshPlan();
   confirm.onclick = async () => {
     if (busy || !plan || blockedReason()) return;
     busy = true; error.hidden = true; renderSelection();
