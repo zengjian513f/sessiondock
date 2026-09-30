@@ -5,12 +5,15 @@ A real Rust node with synthetic CLI profiles only: a fake Codex whose `update`
 prints coloured, carriage-return progress, waits, then raises its version; a
 fake Claude whose `update` fails with an error on stderr; and a Grok profile
 whose command is missing (status 127), which gets no column. A fake `curl`
-first on the profiles' PATH answers the newest-version lookups (npm dist-tags
-for Claude's `latest` channel, npm `latest` for Codex), so no network is used.
+first on the profiles' PATH answers Codex's newest-version lookup and fails
+Claude's, so no network is used: Claude's cell stays shown with a faded arrow
+("unknown") and says the lookup failed. Newest versions arrive in the
+background and the page polls until they do.
 The matrix is exercised twice through the real UI: on the node's own page, and
 on a real `sessiondock-hub` page whose requests reach the node through the
 explicit `/api/nodes/<id>/api/…` proxy, next to a fake node that has Codex only
-(its Claude cell is 无). The update receives the profile's fixed arguments
+(its Claude cell reads 无, and its Codex, with no newest version of its own, is
+judged against Pavo's). The update receives the profile's fixed arguments
 and a closed stdin; a second request while one is running is refused, and an
 unknown profile ID is 404. No real CLI, native CLI home or production directory
 is touched.
@@ -19,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import shlex
 import subprocess
@@ -63,7 +67,6 @@ MISSING = "#!/bin/sh\nexit 127\n"
 FAKE_CURL = """#!/bin/sh
 eval "url=\\${$#}"
 case "$url" in
-  */@anthropic-ai/claude-code/dist-tags) printf '{"stable":"2.0.9","latest":"2.1.1"}\\n' ;;
   */@openai/codex/latest) printf '{"name":"@openai/codex","version":"%s"}\\n' "$SESSIONDOCK_TEST_NEW" ;;
   *) exit 22 ;;
 esac
@@ -105,8 +108,9 @@ def check_machine(page, base, state, machine):
     expect(codex).to_have_text(f"{OLD}↑")                      # just the version and the arrow
     assert f"可更新到 {NEW}" in codex.get_attribute("title")
     expect(claude.locator(".client-version")).to_have_text("2.1.1")
-    expect(claude).to_have_attribute("data-state", "current")
+    expect(claude).to_have_attribute("data-state", "unknown", timeout=10000)   # its lookup failed
     expect(claude).to_have_text("2.1.1↑")
+    expect(claude).to_have_attribute("title", re.compile("最新版本查询失败"))
 
     # A successful update: the button waits while the CLI runs, then the cell is current.
     codex.locator(".client-update").click()
@@ -226,7 +230,9 @@ def main():
                         vega = matrix_row(page, "Vega")
                         expect(vega.locator('td[data-client-source="claude"]')).to_have_text("无")
                         expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
-                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "current")
+                        # Vega found no newest Codex itself; Pavo's newer install and lookup still mark it upgradable.
+                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "outdated")
+                        expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("title", re.compile(f"可更新到 {NEW}"))
                         print("PASS hub matrix through the explicit node proxy, with an empty cell")
                         # A machine that cannot be reached reads 离线, never 失败.
                         other.stop()

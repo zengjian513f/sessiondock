@@ -28,11 +28,26 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
 const UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 /// Tail of the update's output kept for the settings page.
 const OUTPUT_LIMIT: usize = 4000;
-/// One lookup of the newest published version.
-const LATEST_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long a looked-up newest version is reused; a failed lookup is retried sooner.
+/// One lookup of the newest published version (curl's own retries included).
+const LATEST_TIMEOUT: Duration = Duration::from_secs(40);
+/// How long a looked-up newest version is reused; a failed lookup is retried
+/// sooner and never erases the last answer that arrived.
 const LATEST_TTL: Duration = Duration::from_secs(600);
 const LATEST_RETRY: Duration = Duration::from_secs(60);
+
+/// The newest-version lookup of one profile. The lookup crosses the network,
+/// so it runs on its own thread and `GET /api/clients` never waits for it.
+#[derive(Clone, Default)]
+struct Latest {
+    /// The last answer that arrived, however old.
+    version: Option<String>,
+    /// When the last lookup finished, successful or not.
+    checked: Option<Instant>,
+    /// Whether the last lookup failed.
+    failed: bool,
+    /// A lookup is running now.
+    pending: bool,
+}
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct Update {
@@ -64,10 +79,14 @@ pub struct Client {
     /// False when the command cannot be started or the shell reports it
     /// missing (126/127), the same rule as the new-session picker.
     pub installed: bool,
-    /// The newest published version on the CLI's update channel, when the
-    /// lookup answered.
+    /// The newest published version on the CLI's update channel: the last
+    /// answer a lookup returned, kept when a later lookup fails.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest: Option<String>,
+    /// `pending` while a lookup runs, `failed` when the last one failed;
+    /// absent once the current answer arrived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_state: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub update: Option<Update>,
 }
@@ -85,31 +104,42 @@ pub enum UpdateError {
 #[derive(Default)]
 pub struct Updates {
     updates: Mutex<BTreeMap<String, Update>>,
-    latest: Mutex<BTreeMap<String, (Instant, Option<String>)>>,
+    latest: std::sync::Arc<Mutex<BTreeMap<String, Latest>>>,
 }
 
 impl Updates {
     fn get(&self, id: &str) -> Option<Update> {
         self.updates.lock().ok()?.get(id).cloned()
     }
-    /// The profile's newest published version, looked up again once the
-    /// cached answer is older than [`LATEST_TTL`] ([`LATEST_RETRY`] after a failure).
-    fn latest(&self, profile: &CliProfile) -> Option<String> {
-        if let Some((at, latest)) = self.latest.lock().ok()?.get(&profile.id).cloned() {
-            let ttl = if latest.is_some() {
-                LATEST_TTL
-            } else {
-                LATEST_RETRY
-            };
-            if at.elapsed() < ttl {
-                return latest;
-            }
+    /// The profile's newest version as known now, starting a background
+    /// lookup when the answer is older than [`LATEST_TTL`] ([`LATEST_RETRY`]
+    /// after a failure) and none is running.
+    fn latest(&self, profile: &CliProfile) -> Latest {
+        let Ok(mut cache) = self.latest.lock() else {
+            return Latest::default();
+        };
+        let entry = cache.entry(profile.id.clone()).or_default();
+        let ttl = if entry.failed {
+            LATEST_RETRY
+        } else {
+            LATEST_TTL
+        };
+        if !entry.pending && entry.checked.is_none_or(|checked| checked.elapsed() >= ttl) {
+            entry.pending = true;
+            let cache = self.latest.clone();
+            let profile = profile.clone();
+            std::thread::spawn(move || {
+                let found = latest(&profile);
+                if let Ok(mut cache) = cache.lock() {
+                    let entry = cache.entry(profile.id.clone()).or_default();
+                    entry.failed = found.is_none();
+                    entry.version = found.or(entry.version.take());
+                    entry.checked = Some(Instant::now());
+                    entry.pending = false;
+                }
+            });
         }
-        let latest = latest(profile);
-        if let Ok(mut cache) = self.latest.lock() {
-            cache.insert(profile.id.clone(), (Instant::now(), latest.clone()));
-        }
-        latest
+        entry.clone()
     }
     /// Claim the profile's update slot; refused while one is running.
     pub fn begin(&self, id: &str) -> Result<(), UpdateError> {
@@ -134,8 +164,9 @@ impl Updates {
     }
 }
 
-/// Every agent CLI profile with its current version, newest published
-/// version and latest update, probed in parallel. Blocking.
+/// Every agent CLI profile with its current version, newest published version
+/// as known now and latest update; the versions are probed in parallel.
+/// Blocking for the `--version` probes only.
 pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Updates) -> Vec<Client> {
     let profiles: Vec<&CliProfile> = profiles
         .filter(|profile| profile.source != Source::Shell)
@@ -146,7 +177,9 @@ pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Update
             .map(|profile| {
                 let probe = scope.spawn(move || {
                     let (installed, detail) = version(profile);
-                    let latest = installed.then(|| updates.latest(profile)).flatten();
+                    let latest = installed
+                        .then(|| updates.latest(profile))
+                        .unwrap_or_default();
                     (installed, detail, latest)
                 });
                 (profile, probe)
@@ -156,14 +189,23 @@ pub fn list<'a>(profiles: impl Iterator<Item = &'a CliProfile>, updates: &Update
             .into_iter()
             .map(|(profile, probe)| {
                 let (installed, detail, latest) =
-                    probe.join().unwrap_or((false, String::new(), None));
+                    probe
+                        .join()
+                        .unwrap_or((false, String::new(), Latest::default()));
                 Client {
                     id: profile.id.clone(),
                     source: profile.source,
                     version: installed.then(|| version_number(&detail)).flatten(),
                     detail,
                     installed,
-                    latest,
+                    latest_state: if latest.pending {
+                        Some("pending")
+                    } else if latest.failed {
+                        Some("failed")
+                    } else {
+                        None
+                    },
+                    latest: latest.version,
                     update: updates.get(&profile.id),
                 }
             })
@@ -293,7 +335,16 @@ fn text(value: &serde_json::Value, key: &str) -> Option<String> {
 /// CLI's own proxy settings apply.
 fn fetch(profile: &CliProfile, url: &str) -> Option<serde_json::Value> {
     let mut command = Command::new("curl");
-    command.args(["-fsSL", "--max-time", "12", url]);
+    command.args([
+        "-fsSL",
+        "--connect-timeout",
+        "4",
+        "--max-time",
+        "8",
+        "--retry",
+        "2",
+        url,
+    ]);
     let outcome = bounded(command, profile, LATEST_TIMEOUT).ok()?;
     if !outcome.status?.success() {
         return None;
