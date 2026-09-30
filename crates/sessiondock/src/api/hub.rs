@@ -486,12 +486,31 @@ async fn handle(
         path = rest.to_string();
     }
     if method == Method::POST && path == "/api/process-links" {
-        return Ok((StatusCode::FORBIDDEN, axum::Json(json!({"code":"private_process_links_route","error":"进程关联由 Hub 后台协调"}))).into_response());
+        return Ok((
+            StatusCode::FORBIDDEN,
+            axum::Json(
+                json!({"code":"private_process_links_route","error":"进程关联由 Hub 后台协调"}),
+            ),
+        )
+            .into_response());
     }
     // Move handoff is coordinated server-to-server. Do not let the generic
     // browser proxy bypass target verification or the source ownership switch.
-    if path.starts_with("/api/session/transfer/") && !matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel" | "/api/session/transfer/progress") {
-        return Ok((StatusCode::NOT_FOUND, axum::Json(json!({"code":"private_transfer_route","error":"内部迁移接口不可通过浏览器调用"}))).into_response());
+    if path.starts_with("/api/session/transfer/")
+        && !matches!(
+            path.as_str(),
+            "/api/session/transfer/clone"
+                | "/api/session/transfer/cancel"
+                | "/api/session/transfer/progress"
+        )
+    {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            axum::Json(
+                json!({"code":"private_transfer_route","error":"内部迁移接口不可通过浏览器调用"}),
+            ),
+        )
+            .into_response());
     }
     if method == Method::GET && path == "/api/session/file" {
         let accept = headers
@@ -532,9 +551,27 @@ async fn handle(
         }
     }
     if explicit.is_none() {
-        if method == Method::POST && matches!(path.as_str(), "/api/session/transfer/clone" | "/api/session/transfer/cancel" | "/api/session/transfer/progress") {
+        if method == Method::POST
+            && matches!(
+                path.as_str(),
+                "/api/session/clone"
+                    | "/api/session/transfer/clone"
+                    | "/api/session/transfer/cancel"
+                    | "/api/session/transfer/progress"
+            )
+        {
+            let mut transfer_body = body.unwrap_or_default();
+            if path == "/api/session/clone" {
+                let uid = transfer_body
+                    .get("uid")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let (source, _) =
+                    namespace::split(uid, true).map_err(|e| Reply::Invalid(e.to_string()))?;
+                transfer_body.insert("target_node".into(), source.into());
+            }
             let request = serde_json::from_value::<crate::hub::transfer::Request>(Value::Object(
-                body.unwrap_or_default(),
+                transfer_body,
             ))
             .map_err(|e| Reply::Invalid(e.to_string()))?;
             let transfers = state.transfers.clone();
@@ -544,10 +581,15 @@ async fn handle(
             let cancel = path == "/api/session/transfer/cancel";
             let progress = path == "/api/session/transfer/progress";
             let result = tokio::spawn(async move {
-                if progress { transfers.progress(&registry, &client, &request).await }
-                else if cancel { transfers.cancel(registry, client, request).await }
-                else { transfers.execute(registry, client, request).await }
-            }).await;
+                if progress {
+                    transfers.progress(&registry, &client, &request).await
+                } else if cancel {
+                    transfers.cancel(registry, client, request).await
+                } else {
+                    transfers.execute(registry, client, request).await
+                }
+            })
+            .await;
             return match result {
                 Ok(Ok(value)) => ok(&value),
                 Ok(Err(e)) => Ok(error_json(StatusCode::CONFLICT, &e.message, &e.code)),

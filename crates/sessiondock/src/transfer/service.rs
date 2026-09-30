@@ -600,9 +600,9 @@ impl TransferService {
         if matches!(op.phase.as_str(), "complete" | "ready") {
             return Ok(op);
         }
-        if op.phase == "failed" && op.incoming_digest.is_some() {
+        if op.phase == "failed" && (!op.moving || op.incoming_digest.is_some()) {
             // A failed phase is written only after compensation succeeded.
-            // Retry the same received map; all preflight checks still run below.
+            // Retry the same identity map; all preflight checks still run below.
             op.phase = "planned".into();
             op.error = None;
             self.save(&op)?;
