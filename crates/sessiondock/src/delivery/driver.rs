@@ -877,6 +877,20 @@ impl HostTerminalDriver {
         Self { terminal }
     }
 
+    /// Includes scrollback so a local status card is visible on short PTYs.
+    pub(crate) async fn capture_history(&self, lease: &LeaseHandle) -> Result<String, DriverError> {
+        let target = lease.conversation.as_ref().ok_or_else(|| TerminalError {
+            status: 409,
+            code: "terminal_unavailable",
+            message: "缺少会话终端目标".into(),
+        })?;
+        Ok(self
+            .terminal
+            .capture_history_unleased(target.as_unleased())
+            .await?
+            .text)
+    }
+
     /// Resolved conversation targets do not claim or revoke browser PTY ownership.
     pub fn conversation_native(&self, target: &DeliveryTarget) -> LeaseHandle {
         LeaseHandle {

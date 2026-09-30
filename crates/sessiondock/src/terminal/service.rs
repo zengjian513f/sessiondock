@@ -507,6 +507,31 @@ impl TerminalService {
         }
     }
 
+    pub async fn capture_history_unleased(
+        &self,
+        target: UnleasedTarget<'_>,
+    ) -> Result<CaptureReply, TerminalError> {
+        match self
+            .request_unleased(
+                target,
+                ControlOp::Capture {
+                    kind: CaptureKind::Scrollback,
+                    styled: false,
+                    join: true,
+                    lines: 2000,
+                },
+            )
+            .await?
+        {
+            ControlReply::Capture(capture) => Ok(capture),
+            _ => Err(TerminalError::new(
+                503,
+                "terminal_unavailable",
+                "终端 host 未返回屏幕捕获",
+            )),
+        }
+    }
+
     async fn request_unleased(
         &self,
         target: UnleasedTarget<'_>,
