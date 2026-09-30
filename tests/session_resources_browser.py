@@ -32,7 +32,7 @@ def main():
                   window.resourceCalls = [];
                   SessionDockResources.setLoader(async (uid, scope) => {
                     resourceCalls.push({uid, scope});
-                    const metrics = {cpu_cores: {value: scope === 'inclusive' ? 4.5 : 1.25, status:'ok'}, gpu_count:{value:1,status:'ok'},
+                    const metrics = {cpu_cores: {value: scope === 'inclusive' ? 4.5 : 1.25, status:'ok'}, gpu_count:{value:1,status:'partial',reason:'NVIDIA compute-app residency only'},
                       memory_pss_bytes:{value:1073741824,status:'ok'}, nfs_read_bytes_per_second:{value:null,status:'unsupported',reason:'NFS 探针不可用'}};
                     return {sampled_at:1790812800, totals:metrics, nodes:[
                       {node_id:'a',node_name:'compute-a',status:'ok',metrics},
@@ -41,15 +41,27 @@ def main():
                 }''')
                 page.locator('[data-session-resources]').click()
                 page.get_by_role('dialog').wait_for()
-                page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('1.25')")
-                assert 'NFS 探针不可用' in page.locator('.sr-content').inner_text()
+                page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
+                assert page.locator('.sr-metric[title*="NFS 探针不可用"]').count() > 0
+                assert 'NFS 探针不可用' not in page.locator('.sr-content').inner_text()
+                assert page.locator('.sr-footnote, .sr-scope-help').count() == 0
+                assert 'NVIDIA' not in ' '.join(page.locator('.sr-metric').evaluate_all('(cells) => cells.map(cell => cell.title)'))
+                gpu = page.locator('.sr-totals .sr-metric').nth(1)
+                gpu.hover()
+                assert '不代表独占' in gpu.get_attribute('title')
+                assert page.locator('.sr-totals').bounding_box()['height'] < 190
                 offline = page.locator('.sr-node').filter(has_text='compute-b')
                 assert '机器离线' in offline.inner_text() and '—' in offline.inner_text()
-                page.get_by_role('button', name='含发起任务', exact=True).click()
+                assert page.evaluate('resourceCalls.at(-1).scope') == 'inclusive'
+                page.get_by_role('button', name='仅当前会话', exact=True).click()
+                page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('1.25')")
+                assert page.evaluate('resourceCalls.at(-1).scope') == 'direct'
+                assert page.get_by_role('button', name='仅当前会话', exact=True).get_attribute('aria-pressed') == 'true'
+                page.get_by_role('button', name='包含子会话', exact=True).click()
                 page.wait_for_function("document.querySelector('.sr-totals').textContent.includes('4.5')")
                 assert page.evaluate('resourceCalls.at(-1).scope') == 'inclusive'
                 page.get_by_role('button', name='刷新资源').click()
-                page.wait_for_function('resourceCalls.length >= 3')
+                page.wait_for_function('resourceCalls.length >= 4')
                 if args.screenshots:
                     args.screenshots.mkdir(parents=True, exist_ok=True)
                     page.screenshot(path=str(args.screenshots / 'resources-desktop.png'))
@@ -70,7 +82,7 @@ def main():
                 page.evaluate("SessionDockResources.setLoader(async () => {throw new Error('测试采集端离线')})")
                 page.locator('[data-session-resources]').click()
                 page.get_by_text('测试采集端离线').wait_for()
-                print('PASS resource drawer: selection, scope, refresh, offline/unknown, mobile, close and error', flush=True)
+                print('PASS resource drawer: selection, inclusive totals, Chinese tooltips, compact layout, refresh, offline/unknown, mobile, close and error', flush=True)
         finally:
             browser.close()
 

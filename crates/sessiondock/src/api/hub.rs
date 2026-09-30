@@ -142,6 +142,7 @@ pub struct HubState {
     /// One metadata observer per view, shared by all connected browsers.
     pub ui_events: Arc<EventBus>,
     pub labels: Arc<crate::hub::labels::Labels>,
+    pub resource_nodes: Arc<crate::hub::resources::RelatedNodes>,
 }
 
 /// The hub router: one gate, one dispatcher.
@@ -197,6 +198,7 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
         .clone()
         .spawn(registry.clone(), client.clone(), shutdown.clone());
     let state = HubState {
+        resource_nodes: Arc::new(crate::hub::resources::RelatedNodes::default()),
         labels,
         registry: registry.clone(),
         client: client.clone(),
@@ -439,9 +441,10 @@ async fn handle(
             .find(|(key, _)| key == "scope")
             .map(|(_, value)| value.as_str());
         let inclusive = crate::hub::resources::inclusive(scope).map_err(Reply::Invalid)?;
-        let value = crate::hub::resources::get(registry, client, uid, inclusive)
-            .await
-            .map_err(Reply::Invalid)?;
+        let value =
+            crate::hub::resources::get(&state.resource_nodes, registry, client, uid, inclusive)
+                .await
+                .map_err(Reply::Invalid)?;
         return ok(&value);
     }
     if method == Method::GET && path == "/api/labels" {

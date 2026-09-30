@@ -164,8 +164,14 @@ remain visible; this is not a complete historical billing ledger.
 
 `GET /api/session/resources?uid=...&scope=direct|inclusive` resolves the actual
 native session identity from the inventory, then reports totals and each
-execution machine. Hub reads fan out to registered nodes; unreachable, stale or
-unsupported nodes remain visible. Inclusive accounting takes the union of
+execution machine. Hub reads fan out to discover verified session bindings,
+but only the owning machine and verified execution participants appear in the
+view or its totals. Unrelated machines are hidden even when offline. A verified
+participant remains visible as unknown during an outage while the Hub retains
+that observation; changing API direct/inclusive scope does not change participation.
+The resource drawer defaults to inclusive accounting, with scopes labeled
+“仅当前会话” (direct) and “包含子会话” (inclusive), independent of machine location;
+metric definitions, sampling cadence and partial coverage appear in Chinese tooltips. Inclusive accounting takes the union of
 verified process identities, never sidebar nesting or summed child totals.
 GPU UUIDs are deduplicated within each machine. The local agent also publishes
 `sessions` using the same direct aggregation for Node Status consumers.
