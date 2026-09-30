@@ -10,7 +10,7 @@ for Claude's `latest` channel, npm `latest` for Codex), so no network is used.
 The matrix is exercised twice through the real UI: on the node's own page, and
 on a real `sessiondock-hub` page whose requests reach the node through the
 explicit `/api/nodes/<id>/api/…` proxy, next to a fake node that has Codex only
-(its Claude cell is empty). The update receives the profile's fixed arguments
+(its Claude cell is 无). The update receives the profile's fixed arguments
 and a closed stdin; a second request while one is running is refused, and an
 unknown profile ID is 404. No real CLI, native CLI home or production directory
 is touched.
@@ -93,23 +93,24 @@ def check_machine(page, base, state, machine):
     claude = row.locator('td[data-client-source="claude"]')
     expect(codex.locator(".client-version")).to_have_text(OLD)
     expect(codex).to_have_attribute("data-state", "outdated")
-    expect(codex.locator(".client-latest")).to_have_text(f"→ {NEW}")
+    expect(codex).to_have_text(f"{OLD}↑")                      # just the version and the arrow
+    assert f"可更新到 {NEW}" in codex.get_attribute("title")
     expect(claude.locator(".client-version")).to_have_text("2.1.1")
     expect(claude).to_have_attribute("data-state", "current")
-    expect(claude.locator(".client-latest")).to_have_text("最新")
+    expect(claude).to_have_text("2.1.1↑")
 
     # A successful update: the button waits while the CLI runs, then the cell is current.
     codex.locator(".client-update").click()
-    expect(codex.locator(".client-update")).to_have_text("更新中…")
+    expect(codex.locator(".client-update")).to_have_text("…")
     expect(codex.locator(".client-update")).to_be_disabled()
     expect(codex.locator(".client-version")).to_have_text(NEW, timeout=20000)
     expect(page.locator("#machine-note")).to_have_text(f"{machine}：Codex 已更新 {OLD} → {NEW}。")
     expect(codex).to_have_attribute("data-state", "current")
-    expect(codex.locator(".client-latest")).to_have_text("最新")
+    expect(codex.locator(".client-update")).to_have_text("↑")
     expect(codex.locator(".client-update")).to_be_enabled()
     title = codex.get_attribute("title")
     assert f"Codex CLI {NEW} installed successfully." in title and "\x1b" not in title, title
-    assert f"最新版本：{NEW}" in title and "10%" not in title and "100%" in title, title
+    assert f"已是最新（{NEW}）" in title and "10%" not in title and "100%" in title, title
     argv = (state / "codex.argv").read_text().splitlines()
     assert argv == CODEX_ARGS + ["update"], argv
     assert (state / "codex.stdin").read_text().strip() == "stdin-closed"
@@ -214,7 +215,7 @@ def main():
                         hub_base = f"http://127.0.0.1:{hub.port}"
                         check_machine(page, hub_base, state, "Pavo")
                         vega = matrix_row(page, "Vega")
-                        expect(vega.locator('td[data-client-source="claude"]')).to_have_text("—")
+                        expect(vega.locator('td[data-client-source="claude"]')).to_have_text("无")
                         expect(vega.locator('td[data-client-source="codex"] .client-version')).to_have_text("0.1.0")
                         expect(vega.locator('td[data-client-source="codex"]')).to_have_attribute("data-state", "current")
                         print("PASS hub matrix through the explicit node proxy, with an empty cell")

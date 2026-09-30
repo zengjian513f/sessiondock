@@ -437,7 +437,7 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
   background: var(--panel-2); color: var(--text); font: inherit;
 }
 .machine-row select:focus { outline: none; border-color: var(--accent); }
-/* AI 客户端矩阵：行是机器、列是客户端；窄屏在自己的框里横向滚动 */
+/* AI 客户端矩阵：行是机器、列是客户端，格子里左版本号右 ↑；窄屏在自己的框里横向滚动 */
 #client-matrix { overflow-x: auto; }
 .client-matrix { width: 100%; border-collapse: collapse; font-size: 12px; }
 .client-matrix th, .client-matrix td {
@@ -447,18 +447,15 @@ header.header-fold-nodes #node-chips button { min-width: 28px; padding-inline: 6
 .client-matrix tbody tr:last-child > * { border-bottom: 0; }
 .client-matrix tbody th { font-weight: 600; }
 .client-matrix tbody th .machine-swatch { display: inline-block; vertical-align: -2px; margin-right: 6px; }
-.client-matrix .client-version {
-  font-size: 11.5px; color: var(--text); background: var(--panel-2); padding: 1px 5px; border-radius: 4px;
-}
-.client-matrix .client-latest { margin-left: 4px; color: var(--muted); }
-.client-matrix td[data-state="outdated"] .client-latest { color: var(--accent); font-weight: 600; }
+.client-matrix .client-cell { display: inline-flex; align-items: center; gap: 6px; }
+.client-matrix .client-version { font-size: 11.5px; color: var(--text); }
 .client-matrix .client-update {
-  margin-left: 6px; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px;
-  background: transparent; color: var(--muted); font: inherit; cursor: pointer;
+  width: 20px; height: 20px; padding: 0; border: 1px solid transparent; border-radius: 5px;
+  background: transparent; color: var(--muted); font: inherit; font-weight: 700; line-height: 1; cursor: pointer;
 }
-.client-matrix td[data-state="outdated"] .client-update { border-color: var(--accent); color: var(--accent); }
 .client-matrix .client-update:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.client-matrix .client-update:disabled { cursor: default; opacity: .7; }
+.client-matrix td[data-state="outdated"] .client-update { border-color: var(--accent); color: var(--accent); }
+.client-matrix .client-update:disabled { cursor: default; }
 .client-matrix .client-missing, .client-matrix .client-status { color: var(--muted); }
 .machine-color { position: relative; display: flex; flex: none; }
 .machine-swatch {

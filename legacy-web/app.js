@@ -9419,13 +9419,14 @@ function renderClientMatrix() {
     row.append(name);
     const entry = machineClients.get(target.id);
     const status = target.online === false ? '离线'
-      : !entry || (entry.loading && !entry.clients) ? '正在读取…'
-      : entry.error && !entry.clients ? `无法读取：${entry.error}` : '';
+      : !entry || (entry.loading && !entry.clients) ? '…'
+      : entry.error && !entry.clients ? '失败' : '';
     if (status) {
       const cell = row.insertCell();
       cell.colSpan = Math.max(1, sources.length);
       cell.className = 'client-status';
       cell.textContent = status;
+      if (status === '失败') cell.title = entry.error;
       continue;
     }
     for (const source of sources) {
@@ -9435,14 +9436,14 @@ function renderClientMatrix() {
       if (client) fillClientCell(cell, target, client);
       else {
         cell.className = 'client-missing';
-        cell.textContent = '—';
-        cell.title = '这台机器未安装';
+        cell.textContent = '无';
       }
     }
   }
   box.append(table);
 }
 
+// 格子只有版本号和一个 ↑：有新版时 ↑ 高亮；最新版本号、更新结果都在悬停提示里
 function fillClientCell(cell, target, client) {
   const running = !!client.update?.running;
   const outdated = client.version && client.latest && compareVersions(client.version, client.latest) < 0;
@@ -9450,30 +9451,30 @@ function fillClientCell(cell, target, client) {
     : client.version && client.latest ? 'current' : 'unknown';
   const version = document.createElement('code');
   version.className = 'client-version';
-  version.textContent = client.version || client.detail || '版本未知';
-  const mark = document.createElement('span');
-  mark.className = 'client-latest';
-  mark.textContent = outdated ? `→ ${client.latest}` : cell.dataset.state === 'current' ? '最新' : '';
+  version.textContent = client.version || '?';
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'client-update';
-  button.textContent = running ? '更新中…' : '更新';
+  button.textContent = running ? '…' : '↑';
   button.disabled = running;
   button.setAttribute('aria-label', `更新 ${target.name} 上的 ${clientName(client)}`);
   button.onclick = () => void updateMachineClient(target, client, button);
   const tips = [client.detail || '',
-    client.latest ? `最新版本：${client.latest}` : '未能查到最新版本'];
+    !client.latest ? '未查到最新版本' : outdated ? `可更新到 ${client.latest}` : `已是最新（${client.latest}）`];
   if (client.update && !running) {
     tips.push(clientUpdateSummary(target, client));
     if (client.update.output) tips.push(client.update.output);
   }
   cell.title = tips.filter(Boolean).join('\n\n');
-  cell.append(version, mark, button);
+  const wrap = document.createElement('span');
+  wrap.className = 'client-cell';
+  wrap.append(version, button);
+  cell.append(wrap);
 }
 
 async function updateMachineClient(target, client, button) {
   button.disabled = true;
-  button.textContent = '更新中…';
+  button.textContent = '…';
   setMachineNote(`${target.name}：正在更新 ${clientName(client)}…`);
   try {
     const response = await fetch(appUrl(machineApi(target, 'api/clients/update')), {
