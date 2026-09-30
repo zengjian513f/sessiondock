@@ -1,8 +1,8 @@
-# 会话整组移动与克隆（设计稿）
+# 会话整组移动与克隆
 
-状态：**实现中：Codex、Claude、Grok 同机复制及跨节点移动/复制已接入页面，跨节点可选是否改身份；完整原生格式与版本审计仍待完成**（2026-10-01）。Python 没有这项功能，属于用户明确要求的
+状态：**已实现并完成下述范围验收**（2026-10-01）：Codex、Claude、Grok 同机复制、跨节点移动/复制及可选身份重写。Python 没有这项功能，属于用户明确要求的
 新功能，不适用"只做到 Python 对齐"的限制；但除本文列出的拒绝条件外，不要另加限制。
-实现落地后，把本文改写成现行合同，并删掉 [TODO.md](../TODO.md) 里对应的条目。
+本文是现行合同；验收范围和证据见[交付验收](#交付验收)。
 
 用户确认采用整组操作，并同时实现移动和克隆。选中任意会话，沿关系和历史依赖双向展开，
 处理整个连通组，不能只带选中分支而留下它的兄弟分支或祖先的子代理。
@@ -394,16 +394,18 @@ Hub 的 `GET /api/session/transfers` 返回未结束的跨节点操作；
 保证完整 uid 字符串不变。
 
 当前面板已提供目标、操作、身份选项和整组表格；Codex、Claude、Grok 同机新身份复制及跨机
-移动/复制可以执行，跨机支持保留或改变身份。完整传输验收仍按本文后续流程进行。
+移动/复制可以执行，跨机支持保留或改变身份。已完成的传输验收见下文。
 
 
-- 能力标志：`session_move`、`session_clone`（[capabilities.md](capabilities.md)），分别在实现和验证
-  完整后开启。入口位于 Hub；移动要求至少一个其他节点支持，克隆的目标也可为源节点本身。
-- 侧栏菜单和会话标题菜单加"移动整组…"和"克隆整组…"，打开统一对话框（`popup.js`）：
+- 能力标志沿用现有协议：`session_clone_local_codex`（也包含 Claude/Grok）、
+  `session_clone_remote`、`session_move_remote`，见 [capabilities.md](capabilities.md)。
+  入口位于 Hub；移动要求另一个节点支持，复制的目标也可为源节点本身。
+- 侧栏和会话标题菜单的“移动 / 复制整组…”打开统一面板（`popup.js`）：
   - 目标机器列表，不可用的置灰，并给一行原因。
   - 显示"整组 N 个会话"，列出所有兄弟分支、祖先、子代理及附带历史文件和去重后的总大小。
     不提供取消勾选单个成员的拆组操作；不支持成员和运行中成员明确标记。
-  - 克隆说明"原会话保留，创建一组新会话"及"工作目录不复制"；共享存储时说明新组共同可见。
+  - 源机器与目标机器并排同样式显示；源机器为灰色静态控件，没有下拉箭头。
+    不添加重复的操作解释；确有阻碍或环境差异时显示具体原因。
   - 按钮文案分别为"移动整组"和"克隆整组"。执行过程中显示当前步骤和进度。
 - 文案用普通话，不暴露 plan_id、staging 这类内部概念。一致时不出任何提示。
 - 多选第一版不支持：一次选择一个 S，操作其整个连通组。
@@ -476,6 +478,35 @@ Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
 - 真实 CLI（`--include-real`）：按上文"第一步先做 Codex 实测"的方法，在临时 home 下复制后
   resume，并断言实际使用的模型。
 - 文档：`python3 tests/check_docs_links.py`；新错误码重新生成 `error-codes.md`。
+
+## 交付验收
+
+以下是 2026-10-01 收尾时核对的验收结果。浏览器套件使用临时合成会话和真实节点/Hub，
+实际点击入口、选择操作、确认并打开目标历史；原生测试另使用隔离 home 和规定的低成本模型。
+未用生产会话做测试。早期章节中的单项实验限制只描述当时样本，不替代本表后续证据。
+
+| 要求 | 已核对证据与结果 |
+|---|---|
+| 同机整组复制，Codex 分页 fork、多代 rollout、归档和 code-mode 子代理 | [session_clone_browser.py](../tests/session_clone_browser.py) 页面操作通过；[session_clone_service_real.py](../tests/session_clone_service_real.py) 原生完整分页、列表、当前版本、元数据及新旧组分别续聊通过 |
+| Claude/Grok 分支、子代理、跨父会话代理引用 | [session_files_clone_browser.py](../tests/session_files_clone_browser.py) 页面整组复制、历史打开、源文件不变、失败补偿和重启重试通过；最后一次包含 Grok 检查点依赖，共 9 项 PASS |
+| 混合来源连通组、同 SID 不同来源、跨来源归属 | [session_mixed_clone_browser.py](../tests/session_mixed_clone_browser.py) 十四会话组、发布失败补偿和重启重试通过 |
+| 跨机移动/复制 × 保留/改变身份 | [session_mixed_bundle_browser.py](../tests/session_mixed_bundle_browser.py) 在两台主机的独立临时存储完成四种组合；目标三种历史与关系、源端保留/清理、Codex 同 SID 两代 rollout 均通过 |
+| 真实复杂会话迁移后恢复 | [session_native_transfer.py](../tests/session_native_transfer.py) 的原生迁移路径：Codex 五会话组、Claude/Grok 各三会话组，分别完成保留与重写身份；原生恢复与续聊、源端清理、无关会话保留、日常配置不变通过。Claude 为跨机往返后在最终目标续聊 |
+| 目标已有副本、前缀扩展和失败恢复 | [session_prefix_browser.py](../tests/session_prefix_browser.py) 三种来源复制/移动及文件、原生行、显示设置恢复通过；[session_bundle_browser.py](../tests/session_bundle_browser.py) 相同目标复用与续写后重试不覆盖通过 |
+| 停写、交接、清理与中断恢复 | [session_bundle_browser.py](../tests/session_bundle_browser.py) 覆盖源锁、部分清理、新外部引用、移回、旧回执、草稿别名、Hub/节点重启；保留和重写身份的移动均通过 |
+| cwd 内容、外部附件及共享存储 | 同一双机套件 `--dependencies` 覆盖三种来源外部图片/结果/链接的缺失与异内容；独立本地存储和共享 NFS 探针实测通过；共享会话存储拒绝移动，不执行源端删除 |
+| 原生 goal、附件关联、实时历史 | [session_clone_browser.py](../tests/session_clone_browser.py) 结构与映射验证通过；[session_goals_native_browser.py](../tests/session_goals_native_browser.py) 原生读取 goal/附件并独立修改克隆通过。实时连接不迁移 |
+| Claude 原生文件回退 | [session_claude_rewind_browser.py](../tests/session_claude_rewind_browser.py) 原生 Edit、浏览器复制、新检查点回退及文件原字节恢复通过 |
+| Grok 原生压缩检查点 | [session_grok_checkpoint_browser.py](../tests/session_grok_checkpoint_browser.py) Grok 1.0.44 原生压缩、浏览器复制、加载、回退和续聊读回标记通过；源文件和日常配置不变 |
+| 目标 CLI 与动态工具提示 | [session_transfer_environment_browser.py](../tests/session_transfer_environment_browser.py) 缺 CLI、版本较旧/未知、切换目标后迟到响应及执行器未核验提示通过 |
+| 表格、机器与身份选择、禁用提示、窄屏及任务进度 | [session_clone_browser.py](../tests/session_clone_browser.py) 控件与 tooltip 通过；双机套件覆盖持久进度、刷新恢复和窄屏入口 |
+| 交付 | 实现及测试已提交、推送；官方 `deploy --all` 已更新六个在线应用目标并通过健康检查，现有 ptyhost 保留。Cetus 离线跳过，未宣称该目标已更新 |
+
+原生 Codex 证据覆盖 0.159.0 的克隆与 0.159.2 的复杂迁移；Grok 检查点证据为 1.0.44。
+这些结果不构成所有 CLI 版本组合的兼容承诺。导入按实际原生 schema 核对，不创建或升级
+CLI 数据库，不覆盖目标整库；不匹配时保留现场并报错。动态工具定义可迁移，但执行器、
+认证及外部服务仍属于目标环境，页面会明确标为未核验。第一版 Linux、相同 CLI 根和 cwd
+范围，以及不迁移进程/PTY、不复制工作目录的边界保持不变。
 
 ## 风险清单
 
