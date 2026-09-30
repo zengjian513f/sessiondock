@@ -321,6 +321,7 @@
       <button type="button" class="modal-close" title="关闭" aria-label="关闭">×</button>
     </div>
     <div class="new-row">
+      <label id="new-node-label" class="node-select" hidden title="机器"><span class="visually-hidden">机器</span><select id="new-node"></select></label>
       <fieldset class="new-source">
         <legend class="visually-hidden">会话类型</legend>
         <label title="Claude"><input type="radio" name="new-source" value="claude" checked><span><svg class="ico source-icon" data-source="claude" aria-hidden="true"><use href="#i-claude"/></svg><em class="src-label">Claude</em></span></label>
@@ -344,7 +345,6 @@
     </div>
     <div class="new-cwd-combobox">
       <div class="new-where">
-        <label id="new-node-label" class="node-select" hidden title="机器"><span class="visually-hidden">机器</span><select id="new-node"></select></label>
         <div class="new-cwd-field">
           <label class="new-cwd-label" for="new-cwd">启动目录</label>
           <input id="new-cwd" name="cwd" autocomplete="off" spellcheck="false"
