@@ -416,6 +416,33 @@ impl LifecycleService {
         .await
         .map_err(|_| Error::WorkerFailed)?
     }
+    /// Agent CLI versions for the machine settings, probed under the same
+    /// admission as the model catalog.
+    pub async fn clients(&self) -> Result<Vec<super::clients::Client>, Error> {
+        if self.stop.is_cancelled() {
+            return Err(Error::Closed);
+        }
+        let permit = tokio::select! {
+            _ = self.stop.cancelled() => return Err(Error::Closed),
+            permit = self.admission.clone().acquire_owned() => permit.map_err(|_| Error::Closed)?,
+        };
+        let launcher = self.launcher.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            launcher.clients()
+        })
+        .await
+        .map_err(|_| Error::WorkerFailed)
+    }
+    /// Start the profile's CLI update on its own thread and return at once.
+    /// It holds no admission: a download of minutes must not delay session
+    /// creation, and the CLI replaces only its own installation.
+    pub fn start_client_update(&self, id: String) -> Result<(), super::clients::UpdateError> {
+        self.launcher.begin_update(&id)?;
+        let launcher = self.launcher.clone();
+        std::thread::spawn(move || launcher.run_update(&id));
+        Ok(())
+    }
     /// Model catalog for the new-session picker: reads CLI caches or runs
     /// the CLI's own list command, bounded, under the same admission.
     pub async fn models(&self, source: Source) -> Result<super::models::Catalog, Error> {

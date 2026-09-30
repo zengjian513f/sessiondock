@@ -2,6 +2,7 @@
 use crate::{
     error::ApiError,
     lifecycle::{
+        clients::UpdateError,
         launcher::{DEFAULT_COMPLETIONS, Entry},
         model::{Launch, LaunchSpec, Record, Source, State as LaunchState},
         service::{Error as ServiceError, LifecycleService},
@@ -864,6 +865,42 @@ pub async fn models(
     let Query(query) = query.map_err(|_| invalid())?;
     let catalog = service.models(query.source).await.map_err(failure)?;
     response(json!(catalog), permit).await
+}
+
+/// This machine's agent CLIs with their versions and latest manual update.
+pub async fn clients(State(state): State<AppState>) -> Result<Response, ApiError> {
+    let service = enabled(&state)?;
+    let permit = admit(&state).await?;
+    let clients = service.clients().await.map_err(failure)?;
+    response(json!({ "clients": clients }), permit).await
+}
+
+#[derive(Deserialize)]
+pub struct ClientUpdateRequest {
+    id: String,
+}
+/// Start one CLI's own `update` in the background; the page polls
+/// `GET /api/clients` for the outcome.
+pub async fn client_update(
+    State(state): State<AppState>,
+    body: Result<Json<ClientUpdateRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let service = enabled(&state)?;
+    let permit = admit(&state).await?;
+    let body = parse_body(body)?;
+    match service.start_client_update(body.id) {
+        Ok(()) => response(json!({ "started": true }), permit).await,
+        Err(UpdateError::Unknown) => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "unknown_client",
+            "这台机器没有配置该客户端",
+        )),
+        Err(UpdateError::Running) => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "client_update_running",
+            "该客户端正在更新，请等它结束",
+        )),
+    }
 }
 
 #[derive(Deserialize)]
