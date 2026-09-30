@@ -467,6 +467,7 @@ function browserStateSnapshot(reason = '') {
     name: T.name, uid: T.uid, mode: T.mode,
     visible: !$('#termpane')?.classList.contains('hidden'),
     connected: T.ws?.readyState ?? null,
+    frozen: (T.list || []).find(row => row.uid === S.sel)?.frozen ?? null,
   };
   return {
     data: {
@@ -5413,7 +5414,7 @@ function bindSessionActions(heading) {
 }
 
 // 会话头任何宽度都只占一行，且不因折叠留白。一行上的重要程度：标题 → 操作按钮（按菜单顺序：
-// 星标、折叠过程、报告、搜索、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
+// 星标、折叠过程、搜索、冻结/恢复与报告、移动/复制、停止/删除）→ 元信息（消息数、大小、起止时间、机器、目录、来源、
 // 模型、会话号、分支）。宽屏/中屏长标题让到标题行的 40%（不少于 8em）为止，窄屏标题不让位；
 // 标题之后先按顺序平铺操作，全放下了再把元信息按顺序跟在标题后面（.dbrief）；从放不下的那一项起
 // 后面的全部收进 ⋯ 菜单（放不下某个按钮时元信息也不放，免得次要的露着、重要的反而折了）；
@@ -5795,11 +5796,14 @@ function head(m, total) {
           title="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-label="${S.compactTurns ? '展开所有过程' : '折叠已完成过程'}"
           aria-pressed="${!S.compactTurns}">${uiIcon('process')}</button>
-        <button class="session-menu-action" data-report-bug title="报告当前会话问题"
-          aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         ${S.term ? `<div class="session-menu-search"><b id="mcount">…</b>
           <button class="session-menu-action" id="m-prev" title="上一处" aria-label="上一处匹配">↑</button>
           <button class="session-menu-action" id="m-next" title="下一处" aria-label="下一处匹配">↓</button></div>` : ''}
+        <div class="session-menu-diagnostics">
+          ${m.agent_id ? '' : '<button class="session-menu-action" id="a-session-freeze" hidden></button>'}
+          <button class="session-menu-action" data-report-bug title="报告当前会话问题"
+            aria-label="报告当前会话问题">${uiIcon('bug')}</button>
+        </div>
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
@@ -5979,7 +5983,45 @@ function unusedNewAssignedLaunch(session) {
   return launch;
 }
 
+function renderSessionFreeze(m, button = $('#a-session-freeze')) {
+  if (!button || m.uid !== S.sel) return;
+  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid
+    && row.instance_id && !row.stale && typeof row.frozen === 'boolean');
+  const wasHidden = button.hidden;
+  button.hidden = !row || (!HUB_MODE && SessionDockCapabilities.config.session_freeze !== true);
+  const heading = button.closest('.dhead');
+  if (wasHidden !== button.hidden && heading?.isConnected)
+    requestAnimationFrame(() => { if (heading.isConnected) layoutSessionHead(heading); });
+  if (button.hidden) return;
+  const label = row.frozen ? '恢复运行' : '冻结现场';
+  button.innerHTML = uiIcon(row.frozen ? 'play' : 'pause');
+  button.title = button.ariaLabel = label;
+  button.setAttribute('aria-pressed', String(row.frozen));
+  labelSessionAction(button);
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const result = await post('api/session/freeze', {uid:m.uid,
+        instance_id:row.instance_id, frozen:!row.frozen});
+      if (result.error || !result.ok) throw new Error(result.error || '请求失败');
+      row.frozen = result.frozen;
+      browserAuditEvent('session.freeze', {uid:m.uid, instance_id:row.instance_id,
+        frozen:result.frozen, process_count:result.process_count});
+      showSessionStopNotice(result.frozen
+        ? '现场已冻结：会话及子进程已暂停，可报告问题；排查后点击“恢复运行”'
+        : '会话已恢复运行', result.frozen);
+    } catch (error) {
+      showSessionStopNotice(`冻结 / 恢复失败：${error.message || error}`, true);
+    } finally {
+      await loadTermList();
+      renderSessionFreeze(m);
+      button.disabled = false;
+    }
+  };
+}
+
 function renderSessionAction(m, button = $('#a-session-action')) {
+  renderSessionFreeze(m, button?.closest('.dhead')?.querySelector('#a-session-freeze'));
   if (!button || m.uid !== S.sel) return;
   if (m.fork_parent) {
     const shown = !!m.fork_parent_visible;

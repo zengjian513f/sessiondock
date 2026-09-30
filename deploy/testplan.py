@@ -24,7 +24,7 @@ FULL = "<full>"                       # target sentinel: run the whole default s
 RUST = ["cargo_*"]                    # fmt/clippy/check/build; cargo_test is off the default --list
 DOCS = ["tests/check_docs_links.py", "tests/check_agents_md.py"]
 PTYHOST = RUST + ["terminal*", "term_*", "lifecycle*", "cutover*", "host*", "native_*", "managed_*", "send_*",
-                  "live_*", "session_stop_*", "pending_*", "restart_state_*", "bug_report_*"]
+                  "live_*", "session_stop_*", "session_freeze_*", "pending_*", "restart_state_*", "bug_report_*"]
 # crates/sessiondock/src/<module>/** or src/<module>.rs -> Python suite patterns (RUST is always
 # added).  A module absent here gets "<module>*"; if that matches nothing -> FULL.
 MODULE_SUITES = {
@@ -32,13 +32,13 @@ MODULE_SUITES = {
                  "claude_*", "grok_*", "agent_*", "orphan_*", "continued_*", "fork_*",
                  "list_rows_*", "input_history_*", "inventory_*", "debug_runs_*", "symlink_*",
                  "unicode_*", "names_*", "budget_*", "reader_pool_*", "sse_*", "rewind_*"],
-    "terminal": ["terminal_*", "term_*", "managed_*", "session_stop_*"],
-    "lifecycle": ["lifecycle_*", "send_*", "pending_*", "restart_state_*", "live_*", "session_stop_*"],
+    "terminal": ["terminal_*", "term_*", "managed_*", "session_stop_*", "session_freeze_*"],
+    "lifecycle": ["lifecycle_*", "send_*", "pending_*", "restart_state_*", "live_*", "session_stop_*", "session_freeze_*"],
     "hub": ["hub_*", "node_auth_*"], "hub_config": ["hub_*"], "bin": ["hub_*"],
     "search": ["search_*"], "media": ["media_*", "native_*"], "files": ["file*"],
     "delivery": ["delivery_*", "send_*"], "bug_report": ["bug_report_*"],
     "audit": ["audit_*"], "metadata": ["metadata_*", "prefs_*"], "trash": ["trash_*"],
-    "runtime": ["live_*", "spawned_by_*", "managed_*", "restart_state_*", "lifecycle_*"],
+    "runtime": ["session_freeze_*", "live_*", "spawned_by_*", "managed_*", "restart_state_*", "lifecycle_*"],
     "bridge": ["claude_prompt_*", "prompt_*", "live_*"], "native_replay": ["native_*"],
     "assets": ["static_assets_*", "meta_*", "prefs_*"],
 }

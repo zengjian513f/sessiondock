@@ -26,6 +26,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::time::{Instant, timeout_at};
 
+pub mod freeze;
 pub mod process;
 pub mod procscan;
 pub mod spawn;

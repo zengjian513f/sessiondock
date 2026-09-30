@@ -1176,6 +1176,21 @@ pub async fn stop(
         )
         .await;
     }
+    // A stopped tree cannot consume EOF/HUP; resume it before the ordinary
+    // guarded shutdown so paused descendants are not left orphaned.
+    if let [target] = targets.as_slice()
+        && let Some(host) = observed.hosts.iter().find(|host| {
+            host.instance_id.as_deref() == Some(target.instance_id())
+                && host.summary.name == target.name()
+        })
+        && let crate::runtime::ProcessEvidence::Verified { child, .. } = host.process
+        && crate::runtime::freeze::frozen(child)
+    {
+        crate::runtime::freeze::set(child, false).await.map_err(|error| {
+            ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "freeze_resume_failed",
+                format!("停止前无法恢复冻结进程：{error}；请先恢复运行后重试"))
+        })?;
+    }
     let session = observed.sessions.get(&uid);
     let candidate = match targets.as_slice() {
         [target] => crate::lifecycle::service::StopCandidate::Instance(Box::new((*target).clone())),
@@ -1234,4 +1249,73 @@ pub async fn stop(
             response(value, permit).await
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct FreezeRequest {
+    uid: String,
+    instance_id: String,
+    frozen: bool,
+    #[serde(default)]
+    _page_id: String,
+    #[serde(default)]
+    _trace_id: String,
+    #[serde(default)]
+    _build: String,
+}
+
+/// Pin the current managed instance and its verified OS incarnation. No host
+/// protocol change is needed, so existing sessions remain available.
+pub async fn freeze(
+    State(state): State<AppState>,
+    body: Result<Json<FreezeRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    enabled(&state)?;
+    let permit = admit(&state).await?;
+    let body = parse_body(body)?;
+    let observed = super::runtime::observe(&state)
+        .await?
+        .ok_or_else(|| ApiError::unavailable("会话冻结"))?;
+    let targets: Vec<_> = observed
+        .hosts
+        .iter()
+        .filter(|host| {
+            host.bound_target()
+                .is_some_and(|target| target.uid() == body.uid)
+                && host.instance_id.as_deref() == Some(body.instance_id.as_str())
+        })
+        .collect();
+    let [host] = targets.as_slice() else {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "freeze_instance_changed",
+            "运行实例已变化或不可确认，请刷新后重试",
+        ));
+    };
+    let crate::runtime::ProcessEvidence::Verified { child, .. } = host.process else {
+        return Err(ApiError::unavailable("进程身份验证"));
+    };
+    let count = crate::runtime::freeze::set(child, body.frozen)
+        .await
+        .map_err(|error| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "freeze_failed",
+                format!("无法冻结或恢复会话进程：{error}"),
+            )
+        })?;
+    if let Some(audit) = &state.audit {
+        audit.record(crate::audit::query::ServerEvent {
+            event: "session.freeze", category: "terminal", severity: "info",
+            uid: &body.uid, trace_id: &body._trace_id, page_id: &body._page_id,
+            build: &body._build,
+            data: json!({"frozen":body.frozen,"instance_id":body.instance_id,"process_count":count}),
+        });
+    }
+    response(
+        json!({"ok":true,"frozen":body.frozen,"instance_id":body.instance_id,
+        "process_count":count}),
+        permit,
+    )
+    .await
 }

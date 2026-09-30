@@ -92,7 +92,7 @@ HEAD_STATE_JS = f"""() => {{
     globals: [...actions.querySelectorAll('[id^="a-global-"]')]
       .sort((a, b) => a.dataset.order - b.dataset.order).map(id),
     inline: [...actions.querySelectorAll('button')].filter(b => !b.hidden && b.offsetWidth).map(id),
-    menu_actions: [...document.querySelectorAll('#session-actions-menu [role="menu"] > *')].map(id),
+    menu_actions: [...document.querySelectorAll('#session-actions-menu [role="menu"] button')].filter(b => !b.hidden).map(id),
     brief: [...document.querySelectorAll('.dbrief > *')].map(key),
     menu_meta: [...document.querySelectorAll('#session-actions-menu .dmeta > *')].map(key),
     more: !!more && !more.hidden && more.offsetWidth > 0,
