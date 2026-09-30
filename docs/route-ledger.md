@@ -13,7 +13,7 @@ linked from [the documentation index](README.md).
 | Sync and search | GET `/api/events` (lightweight UI changes), `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
 | Runtime state | GET `/api/live`, `/api/term/list` | capability-gated |
 | Preferences and timeline | POST `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
-| Group copies | POST `/api/session/clone/plan`, `/api/session/clone`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel` | capability-gated |
+| Group copies | POST `/api/session/clone/plan`, `/api/session/clone`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel`, `/api/session/transfer/progress`; GET `/api/session/transfers` | capability-gated |
 | Private transfer channel | POST `/api/session/transfer/manifest`, `/api/session/transfer/check`, `/api/session/transfer/reserve`, `/api/session/transfer/export`, `/api/session/transfer/receive`, `/api/session/transfer/status`, `/api/session/transfer/release` | authenticated node listener only |
 | Private move handoff | POST `/api/session/transfer/abort`, `/api/session/transfer/switch`, `/api/session/transfer/activate`, `/api/session/transfer/retire` | authenticated node listener only |
 | Creation and control | POST `/api/term/create`, `/api/term/takeover`, `/api/term/kill`, `/api/term/bind`, `/api/term/discard`, `/api/term/backend`, `/api/session/stop`, `/api/session/freeze`; GET `/api/term/new-status`, `/api/term/complete-dir`, `/api/term/models` | capability-gated |

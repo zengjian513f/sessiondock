@@ -18,6 +18,14 @@ struct Journal {
     request: Request,
     phase: String,
     result: Option<Value>,
+    #[serde(default)]
+    preview: Option<Value>,
+    #[serde(default)]
+    bytes_sent: u64,
+    #[serde(default)]
+    bytes_total: u64,
+    #[serde(default)]
+    error: Option<String>,
 }
 pub struct Transfers {
     directory: PathBuf,
@@ -64,6 +72,78 @@ impl Transfers {
         .await
         .map_err(|e| TransferError::new("move_io", e.to_string()))?
     }
+    fn public(journal: &Journal) -> Value {
+        json!({"request":journal.request,"phase":journal.phase,"plan":journal.preview,
+            "bytes_sent":journal.bytes_sent,"bytes_total":journal.bytes_total,
+            "error":journal.error,"result":journal.result})
+    }
+    /// Atomic journals are readable while execution owns the mutation gate.
+    pub fn pending(&self) -> Result<Value, TransferError> {
+        let mut pending = Vec::new();
+        for entry in fs::read_dir(&self.directory)? {
+            let path = entry?.path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            let journal: Journal = serde_json::from_slice(&fs::read(path)?)?;
+            if !matches!(journal.phase.as_str(), "complete" | "aborted") {
+                pending.push(Self::public(&journal));
+            }
+        }
+        Ok(json!({"operations":pending}))
+    }
+    pub async fn progress(
+        &self,
+        registry: &Registry,
+        client: &Client,
+        request: &Request,
+    ) -> Result<Value, TransferError> {
+        let mut journal: Journal =
+            serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
+        if journal.request != *request {
+            return Err(TransferError::new(
+                "move_conflict",
+                "操作已绑定其他迁移目标",
+            ));
+        }
+        // Journals written by older versions have no preview. Fetch only this
+        // selected operation; listing tasks must work even when a node is offline.
+        if journal.preview.is_none() {
+            let (source_id, _) = namespace::split(&request.uid, true)
+                .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+            let source = registry
+                .get(&source_id)
+                .ok_or_else(|| TransferError::new("move_node_unavailable", "源机器不可用"))?;
+            let address = registry
+                .target(&source)
+                .map_err(|_| TransferError::new("move_node_unavailable", "源机器不可用"))?;
+            let state = call(
+                client,
+                &address,
+                "/api/session/transfer/status",
+                &json!({"operation_id":request.operation_id}),
+                true,
+            )
+            .await?
+            .1;
+            journal.preview = Some(namespace::public_payload(
+                state,
+                &source,
+                "/api/session/clone",
+            ));
+        }
+        Ok(Self::public(&journal))
+    }
+    async fn record_error(&self, request: &Request, error: &TransferError) {
+        if let Ok(path) = self.path(&request.operation_id)
+            && let Ok(raw) = fs::read(path)
+            && let Ok(mut journal) = serde_json::from_slice::<Journal>(&raw)
+            && journal.request == *request
+        {
+            journal.error = Some(error.message.clone());
+            let _ = self.save(&journal).await;
+        }
+    }
     pub async fn cancel(
         &self,
         registry: Arc<Registry>,
@@ -79,7 +159,11 @@ impl Transfers {
                 "操作已绑定其他迁移目标",
             ));
         }
-        self.abort(&registry, &client, &mut journal).await
+        let result = self.abort(&registry, &client, &mut journal).await;
+        if let Err(error) = &result {
+            self.record_error(&request, error).await;
+        }
+        result
     }
     async fn abort(
         &self,
@@ -170,7 +254,8 @@ impl Transfers {
         let result = self
             .run(registry.clone(), client.clone(), request.clone())
             .await;
-        if result.is_err() {
+        if let Err(error) = &result {
+            self.record_error(&request, error).await;
             if let Ok((source, _)) = namespace::split(&request.uid, true) {
                 if let Some(node) = registry.get(&source) {
                     if let Ok(target) = registry.target(&node) {
@@ -230,6 +315,10 @@ impl Transfers {
                 request: request.clone(),
                 phase: "planned".into(),
                 result: None,
+                preview: None,
+                bytes_sent: 0,
+                bytes_total: 0,
+                error: None,
             }
         };
         if journal.phase == "complete" {
@@ -257,6 +346,7 @@ impl Transfers {
         let target_address = registry
             .target(&target)
             .map_err(|_| TransferError::new("move_node_unavailable", "目标机器不可用"))?;
+        journal.error = None;
         self.save(&journal).await?;
         let operation = json!({"operation_id":request.operation_id});
         let source_state = call(
@@ -280,6 +370,12 @@ impl Transfers {
         if source_state["uid"] != local_uid {
             return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
         }
+        journal.preview = Some(namespace::public_payload(
+            source_state.clone(),
+            &source,
+            "/api/session/clone",
+        ));
+        self.save(&journal).await?;
         let moving = source_state["mode"] == "move";
         let mut current = call(
             &client,
@@ -337,8 +433,14 @@ impl Transfers {
                 }
                 journal.phase = "transferring".into();
                 self.save(&journal).await?;
-                self.stream(&client, &source_address, &target_address, &operation)
-                    .await?;
+                self.stream(
+                    &client,
+                    &source_address,
+                    &target_address,
+                    &operation,
+                    &mut journal,
+                )
+                .await?;
             }
             // Recheck stopped state and the source snapshot immediately before
             // target publication. Source lease fences managed launches throughout.
@@ -441,6 +543,7 @@ impl Transfers {
         source: &Target,
         target: &Target,
         operation: &Value,
+        journal: &mut Journal,
     ) -> Result<(), TransferError> {
         let encoded = serde_json::to_vec(operation)?;
         let response = client
@@ -469,6 +572,11 @@ impl Transfers {
             .header("content-length")
             .ok_or_else(|| TransferError::new("move_format", "迁移包缺少长度"))?
             .to_owned();
+        journal.bytes_total = length
+            .parse()
+            .map_err(|_| TransferError::new("move_format", "迁移包长度无效"))?;
+        journal.bytes_sent = 0;
+        self.save(journal).await?;
         let headers = [
             ("Content-Type", "application/x-tar"),
             ("Content-Length", length.as_str()),
@@ -488,9 +596,16 @@ impl Transfers {
             .await
             .map_err(network)?;
         let mut body = response.into_body();
+        let mut last_save = std::time::Instant::now();
         while let Some(bytes) = body.read().await.map_err(network)? {
             upload.send(&bytes).await.map_err(network)?;
+            journal.bytes_sent += bytes.len() as u64;
+            if last_save.elapsed() >= Duration::from_secs(1) {
+                self.save(journal).await?;
+                last_save = std::time::Instant::now();
+            }
         }
+        self.save(journal).await?;
         let received = upload.response().await.map_err(network)?;
         let status = received.status;
         let raw = received

@@ -303,6 +303,12 @@ Hub 使用已绑定源会话和目标节点的同一操作记录驱动移动。�
 `/api/session/transfer/clone`，按源计划中的 `mode` 执行。Hub 的
 `POST /api/session/transfer/cancel` 按已绑定的源/目标撤回操作；节点私有
 `POST /api/session/transfer/abort` 负责持久决定、目标补偿及最终解锁。
+Hub 的 `GET /api/session/transfers` 返回未结束的跨节点操作；
+`POST /api/session/transfer/progress` 按已绑定的源、目标及操作返回清单、阶段、传输字节和最近错误。
+读进度不占用执行锁，Hub 重启后从原子写入的 journal 恢复。老 journal 缺少清单时从源节点补读。
+页面顶栏只在有待处理任务时显示入口；窄屏和隐藏侧栏时沿用现有折叠菜单。刷新或关闭页面后，
+可重新打开原操作并继续或撤回，源记录已部分清理也不要求重新计划。完成和撤回后任务退出列表。
+传输时显示已发送归档字节与总归档字节，发布、归属交接、清理及撤回分别显示阶段。
 `session_bundle_browser.py --move --preserve --peer <SSH 别名>` 覆盖三种来源的复杂组移动、
 回收站字节、源锁重启保持、再次移回，以及目标 ready 重启、部分清理中断和新增外部引用保护。
 去掉 `--preserve` 验证移动同时改身份；去掉 `--peer` 验证共享存储拒绝。

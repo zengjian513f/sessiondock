@@ -5512,7 +5512,7 @@ function syncSessionGlobalActions(heading, list) {
   const dock = !!list && (document.body.classList.contains('side-collapsed')
     || (MOBILE.matches && document.body.classList.contains('mobile-detail')));
   let changed = false;
-  for (const [index, id] of ['new-session', 'settings', 'page-reload'].entries()) {
+  for (const [index, id] of ['new-session', 'settings', 'page-reload', 'transfer-tasks'].entries()) {
     const source = document.getElementById(id);
     if (!source) continue;
     const enabled = dock && !source.hidden && !source.classList.contains('hidden');
@@ -5524,7 +5524,7 @@ function syncSessionGlobalActions(heading, list) {
         proxy = el('button', 'session-menu-action');
         proxy.id = proxyId;
         proxy.type = 'button';
-        proxy.dataset.order = index - 3;
+        proxy.dataset.order = index - 4;
         proxy.setAttribute('role', 'menuitem');
         proxy.appendChild(source.querySelector('svg').cloneNode(true));
         proxy.onclick = () => source.click();
@@ -5692,7 +5692,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'page-reload', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -9090,7 +9090,7 @@ function syncPageReload() {
 }
 $('#page-reload').onclick = () => location.reload();
 appDisplayMode.addEventListener('change', syncPageReload);
-for (const id of ['new-session', 'settings', 'page-reload']) {
+for (const id of ['new-session', 'settings', 'page-reload', 'transfer-tasks']) {
   new MutationObserver(() => layoutSessionHead()).observe(document.getElementById(id),
     {attributes: true, attributeFilter: ['hidden', 'class', 'disabled']});
 }
@@ -10022,8 +10022,8 @@ function transferUnavailableReason(uid) {
 function paintTransferAvailability(button, uid) {
   setControlUnavailable(button, transferUnavailableReason(uid));
 }
-async function cloneSessionGroup(uid) {
-  const reason = transferUnavailableReason(uid);
+async function cloneSessionGroup(uid, resumed = null) {
+  const reason = resumed ? '' : transferUnavailableReason(uid);
   if (reason) {
     const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
     paintTransferAvailability(control, uid); return;
@@ -10061,6 +10061,7 @@ async function cloneSessionGroup(uid) {
         <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
           <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
       </div>
+      <p class="transfer-progress" role="status" hidden></p>
       <p class="transfer-error" role="alert" hidden></p>
     </div>
     <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
@@ -10079,8 +10080,18 @@ async function cloneSessionGroup(uid) {
   }
   target.value = sourceId;
   $d('#transfer-source').value = sourceName;
-  let plan = null, busy = false, uncertain = false;
+  let plan = resumed?.plan || null, busy = false, uncertain = !!resumed;
+  let operationStarted = !!resumed, progressTimer = null, progressLoading = false;
   const identityChoices = {clone:true, move:false};
+  if (resumed) {
+    if (!machines.has(resumed.request.target_node)) {
+      const option = document.createElement('option'); option.value = resumed.request.target_node;
+      option.textContent = '目标机器不可用'; option.disabled = true; target.append(option);
+    }
+    target.value = resumed.request.target_node;
+    radios.forEach(r => r.checked = r.value === plan.mode);
+    identityChoices[plan.mode] = plan.new_ids;
+  }
   const mode = () => radios.find(r => r.checked).value;
   const crossMachine = () => target.value !== sourceId;
   const blockedReason = () => {
@@ -10112,7 +10123,7 @@ async function cloneSessionGroup(uid) {
   target.onchange = () => {renderSelection(); refreshPlan();};
   radios.forEach(r => r.onchange = () => {renderSelection(); refreshPlan();});
   newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection(); refreshPlan();};
-  const close = () => {dialog.close(); dialog.remove();};
+  const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
   $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
   dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
   document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
@@ -10127,7 +10138,8 @@ async function cloneSessionGroup(uid) {
     busy = true; error.hidden = true; renderSelection();
     try {
       await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value});
-      uncertain = false; plan = null; busy = false;
+      uncertain = false; operationStarted = false; plan = null; busy = false;
+      $d('.transfer-progress').hidden = true; refreshTransferTasks();
       await refreshPlan();
     } catch (failure) {
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
@@ -10183,10 +10195,31 @@ async function cloneSessionGroup(uid) {
       }
     } finally {busy = false; if (dialog.isConnected) renderSelection();}
   }
-  await refreshPlan();
+  const paintProgress = data => {
+    const progress = $d('.transfer-progress');
+    progress.hidden = false; progress.textContent = transferPhaseLabel(data);
+    progress.dataset.phase = data.phase;
+  };
+  if (resumed) {
+    renderMembers(plan); paintProgress(resumed); renderSelection();
+    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
+  } else await refreshPlan();
+  const pollProgress = async () => {
+    if (!dialog.isConnected) {clearInterval(progressTimer); return;}
+    if (!operationStarted || !crossMachine() || !plan || progressLoading) return;
+    const id = plan.operation_id;
+    progressLoading = true;
+    try {
+      const data = await request('api/session/transfer/progress', {uid, operation_id:id, target_node:target.value});
+      if (dialog.isConnected && plan?.operation_id === id) paintProgress(data);
+    } catch { /* The execution response reports actionable errors. */ }
+    finally {progressLoading = false;}
+  };
+  progressTimer = setInterval(pollProgress, 1000);
   confirm.onclick = async () => {
     if (busy || !plan || blockedReason()) return;
-    busy = true; error.hidden = true; renderSelection();
+    busy = true; operationStarted = true; error.hidden = true; renderSelection();
+    if (crossMachine()) paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
@@ -10196,8 +10229,85 @@ async function cloneSessionGroup(uid) {
       showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
     } catch (failure) {
       uncertain = failure.code !== 'move_cancelled';
-      if (!uncertain) {plan = null; busy = false; await refreshPlan();}
+      if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
-    } finally {busy = false; if (dialog.isConnected) renderSelection();}
+    } finally {busy = false; if (dialog.isConnected) renderSelection(); refreshTransferTasks();}
   };
+}
+
+
+function transferPhaseLabel(task) {
+  const labels = {planned:'检查环境', transferring:'传输历史', publishing:'发布并验证',
+    switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
+    cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
+  let label = labels[task.phase] || '等待继续';
+  if (task.phase === 'transferring' && task.bytes_total > 0)
+    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
+  return label;
+}
+let transferTasksLoading = false;
+async function refreshTransferTasks() {
+  if (!HUB_MODE || transferTasksLoading) return;
+  transferTasksLoading = true;
+  try {
+    const response = await fetch(appUrl('api/session/transfers'));
+    if (!response.ok) return;
+    const {operations} = await response.json();
+    const button = $('#transfer-tasks');
+    button.hidden = operations.length === 0;
+    button.querySelector('.transfer-task-count').textContent = String(operations.length);
+    layoutHeader();
+    const panel = $('#transfer-tasks-dialog');
+    if (!panel) return;
+    const tbody = panel.querySelector('tbody');
+    const name = id => [...Nodes.machines, ...Nodes.list].find(n => n.id === id)?.name || '离线机器';
+    // Keep controls stable while the user is focusing or clicking a task.
+    const signature = JSON.stringify(operations);
+    if (panel._tasksSignature === signature) return;
+    panel._tasksSignature = signature;
+    tbody.replaceChildren();
+    for (const task of operations) {
+      const row = document.createElement('tr'); row.dataset.operation = task.request.operation_id;
+      const title = document.createElement('td');
+      title.textContent = task.plan?.sessions?.find(m => m.uid === task.request.uid)?.title || '会话组';
+      const nodes = document.createElement('td');
+      nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
+      const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
+      const action = document.createElement('td'), open = document.createElement('button');
+      open.className = 'btn'; open.textContent = '继续处理';
+      open.onclick = async () => {
+        open.disabled = true;
+        try {
+          const response = await fetch(appUrl('api/session/transfer/progress'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(task.request)});
+          const data = await response.json();
+          if (!response.ok || !data.plan) throw new Error(data.error?.message || data.error || '清单暂不可用');
+          panel.close(); panel.remove();
+          await cloneSessionGroup(task.request.uid, data);
+        } catch (failure) {
+          const error = panel.querySelector('.transfer-error'); error.textContent = failure.message; error.hidden = false;
+        } finally {open.disabled = false;}
+      };
+      action.append(open); row.append(title,nodes,phase,action); tbody.append(row);
+    }
+    if (!operations.length) {
+      const row = document.createElement('tr'), cell = document.createElement('td');
+      cell.colSpan = 4; cell.textContent = '没有未完成的操作'; row.append(cell); tbody.append(row);
+    }
+  } catch (error) {console.warn('迁移任务读取失败', error);}
+  finally {transferTasksLoading = false;}
+}
+$('#transfer-tasks').onclick = () => {
+  $('#transfer-tasks-dialog')?.remove();
+  const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
+  panel.setAttribute('aria-labelledby','transfer-tasks-title');
+  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭">×</button></div>
+    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
+  const close = () => {panel.close(); panel.remove();};
+  panel.querySelector('.transfer-close').onclick = close;
+  panel.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.append(panel); panel.showModal(); refreshTransferTasks();
+};
+if (HUB_MODE) {
+  refreshTransferTasks();
+  setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
 }
