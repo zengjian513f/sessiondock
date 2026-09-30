@@ -33,6 +33,7 @@
 ## 谁写
 
 - **SEND** 成功写入 Enter 后把正文（去首尾空白）、`echo_hash` 和发送时间压入 `queued`，落在 conversation 账本，重启后仍在。多个页面、多台设备发出的消息都在同一个列表里。
+- **Codex `/model`**：完整发送正文去首尾空白后恰为 `/model` 时，只交给 TUI 打开模型菜单，不进入等待原生回显的 `queued`；Codex 不为它写 user/command 记录。`sent` 仍只表示终端接受了发送，不表示已经完成模型选择。CHECK/观察通过正常账本操作撤掉旧版本误记的这类排队项（包括 `lost`），不重发、不修改原生历史。包含引用、附件说明或其它正文的消息仍按完整正文等原生回显，其它 CLI 保持原有对账。
 - **观察**：每个订阅主会话视图的 watcher 每秒请求一次读取；1 秒内的读取由所有 watcher 和 CHECK 共用，一个会话每秒最多截一次屏。读失败后 3 秒内不重试。读取更新 `instance`、`input`、`editor`；CHECK 总是即时读取并同样写入对象。
 - **回显对账**：watcher 每次拿到含正文的数据包，把其中 user/command 记录的正文摘要（与 SEND 回执相同的 SHA-256）与 `queued` 比对；摘要相同且记录时间不早于发送时间 5 秒的记录退掉一条排队项，一条记录只能退一条。没有时间的记录（Grok）只按摘要匹配。
 - **CLI 入队**：Claude 忙碌时收到输入先写 `queue-operation` enqueue，到当前步骤结束才写 remove 与 `queued_command`。同一对账把摘要相同、时间不早于发送 5 秒的 enqueue 记录写进 `cli_queued_at`，排队项保留到 user/command 记录出现（BUG-20260928-231633-9a7610）。一条 enqueue 记录只配一条排队项，已标记的项仍占用它。
