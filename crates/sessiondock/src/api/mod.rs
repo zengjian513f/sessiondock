@@ -43,6 +43,8 @@ pub(crate) fn request_body_limit(path: &str) -> usize {
         "/api/session/attachment" => bug_report::ATTACHMENT_BODY_LIMIT,
         "/api/bug-report" => bug_report::REPORT_BODY_LIMIT,
         "/api/session/star"
+        | "/api/session/labels"
+        | "/api/labels"
         | "/api/session/nest"
         | "/api/sessions/fork-visibility"
         | "/api/audit/browser"
@@ -60,12 +62,18 @@ pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/health", get(health::get_health))
         .route("/resources", get(process_links::resources))
+        .route("/session/resources", get(process_links::session_resources))
         .route(
             "/process-links",
             get(process_links::get).post(process_links::post),
         )
         .route("/meta", get(meta))
         .route("/nodes", get(nodes))
+        .route(
+            "/labels",
+            get(metadata::labels).post(metadata::merge_labels),
+        )
+        .route("/session/labels", post(metadata::session_labels))
         .route("/sessions", get(read::list))
         .route("/events", get(events::events))
         .route("/sessions/titles", get(read::titles))
