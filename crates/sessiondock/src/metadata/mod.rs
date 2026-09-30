@@ -10,8 +10,8 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, MetadataSnapshot, NestParent, PendingRewind, SCHEMA_VERSION,
-    SpawnedBy, StopState, TimelinePin, fork_parent_uids,
+    ActivityStop, Attachment, LabelCatalog, MetadataSnapshot, NestParent, PendingRewind,
+    SCHEMA_VERSION, SpawnedBy, StopState, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
@@ -117,6 +117,23 @@ impl MetadataStore {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub fn merge_label_catalog(
+        &self,
+        catalog: &LabelCatalog,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_label_catalog(catalog))
+    }
+
+    pub fn set_labels(
+        &self,
+        uid: &str,
+        add: &std::collections::BTreeSet<String>,
+        remove: &std::collections::BTreeSet<String>,
+        group: Option<Option<String>>,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_labels(uid, add, remove, group))
     }
 
     pub fn set_starred(
