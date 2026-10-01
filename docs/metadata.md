@@ -117,48 +117,25 @@ Validation: metadata/provider/session unit tests,
 SSE retirement `native_advanced`, reload keeps state, 390 px pin/unpin, Web
 restart persists, native file only appended).
 
-## `spawned_by`
+## Sidebar parent
 
-`spawned_by: {source, sid}` records which session started this one; the
-server writes it itself from the process tree while both CLIs are alive
-([liveness.md](liveness.md#spawned_by)) — every `/api/live` and a 10 s
-background tick call `MetadataStore::record_spawn_parents`, which applies
-`with_spawn_parents`: the first relation is kept for good, a later different
-clue is ignored, and entries with an empty uid/source/sid are skipped. The value names the spawner's source
-and native session id, not a UID, and the spawner row may no longer exist.
-Cross-node SSH discovery can also include `node_id` in that object; absent means
-the child's node. Its launch initiator is distinct from native creation ancestry
-([process-links](process-links.md)). `enrich`/`enrich_one` put the object on the row as `spawned_by`; there is no
-HTTP route to set or clear it, and stars/visibility/pins never touch it.
-`tests/meta_import.py` carries the identical key over unchanged.
+`POST /api/session/nest` stores one display-only parent, `nest_parent: {source, sid, node_id?}`.
+Absent `node_id` means the child's own node. `{uid, parent_uid}` attaches to a listed
+session; `{uid, parent_uid: null}` clears the relation. There is no independent flag,
+startup-source fallback or restore action. Native subagent relationships remain in the CLI history.
+Process launch evidence remains diagnostic and never changes sidebar attachment.
 
-Exception to write-once: native creation timestamps can disprove a recorded
-relationship. The spawn watcher moves a parent newer than its child to the
-non-displayed `invalid_spawned_by` field, retaining evidence and preserving
-stars, manual `nest_parent` and `nest_independent`. It compares the expected
-old value inside the atomic metadata update. Missing parents or unparseable
-dates are not repaired by guessing; later valid discovery can still set a parent.
+### `spawned_by`
 
-```json
-"grok:example": {"spawned_by": {"source": "claude", "sid": "8accf618-…"}}
-```
+Older metadata is read with a one-way migration: keep an existing manual parent;
+otherwise move a previously displayed `spawned_by` into `nest_parent`. A legacy
+`nest_independent: true` clears the relation. Legacy startup and independent fields
+are absent from API responses and from the next metadata write. Clearing the parent
+cannot be undone by process scans, polling or restart.
 
-## Sidebar nest override
-
-`POST /api/session/nest` writes a display-only parent for the sidebar tree.
-It never rewrites `spawned_by`. The row carries:
-
-- `nest_parent: {source, sid, node_id?}` — manual parent; absent `node_id` means the child’s own node
-- `nest_independent: true` — ignore `spawned_by` and show the session as a root
-
-`{uid, parent_uid}` stores the listed target's `{source, sid}` and clears
-independence. `{uid, independent: true}` (no `parent_uid`) makes the session
-independent. `{uid, independent: false}` clears both fields so `spawned_by`
-applies again. The handler rejects attaching to self (`400 nest_parent_self`),
-a missing target (`404 nest_parent_missing`), a descendant (`409 nest_parent_cycle`),
-or `independent` together with
-`parent_uid` (`400 nest_conflict`). Without a state directory the route is
-`501 metadata_disabled`.
+The handler rejects attaching to self (`400 nest_parent_self`), a missing target
+(`404 nest_parent_missing`) or a descendant (`409 nest_parent_cycle`). Without a state
+directory the route is `501 metadata_disabled`.
 
 The Hub also accepts a parent on another registered machine. It resolves both
 scoped UIDs against the fleet list, checks the complete displayed parent chain,
@@ -171,21 +148,20 @@ and forwarding; a cyclic fleet edge returns HTTP 400. Direct node writes can onl
 validate their local inventory. Missing/filtered/offline parent rows do not retarget
 the relation to a same-SID session on a different machine.
 
-The legacy sidebar offers these from the session context menu: 从父会话独立,
-取消独立 (restore `spawned_by`), and 附属到… (click the parent, with 取消).
+The legacy sidebar offers these from the session context menu: 解除附属 and 附属到… (click the parent, with 取消).
 
 When rewind or continuation hides a recorded parent, the sidebar resolves its
 children under the visible successor on the same node and source. Fork selection
 uses the existing live-first, then newest-created order, and follows hidden
 intermediate parents. Showing the original parent restores its own subtree.
-This applies to both recorded and manual parents; `nest_independent` still wins.
+This applies to the stored `nest_parent` relation.
 Missing or filtered parents without a visible successor leave their children as
 roots. These display decisions never rewrite the stored relationship.
 
 Validation: `python3 tests/metadata_suite.py`,
 `python3 tests/nest_tree_browser.py`, `python3 tests/hub_nest_browser.py`
 (two actual nodes and Hub, cross-machine click attach, same-SID isolation, cycle
-checks, node/Hub restart, detach/restore and local reattachment).
+checks, node/Hub restart, detach and explicit local reattachment).
 
 ## Writer exclusion and durable publication
 

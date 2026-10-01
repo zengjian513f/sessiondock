@@ -41,7 +41,7 @@ def main():
         saved = state / "session-metadata.json"
         invalid = {"source": "claude", "sid": P_SID}
         saved.write_text(json.dumps({"schema_version": 1, "revision": 1, "sessions": {
-            uids[G_SID]: {"spawned_by": invalid, "starred": True, "starred_at": 1},
+            uids[G_SID]: {"spawned_by": invalid, "nest_independent": True, "starred": True, "starred_at": 1},
         }}))
         saved.chmod(0o600)
         env = {"SESSIONDOCK_PROC_ROOT": proc, "SESSIONDOCK_STATE_DIR": state,
@@ -53,9 +53,9 @@ def main():
             assert "spawned_by" not in old, old
             assert old["updated"] == END and old["starred"], old
             child = next(r for r in rows if r["uid"] == uids[G2_SID])
-            assert child["spawned_by"] == {"source": "claude", "sid": Q_SID}, child
+            assert "spawned_by" not in child and "nest_parent" not in child, child
             disk = json.loads(saved.read_text())["sessions"][uids[G_SID]]
-            assert disk["invalid_spawned_by"] == invalid and "spawned_by" not in disk, disk
+            assert disk["nest_independent"] is True, disk
             with sync_playwright() as pw:
                 launch = {"headless": True}
                 if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -112,7 +112,7 @@ def main():
         with server_with_env(corpus, env, args.binary) as (base, opener):
             get_json(opener, base, "/api/live?force=1")
             disk = json.loads(saved.read_text())["sessions"][uids[G_SID]]
-            assert "spawned_by" not in disk and disk["invalid_spawned_by"] == invalid and disk["starred"]
+            assert "spawned_by" not in disk and "nest_independent" not in disk and disk["starred"]
             assert disk["nest_parent"] == invalid
         print("PASS spawn chronology repair, valid children, native activity, Chromium nesting/open/SSE, restart")
 

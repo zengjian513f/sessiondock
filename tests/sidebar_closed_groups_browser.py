@@ -28,7 +28,7 @@ def fixture():
                        title=f'Synthetic {index}', cwd=f'/synthetic/project-{group:02d}',
                        created=stamp, updated=stamp, size=100)
             if 1 <= offset <= 5:
-                row['spawned_by'] = dict(source='claude', sid=f'fold-{group * PER_GROUP}')
+                row['nest_parent'] = dict(source='claude', sid=f'fold-{group * PER_GROUP}')
             if offset == 0:
                 row['agent_items'] = [dict(id=f'agent-{a}', title=f'Worker {a}', type='general',
                                          updated=stamp, created=stamp) for a in range(20)]

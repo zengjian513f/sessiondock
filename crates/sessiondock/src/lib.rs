@@ -78,20 +78,7 @@ pub fn app_pair_with_shutdown(
     }
     let terminal = prepare_terminal(&config)?;
     let built = build_app(config, shutdown.clone(), None, terminal, Vec::new())?;
-    // The synchronous factory runs inside test runtimes; without one the
-    // `/api/live` handler still records spawners on every call.
-    if let Some(start) = built.spawn_watch
-        && tokio::runtime::Handle::try_current().is_ok()
-    {
-        start.watcher.spawn_loop(start.reader, shutdown);
-    }
     Ok((built.router, built.node_router))
-}
-
-/// The spawner watch loop, started by the caller from an async context.
-struct SpawnStart {
-    watcher: Arc<runtime::spawn::SpawnWatcher>,
-    reader: Reader,
 }
 
 /// Startup ownership remains with the caller, which must await lifecycle
@@ -151,7 +138,6 @@ pub async fn prepare_app(
         _ => None,
     };
     let worker_lifecycle = lifecycle.clone();
-    let shutdown_for_watch = shutdown.clone();
     let result = tokio::task::spawn_blocking(move || {
         build_app(config, shutdown, worker_lifecycle, terminal, adapters)
     })
@@ -160,10 +146,6 @@ pub async fn prepare_app(
     .and_then(|result| result);
     match result {
         Ok(built) => {
-            // The 10 s spawner tick, same context.
-            if let Some(start) = built.spawn_watch {
-                start.watcher.spawn_loop(start.reader, shutdown_for_watch);
-            }
             // Process-evidence binding of pending Codex/Grok launches
             // (`new-status` resolution); no-op unless lifecycle,
             // managed runtime and the process scan are all configured.
@@ -203,12 +185,11 @@ fn prepare_terminal(config: &Config) -> io::Result<Option<Arc<terminal::Terminal
 }
 
 /// build_app's outputs the caller drives: the routers plus the services whose
-/// shutdown and (for the spawn watcher) background task the caller owns.
+/// shutdown and background tasks the caller owns.
 struct BuiltApp {
     router: Router,
     node_router: Option<Router>,
     audit: Option<Arc<audit::AuditService>>,
-    spawn_watch: Option<SpawnStart>,
     /// The router's state, for background tasks started from the async context.
     state: AppState,
 }
@@ -430,17 +411,6 @@ fn build_app(
         config.search_warmup_secs,
     )?);
     search.spawn_warmup(shutdown.clone());
-    let spawn_watch = match (&proc_scan, &metadata) {
-        (Some(scanner), Some(metadata)) => Some(Arc::new(runtime::spawn::SpawnWatcher::new(
-            scanner.clone(),
-            metadata.clone(),
-        ))),
-        _ => None,
-    };
-    let spawn_start = spawn_watch.as_ref().map(|watcher| SpawnStart {
-        watcher: watcher.clone(),
-        reader: reader.clone(),
-    });
     // Every dependency of a bug-report worker must be configured —
     // the bundle directory and repository, the audit log (events.jsonl is the
     // core of a report), the terminal transport and the lifecycle service —
@@ -558,7 +528,6 @@ fn build_app(
         runtime,
         runtime_probes,
         proc_scan,
-        spawn_watch,
         observations: observe::WatchHub::new(reader.clone(), shutdown.clone()),
         reader,
         watchers: Arc::new(Semaphore::new(32)),
@@ -599,7 +568,6 @@ fn build_app(
         router,
         node_router,
         audit,
-        spawn_watch: spawn_start,
         state,
     })
 }

@@ -30,7 +30,7 @@ def main():
                         row['agent_items'] = [dict(id='worker', title='Synthetic worker', type='general',
                             created=row['updated'], updated=row['updated'])]
                     if row['uid'] == child_uid:
-                        row['spawned_by'] = dict(source='claude', sid='search-main')
+                        row['nest_parent'] = dict(source='claude', sid='search-main')
                 return rows
 
             enrich(sessions['sessions'])

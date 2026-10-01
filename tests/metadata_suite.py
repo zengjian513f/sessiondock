@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HTTP contract of persisted preferences (star, fork-visibility, nest) vs /api/sessions,
-plus the server-recorded `spawned_by` row key: seeded on disk, carried
-by the row, untouched by star/unstar/nest, durable across restart.
+plus the user-selected `nest_parent` row key: seeded on disk, carried
+by the row, unchanged by star/unstar and durable across restart.
 
 Loopback synthetic fixtures, no Chromium. Codes from api/metadata.rs; disk keys
 from Document (schema_version 1). Request types omit deny_unknown_fields.
@@ -18,9 +18,8 @@ from history_parity import (  # noqa: E402
 
 BINARY = (p if (p := REPO / "target/release" / DEBUG_BINARY.name).is_file() else DEBUG_BINARY)
 KEYS = {"schema_version", "revision", "sessions"}
-ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "spawned_by",
-            "nest_parent", "nest_independent"}
-SPAWNED_BY = {"source": "codex", "sid": "parent-native-sid"}
+ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "nest_parent"}
+NEST_PARENT = {"source": "codex", "sid": "codex-parent"}
 FILE, STAR, VIS, NEST = ("session-metadata.json", "/api/session/star",
                          "/api/sessions/fork-visibility", "/api/session/nest")
 
@@ -107,21 +106,21 @@ def run(opener, base, state, extra):
     if not branch or not parent:
         fail("list", "need claude-branch and codex-parent", raw)
     uid, puid = branch["uid"], parent["uid"]
-    if branch.get("spawned_by") != SPAWNED_BY or "spawned_by" in parent:
-        fail("spawned_by", f"branch={branch.get('spawned_by')} parent={parent.get('spawned_by')}", raw)
-    passed("seeded spawned_by {source, sid} decorates its row only")
+    if branch.get("nest_parent") != NEST_PARENT or "nest_parent" in parent:
+        fail("nest_parent", f"branch={branch.get('nest_parent')} parent={parent.get('nest_parent')}", raw)
+    passed("seeded nest_parent {source, sid} decorates its row only")
     saved, sraw = want(opener, base, STAR, 200, {"uid": uid, "starred": True})
     if saved.get("ok") is not True or saved.get("starred") is not True or saved.get("uid") != uid \
             or not isinstance(saved.get("starred_at"), (int, float)):
         fail("star", "response shape", sraw)
     rows, raw = listed(opener, base)
-    if rows["claude-branch"].get("starred") is not True or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
-        fail("star", "list missing starred or spawned_by", raw)
+    if rows["claude-branch"].get("starred") is not True or rows["claude-branch"].get("nest_parent") != NEST_PARENT:
+        fail("star", "list missing starred or nest_parent", raw)
     want(opener, base, STAR, 200, {"uid": uid, "starred": False})
     rows, raw = listed(opener, base)
-    if rows["claude-branch"].get("starred") is True or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
-        fail("unstar", "still starred or spawned_by lost", raw)
-    passed("star list unstar (spawned_by untouched)")
+    if rows["claude-branch"].get("starred") is True or rows["claude-branch"].get("nest_parent") != NEST_PARENT:
+        fail("unstar", "still starred or nest_parent lost", raw)
+    passed("star list unstar (nest_parent untouched)")
     want(opener, base, STAR, 400, {"uid": "", "starred": True}, code="invalid_metadata_uid")
     want(opener, base, STAR, 404, {"uid": "codex:missing", "starred": True}, code="session_missing")
     want(opener, base, STAR, 404, {"uid": "x" * 257, "starred": True}, code="session_missing")
@@ -166,28 +165,19 @@ def run(opener, base, state, extra):
             or attached.get("nest_independent") is True:
         fail("nest", "attach shape", araw)
     rows, raw = listed(opener, base)
-    if rows["claude-branch"].get("nest_parent") != expect_parent \
-            or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
-        fail("nest", "list after attach lost spawned_by or nest_parent", raw)
-    want(opener, base, NEST, 200, {"uid": uid, "independent": True})
+    if rows["claude-branch"].get("nest_parent") != expect_parent:
+        fail("nest", "list after attach lost nest_parent", raw)
+    want(opener, base, NEST, 200, {"uid": uid, "parent_uid": None})
     rows, raw = listed(opener, base)
-    if rows["claude-branch"].get("nest_independent") is not True \
-            or "nest_parent" in rows["claude-branch"] \
-            or rows["claude-branch"].get("spawned_by") != SPAWNED_BY:
-        fail("nest", "independent did not hide nest_parent", raw)
-    want(opener, base, NEST, 200, {"uid": uid, "independent": False})
-    rows, raw = listed(opener, base)
-    if rows["claude-branch"].get("nest_independent") or "nest_parent" in rows["claude-branch"]:
-        fail("nest", "restore still independent", raw)
+    if "nest_parent" in rows["claude-branch"] or "nest_independent" in rows["claude-branch"]:
+        fail("nest", "clear left a parent or independent flag", raw)
     want(opener, base, NEST, 400, {"uid": uid, "parent_uid": uid}, code="nest_parent_self")
     want(opener, base, NEST, 404, {"uid": uid, "parent_uid": "codex:missing"},
          code="nest_parent_missing")
-    want(opener, base, NEST, 400, {"uid": uid, "parent_uid": other, "independent": True},
-         code="nest_conflict")
     want(opener, base, NEST, 200, {"uid": other, "parent_uid": uid})
     want(opener, base, NEST, 409, {"uid": uid, "parent_uid": other}, code="nest_parent_cycle")
-    want(opener, base, NEST, 200, {"uid": other, "independent": False})
-    passed("nest attach / independent / restore / cycle")
+    want(opener, base, NEST, 200, {"uid": other, "parent_uid": None})
+    passed("nest attach / clear / cycle")
     parsed = urlsplit(base)
     conc(parsed.hostname, parsed.port, [rows[sid]["uid"] for sid in extra])
     rows, raw = listed(opener, base)
@@ -195,10 +185,11 @@ def run(opener, base, state, extra):
     if missing:
         fail("concurrent", f"lost update {missing}", raw)
     passed("concurrent 8 stars persist")
+    want(opener, base, NEST, 200, {"uid": uid, "parent_uid": puid})
     data = disk(state)
-    if data["sessions"].get(uid, {}).get("spawned_by") != SPAWNED_BY:
-        fail("disk", f"spawned_by row {data['sessions'].get(uid)}")
-    passed("on-disk schema_version=1 keys, spawned_by row kept")
+    if data["sessions"].get(uid, {}).get("nest_parent") != NEST_PARENT:
+        fail("disk", f"nest_parent row {data['sessions'].get(uid)}")
+    passed("on-disk schema_version=1 keys, nest_parent row kept")
 
 def cap(opener, base, enabled):
     meta, raw = want(opener, base, "/api/meta", 200)
@@ -224,11 +215,11 @@ def main():
             passed("disabled 501 metadata:false")
         state = root / "state"
         state.mkdir(mode=0o700); state.chmod(0o700)
-        # The server records spawned_by itself (no route); seed it the way a
+        # Seed the user-selected parent the way a
         # recorded document looks, like meta_import.py does.
         seeded = state / FILE
         seeded.write_text(json.dumps({"schema_version": 1, "revision": 1, "sessions": {
-            corpus.uid("claude-branch"): {"spawned_by": SPAWNED_BY}}}) + "\n")
+            corpus.uid("claude-branch"): {"nest_parent": NEST_PARENT}}}) + "\n")
         seeded.chmod(0o600)
         with isolated_server(corpus, args.binary, state_dir=state) as (base, opener):
             cap(opener, base, True)
@@ -237,10 +228,10 @@ def main():
             rows, raw = listed(opener, base)
             lost = [sid for sid in extra if rows.get(sid, {}).get("starred") is not True]
             vis = rows.get("codex-parent", {}).get("fork_parent_visible")
-            if lost or vis is not True or rows.get("claude-branch", {}).get("spawned_by") != SPAWNED_BY:
-                fail("restart", f"lost={lost} visible={vis} spawned_by={rows.get('claude-branch', {}).get('spawned_by')}", raw)
+            if lost or vis is not True or rows.get("claude-branch", {}).get("nest_parent") != NEST_PARENT:
+                fail("restart", f"lost={lost} visible={vis} nest_parent={rows.get('claude-branch', {}).get('nest_parent')}", raw)
             disk(state)
-            passed("durable across restart (stars, visibility, spawned_by)")
+            passed("durable across restart (stars, visibility, nest_parent)")
 
 
 if __name__ == "__main__":

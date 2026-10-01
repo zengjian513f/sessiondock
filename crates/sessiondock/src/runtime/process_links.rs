@@ -281,7 +281,6 @@ async fn legacy_publish(state: &AppState, published: Published) -> Result<usize,
         if cache.boot_id != published.boot_id || cache.boot_id.is_empty() {
             return Ok(0);
         }
-        let mut parents = Vec::new();
         let mut count = 0;
         for link in published.links {
             if !crate::hub::identity::is_node_id(&link.session.node_id)
@@ -311,24 +310,6 @@ async fn legacy_publish(state: &AppState, published: Published) -> Result<usize,
             } else {
                 link
             };
-            if let Some((uid, child)) = cache.local.get(&link.process)
-                && (child.node_id != link.session.node_id
-                    || child.source != link.session.source
-                    || child.sid != link.session.sid)
-                && let (Some(parent_created), Some(child_created)) =
-                    (link.session.created, child.created)
-                && parent_created <= child_created
-            {
-                parents.push((
-                    uid.clone(),
-                    crate::metadata::SpawnedBy {
-                        source: link.session.source.clone(),
-                        sid: link.session.sid.clone(),
-                        node_id: (node_id != link.session.node_id)
-                            .then(|| link.session.node_id.clone()),
-                    },
-                ));
-            }
             // First verified launch is stable for this incarnation even if the
             // connection tuple later gets reused. Never reassign old work.
             cache.links.entry(link.process.clone()).or_insert(link);
@@ -372,11 +353,6 @@ async fn legacy_publish(state: &AppState, published: Published) -> Result<usize,
             }
         }
         drop(caches);
-        if let Some(metadata) = metadata {
-            metadata
-                .record_spawn_parents(&parents)
-                .map_err(ApiError::from)?;
-        }
         Ok(count)
     })
     .await
@@ -481,57 +457,6 @@ async fn agent_catalog(state: &AppState) -> Result<process_links::agent::Catalog
         sessions,
     })
 }
-async fn remember_agent_parents(state: &AppState, report: &Report) -> Result<(), ApiError> {
-    let Some(metadata) = &state.metadata else {
-        return Ok(());
-    };
-    let document = state
-        .reader
-        .run_wait(&state.shutdown, |store| store.list_recent())
-        .await?;
-    let rows = SessionRow::from_list(&document);
-    let uids: HashMap<_, _> = rows
-        .iter()
-        .map(|r| ((r.source.as_str(), r.sid.as_str()), r.uid.as_str()))
-        .collect();
-    let parents: Vec<_> = report
-        .bindings
-        .iter()
-        .filter_map(|binding| {
-            let parent = binding.initiator.as_ref()?;
-            let child = &binding.session;
-            if child.node_id != report.node_id
-                || (parent.node_id == child.node_id
-                    && parent.source == child.source
-                    && parent.sid == child.sid)
-                || parent.created? > child.created?
-            {
-                return None;
-            }
-            Some((
-                uids.get(&(child.source.as_str(), child.sid.as_str()))?
-                    .to_string(),
-                crate::metadata::SpawnedBy {
-                    source: parent.source.clone(),
-                    sid: parent.sid.clone(),
-                    node_id: (parent.node_id != child.node_id).then(|| parent.node_id.clone()),
-                },
-            ))
-        })
-        .collect();
-    let metadata = metadata.clone();
-    tokio::task::spawn_blocking(move || metadata.record_spawn_parents(&parents))
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "collector_metadata_failed",
-                "关联保存失败",
-            )
-        })?
-        .map_err(ApiError::from)?;
-    Ok(())
-}
 pub async fn report(state: &AppState) -> Result<Report, ApiError> {
     if let Some(path) = agent_socket(state) {
         let catalog = agent_catalog(state).await?;
@@ -545,7 +470,6 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
             && report.node_id == node_id
             && report.boot_id == boot_id
         {
-            remember_agent_parents(state, &report).await?;
             return Ok(report);
         }
     }
@@ -561,7 +485,6 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
             && let Ok(report) = serde_json::from_value::<Report>(value)
             && Some(report.node_id.as_str()) == state.node.as_ref().map(|n| n.node_id.as_str())
         {
-            remember_agent_parents(state, &report).await?;
             return Ok(report.bindings.len());
         }
     }

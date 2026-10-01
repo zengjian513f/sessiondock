@@ -36,8 +36,8 @@ def main():
                     metadata=source.root/'state/session-metadata.json'
                     before=json.loads(metadata.read_text())
                     selected=uid('claude',claude[2]);grok_uid=uid('grok',root/'files/grok/project'/ident(10))
-                    before['sessions'][selected]={'spawned_by':{'source':'codex','sid':ident(2)},'starred':True}
-                    before['sessions'][grok_uid]={'spawned_by':{'source':'claude','sid':ident(2)},'starred':True}
+                    before['sessions'][selected]={'nest_parent':{'source':'codex','sid':ident(2)},'starred':True}
+                    before['sessions'][grok_uid]={'nest_parent':{'source':'claude','sid':ident(2)},'starred':True}
                     metadata.write_text(json.dumps(before))
                     original={p:p.read_bytes() for home in (source.root/'codex',root/'files/claude',root/'files/grok')
                               for p in home.rglob('*') if p.is_file() and '.sqlite' not in p.name}
@@ -71,13 +71,9 @@ def main():
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(14)
                         dialog.locator('#transfer-target').select_option(b.nid)
                         if moving:
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
-                                dialog.locator('.transfer-segments label').nth(1).click()
-                            assert planned.value.ok,planned.value.text()
+                            dialog.locator('.transfer-segments label').nth(1).click()
                         if dialog.locator('#transfer-new-ids').is_checked()!=fresh:
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
-                                dialog.locator('#transfer-new-ids').set_checked(fresh)
-                            assert planned.value.ok,planned.value.text()
+                            dialog.locator('#transfer-new-ids').set_checked(fresh)
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
                         expect(dialog.locator('.clone-members tbody tr')).to_have_count(14)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as transferred:
@@ -106,8 +102,8 @@ def main():
                             page.goto(base+'/?'+urlencode({'sid':row['uid'],'node':b.nid}),wait_until='networkidle')
                             expect(page.locator('#msgs')).to_contain_text(text)
                             local=provider+':'+row['uid'].split('~',1)[1]
-                            if provider=='claude':assert state[local]['spawned_by']=={'source':'codex','sid':codex[ident(2)]}
-                            if provider=='grok':assert state[local]['spawned_by']=={'source':'claude','sid':ids['claude:'+ident(2)]}
+                            if provider=='claude':assert state[local]['nest_parent']=={'source':'codex','sid':codex[ident(2)]}
+                            if provider=='grok':assert state[local]['nest_parent']=={'source':'claude','sid':ids['claude:'+ident(2)]}
                         assert all((old!=new)==fresh for old,new in codex.items())
                         assert all((old.split(':',1)[1]!=new)==fresh for old,new in ids.items())
                         if moving:

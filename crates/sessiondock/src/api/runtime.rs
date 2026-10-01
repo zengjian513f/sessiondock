@@ -90,7 +90,6 @@ struct Merged {
     uids: Vec<String>,
     tmux_uids: Vec<String>,
     started: BTreeMap<String, f64>,
-    recorded: Option<Result<usize, crate::metadata::MetadataError>>,
 }
 
 fn seed_managed_status(response: &mut Value, running: &[String], started: &BTreeMap<String, f64>) {
@@ -104,11 +103,10 @@ fn seed_managed_status(response: &mut Value, running: &[String], started: &BTree
 }
 
 /// The per-request fields of a `/api/live` body: how the two source
-/// caches answered and how many spawners this call wrote.
+/// caches answered.
 struct Volatile {
     managed: Option<Value>,
     scan: Option<Value>,
-    recorded: Option<Value>,
 }
 
 fn cache_report(hit: bool, age: std::time::Duration, ttl: std::time::Duration) -> Value {
@@ -127,9 +125,6 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
         if let Some(report) = volatile.scan {
             scan.insert("cache".into(), report);
         }
-        if let Some(recorded) = volatile.recorded {
-            scan.insert("spawned_recorded".into(), recorded);
-        }
     }
     ([(header::CACHE_CONTROL, "no-store")], Json(response)).into_response()
 }
@@ -139,11 +134,11 @@ fn finish(mut response: Value, volatile: Volatile) -> Response {
 /// stopped. With the scan (Linux, explicit switch) the answer is:
 /// `uids` = sessions with a live CLI process (list order), `tmux_uids` those
 /// running under tmux or a managed host, `started_at[uid]` the earliest CLI
-/// main-process start; spawners are recorded on the way. `?force=1` bypasses
+/// main-process start. `?force=1` bypasses
 /// every cache. The assembled body is kept per view while the scan, the
 /// managed observation, the lifecycle generation and the list topology are
 /// the ones it was built from (`polls::PollCache`); only the two `cache`
-/// reports and `spawned_recorded` are per request.
+/// reports are per request.
 pub async fn live(
     State(state): State<AppState>,
     RawQuery(query): RawQuery,
@@ -210,21 +205,15 @@ pub async fn live(
         .ok()
         .map(|snapshot| cache_report(snapshot.cached, snapshot.age, scanner.ttl()));
     if !force && let Some(cached) = state.polls.live(&debug_run, &key) {
-        // Nothing was written by this call: the entry's builder recorded
-        // this scan's spawners (write once, memoised per scan).
-        let recorded = scanned
-            .is_ok()
-            .then(|| json!(state.spawn_watch.as_ref().map(|_| 0)));
         return Ok(finish(
             (*cached).clone(),
             Volatile {
                 managed: managed_report,
                 scan: scan_report,
-                recorded,
             },
         ));
     }
-    let (response, recorded) = assemble(&state, shared.as_ref(), scanned, &key).await?;
+    let response = assemble(&state, shared.as_ref(), scanned, &key).await?;
     let response = Arc::new(response);
     state.polls.store_live(&debug_run, key, response.clone());
     Ok(finish(
@@ -232,7 +221,6 @@ pub async fn live(
         Volatile {
             managed: managed_report,
             scan: scan_report,
-            recorded,
         },
     ))
 }
@@ -246,14 +234,13 @@ pub(crate) fn lifecycle_generation(state: &AppState) -> Generation {
 }
 
 /// Build the `/api/live` body from the sources in `key` (without the
-/// per-request fields), recording spawners on the way; the second value is
-/// `scan.spawned_recorded`.
+/// per-request fields).
 async fn assemble(
     state: &AppState,
     shared: Option<&SharedObservation>,
     scanned: Result<ScanSnapshot, ScanError>,
     key: &LiveKey,
-) -> Result<(Value, Option<Value>), ApiError> {
+) -> Result<Value, ApiError> {
     let mut response = json!({"enabled":false,"known":false,"partial":true,
         "unavailable_reason":UNCONFIGURED,
         "uids":[],"tmux_uids":[],"started_at":{},"managed":null});
@@ -292,7 +279,6 @@ async fn assemble(
         })?;
         response["managed"] = managed;
     }
-    let mut recorded = None;
     let scanner = state.proc_scan.clone().unwrap_or_else(|| {
         Arc::new(crate::runtime::procscan::ProcScanner::new(
             "/proc".into(),
@@ -305,10 +291,8 @@ async fn assemble(
         Ok(snapshot) => {
             managed_running.retain(|uid| !key.hidden.contains(uid));
             let scan = snapshot.scan.clone();
-            let watcher = state.spawn_watch.clone();
             let sessions = key.rows.clone();
-            // Pairing, ancestry walks and the spawner write touch the
-            // process table and the metadata file: off the reactor.
+            // Pairing and ancestry walks read the process table: off the reactor.
             let merged = tokio::task::spawn_blocking(move || {
                 let active = scan.active_processes(&sessions);
                 let by_uid: HashMap<&str, &SessionRow> = sessions
@@ -355,10 +339,6 @@ async fn assemble(
                         merged.started.insert(uid.clone(), at);
                     }
                 }
-                // Spawners are recorded on every `/api/live` (趁每次判活顺手记下).
-                merged.recorded = watcher
-                    .as_ref()
-                    .map(|watcher| watcher.record(&scan, &sessions, &active.owned));
                 merged
             })
             .await
@@ -383,11 +363,6 @@ async fn assemble(
                 managed.insert("external_detection".into(), json!("proc_scan"));
             }
             scan_report["stats"] = json!(snapshot.scan.stats);
-            recorded = Some(match merged.recorded {
-                Some(Ok(count)) => json!(count),
-                Some(Err(error)) => json!({"error": error.code}),
-                None => Value::Null,
-            });
         }
         Err(ScanError::UnsupportedPlatform) => {
             scan_report["status"] = json!("unsupported_platform");
@@ -398,7 +373,7 @@ async fn assemble(
         }
     }
     response["scan"] = scan_report;
-    Ok((response, recorded))
+    Ok(response)
 }
 
 /// Continued-in fallback: a Claude session no

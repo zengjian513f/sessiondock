@@ -19,8 +19,8 @@ EPOCH_MAX = 253_402_300_799.0
 DEFAULT_REASON, INFERRED_REASON = "网页发送 Escape", "终端已结束或中断"
 KNOWN = {"starred", "starred_at", "fork_parent_visible", "activity_stopped_at",
          "activity_stop_reason", "activity_stop_state", "activity_stop_inferred",
-         "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by"}
-ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "spawned_by")
+         "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by", "nest_parent", "nest_independent"}
+ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "nest_parent")
 SPAWN_SOURCE_MAX, SPAWN_SID_MAX = 32, 256
 HOME_SHARE = Path.home() / ".local" / "share" / "sessiondock"
 
@@ -68,7 +68,7 @@ def convert_row(uid, src, keep, warns):
         out["fork_parent_visible"] = True
     # Python live.spawn_parents wrote {source, sid} once; the spawner row may no
     # longer exist, the relation is kept as-is (Rust decorates from the key alone).
-    spawned = src.get("spawned_by")
+    spawned = None if src.get("nest_independent") else src.get("nest_parent", src.get("spawned_by"))
     if spawned is not None:
         source = str(spawned.get("source") or "").strip() if isinstance(spawned, dict) else ""
         sid = str(spawned.get("sid") or "").strip() if isinstance(spawned, dict) else ""
@@ -76,7 +76,9 @@ def convert_row(uid, src, keep, warns):
                 or any(ch.isspace() or ord(ch) < 32 for ch in source + sid)):
             warns.append((uid, "invalid spawned_by"))
         else:
-            out["spawned_by"] = {"source": source, "sid": sid}
+            out["nest_parent"] = {"source": source, "sid": sid}
+            if spawned.get("node_id"):
+                out["nest_parent"]["node_id"] = spawned["node_id"]
     if src.get("activity_stopped_at") is not None:
         at, state = epoch(src.get("activity_stopped_at")), src.get("activity_stop_state") or "aborted"
         if at is None:
@@ -248,8 +250,8 @@ def verify(binary, out, roots, imported):
                 if got.get("fork_parent") is True or "fork_parent_visible" in got:
                     if (row.get("fork_parent_visible") is True) != (got.get("fork_parent_visible") is True):
                         details.append("fork_parent_visible")
-                if row.get("spawned_by") != got.get("spawned_by"):
-                    details.append(f"spawned_by {got.get('spawned_by')!r}!={row.get('spawned_by')!r}")
+                if row.get("nest_parent") != got.get("nest_parent"):
+                    details.append(f"spawned_by {got.get('nest_parent')!r}!={row.get('nest_parent')!r}")
                 if details:
                     die(f"VERIFY {uid} mismatch {', '.join(details)}")
                 print(f"VERIFY {uid} ok", flush=True)

@@ -50,7 +50,29 @@ impl Disk {
         // JSON keys have last-value behavior.
         let document = serde_json::from_slice::<serde_json::Value>(&bytes)
             .ok()
-            .and_then(|value| serde_json::from_value::<Document>(value).ok())
+            .and_then(|mut value| {
+                if let Some(rows) = value["sessions"].as_object_mut() {
+                    for row in rows
+                        .values_mut()
+                        .filter_map(serde_json::Value::as_object_mut)
+                    {
+                        let independent =
+                            row.remove("nest_independent") == Some(serde_json::json!(true));
+                        let spawned = row.remove("spawned_by");
+                        row.remove("invalid_spawned_by");
+                        if independent {
+                            row.remove("nest_parent");
+                        } else if !row
+                            .get("nest_parent")
+                            .is_some_and(serde_json::Value::is_object)
+                            && let Some(parent) = spawned.filter(serde_json::Value::is_object)
+                        {
+                            row.insert("nest_parent".into(), parent);
+                        }
+                    }
+                }
+                serde_json::from_value::<Document>(value).ok()
+            })
             .filter(|document| document.schema_version == SCHEMA_VERSION);
         let snapshot = document
             .map(|document| MetadataSnapshot { document })

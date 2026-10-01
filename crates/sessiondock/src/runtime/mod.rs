@@ -1,7 +1,7 @@
 //! Read-only controlled-host observations against a frozen native inventory.
 //! No native file reads, launch, cleanup, or control authority. External CLI
 //! discovery lives next to it in `procscan` (explicit `/proc` scan)
-//! and `spawn` (spawner recording); this module never reads it.
+//! this module never reads it.
 //!
 //! Run state is evidence-based and instance-scoped: `running` needs a reachable
 //! host reporting its child alive plus a verified process identity; `exited`
@@ -30,7 +30,6 @@ pub mod freeze;
 pub mod process;
 pub mod process_links;
 pub mod procscan;
-pub mod spawn;
 use process::ProcClock;
 pub use process::{IdentityFailure, ProcessIdentity, StartTime};
 

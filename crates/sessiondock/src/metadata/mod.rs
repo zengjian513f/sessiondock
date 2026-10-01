@@ -11,7 +11,7 @@ use std::{
 
 pub use model::{
     ActivityStop, Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent,
-    PendingRewind, SCHEMA_VERSION, SpawnedBy, StopState, TimelinePin, fork_parent_uids,
+    PendingRewind, SCHEMA_VERSION, StopState, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
@@ -181,38 +181,8 @@ impl MetadataStore {
         &self,
         uid: &str,
         parent: Option<NestParent>,
-        independent: bool,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_nest_display(uid, parent, independent))
-    }
-
-    pub fn invalidate_spawn_parents(
-        &self,
-        invalid: &[(String, SpawnedBy)],
-    ) -> Result<(), MetadataError> {
-        if !invalid.is_empty() {
-            self.update(|snapshot| snapshot.without_invalid_spawn_parents(invalid))?;
-        }
-        Ok(())
-    }
-
-    /// Persist newly observed spawners, first
-    /// relation wins; returns how many sessions were recorded this time.
-    pub fn record_spawn_parents(
-        &self,
-        found: &[(String, SpawnedBy)],
-    ) -> Result<usize, MetadataError> {
-        if found.is_empty() {
-            return Ok(0);
-        }
-        let before = self.snapshot()?;
-        let after = self.update(|snapshot| snapshot.with_spawn_parents(found))?;
-        let recorded: std::collections::BTreeSet<&str> = found
-            .iter()
-            .map(|(uid, _)| uid.trim())
-            .filter(|uid| before.spawned_by(uid).is_none() && after.spawned_by(uid).is_some())
-            .collect();
-        Ok(recorded.len())
+        self.update(|snapshot| snapshot.with_nest_display(uid, parent))
     }
 
     // Domain-only hooks for a future authenticated, verified terminal workflow.

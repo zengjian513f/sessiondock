@@ -13,15 +13,12 @@ cross-family inherited id); an fd on a *.jsonl under a configured read root
 marks it live (the one widening of the literal home markers); an
 orphan helper (no CLI ancestor) does not. GET /api/live is the shape
 {uids, tmux_uids, started_at} plus enabled:true; started_at is
-btime+starttime/100. spawned_by is written once into session-metadata.json
-(and GET /api/sessions) from the CLI process or an ancestor within 16 levels
-via another listed session's main process or CLAUDE_CODE_SESSION_ID /
-CODEX_THREAD_ID / CODEX_SESSION_ID / GROK_SESSION_ID / CLAUDE_PID. Unset
+btime+starttime/100. Process discovery never writes sidebar relations.
 The default process scan is enabled on Linux.
 
 CLI barrier (`live.is_cli_process`): Q is a claude inside a
 tmux pane whose tool shell spawned `grok -p` (G2, events.jsonl open). G2 is
-live and spawned_by Q, but Q's claude between G2 and the tmux server means the
+live, but Q's claude between G2 and the tmux server means the
 console is Q's: tmux_uids lists Q only, never G2.
 """
 from __future__ import annotations
@@ -212,12 +209,9 @@ def build(root):
 
 
 def expect_spawned(rows, area):
-    for sid, parent in PARENT.items():
-        got = (rows.get(sid) or {}).get("spawned_by")
-        if got != parent:
-            fail(area, f"{sid} spawned_by={got!r} want {parent}")
-    if "spawned_by" in (rows.get(P_SID) or {}):
-        fail(area, "P has spawned_by")
+    for sid, row in rows.items():
+        if any(key in row for key in ('spawned_by', 'nest_independent', 'nest_parent')):
+            fail(area, f"{sid} acquired a sidebar relationship from a process scan")
 
 
 def run_scan(opener, base, uids, proc, state):
@@ -243,20 +237,11 @@ def run_scan(opener, base, uids, proc, state):
             fail("started_at", f"{uid} {started.get(uid)!r} want {ts}", json.dumps(started).encode())
     passed("GET /api/live started_at btime+starttime/100")
     expect_spawned(by_sid(opener, base), "sessions spawned_by")
-    passed("GET /api/sessions K←P T←K G←P G2←Q, P has no spawned_by")
+    passed("GET /api/sessions: live child processes do not create sidebar parents")
     path = state / "session-metadata.json"
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError) as err:
-        fail("metadata", str(err))
-    rows = data.get("sessions") if isinstance(data, dict) else None
-    if not isinstance(rows, dict):
-        fail("metadata", "sessions is not an object", path.read_bytes()[:240])
-    for sid, parent in PARENT.items():
-        row = rows.get(uids[sid]) if isinstance(rows.get(uids[sid]), dict) else {}
-        if row.get("spawned_by") != parent:
-            fail("metadata", f"{sid} {row.get('spawned_by')!r} want {parent}")
-    passed("session-metadata.json contains K,T,G spawned_by")
+    if path.exists():
+        fail("metadata", "process scan unexpectedly wrote session metadata")
+    passed("process scan records no sidebar relationship or startup metadata")
     shutil.rmtree(proc / "200")
     live = fetch(opener, base, "/api/live?force=1")
     got = set(live.get("uids") or [])
@@ -264,7 +249,7 @@ def run_scan(opener, base, uids, proc, state):
         fail("live-after", f"uids={sorted(got)} want {sorted(want - {uids[K_SID]})}",
              json.dumps(live).encode())
     expect_spawned(by_sid(opener, base), "write-once spawned_by")
-    passed("pid 200 gone: K not live, spawned_by unchanged")
+    passed("pid 200 gone: K not live, no sidebar relationship")
 
 
 def run_default_scan(opener, base):
