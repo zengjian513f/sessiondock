@@ -11,7 +11,10 @@
   historical description.
 - Production runs as user unit `sessiondock.service` under `/srv/sessiondock`,
   behind the authenticated `/sessiondock/` proxy. Its writable directories are
-  private; CLI roots stay read-only. Do not stop Python or change proxy traffic
+  private. Ordinary reads do not modify CLI roots; explicitly confirmed clone,
+  move and trash operations may publish, move or clean native files under their
+  contracts, preserving clone sources and minimum-change identity rewriting.
+  Do not stop Python or change proxy traffic
   without an explicit request. See `docs/replacement-checklist.md`.
 - Tests use loopback listeners and private runtime directories. This applies to
   test data, not source or deployment. Imported ptyhost retains

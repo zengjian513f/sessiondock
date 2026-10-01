@@ -4,8 +4,10 @@
 [网络拓扑](network-topology.md)。尤其不要把另一套网络的中转站
 `192.168.2.10` 当作 Cetus。
 
-本文只给 systemd 单元与 nginx 位置的**形状**，用占位符代替一切地址、路径与凭据。它不是生产授权：
-切生产流量、动 `deploy/*`、接旧 Hub 都是单独的、需用户授权的步骤（[replacement-checklist.md](replacement-checklist.md)）。
+本文只给 systemd 单元与 nginx 位置的**形状**，用占位符代替地址、路径与凭据。
+日常修复及舰队发布遵循 [AGENTS.md](../AGENTS.md) 的既有授权和统一部署流程；
+修改 `deploy/*` 本身不另设审批。停旧 Python 或改变反向代理流量仍须用户明确授权，
+已有授权无需重复确认（[replacement-checklist.md](replacement-checklist.md)）。
 Hub 自身**无鉴权**，只 loopback 绑定，放在**已鉴权的反代**后面（和节点侧一样）。
 
 ## 边界
@@ -71,7 +73,7 @@ WantedBy=default.target
 ## nginx 位置（样例，放在已鉴权的 HTTPS server 内）
 
 ```nginx
-# 在已登录鉴权的 server 块里加一个位置；<HUB_PATH> 是挂载前缀（页面 storage 命名空间按它区分）。
+# 在已登录鉴权的 server 块里加一个位置；<HUB_PATH> 是挂载前缀，Hub storage 命名空间固定为 sessiondock.hub.。
 # 鉴权子请求不携带上传正文，避免继承默认 1 MiB 限制。
 location = <HUB_AUTH_PATH> {
     internal;

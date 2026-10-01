@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Authoritative SESSIONDOCK_* tables from Config::from_env (config.rs) and
-HubConfig::from_env (hub_config.rs)."""
+"""Environment tables from node/Hub configuration, plus runtime socket settings."""
 # run_validation: skip
 from __future__ import annotations
 
@@ -23,6 +22,10 @@ This file is produced by `tests/env_reference.py`. Regenerate:
 ```sh
 python3 tests/env_reference.py --write
 ```
+
+The first two tables extract `Config::from_env` and `HubConfig::from_env`.
+The runtime section documents resource collector settings read outside those
+constructors; this is not an inventory of every environment variable read by CLIs.
 """
 
 def section(text, begin, end):
@@ -55,6 +58,10 @@ def occurrences(from_env):
             continue
         seen.add(var)
         start = from_env.rfind("\n", 0, match.start()) + 1
+        # An assignment can wrap before its env::var call (for example cache_dir).
+        preceding = from_env[:start].rstrip()
+        if re.search(r"config\.\w+\s*=\s*$", preceding):
+            start = preceding.rfind("\n") + 1
         end = matches[index + 1].start() if index + 1 < len(matches) else len(from_env)
         window = from_env[start:end]
         nest = re.search(r"(\w+)\s*:\s*root\(\s*\"" + re.escape(var), window)
@@ -159,6 +166,17 @@ def render(rows, hub_rows):
     lines += table(rows)
     lines += ["", "## Hub (`sessiondock-hub`, `HubConfig::from_env`)", ""]
     lines += table(hub_rows)
+    lines += ["", "## Resource collector runtime", "",
+              "These settings are read by `runtime/process_links.rs` and the shared",
+              "`process-links` client. They do not start or configure the collector service.", "",
+              "| Variable | Default / precedence | Behavior |",
+              "| --- | --- | --- |",
+              "| `SESSIONDOCK_RESOURCE_AGENT_SOCKET` | Overrides `RESOURCE_AGENT_SOCKET` | Node-specific Unix socket path; used when process discovery is configured and the path exists. |",
+              "| `RESOURCE_AGENT_SOCKET` | `/run/resource-agent/agent.sock` | Shared client socket path when no SessionDock override is set. |", "",
+              "With a synthetic proc root, the adapter does not contact the default",
+              "production collector unless one of these paths is explicitly configured.",
+              "An unavailable collector retains the polling attribution path; see",
+              "[process links](process-links.md#independent-linux-service)."]
     return "\n".join(lines).rstrip() + "\n"
 
 def main(argv=None):

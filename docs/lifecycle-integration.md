@@ -1,11 +1,13 @@
 # Controlled creation: integration contract
 
-This contract has a private Linux runtime: explicit launcher,
-bounded coordinator, create/status/cancel HTTP and launch-bound pending WS.
+This contract connects an explicit launcher, a coordinator,
+create/status/cancel HTTP and launch-bound pending WS.
 `terminal_create` remains false by default; it is enabled only after opening
-the configured lifecycle ledger and CLI profiles. Batch ten adds explicit
-operator native binding below; no real model CLI launch contract, automatic
-process association or reliable-send queue is claimed.
+the configured lifecycle ledger and CLI profiles. Native association may use an
+explicit operator assertion or the verified process evidence described in
+[lifecycle-http.md](lifecycle-http.md). CLI launch and platform behavior are
+specified in [lifecycle-launcher.md](lifecycle-launcher.md); conversation SEND is
+specified in [conversation.md](conversation.md), without the retired delivery queue.
 
 The implemented prerequisites are documented separately in
 [host launch identity](host-launch-identity.md) and

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
+from urllib.parse import urlencode, urlsplit, parse_qs
 from playwright.sync_api import sync_playwright, expect
 from history_parity import BINARY, Corpus, isolated_server
 from session_clone_browser import prepare
@@ -501,7 +502,14 @@ def main():
                                 reply=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={
                                     'uid':source_uid,'target_node':b.nid,'operation_id':operation})
                                 assert reply.ok,reply.text()
-                                page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}/?sid='+reply.json()['target_uid'],wait_until='networkidle')
+                                inventory=context.request.get(f'http://127.0.0.1:{hub.port}/api/sessions')
+                                assert inventory.ok,inventory.text()
+                                target_row=next(row for row in inventory.json()['sessions']
+                                                if row['uid']==reply.json()['target_uid'])
+                                share={'sid':target_row['source']+':'+target_row['sid'],'node':b.nid}
+                                page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}/?'+urlencode(share),wait_until='networkidle')
+                                expect(page.locator('#msgs')).to_contain_text({'codex':'Branch A current','claude':'Branch A final','grok':'Grok answer 10'}[provider])
+                                assert parse_qs(urlsplit(page.url).query)=={key:[value] for key,value in share.items()},page.url
                                 print('PASS committed move finishes source retirement before target activation after page and Hub restart',flush=True)
                                 for path in generations:path.unlink()
                                 print('PASS Chromium protects cross-generation agent results and scopes call IDs to their thread',flush=True)

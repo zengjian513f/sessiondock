@@ -16,8 +16,12 @@
 ```text
 crates/
   sessiondock/    Axum / Tokio、配置/API、原生会话读模型、共享SSE和搜索
+  process-links/    共享进程归属协议与关联库
+  resource-agent/   独立 Linux 资源采集服务
   ptyhost-client/    独立异步 host 客户端，显式开发目录才接入传输
   ptyhost/           独立 Rust PTY host，保留旧协议并增加可选实例校验
+  ptyhost-record/    终端录像格式、存储与读取
+  ptyhost-screen/    服务端终端画面模型
 legacy-web/          第一阶段工作前端，少量能力/错误处理兼容改动
 web/                 第二阶段 Vue / TypeScript 骨架，当前非默认
 reference/
@@ -37,8 +41,9 @@ cargo run -p sessiondock --locked
 ```
 
 打开 <http://127.0.0.1:8741>。未配置数据根时列表确实为空，不自动扫描
-`.claude`、`.codex`、`.grok` 或原项目。当前只允许 loopback 监听，拒绝非本地
-Host、跨站 API 和旧 Hub 的认证/协议头，不能替代正式认证。
+CLI home 或原项目。普通监听只允许 loopback，Host 接受本地地址及显式配置的
+`SESSIONDOCK_PUBLIC_HOSTS`，拒绝跨站 API 和旧 Hub 的认证/协议头。
+公开部署使用已鉴权反代，支持 `/sessiondock/` 等子路径；这些检查不能替代正式认证。
 
 要查看随仓库提供的**人工合成原生记录**（不会启动 CLI）：
 
@@ -52,7 +57,7 @@ cargo run -p sessiondock --locked
 以上是 POSIX shell 写法；PowerShell 可逐个设置对应 `$env:SESSIONDOCK_*` 后
 运行 cargo。这些是测试样例，不是导入的用户运行数据。
 
-后端支持以下环境变量（不会自动读取 `.env`）：
+常用环境变量如下（不会自动读取 `.env`），完整表见 [environment.md](docs/environment.md)：
 
 | 变量 | 默认值 | 含义 |
 | --- | --- | --- |
@@ -60,23 +65,25 @@ cargo run -p sessiondock --locked
 | `SESSIONDOCK_WEB_DIR` | `legacy-web` | 工作前端目录，相对服务启动目录 |
 | `SESSIONDOCK_CLAUDE_ROOT` | 无 | `项目/*.jsonl`，及 `项目/会话/subagents/agent-*.{jsonl,meta.json}` |
 | `SESSIONDOCK_CODEX_ROOT` | 无 | 显式的 sessions 形状目录，递归 JSONL |
-| `SESSIONDOCK_CODEX_INDEX` | 无 | 显式外置 `session_index.jsonl` 副本，不能置于 native/host/state/static/file roots 中；只读名称索引 |
+| `SESSIONDOCK_CODEX_INDEX` | 所配置 Codex 根父目录的 `session_index.jsonl` | 只读名称索引；显式设置可覆盖默认位置 |
 | `SESSIONDOCK_GROK_ROOT` | 无 | `项目/会话/{summary.json,chat_history.jsonl}` |
-| `SESSIONDOCK_STATE_DIR` | 无 | 既有独立开发元数据目录；仅保存星标/显示偏好，不迁移旧数据 |
+| `SESSIONDOCK_OPENCODE_DB` / `SESSIONDOCK_OPENCODE_ROOT` | 无 | 成对配置原生只读数据库与私有投影目录；见 [OpenCode](docs/opencode.md) |
+| `SESSIONDOCK_STATE_DIR` | 无 | SessionDock 元数据与会话草稿等私有状态；目录按需创建 |
 | `SESSIONDOCK_PTYHOST_DIR` | 无 | 私有 host 目录；启用精确 UID/实例控制台和观察 |
-| `SESSIONDOCK_FILE_ROOTS` | 无 | 1–16个显式绝对开发文件目录；POSIX以冒号、Windows以分号分隔，只读 |
+| `SESSIONDOCK_FILE_ROOTS` | 无 | 兼容旧配置的目录列表，不授予或限制文件读取；POSIX 以冒号、Windows 以分号分隔 |
 
 只读取明确配置的数据根，拒绝会话路径中的符号链接；这不是对敌对本地
-文件系统的完整沙箱。建议先用脱敏副本，复杂历史会明确返回 501。
-当前仅支持根路径本地开发，静态文件变更后需要重启以更新资源快照/build。
-静态前端与所有私有数据目录不得重叠，元数据目录也不能与host/native输入重叠。
+文件系统的完整沙箱。建议先用脱敏副本；无法解释的历史形状会明确报错。
+静态文件变更后需要重启以更新资源快照/build。配置没有通用的目录互斥要求；
+具体服务仍检查其实际协议、身份和 OS 访问条件。
 
-如需保存偏好，请先创建新的私有目录（例如忽略的 `.runtime/metadata`，Unix
-权限0700），再显式设置 `SESSIONDOCK_STATE_DIR`。未配置时仍返回501；坏schema、
-不安全权限、已有writer不会被自动修复或覆盖。详见 [元数据边界](docs/metadata.md)。
-文件目录还须独立于静态资源、native、metadata和host目录；只允许读取所选会话
-实际提及的文件，或以提及目录为入口在所属授权根内导航。不会扩大到整个文件系统，
-不会展开HOME。详见 [文件读取边界](docs/files.md)。
+保存偏好时显式设置 `SESSIONDOCK_STATE_DIR`（例如忽略的 `.runtime/metadata`）。
+未配置时元数据写接口返回 501；目录按需创建，缺失、损坏或未知 schema 按空数据
+读取，后续更新可以覆盖文件。每次操作重载，进程内 mutex 串行更新，无独占生命周期
+文件锁。详见 [元数据边界](docs/metadata.md)。
+文件浏览与独立预览由 FileDock 提供；SessionDock 负责解析会话引用和附件等接口。
+文件访问遵循 OS 权限，不以旧 file roots 或 cwd 作为授权边界。详见
+[文件入口](docs/files.md) 和 [安全边界](docs/security-model.md)。
 
 ## 构建与检查
 
@@ -85,7 +92,6 @@ cargo run -p sessiondock --locked
 
 ```sh
 cargo build --workspace --release --locked
-node --test tests/legacy_contract.mjs tests/history_pages_contract.mjs tests/media_lazy_contract.mjs
 
 # 免费浏览器验收：需要 Python Playwright + Chromium，测试自行创建/清理临时样例。
 cargo build -p sessiondock --locked
@@ -130,13 +136,17 @@ Rust 运行依赖，也不是所有历史格式已兼容的证明**。
 
 ## 当前范围
 
-- 提供 Claude、Codex、Grok 会话读取、搜索、分页、媒体和 SSE。
+- 提供 Claude、Codex、Grok、OpenCode 会话读取、搜索、分页、媒体和 SSE。
 - 可选服务提供受管终端、生命周期、可靠发送、文件、回收站和诊断能力。
 - 本地节点与 `sessiondock-hub` 支持多机 Hub。
 - 未启用的能力明确返回 501；不会伪造成功。
-- 原生历史只读。写入数据仅进入 SessionDock 的私有目录。
+- 普通读取不修改原生历史。用户明确确认的整组移动、复制和回收站操作可以按各自合同
+  发布、移动或清理原生文件；克隆保留源组，并仅改写目标必需的身份、路径与偏移字节。
+- 整组操作见 [移动](docs/session-move.md) 与 [克隆](docs/session-clone.md)；
+  独立 Linux 资源采集及会话计量见 [process-links](docs/process-links.md)。
 
-第二阶段 Vue 骨架仍可在 `web/` 执行 `npm ci && npm test && npm run build`。
+第二阶段 Vue 骨架仍可在 `web/` 执行 `npm ci && npm run build`。
+Cargo、Node 和 Vue 单元测试仅在用户明确要求时运行。
 当前不做前端框架重构。平台限制见对应合同。
 
 架构见 [docs/architecture.md](docs/architecture.md)，冻结前端参考见

@@ -17,11 +17,12 @@ background work. Only then does `#backend-notice` appear, saying
 “能力配置无效，请检查服务配置。” — a healthy SessionDock page has no
 standing banner (it is the replacement, not a development build).
 
-`storage_namespace` is `"sessiondock."`. The parser uses a configured non-empty
-string and otherwise defaults to `"sessiondock."`.
+`storage_namespace` is `"sessiondock."` on a node and `"sessiondock.hub."` on
+the Hub, independent of its proxy mount path. The parser uses a configured
+non-empty string and otherwise defaults to `"sessiondock."`.
 `SessionDockCapabilities.namespace` prefixes `localStorage` in `nodes.js` /
 `app.js` (`STORAGE_PREFIX`), `typography.js`, the theme bootstrap in
-`index.html`, and `files.js` (`<namespace>files-<key>`). Reads and writes use
+`index.html`. Independent file-manager preferences belong to FileDock. Reads and writes use
 only these SessionDock keys; there is no compatibility namespace or copy-forward
 path. `SessionDockCapabilities.stored(key, prefix = namespace)` is the shared
 read helper for `store.get`, `nodesOff` and typography.
@@ -36,6 +37,11 @@ Both use browser-local `sessiondock.*` preferences. Cache changes trim immediate
 while preserving pinned sessions; concurrency is sampled when the next batch
 starts, so changing it does not alter an already-running batch. Invalid saved
 concurrency values fall back to 6. The selected settings tab is also retained.
+
+Features also stores `sleepMinutes`: 0 (off), 5, 15, 30, 60, 120 or 240 minutes,
+default 60. After that interval without trusted user interaction, the page pauses
+its network activity and shows “页面已休眠”. Returning to the tab does not wake
+it; the user selects Resume. Sleep does not stop the backend CLI session.
 
 Appearance settings store `interfaceScale` as an integer percentage (50–150,
 step 1; default 100), adjusted with a live slider, reset button, or a two-finger
@@ -69,8 +75,11 @@ a missing flag does not enable cloning. The historically named local flag now
 also covers the Claude/Grok file adapters. The source group is retained.
 The Hub separately declares `session_clone_remote` for cross-node copying with
 new or retained identities. Identical destination files/rows can be reused when retaining IDs;
-different data returns a conflict. The receiver checks Linux, configured root paths, worktree
-contents and native schema before publication. The Hub's `session_move_remote` enables cross-node
+conflicting data is rejected, while a valid same-history prefix can be extended
+under the [transfer contract](session-move.md#工作目录一致性的验证范围).
+The receiver checks Linux, configured root paths, cwd path/existence, explicit
+external history dependencies and native schema before publication; it does not
+scan or compare the whole worktree. The Hub's `session_move_remote` enables cross-node
 moves with either identity choice, requiring source trash and independent session storage.
 Target publication stays fenced until the source records the handoff; source cleanup can be retried.
 The full `session_move` / `session_clone` flags
@@ -97,10 +106,13 @@ before publishing.
 | `backend` | `"rust"` | identifies the server implementation | [architecture.md](architecture.md) |
 | `stage` | `"replacement"` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `read_only` | `false` (`true` only in the fail-closed fallback above) | `true` never comes from the server; the fallback shows `#backend-notice` | [architecture.md](architecture.md) |
-| `storage_namespace` | `"sessiondock."` | `localStorage` prefix (above) | [architecture.md](architecture.md) |
+| `storage_namespace` | node `"sessiondock."`; Hub `"sessiondock.hub."` | `localStorage` prefix (above) | [architecture.md](architecture.md) |
 | `sessions` | `true` | no `config`/`allows` gate | [architecture.md](architecture.md) |
 | `watch` | `true` | no `config`/`allows` gate (SSE is always on) | [architecture.md](architecture.md) |
 | `search` | `true` | else title-only filter, no NDJSON `/api/search` | [architecture.md](architecture.md) |
+| `list_delta` | `true` | incremental session-list snapshots | [read-model.md](read-model.md) |
+| `unread_batch` | `true` | batched background unread summaries | [history-pages.md](history-pages.md) |
+| `ui_events` | `true` | lightweight list/preference change events | [read-model.md](read-model.md) |
 | `live` | `true` where native process discovery is supported | when false the page skips `/api/live` (“运行状态未知”); when true `/api/live` merges managed observations with native process discovery | [liveness.md](liveness.md), [processes.md](processes.md) |
 | `terminal` | true when `SESSIONDOCK_PTYHOST_DIR` opens TerminalService | notice + 3s term-list poll if `live` is false | [terminal-ownership.md](terminal-ownership.md) |
 | `terminal_transport` | same as `terminal` | no `config`/`allows` gate | [terminal-ownership.md](terminal-ownership.md) |
@@ -113,6 +125,7 @@ before publishing.
 | `terminal_complete_dir` | same as `terminal_create` | enables cwd directory suggestions | [lifecycle-http.md](lifecycle-http.md) |
 | `session_stop` | true when `terminal_create` and `terminal` are both true | stop control for listed managed instances and inline outcome/refusal notice | [lifecycle-http.md](lifecycle-http.md#stopping-a-session) |
 | `outbox` | always false (the legacy send routes, browser outbox and delivery ledger are retired; SEND is `conversation_send`) | kept so older pages read the outbox as disabled | [conversation.md](conversation.md) |
+| `conversation_send` | node: metadata, terminal, lifecycle and file writes configured; Hub forwards to node | server-owned drafts, SEND and CLI echo tracking | [conversation.md](conversation.md) |
 | `audit` | true when `SESSIONDOCK_AUDIT_DIR` is configured | queues `POST /api/audit/browser`; else no posts | [diagnostics.md](diagnostics.md) |
 | `bug_report` | true when `SESSIONDOCK_BUG_REPORT_DIR`/`REPO`, the audit directory, the terminal transport, the lifecycle service are all configured | no `config`/`allows` gate yet (the report dialog posts and shows the `501 bug_report_disabled` error); `POST /api/bug-report` and the `uid=bug-report` upload answer 501 while false | [bug-report.md](bug-report.md) |
 | `metadata` | true when `SESSIONDOCK_STATE_DIR` opens MetadataStore | enables stars and display preferences | [metadata.md](metadata.md) |
@@ -141,7 +154,7 @@ list. Dialog actions share the original controls and preferences.
 
 Node responses keep `hub:false`; the separate Hub server provides federation.
 `mutations:false` is not a gate for the separately advertised trash, file-write,
-timeline-pin, or delivery endpoints. `file_thumbnails:false` means thumbnail
+timeline-pin, or conversation endpoints. `file_thumbnails:false` means thumbnail
 rendering is not implemented.
 
 `files_write` contains the configured chunk size and supported operations when

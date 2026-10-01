@@ -10068,7 +10068,22 @@ function uidOfDeepLink(spec) {
   const source = cut > 0 ? spec.slice(0, cut) : null;
   const sid = cut > 0 ? spec.slice(cut + 1) : spec;
   const matches = S.sessions.filter(s => s.sid === sid && (!source || s.source === source) && (!deepNode() || s.node_id === deepNode()));
-  const hit = (matches.length === 1 ? matches[0] : null)
+  const byUid = new Map(matches.map(row => [row.uid, row]));
+  // Verified rollout generations share one native ID. Collapse only explicit
+  // continuations within this identity and machine; independent copies remain ambiguous.
+  const current = new Set(matches.map(row => {
+    const seen = new Set();
+    while (row.continued_in) {
+      if (seen.has(row.uid)) return null;
+      seen.add(row.uid);
+      const next = byUid.get(row.continued_in);
+      if (!next || next.source !== row.source || (next.node_id || '') !== (row.node_id || '')) break;
+      row = next;
+    }
+    return row.uid;
+  }));
+  const hit = (matches.length === 1 ? matches[0]
+    : current.size === 1 ? byUid.get(current.values().next().value) : null)
     || S.sessions.find(s => s.uid === spec);
   return hit ? hit.uid : null;
 }
