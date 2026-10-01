@@ -2393,8 +2393,24 @@ $('#new-cwd-options').onclick = e => {
 $('#new-session-dialog').addEventListener('close', closeCwdPicker);
 $('#new-session-form .new-source').addEventListener('change', () => NewModels.refresh());
 $('#new-node').addEventListener('change', () => NewModels.refresh());
-$('#new-session-dialog').addEventListener('click', e => {
-  if (e.target === $('#new-session-dialog')) $('#new-session-dialog').close();
+let newSessionBackdropPressed = false;
+function newSessionBackdropHit(event) {
+  const dialog = $('#new-session-dialog');
+  const rect = dialog.getBoundingClientRect();
+  return event.target === dialog && (event.clientX < rect.left || event.clientX >= rect.right
+    || event.clientY < rect.top || event.clientY >= rect.bottom);
+}
+$('#new-session-dialog').addEventListener('pointerdown', event => {
+  newSessionBackdropPressed = event.button === 0 && newSessionBackdropHit(event);
+});
+$('#new-session-dialog').addEventListener('pointercancel', () => { newSessionBackdropPressed = false; });
+$('#new-session-dialog').addEventListener('close', () => { newSessionBackdropPressed = false; });
+$('#new-session-dialog').addEventListener('click', event => {
+  // Like the report dialog, require both ends of the gesture on the backdrop.
+  // Selecting input text and releasing outside also targets the dialog.
+  const dismiss = newSessionBackdropPressed && newSessionBackdropHit(event);
+  newSessionBackdropPressed = false;
+  if (dismiss) $('#new-session-dialog').close();
 });
 
 const termRows = () => Math.max(10, Math.floor(T.height / (termFontSize() * 1.31)));
