@@ -288,7 +288,7 @@ test('consoleUnavailableReason: empty selection, stubs, hub errors, rust-only ga
   assert.equal(reason({ConsoleUI: {errors: new Map([['u', '上次失败']]), busy: new Set()}}, 'u', null, false), '');
 });
 
-test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing fields degrade to flat', () => {
+test('nest tree: nest_parent nests by node/source/sid, cycles stay roots, missing fields degrade to flat', () => {
   // nestEdges also resolves a spawner hidden by rewind/continuation through S.sessions;
   // here every spawner is listed, so the full inventory equals the rendered list.
   const S = {nest: true, nestClosed: new Set(), live: new Set(), sessions: []};
@@ -296,9 +296,9 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
   for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'nestStamp', 'nestSize', 'agentRunning', 'expandRows']) load(context, name);
   const a = {uid: 'claude:a', source: 'claude', sid: 'a', updated: '2026-09-12T00:00:00Z',
     agent_items: [{id: 'ag', type: 'Task', updated: '2026-09-12T00:30:00Z'}]};
-  const b = {uid: 'claude:b', source: 'claude', sid: 'b', updated: '2026-09-12T01:00:00Z', spawned_by: {source: 'claude', sid: 'a'}};
-  const c = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', spawned_by: {source: 'claude', sid: 'a'}};
-  const other = {uid: 'codex:d', source: 'codex', sid: 'd', node_id: 'n2', updated: '2026-09-12T03:00:00Z', spawned_by: {source: 'claude', sid: 'a'}};
+  const b = {uid: 'claude:b', source: 'claude', sid: 'b', updated: '2026-09-12T01:00:00Z', nest_parent: {source: 'claude', sid: 'a'}};
+  const c = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', nest_parent: {source: 'claude', sid: 'a'}};
+  const other = {uid: 'codex:d', source: 'codex', sid: 'd', node_id: 'n2', updated: '2026-09-12T03:00:00Z', nest_parent: {source: 'claude', sid: 'a'}};
   const {children, nested} = context.nestTree([a, b, c, other]);
   same([...nested], ['claude:b', 'codex:c']);          // other node: the spawner is not in this list
   same(children.get('claude:a').map(s => s.uid), ['claude:b', 'codex:c']);
@@ -307,7 +307,7 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
   context.expandRows(a, 0, children, rows, new Set(['claude:a']));
   same(rows.map(r => [r.agent ? r.agent.id : r.s.uid, r.depth]), [['claude:a', 0], ['codex:c', 1], ['claude:b', 1], ['ag', 1]]);
   assert.equal(rows[0].kids, 3);
-  // Rust without the backend fields: no spawned_by means every row is a root; active is never set so no
+  // Rust without the backend fields: no nest_parent means every row is a root; active is never set so no
   // agent row is running even when the owner is live.
   const {nested: flat} = context.nestTree([{uid: 'claude:x', source: 'claude', sid: 'x'}, {uid: 'claude:y', source: 'claude', sid: 'y'}]);
   assert.equal(flat.size, 0);
@@ -317,8 +317,8 @@ test('nest tree: spawned_by nests by node/source/sid, cycles stay roots, missing
   S.live.clear();
   assert.equal(context.agentRunning('claude:a', {...a.agent_items[0], active: true}), false);
   // A cycle (a spawned by b, b spawned by a) keeps the later one as a root instead of hiding both.
-  const p = {uid: 'claude:p', source: 'claude', sid: 'p', spawned_by: {source: 'claude', sid: 'q'}};
-  const q = {uid: 'claude:q', source: 'claude', sid: 'q', spawned_by: {source: 'claude', sid: 'p'}};
+  const p = {uid: 'claude:p', source: 'claude', sid: 'p', nest_parent: {source: 'claude', sid: 'q'}};
+  const q = {uid: 'claude:q', source: 'claude', sid: 'q', nest_parent: {source: 'claude', sid: 'p'}};
   same([...context.nestTree([p, q]).nested], ['claude:p']);
   S.nest = false;
   assert.equal(context.nestTree([a, b, c]).nested.size, 0);
@@ -343,8 +343,8 @@ test('continued-in: the old Claude file is hidden while its continuation is list
   for (const name of ['spawnKey', 'nestSpecParent', 'nestParentOf', 'nestEdges', 'nestTree', 'sessionContinued', 'hiddenForkParent', 'sessionHidden']) load(context, name);
   const old = {uid: 'claude:old', source: 'claude', sid: 'old', updated: '2026-09-12T00:00:00Z', continued_in: 'claude:new'};
   // The continuation inherits the old process's environment: the scan records the old session as its spawner.
-  const fresh = {uid: 'claude:new', source: 'claude', sid: 'new', updated: '2026-09-12T01:00:00Z', spawned_by: {source: 'claude', sid: 'old'}};
-  const child = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', spawned_by: {source: 'claude', sid: 'new'}};
+  const fresh = {uid: 'claude:new', source: 'claude', sid: 'new', updated: '2026-09-12T01:00:00Z', nest_parent: {source: 'claude', sid: 'old'}};
+  const child = {uid: 'codex:c', source: 'codex', sid: 'c', updated: '2026-09-12T02:00:00Z', nest_parent: {source: 'claude', sid: 'new'}};
   S.sessions = [old, fresh, child];
   assert.equal(context.sessionContinued(old), true);
   assert.equal(context.sessionHidden(old), true);

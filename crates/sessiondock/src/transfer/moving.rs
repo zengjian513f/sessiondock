@@ -352,17 +352,6 @@ impl TransferService {
                 }
             }
         }
-        for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
-            if !uids.contains(row["uid"].as_str().unwrap_or("")) {
-                let parent = &row["spawned_by"];
-                if references(
-                    parent["source"].as_str().unwrap_or(""),
-                    parent["sid"].as_str().unwrap_or(""),
-                ) {
-                    return Err(changed());
-                }
-            }
-        }
         Ok(())
     }
     pub fn retire_source(&self, id: &str, trash: &Path) -> Result<Operation, TransferError> {

@@ -28,8 +28,8 @@ def main():
         metadata=corpus.root/'state/session-metadata.json'
         before=json.loads(metadata.read_text())
         claude_uid=uid('claude',claude[2]);grok_uid=uid('grok',root/'file-node/grok/project'/ident(10))
-        before['sessions'][claude_uid]={'spawned_by':{'source':'codex','sid':ident(2)},'starred':True}
-        before['sessions'][grok_uid]={'spawned_by':{'source':'claude','sid':ident(2)},'starred':True}
+        before['sessions'][claude_uid]={'nest_parent':{'source':'codex','sid':ident(2)},'starred':True}
+        before['sessions'][grok_uid]={'nest_parent':{'source':'claude','sid':ident(2)},'starred':True}
         metadata.write_text(json.dumps(before))
         original={p:p.read_bytes() for home in (corpus.root/'codex',root/'file-node/claude',root/'file-node/grok')
                   for p in home.rglob('*') if p.is_file() and '.sqlite' not in p.name}
@@ -92,8 +92,8 @@ def main():
                         def session(source,sid):return next(r for r in rows if r['source']==source and r['sid']==sid and not r.get('continued_in'))
                         cloned_claude=session('claude',ids['claude:'+ident(2)])
                         cloned_grok=session('grok',ids['grok:'+ident(10)])
-                        assert state[cloned_claude['uid']]['spawned_by']=={'source':'codex','sid':codex[ident(2)]}
-                        assert state[cloned_grok['uid']]['spawned_by']=={'source':'claude','sid':ids['claude:'+ident(2)]}
+                        assert state[cloned_claude['uid']]['nest_parent']=={'source':'codex','sid':codex[ident(2)]}
+                        assert state[cloned_grok['uid']]['nest_parent']=={'source':'claude','sid':ids['claude:'+ident(2)]}
                         for source,sid,text in [('claude',ids['claude:'+ident(2)],'Branch A final'),
                                                 ('codex',codex[ident(2)],'Branch A current'),
                                                 ('grok',ids['grok:'+ident(10)],'Grok answer 10')]:

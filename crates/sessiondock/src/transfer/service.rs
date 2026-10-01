@@ -423,27 +423,20 @@ impl TransferService {
                 op.metadata_before
                     .insert(member.uid.clone(), before.clone());
                 let mut after = serde_json::Map::new();
-                for key in [
-                    "starred",
-                    "starred_at",
-                    "group",
-                    "fork_parent_visible",
-                    "nest_independent",
-                ] {
+                for key in ["starred", "starred_at", "group", "fork_parent_visible"] {
                     if let Some(v) = before.get(key) {
                         after.insert(key.into(), v.clone());
                     }
                 }
-                for key in ["spawned_by", "nest_parent"] {
-                    if let Some(mut relation) = before.get(key).cloned()
-                        && relation["node_id"].is_null()
+                if let Some(mut relation) = before.get("nest_parent").cloned() {
+                    if relation["node_id"].is_null()
                         && let Some(mapped) = relation["sid"].as_str().and_then(|id| {
                             op.mapped_session(relation["source"].as_str().unwrap_or(""), id)
                         })
                     {
                         relation["sid"] = mapped.clone().into();
-                        after.insert(key.into(), relation);
                     }
+                    after.insert("nest_parent".into(), relation);
                 }
                 if new_ids && !after.is_empty() {
                     after.insert("clone_operation".into(), op.id.clone().into());
@@ -728,8 +721,6 @@ impl TransferService {
                 "starred_at",
                 "group",
                 "fork_parent_visible",
-                "nest_independent",
-                "spawned_by",
                 "nest_parent",
             ];
             for (uid, row) in &mut op.metadata_after {
@@ -757,10 +748,6 @@ impl TransferService {
                             "move_conflict",
                             "目标会话显示设置不同且历史没有延长",
                         ));
-                    }
-                    if !before["spawned_by"].is_null() && before["spawned_by"] != row["spawned_by"]
-                    {
-                        return Err(TransferError::new("move_conflict", "目标会话原生归属不同"));
                     }
                     op.metadata_replaced.insert(uid.clone(), before);
                 }

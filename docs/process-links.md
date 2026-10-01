@@ -23,9 +23,8 @@ tuple and first observation time. Bindings also expose a `launch_chain` (nearest
 launch first), retaining earlier launch identities across additional SSH hops
 and after an upstream launcher exits. An established attribution stays attached to
 that process incarnation; a later connection reusing the same ports cannot
-reassign old work. Native `spawned_by` is recorded only when both creation times
-are known and the parent is not newer than the child. Its optional `node_id`
-identifies a remote parent. Manual sidebar nesting never changes process ownership.
+reassign old work. These diagnostic launch links never write a sidebar parent.
+The user-selected `nest_parent` never changes process ownership.
 
 ## Current wire contract
 

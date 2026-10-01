@@ -1420,8 +1420,8 @@ function applyMigrationMeta(uid, agent, entry, meta) {
   if (SessionDockCapabilities.config.backend !== 'rust' || !meta
       || meta.uid !== uid || (meta.agent_id || null) !== agent) return;
   const key = m => JSON.stringify([m.title, m.parent_title, m.sid, m.agent_type,
-    m.cwd, m.model, !!m.starred, m.fork_parent_visible, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent, m.group || null,
+    m.cwd, m.model, !!m.starred, m.fork_parent_visible,
+    m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type])]);
   const changed = key(entry.meta) !== key(meta);
   entry.meta = meta;
@@ -2561,8 +2561,8 @@ function mergeSessionMetaEvent(entry, session) {
 /** 列表元数据变更后同步缓存和当前详情标题，不重绘消息正文。 */
 function refreshSessionMeta() {
   const headerKey = m => JSON.stringify([
-    m.title, m.parent_title, m.sid, m.agent_type, !!m.starred, m.spawned_by || null,
-    m.nest_parent || null, !!m.nest_independent, m.group || null,
+    m.title, m.parent_title, m.sid, m.agent_type, !!m.starred,
+    m.nest_parent || null, m.group || null,
     (m.agent_items || []).map(a => [a.id, a.title, a.type]),
   ]);
   const before = cache.get(viewKey(S.sel, S.agent));
@@ -3301,10 +3301,7 @@ function openItemMenu(uid, x, y) {
   const unusedLaunch = !row?.pending && unusedNewAssignedLaunch(row);
   // 运行中的 SSH 会话先停止，结束后才删除；未使用的原生启动仍可直接丢弃。
   const shellRunning = typeof pendingShellRunning === 'function' && pendingShellRunning(row);
-  const byKey = new Map(list.map(session => [spawnKey(session.node_id, session.source, session.sid), session]));
-  const nested = !!(row && nestParentOf(row, byKey));
-  const canRestore = !!(row?.spawned_by?.source && row.spawned_by.sid)
-    && (!!row.nest_independent || !!(row.nest_parent?.source && row.nest_parent.sid));
+  const nested = !!(row?.nest_parent?.source && row.nest_parent.sid);
   const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
   // Keep every action in its fixed position, with the same unavailable hints as
   // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
@@ -3312,8 +3309,7 @@ function openItemMenu(uid, x, y) {
     stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
       ? '此会话当前没有可停止的进程。' : '',
     hide: !parent ? '仅分叉父会话可隐藏。' : '',
-    detach: !nestable || !nested ? '此会话当前不能从父会话独立。' : '',
-    reattach: !nestable || !canRestore ? '此会话当前没有可恢复的附属关系。' : '',
+    detach: !nestable || !nested ? '此会话当前没有附属关系。' : '',
     attach: !nestable ? '此会话当前不能设置附属关系。' : '',
     delete: parent ? '分叉父会话可隐藏，不能直接删除。'
       : ((!row?.pending && running && !unusedLaunch) || shellRunning)
@@ -3475,11 +3471,7 @@ $('#item-menu').onclick = async e => {
     return;
   }
   if (button.dataset.act === 'detach') {
-    await setSessionNest(uid, {parent_uid: null, independent: true});
-    return;
-  }
-  if (button.dataset.act === 'reattach') {
-    await setSessionNest(uid, {parent_uid: null, independent: false});
+    await setSessionNest(uid, {parent_uid: null});
     return;
   }
   if (button.dataset.act === 'attach') {
@@ -3868,21 +3860,13 @@ for (const host of [$('#node-chips'), $('#chips')]) {
   }, true);
 }
 
-/* ---------- 分层：发起关系 ---------- */
-// spawned_by 来自本机进程树或经验证的 SSH 关联；两类父关系都可指定机器。
-// 都按机器、来源和原生 sid 解析，避免不同机器的同名会话串线。
+/* ---------- 分层：附属关系 ---------- */
 const spawnKey = (nodeId, source, sid) => JSON.stringify([nodeId || '', source, String(sid)]);
 
-/** 左栏实际用的父会话：手动附属优先，独立显示则没有父级，否则用 spawned_by。 */
+/** SessionDock stores only the user-selected sidebar parent. */
 function nestSpecParent(session) {
-  if (session.nest_independent) return null;
-  if (session.nest_parent?.source && session.nest_parent.sid) {
-    return {parent: session.nest_parent, explicit: true};
-  }
-  if (session.spawned_by?.source && session.spawned_by.sid) {
-    return {parent: session.spawned_by, explicit: false};
-  }
-  return null;
+  return session.nest_parent?.source && session.nest_parent.sid
+    ? {parent: session.nest_parent} : null;
 }
 
 function nestParentOf(session, byKey, allByKey = new Map(S.sessions.map(s =>
@@ -3920,10 +3904,7 @@ function nestEdges(list) {
     if (!spec) continue;
     const parent = nestParentOf(s, byKey, allByKey);
     if (!parent) continue;
-    // compact/continue 会另写一份 JSONL，新进程常继承旧会话的环境变量，
-    // spawned_by 会误把「同一条对话的续写」当成派出去的孩子。手动附属除外。
-    if (!spec.explicit && parent.continued_in === s.uid) continue;
-    // 数据出环（A 由 B 发起、B 又由 A 发起）时后处理的那条留作根，树不会吞掉它
+    // A stored cycle must not swallow sessions from the sidebar.
     let cur = parent, looped = false;
     for (let i = 0; cur && i < list.length; i++) {
       if (cur === s) { looped = true; break; }
@@ -3959,14 +3940,12 @@ function nestDescendantUids(uid, list = sidebarSessions()) {
   return out;
 }
 
-function applySessionNest(uid, nestParent, independent) {
+function applySessionNest(uid, nestParent) {
   for (const rows of [S.sessions, S.results || []]) {
     const row = rows.find(session => session.uid === uid);
     if (!row) continue;
     if (nestParent) row.nest_parent = nestParent;
     else delete row.nest_parent;
-    if (independent) row.nest_independent = true;
-    else delete row.nest_independent;
   }
 }
 
@@ -3983,16 +3962,16 @@ function setNestAttach(value) {
   side.scrollTop = top;
 }
 
-async function setSessionNest(uid, {parent_uid = null, independent = false} = {}) {
+async function setSessionNest(uid, {parent_uid = null} = {}) {
   try {
     const response = await fetch(appUrl('api/session/nest'), {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({uid, parent_uid, independent}),
+      body: JSON.stringify({uid, parent_uid}),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    applySessionNest(uid, data.nest_parent || null, !!data.nest_independent);
-    if (!data.nest_independent && !S.nest) {
+    applySessionNest(uid, data.nest_parent || null);
+    if (data.nest_parent && !S.nest) {
       S.nest = true;
       store.set('nest', true);
       renderView();
@@ -4019,7 +3998,7 @@ async function pickNestParent(target) {
   // 逐条保存；失败的留在点选里（setSessionNest 已提示原因），可以再点一次。
   const failed = [];
   for (const uid of uids) {
-    if (!await setSessionNest(uid, {parent_uid: target.uid, independent: false})) failed.push(uid);
+    if (!await setSessionNest(uid, {parent_uid: target.uid})) failed.push(uid);
   }
   setNestAttach(failed);
 }

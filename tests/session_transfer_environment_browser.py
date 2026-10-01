@@ -23,8 +23,8 @@ def main():
         root=Path(tmp);source=prepare(root/'source')
         roots,claude,side,agent=fixture(root/'files');roots['codex']=str(source.root/'codex')
         metadata=source.root/'state/session-metadata.json';doc=json.loads(metadata.read_text())
-        doc['sessions'][uid('claude',claude[2])]={'spawned_by':{'source':'codex','sid':ident(2)}}
-        doc['sessions'][uid('grok',root/'files/grok/project'/ident(10))]={'spawned_by':{'source':'claude','sid':ident(2)}}
+        doc['sessions'][uid('claude',claude[2])]={'nest_parent':{'source':'codex','sid':ident(2)}}
+        doc['sessions'][uid('grok',root/'files/grok/project'/ident(10))]={'nest_parent':{'source':'claude','sid':ident(2)}}
         metadata.write_text(json.dumps(doc))
         with sqlite3.connect(source.root/'codex/state_5.sqlite') as db:
             db.execute('ALTER TABLE thread_dynamic_tools ADD COLUMN namespace TEXT')

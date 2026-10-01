@@ -538,200 +538,20 @@ fn timeline_pin_round_trip_versioning_retire_and_clear() {
 /// relation is permanent, empty entries are skipped, other preferences never
 /// touch it, and the row carries it.
 #[test]
-fn spawn_parent_is_recorded_once_and_enriches_rows() {
+fn nest_parent_attaches_and_clears() {
     let root = temp();
     let store = MetadataStore::open(root.path()).unwrap();
-    let parent = SpawnedBy {
+    let parent = NestParent {
         node_id: None,
         source: "claude".into(),
-        sid: "parent-sid".into(),
+        sid: "parent".into(),
     };
-    assert!(store.snapshot().unwrap().spawned_uids().is_empty());
-    assert_eq!(
-        store
-            .record_spawn_parents(&[("grok:child".into(), parent.clone())])
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        store.snapshot().unwrap().spawned_uids(),
-        ["grok:child".to_owned()].into()
-    );
-    // Only one spawner: a later clue does not rewrite the first relation.
-    assert_eq!(
-        store
-            .record_spawn_parents(&[(
-                "grok:child".into(),
-                SpawnedBy {
-                    node_id: None,
-                    source: "codex".into(),
-                    sid: "other".into()
-                }
-            )])
-            .unwrap(),
-        0
-    );
-    assert_eq!(
-        store
-            .record_spawn_parents(&[
-                ("grok:child".into(), parent.clone()),
-                (
-                    "codex:bad".into(),
-                    SpawnedBy {
-                        node_id: None,
-                        source: String::new(),
-                        sid: String::new()
-                    }
-                ),
-            ])
-            .unwrap(),
-        0
-    );
-    assert_eq!(store.snapshot().unwrap().revision(), 1);
-    assert_eq!(store.snapshot().unwrap().row("codex:bad"), json!({}));
-    let original = json!({"uid":"grok:child", "title":"demo"});
-    let mut rows = vec![original.clone(), json!({"uid":"claude:root"})];
-    store.snapshot().unwrap().enrich(&mut rows);
-    assert_eq!(
-        rows[0]["spawned_by"],
-        json!({"source":"claude", "sid":"parent-sid"})
-    );
-    assert!(rows[1].get("spawned_by").is_none());
-    assert!(original.get("spawned_by").is_none());
-    let mut one = original.clone();
-    store.snapshot().unwrap().enrich_one(&mut one, &[]);
-    assert_eq!(one["spawned_by"]["sid"], "parent-sid");
-    // Stars and the relation do not overwrite each other; a stale decoration is replaced.
-    store.set_starred("grok:child", true).unwrap();
-    let mut stale = json!({"uid":"grok:child", "spawned_by":{"source":"x","sid":"y"}});
-    store
-        .snapshot()
-        .unwrap()
-        .enrich(std::slice::from_mut(&mut stale));
-    assert_eq!(stale["spawned_by"]["source"], "claude");
-    assert_eq!(stale["starred"], true);
-    store.set_starred("grok:child", false).unwrap();
-    assert_eq!(
-        store.snapshot().unwrap().row("grok:child"),
-        json!({"spawned_by":{"source":"claude","sid":"parent-sid"}})
-    );
-    // Parent strings are retained as supplied, after trimming.
-    for parent_value in [
-        SpawnedBy {
-            node_id: None,
-            source: "claude".into(),
-            sid: "with space".into(),
-        },
-        SpawnedBy {
-            node_id: None,
-            source: "x".repeat(33),
-            sid: "sid".into(),
-        },
-        SpawnedBy {
-            node_id: None,
-            source: "claude".into(),
-            sid: "bad\u{7}".into(),
-        },
-    ] {
-        assert!(
-            store
-                .record_spawn_parents(&[(format!("codex:new-{}", parent_value.sid), parent_value)])
-                .is_ok()
-        );
-    }
-    assert!(
-        store
-            .record_spawn_parents(&[("bad uid".into(), parent.clone())])
-            .is_ok()
-    );
-    let trimmed = MetadataSnapshot::empty()
-        .with_spawn_parents(&[(
-            " codex:new ".into(),
-            SpawnedBy {
-                node_id: None,
-                source: " codex ".into(),
-                sid: " sid-1 ".into(),
-            },
-        )])
-        .unwrap();
-    assert_eq!(
-        trimmed.spawned_by("codex:new"),
-        Some(&SpawnedBy {
-            node_id: None,
-            source: "codex".into(),
-            sid: "sid-1".into()
-        })
-    );
-    // Durable across restart with the documented key.
-    drop(store);
-    let disk: Value =
-        serde_json::from_slice(&fs::read(root.path().join(METADATA_FILENAME)).unwrap()).unwrap();
-    assert_eq!(
-        disk["sessions"]["grok:child"],
-        json!({"spawned_by":{"source":"claude","sid":"parent-sid"}})
-    );
-    let restarted = MetadataStore::open(root.path()).unwrap();
-    assert_eq!(
-        restarted.snapshot().unwrap().spawned_by("grok:child"),
-        Some(&parent)
-    );
-}
-
-#[test]
-fn nest_display_overrides_spawned_by_and_clears() {
-    let root = temp();
-    let store = MetadataStore::open(root.path()).unwrap();
-    let spawned = SpawnedBy {
-        node_id: None,
-        source: "claude".into(),
-        sid: "parent-sid".into(),
-    };
-    store
-        .record_spawn_parents(&[("grok:child".into(), spawned.clone())])
-        .unwrap();
     let attached = store
-        .set_nest_display(
-            "grok:child",
-            Some(NestParent {
-                node_id: None,
-                source: "codex".into(),
-                sid: "other".into(),
-            }),
-            false,
-        )
+        .set_nest_display("grok:child", Some(parent.clone()))
         .unwrap();
-    assert_eq!(attached.revision(), 2);
-    assert_eq!(
-        attached.nest_parent("grok:child"),
-        Some(&NestParent {
-            node_id: None,
-            source: "codex".into(),
-            sid: "other".into()
-        })
-    );
-    assert!(!attached.nest_independent("grok:child"));
-    let independent = store.set_nest_display("grok:child", None, true).unwrap();
-    assert!(independent.nest_independent("grok:child"));
-    assert!(independent.nest_parent("grok:child").is_none());
-    let restored = store.set_nest_display("grok:child", None, false).unwrap();
-    assert!(!restored.nest_independent("grok:child"));
-    assert!(restored.nest_parent("grok:child").is_none());
-    assert_eq!(restored.spawned_by("grok:child"), Some(&spawned));
-    let again = store.set_nest_display("grok:child", None, false).unwrap();
-    assert!(Arc::ptr_eq(&restored, &again));
-    let mut row = json!({"uid":"grok:child", "nest_parent":{"source":"stale","sid":"x"}});
-    restored.enrich(std::slice::from_mut(&mut row));
-    assert!(row.get("nest_parent").is_none());
-    assert!(row.get("nest_independent").is_none());
-    assert_eq!(
-        row["spawned_by"],
-        json!({"source":"claude","sid":"parent-sid"})
-    );
-    let independent = store.set_nest_display("grok:child", None, true).unwrap();
-    independent.enrich(std::slice::from_mut(&mut row));
-    assert_eq!(row["nest_independent"], true);
-    assert_eq!(
-        row["spawned_by"],
-        json!({"source":"claude","sid":"parent-sid"})
-    );
+    assert_eq!(attached.nest_parent("grok:child"), Some(&parent));
+    let cleared = store.set_nest_display("grok:child", None).unwrap();
+    assert!(cleared.nest_parent("grok:child").is_none());
+    let again = store.set_nest_display("grok:child", None).unwrap();
+    assert!(Arc::ptr_eq(&cleared, &again));
 }

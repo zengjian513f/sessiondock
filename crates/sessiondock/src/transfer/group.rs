@@ -10,7 +10,6 @@ pub(super) mod grok_tools;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::TransferError;
 use crate::sessions::SessionSnapshot;
@@ -48,10 +47,6 @@ pub struct Group {
     pub members: Vec<Member>,
     pub edges: Vec<Edge>,
     pub blockers: Vec<Blocker>,
-}
-
-fn string<'a>(v: &'a Value, key: &str) -> &'a str {
-    v[key].as_str().unwrap_or("")
 }
 
 pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, TransferError> {
@@ -189,28 +184,21 @@ pub(super) fn derive_cached(
             });
         }
     }
+    // Include existing local sidebar attachments in the selected group. A
+    // missing or remote display parent is not a native dependency or blocker.
     for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
-        let uid = string(row, "uid");
-        if !entries.contains_key(uid) {
+        let Some(uid) = row["uid"].as_str().filter(|uid| entries.contains_key(*uid)) else {
             continue;
-        }
-        let parent = &row["spawned_by"];
-        if parent.is_object() {
-            let source = string(parent, "source");
-            let sid = string(parent, "sid");
-            if let Some(ids) = identities.get(&(source, sid)) {
-                for id in ids {
-                    connect(uid, id, "spawned_by");
-                }
-            } else {
-                blockers.push(Blocker {
-                    uid: uid.into(),
-                    code: "move_group_incomplete".into(),
-                    message: format!("缺少 spawned_by 关联的 {source} 会话 {sid}"),
-                });
+        };
+        let parent = &row["nest_parent"];
+        if parent["node_id"].is_null()
+            && let (Some(source), Some(sid)) = (parent["source"].as_str(), parent["sid"].as_str())
+            && let Some(ids) = identities.get(&(source, sid))
+        {
+            for id in ids {
+                connect(uid, id, "nest_parent");
             }
         }
-        // nest_parent is presentation, not ownership or native dependency.
     }
     // Merge call names across rollouts, then resolve cached output identities.
     let mut calls_by_thread = BTreeMap::<String, BTreeMap<String, String>>::new();

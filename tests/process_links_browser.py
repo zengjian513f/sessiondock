@@ -127,7 +127,7 @@ def main():
                     rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
                     child = next(r for r in rows if r['sid'] == 'child')
                     expected = {'source': 'codex', 'sid': 'parent', 'node_id': nodes[0].nid}
-                    assert child['spawned_by'] == expected
+                    assert 'spawned_by' not in child and 'nest_parent' not in child
                     assert 'spawned_by' not in next(r for r in rows if r['sid'] == 'older')
                     context = browser.new_context(service_workers='block')
                     stack.callback(context.close)
@@ -136,7 +136,8 @@ def main():
                         page.goto(f'http://127.0.0.1:{hub.port}', wait_until='networkidle')
                         uid = scoped(nodes[1].nid, corpora[1].uid('child'))
                         parent = scoped(nodes[0].nid, corpora[0].uid('parent'))
-                        page.wait_for_function('([uid, parent]) => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s])))?.uid === parent', arg=[uid, parent])
+                        page.wait_for_function('uid => S.sessions.some(s => s.uid === uid)', arg=uid)
+                        assert page.evaluate('uid => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s]))) === null', uid)
                         page.locator(f'[data-uid="{parent}"]').first.click()
                         page.locator(f'[data-uid="{uid}"]').first.click()
                         assert page.evaluate('S.sel') == uid
@@ -179,7 +180,7 @@ def main():
                         # Persisted per-process identity survives no live SSH evidence.
                         shutil.rmtree(procs[0] / '200')
                         (procs[1] / '100/environ').write_bytes(b'')
-                        print('PASS automatic remote CLI nesting, Python attribution, chronology and browser gates', flush=True)
+                        print('PASS diagnostic remote CLI attribution without automatic nesting, chronology and browser gates', flush=True)
                     else:
                         # Reusing PID 300 must not inherit its predecessor's saved link.
                         stat = procs[1] / '300/stat'

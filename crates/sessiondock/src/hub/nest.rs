@@ -39,10 +39,7 @@ pub async fn prepare(
                 "不能附属到自己或自己的子会话下面".into(),
             ));
         }
-        if row["nest_independent"] == true {
-            break;
-        }
-        let spec = row.get("nest_parent").or_else(|| row.get("spawned_by"));
+        let spec = row.get("nest_parent");
         current = spec.and_then(|spec| {
             let node = spec.get("node_id").unwrap_or(&row["node_id"]);
             rows.iter().find(|candidate| {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # run_validation: skip  (real-cli operator run: whether haiku actually executes the grok command is up to the model; run by hand per batch)
 """Real-CLI acceptance: Claude -p spawns grok -p; the Rust service lists that
-Grok session on the real ~/.grok/sessions root and reports spawned_by when
+Grok session on the real ~/.grok/sessions root without inferring a sidebar parent when
 the Linux /proc scan still saw grok.
 
 Rules: cheapest models only (Claude `claude-haiku-4-5-20251001` `--effort low`,
@@ -9,7 +9,7 @@ Grok `grok-4.6` `--reasoning-effort low`); isolated `CLAUDE_CONFIG_DIR` reuses
 credentials read-only; proxy passthrough; Claude JSONL assistant records carry
 the exact model id; release binary read-only with native process discovery and
 a temp state dir; GET `/api/sessions?force=1` must list the new Grok row;
-`spawned_by` is `{"source":"claude","sid":U}` when recorded, else presence only
+No startup-derived sidebar parent is recorded
 (grok -p may have finished); delete only the created `U.jsonl`, the new Grok
 session dir, and temp dirs. SKIP when `claude`/`grok` is absent or login fails.
 `--dry-run` prints the exact commands and exits 0 without touching homes.
@@ -258,17 +258,8 @@ def run(binary):
                             and r.get("sid") == grok_dir.name), None)
             if row is None:
                 fail("grok-row", f"Grok uid {uid} not in {len(sessions)} rows")
-            parent = row.get("spawned_by")
-            print(f"observed grok uid={row.get('uid')} sid={row.get('sid')!r} "
-                  f"spawned_by={parent!r} claude_sid={sid}", flush=True)
-            passed("grok-row")
-            if parent:
-                if parent.get("source") != "claude" or parent.get("sid") != sid:
-                    fail("spawned_by", f"want claude/{sid}, got {parent}")
-                passed("spawned_by")
-            else:
-                print("PASS spawned_by: not recorded (grok may have finished before the scan)",
-                      flush=True)
+            assert "spawned_by" not in row and "nest_parent" not in row, row
+            passed("CLI launch does not create a sidebar parent")
         finally:
             remove_created(jsonl, grok_dir, sid, before)
 
