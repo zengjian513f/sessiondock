@@ -29,7 +29,10 @@ CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DA
 ReadWritePaths=/run/resource-agent /var/lib/resource-agent
 TasksMax=128
 MemoryMax=512M
-CPUQuota=25%
+# Allow short page-table walks without throttling the snapshot API with them.
+# The PSS worker independently paces its CPU use to at most 20% of one core.
+CPUQuota=100%
+CPUWeight=10
 Nice=10
 
 [Install]
