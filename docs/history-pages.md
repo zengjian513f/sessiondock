@@ -229,10 +229,13 @@ No frontend framework is introduced.
 
 `GET /api/messages/{uid}?window=1&agent=...` keeps the existing live checkpoint
 fields. When history is omitted, `partial` contains `head`, `tail`, `omitted`
-and an opaque `cursor`. Initial windows prioritize up to 500 latest events, then
-up to 100 earliest events within the shared budgets. Heavy media can reduce
-either segment. SSE resets also use a bounded window; ordinary append semantics
-remain unchanged.
+and an opaque `cursor`. Initial windows prioritize up to 20 latest events, then
+up to 5 earliest events within a separate 256 KiB estimated JSON target
+(including the 64 KiB metadata reserve). Large text or media can reduce either
+segment. The latest event is always included intact, even above that soft target;
+all omitted events remain available through history pages. This intentionally
+uses a smaller opening window than the frozen Python 100/500-event window.
+SSE resets also use a bounded window; ordinary append semantics remain unchanged.
 
 `GET /api/messages/{uid}/page?cursor=...&agent=...` returns:
 
@@ -287,7 +290,8 @@ discarded. Explicit reload must also avoid overwriting concurrent live updates.
   references and 24 MiB estimated embedded compressed-image bytes — so a
   page normally groups as much as fits in 8 MiB, and the 51 MB / 7,426-message real
   Claude session fills its gap in a handful of pages. Initial head/tail
-  windows use the same media/byte budget and at most 600 events.
+  windows use the same media budgets, a separate 256 KiB JSON target and at
+  most 25 events. Explicit pages retain their larger grouping targets.
 - The legacy gap button chains pages: one click keeps requesting the next
   grant until the gap is filled (progress on the button, a second click
   aborts and keeps the pages already read), then renders once. Every page

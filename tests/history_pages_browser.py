@@ -49,6 +49,14 @@ def build(root):
     started=codex_row("event_msg",{"type":"task_started","turn_id":"activity-turn"})
     started["timestamp"]=datetime.now(timezone.utc).isoformat()
     corpus.put("codex-page-activity","codex",[*activity_rows,started],[])
+    # Fewer than the old 600-event window, yet several MiB of tool-like text.
+    corpus.put("codex-heavy-window","codex",[
+        codex_row("session_meta",{"id":"codex-heavy-window","cwd":"/synthetic/heavy"}),
+        *[row(f"HEAVY ROW {index:04d} " + "x" * 8192) for index in range(449)]],[])
+    corpus.put("codex-oversized-window","codex",[
+        codex_row("session_meta",{"id":"codex-oversized-window","cwd":"/synthetic/oversized"}),
+        *[row(f"OLDER ROW {index:04d}") for index in range(30)],
+        row("OVERSIZED LATEST " + "y" * (300 * 1024))],[])
     return corpus
 
 
@@ -113,6 +121,13 @@ def main():
                     else:
                         request.continue_()
                 page.route("**/api/messages/*/page?*",page_route)
+                # Keep the existing render-race choreography with the smaller initial
+                # window by yielding every ten DOM groups in this test only.
+                def small_render_batches(route):
+                    response=route.fetch()
+                    route.fulfill(response=response,body=response.text().replace(
+                        "const RENDER_BATCH = 250;", "const RENDER_BATCH = 10;"))
+                page.route("**/app.js*",small_render_batches)
                 page.goto(base,wait_until="networkidle")
                 page.evaluate("HISTORY_PAGE_CHAIN=false")
 
@@ -155,11 +170,14 @@ def main():
                     button.click()
 
                 def settled():
-                    page.wait_for_function("historyPageRequests.size===0")
+                    page.wait_for_function("""historyPageRequests.size===0 && (() => {
+                      const e=cache.get(viewKey(S.sel,S.agent));
+                      return !!document.querySelector(e?.partial ? '#msgs .history-gap' : '#msgs .msg');
+                    })()""")
 
                 select("codex-pages","PAGE ROW 1399")
                 first=snapshot()
-                assert len(first["text"])==600 and first["partial"]["omitted"]==800
+                assert len(first["text"])==25 and first["partial"]["omitted"]==1375
                 page.wait_for_function("_es && _es.readyState===EventSource.OPEN")
                 page.evaluate("window.__watchBefore=_es")
 
@@ -172,7 +190,7 @@ def main():
                 live=snapshot()
                 release();settled()
                 after=snapshot()
-                assert after["partial"]["head"]==300 and len(after["text"])==801
+                assert after["partial"]["head"]==205 and len(after["text"])==226
                 assert after["text"][-1]=="APPEND DURING PAGE HTTP" and after["text"].count("APPEND DURING PAGE HTTP")==1
                 assert after["cursor"]==live["cursor"] and after["end"]==live["end"] and after["anchor"]==live["anchor"]
                 assert page.evaluate("_es===window.__watchBefore")
@@ -209,10 +227,10 @@ def main():
                 page.evaluate("window.__heldPageRender();window.__heldPageRender=null")
                 settled()
                 after=snapshot()
-                assert after["partial"]["head"]==700 and len(after["text"])==1202
+                assert after["partial"]["head"]==605 and len(after["text"])==627
                 assert after["cursor"]==live["cursor"]
                 assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE RENDER")==1
-                assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE HTTP")==1
+                assert page.locator("#msgs").inner_text().count("APPEND DURING PAGE HTTP")==1, page.locator("#msgs").inner_text()[-2000:]
                 assert page.evaluate("_es===window.__watchBefore")
 
                 # A view switch invalidates a captured response even if its
@@ -233,7 +251,7 @@ def main():
                 expected_native[str(path.relative_to(corpus.root))]=hashlib.sha256(changed).hexdigest()
                 page.wait_for_function("cache.get(viewKey(S.sel,S.agent)).msgs[0].text==='EDIT ROW 0000'")
                 reset=snapshot()
-                assert reset["partial"] and len(reset["text"])<=600
+                assert reset["partial"] and len(reset["text"])<=25
                 release();settled()
                 assert snapshot()["text"]==reset["text"] and snapshot()["partial"]==reset["partial"]
 
@@ -292,7 +310,9 @@ def main():
                 page.locator("#a-view-switch").click()
                 page.locator('#session-view-menu button[data-agent="codex-page-agent"]').click()
                 expect(page.locator("#msgs")).to_contain_text("AGENT ROW 0749")
-                start=len(requests);click_page();settled()
+                start=len(requests)
+                while snapshot()["partial"]:
+                    click_page();settled()
                 assert snapshot()["partial"] is None and len(snapshot()["text"])==750
                 assert all(text.startswith("AGENT ROW") for text in snapshot()["text"])
                 assert any(parse_qs(urlsplit(url).query).get("agent")==["codex-page-agent"] for url in requests[start:] if "/page?" in url)
@@ -318,6 +338,44 @@ def main():
                 expect(page.locator(".history-gap-load")).to_have_count(0)
                 expect(page.locator("#a-term")).to_be_visible()
                 assert page.evaluate("document.documentElement.scrollWidth<=innerWidth")
+
+                # Opening a multi-MiB history transfers only a small recent
+                # window. Read the actual HTTP body as well as the UI cache;
+                # shrinking the DOM alone must not satisfy this regression.
+                page.set_viewport_size({"width":1280,"height":900})
+                for name,marker in (("codex-heavy-window","HEAVY ROW 0448"),
+                                    ("codex-oversized-window","OVERSIZED LATEST")):
+                    start=len(requests)
+                    opening=[]
+                    def capture_open(route):
+                        response=route.fetch()
+                        opening.append(response.body())
+                        route.fulfill(response=response)
+                    page.route("**/api/messages/*?window=1",capture_open)
+                    select(name,marker)
+                    page.unroute("**/api/messages/*?window=1",capture_open)
+                    assert len(opening)==1
+                    wire=json.loads(opening[0])
+                    recent=snapshot()
+                    assert recent["partial"] and recent["text"]==[m["text"] for m in wire["messages"]]
+                    assert not any("/page?" in url for url in requests[start:])
+                    if name=="codex-heavy-window":
+                        assert 0<len(wire["messages"])<25
+                        assert len(opening[0])<256*1024
+                        assert wire["partial"]["tail"]==20
+                        assert recent["text"][-20:]==[f"HEAVY ROW {i:04d} "+"x"*8192 for i in range(429,449)]
+                    else:
+                        assert len(wire["messages"])==1
+                        assert recent["text"]==["OVERSIZED LATEST "+"y"*(300*1024)]
+                    live=recent["cursor"]
+                    while snapshot()["partial"]:
+                        click_page();settled()
+                    restored=snapshot()
+                    expected=([f"HEAVY ROW {i:04d} "+"x"*8192 for i in range(449)]
+                              if name=="codex-heavy-window" else
+                              [*[f"OLDER ROW {i:04d}" for i in range(30)],recent["text"][-1]])
+                    assert restored["text"]==expected and restored["cursor"]==live
+                    print(f"PASS {name}: opening {len(opening[0])} bytes, {len(wire['messages'])} messages; complete history restored")
 
                 # Exercise the real covered-activity handler in Chromium with a
                 # synthetic duplicate packet. It deliberately changes a message

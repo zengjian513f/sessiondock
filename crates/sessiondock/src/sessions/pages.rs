@@ -19,6 +19,11 @@ pub const DEFAULT_PAGE_EVENTS: usize = 2000;
 const MAX_IMAGES: usize = 128;
 const MAX_IMAGE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_JSON_BYTES: usize = 8 * 1024 * 1024;
+// Opening a view should be cheap even when its history contains long tool output.
+// Explicit history pages retain their larger grouping targets.
+const WINDOW_HEAD_EVENTS: usize = 5;
+const WINDOW_TAIL_EVENTS: usize = 20;
+const WINDOW_JSON_BYTES: usize = 256 * 1024;
 /// Typed images shown inline per message; the rest continue through media pages.
 pub(super) const DISPLAY_LIMIT: usize = media_projection::DISPLAY_LIMIT;
 
@@ -230,6 +235,7 @@ struct Budget {
     images: usize,
     image_bytes: usize,
     json_bytes: usize,
+    json_target: usize,
 }
 impl Default for Budget {
     fn default() -> Self {
@@ -238,6 +244,7 @@ impl Default for Budget {
             images: 0,
             image_bytes: 0,
             json_bytes: 64 * 1024,
+            json_target: MAX_JSON_BYTES,
         }
     }
 }
@@ -298,7 +305,7 @@ impl Budget {
         if self.events > 0
             && (self.images.saturating_add(displayed) > MAX_IMAGES
                 || self.image_bytes.saturating_add(image_bytes) > MAX_IMAGE_BYTES
-                || self.json_bytes.saturating_add(json_bytes) > MAX_JSON_BYTES)
+                || self.json_bytes.saturating_add(json_bytes) > self.json_target)
         {
             return Ok(false);
         }
@@ -330,25 +337,33 @@ pub(super) fn window(
     pages: &PageStore,
 ) -> Result<Value, SessionError> {
     let total = selected.len();
-    let mut budget = Budget::default();
-    // Prioritize the latest tail. Heavy media may reduce either segment below
-    // legacy's usual 100/500 events; all omitted events remain reachable.
+    let mut budget = Budget {
+        json_target: WINDOW_JSON_BYTES,
+        ..Budget::default()
+    };
+    // Prioritize the latest tail. Large messages may reduce either segment;
+    // the newest event always fits and every omitted event remains reachable.
     let mut stop = total;
     while stop > 0
-        && total - stop < 500
+        && total - stop < WINDOW_TAIL_EVENTS
         && budget.take_at(
             snapshot,
             selected[stop - 1].index,
             selected[stop - 1].event,
-            600,
+            WINDOW_HEAD_EVENTS + WINDOW_TAIL_EVENTS,
         )?
     {
         stop -= 1;
     }
     let mut start = 0;
     while start < stop
-        && start < 100
-        && budget.take_at(snapshot, selected[start].index, selected[start].event, 600)?
+        && start < WINDOW_HEAD_EVENTS
+        && budget.take_at(
+            snapshot,
+            selected[start].index,
+            selected[start].event,
+            WINDOW_HEAD_EVENTS + WINDOW_TAIL_EVENTS,
+        )?
     {
         start += 1;
     }
