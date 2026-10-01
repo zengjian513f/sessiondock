@@ -3,6 +3,7 @@
 //! The offline stager never publishes; the service owns native import and recovery.
 
 pub mod bundle;
+mod cleanup;
 mod code_mode;
 pub mod codex;
 mod codex_ids;

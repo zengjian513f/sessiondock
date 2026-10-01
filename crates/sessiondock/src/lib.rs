@@ -502,6 +502,9 @@ fn build_app(
         });
         service
     });
+    if let Some(service) = &transfer {
+        service.clone().housekeeping(shutdown.clone());
+    }
     let state = AppState {
         transfer,
         shell_env,

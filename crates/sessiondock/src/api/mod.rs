@@ -186,6 +186,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/session/clone/plan", post(transfer::plan))
         .route("/session/clone", post(transfer::execute))
+        .route("/session/clone/cancel", post(transfer::cancel_clone))
+        .route("/session/clone/progress", post(transfer::clone_progress))
         .route("/term/list", get(terminal::list))
         .route(
             "/term/create",
