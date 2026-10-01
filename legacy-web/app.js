@@ -4292,7 +4292,10 @@ function patchSidebarRow(node, row, highlightKey) {
     cwd.innerHTML = timelineDirectoryMarkup(s);
   }
   const snippet = node.querySelector('.snip');
-  if (snippet && (snippet.textContent !== s.snippet || node._highlightKey !== highlightKey)) snippet.innerHTML = hl(s.snippet);
+  if (snippet && (snippet.title !== s.snippet || node._highlightKey !== highlightKey)) {
+    snippet.title = s.snippet;
+    snippet.innerHTML = sidebarSnippet(s.snippet);
+  }
   globalThis.SessionDockGroups?.paintRow(node, s);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
   syncRowPickBox(node, s);
@@ -4348,7 +4351,7 @@ function createSidebarRow(r, picked = pickedSessions) {
        <div class="m">${esc(meta)}</div>
        ${S.view === 'date'
          ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
-       ${s.snippet ? `<div class="snip">${hl(s.snippet)}</div>` : ''}
+       ${s.snippet ? `<div class="snip" title="${esc(s.snippet)}">${sidebarSnippet(s.snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
   globalThis.SessionDockGroups?.paintRow(it, s);
@@ -4633,6 +4636,18 @@ function hl(text) {
     last = match.index + match[0].length;
   }
   return html + esc(text.slice(last));
+}
+
+// The server's 40-character context can hide the hit below the sidebar's
+// two-line clamp. Keep a short Unicode-safe lead-in; the title retains the
+// full excerpt. Apply this to both newly created and reconciled rows.
+function sidebarSnippet(text) {
+  const start = S.opts.regex ? regexCached(text)[0]?.[0] : reTerm(false)?.exec(text)?.index;
+  if (start !== undefined) {
+    const before = Array.from(text.slice(0, start));
+    if (before.length > 8) text = '…' + before.slice(-8).join('') + text.slice(start);
+  }
+  return hl(text);
 }
 
 /** 在已渲染的 DOM 里给命中词套 <mark>, 走文本节点所以不会破坏标签。 */
