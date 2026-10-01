@@ -198,6 +198,20 @@ and displays the existing floating notice style, preserving editor contents.
 These protections take effect after a pre-existing old page loads the new frontend;
 deploying cannot replace JavaScript already running in another browser tab.
 
+Settings → Features → Auto sleep defaults to one hour without interaction.
+The browser saves the selected duration (5/15/30/60/120/240 minutes or disabled)
+as `sleepMinutes` under its existing SessionDock preference namespace. Keyboard,
+pointer, touch and wheel input reset the deadline; server output and returning
+to a tab do not. Wall-clock checks also cover suspended computers and throttled
+background timers. At the deadline a full-page modal uses the session-pause
+shade and a **Resume** button, including above an already open settings dialog.
+HTTP polling, history/UI SSE, audit beacons and terminal attachments pause;
+the underlying CLI processes and editor drafts remain intact. Only Resume
+dismisses sleep and reconciles the lists/history and terminal connection.
+Recorded console replay reconnects at its saved position, and a terminal claim
+that finishes after sleep starts cannot reopen a socket behind the overlay.
+Resuming never clears a newer-build or expired-login pause.
+
 ## Response caches
 
 The shared observer and fallback browser polls read `/api/live` and

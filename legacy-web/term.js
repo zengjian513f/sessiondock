@@ -3592,6 +3592,8 @@ function bindTimeline() {
 bindTimeline();
 
 function attachRecordingReplay(view, row, uid) {
+  let restoreTimeline = view.resumeTimeline;
+  view.resumeTimeline = null;
   const name = view.name;
   view.replay = true;
   view.revoked = true;               // 绝不能自动 claim 一个已退出的实例
@@ -3647,6 +3649,16 @@ function attachRecordingReplay(view, row, uid) {
         renderTakeoverBtn();
       } else if (message.t === 'end') {
         tl.atEnd = true; tl.playing = false;
+        // The initial replay opens at its tail. Once that snapshot is complete,
+        // restore the position saved when the page detached for sleep/background.
+        if (restoreTimeline) {
+          const saved = restoreTimeline; restoreTimeline = null;
+          timelineSeekTo(view, saved.clock);
+          if (saved.playing) {
+            tl.playing = true; tl.atEnd = false;
+            timelineSend(view, {t:'play', speed:saved.speed});
+          }
+        }
       }
       renderTimeline(view);
       return;
@@ -3673,6 +3685,7 @@ async function attachTerm(name, auto = false, directClaim = false) {
   if (SessionDockNetwork.paused) return;
   const existing = T.views.get(name);
   if (!await loadTerminalRenderer(name)) return false;
+  if (SessionDockNetwork.paused) return false;
   // Loading assets yields: a replaced/disposed host must not be recreated by
   // an old reconnect or theme refresh after the user's next action.
   if (existing && T.views.get(name) !== existing) return false;
@@ -3694,6 +3707,7 @@ async function attachTerm(name, auto = false, directClaim = false) {
 }
 
 async function attachOwnedTerm(view, allowRefresh = true, auto = false, directClaim = false) {
+  if (SessionDockNetwork.paused) return false;
   if (view.retired) return false;
   if (view.replay && view.ws && view.ws.readyState < 2) return true;
   const name = view.name;
@@ -3743,6 +3757,7 @@ async function attachOwnedTerm(view, allowRefresh = true, auto = false, directCl
   // A fork/current thread can display its ancestor's bound host. Report the
   // attempt on the selected view; the wire binding remains the host's tuple.
   const token = await claimTermOwnership(name, active ? T.uid || uid : uid, binding, auto, directClaim);
+  if (SessionDockNetwork.paused) return false;
   if (bound && T.views.get(name) !== view) return false;
   if (!token) {
     view.revoked = true;
@@ -4590,6 +4605,7 @@ function persistComposerDraft(uid = composerUid) {
 // transport recovers, including a report dialog whose first read failed.
 let composerRecoveryBusy = false;
 async function recoverComposerDrafts() {
+  if (globalThis.SessionDockSleep?.sleeping || SessionDockNetwork.reason === 'login') return;
   if (composerRecoveryBusy || document.hidden || !navigator.onLine || composerSending) return;
   composerRecoveryBusy = true;
   try {
@@ -5421,6 +5437,7 @@ async function reconcileComposerSubmission(uid) {
 }
 let composerInputProbeBusy=false, composerDraftSyncBusy=false;
 async function pollComposerInput() {
+  if (SessionDockNetwork.paused) return;
   const uid=composerUid;
   if (!uid || !conversationSendEnabled() || document.hidden || composerSending || composerInputProbeBusy
       || !$('#composer').getClientRects().length || !takenOver(uid)) return;
@@ -6348,6 +6365,7 @@ function backgroundTerm() {
   termWasBackgrounded = true;
   for (const view of T.views.values()) {
     view.resumeFocus = !!document.activeElement && view.host.contains(document.activeElement);
+    if (view.replay && view.ws && !view.resumeTimeline) view.resumeTimeline = {...view.timeline};
   }
   suspendTerm();
 }
@@ -6361,7 +6379,8 @@ function foregroundTerm(force = false) {
     }
     if (view.resumeFocus) requestTermFocus(view, document.body);
     view.resumeFocus = false;
-    reconnectTerm(view);
+    if (view.replay && view.resumeTimeline) void attachTerm(view.name, true);
+    else reconnectTerm(view);
   }
 }
 document.addEventListener('visibilitychange', () => {
@@ -6373,6 +6392,13 @@ addEventListener('pagehide', backgroundTerm);
 addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));
 addEventListener('sessiondock-network-paused', backgroundTerm);
+addEventListener('sessiondock-network-resumed', () => {
+  foregroundTerm(true);
+  void loadTermList();
+  void recoverComposerDrafts();
+  void pollComposerInput();
+  if (composerUid) void followServerDraft(composerUid);
+});
 
 // Native/global process discovery and managed terminal transport are independent
 // Rust capabilities. The live poll normally refreshes this list; do not

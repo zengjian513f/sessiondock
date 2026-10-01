@@ -488,6 +488,18 @@
     </div>
     </div>
     <div id="settings-features" class="settings-pane" role="tabpanel" hidden>
+    <label class="setting-row" for="setting-sleep">
+      <span><b>自动休眠</b><small>无操作时暂停同步，按 Resume 恢复；会话继续运行</small></span>
+      <select id="setting-sleep">
+        <option value="5">5 分钟</option>
+        <option value="15">15 分钟</option>
+        <option value="30">30 分钟</option>
+        <option value="60" selected>1 小时（默认）</option>
+        <option value="120">2 小时</option>
+        <option value="240">4 小时</option>
+        <option value="0">不休眠</option>
+      </select>
+    </label>
     <label class="setting-row" for="setting-cache">
       <span><b>历史缓存</b><small>打开中的会话固定驻留，不计入此上限</small></span>
       <select id="setting-cache">
@@ -546,6 +558,7 @@
 </script>
 <script defer src="term-menu.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script defer src="term.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
+<script defer src="page-sleep.js?v=__SESSIONDOCK_ASSET_VERSION__"></script>
 <script>
   // 不再注册 Service Worker：同源新标签页的导航要先经过它，而浏览器把它安排在已有的
   // 同站点进程里启动——旧页面主线程卡死时，新标签页跟着挂到 60 s 启动超时。离线壳
