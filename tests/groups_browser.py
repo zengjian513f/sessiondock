@@ -51,6 +51,8 @@ def main():
         def page_at(base, mobile=False):
             context = browser.new_context(service_workers='block', viewport={'width': 390 if mobile else 1280, 'height': 900}, has_touch=mobile)
             contexts.append(context)
+            # An obsolete saved dropdown selection must never hide sessions/groups.
+            context.add_init_script("localStorage.setItem('sessiondock.groupFilter', JSON.stringify('历史分组'))")
             context.route('**/*', lambda route: route.continue_() if route.request.url.startswith(base + '/') else route.abort())
             page = context.new_page(); page.on('pageerror', lambda error: errors.append(str(error)))
             page.goto(base, wait_until='networkidle')
@@ -59,10 +61,10 @@ def main():
             except Exception as exc:
                 raise AssertionError({'page_errors': errors, 'catalog': page.request.get(base + '/api/groups').text(),
                     'ui': page.evaluate('({groups: typeof SessionDockGroups, sessions: S.sessions.length})')}) from exc
+            expect(page.locator('#session-group-filter, #session-group-filters')).to_have_count(0)
             return page
         def tree(page):
             page.locator('#view [data-v="tree"]').click()
-            page.locator('#session-group-filter').select_option('')
         def edit(page, uid, hold=False, hover=False):
             item = page.locator(f'#side .item[data-uid="{uid}"]')
             if hold:
@@ -131,9 +133,17 @@ def main():
             for i in range(2):
                 assert set(stored(i)['group_catalog']['groups']) == {'历史分组', '缓存分组', '待办', '稍后'}
             a, b = scoped(nodes[0].nid, uid_a), scoped(nodes[1].nid, uid_b)
-            page.locator('#session-group-filter').select_option('待办')
-            expect(page.locator('#side .item')).to_have_count(1)
-            page.locator('#session-group-filter').select_option('')
+            for view in ('tree', 'date'):
+                page.locator(f'#view [data-v="{view}"]').click()
+                expect(page.locator('#side .item')).to_have_count(4)
+            page.locator('#view [data-v="group"]').click()
+            expect(page.locator('#side .item')).to_have_count(2)
+            for name in ('历史分组', '缓存分组', '待办', '稍后'):
+                expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_be_enabled()
+            page.reload(wait_until='networkidle')
+            page.wait_for_function('SessionDockGroups.available')
+            expect(page.locator('#side .item')).to_have_count(2)
+            tree(page)
             page.evaluate("store.set('labelFilter', ['旧标签'])")
             page.reload(wait_until='networkidle'); page.wait_for_function('SessionDockGroups.available')
             expect(page.locator('#side .item')).to_have_count(4)
@@ -173,20 +183,23 @@ def main():
             for context in contexts: context.close()
             contexts.clear(); hub.stop(); hub.start()
             bases[1] = start_node(1); rejoined = page_at(bases[1])
-            expect(rejoined.locator('#session-group-filter option[value="搁置"]')).to_have_count(0, timeout=25000)
+            rejoined.locator('#view [data-v="group"]').click()
+            expect(rejoined.get_by_role('button', name='删除分组 搁置', exact=True)).to_have_count(0, timeout=25000)
             assert 'group' not in stored(1)['sessions'][uid_b]
             # Recreate the same name with a newer operation; deletion does not permanently reserve names.
             create(rejoined, '搁置')
             tree(rejoined); edit(rejoined, uid_b); assign(rejoined, '搁置')
             page = page_at(f'http://127.0.0.1:{hub.port}')
-            expect(page.locator('#session-group-filter option[value="搁置"]')).to_have_count(1)
+            page.locator('#view [data-v="group"]').click()
+            expect(page.get_by_role('button', name='删除分组 搁置', exact=True)).to_be_enabled()
             for context in contexts: context.close()
             contexts.clear(); hub.stop()
             for stack in stacks: stack.close()
             bases = [start_node(i) for i in range(2)]
             for i, base in enumerate(bases):
                 solo = page_at(base)
-                expect(solo.locator('#session-group-filter option[value="搁置"]')).to_have_count(1)
+                solo.locator('#view [data-v="group"]').click()
+                expect(solo.get_by_role('button', name='删除分组 搁置', exact=True)).to_be_enabled()
                 assert stored(i)['sessions'][corpora[i].uid('same')]['starred'] is True
             # Standalone deletion of a populated group clears the assignment atomically.
             remove(solo, '搁置')
@@ -196,7 +209,7 @@ def main():
             assert set(solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')) == {'', '历史分组', '缓存分组', '待办', '稍后'}
             solo.locator('#session-group-menu button').first.press('Escape')
             solo.locator('#item-menu [data-act="group"]').press('Escape')
-            remaining = solo.locator('#session-group-filter option').evaluate_all('(options) => options.map(option => option.value).filter(Boolean)')
+            remaining = solo.evaluate('SessionDockGroups.names')
             for name in remaining: remove(solo, name)
             expect(solo.locator('#side .group')).to_have_count(0)
             expect(solo.locator('#side .item')).to_have_count(0)
@@ -206,7 +219,7 @@ def main():
             create(solo, '空列表新建')
             assert all(p.read_bytes() == raw for p, raw in native.items())
             assert not errors, errors
-            print('PASS groups browser: inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
+            print('PASS groups browser: no dropdown, obsolete filter ignored across views/reload, inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
         finally:
             for context in contexts: context.close()
             if hub: hub.stop()

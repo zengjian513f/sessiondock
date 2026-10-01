@@ -240,9 +240,10 @@ Escape cancels. Existing session tree/time views still show ungrouped sessions.
 The session right-click/hold menu has a second-level group menu. Its first item
 is Ungrouped, followed by named groups, and a click assigns immediately. Desktop
 hover and ArrowRight open the submenu; ArrowLeft or Escape returns to the parent.
-Multi-select uses the same immediate assignment menu. A single group filter
-organizes sessions across machines; only the filter is browser state. Clone
-preserves the group and catalog reads include imported names.
+Multi-select uses the same immediate assignment menu. Groups are browsed through
+the top-right Group view; there is no group filter dropdown. Previous browser
+group-filter preferences do not restrict any view or the catalog. Clone preserves
+the group and catalog reads include imported names.
 
 Catalog `changes` records the latest create/delete operation for each name,
 including deletion markers. Stamps advance beyond observed operations and include

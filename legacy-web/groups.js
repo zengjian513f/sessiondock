@@ -3,7 +3,6 @@
 // Nodes own groups and assignments; the Hub distributes catalog changes.
 globalThis.SessionDockGroups = (() => {
   let catalog = [], available = false, refreshTask = null, busy = false;
-  let groupFilter = store.get('groupFilter', '');
   let menuUids = [], menuAnchor = null, editing = false;
   const menu = $('#session-group-menu'), status = $('#session-group-status');
   const row = uid => indexedSessions().byUid.get(uid);
@@ -15,8 +14,7 @@ globalThis.SessionDockGroups = (() => {
     const next = [...new Set(data.groups || [])].sort((a, b) => a.localeCompare(b));
     const changed = !available || JSON.stringify(next) !== JSON.stringify(catalog);
     catalog = next; available = true;
-    if (groupFilter && !catalog.includes(groupFilter)) { groupFilter = ''; store.set('groupFilter', ''); }
-    paintFilters(); paintPickBar(!!S.nestAttach);
+    paintPickBar(!!S.nestAttach);
     if (changed) renderSide();
     if (!menu.hidden) paintMenu();
   }
@@ -35,17 +33,7 @@ globalThis.SessionDockGroups = (() => {
     return refreshTask;
   }
   function matches(session) {
-    if (S.view === 'group' && (!session.group || (available && !catalog.includes(session.group)))) return false;
-    return !available || !groupFilter || session.group === groupFilter;
-  }
-  function paintFilters() {
-    $('#session-group-filters').hidden = !available;
-    const select = $('#session-group-filter');
-    const key = JSON.stringify([catalog, groupFilter]);
-    if (select.dataset.key === key) return;
-    select.dataset.key = key;
-    select.replaceChildren(new Option('全部分组', ''), ...catalog.map(name => new Option(name, name)));
-    select.value = groupFilter;
+    return S.view !== 'group' || !!session.group && (!available || catalog.includes(session.group));
   }
   function paintRow(node, session) {
     const body = node.querySelector('.body'); if (!body) return;
@@ -169,9 +157,8 @@ globalThis.SessionDockGroups = (() => {
   $('#side-pick-group').onclick = event => showMenu([...pickedSessions], event.currentTarget);
   document.addEventListener('pointerdown', event => { if (!event.target.closest('#session-group-menu, #item-menu, #side-pick-group')) closeMenu(); }, true);
   addEventListener('resize', closeMenu);
-  $('#session-group-filter').onchange = event => { groupFilter = event.target.value; store.set('groupFilter', groupFilter); renderSide(); };
   void refresh();
   setInterval(() => { if (!document.hidden && !busy && !editing) void refresh(); }, 10000);
   return {matches, paintRow, paintPickBar, paintHeading, paintSidebar, showMenu, closeMenu, escapeMenu,
-    contains: name => catalog.includes(name), get names() { return catalog.filter(name => !groupFilter || name === groupFilter); }, get available() { return available; }};
+    contains: name => catalog.includes(name), get names() { return catalog; }, get available() { return available; }};
 })();
