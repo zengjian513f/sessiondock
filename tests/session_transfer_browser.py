@@ -119,23 +119,24 @@ def environment_checks(transfer, root):
     (cwd/'cycle').symlink_to(cwd, target_is_directory=True)
     inspect={'operation':'inspect_environment','cwd':str(cwd),'dependencies':[str(external)]}
     snapshot=command(transfer,inspect)
-    assert 'untracked' in snapshot['entries'] and 'ignored' in snapshot['entries']
+    assert snapshot['entries']=={}, 'working directory must not be enumerated'
     assert str(external) in snapshot['dependencies']
     assert all('.git' not in Path(p).parts for p in snapshot['entries'])
     compare={'operation':'compare_environment','snapshot':snapshot}
     assert command(transfer,compare)['matches']
     (cwd/'.git/HEAD').write_text('different git metadata')
     assert command(transfer,compare)['matches']
-    for path,changed in [(cwd/'ignored',b'same dirty status, different bytes'),(external,b'changed attachment')]:
-        before=path.read_bytes();path.write_bytes(changed)
-        command(transfer,compare,error='move_cwd_mismatch')
-        command(transfer,{'operation':'recheck_environment','snapshot':snapshot},error='move_plan_stale')
-        path.write_bytes(before)
+    (cwd/'ignored').write_text('unrelated changed build output')
     (cwd/'untracked').chmod(0o700)
+    (cwd/'added').write_text('new project')
+    (cwd/'broken-link').symlink_to(root/'missing')
+    with (cwd/'large-build-output').open('wb') as stream:stream.truncate(8*1024**3)
+    assert command(transfer,compare)['matches']
+    assert command(transfer,{'operation':'recheck_environment','snapshot':snapshot})
+    before=external.read_bytes();external.write_bytes(b'changed attachment')
     command(transfer,compare,error='move_cwd_mismatch')
-    (cwd/'untracked').chmod(0o600)
-    (cwd/'added').write_text('new path')
-    command(transfer,compare,error='move_cwd_mismatch');(cwd/'added').unlink()
+    command(transfer,{'operation':'recheck_environment','snapshot':snapshot},error='move_plan_stale')
+    external.write_bytes(before)
     assert command(transfer,compare)['matches']
     # Per-host inode and mtime differences are not content differences.
     changed_stamp=json.loads(json.dumps(snapshot))
@@ -148,7 +149,7 @@ def environment_checks(transfer, root):
     assert not command(transfer,{'operation':'check_storage_probe','root':str(target),'probe':probe})['shared']
     command(transfer,{'operation':'remove_storage_probe','root':str(source),'probe':probe})
     assert not list(source.iterdir())
-    print('PASS content preflight: ignored/untracked files, executable bits, external links, cycles, stale scan; shared storage nonce')
+    print('PASS preflight: cwd existence only, unrelated project content ignored, explicit dependency contents/stamps; shared storage nonce')
     return cwd
 
 

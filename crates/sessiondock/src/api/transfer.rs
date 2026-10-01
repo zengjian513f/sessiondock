@@ -79,7 +79,7 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let _guard = service.gate.clone().lock_owned().await;
+    let _guard = service.session_guard(&body.uid).await;
     let copy = service.clone();
     let selected = body.uid;
     let moving = match body.mode.as_deref().unwrap_or("clone") {
@@ -118,7 +118,10 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     if body.step == "target" {
         let op = match service.load(&body.operation_id) {
             Ok(op) => op,
@@ -162,7 +165,10 @@ pub async fn switch_source(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let op = match service.load(&body.operation_id) {
         Ok(op) => op,
         Err(e) => return failure(e),
@@ -189,7 +195,10 @@ pub async fn activate_target(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     match tokio::task::spawn_blocking(move || {
         let _guard = guard;
         service.activate_target(&body.operation_id)
@@ -215,7 +224,10 @@ pub async fn retire_source(
             "源机器未配置回收站",
         ));
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let op = match service.load(&body.operation_id) {
         Ok(op) => op,
         Err(e) => return failure(e),
@@ -327,7 +339,10 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let op = match service.load(&body.operation_id) {
         Ok(op) if op.uid == body.uid => op,
         Ok(_) => {
@@ -361,6 +376,8 @@ pub async fn execute(State(state): State<AppState>, Json(body): Json<ExecuteRequ
 
 #[derive(Deserialize)]
 pub struct TransferId {
+    #[serde(default)]
+    reset: bool,
     operation_id: String,
     #[serde(default)]
     completed: bool,
@@ -375,7 +392,10 @@ pub async fn export_bundle(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let copy = service.clone();
     let op =
         match tokio::task::spawn_blocking(move || copy.reserve_export(&body.operation_id)).await {
@@ -400,6 +420,7 @@ pub async fn export_bundle(
     let copy_path = path.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
+        let _scope = crate::transfer::coordination::Scope::enter(copy.interrupts.flag(&copy_op.id));
         copy.export_bundle(&copy_op, &copy_path)
     })
     .await;
@@ -478,10 +499,14 @@ impl std::io::Read for ChannelReader {
             if n != 0 {
                 return Ok(n);
             }
-            match self.receiver.blocking_recv() {
-                Some(Ok(bytes)) => self.current = std::io::Cursor::new(bytes),
-                Some(Err(e)) => return Err(std::io::Error::other(e)),
-                None => return Ok(0),
+            crate::transfer::coordination::check().map_err(std::io::Error::other)?;
+            match self.receiver.try_recv() {
+                Ok(Ok(bytes)) => self.current = std::io::Cursor::new(bytes),
+                Ok(Err(e)) => return Err(std::io::Error::other(e)),
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return Ok(0),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
             }
         }
     }
@@ -492,23 +517,29 @@ pub async fn receive_bundle(State(state): State<AppState>, body: axum::body::Bod
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
     let (sender, receiver) = tokio::sync::mpsc::channel(4);
-    let worker = tokio::task::spawn_blocking(move || {
-        let _guard = guard;
+    let mut worker = tokio::task::spawn_blocking(move || {
         service.receive_bundle(ChannelReader {
             receiver,
             current: std::io::Cursor::new(axum::body::Bytes::new()),
         })
     });
     let mut stream = body.into_data_stream();
-    while let Some(chunk) = stream.next().await {
-        if sender.send(chunk.map_err(|e| e.to_string())).await.is_err() {
-            break;
+    let finished = loop {
+        tokio::select! {
+            result = &mut worker => break Some(result),
+            chunk = stream.next() => match chunk {
+                Some(chunk) => if sender.send(chunk.map_err(|e| e.to_string())).await.is_err() { break None; },
+                None => break None,
+            }
         }
-    }
+    };
     drop(sender);
-    match worker.await {
+    let result = match finished {
+        Some(result) => result,
+        None => worker.await,
+    };
+    match result {
         Ok(Ok(op)) => Json(TransferService::public(&op)).into_response(),
         Ok(Err(e)) => failure(e),
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
@@ -522,7 +553,10 @@ pub async fn release_export(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
         service.release_export(&body.operation_id, body.completed)
@@ -543,7 +577,10 @@ pub async fn reserve_export(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let _guard = service.gate.clone().lock_owned().await;
+    let _guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let copy = service.clone();
     let result = tokio::task::spawn_blocking(move || copy.reserve_export(&body.operation_id)).await;
     match result {
@@ -589,9 +626,16 @@ pub async fn bundle_manifest(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = match service.operation_guard(&body.operation_id).await {
+        Ok(guard) => guard,
+        Err(e) => return failure(e),
+    };
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
+        let _scope = crate::transfer::coordination::Scope::enter(
+            service.interrupts.flag(&body.operation_id),
+        );
+        crate::transfer::coordination::check()?;
         let op = service.load(&body.operation_id)?;
         service.bundle_manifest(&op)
     })
@@ -610,17 +654,18 @@ pub async fn check_bundle(
         Ok(s) => s,
         Err(e) => return *e,
     };
-    let guard = service.gate.clone().lock_owned().await;
+    let guard = service
+        .locks
+        .acquire(service.operation_keys(&manifest.operation))
+        .await;
     let result = tokio::task::spawn_blocking(move || {
         let _guard = guard;
+        let _scope = crate::transfer::coordination::Scope::enter(
+            service.interrupts.flag(&manifest.operation.id),
+        );
+        crate::transfer::coordination::check()?;
         service.validate_bundle(&manifest)?;
-        for snapshot in &manifest.environment {
-            let dependencies = snapshot.dependencies.keys().cloned().collect::<Vec<_>>();
-            snapshot.compare(&crate::transfer::environment::Snapshot::capture(
-                &snapshot.cwd,
-                &dependencies,
-            )?)?;
-        }
+        service.verify_environment(&manifest)?;
         // Preserved identities require the incoming history bytes to prove
         // a prefix; execute performs that proof before publishing any file.
         if manifest.operation.new_ids() {
@@ -637,4 +682,18 @@ pub async fn check_bundle(
         Ok(Err(e)) => failure(e),
         Err(e) => failure(TransferError::new("move_io", e.to_string())),
     }
+}
+
+/// Signal a preparatory worker without waiting for its session locks.
+pub async fn interrupt(State(state): State<AppState>, Json(body): Json<TransferId>) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return *e,
+    };
+    if body.reset {
+        service.interrupts.reset(&body.operation_id);
+    } else {
+        service.interrupts.cancel(&body.operation_id);
+    }
+    Json(json!({"cancel_requested":true})).into_response()
 }

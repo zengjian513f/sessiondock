@@ -647,13 +647,13 @@ pub async fn create(
     State(state): State<AppState>,
     body: Result<Json<CreateRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let _transfer_guard = match &state.transfer {
-        Some(service) => Some(service.gate.clone().lock_owned().await),
-        None => None,
-    };
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
+    let _transfer_guard = match (&state.transfer, &body.resume_uid) {
+        (Some(service), Some(uid)) => Some(service.session_guard(uid).await),
+        _ => None,
+    };
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     let request_id = request_id(body.request_id, true)?;
     crate::terminal::terminal_size(body.cols.unwrap_or(120), body.rows.unwrap_or(32))?;
@@ -738,13 +738,13 @@ pub async fn takeover(
     State(state): State<AppState>,
     body: Result<Json<TakeoverRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let _transfer_guard = match &state.transfer {
-        Some(service) => Some(service.gate.clone().lock_owned().await),
-        None => None,
-    };
     let service = enabled(&state)?;
     let permit = admit(&state).await?;
     let body = parse_body(body)?;
+    let _transfer_guard = match &state.transfer {
+        Some(service) => Some(service.session_guard(&body.uid).await),
+        None => None,
+    };
     diagnostics([&body._build, &body._trace_id, &body._page_id])?;
     let request_id = crate::lifecycle::store::fresh_request_id()
         .map_err(|_| failure(ServiceError::Store(StoreError::RandomUnavailable)))?;

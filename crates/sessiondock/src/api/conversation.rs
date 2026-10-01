@@ -168,7 +168,7 @@ pub async fn send(
     }
     let transfer_guard = match &s.transfer {
         Some(transfer) => {
-            let guard = transfer.gate.clone().lock_owned().await;
+            let guard = transfer.session_guard(&q.uid).await;
             if transfer.locked(&q.uid).map_err(|e| {
                 ApiError::new(StatusCode::CONFLICT, "move_recovery_required", e.message)
             })? {

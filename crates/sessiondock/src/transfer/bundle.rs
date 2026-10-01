@@ -145,6 +145,14 @@ impl TransferService {
         }
         self.recheck(op)?;
         let roots = self.bundle_roots(op)?;
+        let cache = self.directory.join(&op.id).join("export-manifest.json");
+        if cache.is_file() {
+            let manifest: Manifest = serde_json::from_slice(&fs::read(&cache)?)?;
+            for snapshot in &manifest.environment {
+                snapshot.recheck()?;
+            }
+            return Ok(manifest);
+        }
         let dependencies = dependencies::collect(self, op)?;
         let mut environment = Vec::new();
         for cwd in op
@@ -217,6 +225,7 @@ impl TransferService {
             environment,
             files,
         };
+        super::service::persist(&cache, &manifest)?;
         Ok(manifest)
     }
     pub fn export_bundle(
@@ -272,6 +281,33 @@ impl TransferService {
             return Err(error);
         }
         Ok(manifest)
+    }
+    pub fn verify_environment(&self, manifest: &Manifest) -> Result<Vec<Snapshot>, TransferError> {
+        let source_hash = format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&manifest.environment)?)
+        );
+        let path = self
+            .directory
+            .join(format!("environment-{}.json", manifest.operation.id));
+        if path.is_file() {
+            let (saved_hash, saved): (String, Vec<Snapshot>) =
+                serde_json::from_slice(&fs::read(&path)?)?;
+            if saved_hash == source_hash && saved.iter().all(|snapshot| snapshot.recheck().is_ok())
+            {
+                return Ok(saved);
+            }
+        }
+        let mut snapshots = Vec::new();
+        for snapshot in &manifest.environment {
+            super::coordination::check()?;
+            let dependencies = snapshot.dependencies.keys().cloned().collect::<Vec<_>>();
+            let target = Snapshot::capture(&snapshot.cwd, &dependencies)?;
+            snapshot.compare(&target)?;
+            snapshots.push(target);
+        }
+        super::service::persist(&path, &(source_hash, &snapshots))?;
+        Ok(snapshots)
     }
     pub fn validate_bundle(&self, manifest: &Manifest) -> Result<(), TransferError> {
         if !cfg!(target_os = "linux") {
@@ -498,6 +534,12 @@ impl TransferService {
         first.read_to_end(&mut raw)?;
         drop(first);
         let manifest: Manifest = serde_json::from_slice(&raw)?;
+        let _guard = self
+            .locks
+            .blocking(self.operation_keys(&manifest.operation));
+        let _scope =
+            super::coordination::Scope::enter(self.interrupts.flag(&manifest.operation.id));
+        super::coordination::check()?;
         self.validate_bundle(&manifest)?;
         let digest = format!("{:x}", Sha256::digest(&raw));
         let directory = self.directory.join(&manifest.operation.id);
@@ -511,13 +553,7 @@ impl TransferService {
                 "目标已存在不同的迁移操作",
             ));
         }
-        let mut target_environment = Vec::new();
-        for snapshot in &manifest.environment {
-            let dependencies = snapshot.dependencies.keys().cloned().collect::<Vec<_>>();
-            let target = Snapshot::capture(&snapshot.cwd, &dependencies)?;
-            snapshot.compare(&target)?;
-            target_environment.push(target);
-        }
+        let target_environment = self.verify_environment(&manifest)?;
         if manifest.operation.new_ids() {
             native::preflight_copy(manifest.operation.rewritten.as_ref().unwrap(), false)?;
         }

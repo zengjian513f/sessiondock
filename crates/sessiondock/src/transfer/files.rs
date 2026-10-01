@@ -31,6 +31,8 @@ pub struct Plan {
     pub records: BTreeMap<String, String>,
     #[serde(default)]
     pub tool_names: BTreeMap<String, String>,
+    #[serde(default)]
+    pub owner_tools: BTreeMap<String, BTreeMap<String, String>>,
     pub roots: BTreeMap<String, PathBuf>,
     pub files: Vec<File>,
 }
@@ -558,6 +560,7 @@ impl Plan {
             sessions: BTreeMap::new(),
             records: BTreeMap::new(),
             tool_names: BTreeMap::new(),
+            owner_tools: BTreeMap::new(),
             roots: BTreeMap::new(),
             files: Vec::new(),
         };
@@ -651,6 +654,13 @@ impl Plan {
                         mint(&source, agent, &mut plan.sessions, new_ids)?;
                     }
                     collect_tools(&row, &source, &mut plan.tool_names);
+                    if source == "grok" {
+                        collect_tools(
+                            &row,
+                            &source,
+                            plan.owner_tools.entry(owner.clone()).or_default(),
+                        );
+                    }
                     let mut error = None;
                     record_ids(&mut row, &source, &mut |value| {
                         if let Some(id) = value.as_str()
@@ -751,27 +761,12 @@ impl Plan {
             for row in &rows {
                 collect_tools(row, source, &mut local_names);
             }
-        } else if source == "grok" {
-            // Chat calls and update results share one session's namespace.
-            // Another session may legitimately reuse the same call ID.
-            for sibling in self.files.iter().filter(|candidate| {
-                candidate.provider == "grok"
-                    && candidate.owner == file.owner
-                    && matches!(candidate.format.as_str(), "json" | "jsonl")
-            }) {
-                let bytes = fs::read(&sibling.source)?;
-                if digest(&bytes) != sibling.sha256 {
-                    return Err(TransferError::new(
-                        "move_plan_stale",
-                        "原生文件在计划后发生变化",
-                    ));
-                }
-                for row in parse(&bytes, &sibling.format)? {
-                    collect_tools(&row, source, &mut local_names);
-                }
-            }
         }
-        let names = &local_names;
+        let names = if source == "grok" {
+            self.owner_tools.get(&file.owner).unwrap_or(&local_names)
+        } else {
+            &local_names
+        };
         for mut row in rows {
             if let Some(links) = &links {
                 super::group::claude_tools::resolve(&mut row, links);
@@ -882,6 +877,32 @@ impl Plan {
         })
     }
     pub fn stage(&self, destination: &Path) -> Result<(), TransferError> {
+        // Older journals did not persist owner-scoped tool names. Reconstruct
+        // them once per staging operation, never once per output file.
+        let mut prepared = self.clone();
+        if self.new_ids && prepared.owner_tools.is_empty() {
+            for file in self
+                .files
+                .iter()
+                .filter(|f| f.provider == "grok" && matches!(f.format.as_str(), "json" | "jsonl"))
+            {
+                super::coordination::check()?;
+                let raw = fs::read(&file.source)?;
+                if digest(&raw) != file.sha256 {
+                    return Err(TransferError::new(
+                        "move_plan_stale",
+                        "原生文件在计划后发生变化",
+                    ));
+                }
+                for row in parse(&raw, &file.format)? {
+                    collect_tools(
+                        &row,
+                        "grok",
+                        prepared.owner_tools.entry(file.owner.clone()).or_default(),
+                    );
+                }
+            }
+        }
         if destination.exists() {
             return Err(TransferError::new("move_conflict", "暂存目录已存在"));
         }
@@ -922,7 +943,8 @@ impl Plan {
             }
             let target = destination.join(&file.provider).join(&file.target);
             fs::create_dir_all(target.parent().unwrap())?;
-            let output = self.rewrite(file, &raw)?;
+            super::coordination::check()?;
+            let output = prepared.rewrite(file, &raw)?;
             if file.format == "symlink" {
                 #[cfg(unix)]
                 std::os::unix::fs::symlink(
