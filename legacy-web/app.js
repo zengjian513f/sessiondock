@@ -4097,14 +4097,14 @@ const sidebarNestClosed = uid => !S.term && S.nestClosed.has(uid);
 function sidebarMainMatches(s) {
   if (!S.term) return true;
   return S.results !== null ? s.hits > 0
-    : matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n'));
+    : matchesSearch([s.title, s.cwd, s.node_name || '', s.sid || '', s.uid || ''].join('\n'));
 }
 
 function sidebarAgentItems(s) {
   const agents = s.agent_items || [];
   if (!S.term) return agents;
   if (S.results !== null) return agents.filter(a => a.hits > 0);
-  return agents.filter(a => matchesSearch([a.title, a.cwd || s.cwd, s.node_name || ''].join('\n')));
+  return agents.filter(a => matchesSearch([a.title, a.cwd || s.cwd, s.node_name || '', a.id || ''].join('\n')));
 }
 
 function sidebarMatchCount(list) {
