@@ -124,6 +124,23 @@ def to_list(page):
 def open_item_menu(page, uid):
     page.locator(f'#side .item[data-uid="{uid}"]').click(button="right")
     page.locator("#item-menu").wait_for(state="visible")
+    actions = page.locator('#item-menu button').evaluate_all("""buttons => buttons.map(b => ({
+      act: b.dataset.act, visible: !b.hidden && b.offsetHeight > 0,
+      disabled: b.getAttribute('aria-disabled') === 'true',
+      color: getComputedStyle(b).color,
+    }))""")
+    assert [a['act'] for a in actions] == ['stop', 'hide', 'detach', 'reattach', 'attach', 'delete', 'clone', 'group', 'pick'], actions
+    assert all(a['visible'] for a in actions), actions
+    muted = page.locator('#item-menu').evaluate("m => getComputedStyle(m).getPropertyValue('--muted').trim()")
+    expected_color = page.evaluate("color => { const b = document.createElement('b'); b.style.color = color; document.body.append(b); const result = getComputedStyle(b).color; b.remove(); return result; }", muted)
+    assert all(a['color'] == expected_color for a in actions if a['disabled']), actions
+    # An actual click and keyboard activation on an unavailable action keep
+    # the menu open and cannot start a stop/delete/attach operation.
+    disabled = page.locator('#item-menu button[aria-disabled="true"]').first
+    disabled.click(force=True)
+    disabled.focus()
+    page.keyboard.press('Enter')
+    assert page.locator('#item-menu').is_visible()
 
 
 def session_depth(page, uid):

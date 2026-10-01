@@ -329,7 +329,8 @@ def main(bind_native=False, bare_shell=False):
                                 page.wait_for_function("uid => (ConsoleUI.errors.get(uid) || '').includes('没有留下录制')",arg="tmux:"+natural["name"])
                                 page.set_viewport_size({"width":1280,"height":900})
                                 page.locator(f'#side .item[data-uid="tmux:{natural["name"]}"]').click(button="right")
-                                expect(page.locator('#item-menu [data-act="stop"]')).to_be_hidden()
+                                expect(page.locator('#item-menu [data-act="stop"]')).to_be_visible()
+                                expect(page.locator('#item-menu [data-act="stop"]')).to_have_attribute('aria-disabled', 'true')
                                 expect(page.locator('#item-menu [data-act="delete"]')).to_have_text("删除会话")
                                 with page.expect_response(lambda response:urlsplit(response.url).path=="/api/term/discard") as gone:
                                     page.locator('#item-menu [data-act="delete"]').click()

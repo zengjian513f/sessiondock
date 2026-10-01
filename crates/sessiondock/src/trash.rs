@@ -545,6 +545,13 @@ impl TrashService {
 
     /// Restore to the recorded paths when those paths are available.
     fn restorable(&self, manifest: &Manifest) -> Result<(), TrashError> {
+        if manifest.run_state.detail.starts_with("move:") {
+            return Err(TrashError::new(
+                409,
+                "move_session_locked",
+                "会话已迁出，请从目标机器复制或移动回来",
+            ));
+        }
         for file in &manifest.files {
             match fs::symlink_metadata(&file.origin) {
                 Ok(_) => {
@@ -841,7 +848,7 @@ fn create_private_dir(path: &Path) -> Result<(), TrashError> {
 }
 
 /// Move the named entry, including across filesystems.
-fn move_entry(from: &Path, to: &Path) -> Result<(), TrashError> {
+pub(crate) fn move_entry(from: &Path, to: &Path) -> Result<(), TrashError> {
     #[cfg(test)]
     if FAIL_AFTER_PUBLISH.with(|fail| fail.replace(false)) {
         fs::copy(from, to)

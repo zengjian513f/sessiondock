@@ -38,6 +38,22 @@
   verify, auto-rollback; `docs/deployment.md`) and `deploy/fleet_status.py`
   for the read-only fleet table; do not hand-roll scp/restart sequences.
 
+## Shared development checkout
+
+- The checkout used by lyra, cygnus and pavo is shared. Run Cargo on lyra
+  (`~/.cargo/bin/cargo` in non-login SSH commands); these machines should use
+  the same Rust build artifacts from that checkout. Check `hostname` and the
+  actual toolchain before running commands.
+- Lyra has the GitHub credentials for `git push`. A Git commit is a local
+  repository operation and can be made on any of the three machines with Git
+  identity configured; push from lyra. Do not describe GitHub credentials as
+  a requirement for committing.
+- Run Playwright Chromium validation on a machine where it is installed
+  (currently cygnus). Lyra currently lacks Playwright, while cygnus lacks
+  Cargo. The deploy test gate may need both, so arrange access to both tools
+  before using it. If a gate cannot run, record which checks actually ran;
+  `--test none` is not itself validation.
+
 ## Structure
 
 - Treat SessionDock as an independent project. Current contracts live in `docs/`
@@ -104,6 +120,10 @@
   organize work without making valid input fail.
 - Read the affected contract before editing. Keep history, list and search
   semantics aligned. Pagination must not move live checkpoints.
+- Native session files follow a minimum-change rule: clone/move may patch only
+  required identity, path and dependent offset bytes. Preserve all other bytes,
+  including whitespace, line endings, key order and escape spelling. Never
+  reserialize entire records or insert missing fields during identity rewriting.
 - If the user asks for one validation run, finish edits first. Ordinary tests
   use synthetic data and fake CLIs. Record final results; old results do not
   validate later changes.

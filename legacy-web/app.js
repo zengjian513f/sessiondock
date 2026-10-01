@@ -2178,6 +2178,8 @@ function paintLive() {
     renderSessionAction(selected);
     renderConversationTail(cache.get(viewKey(selected.uid, S.agent))?.activity, selected.uid);
   }
+  paintTransferAvailability($('#a-clone-group'), S.sel);
+  if (menuUid) paintTransferAvailability($('#item-menu [data-act="clone"]'), menuUid);
   renderSessionCounts();
   syncActiveOnlyList();
   if (S.picking) renderPickBar();
@@ -3304,20 +3306,33 @@ function openItemMenu(uid, x, y) {
   const canRestore = !!(row?.spawned_by?.source && row.spawned_by.sid)
     && (!!row.nest_independent || !!(row.nest_parent?.source && row.nest_parent.sid));
   const nestable = SessionDockCapabilities.allows('metadata') && !!row && !row.pending && !parent;
-  menu.querySelector('[data-act="stop"]').hidden = parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch);
-  menu.querySelector('[data-act="hide"]').hidden = !parent;
-  menu.querySelector('[data-act="detach"]').hidden = !nestable || !nested;
-  menu.querySelector('[data-act="reattach"]').hidden = !nestable || !canRestore;
-  menu.querySelector('[data-act="attach"]').hidden = !nestable;
-  menu.querySelector('[data-act="delete"]').hidden = parent || (!row?.pending && running && !unusedLaunch) || shellRunning;
-  menu.querySelector('[data-act="group"]').hidden = !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available;
+  // Keep every action in its fixed position, with the same unavailable hints as
+  // other controls. The shared capture handler blocks mouse, touch and keyboard clicks.
+  const unavailable = {
+    stop: parent || (row?.pending ? !shellRunning : !running || !!unusedLaunch)
+      ? '此会话当前没有可停止的进程。' : '',
+    hide: !parent ? '仅分叉父会话可隐藏。' : '',
+    detach: !nestable || !nested ? '此会话当前不能从父会话独立。' : '',
+    reattach: !nestable || !canRestore ? '此会话当前没有可恢复的附属关系。' : '',
+    attach: !nestable ? '此会话当前不能设置附属关系。' : '',
+    delete: parent ? '分叉父会话可隐藏，不能直接删除。'
+      : ((!row?.pending && running && !unusedLaunch) || shellRunning)
+        ? '请先停止会话再删除。' : '',
+    group: !SessionDockCapabilities.allows('metadata') || !row || row.pending || !globalThis.SessionDockGroups?.available
+      ? '此会话当前不能保存分组。' : '',
+    pick: parent ? '分叉父会话不能加入多选。' : '',
+  };
+  for (const button of menu.querySelectorAll('button[data-act]')) {
+    button.hidden = false;
+    if (button.dataset.act !== 'clone') setControlUnavailable(button, unavailable[button.dataset.act]);
+  }
   menu.querySelector('[data-act="delete"]').textContent = ((row?.pending && row?.source !== 'shell') || unusedLaunch) ? '丢弃会话' : '删除会话';
-  menu.querySelector('[data-act="pick"]').hidden = parent;
+  paintTransferAvailability(menu.querySelector('[data-act="clone"]'), uid);
   menu.hidden = false;
   const box = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - box.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - box.height - 8))}px`;
-  menu.querySelector('button:not([hidden])')?.focus({ preventScroll: true });
+  menu.querySelector('button:not([aria-disabled="true"])')?.focus({ preventScroll: true });
 }
 
 function closeItemMenu() {
@@ -3449,11 +3464,12 @@ $('#side').addEventListener('click', e => {
 
 $('#item-menu').onclick = async e => {
   const button = e.target.closest('button[data-act]');
-  if (!button) return;
+  if (!button || button.getAttribute('aria-disabled') === 'true') return;
   const uid = menuUid;
   if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
   closeItemMenu();
   if (!uid) return;
+  if (button.dataset.act === 'clone') { await cloneSessionGroup(uid); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
     return;
@@ -3719,6 +3735,8 @@ function applySourceFilterChange() {
 
 function selectOnlySource(source) {
   if (!Object.hasOwn(SOURCES, source)) return false;
+  const control = document.querySelector(`#chips button[data-source="${CSS.escape(source)}"]`);
+  if (control?.dataset.unavailableReason) { return false; }
   S.off = new Set(Object.keys(SOURCES).filter(item => item !== source));
   applySourceFilterChange();
   return true;
@@ -3727,7 +3745,7 @@ function selectOnlySource(source) {
 function selectOnlyNodeFilter(id) {
   const node = Nodes.list.find(item => item.id === id);
   if (!node) return false;
-  if (node.online === false) { appAlert(nodeOfflineReason(node)); return false; }
+  if (node.online === false) { return false; }
   Nodes.off = new Set(Nodes.list.filter(item => item.id !== id).map(item => item.id));
   store.set('nodesOff', [...Nodes.off]);
   renderNodes(); renderChips(); renderSide();
@@ -3765,6 +3783,7 @@ function renderChips() {
     c.querySelector(':scope > b').textContent = n;
     c.title = `${v.name}：点击选择或取消；右键或长按只选此类型`;
     c.setAttribute('aria-label', `${v.name}，${n} 个会话`);
+    setControlUnavailable(c, n === 0 ? `${v.name} 在当前选择的机器上没有会话。` : '');
   }
 }
 
@@ -3777,6 +3796,7 @@ function filterButton(target) {
 }
 
 function selectOnlyFilter(button) {
+  if (button.dataset.unavailableReason) { return false; }
   if (button.dataset.node) return selectOnlyNodeFilter(button.dataset.node);
   if (button.dataset.source) return selectOnlySource(button.dataset.source);
   return false;
@@ -5523,7 +5543,7 @@ function syncSessionGlobalActions(heading, list) {
   const dock = !!list && (document.body.classList.contains('side-collapsed')
     || (MOBILE.matches && document.body.classList.contains('mobile-detail')));
   let changed = false;
-  for (const [index, id] of ['new-session', 'settings', 'page-reload'].entries()) {
+  for (const [index, id] of ['new-session', 'settings', 'page-reload', 'transfer-tasks'].entries()) {
     const source = document.getElementById(id);
     if (!source) continue;
     const enabled = dock && !source.hidden && !source.classList.contains('hidden');
@@ -5535,7 +5555,7 @@ function syncSessionGlobalActions(heading, list) {
         proxy = el('button', 'session-menu-action');
         proxy.id = proxyId;
         proxy.type = 'button';
-        proxy.dataset.order = index - 3;
+        proxy.dataset.order = index - 4;
         proxy.setAttribute('role', 'menuitem');
         proxy.appendChild(source.querySelector('svg').cloneNode(true));
         proxy.onclick = () => source.click();
@@ -5703,7 +5723,7 @@ for (const media of [MOBILE, MEDIUM]) media.addEventListener('change', () => lay
 //   3. 机器 chip 缩成首字母（首字母相同则前两个字母），不显示会话数（仅中央站、机器筛选可见时）
 //   4. 右侧按钮从末尾折进 ⋯（新建、刷新页面、回收站、报告问题、设置）
 // 筛选条被挤压或整条顶栏横向溢出才进入下一级；放得下就按相反顺序展开。
-const HEADER_ACTIONS = ['new-session', 'page-reload', 'trash', 'report-bug', 'settings'];
+const HEADER_ACTIONS = ['new-session', 'page-reload', 'transfer-tasks', 'trash', 'report-bug', 'settings'];
 const HEADER_FOLD_LABELS = 'header-fold-labels';
 const HEADER_FOLD_BRAND = 'header-fold-brand';
 const HEADER_FOLD_NODES = 'header-fold-nodes';
@@ -5899,6 +5919,7 @@ function head(m, total) {
           <button class="session-menu-action" data-report-bug title="报告当前会话问题"
             aria-label="报告当前会话问题">${uiIcon('bug')}</button>
         </div>
+        ${SessionDockCapabilities.config.session_clone_local_codex === true ? `<button class="session-menu-action" id="a-clone-group" type="button" title="移动 / 复制整组" aria-label="移动 / 复制整组">${uiIcon('transfer')}</button>` : ''}
         ${m.agent_id ? '' : '<button class="session-menu-action danger" id="a-session-action"></button>'}
         `, `
     <div class="dmeta">
@@ -5915,6 +5936,8 @@ function head(m, total) {
     </div>`;
   h.querySelector('.mobile-back').onclick = showMobileList;
   h.querySelector('#a-star').onclick = () => toggleSessionStar(m.uid);
+  h.querySelector('#a-clone-group')?.addEventListener('click', () => cloneSessionGroup(m.uid));
+  paintTransferAvailability(h.querySelector('#a-clone-group'), m.uid);
   const turnMode = h.querySelector('#a-turns');
   turnMode.onclick = () => {
     S.compactTurns = !S.compactTurns;
@@ -9101,7 +9124,7 @@ function syncPageReload() {
 }
 $('#page-reload').onclick = () => location.reload();
 appDisplayMode.addEventListener('change', syncPageReload);
-for (const id of ['new-session', 'settings', 'page-reload']) {
+for (const id of ['new-session', 'settings', 'page-reload', 'transfer-tasks']) {
   new MutationObserver(() => layoutSessionHead()).observe(document.getElementById(id),
     {attributes: true, attributeFilter: ['hidden', 'class', 'disabled']});
 }
@@ -10024,3 +10047,362 @@ loadSessions(false).then(async ok => {
     else leaveBootDetail();
   } else leaveBootDetail();
 });
+
+
+/** Whole-group transfer preview. A confirmed local clone keeps its operation ID
+ * across uncertain responses; unsupported selections never use the local API. */
+function transferUnavailableReason(uid) {
+  return uid && sessionStoppable(uid) ? '会话正在运行，请先停止后再移动或复制整组。' : '';
+}
+function paintTransferAvailability(button, uid) {
+  const row = button?.closest('#item-menu')
+    ? sidebarSessions().find(session => session.uid === uid) : null;
+  const unavailable = button?.closest('#item-menu') && (!row || row.pending
+    || SessionDockCapabilities.config.session_clone_local_codex !== true);
+  setControlUnavailable(button, unavailable ? '此会话当前不支持移动或复制整组。' : transferUnavailableReason(uid));
+}
+async function cloneSessionGroup(uid, resumed = null) {
+  const reason = resumed ? '' : transferUnavailableReason(uid);
+  if (reason) {
+    const control = $('#item-menu:not([hidden]) [data-act="clone"]') || $('#a-clone-group');
+    paintTransferAvailability(control, uid); return;
+  }
+  closeSessionActions();
+  document.querySelector('#clone-group-dialog')?.remove();
+  const sourceId = nodeOf(uid);
+  const machines = new Map();
+  for (const node of [...Nodes.machines, ...Nodes.list]) machines.set(node.id, {...machines.get(node.id), ...node});
+  const sourceName = machines.get(sourceId)?.name || (HUB_MODE ? '来源机器' : '当前机器');
+  if (!machines.has(sourceId)) machines.set(sourceId, {id:sourceId, name:sourceName});
+  const dialog = document.createElement('dialog');
+  dialog.className = 'app-dialog transfer-dialog'; dialog.id = 'clone-group-dialog';
+  dialog.setAttribute('aria-labelledby', 'transfer-title');
+  dialog.innerHTML = `
+    <div class="transfer-head">
+      <div><h2 id="transfer-title">移动或复制会话组</h2></div>
+      <button class="transfer-close" type="button" aria-label="关闭">×</button>
+    </div>
+    <div class="transfer-body">
+      <div class="transfer-controls">
+        <label class="transfer-field"><span>源机器</span><input id="transfer-source" type="text" disabled></label>
+        <label class="transfer-field"><span>目标机器</span><select id="transfer-target"></select></label>
+        <fieldset class="transfer-mode"><legend>操作</legend><div class="transfer-segments">
+          <label><input type="radio" name="transfer-mode" value="clone" checked><span>复制</span></label>
+          <label><input type="radio" name="transfer-mode" value="move"><span>移动</span></label>
+        </div></fieldset>
+      </div>
+      <div class="transfer-identity" hidden>
+        <label><input id="transfer-new-ids" type="checkbox" checked><span>生成新 UID</span></label>
+      </div>
+      <p class="transfer-notice" role="status" hidden></p>
+      <p class="transfer-environment" role="status" hidden></p>
+      <div class="transfer-section-head"><h3>整组会话</h3><span class="clone-status" role="status">正在读取清单…</span></div>
+      <div class="transfer-table-scroll" tabindex="0" role="region" aria-label="整组会话清单">
+        <table class="clone-members"><thead><tr><th scope="col">会话</th><th scope="col">来源</th><th scope="col">关联</th><th scope="col" class="transfer-number">历史文件</th><th scope="col" class="transfer-number">大小</th></tr></thead>
+          <tbody><tr><td colspan="5" class="transfer-empty">正在检查关联会话和历史依赖…</td></tr></tbody></table>
+      </div>
+      <p class="transfer-progress" role="status" hidden></p>
+      <p class="transfer-error" role="alert" hidden></p>
+    </div>
+    <div class="transfer-footer"><button type="button" class="btn clone-cancel">取消</button><button type="button" class="btn transfer-abort" hidden>撤回本次移动</button><button type="button" class="btn primary clone-confirm" disabled>复制整组</button></div>`;
+  const $d = selector => dialog.querySelector(selector);
+  const target = $d('#transfer-target'), newIds = $d('#transfer-new-ids');
+  const confirm = $d('.clone-confirm'), status = $d('.clone-status');
+  const notice = $d('.transfer-notice'), error = $d('.transfer-error');
+  const radios = [...dialog.querySelectorAll('[name="transfer-mode"]')];
+  for (const node of machines.values()) {
+    const option = document.createElement('option');
+    option.value = node.id;
+    const unavailable = node.online === false || node.enabled === false;
+    option.textContent = node.name + (unavailable ? ' · 不可用' : '');
+    option.disabled = unavailable && node.id !== sourceId;
+    target.append(option);
+  }
+  target.value = sourceId;
+  $d('#transfer-source').value = sourceName;
+  let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
+  let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
+  let environmentLoading = false, environmentSequence = 0;
+  const environmentClients = new Map();
+  const identityChoices = {clone:true, move:false};
+  if (resumed) {
+    if (!machines.has(resumed.request.target_node)) {
+      const option = document.createElement('option'); option.value = resumed.request.target_node;
+      option.textContent = '目标机器不可用'; option.disabled = true; target.append(option);
+    }
+    target.value = resumed.request.target_node;
+    radios.forEach(r => r.checked = r.value === plan.mode);
+    identityChoices[plan.mode] = plan.new_ids;
+  }
+  const mode = () => radios.find(r => r.checked).value;
+  const crossMachine = () => target.value !== sourceId;
+  const blockedReason = () => {
+    const destination = machines.get(target.value);
+    if (!destination || destination.online === false || destination.enabled === false) return '目标机器当前不可用。';
+    if (machines.get(sourceId)?.online === false) return '源机器已离线。';
+    if (crossMachine()) {
+      if (SessionDockCapabilities.config[mode() === 'move' ? 'session_move_remote' : 'session_clone_remote'] !== true) return '跨机器传输尚未接入。';
+      return '';
+    }
+    if (mode() === 'move') return '移动需要选择另一台机器。';
+    return '';
+  };
+  const renderSelection = () => {
+    const cross = crossMachine(), moving = mode() === 'move';
+    $d('.transfer-identity').hidden = !cross;
+    newIds.checked = identityChoices[mode()];
+    const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
+    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
+    confirm.disabled = busy || planning || aborting || environmentLoading || !plan || !!reason;
+    // Keep the chosen operation fixed while its publication result is uncertain.
+    target.disabled = busy || aborting || uncertain;
+    for (const radio of radios) radio.disabled = busy || aborting || uncertain;
+    newIds.disabled = busy || aborting || uncertain;
+    $d('.transfer-abort').hidden = (!uncertain && !(busy && operationStarted)) || !moving;
+    $d('.transfer-abort').disabled = aborting;
+    dialog.setAttribute('aria-busy', String(busy));
+  };
+  target.onchange = () => {renderSelection(); refreshEnvironment();};
+  radios.forEach(r => r.onchange = renderSelection);
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
+  const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
+  $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
+  dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
+  const request = async (path, body) => {
+    const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    const data = await response.json();
+    if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
+    return data;
+  };
+  $d('.transfer-abort').onclick = async () => {
+    if (aborting || !plan) return;
+    ++executionSequence; uncertain = true; aborting = true; busy = true; error.hidden = true; renderSelection();
+    try {
+      await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value});
+      uncertain = false; operationStarted = false; plan = null; busy = false;
+      $d('.transfer-progress').hidden = true; refreshTransferTasks();
+      await refreshPlan();
+    } catch (failure) {
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
+  };
+  const renderMembers = data => {
+    const members = new Map();
+    for (const member of data.sessions) {
+      const key = `${member.source}:${member.sid}`;
+      if (!members.has(key)) members.set(key, {...member, files:0, bytes:0, selected:false, relations:new Set()});
+      const row = members.get(key);
+      row.files += member.file_count ?? 1; row.bytes += member.bytes ?? 0;
+      row.selected ||= member.uid === uid;
+      if (member.uid === uid) {row.title = member.title; row.cwd = member.cwd;}
+      for (const relation of member.relations || []) row.relations.add(relation);
+    }
+    const body = $d('.clone-members tbody'); body.replaceChildren();
+    const ordered = [...members.values()].sort((a,b) => Number(b.selected)-Number(a.selected) || Number(a.agent)-Number(b.agent));
+    for (const member of ordered) {
+      const tr = document.createElement('tr'); if (member.selected) tr.className = 'transfer-selected';
+      const title = document.createElement('td');
+      const name = document.createElement('div'); name.className = 'transfer-session-name'; name.textContent = member.title || member.sid; name.title = name.textContent;
+      title.append(name);
+      const detail = document.createElement('div'); detail.className = 'transfer-session-detail'; detail.textContent = member.cwd || member.sid; detail.title = `${member.sid}${member.cwd ? '\n'+member.cwd : ''}`; title.append(detail);
+      const source = document.createElement('td'); source.textContent = {codex:'Codex',claude:'Claude',grok:'Grok'}[member.source] || member.source;
+      const relation = document.createElement('td');
+      const badge = document.createElement('span'); badge.className = 'transfer-badge';
+      badge.textContent = member.selected ? '所选会话' : member.agent ? '子代理' : member.relations.has('fork') ? '分支关联' : '关联历史';
+      relation.append(badge);
+      const files = document.createElement('td'); files.className = 'transfer-number'; files.textContent = String(member.files);
+      const bytes = document.createElement('td'); bytes.className = 'transfer-number'; bytes.textContent = fmtSize(member.bytes);
+      tr.append(title,source,relation,files,bytes); body.append(tr);
+    }
+    status.textContent = `整组 ${data.session_count} 个会话 · ${data.file_count} 份历史 · ${fmtSize(data.bytes)}`;
+  };
+  async function refreshEnvironment() {
+    const sequence = ++environmentSequence;
+    const note = $d('.transfer-environment');
+    if (!plan) {environmentLoading = false; note.hidden = true; renderSelection(); return;}
+    const destinationId = target.value, currentPlan = plan;
+    const clients = id => {
+      if (!environmentClients.has(id)) environmentClients.set(id, (async () => {
+        try {
+          const path = HUB_MODE ? `api/nodes/${id}/api/clients` : 'api/clients';
+          const response = await fetch(appUrl(path), {cache:'no-store', signal:AbortSignal.timeout(20000)});
+          const data = await response.json();
+          if (!response.ok || !Array.isArray(data.clients)) throw new Error('clients unavailable');
+          return data.clients;
+        } catch {return null;}
+      })());
+      return environmentClients.get(id);
+    };
+    environmentLoading = true; note.hidden = false; note.textContent = '正在核对目标 CLI…'; note.title = '';
+    renderSelection();
+    const [sourceClients, targetClients] = await Promise.all([clients(sourceId), clients(destinationId)]);
+    if (!dialog.isConnected || sequence !== environmentSequence) return;
+    const messages = [], cross = destinationId !== sourceId;
+    if (!targetClients) messages.push('未核验目标 CLI');
+    if (cross && !sourceClients) messages.push('未核验源 CLI 版本');
+    for (const provider of new Set(currentPlan.sessions.map(member => member.source))) {
+      const name = SOURCES[provider]?.name || provider;
+      const installed = (targetClients || []).filter(client => client.source === provider && client.installed);
+      if (targetClients && !installed.length) {messages.push(`目标未配置可用的 ${name} CLI`); continue;}
+      if (!cross || !targetClients || !sourceClients) continue;
+      const versions = rows => rows.map(client => client.version).filter(version => typeof version === 'string' && /^\d+(?:\.\d+)+/.test(version));
+      const targetVersions = versions(installed);
+      const sourceVersions = versions(sourceClients.filter(client => client.source === provider && client.installed));
+      if (!targetVersions.length || !sourceVersions.length) messages.push(`未核验 ${name} 版本差异`);
+      else if (targetVersions.some(to => sourceVersions.some(from => compareVersions(to, from) < 0))) messages.push(`目标 ${name} 存在较旧版本`);
+    }
+    const tools = Array.isArray(currentPlan.dynamic_tools) ? currentPlan.dynamic_tools : [];
+    if (!Array.isArray(currentPlan.dynamic_tools)) messages.push('未核验动态工具依赖');
+    if (tools.length) messages.push(`${tools.length} 个动态工具执行器未核验`);
+    note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
+    environmentLoading = false; renderSelection();
+  }
+  async function refreshPlan(executing = false) {
+    if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
+    const fresh = !crossMachine() || identityChoices[mode()];
+    const selectedMode = mode();
+    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return true;
+    const previous = plan;
+    planning = true; plan = null; error.hidden = true; renderSelection();
+    status.textContent = '正在读取清单…';
+    try {
+      const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
+      if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
+      if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
+      plan = next;
+      if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
+      return true;
+    } catch (failure) {
+      plan = previous;
+      if (dialog.isConnected) {
+        status.textContent = '清单读取失败';
+        error.textContent = failure.message; error.hidden = false;
+      }
+      return false;
+    } finally {planning = false; if (dialog.isConnected) renderSelection();}
+  }
+  const paintProgress = data => {
+    const progress = $d('.transfer-progress');
+    progress.hidden = false; progress.textContent = transferPhaseLabel(data);
+    progress.dataset.phase = data.phase;
+  };
+  if (resumed) {
+    renderMembers(plan); paintProgress(resumed); renderSelection();
+    refreshEnvironment();
+    if (resumed.error) {error.textContent = resumed.error; error.hidden = false;}
+  } else await refreshPlan();
+  const pollProgress = async () => {
+    if (!dialog.isConnected) {clearInterval(progressTimer); return;}
+    if (!operationStarted || !HUB_MODE || !plan || progressLoading) return;
+    const id = plan.operation_id;
+    progressLoading = true;
+    try {
+      const data = await request('api/session/transfer/progress', {uid, operation_id:id, target_node:target.value});
+      if (dialog.isConnected && plan?.operation_id === id) paintProgress(data);
+    } catch { /* The execution response reports actionable errors. */ }
+    finally {progressLoading = false;}
+  };
+  progressTimer = setInterval(pollProgress, 1000);
+  confirm.onclick = async () => {
+    if (busy || planning || aborting || !plan || blockedReason()) return;
+    busy = true; error.hidden = true; renderSelection();
+    const prepared = uncertain || await refreshPlan(true);
+    if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
+    const execution = ++executionSequence;
+    operationStarted = true; error.hidden = true; renderSelection();
+    if (HUB_MODE) paintProgress({phase:'planned'});
+    try {
+      const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
+        uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
+      });
+      if (execution !== executionSequence) return;
+      if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
+      close(); await loadSessions(true); await openSession(result.target_uid);
+      showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
+    } catch (failure) {
+      if (execution !== executionSequence) return;
+      uncertain = failure.code !== 'move_cancelled';
+      if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
+      if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
+    } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
+  };
+}
+
+
+function transferPhaseLabel(task) {
+  const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+    failed:'复制失败，可重试', rollback_required:'恢复待处理',
+    switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
+    cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};
+  let label = labels[task.phase] || '等待继续';
+  if (task.phase === 'transferring' && task.bytes_total > 0)
+    label += ` · ${fmtSize(task.bytes_sent)} / ${fmtSize(task.bytes_total)}`;
+  return label;
+}
+let transferTasksLoading = false;
+async function refreshTransferTasks() {
+  if (!HUB_MODE || transferTasksLoading) return;
+  transferTasksLoading = true;
+  try {
+    const response = await fetch(appUrl('api/session/transfers'));
+    if (!response.ok) return;
+    const {operations} = await response.json();
+    const button = $('#transfer-tasks');
+    button.hidden = operations.length === 0;
+    button.querySelector('.transfer-task-count').textContent = String(operations.length);
+    layoutHeader();
+    const panel = $('#transfer-tasks-dialog');
+    if (!panel) return;
+    const tbody = panel.querySelector('tbody');
+    const name = id => [...Nodes.machines, ...Nodes.list].find(n => n.id === id)?.name || '离线机器';
+    // Keep controls stable while the user is focusing or clicking a task.
+    const signature = JSON.stringify(operations);
+    if (panel._tasksSignature === signature) return;
+    panel._tasksSignature = signature;
+    tbody.replaceChildren();
+    for (const task of operations) {
+      const row = document.createElement('tr'); row.dataset.operation = task.request.operation_id;
+      const title = document.createElement('td');
+      title.textContent = task.plan?.sessions?.find(m => m.uid === task.request.uid)?.title || '会话组';
+      const nodes = document.createElement('td');
+      nodes.textContent = `${name(nodeOf(task.request.uid))} → ${name(task.request.target_node)}`;
+      const phase = document.createElement('td'); phase.textContent = transferPhaseLabel(task);
+      const action = document.createElement('td'), open = document.createElement('button');
+      open.className = 'btn'; open.textContent = '继续处理';
+      open.onclick = async () => {
+        open.disabled = true;
+        try {
+          const response = await fetch(appUrl('api/session/transfer/progress'), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(task.request)});
+          const data = await response.json();
+          if (!response.ok || !data.plan) throw new Error(data.error?.message || data.error || '清单暂不可用');
+          panel.close(); panel.remove();
+          await cloneSessionGroup(task.request.uid, data);
+        } catch (failure) {
+          const error = panel.querySelector('.transfer-error'); error.textContent = failure.message; error.hidden = false;
+        } finally {open.disabled = false;}
+      };
+      action.append(open); row.append(title,nodes,phase,action); tbody.append(row);
+    }
+    if (!operations.length) {
+      const row = document.createElement('tr'), cell = document.createElement('td');
+      cell.colSpan = 4; cell.textContent = '没有未完成的操作'; row.append(cell); tbody.append(row);
+    }
+  } catch (error) {console.warn('迁移任务读取失败', error);}
+  finally {transferTasksLoading = false;}
+}
+$('#transfer-tasks').onclick = () => {
+  $('#transfer-tasks-dialog')?.remove();
+  const panel = document.createElement('dialog'); panel.id = 'transfer-tasks-dialog'; panel.className = 'app-dialog transfer-dialog';
+  panel.setAttribute('aria-labelledby','transfer-tasks-title');
+  panel.innerHTML = `<div class="transfer-head"><h2 id="transfer-tasks-title">未完成的移动与复制</h2><button class="transfer-close" aria-label="关闭">×</button></div>
+    <div class="transfer-body"><div class="transfer-table-scroll"><table class="transfer-tasks-table"><thead><tr><th>会话</th><th>机器</th><th>阶段</th><th></th></tr></thead><tbody></tbody></table></div><p class="transfer-error" hidden></p></div>`;
+  const close = () => {panel.close(); panel.remove();};
+  panel.querySelector('.transfer-close').onclick = close;
+  panel.addEventListener('cancel', e => {e.preventDefault(); close();});
+  document.body.append(panel); panel.showModal(); refreshTransferTasks();
+};
+if (HUB_MODE) {
+  refreshTransferTasks();
+  setInterval(() => {if (!document.hidden) refreshTransferTasks();}, 5000);
+}

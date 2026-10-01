@@ -427,6 +427,14 @@ def main():
                     item.dispatch_event("click", {"bubbles": True})
                     stop_item = menu.locator('[data-act="stop"]')
                     expect(stop_item).to_be_visible()
+                    expect(stop_item).not_to_have_attribute('aria-disabled', 'true')
+                    delete_item = menu.locator('[data-act="delete"]')
+                    expect(delete_item).to_be_visible()
+                    expect(delete_item).to_have_attribute('aria-disabled', 'true')
+                    delete_item.click(force=True)
+                    expect(menu).to_be_visible()
+                    expect(menu.get_by_role('menuitem', name='移到分组…')).to_be_visible()
+                    expect(menu.locator('button:visible')).to_have_count(9)
                     bounds = menu.bounding_box()
                     assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= 391, bounds
                     with page.expect_response(lambda response: urlsplit(response.url).path == "/api/session/stop") as stopped:
