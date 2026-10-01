@@ -592,3 +592,31 @@ pub fn spawn(state: AppState) {
         }
     });
 }
+
+pub async fn probe(state: &AppState, enabled: bool) -> Result<serde_json::Value, ApiError> {
+    let path = agent_socket(state).ok_or_else(|| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "collector_unavailable",
+            "此机器未安装资源采集服务",
+        )
+    })?;
+    tokio::task::spawn_blocking(move || {
+        process_links::agent::request(&path, &process_links::agent::Request::Probe { enabled })
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "probe_failed",
+            "探测请求失败",
+        )
+    })?
+    .map_err(|_| {
+        ApiError::new(
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "probe_unavailable",
+            "此机器暂时无法开启探测，请检查采集服务",
+        )
+    })
+}

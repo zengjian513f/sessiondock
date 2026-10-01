@@ -95,6 +95,10 @@ pub fn node_row(
             value["reason"].as_str().unwrap_or("collector_unavailable"),
         );
     }
+    let diagnostic = value
+        .get("diagnostic")
+        .cloned()
+        .unwrap_or_else(|| json!({"state":"unsupported","remaining_seconds":0}));
     let Ok(resources) = serde_json::from_value::<Resources>(value) else {
         return unavailable(
             node_id,
@@ -130,10 +134,11 @@ pub fn node_row(
             "resource_sample_stale_or_clock_skew",
         );
         row["session_related"] = json!(related);
+        row["diagnostic"] = diagnostic.clone();
         return row;
     }
     json!({"node_id":node_id,"node_name":node_name,"status":"ok", "sampled_at":resources.sampled_at,"session_related":related,
-        "metrics": process_links::resource_summary::metrics(&resources, session, inclusive)})
+        "diagnostic":diagnostic,"metrics": process_links::resource_summary::metrics(&resources, session, inclusive)})
 }
 
 pub fn response(rows: Vec<Value>) -> Value {
@@ -268,4 +273,29 @@ mod tests {
         );
         assert_eq!(response(vec![row])["totals"]["partial"], true);
     }
+}
+
+/// Only the owner and verified execution participants can be targeted by a session action.
+pub async fn probe(
+    related: &RelatedNodes,
+    registry: &Registry,
+    client: &Client,
+    uid: &str,
+    inclusive: bool,
+    enabled: bool,
+) -> Result<Value, String> {
+    let view = get(related, registry, client, uid, inclusive).await?;
+    let rows = view["nodes"].as_array().cloned().unwrap_or_default();
+    let results: Vec<Value> = stream::iter(rows).map(|row| async move {
+        let id = row["node_id"].as_str().unwrap_or_default();
+        let error = |message: &str| json!({"node_id":id,"node_name":row["node_name"],"ok":false,"error":message});
+        if row["status"] != "ok" && row["status"] != "stale" { return error("机器离线或不支持临时探测"); }
+        let Some(node) = registry.get(id) else { return error("机器未注册"); };
+        let Ok(target) = registry.target(&node) else { return error("机器暂时无法连接"); };
+        match client.json(&target, "POST", "/api/resources/probe", Some(&json!({"enabled":enabled})), Duration::from_secs(3)).await {
+            Ok((200, value)) => json!({"node_id":id,"node_name":row["node_name"],"ok":true,"diagnostic":value}),
+            _ => error("机器探测请求失败，请检查采集服务"),
+        }
+    }).buffer_unordered(8).collect().await;
+    Ok(json!({"partial":results.iter().any(|r| r["ok"] != true),"nodes":results}))
 }

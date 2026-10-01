@@ -51,7 +51,7 @@ impl Config {
         while let Some(key) = args.next() {
             if key == "--help" {
                 println!(
-                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish. Observes only; never signals or moves workloads."
+                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish, probe (60-second lease). Observes only; never signals or moves workloads."
                 );
                 std::process::exit(0);
             }
@@ -122,6 +122,98 @@ impl Config {
         })
     }
 }
+struct Diagnostic {
+    supported: bool,
+    deadline: Option<Instant>,
+    state: &'static str,
+    window: IoWindow,
+    lost: Arc<AtomicU64>,
+}
+impl Diagnostic {
+    fn value(&self) -> Value {
+        let remaining = self
+            .deadline
+            .map(|d| {
+                d.saturating_duration_since(Instant::now())
+                    .as_secs_f64()
+                    .ceil() as u64
+            })
+            .unwrap_or(0);
+        json!({"state": if !self.supported { "unsupported" } else { self.state }, "remaining_seconds":remaining,
+            "error": if self.state == "failed" { Some("探测启动失败或已异常停止，请检查采集服务日志") } else { None }})
+    }
+}
+fn diagnostic_worker(uid: u32, control: Arc<Mutex<Diagnostic>>) {
+    let mut child: Option<std::process::Child> = None;
+    let mut receiver = None;
+    loop {
+        let mut d = control.lock().unwrap_or_else(|e| e.into_inner());
+        let expired = d
+            .deadline
+            .is_some_and(|deadline| deadline <= Instant::now());
+        if STOP.load(Ordering::Relaxed) || expired || d.deadline.is_none() {
+            d.deadline = None;
+            d.window = IoWindow::new(false);
+            if let Some(mut running) = child.take() {
+                let failed = d.state == "failed";
+                d.state = "stopping";
+                drop(d);
+                // No pinned objects: reaping the helper closes and detaches every link.
+                let _ = running.kill();
+                let _ = running.wait();
+                receiver = None;
+                d = control.lock().unwrap_or_else(|e| e.into_inner());
+                d.state = if failed { "failed" } else { "off" };
+            } else if d.state == "stopping" {
+                d.state = "off";
+            }
+            if STOP.load(Ordering::Relaxed) {
+                break;
+            }
+        } else if child.is_none() {
+            let (sender, rx) = mpsc::sync_channel(128);
+            match io_events::start(uid, sender, d.lost.clone()) {
+                Ok(running) => {
+                    child = Some(running);
+                    receiver = Some(rx);
+                }
+                Err(error) => {
+                    eprintln!("I/O probe start failed: {error}");
+                    d.deadline = None;
+                    d.state = "failed";
+                    d.window = IoWindow::new(false);
+                }
+            }
+        }
+        if let Some(rx) = &receiver {
+            for event in rx.try_iter() {
+                match &event {
+                    io_events::Event::Ready => d.state = "active",
+                    io_events::Event::Failed => {
+                        d.state = "failed";
+                        d.deadline = None;
+                    }
+                    _ => {}
+                }
+                let lost = d.lost.load(Ordering::Relaxed);
+                d.window.observe(event, lost);
+            }
+        }
+        if let Some(running) = child.as_mut() {
+            if let Ok(Some(_)) = running.try_wait() {
+                child = None;
+                receiver = None;
+                if d.deadline.is_some() {
+                    d.state = "failed";
+                }
+                d.deadline = None;
+                d.window = IoWindow::new(false);
+            }
+        }
+        drop(d);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 struct State {
     engine: Engine,
     snapshot: Snapshot,
@@ -131,6 +223,7 @@ struct State {
     forks: u64,
     execs: u64,
     exits: u64,
+    diagnostic: Arc<Mutex<Diagnostic>>,
 }
 impl State {
     fn update(&mut self, snapshot: Snapshot, resources: Resources) {
@@ -152,6 +245,28 @@ impl State {
             Request::Health => Ok(
                 json!({"service":"resource-agent", "version":1, "node_id":self.engine.node_id, "boot_id":self.engine.boot_id, "sampled_at":self.report.sampled_at,"collector":self.status,"processes":self.snapshot.entries.len(),"fork_events":self.forks,"exec_events":self.execs,"exit_events":self.exits}),
             ),
+            Request::Probe { enabled } => {
+                let mut diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
+                if !diagnostic.supported {
+                    return Err("此机器不支持临时 I/O 探测");
+                }
+                if enabled {
+                    // Repeated clicks never extend an existing lease.
+                    if diagnostic.deadline.is_none() && diagnostic.state != "stopping" {
+                        diagnostic.deadline = Some(Instant::now() + Duration::from_secs(60));
+                        diagnostic.state = "starting";
+                        diagnostic.window = IoWindow::new(true);
+                        diagnostic.lost.store(0, Ordering::Relaxed);
+                    }
+                } else {
+                    diagnostic.deadline = None;
+                    if matches!(diagnostic.state, "starting" | "active") {
+                        diagnostic.state = "stopping";
+                    }
+                    diagnostic.window = IoWindow::new(false);
+                }
+                Ok(diagnostic.value())
+            }
             Request::Report => Ok(json!(self.report)),
             Request::Resources => {
                 let mut resources = self.resources.clone();
@@ -168,7 +283,29 @@ impl State {
                     .cloned()
                     .collect();
                 resources.sessions = process_links::resource_summary::sessions(&resources);
-                Ok(json!(resources))
+                let diagnostic = self.diagnostic.lock().unwrap_or_else(|e| e.into_inner());
+                if diagnostic.state != "active"
+                    || diagnostic.deadline.is_none_or(|d| d <= Instant::now())
+                {
+                    for sample in &mut resources.samples {
+                        for (name, _, _) in IO_METRICS {
+                            sample.metrics.insert(
+                                name.into(),
+                                metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
+                            );
+                        }
+                    }
+                    for (name, _, _) in IO_METRICS {
+                        resources.metric_availability.insert(
+                            name.into(),
+                            metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
+                        );
+                    }
+                    resources.sessions = process_links::resource_summary::sessions(&resources);
+                }
+                let mut value = json!(resources);
+                value["diagnostic"] = diagnostic.value();
+                Ok(value)
             }
             Request::Catalog(catalog) => {
                 if !self.engine.catalog(catalog) {
@@ -221,6 +358,7 @@ const IO_METRICS: [(&str, io_events::IoKind, &str); 6] = [
     ),
 ];
 
+#[derive(Clone)]
 struct IoWindow {
     status: &'static str,
     samples: Vec<io_events::IoSample>,
@@ -883,7 +1021,14 @@ pub fn run() -> io::Result<()> {
         lost_events: 0,
     };
     let io_enabled = config.events && config.io_events && config.proc_root == Path::new("/proc");
-    let mut io_window = IoWindow::new(io_enabled);
+    let diagnostic = Arc::new(Mutex::new(Diagnostic {
+        supported: config.events && config.proc_root == Path::new("/proc"),
+        deadline: io_enabled.then(|| Instant::now() + Duration::from_secs(60)),
+        state: if io_enabled { "starting" } else { "off" },
+        window: IoWindow::new(io_enabled),
+        lost: Arc::new(AtomicU64::new(0)),
+    }));
+    let io_window = IoWindow::new(false);
     let mut sampler = ResourceSampler::default();
     let slow_cache = Arc::new(Mutex::new(SlowObservations::default()));
     let data = sampler.collect(
@@ -904,6 +1049,7 @@ pub fn run() -> io::Result<()> {
         forks: 0,
         execs: 0,
         exits: 0,
+        diagnostic: diagnostic.clone(),
     }));
     let (sender, receiver) = mpsc::sync_channel(8192);
     let lost = Arc::new(AtomicU64::new(0));
@@ -919,20 +1065,9 @@ pub fn run() -> io::Result<()> {
     } else {
         None
     };
-    let (io_sender, io_receiver) = mpsc::sync_channel(128);
-    let io_lost = Arc::new(AtomicU64::new(0));
-    let mut io_tracer = if io_enabled {
-        match io_events::start(config.uid, io_sender, io_lost.clone()) {
-            Ok(child) => Some(child),
-            Err(error) => {
-                eprintln!("I/O kernel events unavailable: {error}");
-                io_window.update(io_events::Event::Failed);
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let io_control = diagnostic.clone();
+    let io_uid = config.uid;
+    let io_worker = std::thread::spawn(move || diagnostic_worker(io_uid, io_control));
     unsafe {
         libc::signal(libc::SIGTERM, stop as *const () as usize);
         libc::signal(libc::SIGINT, stop as *const () as usize);
@@ -1048,18 +1183,22 @@ pub fn run() -> io::Result<()> {
                     }
                 }
             }
-            for event in io_receiver.try_iter() {
-                io_window.observe(event, io_lost.load(Ordering::Relaxed));
-            }
             if sampled.elapsed() >= Duration::from_secs(2) {
                 let snapshot = linux::collect_uid(&worker_config.proc_root, worker_config.uid);
                 let slow = slow_cache.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let (io_window, io_lost) = {
+                    let diagnostic = diagnostic.lock().unwrap_or_else(|e| e.into_inner());
+                    (
+                        diagnostic.window.clone(),
+                        diagnostic.lost.load(Ordering::Relaxed),
+                    )
+                };
                 let data = sampler.collect(
                     &worker_config.proc_root,
                     &snapshot,
                     &worker_config.node_id,
                     &io_window,
-                    io_lost.load(Ordering::Relaxed),
+                    io_lost,
                     &slow,
                 );
                 let mut s = worker_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -1098,7 +1237,7 @@ pub fn run() -> io::Result<()> {
             }
         }
     }
-    for child in [tracer.as_mut(), io_tracer.as_mut()].into_iter().flatten() {
+    for child in tracer.as_mut().into_iter() {
         unsafe {
             libc::kill(child.id() as i32, libc::SIGINT);
         }
@@ -1111,6 +1250,7 @@ pub fn run() -> io::Result<()> {
         }
         child.wait()?;
     }
+    let _ = io_worker.join();
     let _ = worker.join();
     if let Some(worker) = pss_worker {
         let _ = worker.join();
