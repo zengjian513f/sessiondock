@@ -25,8 +25,9 @@ pub struct Instance {
     /// `null` before the first attempt.
     pub running: Option<bool>,
     /// The screen shows the CLI's busy indicator (spinner, "esc to
-    /// interrupt") on the last successful read; `null` after a failed read
-    /// or for CLIs without a recognized busy indicator (Grok, OpenCode).
+    /// interrupt", or live background terminals) on the last successful read;
+    /// `null` after a failed read or for CLIs without a recognized busy
+    /// indicator (Grok, OpenCode).
     pub busy: Option<bool>,
 }
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -264,12 +265,14 @@ pub fn transcript(
 }
 
 /// Whether the screen shows the CLI's busy indicator, for CLIs the driver
-/// recognizes; the same patterns delivery uses before it types.
+/// recognizes, including background terminals that outlive a Codex turn.
 pub fn screen_busy(source: &str, capture: &crate::delivery::driver::ScreenCapture) -> Option<bool> {
     use crate::delivery::driver;
     match source {
         "claude" => Some(driver::busy_screen(&capture.text)),
-        "codex" => Some(driver::codex_busy_screen(&capture.text)),
+        "codex" => Some(
+            driver::codex_busy_screen(&capture.text) || driver::codex_background_running(capture),
+        ),
         _ => None,
     }
 }
@@ -396,7 +399,8 @@ impl super::Conversations {
                 .any(|row| row.state == "queued" && row.cli_queued_at.is_some())
             || capture.lag.is_some_and(|lag| lag > 0)
             || super::input::classify("codex", capture).state != super::input::InputState::Ready
-            || screen_busy("codex", capture) != Some(false)
+            // Background terminals do not hold the foreground input queue.
+            || driver::codex_busy_screen(&capture.text)
             || editor_text("codex", capture).is_none_or(|text| !text.trim().is_empty())
             || !driver::codex_queued_texts(capture).is_empty()
         {

@@ -214,6 +214,12 @@ static PASTING: LazyLock<Regex> =
 
 static CODEX_BUSY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bWorking\b.*\besc to interrupt\b").expect("codex busy"));
+static CODEX_BACKGROUND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^[1-9][0-9]*\s+background\s+terminals?\s+running\s*·\s*/ps\s+to\s+view\s*·\s*/stop\s+to\s+close$",
+    )
+    .expect("codex background terminals")
+});
 static CODEX_CONTEXT_FOOTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bContext\s+\d+%\s+used\b").expect("codex context"));
 static CODEX_CONTEXT_LEFT_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
@@ -278,6 +284,27 @@ fn codex_plain(line: &str) -> String {
 /// Whether the visible Codex screen still reports an active turn.
 pub fn codex_busy_screen(screen: &str) -> bool {
     CODEX_BUSY.is_match(&strip_ansi(screen))
+}
+
+/// Background terminals outlive the model turn. Recognize Codex's status
+/// immediately above its live composer, never a quoted line in the transcript
+/// or the draft. This is activity evidence, independent of input readiness.
+pub fn codex_background_running(capture: &ScreenCapture) -> bool {
+    let normalized = capture.text.replace('\r', "");
+    let raw: Vec<&str> = normalized.lines().collect();
+    let clean: Vec<String> = raw.iter().map(|line| codex_plain(line)).collect();
+    let Some((editor, _)) = locate_codex(&raw, &clean, capture.cursor) else {
+        return false;
+    };
+    let mut status: Vec<&str> = clean[..editor]
+        .iter()
+        .rev()
+        .skip_while(|line| !nonblank(line))
+        .take_while(|line| nonblank(line))
+        .map(|line| line.trim())
+        .collect();
+    status.reverse();
+    CODEX_BACKGROUND.is_match(&status.join(" "))
 }
 
 /// Whether Claude visibly has a turn in progress.
