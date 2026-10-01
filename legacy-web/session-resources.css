@@ -38,3 +38,9 @@
 .sr-scopes { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
 .sr-scopes button { border: 0; border-radius: 5px; padding: 5px 10px; font: inherit; font-size: 12px; background: transparent; color: var(--muted); cursor: pointer; }
 .sr-scopes button[aria-pressed="true"] { background: var(--bg); color: var(--accent); box-shadow: 0 1px 3px #00000014; }
+
+.sr-probe-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.sr-probe { border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px; background: var(--panel); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.sr-probe:disabled { opacity: .55; cursor: default; }
+.sr-probe-error, .sr-diagnostic { font-size: 11px; }
+.sr-diagnostic { display: block; margin: 0 0 8px; color: var(--muted); }

@@ -32,6 +32,7 @@ pub enum Request {
     Health,
     Report,
     Resources,
+    Probe { enabled: bool },
     Catalog(Catalog),
     Publish(Published),
 }

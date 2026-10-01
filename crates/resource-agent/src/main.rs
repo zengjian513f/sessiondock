@@ -10,6 +10,9 @@ mod memory;
 mod server;
 #[cfg(target_os = "linux")]
 fn main() -> std::io::Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--io-probe-helper") {
+        return io_events::helper_main();
+    }
     server::run()
 }
 #[cfg(not(target_os = "linux"))]

@@ -121,7 +121,7 @@ into cgroups, throttle workloads, or signal them. Its own cgroup has CPU/memory
 limits; stopping that cgroup stops only the collector and its tracer.
 These limits do not bound probe execution charged to monitored workloads.
 Per-call VFS/TCP tracing is therefore disabled by default and explicitly disabled
-in the supplied service unit. `--io-events on` opts into diagnostic tracing;
+in the supplied service unit. `--io-events on` starts one bounded 60-second diagnostic window;
 `--events off` disables both lifecycle and I/O probes. Default collection retains
 lifecycle attribution, CPU, PSS, GPU and `/proc/PID/io` storage rates. Local-file,
 NFS and TCP logical rates are unavailable (null) when I/O probes are off.
@@ -136,7 +136,7 @@ checks peer credentials. No TCP listener or new network credentials are added.
 The supplied unit bounds capabilities to BPF/performance tracing, reading process
 state, resource limits and socket ownership. It does not make either UI privileged.
 
-The newline-delimited JSON requests are `health`, `report`, `resources`,
+The newline-delimited JSON requests are `health`, `report`, `resources`, `probe`,
 `catalog` (native session identities and process owners), and `publish` (verified
 SSH links), encoded as `{ "op": "report" }` or `{ "op": "catalog", "data": ... }`.
 Responses are `{ "ok": true, "result": ... }` or an explicit error. SessionDock
@@ -197,3 +197,36 @@ and `tests/process_links_browser.py --with-agent` cover independent lifetime,
 restart recovery, no workload termination, PID reuse, unavailable metrics and the
 browser-visible cross-machine relation. Live BPF validation additionally checks
 that a short child fork and exit are observed without changing its command.
+
+
+## Temporary I/O diagnostics
+
+The session resource drawer provides “探测 60 秒” and “停止探测”. The Hub sends
+`POST /api/session/resources/probe` (`uid`, `scope`, `enabled`) only to the
+session owner and verified execution participants. Each machine returns its own
+state and remaining seconds; partial failures are visible. Direct machine
+`POST /api/resources/probe` requires authenticated Hub access. Local consumers,
+including Node Status, use the same private socket request
+`{"op":"probe","data":{"enabled":true}}` (false stops).
+
+The lease lasts at most 60 seconds from acceptance and repeated enable requests
+do not extend it. The agent owns the timer independently of page polling, Hub
+availability and the process sampler. The helper also has a 60-second watchdog,
+a parent-death signal and a kernel-side accounting deadline. Stop/expiry kills
+and reaps only the helper and closes its unpinned BPF links/maps; monitoring
+never signals workloads. Agent restart defaults back to off. Diagnostic state
+is published in `resources.diagnostic` and each session resource node.
+
+The I/O BPF object is compiled at build time (Clang BPF backend) and embedded in
+the executable. Targets need `libbpf.so.1`, compatible BTF and the existing BPF
+capabilities, but no runtime compiler for I/O diagnostics. Lifecycle attribution
+still uses its existing bpftrace collector. Loading or attachment failure is an
+explicit unavailable result and closes partial attachments.
+
+Counters aggregate in kernel maps instead of sending an event for every I/O.
+The temporary probe covers the monitored user's processes on each participating
+machine, so other session views share that machine's diagnostic window. Turning
+it off from one view stops it for all views on that machine. Probe execution can
+still affect small-I/O throughput. CPU, PSS, GPU and proc storage accounting
+remain available while diagnostics are off; unavailable diagnostic rates are
+null, never stale values presented as live zeroes.
