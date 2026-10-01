@@ -55,21 +55,34 @@ fn string<'a>(v: &'a Value, key: &str) -> &'a str {
 }
 
 pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, TransferError> {
+    derive_cached(snapshot, selected, &super::references::Cache::default())
+}
+
+pub(super) fn derive_cached(
+    snapshot: &SessionSnapshot,
+    selected: &str,
+    cache: &super::references::Cache,
+) -> Result<Group, TransferError> {
     let index = snapshot.index();
     let entries: BTreeMap<_, _> = index.candidates().map(|e| (e.uid.clone(), e)).collect();
     if !entries.contains_key(selected) {
         return Err(TransferError::new("not_found", "会话不在当前索引中"));
     }
-    let mut grok_aliases = Vec::new();
-    for e in entries.values().filter(|e| e.source == "grok") {
-        if let Some(path) = &e.summary_path
-            && let Ok(raw) = std::fs::read(path)
-            && let Ok(row) = serde_json::from_slice::<Value>(&raw)
-            && let Some(alias) = row["agent_id"].as_str().filter(|s| !s.is_empty())
-        {
-            grok_aliases.push((alias.to_owned(), e.summary.sid.clone()));
-        }
-    }
+    cache.retain(&entries.values().map(|e| e.data.clone()).collect());
+    let links: BTreeMap<_, _> = entries
+        .values()
+        .map(|e| Ok((e.uid.clone(), cache.get(e)?)))
+        .collect::<Result<_, TransferError>>()?;
+    let grok_aliases: Vec<_> = entries
+        .values()
+        .filter(|e| e.source == "grok")
+        .filter_map(|e| {
+            links[&e.uid]
+                .alias
+                .as_ref()
+                .map(|alias| (alias.clone(), e.summary.sid.clone()))
+        })
+        .collect();
     let mut identities: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
     for e in entries.values() {
         if !e.summary.sid.is_empty() {
@@ -199,193 +212,54 @@ pub fn derive(snapshot: &SessionSnapshot, selected: &str) -> Result<Group, Trans
         }
         // nest_parent is presentation, not ownership or native dependency.
     }
-    // Calls and outputs can fall in different generations of one thread.
-    // Scope call IDs to the owning thread, never to unrelated conversations.
+    // Merge call names across rollouts, then resolve cached output identities.
     let mut calls_by_thread = BTreeMap::<String, BTreeMap<String, String>>::new();
     for e in entries.values().filter(|e| e.source == "codex") {
-        if let Ok(raw) = std::fs::read(&e.data) {
-            let calls = calls_by_thread.entry(e.summary.sid.clone()).or_default();
-            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
-                if let Ok(row) = serde_json::from_slice::<Value>(line) {
-                    super::codex_tools::collect_call(&row, calls);
-                }
-            }
-        }
+        calls_by_thread
+            .entry(e.summary.sid.clone())
+            .or_default()
+            .extend(links[&e.uid].calls.clone());
     }
-    for e in entries.values().filter(|e| e.source == "codex") {
-        if let Ok(raw) = std::fs::read(&e.data) {
-            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
-                let Ok(row) = serde_json::from_slice::<Value>(line) else {
-                    continue;
-                };
-                for id in super::codex_tools::references(&row, &calls_by_thread[&e.summary.sid]) {
-                    if let Some(targets) = identities.get(&("codex", id.as_str())) {
-                        for target in targets {
-                            if e.uid != *target {
-                                edges.insert(Edge {
-                                    from: e.uid.clone(),
-                                    to: (*target).into(),
-                                    kind: "agent_tool".into(),
-                                });
-                            }
-                        }
-                    } else {
-                        blockers.push(Blocker {
-                            uid: e.uid.clone(),
-                            code: "move_group_incomplete".into(),
-                            message: format!("工具引用的 Codex 会话 {id} 缺失"),
-                        });
-                    }
-                }
-            }
-        }
-    }
-    // Native Claude forks can copy message UUIDs without a session-level fork
-    // field. Resolve those shared records as well as explicit physical refs.
-    // Grok keeps its fork relationship in summary.json, outside chat history.
-    let mut claude_messages = BTreeMap::<String, String>::new();
-    for e in entries
-        .values()
-        .filter(|e| matches!(e.source, "claude" | "grok"))
-    {
-        let mut references = BTreeSet::<(String, String)>::new();
-        if e.source == "claude" {
-            let raw = match std::fs::read(&e.data) {
-                Ok(raw) => raw,
-                Err(error) => {
-                    blockers.push(Blocker {
-                        uid: e.uid.clone(),
-                        code: "move_io".into(),
-                        message: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            let tool_rows: Vec<Value> = raw
-                .split(|b| *b == b'\n')
-                .filter_map(|line| serde_json::from_slice(line).ok())
-                .collect();
-            let links = claude_tools::links(&tool_rows);
-            for id in links.requests {
-                // Teammate names and failed lookups are not persisted histories.
-                if identities.contains_key(&("claude", id.as_str())) {
-                    references.insert((id, "agent_tool".into()));
-                }
-            }
-            for id in links.resumed.into_values() {
-                references.insert((id, "agent_tool".into()));
-            }
-            for line in raw.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
-                let row: Value = match serde_json::from_slice(line) {
-                    Ok(row) => row,
-                    Err(error) => {
-                        blockers.push(Blocker {
-                            uid: e.uid.clone(),
-                            code: "move_format".into(),
-                            message: error.to_string(),
-                        });
-                        continue;
-                    }
-                };
-                for key in [
-                    "parentSessionId",
-                    "forkedFromSessionId",
-                    "continuedInSessionId",
-                ] {
-                    if let Some(id) = row[key].as_str().filter(|id| !id.is_empty()) {
-                        references.insert((
-                            id.into(),
-                            if row["type"] == "fork-context-ref" {
-                                "history_base".into()
-                            } else {
-                                "fork".into()
-                            },
-                        ));
-                    }
-                }
-                if !e.is_agent()
-                    && row.get("parentUuid").is_some()
-                    && let Some(id) = row["uuid"].as_str().filter(|id| !id.is_empty())
+    let mut claude_messages = BTreeMap::<&str, &str>::new();
+    for e in entries.values() {
+        let native = &links[&e.uid];
+        blockers.extend(native.errors.iter().map(|(code, message)| Blocker {
+            uid: e.uid.clone(),
+            code: code.clone(),
+            message: message.clone(),
+        }));
+        let mut references = native.required.clone();
+        references.extend(
+            native
+                .optional
+                .iter()
+                .filter(|id| identities.contains_key(&(e.source, id.as_str())))
+                .map(|id| (id.clone(), "agent_tool".into())),
+        );
+        if e.source == "codex" {
+            for (call, ids) in &native.outputs {
+                if calls_by_thread[&e.summary.sid]
+                    .get(call)
+                    .is_some_and(|name| {
+                        matches!(name.as_str(), "__code_agent" | "spawn_agent" | "wait")
+                    })
                 {
-                    if let Some(other) = claude_messages.get(id) {
-                        if other != &e.uid {
-                            edges.insert(Edge {
-                                from: e.uid.clone(),
-                                to: other.clone(),
-                                kind: "fork".into(),
-                            });
-                        }
-                    } else {
-                        claude_messages.insert(id.into(), e.uid.clone());
-                    }
+                    references.extend(ids.iter().map(|id| (id.clone(), "agent_tool".into())));
                 }
             }
-        } else if let Some(path) = &e.summary_path {
-            match grok_tools::rows(path.parent().unwrap()) {
-                Ok(rows) => {
-                    for id in grok_tools::required_references(&rows) {
-                        references.insert((id, "agent_tool".into()));
+        }
+        if e.source == "claude" && !e.is_agent() {
+            for id in &native.messages {
+                if let Some(other) = claude_messages.get(id.as_str()) {
+                    if *other != e.uid {
+                        edges.insert(Edge {
+                            from: e.uid.clone(),
+                            to: (*other).into(),
+                            kind: "fork".into(),
+                        });
                     }
-                    for id in grok_tools::references(&rows) {
-                        // The same tool also accepts shell task IDs and failed lookups.
-                        // Only indexed durable agents establish a history relationship.
-                        if identities.contains_key(&("grok", id.as_str())) {
-                            references.insert((id, "agent_tool".into()));
-                        }
-                    }
-                }
-                Err(error) => blockers.push(Blocker {
-                    uid: e.uid.clone(),
-                    code: error.code,
-                    message: error.message,
-                }),
-            }
-            let row: Value = match std::fs::read(path)
-                .map_err(TransferError::from)
-                .and_then(|raw| Ok(serde_json::from_slice(&raw)?))
-            {
-                Ok(row) => row,
-                Err(error) => {
-                    blockers.push(Blocker {
-                        uid: e.uid.clone(),
-                        code: error.code,
-                        message: error.message,
-                    });
-                    continue;
-                }
-            };
-            if let Some(id) = row["parent_session_id"]
-                .as_str()
-                .filter(|id| !id.is_empty())
-            {
-                references.insert((id.into(), "fork".into()));
-            }
-            // Grok children have independent directories and need not carry a
-            // parent_session_id in their own summary. The owner records them.
-            let agents = path.parent().unwrap().join("subagents");
-            if agents.is_dir() {
-                for entry in std::fs::read_dir(agents)? {
-                    let metadata = entry?.path().join("meta.json");
-                    if !metadata.is_file() {
-                        continue;
-                    }
-                    match std::fs::read(&metadata)
-                        .map_err(TransferError::from)
-                        .and_then(|raw| Ok(serde_json::from_slice::<Value>(&raw)?))
-                    {
-                        Ok(meta) => {
-                            for name in ["child_session_id", "parent_session_id"] {
-                                if let Some(id) = meta[name].as_str().filter(|id| !id.is_empty()) {
-                                    references.insert((id.into(), "subagent".into()));
-                                }
-                            }
-                        }
-                        Err(error) => blockers.push(Blocker {
-                            uid: e.uid.clone(),
-                            code: error.code,
-                            message: error.message,
-                        }),
-                    }
+                } else {
+                    claude_messages.insert(id, &e.uid);
                 }
             }
         }

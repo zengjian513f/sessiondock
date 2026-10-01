@@ -95,6 +95,8 @@ impl Operation {
     }
 }
 pub struct TransferService {
+    inventory: SessionStore,
+    references: super::references::Cache,
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
@@ -189,6 +191,8 @@ impl TransferService {
             fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
         }
         let service = Self {
+            inventory: SessionStore::with_metadata(roots.clone(), metadata.clone()),
+            references: Default::default(),
             directory,
             roots,
             home,
@@ -246,8 +250,23 @@ impl TransferService {
     pub(super) fn save(&self, op: &Operation) -> Result<(), TransferError> {
         persist(&self.directory.join(&op.id).join("operation.json"), op)
     }
-    pub fn store(&self) -> SessionStore {
-        SessionStore::with_metadata(self.roots.clone(), self.metadata.clone())
+    pub fn store(&self) -> &SessionStore {
+        &self.inventory
+    }
+    fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
+        let started = std::time::Instant::now();
+        let snapshot = self
+            .store()
+            .search_snapshot()
+            .map_err(|e| TransferError::new("move_inventory", e.message))?;
+        let indexed = started.elapsed();
+        let result = group::derive_cached(&snapshot, selected, &self.references);
+        eprintln!(
+            "sessiondock transfer group: inventory_ms={} relationships_ms={}",
+            indexed.as_millis(),
+            started.elapsed().saturating_sub(indexed).as_millis()
+        );
+        result
     }
     pub fn locked(&self, uid: &str) -> Result<bool, TransferError> {
         for entry in fs::read_dir(&self.directory)? {
@@ -291,11 +310,7 @@ impl TransferService {
                 "会话组有尚未恢复的复制操作",
             ));
         }
-        let snapshot = self
-            .store()
-            .search_snapshot()
-            .map_err(|e| TransferError::new("move_inventory", e.message))?;
-        let group = group::derive(&snapshot, selected)?;
+        let group = self.group(selected)?;
         let mut codex_group = group.clone();
         codex_group.members.retain(|m| m.source == "codex");
         let mut file_group = group.clone();
@@ -443,11 +458,7 @@ impl TransferService {
         Ok(op)
     }
     pub fn recheck(&self, op: &Operation) -> Result<(), TransferError> {
-        let snapshot = self
-            .store()
-            .search_snapshot()
-            .map_err(|e| TransferError::new("move_inventory", e.message))?;
-        let current = group::derive(&snapshot, &op.uid)?;
+        let current = self.group(&op.uid)?;
         let old: BTreeSet<_> = op
             .group()
             .members
@@ -836,14 +847,7 @@ impl TransferService {
             if op.incoming_digest.is_none() {
                 self.recheck(&op)?;
             }
-            let store = self.store();
-            store
-                .list(true)
-                .map_err(|e| TransferError::new("move_verify", e.message))?;
-            let snapshot = store
-                .search_snapshot()
-                .map_err(|e| TransferError::new("move_verify", e.message))?;
-            let group = group::derive(&snapshot, op.target_uid.as_ref().unwrap())?;
+            let group = self.group(op.target_uid.as_ref().unwrap())?;
             if !group.blockers.is_empty() || group.members.len() != op.group().members.len() {
                 return Err(TransferError::new("move_verify", "克隆后的历史关系不完整"));
             }
