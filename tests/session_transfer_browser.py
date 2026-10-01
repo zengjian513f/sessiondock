@@ -124,6 +124,15 @@ def environment_checks(transfer, root):
     assert all('.git' not in Path(p).parts for p in snapshot['entries'])
     compare={'operation':'compare_environment','snapshot':snapshot}
     assert command(transfer,compare)['matches']
+    # Even old cached manifests must drop workspace-upload contents/stamps
+    # before any filesystem access, including missing upload paths.
+    legacy=copy.deepcopy(snapshot)
+    upload=str(cwd/'sessiondock_attachments/123/missing.png')
+    legacy['dependencies'][upload]=copy.deepcopy(snapshot['dependencies'][str(external)])
+    legacy['stamps'][upload]=copy.deepcopy(snapshot['stamps'][str(external)])
+    assert command(transfer,{'operation':'compare_environment','snapshot':legacy})['matches']
+    assert command(transfer,{'operation':'recheck_environment','snapshot':legacy})
+    assert upload not in command(transfer,{**inspect,'dependencies':[str(external),upload]})['dependencies']
     (cwd/'.git/HEAD').write_text('different git metadata')
     assert command(transfer,compare)['matches']
     (cwd/'ignored').write_text('unrelated changed build output')
@@ -163,6 +172,12 @@ def main():
         root = Path(temporary)
         cwd=environment_checks(transfer,root)
         source = fixture(root / 'source',cwd=cwd)
+        args_text=r'{  "ids" : ["'+ident(6)+r'"], "note" : "\u00e9 \/ '+ident(6)+'" }'
+        format_row={'type':'response_item','payload':{'type':'function_call','name':'wait',
+            'call_id':'format-call','arguments':args_text},'fixture_number':20.0,'fixture_literal':'café / Ω 🐈 '+ident(6)}
+        formatted=(' \t'+json.dumps(format_row,ensure_ascii=True,separators=(',  ', ' : '))+' \t\r\n').encode()
+        formatted=formatted.replace(b'"fixture_number" : 20.0',b'"fixture_number" : 2.00e1')
+        with source.paths['a-agent'].open('ab') as stream:stream.write(formatted)
         roots = {'codex': str(source.root / 'codex')}
         original = fingerprint(source.root)
         wanted = {source.uid(key) for key in source.paths if key != 'unrelated'}
@@ -204,6 +219,10 @@ def main():
         native = [json.loads(line)['payload'] for line in
                   (root / 'clone' / 'codex' / agent_file['relative']).read_text().splitlines()][3:]
         records = clone['identities']['records']
+        expected=formatted.replace(b'"call_id" : "format-call"',('"call_id" : "'+records['format-call']+'"').encode())
+        expected=expected.replace(('[\\"'+ident(6)+'\\"]').encode(),('[\\"'+mapping[ident(6)]+'\\"]').encode())
+        assert (root/'clone/codex'/agent_file['relative']).read_bytes().endswith(expected), 'Codex changed non-identity bytes'
+        print('PASS Codex preserves raw layout, CRLF, numeric spelling, Unicode and nested JSON escapes')
         assert native[0]['root_turn_id'] == clone['identities']['turns'][ident(21)]
         assert native[1]['call_id'] == native[2]['call_id'] == native[3]['call_id'] == records['call_spawn']
         assert native[4]['item']['id'] == records['call_spawn']

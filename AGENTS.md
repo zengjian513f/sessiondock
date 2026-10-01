@@ -120,6 +120,10 @@
   organize work without making valid input fail.
 - Read the affected contract before editing. Keep history, list and search
   semantics aligned. Pagination must not move live checkpoints.
+- Native session files follow a minimum-change rule: clone/move may patch only
+  required identity, path and dependent offset bytes. Preserve all other bytes,
+  including whitespace, line endings, key order and escape spelling. Never
+  reserialize entire records or insert missing fields during identity rewriting.
 - If the user asks for one validation run, finish edits first. Ordinary tests
   use synthetic data and fake CLIs. Record final results; old results do not
   validate later changes.

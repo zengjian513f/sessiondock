@@ -767,7 +767,20 @@ impl Plan {
         } else {
             &local_names
         };
-        for mut row in rows {
+        let mut rewritten = rows.into_iter();
+        let records: Vec<&[u8]> = if file.format == "json" {
+            vec![raw]
+        } else {
+            raw.split_inclusive(|byte| *byte == b'\n').collect()
+        };
+        for original in records {
+            if original.iter().all(u8::is_ascii_whitespace) {
+                output.extend_from_slice(original);
+                continue;
+            }
+            let mut row = rewritten
+                .next()
+                .ok_or_else(|| TransferError::new("move_format", "缺少原生记录"))?;
             if let Some(links) = &links {
                 super::group::claude_tools::resolve(&mut row, links);
             }
@@ -780,8 +793,7 @@ impl Plan {
             record_ids(&mut row, source, &mut |value| {
                 rewrite_scalar(value, source, &self.records)
             });
-            serde_json::to_writer(&mut output, &row)?;
-            output.push(b'\n');
+            output.extend_from_slice(&super::json_bytes::rewrite(original, &row)?);
         }
         Ok(output)
     }

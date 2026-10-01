@@ -10331,7 +10331,7 @@ async function cloneSessionGroup(uid, resumed = null) {
 
 
 function transferPhaseLabel(task) {
-  const labels = {planned:'准备迁移', preparing:'整理会话与附件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+  const labels = {planned:'准备迁移', preparing:'整理会话文件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
     failed:'复制失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};

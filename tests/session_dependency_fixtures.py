@@ -13,6 +13,10 @@ def add_external_dependencies(source, provider):
     linked=directory/'linked.txt';linked.write_text('External symbolic link content\n')
     pointer='<persisted-output>\nFull output saved to: '+str(output)+'\n</persisted-output>'
     literal='Ordinary example /missing/example.png and {"outputFile":"/missing/ordinary.txt"}'
+    # These deliberately do not exist on either node. Composer uploads are
+    # workspace references, never a migration dependency or a publish input.
+    upload=source.root/'cwd/sessiondock_attachments/123/image.png'
+    relative_upload='./sessiondock_attachments/123/result.txt'
     if provider=='codex':
         primary=source.paths['a']
         rows=[{'type':'response_item','payload':{'type':'message','role':'user','content':[
@@ -31,6 +35,16 @@ def add_external_dependencies(source, provider):
               {'type':'tool_result','tool_call_id':'external-output','content':pointer}]
         (primary.parent/'compaction_checkpoints/external-link.txt').symlink_to(linked)
     with primary.open('ab') as stream:
-        for row in rows:stream.write(encoded(row))
+        for row in rows:
+            content=row.get('payload',row.get('message',row)).get('content')
+            if isinstance(content,list) and any(item.get('type') in ('image','input_image','image_url') for item in content):
+                content.append({'type':'image','source':{'type':'file','path':str(upload)}})
+                content.append({'type':'image','source':{'type':'file','path':'./sessiondock_attachments/123/relative.png'}})
+            stream.write(encoded(row))
+        # Known persisted-output envelope, including a relative path.
+        extra={'type':'tool_result','content':'Full output saved to: '+relative_upload}
+        if provider=='claude':extra=claude_row(ident(2),'user',ident(883),ident(882),[extra],cwd=str(source.root/'cwd'))
+        elif provider=='codex':extra={'type':'response_item','payload':{'type':'function_call_output','call_id':'workspace-output','output':extra['content']}}
+        stream.write(encoded(extra))
     paths=[image,output]+([linked] if provider!='codex' else [])
     return {p:p.read_bytes() for p in paths}

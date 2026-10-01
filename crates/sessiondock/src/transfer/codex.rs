@@ -507,15 +507,19 @@ pub fn stage(plan: &ClonePlan, destination: &Path) -> Result<StagedClone, Transf
             }
             let mut bytes = Vec::new();
             let mut boundaries = BTreeMap::from([(0, 0)]);
+            let mut start = 0;
             for (end, mut row) in rows(&raw)? {
                 if plan.mode == Mode::Clone {
                     rewrite(&mut row, &plan.identities, inherited)?;
-                    serde_json::to_writer(&mut bytes, &row)?;
-                    bytes.push(b'\n');
+                    bytes.extend_from_slice(&super::json_bytes::rewrite(
+                        &raw[start..end as usize],
+                        &row,
+                    )?);
                     boundaries.insert(end, bytes.len() as u64);
                 } else {
                     boundaries.insert(end, end);
                 }
+                start = end as usize;
             }
             if plan.mode == Mode::Move {
                 bytes = raw;

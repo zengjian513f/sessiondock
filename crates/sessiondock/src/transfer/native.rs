@@ -405,7 +405,7 @@ pub fn rewrite(
                                     .into();
                             }
                         }
-                        *source = serde_json::to_string(&v)?;
+                        *source = super::json_bytes::rewrite_text(source, &v)?;
                     }
                 }
                 if matches!(
@@ -437,7 +437,8 @@ pub fn rewrite(
                     } else {
                         codex_ids::item(&mut item, &mut mapper)?;
                     }
-                    row.insert("item_json".into(), serde_json::to_string(&item)?.into());
+                    let rewritten = super::json_bytes::rewrite_text(text, &item)?;
+                    row.insert("item_json".into(), rewritten.into());
                 }
                 if table.name == "thread_turns" {
                     for (byte, ord, end) in [
