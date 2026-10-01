@@ -288,7 +288,7 @@ pub async fn live(
 
 fn live_body(registry: &Registry, answers: &[Answer]) -> Value {
     let mut result = envelope(registry, answers);
-    for key in ["uids", "tmux_uids"] {
+    for key in ["uids", "tmux_uids", "working_uids"] {
         let rows: Vec<Value> = answers
             .iter()
             .filter(|answer| answer.ok())
