@@ -334,6 +334,7 @@ pub fn node_router() -> Router<AppState> {
             post(transfer::reserve_export),
         )
         .route("/api/session/transfer/abort", post(transfer::abort_move))
+        .route("/api/session/transfer/interrupt", post(transfer::interrupt))
         .route(
             "/api/session/transfer/switch",
             post(transfer::switch_source),

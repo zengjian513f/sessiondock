@@ -7,6 +7,7 @@ mod code_mode;
 pub mod codex;
 mod codex_ids;
 mod codex_tools;
+pub mod coordination;
 pub mod environment;
 pub mod files;
 pub mod group;

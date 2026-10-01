@@ -10120,8 +10120,8 @@ async function cloneSessionGroup(uid, resumed = null) {
   }
   target.value = sourceId;
   $d('#transfer-source').value = sourceName;
-  let plan = resumed?.plan || null, busy = false, uncertain = !!resumed;
-  let operationStarted = !!resumed, progressTimer = null, progressLoading = false;
+  let plan = resumed?.plan || null, busy = false, planning = false, uncertain = !!resumed;
+  let operationStarted = !!resumed, progressTimer = null, progressLoading = false, aborting = false, executionSequence = 0;
   let environmentLoading = false, environmentSequence = 0;
   const environmentClients = new Map();
   const identityChoices = {clone:true, move:false};
@@ -10152,19 +10152,19 @@ async function cloneSessionGroup(uid, resumed = null) {
     $d('.transfer-identity').hidden = !cross;
     newIds.checked = identityChoices[mode()];
     const reason = blockedReason(); notice.textContent = reason; notice.hidden = !reason;
-    confirm.textContent = busy ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
-    confirm.disabled = busy || environmentLoading || !plan || !!reason;
+    confirm.textContent = aborting ? '正在撤回…' : busy && operationStarted ? (moving ? '正在移动…' : '正在复制…') : uncertain ? (moving ? '重试同一次移动' : '重试同一次复制') : moving ? '移动整组' : '复制整组';
+    confirm.disabled = busy || planning || aborting || environmentLoading || !plan || !!reason;
     // Keep the chosen operation fixed while its publication result is uncertain.
-    target.disabled = busy || uncertain;
-    for (const radio of radios) radio.disabled = busy || uncertain;
-    newIds.disabled = busy || uncertain;
-    $d('.transfer-abort').hidden = !uncertain || !moving;
-    $d('.transfer-abort').disabled = busy;
+    target.disabled = busy || aborting || uncertain;
+    for (const radio of radios) radio.disabled = busy || aborting || uncertain;
+    newIds.disabled = busy || aborting || uncertain;
+    $d('.transfer-abort').hidden = (!uncertain && !(busy && operationStarted)) || !moving;
+    $d('.transfer-abort').disabled = aborting;
     dialog.setAttribute('aria-busy', String(busy));
   };
-  target.onchange = () => {renderSelection(); refreshPlan(); refreshEnvironment();};
-  radios.forEach(r => r.onchange = () => {renderSelection(); refreshPlan();});
-  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection(); refreshPlan();};
+  target.onchange = () => {renderSelection(); refreshEnvironment();};
+  radios.forEach(r => r.onchange = renderSelection);
+  newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
   const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
   $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
   dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
@@ -10176,8 +10176,8 @@ async function cloneSessionGroup(uid, resumed = null) {
     return data;
   };
   $d('.transfer-abort').onclick = async () => {
-    if (busy || !plan) return;
-    busy = true; error.hidden = true; renderSelection();
+    if (aborting || !plan) return;
+    ++executionSequence; uncertain = true; aborting = true; busy = true; error.hidden = true; renderSelection();
     try {
       await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value});
       uncertain = false; operationStarted = false; plan = null; busy = false;
@@ -10185,7 +10185,7 @@ async function cloneSessionGroup(uid, resumed = null) {
       await refreshPlan();
     } catch (failure) {
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
-    } finally {busy = false; if (dialog.isConnected) renderSelection();}
+    } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
   };
   const renderMembers = data => {
     const members = new Map();
@@ -10258,12 +10258,13 @@ async function cloneSessionGroup(uid, resumed = null) {
     note.textContent = messages.join('；'); note.title = tools.join('、'); note.hidden = !messages.length;
     environmentLoading = false; renderSelection();
   }
-  async function refreshPlan() {
-    if (busy || uncertain || (mode() === 'move' && !crossMachine())) return;
+  async function refreshPlan(executing = false) {
+    if ((!executing && busy) || planning || uncertain || (mode() === 'move' && !crossMachine())) return;
     const fresh = !crossMachine() || identityChoices[mode()];
     const selectedMode = mode();
-    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return;
-    busy = true; plan = null; error.hidden = true; renderSelection();
+    if (plan && plan.new_ids === fresh && plan.mode === selectedMode) return true;
+    const previous = plan;
+    planning = true; plan = null; error.hidden = true; renderSelection();
     status.textContent = '正在读取清单…';
     try {
       const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
@@ -10271,12 +10272,15 @@ async function cloneSessionGroup(uid, resumed = null) {
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
       plan = next;
       if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
+      return true;
     } catch (failure) {
+      plan = previous;
       if (dialog.isConnected) {
         status.textContent = '清单读取失败';
         error.textContent = failure.message; error.hidden = false;
       }
-    } finally {busy = false; if (dialog.isConnected) renderSelection();}
+      return false;
+    } finally {planning = false; if (dialog.isConnected) renderSelection();}
   }
   const paintProgress = data => {
     const progress = $d('.transfer-progress');
@@ -10301,27 +10305,33 @@ async function cloneSessionGroup(uid, resumed = null) {
   };
   progressTimer = setInterval(pollProgress, 1000);
   confirm.onclick = async () => {
-    if (busy || !plan || blockedReason()) return;
-    busy = true; operationStarted = true; error.hidden = true; renderSelection();
+    if (busy || planning || aborting || !plan || blockedReason()) return;
+    busy = true; error.hidden = true; renderSelection();
+    const prepared = uncertain || await refreshPlan(true);
+    if (!prepared || !plan || !dialog.isConnected) {busy = false; if (dialog.isConnected) renderSelection(); return;}
+    const execution = ++executionSequence;
+    operationStarted = true; error.hidden = true; renderSelection();
     if (HUB_MODE) paintProgress({phase:'planned'});
     try {
       const result = await request(crossMachine() ? 'api/session/transfer/clone' : 'api/session/clone', {
         uid, operation_id:plan.operation_id, ...(crossMachine() ? {target_node:target.value} : {}),
       });
+      if (execution !== executionSequence) return;
       if (result.phase !== 'complete' || !result.target_uid) throw new Error('复制未完成，请重试检查结果');
       close(); await loadSessions(true); await openSession(result.target_uid);
       showSessionStopNotice(result.mode === 'move' ? '整组移动完成。' : '整组复制完成，原会话已保留。');
     } catch (failure) {
+      if (execution !== executionSequence) return;
       uncertain = failure.code !== 'move_cancelled';
       if (!uncertain) {operationStarted = false; plan = null; busy = false; $d('.transfer-progress').hidden = true; await refreshPlan();}
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
-    } finally {busy = false; if (dialog.isConnected) renderSelection(); refreshTransferTasks();}
+    } finally {if (execution === executionSequence) {busy = false; if (dialog.isConnected) renderSelection();} refreshTransferTasks();}
   };
 }
 
 
 function transferPhaseLabel(task) {
-  const labels = {planned:'检查环境', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
+  const labels = {planned:'准备迁移', preparing:'整理会话与附件', checking:'检查目标目录与会话依赖', transferring:'传输历史', publishing:'发布历史', verifying:'验证历史与关系',
     failed:'复制失败，可重试', rollback_required:'恢复待处理',
     switching:'交接执行归属', releasing:'确认完成', retiring:'清理源端',
     cleanup_pending:'源端清理待重试', aborting:'撤回待完成', aborted:'已撤回', complete:'已完成'};

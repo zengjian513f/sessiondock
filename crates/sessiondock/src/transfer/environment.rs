@@ -67,7 +67,7 @@ fn stale() -> TransferError {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
     pub cwd: PathBuf,
-    /// Relative names in the work tree, including ignored/untracked files.
+    /// Legacy wire field; new snapshots never enumerate the work tree.
     pub entries: BTreeMap<PathBuf, Content>,
     /// Absolute names reached through links or explicitly referenced attachments.
     pub dependencies: BTreeMap<PathBuf, Content>,
@@ -91,7 +91,9 @@ impl Snapshot {
             stamps: BTreeMap::new(),
         };
         let mut seen = BTreeSet::new();
-        result.walk(cwd, true, &mut seen)?;
+        // The working directory is an execution location, not migration data.
+        // Never enumerate it or follow unrelated project links.
+
         for path in dependencies {
             result.walk(path, false, &mut seen).map_err(|mut error| {
                 error.message = format!("外部历史依赖 {}：{}", path.display(), error.message);
@@ -107,6 +109,7 @@ impl Snapshot {
         tree: bool,
         seen: &mut BTreeSet<(PathBuf, bool)>,
     ) -> Result<(), TransferError> {
+        super::coordination::check()?;
         if !seen.insert((path.to_owned(), tree)) {
             return Ok(());
         }
@@ -152,6 +155,7 @@ impl Snapshot {
             let mut hash = Sha256::new();
             let mut buffer = [0u8; 65536];
             loop {
+                super::coordination::check()?;
                 let count = file.read(&mut buffer)?;
                 if count == 0 {
                     break;
@@ -183,6 +187,10 @@ impl Snapshot {
         Ok(())
     }
     pub fn recheck(&self) -> Result<(), TransferError> {
+        super::coordination::check()?;
+        if !self.cwd.is_dir() {
+            return Err(TransferError::new("move_cwd_missing", "目标工作目录不存在"));
+        }
         for (path, before) in &self.stamps {
             let meta = fs::symlink_metadata(path).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {

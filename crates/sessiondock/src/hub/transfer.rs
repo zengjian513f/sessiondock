@@ -29,7 +29,9 @@ struct Journal {
 }
 pub struct Transfers {
     directory: PathBuf,
-    gate: tokio::sync::Mutex<()>,
+    gates: crate::transfer::coordination::Locks,
+    cancellations:
+        std::sync::Mutex<std::collections::BTreeMap<String, tokio_util::sync::CancellationToken>>,
 }
 impl Transfers {
     pub fn open(directory: PathBuf) -> std::io::Result<Self> {
@@ -41,7 +43,8 @@ impl Transfers {
         }
         Ok(Self {
             directory,
-            gate: tokio::sync::Mutex::new(()),
+            gates: Default::default(),
+            cancellations: Default::default(),
         })
     }
     fn path(&self, id: &str) -> Result<PathBuf, TransferError> {
@@ -175,7 +178,6 @@ impl Transfers {
         client: Arc<Client>,
         request: Request,
     ) -> Result<Value, TransferError> {
-        let _guard = self.gate.lock().await;
         let mut journal: Journal =
             serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
         if journal.request != request {
@@ -184,6 +186,37 @@ impl Transfers {
                 "操作已绑定其他迁移目标",
             ));
         }
+        // Validate binding above, then interrupt preparation before taking the
+        // operation lock. Never wait behind an unrelated transfer.
+        if let Some(token) = self
+            .cancellations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&request.operation_id)
+        {
+            token.cancel();
+        }
+        let (source_id, _) = namespace::split(&request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        for id in [&source_id, &request.target_node] {
+            if let Some(node) = registry.get(id) {
+                if let Ok(target) = registry.target(&node) {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        call(
+                            &client,
+                            &target,
+                            "/api/session/transfer/interrupt",
+                            &json!({"operation_id":request.operation_id}),
+                            false,
+                        ),
+                    )
+                    .await;
+                }
+            }
+        }
+        let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
+        journal = serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
         let result = self.abort(&registry, &client, &mut journal).await;
         if let Err(error) = &result {
             self.record_error(&request, error).await;
@@ -275,10 +308,27 @@ impl Transfers {
         client: Arc<Client>,
         request: Request,
     ) -> Result<Value, TransferError> {
-        let _guard = self.gate.lock().await;
-        let result = self
-            .run(registry.clone(), client.clone(), request.clone())
-            .await;
+        let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        self.cancellations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request.operation_id.clone(), cancellation.clone());
+        let result = tokio::select! {
+            result = self.run(registry.clone(), client.clone(), request.clone()) => result,
+            _ = cancellation.cancelled() => Err(TransferError::new("move_cancelled", "正在取消操作")),
+        };
+        self.cancellations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&request.operation_id);
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.code == "move_cancelled")
+        {
+            return result;
+        }
         if let Err(error) = &result {
             self.record_error(&request, error).await;
             if let Ok((source, _)) = namespace::split(&request.uid, true)
@@ -299,7 +349,12 @@ impl Transfers {
                     .ok()
                     .and_then(|p| fs::read(p).ok())
                     .and_then(|raw| serde_json::from_slice::<Journal>(&raw).ok())
-                    .is_some_and(|j| matches!(j.phase.as_str(), "planned" | "transferring"));
+                    .is_some_and(|j| {
+                        matches!(
+                            j.phase.as_str(),
+                            "planned" | "preparing" | "checking" | "transferring"
+                        )
+                    });
                 if source_state
                     .as_ref()
                     .is_ok_and(|(_, value)| value["mode"] == "clone" || before_publication)
@@ -366,6 +421,18 @@ impl Transfers {
         journal.error = None;
         if source_id != request.target_node {
             self.save(&journal).await?;
+        }
+        // Reset only when explicitly starting/retrying an operation, before
+        // any preparatory work is dispatched to either node.
+        for address in [&source_address, &target_address] {
+            call(
+                &client,
+                address,
+                "/api/session/transfer/interrupt",
+                &json!({"operation_id":request.operation_id,"reset":true}),
+                false,
+            )
+            .await?;
         }
         let operation = json!({"operation_id":request.operation_id});
         let source_state = call(
@@ -460,6 +527,8 @@ impl Transfers {
                 ));
             }
             if current.0 == 404 {
+                journal.phase = "preparing".into();
+                self.save(&journal).await?;
                 let manifest = call(
                     &client,
                     &source_address,
@@ -469,6 +538,8 @@ impl Transfers {
                 )
                 .await?
                 .1;
+                journal.phase = "checking".into();
+                self.save(&journal).await?;
                 let checked = call(
                     &client,
                     &target_address,

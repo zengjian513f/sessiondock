@@ -98,7 +98,8 @@ pub struct TransferService {
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
-    pub gate: Arc<tokio::sync::Mutex<()>>,
+    pub locks: super::coordination::Locks,
+    pub interrupts: super::coordination::Interrupts,
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
@@ -110,6 +111,7 @@ pub fn hash(path: &Path) -> Result<String, TransferError> {
         let mut file = fs::File::open(path)?;
         let mut buffer = [0u8; 65536];
         loop {
+            super::coordination::check()?;
             let count = file.read(&mut buffer)?;
             if count == 0 {
                 break;
@@ -125,7 +127,7 @@ pub fn uid(path: &Path) -> String {
         &format!("{:x}", Sha1::digest(path.to_string_lossy().as_bytes()))[..16]
     )
 }
-fn persist(path: &Path, value: &impl Serialize) -> Result<(), TransferError> {
+pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), TransferError> {
     let temp = path.with_extension("tmp");
     let mut file = fs::File::create(&temp)?;
     serde_json::to_writer(&mut file, value)?;
@@ -136,6 +138,28 @@ fn persist(path: &Path, value: &impl Serialize) -> Result<(), TransferError> {
     Ok(())
 }
 impl TransferService {
+    pub fn operation_keys(&self, op: &Operation) -> Vec<String> {
+        let mut keys = vec![format!("operation:{}", op.id)];
+        for member in &op.group().members {
+            keys.push(format!("session:{}", member.uid));
+            if let Some(staged) = &op.staged {
+                if let Ok(uid) = self.member_target_uid(op, member, staged) {
+                    keys.push(format!("session:{uid}"));
+                }
+            }
+        }
+        keys
+    }
+    pub async fn operation_guard(
+        &self,
+        id: &str,
+    ) -> Result<Vec<tokio::sync::OwnedMutexGuard<()>>, TransferError> {
+        let op = self.load(id)?;
+        Ok(self.locks.acquire(self.operation_keys(&op)).await)
+    }
+    pub async fn session_guard(&self, uid: &str) -> Vec<tokio::sync::OwnedMutexGuard<()>> {
+        self.locks.acquire(vec![format!("session:{uid}")]).await
+    }
     pub fn open(
         directory: PathBuf,
         mut roots: SessionRoots,
@@ -168,7 +192,8 @@ impl TransferService {
             directory,
             roots,
             home,
-            gate: Arc::new(tokio::sync::Mutex::new(())),
+            locks: Default::default(),
+            interrupts: Default::default(),
             metadata,
         };
         // Recovery is performed before the service starts accepting launches.

@@ -63,8 +63,8 @@ def rejected_bundles(source,target,operation):
     manifest=json.loads(raw)
     wrong=copy.deepcopy(manifest);wrong['roots']['codex']+='/wrong'
     status,raw=node_call(target,'/api/session/transfer/check',wrong);assert status==409 and json.loads(raw)['code']=='move_root_mismatch',raw
-    wrong=copy.deepcopy(manifest);wrong['environment'][0]['entries']['']['executable']^=1
-    status,raw=node_call(target,'/api/session/transfer/check',wrong);assert status==409 and json.loads(raw)['code']=='move_cwd_mismatch',raw
+    wrong=copy.deepcopy(manifest);wrong['environment'][0]['cwd']+='/missing'
+    status,raw=node_call(target,'/api/session/transfer/check',wrong);assert status==409 and json.loads(raw)['code']=='move_cwd_missing',raw
     status,archive=node_call(source,'/api/session/transfer/export',{'operation_id':operation});assert status==200,archive[:200]
     try:
         with tarfile.open(fileobj=io.BytesIO(archive)) as reader:
@@ -259,6 +259,14 @@ def main():
                                 print('PASS '+provider+' moving back reclaims the original node; older receipts cannot unlock the new source after restart',flush=True)
                             continue
                         page.locator(f'#side .item[data-uid="{source_uid}"]').click()
+                        # Seed the final plan for the later interrupted-handoff fixtures.
+                        # Mode controls themselves must not perform planning requests.
+                        if args.move or args.preserve:
+                            def final_options(route):
+                                body=route.request.post_data_json
+                                body.update(mode='move' if args.move else 'clone',new_ids=not args.preserve)
+                                route.continue_(post_data=json.dumps(body))
+                            page.route('**/api/session/clone/plan',final_options,times=1)
                         with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as planned:
                             page.locator('#a-clone-group').click()
                         if provider=='codex' and not peer:rejected_bundles(a,b,planned.value.json()['operation_id'])
@@ -267,28 +275,11 @@ def main():
                         dialog.locator('#transfer-target').select_option(b.nid)
                         expect(dialog.locator('#transfer-new-ids')).to_be_checked()
                         if args.move:
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
-                                dialog.locator('.transfer-segments label').nth(1).click()
-                            assert move_plan.value.ok,move_plan.value.text()
-                            assert move_plan.value.json()['mode']=='move'
-                            if not args.preserve:
-                                with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as move_plan:
-                                    dialog.locator('#transfer-new-ids').check()
+                            dialog.locator('.transfer-segments label').nth(1).click()
+                            if not args.preserve:dialog.locator('#transfer-new-ids').check()
                         elif args.preserve:
-                            if provider=='codex':
-                                def old_plan(route):
-                                    response=route.fetch();data=response.json();data.pop('new_ids',None)
-                                    route.fulfill(response=response,json=data)
-                                page.route('**/api/session/clone/plan',old_plan,times=1)
-                                dialog.locator('#transfer-new-ids').uncheck()
-                                expect(dialog.locator('.transfer-error')).to_contain_text('源机器版本尚不支持保留 UID')
-                                expect(dialog.locator('.clone-confirm')).to_be_disabled()
-                                dialog.locator('#transfer-new-ids').check()
-                                expect(dialog.locator('.clone-confirm')).to_be_enabled()
-                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as preserved_plan:
-                                dialog.locator('#transfer-new-ids').uncheck()
-                            assert preserved_plan.value.ok,preserved_plan.value.text()
-                            assert preserved_plan.value.json()['new_ids'] is False
+                            dialog.locator('#transfer-new-ids').uncheck()
+                        move_plan=planned
                         expect(dialog.locator('.clone-confirm')).to_be_enabled()
                         if args.move and peer:
                             for interrupted in (False,True):
