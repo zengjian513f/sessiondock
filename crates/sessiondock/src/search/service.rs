@@ -133,7 +133,7 @@ impl SearchService {
         );
         for agent in candidates {
             let id = agent.and_then(|item| item["id"].as_str()).unwrap_or("");
-            let scanned = match if agent.is_some() {
+            let mut scanned = match if agent.is_some() {
                 pool.agent_uid(uid, id)
             } else {
                 Ok(uid)
@@ -141,6 +141,28 @@ impl SearchService {
                 Ok(key) => self.scan(pool, key, query, cancelled, buffer),
                 Err(error) => Scanned::Error(error),
             };
+            // Identity lookup is independent of the semantic body/cache and
+            // also works for histories whose body cannot be projected. Keep
+            // existing body hit counts/snippets when the body itself matches.
+            if matches!(scanned, Scanned::Matched(None))
+                || matches!(&scanned, Scanned::Error(error) if error.status != 499)
+            {
+                let identity = if agent.is_some() {
+                    id.to_owned()
+                } else {
+                    format!("{}\n{uid}", row["sid"].as_str().unwrap_or(""))
+                };
+                match super::matches(query, &identity, cancelled) {
+                    Ok(Some(outcome)) => scanned = Scanned::Matched(Some(outcome)),
+                    Ok(None) => {}
+                    Err(error) => {
+                        return Scanned::Error(SessionError {
+                            status: error.status,
+                            message: error.message,
+                        });
+                    }
+                }
+            }
             match scanned {
                 Scanned::Matched(outcome) => {
                     if let Some(item) = agent {
