@@ -43,7 +43,7 @@ some diagnostic detail for predictable redaction.
 
 `probe(name)` adds a read-only `HostObservation`: safe summary, `exited`, optional
 launcher `instance_id`, and `AssociationState::{Missing,Invalid,Declared}`. The
-declared association accepts only exact source (`claude`/`codex`/`grok`) and full
+declared association accepts only exact source (`claude`/`codex`/`grok`/`opencode`) and full
 SID and/or source-prefixed UID. IDs are bounded ASCII identifiers; instance nonces
 are 16–128 characters. It verifies the private identity tuple before the Info
 request, in the reply, and after a record reread. Changes to identity, endpoint,
@@ -178,8 +178,9 @@ frame may already have reached the host. Drop both halves and reconnect if neede
 `shutdown` only closes this client's input; it does not send `kill`.
 
 **Never blindly retry input after an error.** Even control timeout/EOF can happen
-after the PTY accepted the write. Reliable delivery needs the provider-specific
-durable ledger and native transcript confirmation planned in M5. Dropping an
+after the PTY accepted the write. Current SEND uses the application's conversation
+draft/submission service and CLI echo tracking; see [conversation.md](../../docs/conversation.md).
+The old delivery dispatcher is retired. Dropping an
 attach connection is separate from terminating its host/CLI process.
 
 ## Tests and remaining work

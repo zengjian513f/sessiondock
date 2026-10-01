@@ -12,7 +12,8 @@ session reads, callers must use the bounded blocking reader executor.
 | Claude child | Same owner UID | Same owner `sessionId`, checked against the child's records | Exact owned agent ID |
 | Codex main | Inventory owner UID | Native `session_meta.payload.id` | `None` |
 | Codex child | Inventory owner UID | Selected child's native `session_meta.payload.id` | Exact owned child ID |
-| Grok | — | — | Scope resolution returns 501 |
+| Grok main | Inventory owner UID | Explicit `summary.json` `info.id` | `None` |
+| OpenCode main | Inventory owner UID | Native ID from the mirrored session summary | `None` |
 
 Resolving a child proves which native view was selected; conversation SEND
 and the live-question bridge use it rather than an application-level agent
@@ -26,13 +27,17 @@ The native parser collects scope provenance once from the already parsed,
 complete JSONL records. It never reopens a file for scope resolution. Claude
 requires an explicit nonempty `sessionId`; Codex requires an explicit
 `session_meta.payload.id`. Neither source falls back to a filename, title,
-display SID, Codex `session_id` alias or cursor hash. IDs over 256 UTF-8 bytes,
-non-string IDs, whitespace-only IDs and IDs containing control characters are
-rejected for scope selection.
+display SID, Codex `session_id` alias or cursor hash. Scope selection requires a
+string that is not empty or whitespace-only. It does not impose an additional
+length or character policy. The separate host protocol retains its own identity
+constraints when a scope is used to bind or control a host.
 
 An unfinished JSONL tail is not identity evidence. Missing or invalid identity
-returns 501. Conflicting explicit identity declarations return 409, as does a
-Claude child declaring a different session ID from its owner. Existing history
+returns 501. Conflicting Claude identity declarations return 409, as does a
+Claude child declaring a different session ID from its owner. Codex uses the
+first `session_meta` only; later copied ancestor metadata is not a conflicting
+identity. Grok and OpenCode obtain their identity from their source summaries,
+not from chat record filenames. Existing history
 validation may reject malformed/unsupported records earlier. These extra
 identity checks are stored as an internal result and do not change ordinary
 list/message display compatibility or turn a readable history into an error

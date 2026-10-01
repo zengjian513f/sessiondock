@@ -75,7 +75,8 @@ of the verification commands.
 1. `git status --short`：产出是否只落在指定文件；有越界改动直接还原。
 2. 通读文件：无网络访问、无写仓库外路径、无 `subprocess` 调用未授权命令、
    无新增依赖；风格与相邻脚本一致。
-3. 跑任务书里的验证命令，再跑一个真实子集（如 `--only node_contracts`）。
+3. 跑任务书里的验证命令，再按改动选择文档检查或覆盖该路径的浏览器套件；
+   不自行运行单元测试。
 4. 在提交或 PR 说明中注明"grok-4.6 headless 产出，人工审阅"；只有确实尚未完成的
    后续工作才写入根目录 `TODO.md`。
 5. 出现 `Memory flush started` 之类 grok 自身日志属正常；`GROK_EXIT` 非 0 或
@@ -108,9 +109,4 @@ of the verification commands.
 - 用一个 `run_all.sh` 逐任务后台启动并写 `status.log`，配一个看门狗监视
   "日志无增长 10 分钟"即可；全部 8 个在 3–8 分钟内完成。
 
-## 候选任务（待派）
-
-- `tests/fixture_stats.py`：统计各 Python 套件生成的合成语料规模（会话数、
-  记录数、字节），供文档引用。
-- 将 `docs/*.md` 中重复的预算数字（32 MiB、256 项等）抽成一张
-  `docs/budgets.md` 总表并由脚本核对源码常量。
+待评估的工具候选统一记录在 [TODO.md](../TODO.md)，本页的已委派记录保留历史原文。

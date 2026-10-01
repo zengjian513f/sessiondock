@@ -165,6 +165,10 @@ Codex `thread_attachments`（旧表名 `thread_artifacts`）按线程迁移；�
 
 ### 第一步先做 Codex 实测
 
+本节保留早期实测及当时后续要求的原文，不作为当前待办或功能状态。
+现行实现范围与后续验收结论以[交付验收](#交付验收)为准，未完成工作统一见
+[TODO.md](../TODO.md)。
+
 2026-09-30 已做一次有限实测：Codex CLI 0.157.0，在临时 `CODEX_HOME` A 中创建普通会话并 fork，
 只将 `sessions/` 内 rollout 按原相对路径复制到初始没有 SQLite 的 B，父线程和子线程的
 `codex exec resume <id>` 均成功。四次调用的 rollout `turn_context` 均记录
@@ -222,7 +226,7 @@ resume，并确认 file-history rewind 可用。
 
 | 条件 | 不满足时 |
 |---|---|
-| 源节点和目标节点都在线，且声明所选能力 `session_move` / `session_clone` | 409 `move_node_unavailable` |
+| 源节点和目标节点都在线且具备所选操作的服务；页面入口检查 `session_clone_local_codex`，跨节点另检查 Hub 的 `session_clone_remote` / `session_move_remote`，两端能力在计划与执行时复核 | 节点离线为 409 `move_node_unavailable`，缺少服务报告具体能力错误 |
 | 连通组可完整解析，组内每种来源均支持所选操作 | 缺依赖沿用历史读取错误；不支持的来源/跨节点范围为 409 `move_group_unsupported`，列出阻碍项 |
 | 两端操作系统同族（第一版只支持 Linux↔Linux） | 409 `move_platform` |
 | 该来源的 CLI 根目录在两端的绝对路径相同 | 409 `move_root_mismatch` |
@@ -458,8 +462,8 @@ Hub：
 普通单文件迁移只作为基础样本，不能据此宣布方案可靠。
 
 [session_mixed_clone_browser.py](../tests/session_mixed_clone_browser.py) 用 `nest_parent` 将
-Codex、Claude、Grok 的分支/子代理连为一个十四会话组，覆盖一次确认、跨适配器发布失败补偿、
-节点/Hub 重启后沿用原映射重试、跨来源归属重写及三种历史的页面打开。
+Codex、Claude、Grok 的分支/子代理连为一个十四会话组，覆盖暂存变化在发布前被拒绝、
+旧计划撤回、节点/Hub 重启后重新计划、跨来源归属重写及三种历史的标准分享链接打开。
 样本故意让不同来源拥有相同 SID，验证 Codex 多代历史不会把其他来源重定向到 Codex。
 [session_mixed_bundle_browser.py](../tests/session_mixed_bundle_browser.py) 将同一复杂组经
 两台 Linux 主机的独立临时目录传输，实际点击页面验证移动/复制与保留/重写身份四种组合。
@@ -505,6 +509,10 @@ Grok 的 `compaction_checkpoints/*.json` 是原生历史，不是普通附件。
 以下是 2026-10-01 收尾时核对的验收结果。浏览器套件使用临时合成会话和真实节点/Hub，
 实际点击入口、选择操作、确认并打开目标历史；原生测试另使用隔离 home 和规定的低成本模型。
 未用生产会话做测试。早期章节中的单项实验限制只描述当时样本，不替代本表后续证据。
+
+本表保留当次验收回执。当前 `session_mixed_clone_browser.py` 的损坏暂存样例会在发布前
+返回 `move_plan_stale` 并撤回旧计划，不再进入历史版本所测的发布后补偿分支；
+现行套件覆盖范围见上面的[验证](#验证)，发布后故障与恢复继续由相应 transfer 套件覆盖。
 
 | 要求 | 已核对证据与结果 |
 |---|---|

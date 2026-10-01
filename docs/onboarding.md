@@ -6,7 +6,7 @@ file is a map, not a product spec; historical migration material is optional.
 ## 1. What this repository is and is not
 
 - [README.md](../README.md) — Project scope, runtime and frontend direction.
-- [AGENTS.md](../AGENTS.md) — Repository workflow and current development boundaries. Native histories stay read-only; do not commit credentials or runtime data.
+- [AGENTS.md](../AGENTS.md) — Repository workflow and current boundaries. Ordinary reads preserve native history; confirmed transfer/trash has explicit write contracts. Do not commit credentials or runtime data.
 
 ## 2. Vocabulary
 
@@ -14,7 +14,7 @@ Read [glossary.md](glossary.md) first. It defines the shared terms.
 
 ## 3. Architecture and module map
 
-- [architecture.md](architecture.md) — Default path: `legacy-web/` → Axum → session views/search/SSE, with ptyhost, delivery, lifecycle, files and Hub services.
+- [architecture.md](architecture.md) — Default path: `legacy-web/` → Axum → session views/search/SSE, with ptyhost, conversation, lifecycle, files and Hub services.
 - [module-map.md](module-map.md) — Generated map of every crate `src` `.rs` file.
 
 ## 4. Contracts by area
@@ -26,6 +26,9 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 - [native-input.md](native-input.md) — Checked JSONL input, physical LF checkpoints, resident records; a private text span is not media or file authority.
 - [history-pages.md](history-pages.md) — Finite gap pages versus the live checkpoint; grants bind canonical owner UID, agent, and producing view.
 - [media.md](media.md) — Ephemeral image cache (lazy descriptors/blobs); no unconfigured disk or automatic remote fetch.
+- [session-move.md](session-move.md), [session-clone.md](session-clone.md) — Confirmed whole-group operations, native byte preservation and recovery.
+- [process-links.md](process-links.md) — Shared process attribution and independent Linux resource collection.
+- [external-links.md](external-links.md) — Current share URLs and mappings for older links.
 
 ### Terminal / lifecycle
 
@@ -36,12 +39,14 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 - [lifecycle-launcher.md](lifecycle-launcher.md) — Explicit adapter allowlist; no HTTP argv or home discovery.
 - [lifecycle-service.md](lifecycle-service.md) — Bounded coordinator; does not infer SID/UID or enable reliable send.
 - [lifecycle-http.md](lifecycle-http.md) — Create/status/cancel and pending consoles; default startup launches nothing.
-- [lifecycle-integration.md](lifecycle-integration.md) — Linux integration contract; `terminal_create` stays false until configured.
+- [lifecycle-integration.md](lifecycle-integration.md) — Integration contract; `terminal_create` stays false until configured.
 - [lifecycle-binding.md](lifecycle-binding.md) — Operator assertion, not proof the CLI owns the native history.
 - [processes.md](processes.md) — Read-only host observations; an empty list does not mean stopped.
 
-### Delivery
+### Conversation SEND
 
+- [conversation.md](conversation.md) — Server-owned drafts, submission identity and CLI echo tracking; the old delivery dispatcher is retired.
+- [composer-input.md](composer-input.md), [cli-state.md](cli-state.md) — Current terminal input readiness and session CLI state.
 - [delivery-scope.md](delivery-scope.md) — `NativeScope` from the session store.
 
 ### Files, diagnostics, capabilities, security
@@ -61,8 +66,10 @@ Read the first file in each group before its siblings. Full index: [docs/README.
 
 - [validation.md](validation.md) — Validation suites and runner options. A
   feature or bug fix must run the affected headless `*_browser.py` before it
-  is done. A full sweep takes the `target/` lock; do not start one during
-  another build.
+  is done. Coordinate shared Cargo artifacts before builds or full sweeps;
+  the validation runner does not acquire a repository-wide `target/` lock.
+  Deployment commands hold the separate Git-common-directory deployment lock
+  described in [deployment.md](deployment.md#并发部署锁).
 - [runbook-dev.md](runbook-dev.md) — Synthetic corpus, loopback bind and optional service configuration.
 
 ## 7. Delegating tooling tasks
@@ -72,11 +79,12 @@ result; never delegate correctness-sensitive code.
 
 ## 8. First-day checklist (safe commands)
 
-From the repo root. These are list/read-only: no build, no listener, no production data. Do not run `cargo` or a full `run_validation.py` until you own the `target/` lock.
+From the repo root. These are list/read-only: no build, no listener, no production
+data. Follow the shared-machine build rules in `AGENTS.md` before running Cargo
+or a full validation sweep. Unit tests require an explicit user request.
 
 ```sh
 python3 tests/run_validation.py --list
 python3 tests/run_validation.py --dry-run
 python3 tests/check_docs_links.py
-node --test tests/legacy_pure_contract.mjs
 ```
