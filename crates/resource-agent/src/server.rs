@@ -1100,16 +1100,22 @@ pub fn run() -> io::Result<()> {
                     if STOP.load(Ordering::Relaxed) {
                         return;
                     }
+                    let cpu_started = memory::thread_cpu_time();
                     let value = memory::pss_bytes(Path::new("/proc"), &process);
+                    let pause_for = memory::sampling_pause(
+                        memory::thread_cpu_time().saturating_sub(cpu_started),
+                        spacing,
+                    );
                     cache
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
                         .pss
                         .insert(process, (value, now()));
                     let pause = Instant::now();
-                    while pause.elapsed() < spacing && !STOP.load(Ordering::Relaxed) {
+                    while pause.elapsed() < pause_for && !STOP.load(Ordering::Relaxed) {
                         std::thread::sleep(
-                            Duration::from_millis(20).min(spacing.saturating_sub(pause.elapsed())),
+                            Duration::from_millis(20)
+                                .min(pause_for.saturating_sub(pause.elapsed())),
                         );
                     }
                 }

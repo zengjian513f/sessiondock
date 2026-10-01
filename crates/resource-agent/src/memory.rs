@@ -1,6 +1,24 @@
 //! Proportional resident memory; unavailable rollups never fall back to RSS.
 use process_links::Process;
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Duration};
+
+/// CPU time, rather than wall time, includes expensive kernel page-table walks.
+pub fn thread_cpu_time() -> Duration {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } == 0 {
+        Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// At most one fifth of a core averaged over a read plus its following pause.
+pub fn sampling_pause(cpu_used: Duration, spacing: Duration) -> Duration {
+    spacing.max(cpu_used.saturating_mul(4))
+}
 
 pub(crate) fn matches(root: &Path, process: &Process) -> bool {
     fs::read_to_string(root.join(process.pid.to_string()).join("stat"))
@@ -37,6 +55,18 @@ fn parse_pss(raw: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expensive_pss_reads_pay_for_their_cpu_before_the_next_read() {
+        assert_eq!(
+            sampling_pause(Duration::from_millis(100), Duration::from_millis(20)),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            sampling_pause(Duration::from_millis(1), Duration::from_millis(20)),
+            Duration::from_millis(20)
+        );
+    }
 
     #[test]
     fn proportional_memory_is_not_rss_or_dirty_pss() {
