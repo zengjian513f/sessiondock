@@ -12,7 +12,8 @@ use serde_json::{Value, json};
 use crate::{
     error::ApiError,
     metadata::{
-        GroupCatalog, MetadataError, MetadataSnapshot, MetadataStore, NestParent, fork_parent_uids,
+        GroupCatalogUpdate, MetadataError, MetadataSnapshot, MetadataStore, NestParent,
+        fork_parent_uids,
     },
     sessions::SessionStore,
     state::{AppState, JsonBytes},
@@ -170,7 +171,7 @@ pub async fn groups(State(state): State<AppState>) -> Result<JsonBytes, ApiError
 
 pub async fn merge_groups(
     State(state): State<AppState>,
-    body: Result<Json<GroupCatalog>, JsonRejection>,
+    body: Result<Json<GroupCatalogUpdate>, JsonRejection>,
 ) -> Result<JsonBytes, ApiError> {
     let metadata = configured(&state)?;
     let Json(body) = body.map_err(invalid)?;

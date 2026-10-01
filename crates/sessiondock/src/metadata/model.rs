@@ -9,15 +9,98 @@ use super::MetadataError;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct GroupChange {
+    pub stamp: String,
+    pub deleted: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GroupCatalog {
     pub groups: BTreeSet<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub changes: BTreeMap<String, GroupChange>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct GroupCatalogUpdate {
+    #[serde(flatten)]
+    pub catalog: GroupCatalog,
+    pub create_groups: BTreeSet<String>,
+    pub delete_groups: BTreeSet<String>,
 }
 
 impl GroupCatalog {
     fn is_empty(&self) -> bool {
-        self.groups.is_empty()
+        self.groups.is_empty() && self.changes.is_empty()
+    }
+    pub fn deleted(&self, name: &str) -> bool {
+        self.changes.get(name).is_some_and(|change| change.deleted)
+    }
+    pub fn merge(&mut self, incoming: &Self) -> Result<(), MetadataError> {
+        self.groups.extend(clean_names(&incoming.groups)?);
+        for (name, change) in &incoming.changes {
+            let name = clean_name(name)?;
+            if self.changes.get(&name).is_none_or(|old| change > old) {
+                self.changes.insert(name, change.clone());
+            }
+        }
+        for (name, change) in &self.changes {
+            if change.deleted {
+                self.groups.remove(name);
+            } else {
+                self.groups.insert(name.clone());
+            }
+        }
+        Ok(())
+    }
+    pub fn apply(&mut self, update: &GroupCatalogUpdate) -> Result<(), MetadataError> {
+        self.merge(&update.catalog)?;
+        let create = clean_names(&update.create_groups)?;
+        let delete = clean_names(&update.delete_groups)?;
+        if create.is_empty() && delete.is_empty() {
+            return Ok(());
+        }
+        // Advance beyond every observed operation, even after clock rollback.
+        let observed = self
+            .changes
+            .values()
+            .filter_map(|change| change.stamp.split('-').next()?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let clock = now.max(observed.saturating_add(1));
+        let mut nonce = [0u8; 16];
+        getrandom::fill(&mut nonce)
+            .map_err(|_| MetadataError::new(503, "group_randomness", "系统随机数不可用"))?;
+        let nonce: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
+        let stamp = format!("{clock:020}-{nonce}");
+        for name in &create {
+            self.changes.insert(
+                name.clone(),
+                GroupChange {
+                    stamp: stamp.clone(),
+                    deleted: false,
+                },
+            );
+            self.groups.insert(name.clone());
+        }
+        for name in &delete {
+            self.changes.insert(
+                name.clone(),
+                GroupChange {
+                    stamp: stamp.clone(),
+                    deleted: true,
+                },
+            );
+            self.groups.remove(name);
+        }
+        Ok(())
     }
 }
 
@@ -266,15 +349,35 @@ impl MetadataSnapshot {
         for row in self.document.sessions.values() {
             catalog.groups.extend(row.group.iter().cloned());
         }
+        catalog.groups.retain(|name| {
+            !catalog
+                .changes
+                .get(name)
+                .is_some_and(|change| change.deleted)
+        });
         catalog
     }
 
-    pub fn with_group_catalog(&self, catalog: &GroupCatalog) -> Result<Self, MetadataError> {
+    pub fn with_group_catalog_update(
+        &self,
+        update: &GroupCatalogUpdate,
+    ) -> Result<Self, MetadataError> {
         let mut next = self.clone();
+        let mut catalog = self.group_catalog();
+        catalog.apply(update)?;
+        for row in next.document.sessions.values_mut() {
+            if row
+                .group
+                .as_deref()
+                .is_some_and(|name| catalog.deleted(name))
+            {
+                row.group = None;
+            }
+        }
+        next.document.group_catalog = catalog;
         next.document
-            .group_catalog
-            .groups
-            .extend(clean_names(&catalog.groups)?);
+            .sessions
+            .retain(|_, row| row != &Row::default());
         if next.document != self.document {
             next.document.revision = increment(self.revision())?;
         }
@@ -292,6 +395,13 @@ impl MetadataSnapshot {
             .transpose()?;
         let mut next = self.clone();
         if let Some(Some(name)) = &group {
+            if next.document.group_catalog.deleted(name) {
+                return Err(MetadataError::new(
+                    409,
+                    "group_deleted",
+                    "分组已删除，请重新选择",
+                ));
+            }
             next.document.group_catalog.groups.insert(name.clone());
         }
         let row = next.document.sessions.entry(uid.to_owned()).or_default();

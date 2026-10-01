@@ -1,7 +1,7 @@
 //! Nodes own group catalogs. The Hub caches their union and sends it back;
 //! assignments never leave the session's node.
 use super::{Client, Registry};
-use crate::metadata::{GroupCatalog, MetadataSnapshot};
+use crate::metadata::{GroupCatalog, GroupCatalogUpdate};
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
@@ -46,19 +46,9 @@ impl Groups {
         &self,
         registry: &Registry,
         client: &Client,
-        incoming: Option<GroupCatalog>,
+        incoming: Option<GroupCatalogUpdate>,
     ) -> Value {
         let mut catalog = self.catalog.lock().await;
-        if let Some(incoming) = incoming {
-            // Same normalization and validation as nodes, before any write.
-            match MetadataSnapshot::empty().with_group_catalog(&incoming) {
-                Ok(snapshot) => {
-                    let incoming = snapshot.group_catalog();
-                    catalog.groups.extend(incoming.groups);
-                }
-                Err(error) => return json!({"ok": false, "error": error.message}),
-            }
-        }
         let reads = stream::iter(registry.all().into_iter().map(|node| async move {
             let result = registry
                 .request(
@@ -81,12 +71,22 @@ impl Groups {
             if let Ok((200, value)) = result
                 && let Ok(remote) = serde_json::from_value::<GroupCatalog>(value)
             {
-                catalog.groups.extend(remote.groups);
+                if let Err(error) = catalog.merge(&remote) {
+                    errors.push(json!({"node_id": node.id, "error": error.message}));
+                    continue;
+                }
                 ready.push(node);
                 continue;
             }
             errors
                 .push(json!({"node_id": node.id, "name": node.name, "error": "分组集合暂未同步"}));
+        }
+        if let Some(incoming) = incoming {
+            let mut next = catalog.clone();
+            if let Err(error) = next.apply(&incoming) {
+                return json!({"ok": false, "error": error.message});
+            }
+            *catalog = next;
         }
         let body = json!(&*catalog);
         let writes = stream::iter(ready.into_iter().map(|node| {
@@ -121,7 +121,7 @@ impl Groups {
         if let Err(error) = self.save(&catalog) {
             errors.push(json!({"error": format!("分组缓存保存失败：{error}")}));
         }
-        json!({"ok": synced > 0, "groups": catalog.groups,
+        json!({"ok": synced > 0, "groups": catalog.groups, "changes": catalog.changes,
             "synced_nodes": synced, "sync_errors": errors})
     }
     pub fn spawn(

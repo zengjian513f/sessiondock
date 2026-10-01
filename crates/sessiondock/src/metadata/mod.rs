@@ -10,8 +10,8 @@ use std::{
 };
 
 pub use model::{
-    ActivityStop, Attachment, GroupCatalog, MetadataSnapshot, NestParent, PendingRewind,
-    SCHEMA_VERSION, SpawnedBy, StopState, TimelinePin, fork_parent_uids,
+    ActivityStop, Attachment, GroupCatalog, GroupCatalogUpdate, MetadataSnapshot, NestParent,
+    PendingRewind, SCHEMA_VERSION, SpawnedBy, StopState, TimelinePin, fork_parent_uids,
 };
 
 pub const METADATA_FILENAME: &str = "session-metadata.json";
@@ -121,9 +121,9 @@ impl MetadataStore {
 
     pub fn merge_group_catalog(
         &self,
-        catalog: &GroupCatalog,
+        update: &GroupCatalogUpdate,
     ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
-        self.update(|snapshot| snapshot.with_group_catalog(catalog))
+        self.update(|snapshot| snapshot.with_group_catalog_update(update))
     }
 
     pub fn set_group(

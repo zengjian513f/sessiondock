@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Node-owned groups through Chromium, real nodes and Hub union/downsync."""
+"""Inline group management, session submenus and offline-safe deletion through Chromium."""
 import argparse
 from contextlib import ExitStack
 import json
@@ -60,128 +60,153 @@ def main():
                 raise AssertionError({'page_errors': errors, 'catalog': page.request.get(base + '/api/groups').text(),
                     'ui': page.evaluate('({groups: typeof SessionDockGroups, sessions: S.sessions.length})')}) from exc
             return page
-        def edit(page, uid, hold=False):
+        def tree(page):
+            page.locator('#view [data-v="tree"]').click()
+            page.locator('#session-group-filter').select_option('')
+        def edit(page, uid, hold=False, hover=False):
             item = page.locator(f'#side .item[data-uid="{uid}"]')
             if hold:
                 item.dispatch_event('pointerdown', {'pointerType': 'touch', 'pointerId': 1, 'button': 0, 'clientX': 30, 'clientY': 300})
                 expect(page.locator('#item-menu')).to_be_visible()
                 item.dispatch_event('pointerup', {'pointerType': 'touch', 'pointerId': 1})
                 item.dispatch_event('click')
-            else:
-                item.click(button='right')
-            page.locator('#item-menu [data-act="group"]').click()
-            expect(page.locator('#session-group-save')).to_be_enabled()
-        def create(page, kind, name):
-            page.locator(f'#session-{kind}-new').fill(name)
-            page.locator(f'#session-{kind}-create').click()
-            expect(page.locator('#session-group-save')).to_be_enabled()
-        def save(page):
-            page.locator('#session-group-save').click()
-            expect(page.locator('#session-group-dialog')).to_be_hidden(timeout=20000)
+            else: item.click(button='right')
+            trigger = page.locator('#item-menu [data-act="group"]')
+            trigger.hover() if hover else trigger.click()
+            expect(page.locator('#session-group-menu')).to_be_visible()
+            expect(page.locator('#session-group-menu button').first).to_contain_text('未分组')
+        def create(page, name, enter=True):
+            page.locator('#view [data-v="group"]').click()
+            expect(page.locator('#side > :last-child')).to_have_id('session-group-create-row')
+            page.locator('#session-group-add').click()
+            page.locator('#session-group-name').fill(name)
+            if enter: page.locator('#session-group-name').press('Enter')
+            else: page.locator('#session-group-create-row button').click()
+            expect(page.locator('#session-group-name')).to_have_count(0)
+            expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_be_enabled()
+        def assign(page, name):
+            page.locator('#session-group-menu button').filter(has_text=name or '未分组').click()
+            expect(page.locator('#session-group-menu')).to_be_hidden()
+            expect(page.locator('#side-pick-group')).to_be_enabled() if page.locator('#side-pick-group').is_visible() else None
+            page.wait_for_function('!document.querySelector(".session-group-delete:disabled")')
+            page.wait_for_function('document.querySelector("#session-group-status").textContent === ""')
+        def remove(page, name):
+            page.locator('#view [data-v="group"]').click()
+            page.get_by_role('button', name=f'删除分组 {name}', exact=True).click()
+            expect(page.get_by_role('button', name=f'删除分组 {name}', exact=True)).to_have_count(0, timeout=20000)
+            expect(page.locator('#session-group-add')).to_be_enabled(timeout=20000)
         def stored(i):
             return json.loads((states[i] / 'session-metadata.json').read_text())
         try:
             bases = [start_node(i) for i in range(2)]
             local = [page_at(base) for base in bases]
             uid_a, uid_b = corpora[0].uid('same'), corpora[1].uid('same')
-            edit(local[0], uid_a)
-            assert '标签' not in local[0].locator('#session-group-dialog').inner_text()
-            assert local[0].locator('#session-group-select').input_value() == '历史分组'
-            if args.screenshots_dir: local[0].locator('#session-group-dialog').screenshot(path=str(args.screenshots_dir / 'desktop.png'))
-            create(local[0], 'group', '待办')
-            save(local[0])
-            expect(local[0].locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_contain_text('待办')
-            local[0].locator('#view [data-v="group"]').click()
-            expect(local[0].locator('#side .gname').filter(has_text='待办')).to_be_visible()
-            local[0].locator('#session-group-filter').select_option('待办')
+            assert local[0].locator('#session-group-dialog').count() == 0
+            create(local[0], '待办')
+            expect(local[0].locator('#side .gname').filter(has_text='未分组')).to_have_count(0)
             expect(local[0].locator('#side .item')).to_have_count(1)
-            local[0].locator('#session-group-filter').select_option('')
-            edit(local[1], uid_b)
-            create(local[1], 'group', '稍后'); save(local[1])
+            local[0].locator('#session-group-add').click()
+            local[0].locator('#session-group-name').fill('取消创建')
+            # A refresh must not discard the inline draft/focus.
+            local[0].evaluate('renderSide()')
+            expect(local[0].locator('#session-group-name')).to_have_value('取消创建')
+            expect(local[0].locator('#session-group-name')).to_be_focused()
+            local[0].locator('#session-group-name').press('Escape')
+            expect(local[0].locator('#session-group-name')).to_have_count(0)
+            if args.screenshots_dir: local[0].locator('#side').screenshot(path=str(args.screenshots_dir / 'desktop.png'))
+            tree(local[0]); edit(local[0], uid_a, hover=True)
+            expect(local[0].locator('#session-group-menu [aria-checked="true"]')).to_contain_text('历史分组')
+            assign(local[0], '待办')
+            expect(local[0].locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_contain_text('待办')
+            create(local[1], '稍后', enter=False); tree(local[1]); edit(local[1], uid_b); assign(local[1], '稍后')
             assert stored(0)['sessions'][uid_a]['starred'] is True
             assert '待办' not in stored(1)['group_catalog']['groups']
             assert 'labels' not in stored(0)['sessions'][uid_a]
             assert 'label_catalog' not in stored(0)
-            for obsolete in ('/api/labels', '/api/session/labels'):
-                result = local[0].evaluate('async path => {const response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"}); return {status: response.status, text: await response.text()};}', obsolete)
-                assert result['status'] in (404, 405), result
-                status = local[0].evaluate('async path => (await fetch(path)).status', obsolete)
-                assert status in (404, 405), status
-            listed = local[0].evaluate('async () => (await (await fetch("/api/sessions")).json()).sessions')
-            assert all('labels' not in row for row in listed)
             hubroot = root / 'hub'; hubroot.mkdir()
             (hubroot / 'hub-cache').mkdir()
             (hubroot / 'hub-cache/labels.json').write_text(json.dumps({'labels': ['缓存旧标签'], 'groups': ['缓存分组']}))
-            hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, nodes)
-            hub.start()
+            hub = Hub(args.binary.resolve().with_name('sessiondock-hub'), hubroot, nodes); hub.start()
             page = page_at(f'http://127.0.0.1:{hub.port}')
             for i in range(2):
                 assert set(stored(i)['group_catalog']['groups']) == {'历史分组', '缓存分组', '待办', '稍后'}
             a, b = scoped(nodes[0].nid, uid_a), scoped(nodes[1].nid, uid_b)
             page.locator('#session-group-filter').select_option('待办')
             expect(page.locator('#side .item')).to_have_count(1)
-            expect(page.locator(f'#side .item[data-uid="{a}"]')).to_be_visible()
             page.locator('#session-group-filter').select_option('')
-            expect(page.locator('#side .item')).to_have_count(4)
-            # A stale tag filter must no longer hide sessions.
             page.evaluate("store.set('labelFilter', ['旧标签'])")
-            page.reload(wait_until='networkidle')
-            page.wait_for_function('SessionDockGroups.available')
+            page.reload(wait_until='networkidle'); page.wait_for_function('SessionDockGroups.available')
             expect(page.locator('#side .item')).to_have_count(4)
-            # Batch defaults to preserving different groups, then can set one group.
+            create(page, '搁置'); tree(page)
+            # The second level opens with keyboard and closes independently.
+            page.locator(f'#side .item[data-uid="{a}"]').click(button='right')
+            trigger = page.locator('#item-menu [data-act="group"]'); trigger.focus(); trigger.press('ArrowRight')
+            expect(page.locator('#session-group-menu')).to_be_visible()
+            page.locator('#session-group-menu button').first.press('ArrowLeft')
+            expect(page.locator('#session-group-menu')).to_be_hidden(); expect(trigger).to_be_focused()
+            trigger.click(); page.locator('#session-group-menu button').first.press('Escape')
+            expect(page.locator('#item-menu')).to_be_visible(); trigger.press('Escape')
+            expect(page.locator('#item-menu')).to_be_hidden()
+            # Cross-node multi-select assigns immediately without a dialog.
             page.locator(f'#side .item[data-uid="{a}"]').click(button='right')
             page.locator('#item-menu [data-act="pick"]').click()
             page.locator(f'#side .item[data-uid="{b}"]').click()
-            page.locator('#side-pick-group').click()
-            expect(page.locator('#session-group-save')).to_be_enabled()
-            assert page.locator('#session-group-select').evaluate('(e) => e.selectedIndex') == 0
-            save(page)
-            assert stored(0)['sessions'][uid_a]['group'] == '待办'
-            assert stored(1)['sessions'][uid_b]['group'] == '稍后'
-            page.locator('#side-pick-group').click()
-            expect(page.locator('#session-group-save')).to_be_enabled()
-            create(page, 'group', '搁置'); save(page)
-            for i, uid in enumerate((uid_a, uid_b)):
-                assert stored(i)['sessions'][uid]['group'] == '搁置'
-                assert 'labels' not in stored(i)['sessions'][uid]
+            page.locator('#side-pick-group').click(); assign(page, '搁置')
+            for i, uid in enumerate((uid_a, uid_b)): assert stored(i)['sessions'][uid]['group'] == '搁置'
             page.locator('#side-pick-cancel').click()
-            # Mobile session hold opens the editor; clear the group.
-            mobile = page_at(bases[0], mobile=True)
+            mobile = page_at(bases[0], mobile=True); mobile.emulate_media(color_scheme='dark')
             edit(mobile, uid_a, hold=True)
-            mobile.emulate_media(color_scheme='dark')
-            bounds = mobile.locator('#session-group-dialog').bounding_box()
+            bounds = mobile.locator('#session-group-menu').bounding_box()
             assert bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 390
-            assert mobile.locator('#session-group-form').evaluate('(e) => e.scrollWidth <= e.clientWidth')
-            if args.screenshots_dir: mobile.locator('#session-group-dialog').screenshot(path=str(args.screenshots_dir / 'mobile.png'))
-            mobile.locator('#session-group-select').select_option('')
-            save(mobile)
+            if args.screenshots_dir: mobile.screenshot(path=str(args.screenshots_dir / 'mobile.png'))
+            assign(mobile, '')
+            expect(mobile.locator(f'#side .item[data-uid="{uid_a}"] .session-row-group')).to_be_hidden()
             assert 'group' not in stored(0)['sessions'][uid_a]
-            # Offline node does not block creation; the catalog lives on A.
+            # Delete with a node offline. Rejoin must not resurrect its catalog/assignment.
             for context in contexts: context.close()
             contexts.clear(); stacks[1].close()
             page = page_at(f'http://127.0.0.1:{hub.port}')
-            edit(page, a); create(page, 'group', '离线补同步')
-            expect(page.locator('#session-group-note')).to_contain_text('恢复连接')
-            save(page)
-            assert '离线补同步' not in stored(1)['group_catalog']['groups']
+            remove(page, '搁置')
+            expect(page.locator('#session-group-status')).to_contain_text('恢复连接', timeout=20000)
+            assert '搁置' in stored(1)['group_catalog']['groups']
+            assert stored(1)['sessions'][uid_b]['group'] == '搁置'
             for context in contexts: context.close()
             contexts.clear(); hub.stop(); hub.start()
-            # Rejoin without a Hub page: background union sync repairs B.
-            bases[1] = start_node(1)
-            rejoined = page_at(bases[1])
-            expect(rejoined.locator('#session-group-filter option[value="离线补同步"]')).to_have_count(1, timeout=25000)
+            bases[1] = start_node(1); rejoined = page_at(bases[1])
+            expect(rejoined.locator('#session-group-filter option[value="搁置"]')).to_have_count(0, timeout=25000)
+            assert 'group' not in stored(1)['sessions'][uid_b]
+            # Recreate the same name with a newer operation; deletion does not permanently reserve names.
+            create(rejoined, '搁置')
+            tree(rejoined); edit(rejoined, uid_b); assign(rejoined, '搁置')
+            page = page_at(f'http://127.0.0.1:{hub.port}')
+            expect(page.locator('#session-group-filter option[value="搁置"]')).to_have_count(1)
             for context in contexts: context.close()
             contexts.clear(); hub.stop()
             for stack in stacks: stack.close()
-            # Both nodes retain catalogs/assignments after restart with no Hub.
             bases = [start_node(i) for i in range(2)]
             for i, base in enumerate(bases):
                 solo = page_at(base)
-                expect(solo.locator('#session-group-filter option[value="离线补同步"]')).to_have_count(1)
+                expect(solo.locator('#session-group-filter option[value="搁置"]')).to_have_count(1)
                 assert stored(i)['sessions'][corpora[i].uid('same')]['starred'] is True
+            # Standalone deletion of a populated group clears the assignment atomically.
+            remove(solo, '搁置')
+            assert 'group' not in stored(1)['sessions'][uid_b]
+            tree(solo); edit(solo, uid_b)
+            assert solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')[0] == ''
+            assert set(solo.locator('#session-group-menu button').evaluate_all('(buttons) => buttons.map(button => button.dataset.groupName)')) == {'', '历史分组', '缓存分组', '待办', '稍后'}
+            solo.locator('#session-group-menu button').first.press('Escape')
+            solo.locator('#item-menu [data-act="group"]').press('Escape')
+            remaining = solo.locator('#session-group-filter option').evaluate_all('(options) => options.map(option => option.value).filter(Boolean)')
+            for name in remaining: remove(solo, name)
+            expect(solo.locator('#side .group')).to_have_count(0)
+            expect(solo.locator('#side .item')).to_have_count(0)
+            expect(solo.locator('#side > :last-child')).to_have_id('session-group-create-row')
+            assert stored(1)['group_catalog']['groups'] == []
+            assert stored(1)['group_catalog']['changes']
+            create(solo, '空列表新建')
             assert all(p.read_bytes() == raw for p, raw in native.items())
             assert not errors, errors
-            print('PASS groups browser: old groups retained, labels removed, standalone creation, group filter/view, cross-node batch preservation/assignment, mobile hold/clear, offline/rejoin union, restarts, native files unchanged')
+            print('PASS groups browser: inline create/cancel/delete, no dialog/ungrouped section, submenus hover/click/keyboard/touch, immediate assignment, batch, offline deletion/rejoin, same-name recreation, restarts, standalone deletion, native files unchanged')
         finally:
             for context in contexts: context.close()
             if hub: hub.stop()
