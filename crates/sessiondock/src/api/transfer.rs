@@ -113,6 +113,68 @@ pub async fn plan(State(state): State<AppState>, Json(body): Json<PlanRequest>) 
     Json(TransferService::public(&op)).into_response()
 }
 
+pub async fn clone_progress(
+    State(state): State<AppState>,
+    Json(body): Json<ExecuteRequest>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return *e,
+    };
+    match service.load(&body.operation_id) {
+        Ok(op) if op.uid == body.uid && op.incoming_digest.is_none() => {
+            service.touch(&op.id);
+            Json(TransferService::public(&op)).into_response()
+        }
+        Ok(_) => failure(TransferError::new(
+            "move_plan_stale",
+            "复制清单与所选会话不一致",
+        )),
+        Err(e) => failure(e),
+    }
+}
+
+/// Browser cancellation for a same-node copy or an unconfirmed preview.
+pub async fn cancel_clone(
+    State(state): State<AppState>,
+    Json(body): Json<ExecuteRequest>,
+) -> Response {
+    let service = match service(&state) {
+        Ok(s) => s,
+        Err(e) => return *e,
+    };
+    let op = match service.load(&body.operation_id) {
+        Ok(op) if op.uid == body.uid && op.incoming_digest.is_none() => op,
+        Ok(_) => {
+            return failure(TransferError::new(
+                "move_plan_stale",
+                "复制清单与所选会话不一致",
+            ));
+        }
+        Err(e) => return failure(e),
+    };
+    service.interrupts.cancel(&op.id);
+    let guard = match service.operation_guard(&op.id).await {
+        Ok(v) => v,
+        Err(e) => return failure(e),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        if op.moving {
+            service.abort_source(&op.id, false)?;
+            service.abort_source(&op.id, true)
+        } else {
+            service.abort_local(&op.id)
+        }
+    })
+    .await;
+    match result {
+        Ok(Ok(op)) => Json(TransferService::public(&op)).into_response(),
+        Ok(Err(e)) => failure(e),
+        Err(e) => failure(TransferError::new("move_io", e.to_string())),
+    }
+}
+
 pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortRequest>) -> Response {
     let service = match service(&state) {
         Ok(s) => s,
@@ -127,7 +189,9 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
             Ok(op) => op,
             Err(e) => return failure(e),
         };
-        if let Err(e) = stopped(&state, &op).await {
+        if op.phase != "complete"
+            && let Err(e) = stopped(&state, &op).await
+        {
             return *e;
         }
     }
@@ -137,6 +201,7 @@ pub async fn abort_move(State(state): State<AppState>, Json(body): Json<AbortReq
         match body.step.as_str() {
             "source" => service.abort_source(&body.operation_id, false),
             "target" => service.abort_target(&body.operation_id),
+            "local" => service.abort_local(&body.operation_id),
             "finish" => service.abort_source(&body.operation_id, true),
             _ => Err(TransferError::new("move_format", "未知的撤回步骤")),
         }

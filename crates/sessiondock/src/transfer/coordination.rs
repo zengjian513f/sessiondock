@@ -84,3 +84,19 @@ pub fn check() -> Result<(), TransferError> {
     }
     Ok(())
 }
+
+/// Bound interruption latency while copying large histories to a pending file.
+pub fn copy(
+    input: &mut impl std::io::Read,
+    output: &mut impl std::io::Write,
+) -> Result<(), TransferError> {
+    let mut bytes = [0u8; 65536];
+    loop {
+        check()?;
+        let n = input.read(&mut bytes)?;
+        if n == 0 {
+            return Ok(());
+        }
+        output.write_all(&bytes[..n])?;
+    }
+}

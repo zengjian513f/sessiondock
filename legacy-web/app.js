@@ -10180,7 +10180,10 @@ async function cloneSessionGroup(uid, resumed = null) {
     target.disabled = busy || aborting || uncertain;
     for (const radio of radios) radio.disabled = busy || aborting || uncertain;
     newIds.disabled = busy || aborting || uncertain;
-    $d('.transfer-abort').hidden = (!uncertain && !(busy && operationStarted)) || !moving;
+    $d('.transfer-abort').hidden = !uncertain && !(busy && operationStarted);
+    $d('.transfer-abort').textContent = moving ? '撤回本次移动' : '取消本次复制';
+    $d('.clone-cancel').disabled = aborting;
+    $d('.transfer-close').disabled = aborting;
     $d('.transfer-abort').disabled = aborting;
     dialog.setAttribute('aria-busy', String(busy));
   };
@@ -10188,8 +10191,9 @@ async function cloneSessionGroup(uid, resumed = null) {
   radios.forEach(r => r.onchange = renderSelection);
   newIds.onchange = () => {identityChoices[mode()] = newIds.checked; renderSelection();};
   const close = () => {clearInterval(progressTimer); dialog.close(); dialog.remove(); refreshTransferTasks();};
-  $d('.transfer-close').onclick = close; $d('.clone-cancel').onclick = close;
-  dialog.addEventListener('cancel', e => {e.preventDefault(); close();});
+  const cancelAndClose = () => cancelTransfer(true);
+  $d('.transfer-close').onclick = cancelAndClose; $d('.clone-cancel').onclick = cancelAndClose;
+  dialog.addEventListener('cancel', e => {e.preventDefault(); cancelAndClose();});
   document.body.appendChild(dialog); renderSelection(); dialog.showModal(); target.focus();
   const request = async (path, body) => {
     const response = await fetch(appUrl(path), {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
@@ -10197,18 +10201,27 @@ async function cloneSessionGroup(uid, resumed = null) {
     if (!response.ok) throw Object.assign(new Error(data.error?.message || data.error || '操作失败'), {code:data.code});
     return data;
   };
-  $d('.transfer-abort').onclick = async () => {
-    if (aborting || !plan) return;
-    ++executionSequence; uncertain = true; aborting = true; busy = true; error.hidden = true; renderSelection();
+  async function discardPreview(previous) {
+    if (previous) await request('api/session/clone/cancel', {uid, operation_id:previous.operation_id});
+  }
+  async function cancelTransfer(closing = false) {
+    if (aborting) return;
+    if (!plan) { if (closing) close(); return; }
+    ++executionSequence; aborting = true; busy = true; error.hidden = true; renderSelection();
     try {
-      await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value});
+      const result = operationStarted && HUB_MODE
+        ? await request('api/session/transfer/cancel', {uid, operation_id:plan.operation_id, target_node:target.value})
+        : await request('api/session/clone/cancel', {uid, operation_id:plan.operation_id});
       uncertain = false; operationStarted = false; plan = null; busy = false;
       $d('.transfer-progress').hidden = true; refreshTransferTasks();
-      await refreshPlan();
+      if (closing || result.phase === 'complete') {close(); await loadSessions(true);}
+      else await refreshPlan();
     } catch (failure) {
+      uncertain = operationStarted;
       if (dialog.isConnected) {error.textContent = failure.message; error.hidden = false;}
     } finally {aborting = false; busy = false; if (dialog.isConnected) renderSelection();}
-  };
+  }
+  $d('.transfer-abort').onclick = () => cancelTransfer();
   const renderMembers = data => {
     const members = new Map();
     for (const member of data.sessions) {
@@ -10292,6 +10305,8 @@ async function cloneSessionGroup(uid, resumed = null) {
       const next = await request('api/session/clone/plan', {uid, new_ids:fresh, mode:selectedMode});
       if (!fresh && next.new_ids !== false) throw new Error('源机器版本尚不支持保留 UID，请更新节点');
       if (selectedMode === 'move' && next.mode !== 'move') throw new Error('源机器版本尚不支持移动，请更新节点');
+      if (previous && previous.operation_id !== next.operation_id) await discardPreview(previous);
+      if (!dialog.isConnected) {await discardPreview(next); return false;}
       plan = next;
       if (dialog.isConnected) {renderMembers(plan); refreshEnvironment();}
       return true;
@@ -10316,12 +10331,18 @@ async function cloneSessionGroup(uid, resumed = null) {
   } else await refreshPlan();
   const pollProgress = async () => {
     if (!dialog.isConnected) {clearInterval(progressTimer); return;}
-    if (!operationStarted || !HUB_MODE || !plan || progressLoading) return;
+    if (!plan || progressLoading) return;
     const id = plan.operation_id;
     progressLoading = true;
     try {
-      const data = await request('api/session/transfer/progress', {uid, operation_id:id, target_node:target.value});
-      if (dialog.isConnected && plan?.operation_id === id) paintProgress(data);
+      const data = await request(operationStarted && HUB_MODE ? 'api/session/transfer/progress' : 'api/session/clone/progress', {uid, operation_id:id, target_node:target.value});
+      if (operationStarted && dialog.isConnected && plan?.operation_id === id) {
+        paintProgress(data);
+        if (!busy && !aborting && uncertain && data.phase === 'aborted') {
+          uncertain = false; operationStarted = false; plan = null;
+          await refreshPlan();
+        }
+      }
     } catch { /* The execution response reports actionable errors. */ }
     finally {progressLoading = false;}
   };

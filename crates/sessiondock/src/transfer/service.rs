@@ -96,12 +96,13 @@ impl Operation {
 }
 pub struct TransferService {
     inventory: SessionStore,
-    references: super::references::Cache,
+    pub(super) references: super::references::Cache,
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
     pub locks: super::coordination::Locks,
     pub interrupts: super::coordination::Interrupts,
+    pub(super) foreground: std::sync::Mutex<BTreeMap<String, std::time::Instant>>,
     pub metadata: Option<Arc<MetadataStore>>,
 }
 pub fn hash(path: &Path) -> Result<String, TransferError> {
@@ -198,6 +199,7 @@ impl TransferService {
             home,
             locks: Default::default(),
             interrupts: Default::default(),
+            foreground: Default::default(),
             metadata,
         };
         // Recovery is performed before the service starts accepting launches.
@@ -208,9 +210,28 @@ impl TransferService {
             }
             let file = path.join("operation.json");
             if !file.exists() {
+                let name = path.file_name().unwrap().to_string_lossy();
+                let id = name.strip_prefix("incoming-").unwrap_or(&name);
+                if id.len() == 36 && id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
+                    fs::remove_dir_all(path)?;
+                }
                 continue;
             }
             let mut operation: Operation = serde_json::from_slice(&fs::read(file)?)?;
+            if operation.phase == "aborted" {
+                service.cleanup_staging(&operation)?;
+                continue;
+            }
+            if operation.phase == "aborting"
+                && !operation.moving
+                && operation.incoming_digest.is_none()
+            {
+                if let Err(error) = service.abort_local(&operation.id) {
+                    operation.error = Some(error.message);
+                    service.save(&operation)?;
+                }
+                continue;
+            }
             if operation.phase == "aborting" && operation.incoming_digest.is_some() {
                 // The source already durably rejected future ownership switches.
                 if let Err(error) = service.abort_target(&operation.id) {
@@ -358,6 +379,7 @@ impl TransferService {
         let id = codex::uuid()?;
         let directory = self.directory.join(&id);
         fs::create_dir(&directory)?;
+        let mut planning = super::cleanup::PlanningDirectory(directory.clone(), false);
         let mut op = Operation {
             id,
             phase: "planned".into(),
@@ -454,6 +476,8 @@ impl TransferService {
         op.rewritten = Some(rewritten);
         op.staged = Some(staged);
         self.save(&op)?;
+        planning.1 = true;
+        self.touch(&op.id);
         Ok(op)
     }
     pub fn recheck(&self, op: &Operation) -> Result<(), TransferError> {
@@ -573,6 +597,23 @@ impl TransferService {
         }
         false
     }
+    /// Keep the small durable decision, remove only private transfer payloads.
+    pub(super) fn cleanup_staging(&self, op: &Operation) -> Result<(), TransferError> {
+        let directory = self.directory.join(&op.id);
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            if entry.file_name() == "operation.json" {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                fs::remove_dir_all(entry.path())?;
+            } else {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        fs::File::open(directory)?.sync_all()?;
+        Ok(())
+    }
     pub(super) fn cleanup_markers(&self, op: &Operation) -> Result<(), TransferError> {
         for file in self.publications(op) {
             let marker = Self::marker(&op.id, &file.target);
@@ -644,6 +685,8 @@ impl TransferService {
         if matches!(op.phase.as_str(), "complete" | "ready") {
             return Ok(op);
         }
+        let _scope = super::coordination::Scope::enter(self.interrupts.flag(&op.id));
+        super::coordination::check()?;
         if op.phase == "failed" && (!op.moving || op.incoming_digest.is_some()) {
             // A failed phase is written only after compensation succeeded.
             // Retry the same identity map; all preflight checks still run below.
@@ -809,7 +852,7 @@ impl TransferService {
                         let executable = fs::metadata(&staging)?.permissions().mode() & 0o111;
                         out.set_permissions(fs::Permissions::from_mode(0o600 | executable))?;
                     }
-                    std::io::copy(&mut fs::File::open(staging)?, &mut out)?;
+                    super::coordination::copy(&mut fs::File::open(staging)?, &mut out)?;
                     out.sync_all()?;
                 }
                 if let Some(old) = op.replaced_files.get(&target) {
@@ -866,6 +909,7 @@ impl TransferService {
             {
                 return Err(TransferError::new("move_verify", "克隆仍引用源组身份"));
             }
+            super::coordination::check()?;
             op.phase = if op.moving { "ready" } else { "complete" }.into();
             if op.phase == "complete" {
                 op.ownership_sequence = self.next_ownership_sequence()?;
@@ -877,6 +921,8 @@ impl TransferService {
             op.error = Some(error.message.clone());
             op.phase = "rollback_required".into();
             self.save(&op)?;
+            // Compensation must not inherit the interrupted worker's flag.
+            drop(_scope);
             if let Err(recovery) = self.rollback(&op) {
                 op.error = Some(format!("{}；回滚：{}", error.message, recovery.message));
                 self.save(&op)?;
