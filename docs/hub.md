@@ -248,6 +248,18 @@ Host、URI/正文上限、响应头；`debug_run` 是列表视图选择器，见
   `sessions/pending` 全部拼接（含 stale 行）、`capabilities[nid] = {enabled: 真值且未失败,
   unavailable_reason: 失败文案或节点的, sources, home, backend, backends（失败为 []）}`、
   `sources` 是成功机器的并集（`prev or available`：已为真不覆盖）。
+- `list_delta: true` 声明列表增量传输。浏览器与 Hub→节点的 `/api/sessions`、
+  `/api/term/list` 读取可带 `X-SessionDock-List: <list_version>`（首次为 `new`）。
+  首次或基线已驱逐时返回原完整响应加 `list_version`；命中时返回当前元数据与
+  `list_delta {base, collections}`，各集合用 `key/remove/upsert` 表达删除、更新和插入。
+  新行带 `{index,row}`，已有行带 `{index,id,set,unset}`；子代理集合的变化用
+  `agents` 递归应用同一协议，不重传兄弟子代理。只有未更新条目自身发生重排时才附
+  `order`。行标识包含节点 ID。
+  `list_unchanged` 说明列表行未变化；健康状态等包络字段仍是本次读取的结果。
+  每个路由实例保留最近 32 个列表版本，版本间复用未变化行；缓存失效只触发完整
+  响应，不丢会话、不改变原生文件。版本只在同一路径和查询视图内使用，重启后
+  自动重建基线。不带该头的客户端保留原 `sig/unchanged` 合同。
+  Hub 先还原节点的完整响应，再应用命名空间与离线缓存；旧节点忽略该头时可继续使用。
 - `trash`：`items` 拼接、`size` 求和、`dir = "所选机器的本地回收站"`。
 - `search_stream(Arc<Registry>, Arc<Client>, query) -> Result<impl Stream<Item = String>>`
   （`progress=1`，`progress_requested(query)` 判定）：每项一行 NDJSON（`serde_json`

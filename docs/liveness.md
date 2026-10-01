@@ -184,6 +184,20 @@ unchanged snapshots produce no application event, with a 20-second SSE
 keepalive. Observation failure restores browser reconciliation until a fresh
 baseline succeeds.
 
+With `list_delta: true`, list reconciliation uses transport revisions as well:
+the first response is complete, then only changed/deleted/inserted rows cross
+the browser and hub-to-node connections. Unchanged terminal lists carry only
+the current envelope and an empty delta. Missing revisions fall back to full
+snapshots; history cursors, list ordering and offline rows retain their semantics.
+The browser keeps its wire baseline separate from rows annotated by the UI.
+
+A page that detects a newer server build pauses background HTTP reads, UI/history
+SSE and terminal attachments until reload. Draft saving remains available.
+An expired login (401 or a redirect to the proxy login page) pauses requests too
+and displays the existing floating notice style, preserving editor contents.
+These protections take effect after a pre-existing old page loads the new frontend;
+deploying cannot replace JavaScript already running in another browser tab.
+
 ## Response caches
 
 The shared observer and fallback browser polls read `/api/live` and

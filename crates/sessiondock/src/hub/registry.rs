@@ -353,6 +353,7 @@ pub struct Registry {
     inner: Mutex<Inner>,
     wake: Notify,
     public_payload: PublicPayload,
+    list_responses: crate::list_sync::RemoteCache,
 }
 
 impl Registry {
@@ -381,6 +382,7 @@ impl Registry {
             }),
             wake: Notify::new(),
             public_payload: identity_payload,
+            list_responses: Default::default(),
         };
         for node in &nodes {
             if !is_node_id(&node.id) {
@@ -845,6 +847,56 @@ impl Registry {
         let target = self
             .target(node)
             .map_err(|_| ClientError::Invalid("invalid node url"))?;
+        if method == "GET"
+            && matches!(
+                path.split('?').next(),
+                Some("/api/sessions" | "/api/term/list")
+            )
+        {
+            // The transport revision supersedes the node's conditional sig. It
+            // also covers terminal lists, which otherwise cross WG in full.
+            let (route, query) = path.split_once('?').unwrap_or((path, ""));
+            let query = query
+                .split('&')
+                .filter(|part| !part.starts_with("sig=") && !part.is_empty())
+                .collect::<Vec<_>>()
+                .join("&");
+            let path = if query.is_empty() {
+                route.to_owned()
+            } else {
+                format!("{route}?{query}")
+            };
+            let scope = format!("{}\n{}\n{}", node.url, node.token, path);
+            let baseline = self.list_responses.get(&scope);
+            let known = baseline
+                .as_ref()
+                .and_then(|v| v["list_version"].as_str())
+                .unwrap_or("new");
+            let response = client
+                .open(
+                    &target,
+                    Request {
+                        method,
+                        target: &path,
+                        headers: &[(crate::list_sync::HEADER, known)],
+                        body: None,
+                        connect: timeout,
+                        idle: timeout,
+                    },
+                )
+                .await?;
+            let status = response.status;
+            let raw = response.into_body().read_to_end(JSON_LIMIT).await?;
+            let data = serde_json::from_slice(&raw)
+                .map_err(|_| ClientError::Invalid("body is not JSON"))?;
+            if status != 200 {
+                return Ok((status, data));
+            }
+            let data = crate::list_sync::expand(data, baseline.as_ref())
+                .ok_or(ClientError::Invalid("invalid list delta"))?;
+            self.list_responses.put(scope, data.clone());
+            return Ok((status, data));
+        }
         client.json(&target, method, path, body, timeout).await
     }
 
