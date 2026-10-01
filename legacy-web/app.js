@@ -2801,7 +2801,7 @@ function visible() {
   pool = pool.filter(s => globalThis.SessionDockGroups?.matches(s) ?? true);
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
-  return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n'))
+  return pool.filter(s => sidebarMainMatches(s)
     || sidebarAgentItems(s).length > 0);
 }
 
@@ -4031,11 +4031,21 @@ function nestStamp(s, children, memo = new Map()) {
 const sidebarGroupClosed = key => !S.term && S.closed.has(key);
 const sidebarNestClosed = uid => !S.term && S.nestClosed.has(uid);
 
+function sidebarMainMatches(s) {
+  if (!S.term) return true;
+  return S.results !== null ? s.hits > 0
+    : matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n'));
+}
+
 function sidebarAgentItems(s) {
   const agents = s.agent_items || [];
   if (!S.term) return agents;
   if (S.results !== null) return agents.filter(a => a.hits > 0);
   return agents.filter(a => matchesSearch([a.title, a.cwd || s.cwd, s.node_name || ''].join('\n')));
+}
+
+function sidebarMatchCount(list) {
+  return list.reduce((count, s) => count + Number(sidebarMainMatches(s)) + sidebarAgentItems(s).length, 0);
 }
 
 // Count the rows a branch would expose without sorting or allocating row objects.
@@ -4054,7 +4064,8 @@ function nestSize(s, children, memo = new Map()) {
 
 function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   const row = {s, agent: null, depth, kids: 0, closed: false};
-  out.push(row);
+  const showMain = sidebarMainMatches(s);
+  if (showMain) out.push(row);
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
   // 发起的会话只在分层模式缩进。
   if (sidebarNestClosed(s.uid)) {
@@ -4072,10 +4083,10 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   row.closed = kids.length > 0 && sidebarNestClosed(s.uid);
   const start = out.length;
   for (const k of kids) {
-    if (k.agent) out.push({s, agent: k.agent, depth: depth + 1});
+    if (k.agent) out.push({s, agent: k.agent, depth: depth + Number(showMain)});
     else if (!seen.has(k.session.uid)) {
       seen.add(k.session.uid);
-      expandRows(k.session, depth + 1, children, out, seen, memo, sizes);
+      expandRows(k.session, depth + Number(showMain), children, out, seen, memo, sizes);
     }
   }
   // 三角上写的是收起后消失的整棵子树行数。
@@ -4178,7 +4189,8 @@ function patchSide(list) {
 }
 
 /* ---------- 子代理行 ---------- */
-const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) ? null : a.updated)}`;
+const agentMeta = (uid, a) => `子代理 · ${a.type} · ${fmtSpan(a.created, agentRunning(uid, a) ? null : a.updated)}`
+  + (S.term && a.hits > 0 ? ` · 命中 ${a.hits}${a.hits_capped ? '+' : ''}` : '');
 
 /** 每行前面的引导区：每一级祖先一根竖线，再一个放三角的槽位（叶子留空）。子代理行让
  *  平铺模式也有引导区；有子代理或发起的孩子就有三角，与分层开关无关。
@@ -4196,6 +4208,7 @@ function agentRow(s, a, depth) {
      <div class="body">
        <div class="t" title="${esc(a.title)}">${hl(a.title)}</div>
        <div class="m">${esc(agentMeta(s.uid, a))}</div>
+       ${a.snippet ? `<div class="snip" title="${esc(a.snippet)}">${sidebarSnippet(a.snippet)}</div>` : ''}
      </div>`);
   it.dataset.key = rowKey({s, agent: a});
   it.dataset.owner = s.uid;
@@ -4256,7 +4269,7 @@ function paintSearchMode(list) {
   $('#side-search-state').hidden = !searching;
   $('#side-search-label').textContent = S.results !== null ? '搜索结果' : '筛选结果';
   $('#side-search-query').textContent = S.term;
-  $('#side-search-count').textContent = `${list.length} 条`;
+  $('#side-search-count').textContent = `${sidebarMatchCount(list)} 条`;
 }
 
 /** Update a row without discarding selection, focus or its existing elements. */
@@ -4271,6 +4284,11 @@ function patchSidebarRow(node, row, highlightKey) {
   const meta = node.querySelector('.m');
   const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
   if (meta && meta.textContent !== metaText) meta.textContent = metaText;
+  const snippet = node.querySelector('.snip'), snippetText = (agent || s).snippet;
+  if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
+    snippet.title = snippetText;
+    snippet.innerHTML = sidebarSnippet(snippetText);
+  }
   if (agent) {
     paintAgentStatus(node);
     return;
@@ -4290,11 +4308,6 @@ function patchSidebarRow(node, row, highlightKey) {
     cwd.title = s.cwd || '';
     cwd.dataset.nodeName = s.node_name || '';
     cwd.innerHTML = timelineDirectoryMarkup(s);
-  }
-  const snippet = node.querySelector('.snip');
-  if (snippet && (snippet.title !== s.snippet || node._highlightKey !== highlightKey)) {
-    snippet.title = s.snippet;
-    snippet.innerHTML = sidebarSnippet(s.snippet);
   }
   globalThis.SessionDockGroups?.paintRow(node, s);
   paintStarButton(node.querySelector('.item-star'), !!s.starred, S.starBusy.has(s.uid));
@@ -4327,7 +4340,7 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
   const structure = JSON.stringify([!!r.agent, S.view, S.nest, !!S.term,
-    r.depth, !!r.kids, !!r.s.pending, !!r.s.snippet, r.s.source]);
+    r.depth, !!r.kids, !!r.s.pending, !!(r.agent || r.s).snippet, r.s.source]);
   return {signature, structure};
 }
 
@@ -4424,8 +4437,8 @@ function renderSide(suppliedList = null) {
     context: sidebarNestContext()};
   for (const [key, rows, summary] of groups) {
     const items = rows.filter(r => !r.agent).map(r => r.s);
-    const first = summary ? summary.first : items[0];
-    const count = summary ? summary.count : items.length;
+    const first = summary ? summary.first : (items[0] || rows[0]?.s);
+    const count = summary ? summary.count : S.term ? rows.length : items.length;
     const g = oldGroups.get(key) || el('div', 'group');
     oldGroups.delete(key);
     g.classList.toggle('closed', sidebarGroupClosed(key));
@@ -8945,7 +8958,7 @@ function showSearchMatches(rows) {
   for (const row of rows) found.set(row.uid, row);
   S.results = [...found.values()].sort((a, b) => String(b.updated).localeCompare(String(a.updated))
     || b.uid.localeCompare(a.uid));
-  $('#stat').textContent = ` 已找到 ${S.results.length} 个会话，继续搜索…`;
+  $('#stat').textContent = ` 已找到 ${sidebarMatchCount(S.results)} 个会话，继续搜索…`;
   renderSide();
 }
 
@@ -9070,8 +9083,8 @@ async function runSearch() {
     $('#stat').classList.remove('err');
     S.results = d.results;
     $('#stat').textContent = d.truncated
-      ? ` 命中超过 ${d.results.length} 个会话（已截断，请细化条件）`
-      : ` 全文命中 ${d.results.length} 个会话`;
+      ? ` 命中超过 ${sidebarMatchCount(d.results)} 个会话（已截断，请细化条件）`
+      : ` 全文命中 ${sidebarMatchCount(d.results)} 个会话`;
     if (d.partial) {
       const offline = (d.errors || []).filter(e => d.nodes?.some(n => n.id === e.node_id && n.online === false));
       const failed = (d.errors || []).filter(e => !offline.includes(e));

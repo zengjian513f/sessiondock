@@ -105,7 +105,7 @@ def main():
 
                     # Typing filters titles and must already expose saved folds.
                     page.locator('#q').fill('"Synthetic worker"')
-                    expect(parent).to_be_visible()
+                    expect(parent).to_have_count(0)
                     expect(worker).to_be_visible()
                     expect(other).to_have_count(0)
                     expect(only).to_have_count(0)
@@ -113,7 +113,7 @@ def main():
                     expect(page.locator('#side .group.closed')).to_have_count(0)
                     expect(page.locator('#side .nest-caret')).to_have_count(0)
                     group.locator('.ghead').click()
-                    expect(parent).to_be_visible()
+                    expect(parent).to_have_count(0)
 
                     # Enter searches real fixture bodies; the matched child is
                     # visible even when its parent was previously folded.
@@ -124,6 +124,8 @@ def main():
                     expect(parent).to_be_visible()
                     expect(child).to_be_visible()
                     expect(worker).to_be_visible()
+                    expect(worker.locator('.snip mark')).to_have_text('Needle')
+                    expect(worker.locator('.m')).to_contain_text('命中 1')
                     expect(other).to_have_count(0)
                     expect(only).to_have_count(0)
                     expect(missed).to_have_count(0)
@@ -141,6 +143,7 @@ def main():
                     sessions['sig'] += '-refresh'
                     page.evaluate('runSessionPoll()')
                     expect(worker).to_be_visible()
+                    expect(worker.locator('.snip mark')).to_have_text('Needle')
                     expect(other).to_have_count(0)
                     expect(only).to_have_count(0)
                     assert page.evaluate('JSON.stringify([[...S.closed], [...S.nestClosed]])') == saved
@@ -152,9 +155,15 @@ def main():
                         page.wait_for_function("old => (document.querySelector('#stat').dataset.seq || '') !== old", arg=old)
 
                     search('SidecarOnly')
-                    expect(parent).to_be_visible()
-                    expect(parent.locator('.m')).not_to_contain_text('命中')
+                    expect(parent).to_have_count(0)
                     expect(only).to_be_visible()
+                    expect(only.locator('.snip mark')).to_have_text(['SidecarOnly', 'SidecarOnly'])
+                    expect(page.locator('#side .item')).to_have_count(1)
+                    expect(page.locator('#side-search-count')).to_have_text('1 条')
+                    sessions['sig'] += '-sidecar-refresh'
+                    page.evaluate('runSessionPoll()')
+                    expect(parent).to_have_count(0)
+                    expect(only.locator('.snip mark')).to_have_text(['SidecarOnly', 'SidecarOnly'])
                     expect(worker).to_have_count(0)
                     expect(child).to_have_count(0)
                     only.click()
@@ -163,9 +172,11 @@ def main():
                     expect(page.locator('#side .item')).to_have_count(0)
                     search('CodexWorkerOnly')
                     expect(parent).to_have_count(0)
-                    expect(child).to_be_visible()
+                    expect(child).to_have_count(0)
                     codex_worker = page.locator('#side .item.agent[data-agent="codex-worker"]')
                     expect(codex_worker).to_be_visible()
+                    expect(codex_worker.locator('.snip mark')).to_have_text('CodexWorkerOnly')
+                    expect(page.locator('#side .item')).to_have_count(1)
                     codex_worker.click()
                     expect(page.locator('#msgs')).to_contain_text('CodexWorkerOnly body')
                     search('IndependentOnly')
@@ -188,8 +199,9 @@ def main():
                         transcript.write(encoded(claude_row('search-main', 'assistant', 'other-new', 'other-a',
                             'FreshSidecar body', isSidechain=True, agentId='other')))
                     search('FreshSidecar')
-                    expect(parent).to_be_visible()
+                    expect(parent).to_have_count(0)
                     expect(other).to_be_visible()
+                    expect(other.locator('.snip mark')).to_have_text('FreshSidecar')
                     expect(worker).to_have_count(0)
                     expect(only).to_have_count(0)
                     other.click()
