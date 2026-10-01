@@ -158,8 +158,8 @@ pub(super) struct Row {
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<NestParent>,
     /// Private durable decision marker, including an explicit detach.
-    #[serde(skip_serializing_if = "no")]
-    nest_initialized: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nest_initialized: Option<bool>,
 }
 
 /// Manual display parent; an absent node keeps the historical local meaning.
@@ -491,6 +491,26 @@ impl MetadataSnapshot {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
 
+    /// Only legacy automatic links awaiting initialization can be repaired.
+    /// A user choice is never invalidated by native creation timestamps.
+    pub fn without_invalid_initial_nest_parents(
+        &self,
+        invalid: &[(String, NestParent)],
+    ) -> Result<Self, MetadataError> {
+        self.change(|rows| {
+            for (uid, parent) in invalid {
+                if let Some(row) = rows.get_mut(uid)
+                    && row.nest_initialized == Some(false)
+                    && row.nest_parent.as_ref() == Some(parent)
+                {
+                    row.nest_parent = None;
+                    row.nest_initialized = Some(true);
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub fn with_initial_nest_parents(
         &self,
         found: &[(String, NestParent)],
@@ -524,9 +544,9 @@ impl MetadataSnapshot {
                     continue;
                 }
                 let row = rows.entry(uid.clone()).or_default();
-                if !row.nest_initialized && row.nest_parent.is_none() {
+                if row.nest_initialized != Some(true) && row.nest_parent.is_none() {
                     row.nest_parent = Some(parent.clone());
-                    row.nest_initialized = true;
+                    row.nest_initialized = Some(true);
                 }
             }
             Ok(())
@@ -554,7 +574,7 @@ impl MetadataSnapshot {
         self.change(|rows| {
             let row = rows.entry(uid.to_owned()).or_default();
             row.nest_parent = parent;
-            row.nest_initialized = true;
+            row.nest_initialized = Some(true);
             Ok(())
         })
     }

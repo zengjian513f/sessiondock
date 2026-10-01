@@ -132,6 +132,7 @@ directory at birth; every matching process must identify the same initiator.
 An ambiguous directory, a native OpenCode subagent or a session older than
 the process is not inferred this way. Resuming a session created before the
 process does not attach it.
+Verified SSH initiators also initialize the same parent, with the remote node ID.
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second
 relationship or a public row field. Existing manual parents always win. Legacy
@@ -143,7 +144,11 @@ erased a cleared row left no durable detach decision to recover.
 Older metadata is read with a one-way migration: keep an existing manual parent;
 otherwise move a previously displayed `spawned_by` into `nest_parent`. A legacy
 `nest_independent: true` clears the relation. Legacy startup and independent fields
-are absent from API responses and from the next metadata write. Clearing the parent
+are absent from API responses and from the next metadata write. Legacy inferred
+parents carry `nest_initialized: false` for native validation: a parent newer than the child
+or the child’s own continuation is removed during sampling. Explicit parents are
+never rejected on creation time. Import, clone and move preserve a decided empty
+parent, including the private marker. Clearing the parent
 cannot be undone by process scans, polling or restart.
 
 The handler rejects attaching to self (`400 nest_parent_self`), a missing target

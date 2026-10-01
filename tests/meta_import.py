@@ -19,8 +19,8 @@ EPOCH_MAX = 253_402_300_799.0
 DEFAULT_REASON, INFERRED_REASON = "网页发送 Escape", "终端已结束或中断"
 KNOWN = {"starred", "starred_at", "fork_parent_visible", "activity_stopped_at",
          "activity_stop_reason", "activity_stop_state", "activity_stop_inferred",
-         "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by", "nest_parent", "nest_independent"}
-ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "nest_parent")
+         "timeline_tip", "timeline_stale_end", "timeline_rewind", "spawned_by", "nest_parent", "nest_independent", "nest_initialized"}
+ORDER = ("starred", "starred_at", "fork_parent_visible", "stopped", "rewind_pending", "timeline", "nest_parent", "nest_initialized")
 SPAWN_SOURCE_MAX, SPAWN_SID_MAX = 32, 256
 HOME_SHARE = Path.home() / ".local" / "share" / "sessiondock"
 
@@ -68,6 +68,8 @@ def convert_row(uid, src, keep, warns):
         out["fork_parent_visible"] = True
     # Python live.spawn_parents wrote {source, sid} once; the spawner row may no
     # longer exist, the relation is kept as-is (Rust decorates from the key alone).
+    if src.get("nest_independent") is True or src.get("nest_initialized") is True:
+        out["nest_initialized"] = True
     spawned = None if src.get("nest_independent") else src.get("nest_parent", src.get("spawned_by"))
     if spawned is not None:
         source = str(spawned.get("source") or "").strip() if isinstance(spawned, dict) else ""
@@ -77,6 +79,7 @@ def convert_row(uid, src, keep, warns):
             warns.append((uid, "invalid spawned_by"))
         else:
             out["nest_parent"] = {"source": source, "sid": sid}
+            out["nest_initialized"] = src.get("nest_initialized", "nest_parent" in src) is True
             if spawned.get("node_id"):
                 out["nest_parent"]["node_id"] = spawned["node_id"]
     if src.get("activity_stopped_at") is not None:

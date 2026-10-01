@@ -258,8 +258,8 @@ def run(binary):
                             and r.get("sid") == grok_dir.name), None)
             if row is None:
                 fail("grok-row", f"Grok uid {uid} not in {len(sessions)} rows")
-            assert "spawned_by" not in row and "nest_parent" not in row, row
-            passed("CLI launch does not create a sidebar parent")
+            assert "spawned_by" not in row and row.get("nest_parent") == {"source": "claude", "sid": sid}, row
+            passed("CLI launch initializes the sidebar parent")
         finally:
             remove_created(jsonl, grok_dir, sid, before)
 

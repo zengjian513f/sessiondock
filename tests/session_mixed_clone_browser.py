@@ -30,6 +30,7 @@ def main():
         claude_uid=uid('claude',claude[2]);grok_uid=uid('grok',root/'file-node/grok/project'/ident(10))
         before['sessions'][claude_uid]={'nest_parent':{'source':'codex','sid':ident(2)},'starred':True}
         before['sessions'][grok_uid]={'nest_parent':{'source':'claude','sid':ident(2)},'starred':True}
+        before['sessions'][corpus.uid('b')]={'nest_initialized':True}
         metadata.write_text(json.dumps(before))
         original={p:p.read_bytes() for home in (corpus.root/'codex',root/'file-node/claude',root/'file-node/grok')
                   for p in home.rglob('*') if p.is_file() and '.sqlite' not in p.name}
@@ -92,6 +93,8 @@ def main():
                         def session(source,sid):return next(r for r in rows if r['source']==source and r['sid']==sid and not r.get('continued_in'))
                         cloned_claude=session('claude',ids['claude:'+ident(2)])
                         cloned_grok=session('grok',ids['grok:'+ident(10)])
+                        detached=session('codex',codex[ident(4)])
+                        assert state[detached['uid']]['nest_initialized'] is True and 'nest_parent' not in state[detached['uid']]
                         assert state[cloned_claude['uid']]['nest_parent']=={'source':'codex','sid':codex[ident(2)]}
                         assert state[cloned_grok['uid']]['nest_parent']=={'source':'claude','sid':ids['claude:'+ident(2)]}
                         for source,sid,text in [('claude',ids['claude:'+ident(2)],'Branch A final'),
@@ -106,6 +109,25 @@ def main():
                         for key,records in source_db.items():
                             assert all(record in after_db[key] for record in records),key
                         print('PASS browser restart retries the same mixed clone, opens all three histories, remaps cross-provider ownership and preserves originals',flush=True)
+                        # A missing parent and a remote same-SID parent are known
+                        # members that a single-source plan must never discard.
+                        baseline=json.loads(metadata.read_text())
+                        for parent in [{'source':'codex','sid':ident(999)},
+                                       {'source':'codex','sid':codex[ident(2)],'node_id':'d'*32}]:
+                            broken=json.loads(json.dumps(baseline))
+                            broken['revision']=json.loads(metadata.read_text())['revision']+1
+                            broken['sessions'][cloned_claude['uid']]['nest_parent']=parent
+                            metadata.write_text(json.dumps(broken))
+                            page.goto(f'http://127.0.0.1:{hub.port}/?'+urlencode({'sid':scoped(node.nid,cloned_claude['uid']),'node':node.nid}),wait_until='networkidle')
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')) as blocked:
+                                page.locator('#a-clone-group').click()
+                            assert blocked.value.status==409 and blocked.value.json()['code']=='move_group_incomplete',blocked.value.text()
+                            expect(page.locator('#clone-group-dialog .transfer-error')).to_be_visible()
+                            expect(page.locator('#clone-group-dialog .clone-confirm')).to_be_disabled()
+                        baseline['revision']=json.loads(metadata.read_text())['revision']+1
+                        metadata.write_text(json.dumps(baseline))
+                        assert all(p.read_bytes()==raw for p,raw in original.items())
+                        print('PASS Chromium whole-group plans refuse missing parents and remote same-SID parents',flush=True)
         finally:browser.close()
 
 

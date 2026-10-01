@@ -38,6 +38,7 @@ def main():
                     selected=uid('claude',claude[2]);grok_uid=uid('grok',root/'files/grok/project'/ident(10))
                     before['sessions'][selected]={'nest_parent':{'source':'codex','sid':ident(2)},'starred':True}
                     before['sessions'][grok_uid]={'nest_parent':{'source':'claude','sid':ident(2)},'starred':True}
+                    before['sessions'][source.uid('b')]={'nest_initialized':True}
                     metadata.write_text(json.dumps(before))
                     original={p:p.read_bytes() for home in (source.root/'codex',root/'files/claude',root/'files/grok')
                               for p in home.rglob('*') if p.is_file() and '.sqlite' not in p.name}
@@ -104,6 +105,9 @@ def main():
                             local=provider+':'+row['uid'].split('~',1)[1]
                             if provider=='claude':assert state[local]['nest_parent']=={'source':'codex','sid':codex[ident(2)]}
                             if provider=='grok':assert state[local]['nest_parent']=={'source':'claude','sid':ids['claude:'+ident(2)]}
+                        detached=row_for('codex',codex[ident(4)])
+                        detached_uid='codex:'+detached['uid'].split('~',1)[1]
+                        assert state[detached_uid]['nest_initialized'] is True and 'nest_parent' not in state[detached_uid]
                         assert all((old!=new)==fresh for old,new in codex.items())
                         assert all((old.split(':',1)[1]!=new)==fresh for old,new in ids.items())
                         if moving:

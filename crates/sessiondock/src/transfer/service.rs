@@ -423,7 +423,13 @@ impl TransferService {
                 op.metadata_before
                     .insert(member.uid.clone(), before.clone());
                 let mut after = serde_json::Map::new();
-                for key in ["starred", "starred_at", "group", "fork_parent_visible"] {
+                for key in [
+                    "starred",
+                    "starred_at",
+                    "group",
+                    "fork_parent_visible",
+                    "nest_initialized",
+                ] {
                     if let Some(v) = before.get(key) {
                         after.insert(key.into(), v.clone());
                     }
@@ -722,6 +728,7 @@ impl TransferService {
                 "group",
                 "fork_parent_visible",
                 "nest_parent",
+                "nest_initialized",
             ];
             for (uid, row) in &mut op.metadata_after {
                 let before = current.row(uid);
@@ -748,6 +755,11 @@ impl TransferService {
                             "move_conflict",
                             "目标会话显示设置不同且历史没有延长",
                         ));
+                    }
+                    if !before["nest_parent"].is_null()
+                        && before["nest_parent"] != row["nest_parent"]
+                    {
+                        return Err(TransferError::new("move_conflict", "目标会话附属关系不同"));
                     }
                     op.metadata_replaced.insert(uid.clone(), before);
                 }
