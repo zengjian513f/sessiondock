@@ -2402,10 +2402,6 @@ header .btn[data-session-docked] { display: none; }
 
 /* Node-owned session groups. */
 #view button[hidden] { display: none; }
-#session-group-filters { margin: 6px 0; }
-#session-group-filters[hidden] { display: none; }
-#session-group-filters label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
-#session-group-filter { flex: 1; min-width: 0; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 .session-row-group { margin-top: 3px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .session-row-group:empty { display: none; }
 #session-group-status { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
