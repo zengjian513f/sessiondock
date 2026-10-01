@@ -2678,7 +2678,14 @@ async function runSessionPoll() {
     if (S.results) {
       // 搜索结果集合保持不变，只合入 rename 等最新元数据。
       const fresh = new Map(S.sessions.map(s => [s.uid, s]));
-      S.results = S.results.map(r => fresh.has(r.uid) ? { ...r, ...fresh.get(r.uid) } : r);
+      S.results = S.results.map(r => {
+        const latest = fresh.get(r.uid);
+        if (!latest) return r;
+        const agents = new Map((latest.agent_items || []).map(a => [a.id, a]));
+        return {...r, ...latest, agent_items: (r.agent_items || []).map(a => ({
+          ...a, ...agents.get(a.id), hits: a.hits, hits_capped: a.hits_capped, snippet: a.snippet,
+        }))};
+      });
       if (!patchSide(visible())) renderSide();
       return true;
     }
@@ -2794,7 +2801,8 @@ function visible() {
   pool = pool.filter(s => globalThis.SessionDockGroups?.matches(s) ?? true);
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
   if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
-  return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n')));
+  return pool.filter(s => matchesSearch([s.title, s.cwd, s.node_name || ''].join('\n'))
+    || sidebarAgentItems(s).length > 0);
 }
 
 // ---------------------------------------------------------------- 左栏
@@ -4023,11 +4031,18 @@ function nestStamp(s, children, memo = new Map()) {
 const sidebarGroupClosed = key => !S.term && S.closed.has(key);
 const sidebarNestClosed = uid => !S.term && S.nestClosed.has(uid);
 
+function sidebarAgentItems(s) {
+  const agents = s.agent_items || [];
+  if (!S.term) return agents;
+  if (S.results !== null) return agents.filter(a => a.hits > 0);
+  return agents.filter(a => matchesSearch([a.title, a.cwd || s.cwd, s.node_name || ''].join('\n')));
+}
+
 // Count the rows a branch would expose without sorting or allocating row objects.
 // A nested closed session contributes just its own row, matching expandRows.
 function nestSize(s, children, memo = new Map()) {
   if (memo.has(s.uid)) return memo.get(s.uid);
-  const size = {rows: 1 + (s.agent_items || []).length, sessions: 1};
+  const size = {rows: 1 + sidebarAgentItems(s).length, sessions: 1};
   memo.set(s.uid, size);
   for (const child of children.get(s.uid) || []) {
     const sub = sidebarNestClosed(child.uid) ? {rows: 1, sessions: 1} : nestSize(child, children, memo);
@@ -4049,7 +4064,7 @@ function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   }
   const when = v => +new Date(v) || 0;
   const kids = [
-    ...(s.agent_items || []).map(agent => ({agent, running: agentRunning(s.uid, agent),
+    ...sidebarAgentItems(s).map(agent => ({agent, running: agentRunning(s.uid, agent),
       when: when(agent.updated)})),
     ...(children.get(s.uid) || []).map(c => ({session: c, running: S.live.has(c.uid),
       when: nestStamp(c, children, memo)})),

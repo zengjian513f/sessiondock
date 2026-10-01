@@ -27,6 +27,7 @@ use super::{
     cache::{Cached, Hit, Lookup, ParseSlots, Priority, SearchCache, TextReader},
 };
 use crate::sessions::{SearchPool, SearchVersion, SessionError, SessionStore};
+use serde_json::json;
 
 /// Bytes of cached bodies that may be held in memory whole at once, for the
 /// queries that cannot be matched chunk by chunk.
@@ -104,6 +105,84 @@ pub struct SearchService {
 }
 
 impl SearchService {
+    /// Each sidecar matches its own semantic body. Never combine terms from
+    /// different views to satisfy AND or include unmatched siblings.
+    pub fn scan_session(
+        &self,
+        pool: &SearchPool,
+        uid: &str,
+        query: &PreparedSearch,
+        cancelled: &AtomicBool,
+        buffer: &mut Vec<u8>,
+    ) -> Scanned {
+        let mut main = None;
+        let mut agents = Vec::new();
+        let mut errors = Vec::new();
+        let Some(row) = pool.row(uid) else {
+            return Scanned::Error(SessionError {
+                status: 404,
+                message: "会话不存在".into(),
+            });
+        };
+        let candidates = std::iter::once(None).chain(
+            row["agent_items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(Some),
+        );
+        for agent in candidates {
+            let id = agent.and_then(|item| item["id"].as_str()).unwrap_or("");
+            let scanned = match if agent.is_some() {
+                pool.agent_uid(uid, id)
+            } else {
+                Ok(uid)
+            } {
+                Ok(key) => self.scan(pool, key, query, cancelled, buffer),
+                Err(error) => Scanned::Error(error),
+            };
+            match scanned {
+                Scanned::Matched(outcome) => {
+                    if let Some(item) = agent {
+                        if let Some((count, capped, snippet)) = outcome {
+                            let mut item = item.clone();
+                            if item["supported"] != false
+                                && let Some(object) = item.as_object_mut()
+                            {
+                                object.remove("migration_warnings");
+                            }
+                            item["hits"] = json!(count);
+                            item["hits_capped"] = json!(capped);
+                            item["snippet"] = json!(snippet);
+                            agents.push(item);
+                        }
+                    } else {
+                        main = outcome;
+                    }
+                }
+                Scanned::Error(error) => {
+                    if error.status == 499 {
+                        return Scanned::Error(error);
+                    }
+                    let mut error = json!({"uid":uid, "source":row["source"],
+                        "name":agent.unwrap_or(row)["title"], "status":error.status,
+                        "code":if error.status == 501 { "unsupported_history" } else { "session_error" },
+                        "error":error.message});
+                    if agent.is_some() {
+                        error["agent"] = json!(id);
+                    }
+                    errors.push(error);
+                }
+                Scanned::Session { .. } => unreachable!("scan returns one view"),
+            }
+        }
+        Scanned::Session {
+            main,
+            agents,
+            errors,
+        }
+    }
+
     pub fn open(
         store: Arc<SessionStore>,
         cache_dir: Option<std::path::PathBuf>,

@@ -45,7 +45,7 @@ fn run(
     let produced = service.produced();
     let result = search::execute(
         &pool.rows,
-        |uid, cancelled, buffer| service.scan(pool, uid, query, cancelled, buffer),
+        |uid, cancelled, buffer| service.scan_session(pool, uid, query, cancelled, buffer),
         query,
         cancelled,
         emit,
