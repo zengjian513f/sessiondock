@@ -729,6 +729,11 @@ pub fn body(view: &ViewSnapshot) -> String {
 /// What one worker found for a candidate.
 pub enum Scanned {
     Matched(Outcome),
+    Session {
+        main: Outcome,
+        agents: Vec<Value>,
+        errors: Vec<Value>,
+    },
     Error(SessionError),
 }
 
@@ -833,9 +838,28 @@ pub fn execute(
                 };
                 let row = pool[wanted];
                 let uid = row["uid"].as_str().unwrap_or("");
+                let (scanned_row, agents) = match scanned_row {
+                    Scanned::Session {
+                        main,
+                        agents,
+                        errors: agent_errors,
+                    } => {
+                        errors.extend(agent_errors);
+                        // An owner with only sidecar hits supplies navigation
+                        // context, with no claim that its own body matched.
+                        let main = main.or_else(|| {
+                            agents.first().map(|agent| {
+                                (0, false, agent["snippet"].as_str().unwrap_or("").to_owned())
+                            })
+                        });
+                        (Scanned::Matched(main), Some(agents))
+                    }
+                    other => (other, None),
+                };
                 match scanned_row {
                     Scanned::Matched(Some((count, capped, snippet))) => {
                         let mut hit = row.clone();
+                        hit["agent_items"] = json!(agents.unwrap_or_default());
                         hit["hits"] = json!(count);
                         hit["hits_capped"] = json!(capped);
                         hit["snippet"] = json!(snippet);
@@ -843,6 +867,7 @@ pub fn execute(
                         hits.push(hit);
                     }
                     Scanned::Matched(None) => {}
+                    Scanned::Session { .. } => unreachable!("normalized above"),
                     Scanned::Error(error) => {
                         if error.status == 499 {
                             return Err(SearchError::cancelled());
