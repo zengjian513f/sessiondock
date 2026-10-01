@@ -24,7 +24,8 @@ def corpus(root):
     rows = [claude_row("search-main", "user", "u0", None, "Synthetic search title"),
             claude_row("search-main", "assistant", "a0", "u0", "Needle Cat cat caterpillar cat. 猫 猫猫 a.b A.B 无法识别的tag？ xtag"),
             claude_row("search-main", "assistant", "context-a", "a0",
-                       "持久，跨板块扩散周期多变。但单纯扫窗口是纯参数网格搜索，缺乏机制突破，应附随先验分组进行差异化评估。"),
+                       "这是用于浏览器验收的临时合成上下文，前面的文字足够长，真正的分组关键词在摘要后面。"
+                       "这是第二段临时合成上下文，前面出现接点两个字，但只有后面的测试才是本次搜索的关键词。"),
             claude_row("search-main", "user", "old-u", "a0", "DISCARDED_SEARCH_ONLY"),
             claude_row("search-main", "assistant", "old-a", "old-u", "DISCARDED_SEARCH_ANSWER"),
             {"type": "last-prompt", "leafUuid": "context-a"}]
@@ -123,24 +124,29 @@ def main():
                 # minimum sidebar width that used to put the actual keyword
                 # below the two visible snippet lines (BUG-20261001-075448).
                 page.locator('#left').evaluate("el => el.style.width = '200px'")
-                search('分组')
                 snippet = page.locator(f'#side .item[data-uid="{data.uid("search-main")}"] .snip')
 
-                def visible_snippet_hit():
-                    expect(snippet.locator('mark')).to_have_text('分组')
+                def visible_snippet_hit(query):
+                    expect(snippet.locator('mark')).to_have_text(query)
                     geometry = snippet.evaluate('''el => {
                         const box = el.getBoundingClientRect(), hit = el.querySelector('mark').getBoundingClientRect();
-                        return {top: box.top, bottom: box.bottom, hitTop: hit.top, hitBottom: hit.bottom};
+                        const style = getComputedStyle(el.querySelector('mark'));
+                        return {top: box.top, bottom: box.bottom, hitTop: hit.top, hitBottom: hit.bottom,
+                            background: style.backgroundColor, decoration: style.textDecorationLine};
                     }''')
                     assert geometry['hitTop'] >= geometry['top'] and geometry['hitBottom'] <= geometry['bottom'], geometry
+                    assert geometry['background'] == 'rgb(255, 224, 138)' and geometry['decoration'] == 'none', geometry
+                    assert query in snippet.get_attribute('title')
 
-                visible_snippet_hit()
-                flag('case')  # Reuses the existing row through patchSidebarRow.
-                visible_snippet_hit()
-                flag('case')
-                flag('regex')
-                visible_snippet_hit()
-                flag('regex')
+                for query in ('分组', '测试'):
+                    search(query)
+                    visible_snippet_hit(query)
+                    flag('case')  # Reuses the existing row through patchSidebarRow.
+                    visible_snippet_hit(query)
+                    flag('case')
+                    flag('regex')
+                    visible_snippet_hit(query)
+                    flag('regex')
                 page.locator('#left').evaluate("(el, width) => el.style.width = width", original_width)
 
                 search("needle")
