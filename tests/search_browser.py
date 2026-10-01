@@ -23,9 +23,11 @@ def corpus(root):
         (root / source).mkdir(parents=True)
     rows = [claude_row("search-main", "user", "u0", None, "Synthetic search title"),
             claude_row("search-main", "assistant", "a0", "u0", "Needle Cat cat caterpillar cat. 猫 猫猫 a.b A.B 无法识别的tag？ xtag"),
+            claude_row("search-main", "assistant", "context-a", "a0",
+                       "持久，跨板块扩散周期多变。但单纯扫窗口是纯参数网格搜索，缺乏机制突破，应附随先验分组进行差异化评估。"),
             claude_row("search-main", "user", "old-u", "a0", "DISCARDED_SEARCH_ONLY"),
             claude_row("search-main", "assistant", "old-a", "old-u", "DISCARDED_SEARCH_ANSWER"),
-            {"type": "last-prompt", "leafUuid": "a0"}]
+            {"type": "last-prompt", "leafUuid": "context-a"}]
     data.put("search-main", "claude", rows, [])
     data.put("search-broken", "claude", [
         claude_row("search-broken", "user", "u0", None, "Unsupported synthetic history"),
@@ -116,6 +118,30 @@ def main():
                     item = page.locator(f'#side .item[data-uid="{data.uid("search-main")}"]')
                     expect(item).to_be_visible()
                     expect(item.locator(".m")).to_contain_text(f"命中 {expected}")
+
+                # The server supplies 40 characters before the hit. At the
+                # minimum sidebar width that used to put the actual keyword
+                # below the two visible snippet lines (BUG-20261001-075448).
+                page.locator('#left').evaluate("el => el.style.width = '200px'")
+                search('分组')
+                snippet = page.locator(f'#side .item[data-uid="{data.uid("search-main")}"] .snip')
+
+                def visible_snippet_hit():
+                    expect(snippet.locator('mark')).to_have_text('分组')
+                    geometry = snippet.evaluate('''el => {
+                        const box = el.getBoundingClientRect(), hit = el.querySelector('mark').getBoundingClientRect();
+                        return {top: box.top, bottom: box.bottom, hitTop: hit.top, hitBottom: hit.bottom};
+                    }''')
+                    assert geometry['hitTop'] >= geometry['top'] and geometry['hitBottom'] <= geometry['bottom'], geometry
+
+                visible_snippet_hit()
+                flag('case')  # Reuses the existing row through patchSidebarRow.
+                visible_snippet_hit()
+                flag('case')
+                flag('regex')
+                visible_snippet_hit()
+                flag('regex')
+                page.locator('#left').evaluate("(el, width) => el.style.width = width", original_width)
 
                 search("needle")
                 expect(page.locator('#side-search-state')).to_be_visible()
