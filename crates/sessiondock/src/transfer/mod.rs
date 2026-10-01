@@ -11,6 +11,7 @@ pub mod coordination;
 pub mod environment;
 pub mod files;
 pub mod group;
+mod json_bytes;
 pub mod moving;
 pub mod native;
 pub mod service;

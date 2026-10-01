@@ -172,6 +172,9 @@ pub(super) fn collect(
             } else {
                 cwd.join(path)
             };
+            if crate::transfer::environment::workspace_upload(&path) {
+                continue;
+            }
             let bundled_directory = owned_directories.iter().any(|root| path.starts_with(root))
                 && bundled.iter().any(|file| file.starts_with(&path));
             if !bundled.contains(&path) && !bundled_directory {

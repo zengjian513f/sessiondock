@@ -76,8 +76,10 @@ pub(in crate::transfer) fn links(rows: &[Value]) -> Links {
 /// A successful native reply resolves abbreviated destinations to a full ID.
 /// Rewrite only that call's destination; never substitute in user text.
 pub(in crate::transfer) fn resolve(row: &mut Value, links: &Links) {
-    for block in row["message"]["content"]
-        .as_array_mut()
+    for block in row
+        .get_mut("message")
+        .and_then(|message| message.get_mut("content"))
+        .and_then(Value::as_array_mut)
         .into_iter()
         .flatten()
     {

@@ -498,7 +498,13 @@ def main():
                             dependencies={path:value for snapshot in environment for path,value in snapshot['dependencies'].items()}
                             assert set(map(str,external))<=set(dependencies),dependencies
                             assert not any('/missing/' in path for path in dependencies)
+                            assert not any('sessiondock_attachments' in Path(path).parts for path in dependencies)
+                            source_manifest=json.loads((source.root/'state/transfers'/completed['operation_id']/'export-manifest.json').read_text())
+                            assert not any('sessiondock_attachments' in json.dumps(snapshot) for snapshot in source_manifest['environment'])
+                            assert not any('sessiondock_attachments' in str(file['relative']) for file in source_manifest['files'])
+                            assert not (source.root/'cwd/sessiondock_attachments').exists()
                             assert all(read_target(path)==raw and path.read_bytes()==raw for path,raw in external.items())
+                            print('PASS '+provider+' missing Composer upload references do not enter the dependency checks or archive',flush=True)
                         if args.move:
                             moved={f['source'] for f in source_op['plan']['files']}
                             moved.update(f['source'] for f in (source_op['file_plan'] or {}).get('files',[]))

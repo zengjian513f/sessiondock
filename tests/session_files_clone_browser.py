@@ -13,6 +13,7 @@ from hub_http_suite import Hub, free_port, scoped
 from node_auth_suite import node_env, TOKEN
 from session_files_browser import fixture, uid, claude_row, encoded
 from session_transfer_browser import ident
+from session_transfer_byte_fixtures import varied_layout, assert_identity_only
 
 
 def main():
@@ -37,6 +38,8 @@ def main():
         foreign_side.write_bytes(encoded(row(foreign_parent,'user',803,None,'Foreign agent question',isSidechain=True,agentId=foreign_agent))+
                                 encoded(row(foreign_parent,'assistant',804,ident(803),'Foreign agent answer',isSidechain=True,agentId=foreign_agent)))
         with claude[2].open('ab') as stream:
+            for kind in ('attachment','system','mode','permission-mode','atis-latch','file-history-delta'):
+                stream.write(encoded({'type':kind,'sessionId':ident(2),'fixture_metadata':True}))
             stream.write(encoded(row(ident(2),'assistant',805,ident(154),[{'type':'tool_use','id':'cross-send','name':'SendMessage',
                 'input':{'to':foreign_agent[:7],'message':'Cross owner request literal '+foreign_agent[:7]}}])))
             reply={'success':True,'resumedAgentId':foreign_agent,'message':'Resuming agent '+foreign_agent[:7]}
@@ -105,6 +108,11 @@ def main():
                 'checkpoint_id':checkpoint_id,'checkpoint_file':'compaction_checkpoints/'+checkpoint_id+'.json',
                 'schema_version':1,'prompt_index_at_compaction':2,'created_at':checkpoint['created_at']}}}))
         (corpus.root/'state').mkdir();(corpus.root/'proc').mkdir()
+        for folder in ('claude','grok'):varied_layout(corpus.root/folder)
+        # Preserve a final metadata record with no newline. Message fixtures
+        # remain complete, since the UI intentionally hides incomplete tails.
+        with claude[2].open('ab') as stream:
+            stream.write((' { "type" : "mode", "mode" : "default", "sessionId" : "'+ident(2)+'" } ').encode())
         original={str(p):p.read_bytes() for folder in ('claude','grok') for p in (corpus.root/folder).rglob('*') if p.is_file()}
         node=SimpleNamespace(name='source',nid='c'*32,port=free_port(),token=TOKEN)
         (corpus.root/'ids').mkdir();(corpus.root/'ids/node-id').write_text(node.nid+'\n')
@@ -136,8 +144,8 @@ def main():
                                 page.locator('#clone-group-dialog .clone-cancel').click()
                                 history.write_bytes(saved_history)
                                 print('PASS Grok missing explicit result dependency blocks browser confirmation',flush=True)
-                            page.locator(f'#side .item[data-uid="{selected}"]').click(button='right')
-                            page.locator('#item-menu [data-act="clone"]').click()
+                            page.locator(f'#side .item[data-uid="{selected}"]').click()
+                            page.locator('#a-clone-group').click()
                             dialog=page.locator('#clone-group-dialog')
                             expect(dialog.locator('.clone-confirm')).to_be_enabled(timeout=20000)
                             expect(dialog.locator('.clone-members tbody tr')).to_have_count(6 if source=='claude' else 8)
@@ -148,6 +156,8 @@ def main():
                             expect(page.locator('#msgs')).to_contain_text('Branch A final' if source=='claude' else 'Grok answer 10')
                             op=json.loads((corpus.root/'state/transfers'/result['operation_id']/'operation.json').read_text())
                             assert op['phase']=='complete'
+                            assert_identity_only(op,original)
+                            print('PASS '+source+' only identity/reference bytes change; layout, CRLF, escapes and EOF are preserved',flush=True)
                             ids=op['file_plan']['sessions']
                             if source=='claude':
                                 page.locator('#a-view-switch').click()
@@ -156,6 +166,9 @@ def main():
                                 assert (corpus.root/'claude/file-history'/ids['claude:'+ident(2)]/'abcdef@v1').is_file()
                                 clone=claude[2].with_name(ids['claude:'+ident(2)]+'.jsonl')
                                 rows=[json.loads(line) for line in clone.read_text().splitlines()]
+                                metadata=[row for row in rows if row.get('fixture_metadata')]
+                                assert len(metadata)==6 and all('message' not in row for row in metadata),metadata
+                                print('PASS Claude metadata rows retain absent message fields after browser cloning',flush=True)
                                 call=next(block for row in rows for block in row.get('message',{}).get('content',[]) if isinstance(block,dict)
                                           and block.get('name')=='SendMessage' and block.get('input',{}).get('message','').startswith('Cross owner request'))
                                 assert call['input']['to']==ids['claude:'+foreign_agent]

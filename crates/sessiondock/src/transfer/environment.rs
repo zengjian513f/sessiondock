@@ -10,6 +10,23 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Composer uploads belong to the workspace, not to the native session.
+/// Classify lexically: missing files must not require a stat or canonicalize.
+pub(super) fn workspace_upload(path: &Path) -> bool {
+    path.components()
+        .any(|part| part.as_os_str() == "sessiondock_attachments")
+}
+
+fn without_workspace_uploads<'de, D, T>(deserializer: D) -> Result<BTreeMap<PathBuf, T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    let mut entries = BTreeMap::<PathBuf, T>::deserialize(deserializer)?;
+    entries.retain(|path, _| !workspace_upload(path));
+    Ok(entries)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Content {
     pub kind: String,
@@ -68,9 +85,12 @@ fn stale() -> TransferError {
 pub struct Snapshot {
     pub cwd: PathBuf,
     /// Legacy wire field; new snapshots never enumerate the work tree.
+    #[serde(deserialize_with = "without_workspace_uploads")]
     pub entries: BTreeMap<PathBuf, Content>,
     /// Absolute names reached through links or explicitly referenced attachments.
+    #[serde(deserialize_with = "without_workspace_uploads")]
     pub dependencies: BTreeMap<PathBuf, Content>,
+    #[serde(deserialize_with = "without_workspace_uploads")]
     pub stamps: BTreeMap<PathBuf, Stamp>,
 }
 impl Snapshot {
@@ -110,6 +130,9 @@ impl Snapshot {
         seen: &mut BTreeSet<(PathBuf, bool)>,
     ) -> Result<(), TransferError> {
         super::coordination::check()?;
+        if workspace_upload(path) {
+            return Ok(());
+        }
         if !seen.insert((path.to_owned(), tree)) {
             return Ok(());
         }
