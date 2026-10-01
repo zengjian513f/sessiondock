@@ -241,7 +241,10 @@ while such receipts exist.
 Local process scans initialize the single `nest_parent` from observed launch
 ancestry, both during `/api/live` assembly and on a ten-second background tick.
 A newly created child's owned CLI process and its inherited identity/CLI ancestors
-supply the evidence; a shared tmux server and a later resume do not. The first
+supply the evidence; OpenCode instead pairs a new top-level session with the
+OpenCode processes running in its directory at birth, requiring unanimous
+initiator evidence. A shared directory alone, a native OpenCode subagent, a
+shared tmux server and a later resume do not supply that evidence. The first
 recorded parent persists after exit. Explicit attach/detach wins across scans
 and restart, as described in [metadata](metadata.md#sidebar-parent).
 No `spawned_by` field is written. Collector SSH reports remain diagnostic;
