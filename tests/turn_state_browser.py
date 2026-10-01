@@ -496,6 +496,37 @@ def main(binary=BINARY):
                         cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                         assert cli["input"]["state"] == "ready", cli
 
+                    # Phone terminal resizing wraps the model/context footer;
+                    # both list and detail must retain the observed busy state.
+                    for width in (608, 390, 320):
+                        observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
+                        page.set_viewport_size({"width": width, "height": 780})
+                        if page.locator(".mobile-back").is_visible():
+                            page.locator(".mobile-back").click()
+                        expect(badge(codex_uid)).to_be_visible()
+                        page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                        page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at",
+                                               arg=[codex_uid, observed], timeout=20000)
+                        wait_busy(page, codex_uid, True)
+                        expect(header).to_be_visible()
+                        expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                        assert header.evaluate("e => getComputedStyle(e).animationName") == "turn-pulse"
+                        assert header.evaluate("""e => {
+                            const r = e.getBoundingClientRect();
+                            return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e;
+                        }""")
+                        page.locator(".mobile-back").click()
+                        expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                    page.emulate_media(reduced_motion="reduce")
+                    assert header.evaluate("e => getComputedStyle(e).animationName") == "none"
+                    assert header.evaluate("e => getComputedStyle(e).boxShadow") != "none"
+                    page.emulate_media(reduced_motion="no-preference")
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    if not page.locator("#termpane").is_visible():
+                        page.locator("#a-term").click()
+                    wait_xterm(page, "RS_SHELL_READY")
+
                     for command in ["quoted", "quoted-quota", "draft", "background-zero", "idle"]:
                         observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                         page.locator("#xterm").click()

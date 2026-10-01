@@ -237,6 +237,12 @@ static CODEX_READY_FOOTER: LazyLock<Regex> =
 static CODEX_MODEL_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*(?:gpt|codex|o\d)[\w.-]*(?:\s+\S+)*\s+·\s+\S.*$").expect("codex model")
 });
+static CODEX_WRAPPED_MODEL_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^\s*(?:gpt|codex|o\d)[\w.-]*(?:\s+(?:minimal|none|low|medium|high|xhigh|max|ultra))*\s*·\s*Context\s+\d+%\s+used(?:\s*·\s*weekly\s+\d+%\s+left)?\s*·\s*Main\s*\[[^\]\r\n]+\]\s*$",
+    )
+    .expect("codex wrapped model footer")
+});
 static CODEX_REWIND_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*esc again to edit previous message\s*$").expect("codex rewind")
 });
@@ -582,7 +588,23 @@ fn locate_codex(
             || CODEX_CONTEXT_LEFT_FOOTER.is_match(&clean_lines[candidate])
         {
             footer = Some(candidate);
-        } else if CODEX_REWIND_FOOTER.is_match(&clean_lines[candidate]) {
+        } else {
+            let mut start = candidate;
+            while start > 0 && nonblank(&clean_lines[start - 1]) {
+                start -= 1;
+            }
+            // Narrow panes soft-wrap the model/context/Main footer. Join
+            // without adding spaces inside words, and recognize the complete
+            // known footer rather than accepting arbitrary following output.
+            let block: String = clean_lines[start..=candidate]
+                .iter()
+                .map(|line| line.trim_end())
+                .collect();
+            if start < candidate && CODEX_WRAPPED_MODEL_FOOTER.is_match(&block) {
+                footer = Some(start);
+            }
+        }
+        if footer.is_none() && CODEX_REWIND_FOOTER.is_match(&clean_lines[candidate]) {
             // Immediately after Esc, Codex swaps its footer for a dim "esc
             // again to edit previous message" hint; require the native dim
             // styling so quoted transcript text cannot promote an old `›` row.
