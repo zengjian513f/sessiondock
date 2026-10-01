@@ -220,6 +220,12 @@ static CODEX_BACKGROUND: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("codex background terminals")
 });
+static CODEX_QUOTA_BANNER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)^⚠\u{fe0f}?\s*(?:weekly|5h)\s+limit:\s*\d+%\s+left\s*·\s*resets\s+at\s+.+\s*·\s*/status$",
+    )
+    .expect("codex quota banner")
+});
 static CODEX_CONTEXT_FOOTER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\bContext\s+\d+%\s+used\b").expect("codex context"));
 static CODEX_CONTEXT_LEFT_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
@@ -287,8 +293,9 @@ pub fn codex_busy_screen(screen: &str) -> bool {
 }
 
 /// Background terminals outlive the model turn. Recognize Codex's status
-/// immediately above its live composer, never a quoted line in the transcript
-/// or the draft. This is activity evidence, independent of input readiness.
+/// above its live composer, allowing intervening quota banners, never a quoted
+/// line in the transcript or the draft. This is activity evidence, independent
+/// of input readiness.
 pub fn codex_background_running(capture: &ScreenCapture) -> bool {
     let normalized = capture.text.replace('\r', "");
     let raw: Vec<&str> = normalized.lines().collect();
@@ -296,15 +303,26 @@ pub fn codex_background_running(capture: &ScreenCapture) -> bool {
     let Some((editor, _)) = locate_codex(&raw, &clean, capture.cursor) else {
         return false;
     };
-    let mut status: Vec<&str> = clean[..editor]
-        .iter()
-        .rev()
-        .skip_while(|line| !nonblank(line))
-        .take_while(|line| nonblank(line))
-        .map(|line| line.trim())
-        .collect();
-    status.reverse();
-    CODEX_BACKGROUND.is_match(&status.join(" "))
+    let mut before = editor;
+    while let Some(end) = clean[..before].iter().rposition(|line| nonblank(line)) {
+        let mut start = end;
+        while start > 0 && nonblank(&clean[start - 1]) {
+            start -= 1;
+        }
+        let block = clean[start..=end]
+            .iter()
+            .map(|line| line.trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        // Codex inserts its quota warning between background work and the
+        // editor. Only that known UI block may be skipped: arbitrary output
+        // still separates historical status text from the live composer.
+        if !CODEX_QUOTA_BANNER.is_match(&block) {
+            return CODEX_BACKGROUND.is_match(&block);
+        }
+        before = start;
+    }
+    false
 }
 
 /// Whether Claude visibly has a turn in progress.

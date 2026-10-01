@@ -45,7 +45,7 @@ while IFS= read -r line; do
   case "$line" in
     busy) printf "Working (3s - esc to interrupt)\\n" ;;
     idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;;
-    background|background-many|background-wrapped|background-zero|quoted|draft)
+    background|background-many|background-wrapped|background-quota|background-quota-wrapped|background-zero|quoted|quoted-quota|draft)
       printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic completed answer\\n\\n" "$line"
       status="1 background terminal running · /ps to view · /stop to close"
       case "$line" in
@@ -58,7 +58,13 @@ while IFS= read -r line; do
         printf "› %s\\n" "$status"
       else
         printf "%s\\n" "$status"
-        if [ "$line" = quoted ]; then printf "Synthetic quoted tool output ends here\\n"; fi
+        case "$line" in quoted|quoted-quota) printf "Synthetic quoted tool output ends here\\n" ;; esac
+        case "$line" in
+          background-quota|quoted-quota)
+            printf "\\n  ⚠ weekly limit: 11%% left · resets at 11:26 PM on 7 Oct · /status\\n" ;;
+          background-quota-wrapped)
+            printf "\\n  ⚠ weekly limit: 11%% left · resets at 11:26 PM\\non 7 Oct · /status\\n" ;;
+        esac
         printf "\\n› \\033[2mAsk Codex to do anything\\033[0m\\n"
       fi
       printf "\\n  GPT-6-Astra high · Context 73%% used · Main [default]\\n  ? for shortcuts\\n"
@@ -465,7 +471,10 @@ def main(binary=BINARY):
                     # BUG-20261001-082816-f14dc6: the turn is complete but
                     # Codex still owns a background terminal. Read the live
                     # footer through the host, CLI state and watch stream.
-                    for command in ["background", "background-many", "background-wrapped"]:
+                    # BUG-20261001-100155-ba71d1: the quota banner between
+                    # the live status and composer must not hide background work.
+                    for command in ["background", "background-many", "background-wrapped",
+                                    "background-quota", "background-quota-wrapped"]:
                         page.locator("#xterm").click()
                         page.keyboard.type(command)
                         page.keyboard.press("Enter")
@@ -487,7 +496,7 @@ def main(binary=BINARY):
                         cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                         assert cli["input"]["state"] == "ready", cli
 
-                    for command in ["quoted", "draft", "background-zero", "idle"]:
+                    for command in ["quoted", "quoted-quota", "draft", "background-zero", "idle"]:
                         observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                         page.locator("#xterm").click()
                         page.keyboard.type(command)
