@@ -344,6 +344,34 @@ pub struct SearchPool {
     published: Arc<Published>,
 }
 
+impl SearchPool {
+    pub fn row(&self, uid: &str) -> Option<&Value> {
+        self.published.row(uid)
+    }
+
+    pub fn agent_uid(&self, owner: &str, id: &str) -> Result<&str, SessionError> {
+        self.published
+            .index
+            .agent(owner, id)
+            .map(|entry| entry.uid.as_str())
+            .ok_or_else(|| SessionError::new(404, "子代理不存在或不属于此主会话"))
+    }
+
+    // Internal search keys may name an owned sidecar; public history access
+    // continues to require the owner uid plus agent id through `prepare`.
+    fn prepare(&self, uid: &str) -> Result<Prepared, SessionError> {
+        let entry = self
+            .published
+            .index
+            .candidate(uid)
+            .ok_or_else(|| SessionError::new(404, "会话不存在"))?;
+        match (&entry.owner, &entry.agent_id) {
+            (Some(owner), Some(agent)) => prepare(&self.published, owner, agent),
+            _ => prepare(&self.published, uid, ""),
+        }
+    }
+}
+
 /// The candidate rows of the last search pool, reused while the published
 /// list, the registry and the run id are the same (a search that parsed
 /// nothing then allocates no rows).
@@ -905,7 +933,7 @@ impl SessionStore {
         pool: &SearchPool,
         uid: &str,
     ) -> Result<Option<Arc<ViewSnapshot>>, SessionError> {
-        let prepared = prepare(&pool.published, uid, "")?;
+        let prepared = pool.prepare(uid)?;
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
@@ -919,7 +947,7 @@ impl SessionStore {
         pool: &SearchPool,
         uid: &str,
     ) -> Result<Arc<ViewSnapshot>, SessionError> {
-        let prepared = prepare(&pool.published, uid, "")?;
+        let prepared = pool.prepare(uid)?;
         let deps = IndexDeps {
             index: &prepared.published.index,
         };
@@ -942,7 +970,7 @@ impl SessionStore {
         let owner = index
             .candidate(uid)
             .ok_or_else(|| SessionError::new(404, "会话不存在"))?;
-        if owner.is_agent() {
+        if owner.is_agent() && owner.owner.is_none() {
             return Err(owner
                 .owner_error
                 .clone()
@@ -952,7 +980,9 @@ impl SessionStore {
         let data = candidate
             .data_stamp()
             .map(|stamp| (stamp.file_identity.clone(), stamp.size));
-        let pin = pin_for(pool.published.metadata.as_ref(), &candidate, uid)
+        let pin = (!owner.is_agent())
+            .then(|| pin_for(pool.published.metadata.as_ref(), &candidate, uid))
+            .flatten()
             .map(|pin| json!([pin.tip, pin.stale_end]));
         let chain = match index.physical_chain(uid) {
             Ok(chain) => {

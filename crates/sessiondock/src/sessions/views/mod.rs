@@ -1398,6 +1398,7 @@ impl Views {
                     cached.snapshot.view.inherited_encoded.clone(),
                 )
             }),
+            true,
         )?;
         let snapshot = Arc::new(ViewSnapshot::new(Arc::new(built.view)));
         self.views.insert(
@@ -1680,7 +1681,7 @@ pub(crate) fn open_transient(
         records: records::RecordCache::default(),
     };
     let built = build(
-        request, deps, &mut files, prefixes, owner, selected, pin, None, None,
+        request, deps, &mut files, prefixes, owner, selected, pin, None, None, false,
     )?;
     Ok(Arc::new(ViewSnapshot::new(Arc::new(built.view))))
 }
@@ -1811,17 +1812,25 @@ fn build(
     pin: Option<TimelinePin>,
     old_prefixes: Option<&[Prefix]>,
     old_inherited: Option<(Arc<Vec<Event>>, Arc<EncodedEvents>)>,
+    include_native_scope: bool,
 ) -> Result<Built, SessionError> {
     let leaf = selected.clone().unwrap_or_else(|| owner.clone());
     let (parsed, _) = files.file(leaf, Pin::Exact(pin.as_ref()), deps)?;
     let owner_parsed = match selected {
-        Some(_) => Some(files.file(owner, Pin::Any, deps)?.0),
-        None => None,
+        Some(_) if include_native_scope => Some(files.file(owner, Pin::Any, deps)?.0),
+        _ => None,
     };
     if let Some(error) = parsed.raw_error.as_ref().or(parsed.unsupported.as_ref()) {
         return Err(SessionError::new(501, error.clone()));
     }
-    let native_scope = native_scope(request, owner_parsed.as_deref().unwrap_or(&parsed), &parsed);
+    // Search consumes only the leaf's semantic text and inherited prefixes.
+    // Reading the full owner for every sidecar would multiply cold-search I/O;
+    // transient search views are never used to authorize native operations.
+    let native_scope = if include_native_scope {
+        native_scope(request, owner_parsed.as_deref().unwrap_or(&parsed), &parsed)
+    } else {
+        Err(SessionError::new(501, "搜索投影不提供原生操作范围"))
+    };
     // Inherited fixed prefixes: reuse the previous chain only when the leaf
     // still declares the same direct parent/cut and every parent file still
     // carries exactly the stamp it was read with (deepest ancestor first).
