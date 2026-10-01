@@ -89,6 +89,7 @@ pub(crate) async fn observe_external_all(
 struct Merged {
     uids: Vec<String>,
     tmux_uids: Vec<String>,
+    working_uids: Vec<String>,
     started: BTreeMap<String, f64>,
 }
 
@@ -249,12 +250,16 @@ async fn assemble(
     // records declare (the pane named for a session).
     let mut managed_running: Vec<String> = Vec::new();
     let mut managed_started: BTreeMap<String, f64> = BTreeMap::new();
+    let mut managed_pids: BTreeMap<String, Vec<i64>> = BTreeMap::new();
     let mut host_roots: BTreeSet<u32> = BTreeSet::new();
     let mut host_uids: BTreeSet<String> = BTreeSet::new();
     if let Some(shared) = shared {
         let snapshot: &RuntimeSnapshot = &shared.snapshot;
         for uid in snapshot.running_uids() {
             managed_running.push(uid.to_owned());
+            if let Some(pid) = snapshot.sessions[uid].pid {
+                managed_pids.insert(uid.to_owned(), vec![i64::from(pid)]);
+            }
             if let Some(at) = snapshot.sessions[uid].started_at {
                 managed_started.insert(uid.to_owned(), at);
             }
@@ -346,6 +351,11 @@ async fn assemble(
                         merged.started.insert(uid.clone(), at);
                     }
                 }
+                let mut owners = active.owned.clone();
+                for (uid, pids) in managed_pids {
+                    owners.entry(uid).or_default().extend(pids);
+                }
+                merged.working_uids = scan.tree.working_uids(&sessions, &owners, &live);
                 merged
             })
             .await
@@ -365,6 +375,7 @@ async fn assemble(
                 .remove("unavailable_reason");
             response["uids"] = json!(merged.uids);
             response["tmux_uids"] = json!(merged.tmux_uids);
+            response["working_uids"] = json!(merged.working_uids);
             response["started_at"] = json!(merged.started);
             if let Some(managed) = response["managed"].as_object_mut() {
                 managed.insert("external_detection".into(), json!("proc_scan"));

@@ -33,6 +33,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::process::ProcClock;
+mod activity;
 
 /// Cache seconds after a scan completes; the TTL starts when the
 /// scan finishes so a slow scan does not immediately expire its own result.

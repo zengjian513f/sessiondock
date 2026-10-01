@@ -468,6 +468,38 @@ def main(binary=BINARY):
                     cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                     assert cli["instance"] == {"running": True, "busy": False}, cli
 
+                    # BUG-20261001-133105-146ce9: detached work no longer
+                    # appears in the TUI or below its CLI, but carries the
+                    # native thread identity. It overrides a quiet screen for
+                    # both dots; a permanent code-mode helper does not.
+                    task_env = {"PATH": "/usr/bin:/bin", "CODEX_SESSION_ID": CODEX_SID,
+                                "CODEX_THREAD_ID": CODEX_SID}
+                    helper = subprocess.Popen(["/synthetic/codex-code-mode-host", "60"],
+                                              executable="/bin/sleep", env=task_env)
+                    try:
+                        page.evaluate("refreshLive(true)")
+                        expect(header).not_to_have_class(TURN)
+                        task = subprocess.Popen(["/bin/sleep", "60"], env=task_env, start_new_session=True)
+                        try:
+                            page.evaluate("refreshLive(true)")
+                            wait_busy(page, codex_uid, False)
+                            expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                            expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
+                            page.reload(wait_until="networkidle")
+                            page.wait_for_function("uid => S.sel === uid && S.live.has(uid)", arg=codex_uid)
+                            wait_busy(page, codex_uid, False)
+                            expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                        finally:
+                            task.terminate()
+                            task.wait(timeout=5)
+                        page.evaluate("refreshLive(true)")
+                        expect(header).not_to_have_class(TURN)
+                        expect(badge(codex_uid)).not_to_have_class(TURN)
+                    finally:
+                        helper.terminate()
+                        helper.wait(timeout=5)
+                    print("PASS quiet TUI with detached owned work and permanent helper isolation")
+
                     # BUG-20261001-082816-f14dc6: the turn is complete but
                     # Codex still owns a background terminal. Read the live
                     # footer through the host, CLI state and watch stream.

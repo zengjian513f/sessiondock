@@ -176,6 +176,7 @@ const S = {
   syncGap: 350,       // 当前会话的同步间隔, 随有无新内容自适应
   live: new Set(),    // 仍在运行的会话 uid
   liveTmux: new Set(),// 其中运行在 tmux 里的会话 uid
+  liveWorking: new Set(),// 有明确归属的后台命令进程仍在运行
   liveStarted: new Map(), // uid → 当前 CLI 主进程启动时间（Unix 秒）
   activeOnly: SessionDockCapabilities.allows('live') && store.get('activeOnly', false), // 未探测时不按空集合筛选
   compactTurns: store.get('compactTurns', true), // 已完成回合只保留过程合集与最终结论
@@ -2031,7 +2032,7 @@ function sessionTurn(uid) {
   const busy = entry?.cli?.instance?.busy;
   if (state !== 'waiting' && typeof busy === 'boolean') state = busy ? 'working' : 'idle';
   // 主回合结束但后台子代理或后台任务（Monitor、后台命令）还在跑：会话在等它们，仍算轮转中。
-  if (state !== 'waiting' && (row?.background > 0 || (row?.agent_items || []).some(item => agentRunning(uid, item)))) state = 'working';
+  if (state !== 'waiting' && (S.liveWorking.has(uid) || row?.background > 0 || (row?.agent_items || []).some(item => agentRunning(uid, item)))) state = 'working';
   return ['working', 'waiting'].includes(state) ? state : (state ? 'idle' : '');
 }
 const turnLabel = turn => ({working: ' · 正在处理', waiting: ' · 等待回答', idle: ' · 空闲'})[turn] || '';
@@ -2111,14 +2112,17 @@ async function refreshLive(force = false) {
   applyNodeState(d, 'live');
   const next = new Set(d.uids);
   const nextTmux = new Set((d.tmux_uids || []).filter(u => next.has(u)));
+  const nextWorking = new Set((d.working_uids || []).filter(u => next.has(u)));
   const nextStarted = new Map(Object.entries(d.started_at || {}).map(([u, t]) => [u, +t]));
   const setChanged = (a, b) => a.size !== b.size || [...a].some(u => !b.has(u));
   const mapChanged = (a, b) => a.size !== b.size
     || [...a].some(([u, t]) => b.get(u) !== t);
   const changed = setChanged(next, S.live) || setChanged(nextTmux, S.liveTmux)
+    || setChanged(nextWorking, S.liveWorking)
     || mapChanged(nextStarted, S.liveStarted);
   S.live = next;
   S.liveTmux = nextTmux;
+  S.liveWorking = nextWorking;
   S.liveStarted = nextStarted;
   trimCache();
   if (changed) {

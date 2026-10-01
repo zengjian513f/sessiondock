@@ -139,6 +139,14 @@ services on one machine.
 
 ## `/api/live` with the scan
 
+`working_uids` lists already-live sessions with attributed command processes;
+it does not add sessions to `uids` or authorize any process operation. A command
+may retain `CODEX_THREAD_ID` / `CODEX_SESSION_ID`, `CLAUDE_CODE_SESSION_ID` or
+`GROK_SESSION_ID` after detaching from its CLI. Known CLI ancestry takes
+precedence over inherited identity. Permanent code-mode and recognized MCP
+transport processes are excluded, while sleeping or I/O-bound commands count.
+See [CLI state](cli-state.md) for the display precedence and exclusions.
+
 ```json
 {
   "enabled": true, "known": true, "partial": false,
