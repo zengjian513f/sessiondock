@@ -35,7 +35,7 @@ def scoped(nid, uid):
 
 class Injector:
     """Adds one spawned child row per machine at the browser boundary: the fixture serves one
-    session per node, and nesting is decided by the page from `spawned_by` + `node_id`."""
+    session per node, and nesting is decided by the page from `nest_parent` + `node_id`."""
 
     def __init__(self):
         self.on = False
@@ -52,7 +52,7 @@ class Injector:
             if row.get("sid") != "same-native-id":
                 continue
             children.append({**row, "uid": scoped(row["node_id"], "claude:child-of-same"), "sid": "child-sid",
-                             "title": row["node_name"] + " child", "spawned_by": {"source": "claude", "sid": "same-native-id"}})
+                             "title": row["node_name"] + " child", "nest_parent": {"source": "claude", "sid": "same-native-id"}})
         data["sessions"].extend(children)
         data["sig"] = str(data.get("sig")) + "-nested"
         route.fulfill(status=response.status, headers={"content-type": "application/json"}, body=json.dumps(data))
@@ -216,7 +216,7 @@ def check_node_chip_issue(page):
 def check_nesting(page, injector):
     injector.on = True
     page.evaluate("loadSessions(true)")
-    page.wait_for_function("S.sessions.length === 6 && S.sessions.some(s => s.spawned_by)")
+    page.wait_for_function("S.sessions.length === 6 && S.sessions.some(s => s.nest_parent)")
     toggle = page.locator("#nest-toggle")
     assert toggle.is_visible()
     toggle.click()

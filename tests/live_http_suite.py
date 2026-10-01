@@ -3,7 +3,7 @@
 cache hit/force miss, bound free-shell running then exited; then the explicit
 `/proc` scan over a synthetic process tree: uids,
 tmux_uids (with the CLI barrier: a `grok -p` under a pane's
-claude is live but not managed), started_at, the scan cache and `spawned_by`
+claude is live but not managed), started_at, the scan cache and no automatic sidebar parents
 recording; finally continued-in pane inheritance against a real ptyhost pane
 whose synthetic subtree runs the continued session. No Chromium."""
 from __future__ import annotations
@@ -297,7 +297,7 @@ def write_tree(proc_root: Path, paths):
     proc.add(601, "bash", 600, "bash")
     proc.add(602, "claude", 601, f"claude --session-id {SID_F}", start_ticks=5_000)
     # H: headless grok -p spawned by F's tool shell inside F's pane. It is live and
-    # spawned_by F, but F's claude between it and the tmux server is a barrier:
+    # launched by F, but F's claude between it and the tmux server is a barrier:
     # the console is F's, H is not in tmux_uids.
     proc.add(603, "bash", 602, "bash /tmp/claude-1000/f/tool.sh",
              {"CLAUDE_CODE_SESSION_ID": SID_F, "CLAUDE_PID": "602"}, start_ticks=5_100)
@@ -359,28 +359,20 @@ def scan_case(binary: Path, root: Path):
         # The 10 s watch loop ticks at startup, so the three spawners may already be on disk (0) or
         # get written by this call (3); never a second time.
         if scan.get("enabled") is not True or stats.get("processes") != 14 or stats.get("matched") != 9 \
-                or cache.get("ttl_ms") != 3000 or scan.get("spawned_recorded") not in (0, 3):
+                or cache.get("ttl_ms") != 3000:
             fail("scan report", scan, raw)
         passed("GET /api/live scan: uids (cmdline/env/fd/orphan/cross-family), tmux_uids (CLI barrier), started_at, envelope")
         hit, raw = call(opener, base, "GET", "/api/live")
         if ((hit.get("scan") or {}).get("cache") or {}).get("hit") is not True:
             fail("scan cache hit", hit.get("scan"), raw)
         forced, raw = call(opener, base, "GET", "/api/live?force=1")
-        if ((forced.get("scan") or {}).get("cache") or {}).get("hit") is not False \
-                or (forced.get("scan") or {}).get("spawned_recorded") != 0:
+        if ((forced.get("scan") or {}).get("cache") or {}).get("hit") is not False:
             fail("scan force miss", forced.get("scan"), raw)
-        passed("GET /api/live scan cache hit, ?force=1 miss, spawners recorded once")
+        passed("GET /api/live scan cache hit, ?force=1 miss, no sidebar writes")
         by_uid, _, raw = rows_by_uid(opener, base)
-        want = {uids[SID_D]: {"source": "claude", "sid": SID_A}, uids[SID_E]: {"source": "claude", "sid": SID_A},
-                uids[SID_H]: {"source": "claude", "sid": SID_F}}
-        got = {uid: row.get("spawned_by") for uid, row in by_uid.items() if "spawned_by" in row}
-        if got != want:
-            fail("spawned_by rows", f"{got} want {want}", raw)
-        passed("/api/sessions rows carry spawned_by {source, sid} for the two grok -p and the child claude only")
-        disk = json.loads((state / "session-metadata.json").read_text())
-        if {uid: row.get("spawned_by") for uid, row in disk["sessions"].items()} != want:
-            fail("spawned_by disk", disk)
-        passed("session-metadata.json rows hold spawned_by (write once)")
+        assert all('spawned_by' not in row and 'nest_parent' not in row for row in by_uid.values())
+        assert not (state / "session-metadata.json").exists()
+        passed("process scans never write sidebar relations")
     # Everything exited: the relation survives, liveness does not.
     empty = root / "proc-empty"
     FakeProc(empty).add(1, "systemd", 0, "/sbin/init")
@@ -389,9 +381,8 @@ def scan_case(binary: Path, root: Path):
         if body.get("uids") != [] or body.get("started_at") != {} or body.get("tmux_uids") != []:
             fail("scan after exit", body, raw)
         by_uid, _, raw = rows_by_uid(opener, base)
-        if by_uid[uids[SID_E]].get("spawned_by") != {"source": "claude", "sid": SID_A}:
-            fail("spawned_by after restart", by_uid[uids[SID_E]].get("spawned_by"), raw)
-        passed("restart with an empty tree: uids [] but spawned_by persists")
+        assert all('spawned_by' not in row and 'nest_parent' not in row for row in by_uid.values())
+        passed("restart with an empty tree: no live or attached sessions")
     # Explicit Grok active file: a listed id is live without a pid.
     active = root / "active_sessions.json"
     active.write_text(json.dumps([{"session_id": SID_D, "pid": 99}]))

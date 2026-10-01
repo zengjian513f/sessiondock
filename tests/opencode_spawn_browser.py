@@ -102,11 +102,8 @@ def main():
                 raise AssertionError(f"mirrored OpenCode rows missing: {sorted(rows)}")
             get_json(opener, base, "/api/live?force=1")
             rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
-            got = {sid: rows[sid].get("spawned_by") for sid in sids}
-            assert got == {SPAWNED: {"source": "claude", "sid": P_SID}, CHILD: None, OLDER: None,
-                           MIXED: None}, got
-            saved = json.loads((state / "session-metadata.json").read_text())["sessions"]
-            assert saved[rows[SPAWNED]["uid"]]["spawned_by"] == {"source": "claude", "sid": P_SID}, saved
+            assert all('spawned_by' not in rows[sid] and 'nest_parent' not in rows[sid] for sid in sids), rows
+            assert not (state / "session-metadata.json").exists()
             spawned, parent = rows[SPAWNED]["uid"], uids[P_SID]
             with sync_playwright() as pw:
                 launch = {"headless": True}
@@ -123,8 +120,15 @@ def main():
                     page.goto(base)
                     item = page.locator(f'#side .item[data-uid="{spawned}"]')
                     expect(item).to_be_visible()
+                    if page.evaluate("uid => !!S.sessions.find(s => s.uid === uid)?.nest_parent", spawned):
+                        item.click(button="right")
+                        page.locator('#item-menu [data-act="detach"]').click()
+                    if not page.evaluate('S.nest'):
+                        page.locator("#nest-toggle").click()
                     expect(item).to_have_attribute("data-depth", "0")
-                    page.locator("#nest-toggle").click()
+                    item.click(button="right")
+                    page.locator('#item-menu [data-act="attach"]').click()
+                    page.locator(f'#side .item[data-uid="{parent}"]').click()
                     expect(item).to_have_attribute("data-depth", "1")
                     # The OpenCode row sits right under its Claude spawner.
                     order = page.evaluate("() => [...document.querySelectorAll('#side .item[data-uid]')]"
@@ -138,7 +142,7 @@ def main():
                     assert not errors, errors
                     context.close()
                 browser.close()
-    print("PASS opencode spawn: `opencode run` from a Claude tool shell nests under Claude; subagent child, "
+    print("PASS opencode spawn: `opencode run` from a Claude tool shell stays independent until explicitly attached; subagent child, "
           "older session and an ambiguous directory stay roots; Chromium nesting/open, desktop + 390px")
 
 

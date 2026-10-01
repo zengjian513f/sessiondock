@@ -154,29 +154,9 @@ pub(super) struct Row {
     /// Files published by the write service and recorded for this session.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
-    /// The session that started this one, written once from the process tree
-    /// while both were alive; never rewritten.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    spawned_by: Option<SpawnedBy>,
-    /// Historical inference disproved by native creation order; never displayed.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    invalid_spawned_by: Option<SpawnedBy>,
-    /// Manual sidebar parent (`{source, sid}`), overriding `spawned_by`.
+    /// User-selected sidebar parent (`{source, sid}`).
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<NestParent>,
-    /// Ignore `spawned_by` in the sidebar tree and show this session as a root.
-    #[serde(skip_serializing_if = "no")]
-    nest_independent: bool,
-}
-
-/// The spawner's source and
-/// native session id. The spawner row may be gone; this is not a UID.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpawnedBy {
-    pub source: String,
-    pub sid: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_id: Option<String>,
 }
 
 /// Manual display parent; an absent node keeps the historical local meaning.
@@ -292,12 +272,6 @@ fn validate_attachment(attachment: &Attachment) -> Result<(), MetadataError> {
     if let Some(agent) = &attachment.agent {
         field(agent)?
     }
-    Ok(())
-}
-
-fn validate_spawned_by(parent: &SpawnedBy) -> Result<(), MetadataError> {
-    field(&parent.source)?;
-    field(&parent.sid)?;
     Ok(())
 }
 
@@ -510,87 +484,17 @@ impl MetadataSnapshot {
             .map_or(&[], |row| row.attachments.as_slice())
     }
 
-    pub fn spawned_by(&self, uid: &str) -> Option<&SpawnedBy> {
-        self.document.sessions.get(uid)?.spawned_by.as_ref()
-    }
-
-    /// Sessions whose spawner is already recorded.
-    pub fn spawned_uids(&self) -> BTreeSet<String> {
-        self.document
-            .sessions
-            .iter()
-            .filter(|(_, row)| row.spawned_by.is_some())
-            .map(|(uid, _)| uid.clone())
-            .collect()
-    }
-
-    /// A session is spawned once; the first
-    /// observed relation is kept for good and a later, different clue is
-    /// ignored. Entries with an empty uid, source or sid are skipped.
-    /// Existing parent relationships remain unchanged.
-    pub fn with_spawn_parents(&self, found: &[(String, SpawnedBy)]) -> Result<Self, MetadataError> {
-        self.change(|rows| {
-            for (uid, parent) in found {
-                let uid = uid.trim();
-                let parent = SpawnedBy {
-                    node_id: parent.node_id.clone(),
-                    source: parent.source.trim().to_owned(),
-                    sid: parent.sid.trim().to_owned(),
-                };
-                if uid.is_empty() || parent.source.is_empty() || parent.sid.is_empty() {
-                    continue;
-                }
-                validate_uid(uid)?;
-                validate_spawned_by(&parent)?;
-                let row = rows.entry(uid.to_owned()).or_default();
-                if row.spawned_by.is_none() {
-                    row.spawned_by = Some(parent);
-                }
-            }
-            Ok(())
-        })
-    }
-
-    pub fn without_invalid_spawn_parents(
-        &self,
-        invalid: &[(String, SpawnedBy)],
-    ) -> Result<Self, MetadataError> {
-        self.change(|rows| {
-            for (uid, expected) in invalid {
-                if let Some(row) = rows.get_mut(uid)
-                    && row.spawned_by.as_ref() == Some(expected)
-                {
-                    row.invalid_spawned_by = row.spawned_by.take();
-                }
-            }
-            Ok(())
-        })
-    }
-
     pub fn nest_parent(&self, uid: &str) -> Option<&NestParent> {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
 
-    pub fn nest_independent(&self, uid: &str) -> bool {
-        self.document
-            .sessions
-            .get(uid)
-            .is_some_and(|row| row.nest_independent)
-    }
-
-    /// Sidebar nesting override. `independent` clears a manual parent and
-    /// hides `spawned_by`; otherwise `parent` replaces the manual parent
-    /// (`None` restores `spawned_by`).
     pub fn with_nest_display(
         &self,
         uid: &str,
         parent: Option<NestParent>,
-        independent: bool,
     ) -> Result<Self, MetadataError> {
         validate_uid(uid)?;
-        let parent = if independent {
-            None
-        } else if let Some(parent) = parent {
+        let parent = if let Some(parent) = parent {
             let parent = NestParent {
                 node_id: parent.node_id,
                 source: parent.source.trim().to_owned(),
@@ -604,7 +508,6 @@ impl MetadataSnapshot {
         };
         self.change(|rows| {
             let row = rows.entry(uid.to_owned()).or_default();
-            row.nest_independent = independent;
             row.nest_parent = parent;
             Ok(())
         })
@@ -812,14 +715,8 @@ impl MetadataSnapshot {
         {
             object.insert("group".into(), json!(group));
         }
-        if let Some(parent) = saved.and_then(|row| row.spawned_by.as_ref()) {
-            object.insert("spawned_by".into(), json!(parent));
-        }
         if let Some(parent) = saved.and_then(|row| row.nest_parent.as_ref()) {
             object.insert("nest_parent".into(), json!(parent));
-        }
-        if saved.is_some_and(|row| row.nest_independent) {
-            object.insert("nest_independent".into(), json!(true));
         }
         if parents.contains(&uid) {
             object.insert("fork_parent".into(), json!(true));

@@ -89,13 +89,14 @@ def main():
                     if restart:
                         action(child, 'detach')
                         depth(child, 0)
-                        action(child, 'reattach')
-                        page.wait_for_function('uid => !S.sessions.find(s => s.uid === uid).nest_independent', arg=child)
+                        action(child, 'attach')
+                        page.locator(f'#side .item[data-uid="{parent}"]').click()
+                        page.wait_for_function('uid => !!S.sessions.find(s => s.uid === uid).nest_parent', arg=child)
                         depth(child, 1)
                         action(child, 'attach')
                         page.locator(f'#side .item[data-uid="{twin}"]').click()
                         depth(child, 1)
-                        page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "same"', arg=child)
+                        page.wait_for_function('uid => S.sessions.find(s => s.uid === uid).nest_parent?.sid === "same" && !S.sessions.find(s => s.uid === uid).nest_parent?.node_id', arg=child)
                         assert 'node_id' not in page.evaluate('uid => S.sessions.find(s => s.uid === uid).nest_parent', child)
                     print('PASS cross-node nest: ' + ('node/hub restart, detach, restore, local reattach' if restart else 'click attach, same-SID isolation, cycle, trusted descriptor'), flush=True)
         finally:

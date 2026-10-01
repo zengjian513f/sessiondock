@@ -2,7 +2,7 @@
 """Sidebar nesting: subagents and spawned sessions indent under their spawner.
 
 Isolated Rust server over a synthetic corpus, Playwright Chromium, desktop and 390 px. Every field the
-tree reads is published by this backend from the corpus itself: ``spawned_by`` is seeded into
+tree reads is published by this backend from the corpus itself: legacy ``spawned_by`` is migrated into ``nest_parent`` from
 session-metadata.json (the record the process scan writes once), ``agent_items[].active`` is the
 sidecar's open turn, and ``continued_in`` is the tail ``continued-in`` record. Mid-test
 list changes are made on disk and reach the page through a forced rescan plus the page's own sig
@@ -96,7 +96,9 @@ def corpus(root: Path) -> Corpus:
     state.chmod(0o700)
     document = state / "session-metadata.json"
     document.write_text(json.dumps({"schema_version": 1, "revision": 1, "sessions": {
-        uid[sid]: {"spawned_by": parent} for sid, parent in SPAWNED.items()}}) + "\n")
+        **{uid[sid]: {"spawned_by": parent} for sid, parent in SPAWNED.items()},
+        data.uid("nest-alone-e"): {"spawned_by": {"source": "claude", "sid": "nest-root-a"}, "nest_independent": True},
+        uid["nest-orphan-d"]: {"spawned_by": {"source": "claude", "sid": "nest-root-a"}, "nest_parent": SPAWNED["nest-orphan-d"]}}}) + "\n")
     document.chmod(0o600)
     return data
 
@@ -129,7 +131,7 @@ def open_item_menu(page, uid):
       disabled: b.getAttribute('aria-disabled') === 'true',
       color: getComputedStyle(b).color,
     }))""")
-    assert [a['act'] for a in actions] == ['stop', 'hide', 'detach', 'reattach', 'attach', 'delete', 'clone', 'group', 'pick'], actions
+    assert [a['act'] for a in actions] == ['stop', 'hide', 'detach', 'attach', 'delete', 'clone', 'group', 'pick'], actions
     assert all(a['visible'] for a in actions), actions
     muted = page.locator('#item-menu').evaluate("m => getComputedStyle(m).getPropertyValue('--muted').trim()")
     expected_color = page.evaluate("color => { const b = document.createElement('b'); b.style.color = color; document.body.append(b); const result = getComputedStyle(b).color; b.remove(); return result; }", muted)
@@ -382,7 +384,7 @@ def check_page(page, uid, data, server, width):
     new_uid, old_uid = uid["new"], data.uid("nest-old")
     poll(page, server, 'S.sessions.length === 7 && S.sessions.some(s => s.continued_in)')
     assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).continued_in", old_uid) == new_uid
-    assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).spawned_by", new_uid) == SPAWNED["nest-new"]
+    assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).nest_parent", new_uid) == SPAWNED["nest-new"]
     continued = rows()
     listed = [r["uid"] for r in continued if not r["agent"]]
     assert new_uid in listed and old_uid not in listed, listed
@@ -398,19 +400,22 @@ def check_page(page, uid, data, server, width):
     to_list(page)
     open_item_menu(page, E)
     page.locator('#item-menu [data-act="detach"]').click()
-    page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_independent", arg=E)
+    page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=E)
     for sid in ("nest-old", "nest-new"):
         data.paths.pop(sid).unlink()
     poll(page, server, "S.sessions.length === 5")
     to_list(page)
 
-    # Right-click: detach B from A, restore spawned_by nesting, attach E under A, cancel attach.
+    # Right-click: detach B from A, manually attach it again, attach E under A, cancel attach.
     open_item_menu(page, B)
     page.locator('#item-menu [data-act="detach"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=B)
     assert session_depth(page, C) == 1
+    poll(page, server, "S.sessions.every(s => !('spawned_by' in s) && !('nest_independent' in s))")
+    assert session_depth(page, B) == 0
     open_item_menu(page, B)
-    page.locator('#item-menu [data-act="reattach"]').click()
+    page.locator('#item-menu [data-act="attach"]').click()
+    page.locator(f'#side .item[data-uid="{A}"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 1; }", arg=B)
     assert session_depth(page, C) == 2
     open_item_menu(page, E)
@@ -428,7 +433,16 @@ def check_page(page, uid, data, server, width):
     page.locator('#item-menu [data-act="detach"]').click()
     page.wait_for_function("uid => { const n = document.querySelector(`#side .item[data-uid=\"${uid}\"]`); return n && +n.dataset.depth === 0; }", arg=E)
 
-    # Off again: spawned sessions return to roots; the subagent rows stay under A.
+    # A missing or filtered parent must not prevent clearing the saved attachment.
+    open_item_menu(page, D)
+    if page.evaluate("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", D):
+        page.locator('#item-menu [data-act="detach"]').click()
+        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=D)
+    else:
+        assert page.locator('#item-menu [data-act="detach"]').get_attribute('aria-disabled') == 'true'
+        page.keyboard.press('Escape')
+
+    # Off again: attached sessions return to roots; the subagent rows stay under A.
     page.locator("#nest-toggle").click()
     back = rows()
     assert [(r["uid"], r["agent"], r["depth"]) for r in back] == [
@@ -489,25 +503,44 @@ def check_hidden_spawner(browser, binary, root, width):
         to_list(page)
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="detach"]').click()
-        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_independent", arg=worker)
+        page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).nest_parent == null", arg=worker)
         assert session_depth(page, worker) == 0
         open_item_menu(page, worker)
-        page.locator('#item-menu [data-act="reattach"]').click()
-        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_independent", arg=worker)
+        page.locator('#item-menu [data-act="attach"]').click()
+        page.locator(f'#side .item[data-uid="{leaf}"]').click()
+        page.wait_for_function("uid => !!S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
         assert session_depth(page, worker) == 1
-        # Showing the historical parent restores its own subtree, without rewriting spawn metadata.
+        # An explicit attachment to the successor stays there when the old parent is shown.
         page.locator(f'#side .item[data-uid="{leaf}"]').click()
         opened(page, leaf)
         page.locator("#a-fork-chain").click()
         page.locator(f'#fork-chain-menu .chain-row[data-uid="{parent}"] .chain-toggle').click()
         page.wait_for_function("uid => S.sessions.find(s => s.uid === uid).fork_parent_visible", arg=parent)
         to_list(page)
-        assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [parent, worker])
-        assert not page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
+        assert not page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [parent, worker])
+        assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
         # Filtering an ordinary visible parent must still leave a root; node/source identity is scoped.
-        assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", parent) == 0
-        assert json.loads(document.read_text())["sessions"][worker] == {"spawned_by": relation}
+        assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", leaf) == 0
+        assert json.loads(document.read_text())["sessions"][worker] == {"nest_parent": {"source": "codex", "sid": "rewind-two"}}
+        open_item_menu(page, worker)
+        page.locator('#item-menu [data-act="detach"]').click()
+        page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
+        page.reload(wait_until="networkidle")
+        page.wait_for_function("S.sessions.length === 4")
+        assert session_depth(page, worker) == 0
         assert not errors, errors
+        context.close()
+    # A server restart must not restore a relation from an old startup record.
+    with isolated_server(data, binary, state_dir=state) as (base, opener):
+        rows = get_json(opener, base, "/api/sessions")["sessions"]
+        row = next(r for r in rows if r['uid'] == worker)
+        assert all(key not in row for key in ('nest_parent', 'spawned_by', 'nest_independent')), row
+        context = browser.new_context(viewport={"width": width, "height": 900}, service_workers="block")
+        page = context.new_page()
+        page.goto(base, wait_until="networkidle")
+        page.wait_for_function("S.sessions.length === 4")
+        page.locator('#nest-toggle').click()
+        assert session_depth(page, worker) == 0
         context.close()
 
 
@@ -525,8 +558,9 @@ def main():
             uid = {"a": listed["nest-root-a"]["uid"], "b": listed["nest-child-b"]["uid"],
                    "c": listed["nest-grandchild-c"]["uid"], "d": listed["nest-orphan-d"]["uid"],
                    "e": listed["nest-alone-e"]["uid"], "new": data.uid("nest-new")}
+            assert all('spawned_by' not in r and 'nest_independent' not in r for r in listed.values()), listed
             # The backend publishes the fields the tree is built from.
-            assert {sid: row.get("spawned_by") for sid, row in listed.items() if row.get("spawned_by")} == {
+            assert {sid: row.get("nest_parent") for sid, row in listed.items() if row.get("nest_parent")} == {
                 sid: parent for sid, parent in SPAWNED.items() if sid != "nest-new"}, listed
             assert {a["id"]: a["active"] for a in listed["nest-root-a"]["agent_items"]} == {"x": True, "y": False}, listed
             launch = {"headless": True}
@@ -554,8 +588,8 @@ def main():
                     check_hidden_spawner(browser, args.binary, root / f"rewind-{width}", width)
             finally:
                 browser.close()
-    print("PASS nest tree browser: tree/order/carets/marks from the backend's spawned_by, active and continued_in, "
-          "hidden continued-in parent, hidden rewind spawner, in-place refresh, detach/restore/attach, desktop + 390px", flush=True)
+    print("PASS nest tree browser: tree/order/carets/marks from the backend's nest_parent, active and continued_in, "
+          "hidden continued-in parent, hidden rewind spawner, in-place refresh, detach/reload/restart/attach, desktop + 390px", flush=True)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# External CLI liveness: the `/proc` scan and `spawned_by`
+# External CLI liveness: the `/proc` scan
 
 The process scan sits next to the managed
 host observations ([processes.md](processes.md)). On platforms with
@@ -87,7 +87,7 @@ that inherited a pane through `continued_in` (below).
   (`claude`/`codex`/`grok` argv0). A `grok -p` or `codex exec` spawned by a
   pane's Claude sits in that pane's process tree, but the console is the
   Claude's: the grandchild session is live (its own signals) and
-  `spawned_by` the Claude, and it is not in `tmux_uids`. A CLI's own tool
+  it is not in `tmux_uids`. A CLI's own tool
   shell (`bash tool.sh` under it) still walks through the CLI, because the
   CLI is the start's parent, not an intermediate.
 - **Continued-in inheritance** (`server._pane_for_session` /
@@ -238,45 +238,11 @@ while such receipts exist.
 
 ## `spawned_by`
 
-`runtime/spawn.rs` ports `live.spawn_parents`: for every live session's CLI
-main process the ancestor chain (16 levels including the process itself) is
-walked. A level names a spawner when it is another listed session's owned
-main process, when its environment carries another listed session's
-`CLAUDE_CODE_SESSION_ID` / `CODEX_THREAD_ID` / `CODEX_SESSION_ID` /
-`GROK_SESSION_ID` (`SPAWN_ENV`, lowercase sid lookup by `(source, sid)`), or
-when `CLAUDE_PID` names another session's owned pid. A `tmux*` server ends
-the walk (its environment belongs to nobody). Among several candidates the one
-with the latest `created` wins (a child is born after its parent). Candidates
-are memoised per scan snapshot.
-
-OpenCode names no session on its command line and holds no per-session file
-(`opencode run` from a tool shell creates its session inside one shared
-database), so its sessions are never owned by a process. Instead the scan
-notes every process whose argv0 is `opencode` with its `cwd` and start time,
-and a top-level OpenCode session (no `parent_id` in its mirrored
-`summary.json`) is paired with the OpenCode processes that were running in its
-directory by its birth (1 s slack). The chain of each such process is walked
-as above; all of them must resolve to the same spawner, otherwise (a user's
-own OpenCode there, or two spawners) the row stays a root. An OpenCode
-subagent child stays with its OpenCode parent. The relation is recorded while
-the process lives, like any other.
-
-Candidates newer than the child's native creation time are excluded before
-choosing a parent. A process launch/resume relationship does not establish that
-it created an already-existing session. Each scan also repairs persisted
-relationships disproved by the same native chronology, retaining the old value
-as `invalid_spawned_by` ([metadata.md](metadata.md#spawned_by)). This corrects
-historical inference rather than hiding incorrect nesting in the browser.
-
-The relation is visible only while both processes exist, so it is persisted
-immediately: every `/api/live` records it, and a background task ticks every
-10 s because headless fan-outs live and die while
-no page is open. Both run only when the scan and `SESSIONDOCK_STATE_DIR` are
-configured. The metadata row key is `spawned_by: {source, sid}`, written once
-and never rewritten ([metadata.md](metadata.md#spawned_by)); rows of
-`/api/sessions` carry it verbatim. `tests/meta_import.py` converts the
-key as-is (the spawner may no longer exist). The native-chronology repair above
-is the sole exception to write-once discovery.
+Process launch ancestry is diagnostic evidence, not sidebar attachment. Process scans
+and collector reports never write `spawned_by` or infer a `nest_parent`. The persistent
+spawner watcher has been removed. Existing metadata is migrated to the single
+`nest_parent` field as described in [metadata](metadata.md#spawned_by).
+Native subagent relationships remain supplied by the CLI history.
 
 ### SSH boundary
 
@@ -307,12 +273,12 @@ service (the launcher `env_clear`s).
 
 - `python3 tests/live_http_suite.py --binary … [--ptyhost …]` — scan over a
   synthetic tree: uids/tmux_uids/started_at, envelope, cache hit and force
-  miss, `spawned_by` on the rows and on disk, persistence across restart with
+  miss, no inferred sidebar parents, persistence across restart with
   an empty tree, `SESSIONDOCK_GROK_ACTIVE`, a `grok -p` under a tmux pane's
-  claude (live, `spawned_by` the claude, not in `tmux_uids`); with ptyhost
+  claude (live, not in `tmux_uids`); with ptyhost
   built, a real pane resuming the origin whose synthetic subtree runs the
   continued session and a `grok -p`: `tmux_uids` = origin + continued only.
-- `python3 tests/metadata_suite.py` (seeded `spawned_by` row),
+- `python3 tests/metadata_suite.py` (seeded `nest_parent` row),
   `python3 tests/check_config_suite.py` (the three variables) and
   `python3 tests/spawned_by_suite.py` (six-session tree with a `node` CLI,
   a companion Codex, a headless Grok holding `events.jsonl` under the Grok

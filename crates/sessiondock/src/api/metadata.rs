@@ -69,7 +69,7 @@ pub struct VisibilityRequest {
 }
 
 /// `parent_uid` attaches this session under another listed session;
-/// `independent` shows it as a root and ignores `spawned_by`.
+/// A null/absent `parent_uid` clears the sidebar parent.
 #[derive(Deserialize)]
 pub struct NestRequest {
     uid: String,
@@ -77,8 +77,6 @@ pub struct NestRequest {
     parent_uid: Option<String>,
     #[serde(default)]
     remote_parent: Option<NestParent>,
-    #[serde(default)]
-    independent: bool,
     #[serde(flatten)]
     diagnostics: Diagnostics,
 }
@@ -293,20 +291,14 @@ fn lookup_nest_parent(rows: &[Value], child_uid: &str, source: &str, sid: &str) 
 }
 
 fn display_parent_uid(uid: &str, rows: &[Value], snapshot: &MetadataSnapshot) -> Option<String> {
-    if snapshot.nest_independent(uid) {
-        return None;
-    }
     if let Some(parent) = snapshot.nest_parent(uid) {
         if parent.node_id.is_some() {
             return None;
         }
         return lookup_nest_parent(rows, uid, &parent.source, &parent.sid);
     }
-    let spawned = snapshot.spawned_by(uid)?;
-    if spawned.node_id.is_some() {
-        return None;
-    }
-    lookup_nest_parent(rows, uid, &spawned.source, &spawned.sid)
+
+    None
 }
 
 fn nest_would_cycle(
@@ -355,13 +347,6 @@ pub async fn nest(
             StatusCode::FORBIDDEN,
             "nest_remote_hub",
             "跨机器附属需要通过 Hub 验证",
-        ));
-    }
-    if body.independent && (parent_uid.is_some() || body.remote_parent.is_some()) {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "nest_conflict",
-            "独立显示时不能同时指定父会话",
         ));
     }
     write(state, move |store| {
@@ -437,13 +422,12 @@ pub async fn nest(
         } else {
             None
         };
-        let snapshot = metadata.set_nest_display(&body.uid, parent, body.independent)?;
+        let snapshot = metadata.set_nest_display(&body.uid, parent)?;
         let nest_parent = snapshot.nest_parent(&body.uid).map(|parent| json!(parent));
         Ok(json!({
             "ok": true,
             "uid": body.uid,
             "nest_parent": nest_parent,
-            "nest_independent": snapshot.nest_independent(&body.uid),
             "metadata_revision": snapshot.revision(),
         }))
     })
