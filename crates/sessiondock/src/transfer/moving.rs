@@ -352,6 +352,21 @@ impl TransferService {
                 }
             }
         }
+        // New sidebar children can appear after publication, including while
+        // resuming a partially retired operation. Never leave them orphaned.
+        for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
+            if !uids.contains(row["uid"].as_str().unwrap_or("")) {
+                let parent = &row["nest_parent"];
+                if parent["node_id"].is_null()
+                    && references(
+                        parent["source"].as_str().unwrap_or(""),
+                        parent["sid"].as_str().unwrap_or(""),
+                    )
+                {
+                    return Err(changed());
+                }
+            }
+        }
         Ok(())
     }
     pub fn retire_source(&self, id: &str, trash: &Path) -> Result<Operation, TransferError> {

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import time
 
@@ -26,7 +27,7 @@ def main():
         root = Path(tmp)
         corpus = Corpus(root)
         children = [f'exec-worker-{i}' for i in range(6)]
-        for sid in ['parent', 'other', 'resumed', 'standalone', 'cycle-parent', 'cycle-child', *children]:
+        for sid in ['parent', 'other', 'resumed', 'standalone', 'cycle-parent', 'cycle-child', 'imported-detached', 'imported-attached', *children]:
             created = 101 if sid in ('parent', 'cycle-parent') else 150 if sid in ('other', 'resumed') else 401
             corpus.put(sid, 'codex', [
                 codex_row('session_meta', {'id': sid, 'session_id': sid, 'cwd': '/synthetic/work',
@@ -46,6 +47,10 @@ def main():
             fixture.START[pid] = 40_000
             proc_pid(proc, pid, 'codex', ['codex', 'exec'], 200,
                      env=inherited, fds={3: corpus.paths[sid]})
+        for pid, sid in [(950, 'imported-detached'), (951, 'imported-attached')]:
+            fixture.START[pid] = 40_000
+            proc_pid(proc, pid, 'codex', ['codex', 'exec'], 200,
+                     env=inherited, fds={3: corpus.paths[sid]})
         proc_pid(proc, 400, 'codex', ['codex', 'exec', 'resume', 'resumed'], 200,
                  env=inherited, fds={3: corpus.paths['resumed']})
         proc_pid(proc, 500, 'codex', ['codex', 'exec'], 1, fds={3: corpus.paths['standalone']})
@@ -55,8 +60,16 @@ def main():
                  env=[('CODEX_THREAD_ID', 'cycle-parent')], fds={3: corpus.paths['cycle-child']})
         state = root / 'state' 
         state.mkdir(mode=0o700)
-        (state / 'session-metadata.json').write_text(json.dumps({'schema_version': 1, 'revision': 1,
-            'sessions': {corpus.uid('cycle-parent'): {'nest_parent': {'source': 'codex', 'sid': 'cycle-child'}}}}))
+        legacy = root / 'legacy/session-meta.json'
+        legacy.parent.mkdir()
+        legacy.write_text(json.dumps({'version': 1, 'sessions': {
+            corpus.uid('cycle-parent'): {'nest_parent': {'source': 'codex', 'sid': 'cycle-child'}},
+            corpus.uid('imported-detached'): {'spawned_by': {'source': 'codex', 'sid': 'parent'}, 'nest_independent': True},
+            corpus.uid('imported-attached'): {'spawned_by': {'source': 'codex', 'sid': 'parent'}, 'nest_parent': {'source': 'codex', 'sid': 'other'}},
+        }}))
+        subprocess.run(['python3', str(Path(__file__).with_name('meta_import.py')),
+                        '--python-meta', str(legacy), '--out-dir', str(state), '--no-debug-runs'],
+                       check=True, capture_output=True, timeout=20)
         env = {'SESSIONDOCK_PROC_ROOT': proc, 'SESSIONDOCK_STATE_DIR': state,
                'SESSIONDOCK_GROK_ACTIVE': root / 'absent'}
         browser = pw.chromium.launch(headless=True)
@@ -74,6 +87,8 @@ def main():
                 assert 'nest_parent' not in rows['resumed'], 'resuming an existing session is not birth'
                 assert 'nest_parent' not in rows['cycle-child'], 'automatic attachment created a manual-parent cycle'
                 assert 'nest_parent' not in rows['standalone'], 'same cwd is not launch evidence'
+                assert 'nest_parent' not in rows['imported-detached'], 'import lost the detach decision'
+                assert rows['imported-attached']['nest_parent']['sid'] == 'other', 'import lost the explicit parent'
                 assert all('spawned_by' not in r and 'nest_initialized' not in r for r in rows.values())
                 context = browser.new_context(viewport={'width': 1280, 'height': 900})
                 page = context.new_page()
@@ -83,6 +98,10 @@ def main():
                     page.locator('#nest-toggle').click()
                 def item(sid):
                     return page.locator(f'#side .item[data-uid="{corpus.uid(sid)}"]')
+                expect(item('imported-detached')).to_have_attribute('data-depth', '0')
+                expect(item('imported-attached')).to_have_attribute('data-depth', '1')
+                item('imported-detached').click()
+                expect(page.locator('#msgs')).to_contain_text('Inspect imported-detached')
                 for sid in children[2:]:
                     expect(item(sid)).to_have_attribute('data-depth', '1')
                 item(children[2]).click()
