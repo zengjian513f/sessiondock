@@ -5,7 +5,7 @@
 use process_links::Process;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
     sync::{
         Arc,
@@ -36,6 +36,8 @@ pub struct IoSample {
     pub generation: u64,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
     Ready,
     /// Completed aggregation interval, including an empty interval. generation
@@ -47,254 +49,138 @@ pub enum Event {
     Failed,
 }
 
-#[derive(Clone, Copy)]
-#[repr(usize)]
-enum LossKind {
-    InvalidJson,
-    MapParse,
-    UnknownStdout,
-    TickDelay,
-    GenerationMismatch,
-    LateSample,
-    QueueFull,
-    Stderr,
-    ReadError,
-    MapCapacity,
+#[path = "io_bpf.rs"]
+mod bpf;
+
+#[derive(Serialize, Deserialize)]
+struct Message {
+    event: Event,
+    lost: u64,
 }
 
-struct Losses {
-    total: Arc<AtomicU64>,
-    counts: [AtomicU64; 10],
-}
-
-impl Losses {
-    fn record(&self, kind: LossKind) {
-        self.total.fetch_add(1, Ordering::Relaxed);
-        if self.counts[kind as usize].fetch_add(1, Ordering::Relaxed) == 0 {
-            let name = [
-                "invalid_json",
-                "map_parse",
-                "unknown_stdout",
-                "tick_delay",
-                "generation_mismatch",
-                "late_sample",
-                "queue_full",
-                "stderr",
-                "read_error",
-                "map_capacity",
-            ][kind as usize];
-            // One bounded diagnostic per category; never log tracer payloads.
-            eprintln!("I/O collector loss: {name} (first occurrence)");
-        }
-    }
-}
-
-fn samples(value: &serde_json::Value, ticks: u64) -> Option<Vec<IoSample>> {
-    let maps = value.get("data")?.as_object()?;
-    let value = maps.get("@a").or_else(|| maps.get("@b"))?;
-    // Some bpftrace versions represent an empty map as an empty array.
-    if value.as_array().is_some_and(Vec::is_empty) {
-        return Some(Vec::new());
-    }
-    let map = value.as_object()?;
-    let mut out = Vec::with_capacity(map.len());
-    for (key, value) in map {
-        let fields = key
-            .split(',')
-            .map(str::trim)
-            .map(str::parse::<u64>)
-            .collect::<Result<Vec<_>, _>>()
-            .ok()?;
-        if fields.len() != 5 {
-            return None;
-        }
-        let kind = match fields[2] {
-            0 => IoKind::TcpSend,
-            1 => IoKind::TcpReceive,
-            2 => IoKind::LocalRead,
-            3 => IoKind::LocalWrite,
-            4 => IoKind::NfsRead,
-            5 => IoKind::NfsWrite,
-            _ => return None,
-        };
-        out.push(IoSample {
-            process: Process {
-                pid: u32::try_from(fields[0]).ok()?,
-                start: (fields[1] as u128 * ticks as u128 / 1_000_000_000) as u64,
-            },
-            device: fields[3],
-            generation: fields[4],
-            kind,
-            bytes: value.as_u64()?,
-        });
-    }
-    Some(out)
-}
-
-/// Caller owns the returned child and must terminate/reap it during shutdown.
-/// `lost` includes stderr/helper errors, malformed data, channel overflow and
-/// late generations. If nonzero, expose accounting as degraded, not exact.
-/// Use a bounded receiver and keep it drained; the inactive BPF map is reused
-/// after two seconds, so sustained tracer/userspace stalls can lose data.
+/// Each demand creates one isolated helper. Its alarm starts before libbpf
+/// loading, independently of the API/sampler. Killing/reaping this child closes
+/// every unpinned BPF FD. No compiler or bpftrace is invoked at runtime.
 pub fn start(uid: u32, sender: SyncSender<Event>, lost: Arc<AtomicU64>) -> std::io::Result<Child> {
-    let script = include_str!("io.bt").replace("TARGET_UID", &uid.to_string());
-    let mut child = Command::new("/usr/bin/bpftrace")
-        // -k reports harmless delete-of-absent-key ENOENT as helper_error.
-        // Cleanup probes issue these routinely; reporting them can flood stdout
-        // and starve the actual samples. Keep normal tracer loss diagnostics.
-        .args(["-q", "-f", "json", "-B", "line", "-e", &script])
-        .env("BPFTRACE_MAX_MAP_KEYS", "4096")
+    let mut child = Command::new(std::env::current_exe()?)
+        .args(["--io-probe-helper", &uid.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
-    let losses = Arc::new(Losses {
-        total: lost,
-        counts: std::array::from_fn(|_| AtomicU64::new(0)),
-    });
-    let errors = losses.clone();
+    let errors = lost.clone();
     std::thread::spawn(move || {
+        let mut logged = false;
         for line in BufReader::new(stderr).lines() {
-            match line {
-                Ok(line) if !line.trim().is_empty() => errors.record(LossKind::Stderr),
-                Ok(_) => {}
-                Err(_) => {
-                    errors.record(LossKind::ReadError);
-                    break;
+            if !matches!(line, Ok(ref line) if line.trim().is_empty()) {
+                // libbpf diagnostics imply incomplete coverage; don't relay raw
+                // kernel payloads or unbounded repeated diagnostics.
+                errors.fetch_add(1, Ordering::Relaxed);
+                if !logged {
+                    if let Ok(ref line) = line {
+                        eprintln!("I/O helper: {}", line.chars().take(400).collect::<String>());
+                    }
+                    logged = true;
                 }
             }
         }
     });
-    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as u64;
     std::thread::spawn(move || {
-        let mut pending = Vec::new();
-        let mut next = 0;
-        let mut last_tick = std::time::Instant::now();
-        let send = |event| match sender.try_send(event) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_)) => {
-                losses.record(LossKind::QueueFull);
-                true
-            }
-            Err(TrySendError::Disconnected(_)) => false,
-        };
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match reader.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(_) => {
-                    losses.record(LossKind::ReadError);
-                    break;
-                }
-            }
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-                losses.record(LossKind::InvalidJson);
+        for line in BufReader::new(stdout).lines() {
+            let message = line
+                .ok()
+                .and_then(|line| serde_json::from_str::<Message>(&line).ok());
+            let Some(message) = message else {
+                lost.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
-            match value.get("type").and_then(|v| v.as_str()) {
-                Some("map") => match samples(&value, ticks) {
-                    Some(rows) => {
-                        if rows.len() >= 4096 {
-                            losses.record(LossKind::MapCapacity);
-                        }
-                        pending.extend(rows);
-                    }
-                    None => {
-                        losses.record(LossKind::MapParse);
-                    }
-                },
-                Some("printf") => {
-                    let data = value
-                        .get("data")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    if data == "READY" {
-                        last_tick = std::time::Instant::now();
-                        if !send(Event::Ready) {
-                            return;
-                        }
-                    } else if let Some(generation) = data
-                        .strip_prefix("TICK ")
-                        .and_then(|v| v.parse::<u64>().ok())
-                        .and_then(|v| v.checked_sub(1))
-                    {
-                        if last_tick.elapsed().as_secs_f64() > 3.0 {
-                            losses.record(LossKind::TickDelay);
-                        }
-                        last_tick = std::time::Instant::now();
-                        if generation != next {
-                            losses.record(LossKind::GenerationMismatch);
-                        }
-                        next = generation + 1;
-                        pending.retain(|sample| {
-                            if sample.generation == generation {
-                                true
-                            } else {
-                                losses.record(LossKind::LateSample);
-                                false
-                            }
-                        });
-                        if !send(Event::Batch {
-                            generation,
-                            samples: std::mem::take(&mut pending),
-                        }) {
-                            return;
-                        }
-                    } else {
-                        losses.record(LossKind::UnknownStdout);
-                    }
+            lost.fetch_add(message.lost, Ordering::Relaxed);
+            match sender.try_send(message.event) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    lost.fetch_add(1, Ordering::Relaxed);
                 }
-                _ => {
-                    losses.record(LossKind::UnknownStdout);
-                }
+                Err(TrySendError::Disconnected(_)) => return,
             }
         }
-        let _ = sender.send(Event::Failed);
+        let _ = sender.try_send(Event::Failed);
     });
     Ok(child)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn process_incarnations_and_filesystems_are_preserved() {
-        let value = serde_json::json!({"type":"map","data":{"@a":{
-            "12,123456789,4,77,0":8192,"12,223456789,5,78,0":3
-        }}});
-        let rows = samples(&value, 100).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_ne!(rows[0].process.start, rows[1].process.start);
-        assert_ne!(rows[0].device, rows[1].device);
-        assert!(
-            rows.iter()
-                .any(|v| v.kind == IoKind::NfsRead && v.bytes == 8192)
-        );
-    }
-    #[test]
-    fn empty_maps_are_completed_empty_intervals() {
-        for empty in [serde_json::json!({}), serde_json::json!([])] {
-            assert!(
-                samples(&serde_json::json!({"data":{"@a":empty}}), 100)
-                    .unwrap()
-                    .is_empty()
-            );
+pub fn helper_main() -> std::io::Result<()> {
+    // exec child owns these FDs. SIGALRM's default fatal disposition gives a
+    // kernel-enforced watchdog even if stdout blocks or verifier loading stalls.
+    let parent = unsafe { libc::getppid() };
+    unsafe {
+        libc::signal(libc::SIGALRM, libc::SIG_DFL);
+        libc::alarm(60);
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+            return Err(std::io::Error::last_os_error());
         }
-        assert!(samples(&serde_json::json!({"data":{"@a":[1]}}), 100).is_none());
+        if parent <= 1 || libc::getppid() != parent {
+            return Err(std::io::Error::other("I/O helper parent exited"));
+        }
     }
-
-    #[test]
-    fn malformed_samples_are_not_zeroes() {
-        assert!(samples(&serde_json::json!({"data":{"@b":{"12,1,99,0,0":1}}}), 100).is_none());
-        assert!(samples(&serde_json::json!({"data":{"@b":{"12,1,0,0,0":-1}}}), 100).is_none());
+    let launched = bpf::monotonic_ns();
+    let deadline = launched + 60_000_000_000;
+    let uid = std::env::args()
+        .nth(2)
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| std::io::Error::other("missing I/O helper UID"))?;
+    let probe = bpf::Probe::open(uid, deadline)?;
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    let mut emit = |event, lost| -> std::io::Result<()> {
+        serde_json::to_writer(&mut output, &Message { event, lost })?;
+        output.write_all(b"\n")?;
+        output.flush()
+    };
+    emit(Event::Ready, 0)?;
+    let mut previous_losses = 0;
+    let mut generation = 0;
+    loop {
+        // A small grace period allows calls completing just before the boundary
+        // to finish their bounded kernel-map update. Late generations are loss.
+        let boundary = probe.start_ns + (generation + 1) * 2_000_000_000 + 100_000_000;
+        if boundary >= probe.stop_ns {
+            // Keep the helper alive for the complete lease. Ending immediately
+            // after the last full batch looks like an unexpected collector
+            // failure to the controller; its deadline normally kills us first.
+            let now = bpf::monotonic_ns();
+            if now < probe.stop_ns {
+                std::thread::sleep(std::time::Duration::from_nanos(probe.stop_ns - now));
+            }
+            break;
+        }
+        let now = bpf::monotonic_ns();
+        if boundary > now {
+            std::thread::sleep(std::time::Duration::from_nanos(boundary - now));
+        }
+        let now = bpf::monotonic_ns();
+        if now >= probe.stop_ns {
+            break;
+        }
+        let (samples, mut loss) = probe.drain(generation)?;
+        let kernel_losses = probe.losses()?;
+        loss += kernel_losses.saturating_sub(previous_losses);
+        previous_losses = kernel_losses;
+        if now > boundary + 1_000_000_000 {
+            loss += 1;
+        }
+        emit(
+            Event::Batch {
+                generation,
+                samples,
+            },
+            loss,
+        )?;
+        generation += 1;
     }
+    // Drop unloads links before the helper exits. The final partial interval is
+    // never mislabeled as a completed two-second interval.
+    drop(probe);
+    Ok(())
 }
