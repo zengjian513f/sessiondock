@@ -223,9 +223,9 @@ fn repeated_page_reads_do_not_consume_grant_or_advance_live_cursor() {
     let first = read(&snapshot, &pages, token, "");
     let again = read(&snapshot, &pages, token, "");
     assert_eq!(first["messages"], again["messages"]);
-    assert_eq!(first["page"]["start"], 100);
-    assert_eq!(first["page"]["end"], 300);
-    assert_eq!(first["page"]["remaining"], 201);
+    assert_eq!(first["page"]["start"], 5);
+    assert_eq!(first["page"]["end"], 205);
+    assert_eq!(first["page"]["remaining"], 776);
     for value in [&first, &again] {
         assert!(value.get("end").is_none());
         assert!(value.get("anchor").is_none());
@@ -233,7 +233,7 @@ fn repeated_page_reads_do_not_consume_grant_or_advance_live_cursor() {
         let next = pages
             .lookup(value["page"]["next"].as_str().unwrap(), UID, "")
             .unwrap();
-        assert_eq!((next.next, next.stop, next.total), (300, 501, 1001));
+        assert_eq!((next.next, next.stop, next.total), (205, 981, 1001));
         assert_eq!(next.checkpoint.anchor, snapshot.anchor);
     }
     assert!(pages.lookup(token, UID, "").is_ok());
@@ -258,22 +258,22 @@ fn initial_window_and_pages_use_nonstatus_indexes_even_when_offsets_are_identica
     let snapshot = snapshot(events, b"{}\n", "synthetic-identity", "exact-agent");
     let pages = store();
     let batch = initial(&snapshot, &pages);
-    assert_eq!(batch["partial"]["head"], 100);
-    assert_eq!(batch["partial"]["tail"], 500);
-    assert_eq!(batch["partial"]["omitted"], 401);
-    assert_eq!(batch["messages"][99]["text"], "message-99");
-    assert_eq!(batch["messages"][100]["text"], "message-501");
+    assert_eq!(batch["partial"]["head"], 5);
+    assert_eq!(batch["partial"]["tail"], 20);
+    assert_eq!(batch["partial"]["omitted"], 976);
+    assert_eq!(batch["messages"][4]["text"], "message-4");
+    assert_eq!(batch["messages"][5]["text"], "message-981");
     assert_eq!(batch["message_total"], 1000); // counted:false still occupies an index.
     let token = batch["partial"]["cursor"].as_str().unwrap();
     let saved = pages.lookup(token, UID, "exact-agent").unwrap();
-    assert_eq!((saved.next, saved.stop, saved.total), (100, 501, 1001));
+    assert_eq!((saved.next, saved.stop, saved.total), (5, 981, 1001));
     assert_eq!(saved.checkpoint.start, 3);
     assert_eq!(saved.checkpoint.head, snapshot.head);
     assert_eq!(saved.checkpoint.anchor, snapshot.anchor);
     let page = read(&snapshot, &pages, token, "exact-agent");
     assert_eq!(page["messages"].as_array().unwrap().len(), 200);
-    assert_eq!(page["messages"][0]["text"], "message-100");
-    assert_eq!(page["messages"][199]["text"], "message-299");
+    assert_eq!(page["messages"][0]["text"], "message-5");
+    assert_eq!(page["messages"][199]["text"], "message-204");
 }
 
 #[test]
@@ -288,7 +288,7 @@ fn ordinary_append_keeps_original_gap_and_never_pages_new_tail_events() {
     let mut texts = Vec::new();
     loop {
         let page = read(&current, &pages, &token, "");
-        assert_eq!(page["page"]["stop"], 501);
+        assert_eq!(page["page"]["stop"], 981);
         texts.extend(
             page["messages"]
                 .as_array()
@@ -305,7 +305,7 @@ fn ordinary_append_keeps_original_gap_and_never_pages_new_tail_events() {
     }
     assert_eq!(
         texts,
-        (100..501)
+        (5..981)
             .map(|index| format!("message-{index}"))
             .collect::<Vec<_>>()
     );
@@ -363,10 +363,10 @@ fn inherited_zero_offset_events_are_paged_as_real_indexes() {
     let batch = initial(&original, &pages);
     let token = batch["partial"]["cursor"].as_str().unwrap();
     let page = read(&original, &pages, token, "");
-    assert_eq!(page["messages"].as_array().unwrap().len(), 101);
-    assert_eq!(page["messages"][0]["text"], "message-100");
-    assert_eq!(page["messages"][100]["text"], "message-200");
-    assert!(page["page"]["next"].is_null());
+    assert_eq!(page["messages"].as_array().unwrap().len(), 200);
+    assert_eq!(page["messages"][0]["text"], "message-5");
+    assert_eq!(page["messages"][199]["text"], "message-204");
+    assert!(page["page"]["next"].is_string());
 }
 
 #[test]
@@ -391,7 +391,7 @@ fn invalid_grant_ranges_and_totals_are_rejected_instead_of_sliced() {
 }
 
 #[test]
-fn initial_dynamic_window_prioritizes_tail_with_native_image_budget() {
+fn initial_window_keeps_small_image_history_within_byte_target() {
     let image = image(PNG);
     let mut events = (0..701).map(|index| event(index, 3)).collect::<Vec<_>>();
     for event in &mut events {
@@ -401,13 +401,10 @@ fn initial_dynamic_window_prioritizes_tail_with_native_image_budget() {
     let pages = store();
     let mut selected = select(&snapshot);
     let partial = window(&snapshot, &mut selected, &pages).unwrap();
-    assert_eq!(partial["head"], 0);
-    assert_eq!(partial["tail"], 128);
-    assert_eq!(partial["omitted"], 573);
-    assert_eq!(
-        selected.first().unwrap().event.message["text"],
-        "message-573"
-    );
+    assert_eq!(partial["head"], 3);
+    assert_eq!(partial["tail"], 20);
+    assert_eq!(partial["omitted"], 678);
+    assert_eq!(selected.first().unwrap().event.message["text"], "message-0");
     assert_eq!(
         selected.last().unwrap().event.message["text"],
         "message-700"
@@ -415,12 +412,12 @@ fn initial_dynamic_window_prioritizes_tail_with_native_image_budget() {
     let saved = pages
         .lookup(partial["cursor"].as_str().unwrap(), UID, "")
         .unwrap();
-    assert_eq!((saved.next, saved.stop, saved.total), (0, 573, 701));
+    assert_eq!((saved.next, saved.stop, saved.total), (3, 681, 701));
 }
 
 #[test]
 fn complete_small_window_has_no_grant_and_large_json_tail_is_dynamic() {
-    let small = plain(40);
+    let small = plain(25);
     let pages = store();
     assert!(initial(&small, &pages)["partial"].is_null());
     assert_eq!(pages.len(), 0);
@@ -432,9 +429,9 @@ fn complete_small_window_has_no_grant_and_large_json_tail_is_dynamic() {
     let mut selected = select(&snapshot);
     let partial = window(&snapshot, &mut selected, &pages).unwrap();
     assert_eq!(partial["head"], 0);
-    assert_eq!(partial["tail"], 7);
-    assert_eq!(partial["omitted"], 3);
-    assert_eq!(selected[0].event.message["text"], "message-3");
+    assert_eq!(partial["tail"], 1);
+    assert_eq!(partial["omitted"], 9);
+    assert_eq!(selected[0].event.message["text"], "message-9");
 }
 
 #[test]
@@ -604,7 +601,7 @@ fn descriptor_srcs(items: &Value) -> Vec<String> {
 fn inline_projection_shows_sixteen_images_and_media_more_binds_a_media_grant() {
     let mut events = (0..5).map(|index| event(index, 3)).collect::<Vec<_>>();
     events[2] = many_images(2, 40);
-    events[4] = many_images(4, 16);
+    events[4] = many_images(4, 1);
     let snapshot = snapshot(events, b"{}\n", "synthetic-identity", "exact-agent");
     let pages = store();
     let batch = initial(&snapshot, &pages);
@@ -613,7 +610,7 @@ fn inline_projection_shows_sixteen_images_and_media_more_binds_a_media_grant() {
     assert_eq!(messages.len(), 5);
     assert!(messages[0].get("media").is_none());
     assert!(messages[0].get("media_more").is_none());
-    assert_eq!(messages[4]["media"].as_array().unwrap().len(), 16);
+    assert_eq!(messages[4]["media"].as_array().unwrap().len(), 1);
     assert!(messages[4].get("media_more").is_none());
     let more = &messages[2]["media_more"];
     assert_eq!(
@@ -966,7 +963,7 @@ fn history_pages_and_delta_batches_issue_media_grants_with_absolute_indexes() {
         batch["partial"]["cursor"].as_str().unwrap(),
         "",
     );
-    let paged = &page["messages"][50];
+    let paged = &page["messages"][145];
     assert_eq!(paged["text"], "message-150");
     assert_eq!(paged["media"].as_array().unwrap().len(), DISPLAY_LIMIT);
     let grant = pages
@@ -1025,12 +1022,12 @@ fn default_page_events_fill_a_gap_in_one_read_under_the_byte_budget() {
     assert_eq!(PageStore::with_page_events(0).page_events(), 1);
     assert_eq!(PageStore::with_page_events(1 << 20).page_events(), 10_000);
     let batch = initial(&snapshot, &pages);
-    assert_eq!(batch["partial"]["omitted"], 401);
+    assert_eq!(batch["partial"]["omitted"], 976);
     let token = batch["partial"]["cursor"].as_str().unwrap();
     let page = read(&snapshot, &pages, token, "");
-    assert_eq!(page["messages"].as_array().unwrap().len(), 401);
-    assert_eq!(page["messages"][0]["text"], "message-100");
-    assert_eq!(page["messages"][400]["text"], "message-500");
+    assert_eq!(page["messages"].as_array().unwrap().len(), 976);
+    assert_eq!(page["messages"][0]["text"], "message-5");
+    assert_eq!(page["messages"][975]["text"], "message-980");
     assert_eq!(page["page"]["remaining"], 0);
     assert!(page["page"]["next"].is_null());
 }
