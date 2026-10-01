@@ -368,11 +368,14 @@ def scan_case(binary: Path, root: Path):
         forced, raw = call(opener, base, "GET", "/api/live?force=1")
         if ((forced.get("scan") or {}).get("cache") or {}).get("hit") is not False:
             fail("scan force miss", forced.get("scan"), raw)
-        passed("GET /api/live scan cache hit, ?force=1 miss, no sidebar writes")
+        passed("GET /api/live scan cache hit, ?force=1 miss")
         by_uid, _, raw = rows_by_uid(opener, base)
-        assert all('spawned_by' not in row and 'nest_parent' not in row for row in by_uid.values())
-        assert not (state / "session-metadata.json").exists()
-        passed("process scans never write sidebar relations")
+        want = {uids[SID_D]: {"source": "claude", "sid": SID_A},
+                uids[SID_E]: {"source": "claude", "sid": SID_A},
+                uids[SID_H]: {"source": "claude", "sid": SID_F}}
+        assert {uid: row['nest_parent'] for uid, row in by_uid.items() if 'nest_parent' in row} == want
+        assert all('spawned_by' not in row for row in by_uid.values())
+        passed("process scans initialize nest_parent")
     # Everything exited: the relation survives, liveness does not.
     empty = root / "proc-empty"
     FakeProc(empty).add(1, "systemd", 0, "/sbin/init")
@@ -381,8 +384,8 @@ def scan_case(binary: Path, root: Path):
         if body.get("uids") != [] or body.get("started_at") != {} or body.get("tmux_uids") != []:
             fail("scan after exit", body, raw)
         by_uid, _, raw = rows_by_uid(opener, base)
-        assert all('spawned_by' not in row and 'nest_parent' not in row for row in by_uid.values())
-        passed("restart with an empty tree: no live or attached sessions")
+        assert {uid: row['nest_parent'] for uid, row in by_uid.items() if 'nest_parent' in row} == want
+        passed("restart with an empty tree: no live sessions; attachment persists")
     # Explicit Grok active file: a listed id is live without a pid.
     active = root / "active_sessions.json"
     active.write_text(json.dumps([{"session_id": SID_D, "pid": 99}]))

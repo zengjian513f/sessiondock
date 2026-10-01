@@ -123,7 +123,15 @@ restart persists, native file only appended).
 Absent `node_id` means the child's own node. `{uid, parent_uid}` attaches to a listed
 session; `{uid, parent_uid: null}` clears the relation. There is no independent flag,
 startup-source fallback or restore action. Native subagent relationships remain in the CLI history.
-Process launch evidence remains diagnostic and never changes sidebar attachment.
+Local process evidence initializes `nest_parent` once for a newly created CLI
+session: its owned process identifies the child, and inherited session identity
+or an owning CLI ancestor identifies the parent. A detached dispatcher retains
+this evidence. Resuming a session created before the process does not attach it.
+A private `nest_initialized` decision marker preserves automatic initialization
+and explicit attach/detach across scans, exits and restarts; it is not a second
+relationship or a public row field. Existing manual parents always win. Legacy
+`nest_independent: true` migrates to a decided empty parent. Older versions that
+erased a cleared row left no durable detach decision to recover.
 
 ### `spawned_by`
 
@@ -159,7 +167,8 @@ Missing or filtered parents without a visible successor leave their children as
 roots. These display decisions never rewrite the stored relationship.
 
 Validation: `python3 tests/metadata_suite.py`,
-`python3 tests/nest_tree_browser.py`, `python3 tests/hub_nest_browser.py`
+`python3 tests/nest_tree_browser.py`, `python3 tests/codex_exec_nest_browser.py`,
+`python3 tests/hub_nest_browser.py`
 (two actual nodes and Hub, cross-machine click attach, same-SID isolation, cycle
 checks, node/Hub restart, detach and explicit local reattachment).
 

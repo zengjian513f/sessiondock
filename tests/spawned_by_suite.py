@@ -13,7 +13,7 @@ cross-family inherited id); an fd on a *.jsonl under a configured read root
 marks it live (the one widening of the literal home markers); an
 orphan helper (no CLI ancestor) does not. GET /api/live is the shape
 {uids, tmux_uids, started_at} plus enabled:true; started_at is
-btime+starttime/100. Process discovery never writes sidebar relations.
+btime+starttime/100. Process discovery initializes the single nest_parent relation.
 The default process scan is enabled on Linux.
 
 CLI barrier (`live.is_cli_process`): Q is a claude inside a
@@ -210,8 +210,8 @@ def build(root):
 
 def expect_spawned(rows, area):
     for sid, row in rows.items():
-        if any(key in row for key in ('spawned_by', 'nest_independent', 'nest_parent')):
-            fail(area, f"{sid} acquired a sidebar relationship from a process scan")
+        if any(key in row for key in ('spawned_by', 'nest_independent')) or row.get('nest_parent') != PARENT.get(sid):
+            fail(area, f"{sid} unexpected parent: {row.get('nest_parent')}")
 
 
 def run_scan(opener, base, uids, proc, state):
@@ -237,11 +237,10 @@ def run_scan(opener, base, uids, proc, state):
             fail("started_at", f"{uid} {started.get(uid)!r} want {ts}", json.dumps(started).encode())
     passed("GET /api/live started_at btime+starttime/100")
     expect_spawned(by_sid(opener, base), "sessions spawned_by")
-    passed("GET /api/sessions: live child processes do not create sidebar parents")
+    passed("GET /api/sessions: live child processes initialize nest_parent")
     path = state / "session-metadata.json"
-    if path.exists():
-        fail("metadata", "process scan unexpectedly wrote session metadata")
-    passed("process scan records no sidebar relationship or startup metadata")
+    assert path.exists()
+    passed("process scan persists nest_parent without legacy startup metadata")
     shutil.rmtree(proc / "200")
     live = fetch(opener, base, "/api/live?force=1")
     got = set(live.get("uids") or [])
@@ -249,7 +248,7 @@ def run_scan(opener, base, uids, proc, state):
         fail("live-after", f"uids={sorted(got)} want {sorted(want - {uids[K_SID]})}",
              json.dumps(live).encode())
     expect_spawned(by_sid(opener, base), "write-once spawned_by")
-    passed("pid 200 gone: K not live, no sidebar relationship")
+    passed("pid 200 gone: K not live, recorded relationship survives")
 
 
 def run_default_scan(opener, base):

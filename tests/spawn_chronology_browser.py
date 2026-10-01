@@ -53,9 +53,9 @@ def main():
             assert "spawned_by" not in old, old
             assert old["updated"] == END and old["starred"], old
             child = next(r for r in rows if r["uid"] == uids[G2_SID])
-            assert "spawned_by" not in child and "nest_parent" not in child, child
+            assert "spawned_by" not in child and child["nest_parent"] == {"source": "claude", "sid": Q_SID}, child
             disk = json.loads(saved.read_text())["sessions"][uids[G_SID]]
-            assert disk["nest_independent"] is True, disk
+            assert disk["nest_initialized"] is True and "nest_parent" not in disk, disk
             with sync_playwright() as pw:
                 launch = {"headless": True}
                 if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):

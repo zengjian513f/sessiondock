@@ -177,6 +177,14 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_fork_visibility(uids, visible))
     }
 
+    pub fn initialize_nest_parents(
+        &self,
+        found: &[(String, NestParent)],
+        identities: &std::collections::BTreeMap<(String, String), String>,
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.with_initial_nest_parents(found, identities))
+    }
+
     pub fn set_nest_display(
         &self,
         uid: &str,

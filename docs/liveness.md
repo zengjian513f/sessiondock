@@ -238,11 +238,16 @@ while such receipts exist.
 
 ## `spawned_by`
 
-Process launch ancestry is diagnostic evidence, not sidebar attachment. Process scans
-and collector reports never write `spawned_by` or infer a `nest_parent`. The persistent
-spawner watcher has been removed. Existing metadata is migrated to the single
-`nest_parent` field as described in [metadata](metadata.md#spawned_by).
-Native subagent relationships remain supplied by the CLI history.
+Local process scans initialize the single `nest_parent` from observed launch
+ancestry, both during `/api/live` assembly and on a ten-second background tick.
+A newly created child's owned CLI process and its inherited identity/CLI ancestors
+supply the evidence; a shared tmux server and a later resume do not. The first
+recorded parent persists after exit. Explicit attach/detach wins across scans
+and restart, as described in [metadata](metadata.md#sidebar-parent).
+No `spawned_by` field is written. Collector SSH reports remain diagnostic;
+native subagent relationships remain supplied by the CLI history.
+Work that exits between scans without a recorded relation cannot be recovered
+from timestamps or a shared working directory alone.
 
 ### SSH boundary
 

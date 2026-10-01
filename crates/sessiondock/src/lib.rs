@@ -545,6 +545,7 @@ fn build_app(
         ui_events: Arc::new(ui_events::EventBus::default()),
     };
     runtime::process_links::spawn(state.clone());
+    runtime::spawn::spawn(state.clone());
     // Same state, own gate, no static fallback: everything the hub proxies.
     let node_router = state.node.as_ref().map(|_| {
         api::node_router()

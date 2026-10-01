@@ -292,9 +292,16 @@ async fn assemble(
             managed_running.retain(|uid| !key.hidden.contains(uid));
             let scan = snapshot.scan.clone();
             let sessions = key.rows.clone();
+            let metadata = state.metadata.clone();
             // Pairing and ancestry walks read the process table: off the reactor.
             let merged = tokio::task::spawn_blocking(move || {
                 let active = scan.active_processes(&sessions);
+                if let Some(metadata) = metadata
+                    && let Err(error) =
+                        crate::runtime::spawn::record(&metadata, &scan, &sessions, &active.owned)
+                {
+                    eprintln!("nest discovery failed: {error}");
+                }
                 let by_uid: HashMap<&str, &SessionRow> = sessions
                     .iter()
                     .map(|session| (session.uid.as_str(), session))

@@ -18,7 +18,7 @@ from history_parity import (  # noqa: E402
 
 BINARY = (p if (p := REPO / "target/release" / DEBUG_BINARY.name).is_file() else DEBUG_BINARY)
 KEYS = {"schema_version", "revision", "sessions"}
-ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "nest_parent"}
+ROW_KEYS = {"starred", "starred_at", "fork_parent_visible", "nest_parent", "nest_initialized"}
 NEST_PARENT = {"source": "codex", "sid": "codex-parent"}
 FILE, STAR, VIS, NEST = ("session-metadata.json", "/api/session/star",
                          "/api/sessions/fork-visibility", "/api/session/nest")

@@ -521,7 +521,7 @@ def check_hidden_spawner(browser, binary, root, width):
         assert page.evaluate("([p, w]) => nestDescendantUids(p).has(w)", [leaf, worker])
         # Filtering an ordinary visible parent must still leave a root; node/source identity is scoped.
         assert page.evaluate("uid => nestEdges(sidebarSessions().filter(s => s.uid !== uid)).nested.size", leaf) == 0
-        assert json.loads(document.read_text())["sessions"][worker] == {"nest_parent": {"source": "codex", "sid": "rewind-two"}}
+        assert json.loads(document.read_text())["sessions"][worker] == {"nest_parent": {"source": "codex", "sid": "rewind-two"}, "nest_initialized": True}
         open_item_menu(page, worker)
         page.locator('#item-menu [data-act="detach"]').click()
         page.wait_for_function("uid => !S.sessions.find(s => s.uid === uid).nest_parent", arg=worker)
