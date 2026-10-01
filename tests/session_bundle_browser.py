@@ -391,6 +391,29 @@ def main():
                             manifest=json.loads((cleanup_obstruction.parent.parent/'manifest.json').read_text())
                             assert manifest['files'][0]['in_trash'] and not Path(manifest['files'][0]['origin']).exists()
                             cleanup_obstruction.rmdir()
+                            # After partial retirement, a new independent CLI
+                            # session can attach to a captured (now absent) parent.
+                            # The sidebar relation alone must fence further deletion.
+                            late_path=source.root/'codex/sessions'/('rollout-'+ident(998)+'.jsonl')
+                            late_path.parent.mkdir(parents=True,exist_ok=True)
+                            late_path.write_bytes(encoded({'type':'session_meta','payload':{'id':ident(998),'cwd':str(source.root/'cwd'),'timestamp':'2026-09-11T12:00:00Z'}})+
+                                                  encoded({'type':'response_item','payload':{'type':'message','role':'user','content':'Late attached child'}}))
+                            metadata_path=source.root/'state/session-metadata.json'
+                            baseline=json.loads(metadata_path.read_text()) if metadata_path.exists() else {"schema_version":1,"revision":1,"sessions":{}}
+                            attached=json.loads(json.dumps(baseline))
+                            attached['revision']+=1
+                            captured=next(m for m in partial['full_group']['members'] if not m['agent'])
+                            late_uid=uid('codex',late_path)
+                            attached['sessions'][late_uid]={'nest_parent':{'source':captured['source'],'sid':captured['sid']},'nest_initialized':True}
+                            metadata_path.write_text(json.dumps(attached))
+                            with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as referenced:
+                                dialog.locator('.clone-confirm').click()
+                            assert referenced.value.status==409 and referenced.value.json()['code']=='move_cleanup_pending',referenced.value.text()
+                            assert late_path.exists() and (cleanup_obstruction.parent/'0').exists()
+                            assert json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())['phase']=='retiring'
+                            late_path.unlink();baseline['revision']=attached['revision']+1
+                            metadata_path.write_text(json.dumps(baseline))
+                            print('PASS Chromium cleanup retry preserves a partially retired family with a newly attached child',flush=True)
                             if provider=='grok':
                                 late=source.root/'grok/project'/ident(999);late.mkdir(parents=True)
                                 (late/'summary.json').write_text(json.dumps({'info':{'id':ident(999),'cwd':str(source.root/'cwd')},'generated_title':'Late Grok ref'}))

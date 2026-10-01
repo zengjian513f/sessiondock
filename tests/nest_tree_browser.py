@@ -382,9 +382,11 @@ def check_page(page, uid, data, server, width):
                  tail=[{"type": "continued-in", "continuedInSessionId": "nest-new", "sessionId": "nest-old"}])
     claude_lines(data, "nest-new", "New continued", "/proj/alpha", "12:30")
     new_uid, old_uid = uid["new"], data.uid("nest-old")
+    get_json(*server, "/api/sessions?force=1")
+    get_json(*server, "/api/live?force=1")
     poll(page, server, 'S.sessions.length === 7 && S.sessions.some(s => s.continued_in)')
     assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).continued_in", old_uid) == new_uid
-    assert page.evaluate("uid => S.sessions.find(s => s.uid === uid).nest_parent", new_uid) == SPAWNED["nest-new"]
+    assert page.evaluate("uid => !S.sessions.find(s => s.uid === uid).nest_parent", new_uid)
     continued = rows()
     listed = [r["uid"] for r in continued if not r["agent"]]
     assert new_uid in listed and old_uid not in listed, listed

@@ -457,6 +457,57 @@ async fn agent_catalog(state: &AppState) -> Result<process_links::agent::Catalog
         sessions,
     })
 }
+async fn remember_agent_parents(state: &AppState, report: &Report) -> Result<(), ApiError> {
+    let Some(metadata) = &state.metadata else {
+        return Ok(());
+    };
+    let document = state
+        .reader
+        .run_wait(&state.shutdown, |store| store.list_recent())
+        .await?;
+    let rows = SessionRow::from_list(&document);
+    let uids: BTreeMap<_, _> = rows
+        .iter()
+        .map(|r| ((r.source.clone(), r.sid.clone()), r.uid.clone()))
+        .collect();
+    let parents: Vec<_> = report
+        .bindings
+        .iter()
+        .filter_map(|binding| {
+            let parent = binding.initiator.as_ref()?;
+            let child = &binding.session;
+            if child.node_id != report.node_id
+                || (parent.node_id == child.node_id
+                    && parent.source == child.source
+                    && parent.sid == child.sid)
+                || parent.created? > child.created?
+            {
+                return None;
+            }
+            Some((
+                uids.get(&(child.source.clone(), child.sid.clone()))?
+                    .to_string(),
+                crate::metadata::NestParent {
+                    source: parent.source.clone(),
+                    sid: parent.sid.clone(),
+                    node_id: (parent.node_id != child.node_id).then(|| parent.node_id.clone()),
+                },
+            ))
+        })
+        .collect();
+    let metadata = metadata.clone();
+    tokio::task::spawn_blocking(move || metadata.initialize_nest_parents(&parents, &uids))
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "collector_metadata_failed",
+                "关联保存失败",
+            )
+        })?
+        .map_err(ApiError::from)?;
+    Ok(())
+}
 pub async fn report(state: &AppState) -> Result<Report, ApiError> {
     if let Some(path) = agent_socket(state) {
         let catalog = agent_catalog(state).await?;
@@ -470,10 +521,13 @@ pub async fn report(state: &AppState) -> Result<Report, ApiError> {
             && report.node_id == node_id
             && report.boot_id == boot_id
         {
+            remember_agent_parents(state, &report).await?;
             return Ok(report);
         }
     }
-    legacy_report(state).await
+    let report = legacy_report(state).await?;
+    remember_agent_parents(state, &report).await?;
+    Ok(report)
 }
 pub async fn publish(state: &AppState, published: Published) -> Result<usize, ApiError> {
     if let Some(path) = agent_socket(state) {
@@ -485,10 +539,13 @@ pub async fn publish(state: &AppState, published: Published) -> Result<usize, Ap
             && let Ok(report) = serde_json::from_value::<Report>(value)
             && Some(report.node_id.as_str()) == state.node.as_ref().map(|n| n.node_id.as_str())
         {
+            remember_agent_parents(state, &report).await?;
             return Ok(report.bindings.len());
         }
     }
-    legacy_publish(state, published).await
+    let count = legacy_publish(state, published).await?;
+    report(state).await?;
+    Ok(count)
 }
 pub async fn resources(state: &AppState) -> serde_json::Value {
     if let Some(path) = agent_socket(state)

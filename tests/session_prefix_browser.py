@@ -41,11 +41,9 @@ def transfer(page, hub, selected, target, count, move=False, error=None):
     expect(dialog.locator('.clone-members tbody tr')).to_have_count(count)
     dialog.locator('#transfer-target').select_option(target)
     if move:
-        with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')):
-            dialog.locator('.transfer-segments label').nth(1).click()
+        dialog.locator('.transfer-segments label').nth(1).click()
     else:
-        with page.expect_response(lambda r:r.url.endswith('/api/session/clone/plan')):
-            dialog.locator('#transfer-new-ids').uncheck()
+        dialog.locator('#transfer-new-ids').uncheck()
     expect(dialog.locator('#transfer-new-ids')).not_to_be_checked()
     with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as result:
         dialog.locator('.clone-confirm').click()
@@ -133,6 +131,18 @@ def main():
                     assert peer.read(primary)==divergent and primary.read_bytes()==after
                     peer.write(primary,before)
                     print('PASS '+provider+' divergent target rejected through Chromium without overwriting either side',flush=True)
+                    # Extending native history does not authorize erasing an
+                    # existing target parent, including a remote same-SID link.
+                    target_doc=json.loads(peer.read(target_metadata))
+                    attached={**target_before,'nest_parent':{'source':provider,'sid':ident(2),'node_id':'d'*32},'nest_initialized':True}
+                    target_doc['revision']+=1;target_doc['sessions'][selected]=attached
+                    peer.write(target_metadata,json.dumps(target_doc).encode())
+                    transfer(page,hub,scoped(a.nid,selected),b.nid,count,error='move_conflict')
+                    assert peer.read(primary)==before and primary.read_bytes()==after
+                    assert json.loads(peer.read(target_metadata))['sessions'][selected]==attached
+                    target_doc['revision']+=1;target_doc['sessions'][selected]=target_before
+                    peer.write(target_metadata,json.dumps(target_doc).encode())
+                    print('PASS '+provider+' Chromium prefix import retains conflicting target attachment',flush=True)
                     if provider=='codex':
                         peer.call('stop')
                         changed=peer.call('thread_path',path=str(database),sid=ident(2),rollout=str(source.paths['parent']))

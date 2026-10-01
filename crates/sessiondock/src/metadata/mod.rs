@@ -177,6 +177,13 @@ impl MetadataStore {
         self.update(|snapshot| snapshot.with_fork_visibility(uids, visible))
     }
 
+    pub fn discard_invalid_initial_nest_parents(
+        &self,
+        invalid: &[(String, NestParent)],
+    ) -> Result<Arc<MetadataSnapshot>, MetadataError> {
+        self.update(|snapshot| snapshot.without_invalid_initial_nest_parents(invalid))
+    }
+
     pub fn initialize_nest_parents(
         &self,
         found: &[(String, NestParent)],

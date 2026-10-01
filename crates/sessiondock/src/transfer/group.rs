@@ -184,20 +184,38 @@ pub(super) fn derive_cached(
             });
         }
     }
-    // Include existing local sidebar attachments in the selected group. A
-    // missing or remote display parent is not a native dependency or blocker.
+    // Sidebar attachments connect the whole family across providers. A known
+    // parent cannot be silently omitted from a single-source operation.
     for row in snapshot.list["sessions"].as_array().into_iter().flatten() {
-        let Some(uid) = row["uid"].as_str().filter(|uid| entries.contains_key(*uid)) else {
+        let uid = row["uid"].as_str().unwrap_or("");
+        if !entries.contains_key(uid) {
             continue;
-        };
+        }
         let parent = &row["nest_parent"];
-        if parent["node_id"].is_null()
-            && let (Some(source), Some(sid)) = (parent["source"].as_str(), parent["sid"].as_str())
-            && let Some(ids) = identities.get(&(source, sid))
+        if !parent.is_object() {
+            continue;
+        }
+        let source = parent["source"].as_str().unwrap_or("");
+        let sid = parent["sid"].as_str().unwrap_or("");
+        if parent["node_id"]
+            .as_str()
+            .is_some_and(|node| !node.is_empty())
         {
+            blockers.push(Blocker {
+                uid: uid.into(),
+                code: "move_group_incomplete".into(),
+                message: format!("nest_parent 关联的 {source} 会话 {sid} 在另一节点，不能拆分整组"),
+            });
+        } else if let Some(ids) = identities.get(&(source, sid)) {
             for id in ids {
                 connect(uid, id, "nest_parent");
             }
+        } else {
+            blockers.push(Blocker {
+                uid: uid.into(),
+                code: "move_group_incomplete".into(),
+                message: format!("缺少 nest_parent 关联的 {source} 会话 {sid}"),
+            });
         }
     }
     // Merge call names across rollouts, then resolve cached output identities.

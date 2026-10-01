@@ -127,8 +127,8 @@ def main():
                     rows = get_json(opener, base, '/api/sessions?force=1')['sessions']
                     child = next(r for r in rows if r['sid'] == 'child')
                     expected = {'source': 'codex', 'sid': 'parent', 'node_id': nodes[0].nid}
-                    assert 'spawned_by' not in child and 'nest_parent' not in child
-                    assert 'spawned_by' not in next(r for r in rows if r['sid'] == 'older')
+                    assert 'spawned_by' not in child and child.get('nest_parent') == expected, child
+                    assert 'nest_parent' not in next(r for r in rows if r['sid'] == 'older')
                     context = browser.new_context(service_workers='block')
                     stack.callback(context.close)
                     if not restarted:
@@ -137,10 +137,23 @@ def main():
                         uid = scoped(nodes[1].nid, corpora[1].uid('child'))
                         parent = scoped(nodes[0].nid, corpora[0].uid('parent'))
                         page.wait_for_function('uid => S.sessions.some(s => s.uid === uid)', arg=uid)
-                        assert page.evaluate('uid => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s]))) === null', uid)
+                        assert page.evaluate('([uid,parent]) => nestParentOf(S.sessions.find(s => s.uid === uid), new Map(S.sessions.map(s => [spawnKey(s.node_id,s.source,s.sid),s])))?.uid === parent', [uid, parent])
                         page.locator(f'[data-uid="{parent}"]').first.click()
                         page.locator(f'[data-uid="{uid}"]').first.click()
                         assert page.evaluate('S.sel') == uid
+                        if not page.evaluate('S.nest'):
+                            page.locator('#nest-toggle').click()
+                        child_item = page.locator(f'#side .item[data-uid="{uid}"]')
+                        child_item.click(button='right')
+                        page.locator('#item-menu [data-act="detach"]').click()
+                        get_json(opener, base, '/api/process-links')
+                        page.evaluate('pollSessions()')
+                        page.wait_for_function('uid => !S.sessions.find(s => s.uid === uid)?.nest_parent', arg=uid)
+                        assert 'nest_parent' not in next(r for r in get_json(opener, base, '/api/sessions?force=1')['sessions'] if r['sid'] == 'child')
+                        child_item.click(button='right')
+                        page.locator('#item-menu [data-act="attach"]').click()
+                        page.locator(f'#side .item[data-uid="{parent}"]').click()
+                        page.wait_for_function('([uid,node]) => S.sessions.find(s => s.uid === uid)?.nest_parent?.node_id === node', arg=[uid,nodes[0].nid])
                         response = context.request.post(f'http://127.0.0.1:{hub.port}' + '/api/process-links?node=' + nodes[1].nid,
                             data={'boot_id':'forged','links':[]})
                         assert response.status == 403
@@ -180,7 +193,7 @@ def main():
                         # Persisted per-process identity survives no live SSH evidence.
                         shutil.rmtree(procs[0] / '200')
                         (procs[1] / '100/environ').write_bytes(b'')
-                        print('PASS diagnostic remote CLI attribution without automatic nesting, chronology and browser gates', flush=True)
+                        print('PASS remote CLI attribution and automatic nesting, chronology and browser gates', flush=True)
                     else:
                         # Reusing PID 300 must not inherit its predecessor's saved link.
                         stat = procs[1] / '300/stat'

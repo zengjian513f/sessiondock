@@ -69,6 +69,7 @@ impl Disk {
                             && let Some(parent) = spawned.filter(serde_json::Value::is_object)
                         {
                             row.insert("nest_parent".into(), parent);
+                            row.insert("nest_initialized".into(), serde_json::json!(false));
                         }
                     }
                 }

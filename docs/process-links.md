@@ -23,8 +23,12 @@ tuple and first observation time. Bindings also expose a `launch_chain` (nearest
 launch first), retaining earlier launch identities across additional SSH hops
 and after an upstream launcher exits. An established attribution stays attached to
 that process incarnation; a later connection reusing the same ports cannot
-reassign old work. These diagnostic launch links never write a sidebar parent.
-The user-selected `nest_parent` never changes process ownership.
+reassign old work. A verified initiator initializes an untouched local child’s
+`nest_parent`, including the initiator’s node ID for remote launches. Both the
+compatibility collector and resource-agent path persist this relationship. Native
+creation timestamps exclude older resumed sessions. Explicit attachment or
+detachment always wins, including after restart. The sidebar parent never changes
+process ownership.
 
 ## Current wire contract
 

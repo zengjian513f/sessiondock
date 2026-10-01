@@ -100,7 +100,11 @@ pub fn spawn_parents(
     }
     let mut found = BTreeMap::new();
     for (uid, pids) in owned {
-        if !rows.contains_key(uid.as_str()) {
+        if !rows.contains_key(uid.as_str())
+            || sessions
+                .iter()
+                .any(|row| row.continued_in.as_deref() == Some(uid.as_str()))
+        {
             continue;
         }
         // A later resume is a new process, not a newly created session.
@@ -225,6 +229,31 @@ pub fn record(
     sessions: &[SessionRow],
     owned: &IndexMap<String, Vec<i64>>,
 ) -> Result<(), MetadataError> {
+    let snapshot = metadata.snapshot()?;
+    let by_key: HashMap<_, _> = sessions
+        .iter()
+        .map(|row| ((row.source.as_str(), row.sid.as_str()), row))
+        .collect();
+    let invalid: Vec<_> = sessions
+        .iter()
+        .filter_map(|child| {
+            let saved = snapshot.row(&child.uid);
+            if saved["nest_initialized"] != serde_json::json!(false) {
+                return None;
+            }
+            let parent = snapshot.nest_parent(&child.uid)?;
+            if parent.node_id.is_some() {
+                return None;
+            }
+            let row = by_key.get(&(parent.source.as_str(), parent.sid.as_str()))?;
+            (newer_than_child(row, child)
+                || row.continued_in.as_deref() == Some(child.uid.as_str()))
+            .then(|| (child.uid.clone(), parent.clone()))
+        })
+        .collect();
+    if !invalid.is_empty() {
+        metadata.discard_invalid_initial_nest_parents(&invalid)?;
+    }
     let found: Vec<_> = spawn_parents(scan, sessions, owned).into_iter().collect();
     if !found.is_empty() {
         let identities = sessions

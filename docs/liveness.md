@@ -149,8 +149,7 @@ services on one machine.
   "scan": {
     "enabled": true, "root": "/proc",
     "stats": {"processes": 3077, "matched": 181, "elapsed_ms": 64},
-    "cache": {"hit": false, "age_ms": 0, "ttl_ms": 3000},
-    "spawned_recorded": 0
+    "cache": {"hit": false, "age_ms": 0, "ttl_ms": 3000}
   }
 }
 ```
@@ -159,9 +158,9 @@ services on one machine.
 `unavailable_reason` disappears; `managed` keeps the batch-22 shape when a host
 directory is configured, with `external_detection: "proc_scan"`, and managed
 `running` instances are merged into `uids`/`tmux_uids`/`started_at` (their own
-start time is used when the scan has none). `spawned_recorded` is the number
-of spawners written by this call (`null` without a state directory, an
-`{error}` object when the metadata store refused). A failed scan keeps the
+start time is used when the scan has none). Local launch discovery initializes
+`nest_parent` during sampling and in the background. A continuation of the same
+conversation is not inferred as a newly launched child. A failed scan keeps the
 managed answer, `partial: true` and `scan.status: "failed"`.
 
 The frontend reads `uids`/`tmux_uids`/`started_at` and treats an unlisted
@@ -247,7 +246,8 @@ initiator evidence. A shared directory alone, a native OpenCode subagent, a
 shared tmux server and a later resume do not supply that evidence. The first
 recorded parent persists after exit. Explicit attach/detach wins across scans
 and restart, as described in [metadata](metadata.md#sidebar-parent).
-No `spawned_by` field is written. Collector SSH reports remain diagnostic;
+No `spawned_by` field is written. Verified SSH reports initialize the same
+`nest_parent`, preserving explicit decisions;
 native subagent relationships remain supplied by the CLI history.
 Work that exits between scans without a recorded relation cannot be recovered
 from timestamps or a shared working directory alone.

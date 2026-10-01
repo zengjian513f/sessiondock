@@ -41,7 +41,7 @@ def main():
         saved = state / "session-metadata.json"
         invalid = {"source": "claude", "sid": P_SID}
         saved.write_text(json.dumps({"schema_version": 1, "revision": 1, "sessions": {
-            uids[G_SID]: {"spawned_by": invalid, "nest_independent": True, "starred": True, "starred_at": 1},
+            uids[G_SID]: {"spawned_by": invalid, "starred": True, "starred_at": 1},
         }}))
         saved.chmod(0o600)
         env = {"SESSIONDOCK_PROC_ROOT": proc, "SESSIONDOCK_STATE_DIR": state,
