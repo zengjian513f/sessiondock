@@ -310,6 +310,7 @@ async function flushBrowserAudit() {
   if (!SessionDockCapabilities.allows('audit')) return;
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
+  if (SessionDockNetwork.paused) return;
   if (browserAuditSending || !browserAuditQueue.length) return;
   if (performance.now() < browserAuditRetryAt) { scheduleBrowserAudit(); return; }
   const events = spliceAuditBatch(browserAuditQueue);
@@ -363,6 +364,7 @@ async function flushBrowserAudit() {
 // page.hidden 那条快照留 content；分两包发，合计不超过 60 KB。发不出去的留在
 // 队列里，页面若只是进了 bfcache 还能补发。
 function flushBrowserAuditBeacon() {
+  if (SessionDockNetwork.paused) return;
   if (!SessionDockCapabilities.allows('audit')) return;
   clearTimeout(browserAuditTimer);
   browserAuditTimer = 0;
@@ -428,6 +430,7 @@ function observeLongFrames() {
   if (!SessionDockCapabilities.allows('audit')) return;
   if (!globalThis.PerformanceObserver?.supportedEntryTypes?.includes('long-animation-frame')) return;
   const observer = new PerformanceObserver(list => {
+    if (SessionDockNetwork.paused) return;
     for (const entry of list.getEntries()) {
       if (entry.duration < LONG_FRAME_MIN_MS || longFrameCount >= LONG_FRAME_MAX_EVENTS) continue;
       longFrameCount += 1;
@@ -2817,6 +2820,20 @@ addEventListener('sessiondock-network-paused', event => {
   login.type = 'button'; login.onclick = () => window.open(APP_BASE, '_blank', 'noopener');
   const actions = el('div', 'app-float-actions'); actions.append(login); notice.append(actions);
   floatStack().append(notice);
+});
+
+addEventListener('sessiondock-network-resumed', async () => {
+  await checkServerBuild();
+  if (SessionDockNetwork.paused) return;
+  startUiEvents();
+  void loadSessions();
+  void pollLive(true);
+  void flushBrowserAudit();
+  if (S.sel) {
+    const uid = S.sel, agent = S.agent;
+    await syncSession(uid, agent);
+    if (S.sel === uid && S.agent === agent) watchSession(uid, agent);
+  }
 });
 
 function visible() {
@@ -9978,6 +9995,7 @@ function openSettings() {
   $('#setting-font').value = store.get('font', 'ubuntu');
   $('#setting-theme').value = store.get('theme', 'system');
   $('#setting-cache').value = String(cacheLimitMb);
+  $('#setting-sleep').value = String(SessionDockSleep.minutes);
   $('#setting-stop-concurrency').value = String(sessionStopConcurrency());
   $('#setting-console-paste-files').checked = consolePasteFilesEnabled();
   setMachineNote('');

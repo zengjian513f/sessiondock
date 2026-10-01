@@ -40,6 +40,7 @@ def run(browser, base, root, renderer):
     context.add_init_script(
         "localStorage.setItem('sessiondock.consoleRenderer', JSON.stringify(%s));" % json.dumps(renderer))
     page = context.new_page()
+    page.clock.install()
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.goto(base, wait_until="networkidle")
     shell = context.request.post(base + "/api/term/create", data={
@@ -141,6 +142,13 @@ def run(browser, base, root, renderer):
         page.set_viewport_size({'width': 1280, 'height': 900})
     print(f"PASS {renderer} idle clicks/drag/keyboard, compact status, ticks, wheel and width", flush=True)
 
+    before_sleep = page.evaluate(TIMELINE)['clock']
+    page.clock.fast_forward(61 * 60000)
+    page.wait_for_function('SessionDockSleep.sleeping && !T.ws')
+    page.get_by_role('button', name='Resume', exact=True).click()
+    page.wait_for_function('T.ws?.readyState === WebSocket.OPEN')
+    page.wait_for_function('clock => Math.abs(currentTermViewObject().timeline.clock - clock) < 25', arg=before_sleep)
+    print(f"PASS {renderer} sleep/Resume preserves replay position and reconnects scrubbing", flush=True)
 
     seek(page, 0)
     page.wait_for_function("!(" + XTERM_TEXT + ")().includes('RS_UNKNOWN')", timeout=10000)

@@ -7,17 +7,29 @@ globalThis.SessionDockNetwork = (() => {
   const base = new URL('.', location.href);
   const api = new URL('api/', base).pathname;
   const snapshots = new Map();
-  let stopped = '', sequence = 0;
+  let stopped = '', sleeping = false, sequence = 0;
   const pending = new Set();
   const pausedError = () => new DOMException('自动同步已暂停', 'AbortError');
   const rowKey = (row, key) => `${row.node_id || ''}\n${row[key]}`;
 
   function pause(reason) {
-    if (stopped === 'login' || stopped === reason) return;
-    stopped = reason;
+    if (reason === 'idle') {
+      if (sleeping) return;
+      sleeping = true;
+    } else {
+      if (stopped === 'login' || stopped === reason) return;
+      stopped = reason;
+    }
     for (const controller of pending) controller.abort();
     pending.clear();
     dispatchEvent(new CustomEvent('sessiondock-network-paused', {detail: reason}));
+  }
+
+  function resume() {
+    if (!sleeping) return;
+    sleeping = false;
+    // Waking a page must never clear a stale-build or expired-login pause.
+    if (!stopped) dispatchEvent(new Event('sessiondock-network-resumed'));
   }
 
   function expandRows(baseline, patch) {
@@ -69,7 +81,7 @@ globalThis.SessionDockNetwork = (() => {
     const background = (method === 'GET' && !draftRead) || /\/api\/(audit\/browser|sessions\/unread|session\/conversation\/check)$/.test(url.pathname);
     // A stale page may still save editor drafts before reloading. An expired
     // login pauses writes too: repeatedly following the login redirect is waste.
-    if (stopped && (background || stopped === 'login')) throw pausedError();
+    if (sleeping || (stopped && (background || stopped === 'login'))) throw pausedError();
     const controller = new AbortController();
     const signal = init.signal || (input instanceof Request ? input.signal : null);
     const abort = () => controller.abort(signal?.reason);
@@ -113,5 +125,6 @@ globalThis.SessionDockNetwork = (() => {
       signal?.removeEventListener('abort', abort);
     }
   };
-  return Object.freeze({pause, get paused() {return !!stopped;}, get reason() {return stopped;}});
+  return Object.freeze({pause, resume, get paused() {return sleeping || !!stopped;},
+    get reason() {return stopped || (sleeping ? 'idle' : '');}});
 })();
