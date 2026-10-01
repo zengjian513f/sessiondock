@@ -67,6 +67,7 @@ pub const HUB_ROUTES: &[(&str, &str)] = &[
     ("POST", "/api/session/transfer/progress"),
     ("GET", "/api/session/transfers"),
     ("GET", "/api/session/resources"),
+    ("POST", "/api/session/resources/probe"),
 ];
 /// Reads merged across the selected machines.
 const AGGREGATED: [&str; 5] = [
@@ -459,6 +460,23 @@ async fn handle(
                 .map_err(Reply::Invalid)?;
         return ok(&value);
     }
+    if method == Method::POST && path == "/api/session/resources/probe" {
+        let body: super::process_links::SessionProbeBody =
+            serde_json::from_value(Value::Object(read_body(request).await?))
+                .map_err(|_| Reply::Invalid("需要会话、统计范围和探测开关".into()))?;
+        let inclusive =
+            crate::hub::resources::inclusive(body.scope.as_deref()).map_err(Reply::Invalid)?;
+        return ok(&crate::hub::resources::probe(
+            &state.resource_nodes,
+            registry,
+            client,
+            &body.uid,
+            inclusive,
+            body.enabled,
+        )
+        .await
+        .map_err(Reply::Invalid)?);
+    }
     if method == Method::GET && path == "/api/session/transfers" {
         return match state.transfers.pending() {
             Ok(value) => ok(&value),
@@ -530,7 +548,7 @@ async fn handle(
         explicit = Some(nid.to_string());
         path = rest.to_string();
     }
-    if method == Method::POST && path == "/api/process-links" {
+    if method == Method::POST && (path == "/api/process-links" || path == "/api/resources/probe") {
         return Ok((
             StatusCode::FORBIDDEN,
             axum::Json(

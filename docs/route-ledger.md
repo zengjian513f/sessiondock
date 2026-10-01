@@ -11,7 +11,7 @@ linked from [the documentation index](README.md).
 | Sessions | GET `/api/sessions`, `/api/sessions/titles`, `/api/messages/{uid}`, `/api/messages/{uid}/page`, `/api/messages/{uid}/media-page`, `/api/session/input-history` | current |
 | Background unread | POST `/api/sessions/unread` (read-only cursor summaries, node-scoped through Hub) | current |
 | Sync and search | GET `/api/events` (lightweight UI changes), `/api/watch`, `/api/search` (including `progress=1` NDJSON) | current |
-| Session resources | GET `/api/resources`, `/api/session/resources` (`uid`, `scope=direct` or `inclusive`); GET/POST `/api/process-links` | shared collector; session view resolves opaque UI UID to native identity, Hub aggregates execution nodes; link writes require node authentication |
+| Session resources | GET `/api/resources`, `/api/session/resources` (`uid`, `scope=direct` or `inclusive`); POST `/api/session/resources/probe`, `/api/resources/probe`; GET/POST `/api/process-links` | shared collector; session view resolves opaque UI UID to native identity, Hub aggregates execution nodes; link writes require node authentication |
 | Runtime state | GET `/api/live`, `/api/term/list` | capability-gated |
 | Preferences and timeline | GET/POST `/api/groups`, POST `/api/session/group`, `/api/session/star`, `/api/session/nest`, `/api/sessions/fork-visibility`, `/api/session/rewind` | capability-gated |
 | Group copies | POST `/api/session/clone/plan`, `/api/session/clone`; Hub POST `/api/session/transfer/clone`, `/api/session/transfer/cancel`, `/api/session/transfer/progress`; GET `/api/session/transfers` | capability-gated |

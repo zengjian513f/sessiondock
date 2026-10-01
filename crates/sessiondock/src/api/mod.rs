@@ -64,6 +64,11 @@ pub fn router() -> Router<AppState> {
         .route("/resources", get(process_links::resources))
         .route("/session/resources", get(process_links::session_resources))
         .route(
+            "/session/resources/probe",
+            post(process_links::session_probe),
+        )
+        .route("/resources/probe", post(process_links::node_probe))
+        .route(
             "/process-links",
             get(process_links::get).post(process_links::post),
         )
