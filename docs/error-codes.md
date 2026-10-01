@@ -6,35 +6,35 @@ This file is produced by `tests/error_codes.py`. Handlers return JSON `{"error":
 python3 tests/error_codes.py --write
 ```
 
-Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
+Scanned `crates/sessiondock/src`: **230** (status, code) pairs.
 
 ## 400 Bad Request
 
 ### `attachment_interrupted`
 
-- 附件上传中断 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L333
+- 附件上传中断 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L376
 
 ### `attachment_query`
 
-- 附件请求无效 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L255 → `POST /api/session/conversation/attachment`
+- 附件请求无效 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L298 → `POST /api/session/conversation/attachment`
 
 ### `backend_unknown`
 
-- 未知终端后端 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L909 → `POST /api/term/backend`
+- 未知终端后端 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L968 → `POST /api/term/backend`
 
 ### `backend_unsupported`
 
-- Rust 后端不支持 tmux；新建会话只能由 ptyhost 托管 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L904 → `POST /api/term/backend`
+- Rust 后端不支持 tmux；新建会话只能由 ptyhost 托管 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L963 → `POST /api/term/backend`
 
 ### `bad_body`
 
 - bad body
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L502, L504 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L195, L208, L263, L373, L454
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L504, L506 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L136, L140, L197, L210, L265, L375, L456
 
 ### `create_cwd_failed`
 
-- 创建启动目录失败：{error} — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `prepare_cwd` L453
+- 创建启动目录失败：{error} — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `prepare_cwd` L454
 
 ### `file_absolute_path_required`
 
@@ -206,7 +206,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 附件为空
 - 附件为空或缺少 Content-Length
-- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L353
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L396
 - [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `attachment_upload` L2008
 
 ### `file_upload_modified_invalid`
@@ -253,7 +253,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `invalid_launch_request`
 
-- 创建请求格式或身份字段无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid` L93
+- 创建请求格式或身份字段无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid` L94
 
 ### `invalid_metadata_batch`
 
@@ -272,7 +272,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `invalid_path`
 
-- 启动目录路径无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `complete_dir` L839 → `GET /api/term/complete-dir`
+- 启动目录路径无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `complete_dir` L862 → `GET /api/term/complete-dir`
 
 ### `invalid_purge`
 
@@ -304,7 +304,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `invalid_stop_request`
 
-- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L1079
+- 停止请求格式或会话 UID 无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `invalid_stop` L1138
 
 ### `invalid_terminal_input`
 
@@ -324,11 +324,11 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 来源没有唯一的可续接 CLI 配置
 - 来源没有唯一的已配置 CLI
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `select_entry` L355, L360
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `select_entry` L356, L361
 
 ### `launch_model`
 
-- 模型或推理强度名称无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L681 → `POST /api/term/create`
+- 模型或推理强度名称无效 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L700 → `POST /api/term/create`
 
 ### `nest_conflict`
 
@@ -358,7 +358,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 图片分页游标格式无效
 - append 和 window 只接受 0 或 1
 - 这不是 Claude 主会话
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L506
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L548
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L176
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L570
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_message_query` L530
@@ -447,8 +447,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 工具解码范围不属于当前原生记录
 - 工具解码范围无效
 - 图片缺少当前原生来源授权
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1353
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `trusted_path` L1408
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1366
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `trusted_path` L1421
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L186
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `materialize_text` L71
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `prepare` L154, L158
@@ -462,7 +462,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `attachment_missing`
 
-- 附件暂存字节已不在服务端 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `staged` L464
+- 附件暂存字节已不在服务端 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `staged` L507
 
 ### `entry_not_found`
 
@@ -489,7 +489,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `launch_missing`
 
-- 没有这个创建回执 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `failure` L89
+- 没有这个创建回执 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `failure` L90
 
 ### `media_not_found`
 
@@ -503,8 +503,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - node listener serves /api only
 - API route not found
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L318
-- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L326 → `ANY (fallback)`
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `node_not_found` L370
+- [`api/mod.rs`](../crates/sessiondock/src/api/mod.rs) `not_found` L378 → `ANY (fallback)`
 
 ### `record_not_found`
 
@@ -520,24 +520,24 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 目标不是这个 Claude 会话的记录节点
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `pending_attachment_scope` L717
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `select` L264, L273, L300
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `select_main` L611
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `physical_chain` L280
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1103, L1108, L1114
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `search_version` L934, L939
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `select_main` L661
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `physical_chain` L322
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1113, L1118, L1124
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `search_version` L944, L949
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `find` L184
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup` L202
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `lookup_media` L213
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L578
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1687, L1690
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1731
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1690, L1693
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1734
 
 ### `session_missing`
 
 - 会话不存在
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L534
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1125 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L547
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1184 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L314 → `POST /api/session/nest`
-- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L453 → `POST /api/session/rewind`
+- [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `rewind` L454 → `POST /api/session/rewind`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `star` L171 → `POST /api/session/star`
 
 ### `submission_missing`
@@ -550,15 +550,30 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 指定目录中没有这个终端 host — [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `scroll` L740 → `POST /api/term/scroll`
 
+### `unknown_client`
+
+- 这台机器没有配置该客户端 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `client_update` L913 → `POST /api/clients/update`
+
 ## 409 Conflict
 
 ### `attachment_conflict`
 
-- 相同附件上传 ID 对应了不同文件 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L371
+- 相同附件上传 ID 对应了不同文件 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L414
+
+### `client_update_running`
+
+- 该客户端正在更新，请等它结束 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `client_update` L918 → `POST /api/clients/update`
+
+### `code`
+
+- move_io
+- error
+- 节点迁移操作失败
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `remote_error` L627
 
 ### `draft_revision`
 
-- 另一页面已更新报告草稿，未发布附件和创建诊断 — [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L247
+- 另一页面已更新报告草稿，未发布附件和创建诊断 — [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L249
 
 ### `file_ambiguous`
 
@@ -629,24 +644,28 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 上传位置不一致，请刷新任务后从预期位置继续
 - [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `upload` L916, L924
 
+### `freeze_instance_changed`
+
+- 运行实例已变化或不可确认，请刷新后重试 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `freeze` L1351 → `POST /api/session/freeze`
+
 ### `launch_cwd_unknown`
 
-- 该会话没有记录可用的工作目录；请通过创建接口明确指定目录续接 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L791 → `POST /api/term/takeover`
+- 该会话没有记录可用的工作目录；请通过创建接口明确指定目录续接 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L814 → `POST /api/term/takeover`
 
 ### `launch_identity`
 
 - 创建回执与附件目标实例不匹配
 - 创建回执与进程实例不匹配
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `pending_attachment_cwd` L666, L675
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `check_instance` L117
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `check_instance` L118
 
 ### `launch_identity_declared`
 
-- 该实例启动时已在命令行声明完整原生会话 ID；由运行时目录关联，不接受另行的操作者绑定 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `bind` L190 → `POST /api/term/bind`
+- 该实例启动时已在命令行声明完整原生会话 ID；由运行时目录关联，不接受另行的操作者绑定 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `bind` L191 → `POST /api/term/bind`
 
 ### `launch_not_finished`
 
-- 该创建实例尚未退出或取消，不能丢弃；请先停止它 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `discard` L995 → `POST /api/term/discard`
+- 该创建实例尚未退出或取消，不能丢弃；请先停止它 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `discard` L1054 → `POST /api/term/discard`
 
 ### `launch_not_ready`
 
@@ -654,7 +673,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `launch_source`
 
-- 续接会话的数据源与请求来源不一致 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L649 → `POST /api/term/create`
+- 续接会话的数据源与请求来源不一致 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `create` L666 → `POST /api/term/create`
 
 ### `media_changed`
 
@@ -664,20 +683,357 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 原生图片来源已变化，请重新加载会话 — [`media/native_media.rs`](../crates/sessiondock/src/media/native_media.rs) `changed` L163
 
+### `move_cancelled`
+
+- 本次移动已撤回，请重新查看清单
+- 源会话已变化，本次移动已撤回，请重新查看清单
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L365, L480
+
+### `move_cleanup`
+
+- (dynamic) — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L240, L254, L257, L267, L280 → `POST /api/session/transfer/retire`
+
+### `move_cleanup_pending`
+
+- 目标已可继续；源端清理待重试：{} — [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L521
+
+### `move_conflict`
+
+- 操作已绑定其他迁移目标
+- 跨机复制需要另一台机器
+- 目标操作并非迁移接收记录
+- 目标已存在不同的迁移操作
+- 同一 rollout 身份对应多份文件
+- rollout 身份重复
+- 暂存目录已存在
+- 目标原生历史或当前版本不同
+- 新身份已存在于原生数据库
+- 目标已有不同的项目或分组关联
+- 保留身份复制需要另一台机器
+- 目标文件执行权限不同
+- 目标文件已存在
+- 目标会话显示设置不同
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `cancel` L157
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L104
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L307, L332, L389
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle` L492
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L197
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L456
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L700
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_copy` L591, L606
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L485, L499
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L586, L616, L625, L644
+
+### `move_cwd_mismatch`
+
+- 两端工作目录路径不同
+- 工作目录或外部依赖内容不同
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `compare` L199, L205
+
+### `move_cwd_missing`
+
+- 工作目录必须是绝对路径
+- 工作目录不存在
+- 会话的工作目录不存在
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `capture` L79, L85
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L293
+
+### `move_format`
+
+- 未知的操作类型
+- 未知的撤回步骤
+- 迁移包缺少长度
+- 迁移包长度无效
+- 原生历史记录必须是对象
+- 历史缺少 session_meta
+- history_base 缺少 rollout ID
+- history_base 字节边界无效
+- 原生历史 payload 必须是对象
+- 父历史偏移不是完整记录边界
+- 未知的计划版本
+- 父历史边界超出文件
+- 父历史 ordinal 与字节边界不一致
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L138 → `POST /api/session/transfer/abort`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L88 → `POST /api/session/clone/plan`
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `stream` L573, L577
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `invalid` L36
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L218, L233, L237
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rewrite` L368, L389
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rows` L122
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L441, L495, L505
+- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L49
+
+### `move_group_incomplete`
+
+- 整组存在未解析依赖
+- 缺少被引用的物理 rollout
+- 未映射的 {key}: {id}
+- 未解析的父历史边界
+- 未映射的 {kind:?}: {id}
+- 父历史缺失
+- 物理历史存在循环或缺失依赖
+- 工具引用未映射的子代理: {id}
+- ；
+- 原生子代理图存在组外成员
+- 原生项目或分组关联缺失
+- 原生数据库未映射的 {field}
+- 当前 rollout 不在文件清单中
+- 数据库子代理父身份未映射
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L162, L309
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `remap` L346
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rewrite` L385, L402
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L491, L550
+- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `thread` L9
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L418
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L218, L254
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `mapped` L282
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L375, L398
+
+### `move_group_unsupported`
+
+- 此节点未启用会话整组复制
+- 源机器未配置回收站
+- 目标版本不支持迁移归属交接
+- 目标未配置本组所需的会话来源
+- 此暂存适配器只处理 Codex；未发布移动或克隆能力
+- 文件适配器仅处理 Claude 和 Grok
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L91 → `POST /api/session/clone/plan`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L213 → `POST /api/session/transfer/retire`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `service` L34
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L429
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_roots` L125
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L177
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L440
+
+### `move_identity`
+
+- 无法确定原生 rollout 身份
+- 工具调用 ID 对应多个工具
+- 计划身份映射缺失、冲突或格式无效
+- 缺少目标历史
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L185, L252
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `uuid` L95
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `validate` L589
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `member_target_uid` L478
+
+### `move_inventory`
+
+- (dynamic)
+- [`bin/sessiondock-transfer.rs`](../crates/sessiondock/src/bin/sessiondock-transfer.rs) `derive` L85
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `outside_references` L218
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L260
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `recheck` L407
+
+### `move_native_unsupported`
+
+- 原生元数据不是 UTF-8
+- 原生元数据包含尚未适配的二进制字段
+- 无法识别 {name} 的所属线程
+- 本组包含尚未适配的原生记录 {name}
+- 分页历史需要原生状态库及历史投影，当前未找到完整数据库
+- 无法唯一定位原生数据库游标对应的物理历史
+- 原生 item_json 缺失
+- 原生投影身份未映射: {id}
+- 目标表不存在
+- 源端原生表不存在
+- 回滚所需表缺失
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `boundary` L328
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `capture` L206, L271
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_copy` L580
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L474
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `read` L106
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L528
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rewrite` L417, L427
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L698
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `value` L48, L51
+
+### `move_node_unavailable`
+
+- 源机器不可用
+- 迁移节点不可用
+- 目标机器不可用
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L182, L185
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `network` L624
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L116, L119
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L339, L342, L345, L348
+
+### `move_path`
+
+- 原生文件位于配置根目录之外
+- 文件名无效
+- rollout 文件名无效
+- 暂存文件必须是相对路径
+- 暂存目录不能位于源会话根目录内
+- 工作目录扫描越界
+- 存储核对标识无效
+- 会话文件不在原生根目录内
+- 无效的会话相对路径
+- 会话不在原生根目录中
+- 无效的暂存目标路径
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L293
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `relative` L413, L416, L431
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L448
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `path` L229
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `walk` L173
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `build` L490, L496
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `member_target` L690
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `rewrite` L556
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L708, L735, L744
+
+### `move_plan_stale`
+
+- 复制清单与所选会话不一致
+- 迁移标识无效
+- 操作与源会话或移动模式不符
+- 操作与源会话不符
+- 迁移操作与所选会话不符
+- 暂存文件已变化
+- 导出期间暂存文件发生变化
+- 原生历史末行尚未写完
+- 读取期间历史文件发生变化
+- 读取期间历史文件被替换
+- 历史身份与索引快照不同
+- 历史文件与已确认计划不同
+- 暂存期间源历史发生变化
+- 工作目录或外部依赖在核对期间发生变化
+- 原生文件在计划后发生变化
+- 暂存期间源文件发生变化
+- 源端内容或剩余引用已变化，保留文件等待清理
+- 此操作不是迁移源
+- 迁移源尚未完成导出
+- 此操作不是迁移接收记录
+- 源端执行归属尚未切换
+- 原生数据库结构已变化
+- 源端原生记录已变化，保留清理现场
+- 复制记录不存在
+- 会话组关联已变化，请重新查看复制清单
+- 会话历史已变化，请重新查看复制清单
+- 源会话显示设置已变化，请重新查看复制清单
+- 会话附属文件已变化
+- 原生会话元数据已变化，请重新查看复制清单
+- 目标复用文件已变化
+- 复制暂存数据已变化
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L301 → `POST /api/session/clone`
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `abort` L178, L200
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `path` L49
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `progress` L113
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L330, L371, L405
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_manifest` L191
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `export_bundle` L247
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `plan` L220
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `rows` L111
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stable_read` L142, L151
+- [`transfer/codex.rs`](../crates/sessiondock/src/transfer/codex.rs) `stage` L480, L558
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `stale` L64
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `rewrite` L548
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L772
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L132
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `changed` L20
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `retire_source` L352
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `switch_source` L115, L121
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `insert_copy` L582
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `preflight_copy` L476
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `retire` L532
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L658, L667
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `load` L203
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `recheck` L417, L424, L436, L456, L460
+
+### `move_platform`
+
+- 跨机器迁移目前只支持 Linux
+- 迁移链接要求 Unix
+- 此平台不支持迁移符号链接
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `bundle_manifest` L135
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `receive_bundle` L579, L612
+- [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L270
+- [`transfer/files.rs`](../crates/sessiondock/src/transfer/files.rs) `stage` L748
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L676
+
+### `move_recovery_required`
+
+- 迁移结果缺失
+- 目标复制尚未完成
+- 存储核对文件已变化，保留现场
+- 执行归属已交接，不能撤回；请继续完成移动
+- 源端尚未记录撤回决定
+- 目标已开放继续，不能撤回
+- 目标历史尚未验证完成
+- 迁移序号已耗尽
+- 数据库复制凭据不匹配
+- 克隆数据库记录已变化，保留现场等待恢复
+- 本次导入的项目或分组已被其他记录引用，保留现场
+- 会话组有尚未恢复的复制操作
+- 克隆文件已变化或不属于本次操作，保留现场等待恢复
+- 复制操作需要恢复或重新发起
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L173 → `POST /api/session/conversation/send`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L488
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `run` L327, L497
+- [`transfer/environment.rs`](../crates/sessiondock/src/transfer/environment.rs) `remove` L265
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_source` L57, L66
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `abort_target` L92
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `activate_target` L141
+- [`transfer/moving.rs`](../crates/sessiondock/src/transfer/moving.rs) `next_ownership_sequence` L209
+- [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `rollback` L675, L686, L706, L712
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L578
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L252
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `rollback` L544
+
+### `move_reference_unsupported`
+
+- code-mode 中存在无法静态解析的会话引用
+- 子代理工具参数不是 JSON 字符串
+- 子代理工具参数不是 JSON
+- 子代理工具文本包含无法结构化解析的会话引用
+- 子代理工具结果包含无法识别的内容项
+- 子代理工具结果不是文本或原生内容数组
+- ；
+- [`transfer/code_mode.rs`](../crates/sessiondock/src/transfer/code_mode.rs) `failure` L79
+- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `output` L64, L81, L90
+- [`transfer/codex_tools.rs`](../crates/sessiondock/src/transfer/codex_tools.rs) `rewrite` L42, L48
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `plan_copy` L280
+
+### `move_root_mismatch`
+
+- 两端 CLI 根目录路径不同 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L287
+
+### `move_session_locked`
+
+- 会话正在复制或等待恢复
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L175 → `POST /api/session/conversation/send`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `resolve_resume` L490
+
+### `move_session_running`
+
+- 会话仍在运行：{} — [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `stopped` L56
+
+### `move_shared_storage`
+
+- 两台机器共享会话存储，不能移动文件 — [`transfer/bundle.rs`](../crates/sessiondock/src/transfer/bundle.rs) `validate_bundle` L298
+
+### `move_verify`
+
+- 克隆后的历史关系不完整
+- 克隆仍引用源组身份
+- [`transfer/service.rs`](../crates/sessiondock/src/transfer/service.rs) `execute` L713, L716, L719, L735
+
 ### `nest_parent_cycle`
 
 - 不能附属到自己的子会话下面 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `nest` L369 → `POST /api/session/nest`
+
+### `not_found`
+
+- 会话不在当前索引中 — [`transfer/group.rs`](../crates/sessiondock/src/transfer/group.rs) `derive` L56
 
 ### `report_result_unknown`
 
 - 此报告已开始保存，请核对诊断和处理会话；原输入保留，不会重复创建报告
 - 诊断已开始保存，输入保留，不会重复创建
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L237
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L239
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `get` L59 → `GET /api/session/conversation`
 
 ### `run_state_unknown`
 
-- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1210 → `POST /api/session/stop`
+- 该会话的受管实例运行状态未知（{reason}），未发送任何停止指令；未知不等于已退出，请稍后重试或检查宿主 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1289 → `POST /api/session/stop`
 
 ### `session_error`
 
@@ -711,13 +1067,14 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `native_scope` L119
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `select` L270, L293, L301
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `sid` L217
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `build` L709
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_parent` L427
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `select_main` L608
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `sid` L412
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread` L243
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread_from` L266
-- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `native_identity` L385
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `build` L759
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_parent` L469
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `rollout_parent` L216
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `select_main` L658
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `sid` L451
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread` L280
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread_from` L308
+- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `native_identity` L396
 - [`sessions/media_projection.rs`](../crates/sessiondock/src/sessions/media_projection.rs) `project_range` L40
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `invalid_range` L20
 - [`sessions/native_media.rs`](../crates/sessiondock/src/sessions/native_media.rs) `authorized_reader` L62, L64, L75, L84
@@ -731,9 +1088,13 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - [`sessions/records/native_records/replay_source.rs`](../crates/sessiondock/src/sessions/records/native_records/replay_source.rs) `replay_changed` L21
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L97
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L581, L584
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1922
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1925
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_source` L513
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1695
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `validate_request` L1698
+
+### `shell_env_unconfigured`
+
+- 本机没有配置登录环境检查，不能从页面重启后端 — [`api/shell_env.rs`](../crates/sessiondock/src/api/shell_env.rs) `restart` L22 → `POST /api/shell-env/restart`
 
 ### `stale_build`
 
@@ -741,11 +1102,11 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `stop_superseded`
 
-- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1133 → `POST /api/session/stop`
+- 该回滚分支已不是当前运行分支，未停止共享的子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1192 → `POST /api/session/stop`
 
 ### `takeover_superseded`
 
-- 该回滚分支的运行实例已转移到更新的子会话，请先处理当前子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L752 → `POST /api/term/takeover`
+- 该回滚分支的运行实例已转移到更新的子会话，请先处理当前子会话 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L775 → `POST /api/term/takeover`
 
 ### `terminal_binding_unavailable`
 
@@ -776,8 +1137,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L130
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `action` L526 → `POST /api/session/files/action`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `resolve` L125 → `POST /api/session/resolve-files`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L102
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1098 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `parse_body` L103
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1157 → `POST /api/session/stop`
 - [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `invalid` L108
 - [`api/terminal.rs`](../crates/sessiondock/src/api/terminal.rs) `claim_inner` L167
 - [`security.rs`](../crates/sessiondock/src/security.rs) `api_policy` L107
@@ -815,7 +1176,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 单个附件不能超过 512 MiB
 - 单个附件不能超过 {} MB
-- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L259 → `POST /api/session/conversation/attachment`
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L302 → `POST /api/session/conversation/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `upload_attachment` L743
 - [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `attachment_upload` L2015
 
@@ -828,7 +1189,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `inherit` L648
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `media_page` L560, L594
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `page_selection` L507
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2027
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2030
 
 ### `terminal_input_too_large`
 
@@ -851,14 +1212,14 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `attachment_headers_invalid`
 
-- 附件响应头无效 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `staged` L520
+- 附件响应头无效 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `staged` L563
 
 ### `bug_report_failed`
 
 - 报告捕获任务异常退出
 - 审计查询任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L547 → `POST /api/bug-report/capture`
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L379
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `capture` L549 → `POST /api/bug-report/capture`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L381
 
 ### `file_headers_invalid`
 
@@ -868,7 +1229,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 附件写入任务异常退出
 - 文件读取任务异常退出
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L714 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L716 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `work` L94
 
 ### `live_failed`
@@ -879,11 +1240,33 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 偏好工作异常退出，请重新读取状态确认结果 — [`api/metadata.rs`](../crates/sessiondock/src/api/metadata.rs) `write` L142
 
+### `move_io`
+
+- (dynamic)
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `abort_move` L148 → `POST /api/session/transfer/abort`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `activate_target` L201 → `POST /api/session/transfer/activate`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `bundle_manifest` L569 → `POST /api/session/transfer/manifest`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `check_bundle` L601 → `POST /api/session/transfer/check`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `execute` L325 → `POST /api/session/clone`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `export_bundle` L351, L381 → `POST /api/session/transfer/export`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `plan` L108 → `POST /api/session/clone/plan`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `receive_bundle` L481 → `POST /api/session/transfer/receive`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `release_export` L501 → `POST /api/session/transfer/release`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `reserve_export` L525 → `POST /api/session/transfer/reserve`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `retire_source` L235, L266, L279, L289 → `POST /api/session/transfer/retire`
+- [`api/transfer.rs`](../crates/sessiondock/src/api/transfer.rs) `switch_source` L181 → `POST /api/session/transfer/switch`
+- [`hub/transfer.rs`](../crates/sessiondock/src/hub/transfer.rs) `save` L73
+- [`transfer/mod.rs`](../crates/sessiondock/src/transfer/mod.rs) `from` L43
+
+### `move_native_database`
+
+- (dynamic) — [`transfer/native.rs`](../crates/sessiondock/src/transfer/native.rs) `from` L39
+
 ### `reader_failed`
 
 - 只读任务失败
-- [`state.rs`](../crates/sessiondock/src/state.rs) `run` L159
-- [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L134
+- [`state.rs`](../crates/sessiondock/src/state.rs) `run` L163
+- [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L138
 
 ### `runtime_encoding`
 
@@ -904,17 +1287,18 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 会话行不是对象
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `push` L616
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `resolve` L772
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L511
-- [`sessions/index/titles.rs`](../crates/sessiondock/src/sessions/index/titles.rs) `titles` L13, L24
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_state` L537
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_view_bytes` L728
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `views` L547
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `refresh_within` L553
+- [`sessions/index/titles.rs`](../crates/sessiondock/src/sessions/index/titles.rs) `codex_name` L14
+- [`sessions/index/titles.rs`](../crates/sessiondock/src/sessions/index/titles.rs) `titles` L28, L39
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_state` L543
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `list_view_bytes` L738
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `views` L553
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `history_page_body` L487
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `take` L267
 - [`sessions/pages.rs`](../crates/sessiondock/src/sessions/pages.rs) `validate_response` L324
-- [`sessions/views/body.rs`](../crates/sessiondock/src/sessions/views/body.rs) `serialize_error` L124
+- [`sessions/views/body.rs`](../crates/sessiondock/src/sessions/views/body.rs) `serialize_error` L168
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `encode_events` L120
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1716
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `view_meta` L1719
 
 ### `trash_encoding`
 
@@ -936,7 +1320,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 服务端会话草稿未配置，无法转交报告
 - 会话保存和发送未配置
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L182
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `report_inner` L184
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `enabled` L27
 
 ### `file_action_not_implemented`
@@ -963,7 +1347,7 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 文件写入服务未启用
 - 文件写入未启用：必须显式配置 SESSIONDOCK_FILE_WRITE_ROOTS（只读目录不会隐式变为可写）
-- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L658 → `POST /api/session/attachment`
+- [`api/bug_report.rs`](../crates/sessiondock/src/api/bug_report.rs) `attachment` L660 → `POST /api/session/attachment`
 - [`api/files.rs`](../crates/sessiondock/src/api/files.rs) `write_configured` L458
 
 ### `media_files_disabled`
@@ -980,10 +1364,13 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - Rust 后端尚未迁移此能力：受控会话创建与 pending 生命周期。当前是只读开发阶段。
 - Rust 后端尚未迁移此能力：终端后端选择。当前是只读开发阶段。
 - Rust 后端尚未迁移此能力：受管实例停止。当前是只读开发阶段。
+- Rust 后端尚未迁移此能力：会话冻结。当前是只读开发阶段。
+- Rust 后端尚未迁移此能力：进程身份验证。当前是只读开发阶段。
 - [`api/audit.rs`](../crates/sessiondock/src/api/audit.rs) `browser` L32 → `POST /api/audit/browser`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L891 → `POST /api/term/backend`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `enabled` L32
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1093, L1141 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `backend` L950 → `POST /api/term/backend`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `enabled` L33
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `freeze` L1340, L1358 → `POST /api/session/freeze`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1152, L1200 → `POST /api/session/stop`
 - [`api/trash.rs`](../crates/sessiondock/src/api/trash.rs) `configured` L39
 - [`error.rs`](../crates/sessiondock/src/error.rs) `unavailable` L31
 
@@ -1027,28 +1414,29 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `resolve` L716
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `sid` L213, L218
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `unsupported` L48
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `chain` L498
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `check_cut` L468, L469
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_link` L676, L685, L689
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_parent` L431
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `native_scope` L619, L622
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `new` L341, L344
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `ownership` L452
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `sid` L406, L413
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `chain` L540
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `check_cut` L510, L511
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_link` L726, L735, L739
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `history_parent` L473
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `native_scope` L669, L672
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `new` L380, L383
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `ownership` L494
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `rollout_parent` L215
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `sid` L445, L452
 - [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `unsupported` L71
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `physical_chain` L291
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread` L223, L226, L236, L244
-- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `blank` L161
-- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `native_identity` L379, L392
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `physical_chain` L333
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `thread` L260, L263, L273, L281
+- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `blank` L170
+- [`sessions/index/summary/mod.rs`](../crates/sessiondock/src/sessions/index/summary/mod.rs) `native_identity` L390, L403
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `grok_native_identity` L31
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `native_identity` L65, L91, L104
 - [`sessions/scope.rs`](../crates/sessiondock/src/sessions/scope.rs) `summary_native_identity` L50
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1819
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `build` L1822
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `claude_rewind_target` L573, L586
 - [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `committed_records` L556
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2021
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1912, L1916
-- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L2068
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `inherit` L2024
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `native_scope` L1915, L1919
+- [`sessions/views/mod.rs`](../crates/sessiondock/src/sessions/views/mod.rs) `parse_prefix` L2071
 
 ## 503 Service Unavailable
 
@@ -1062,8 +1450,8 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 附件发布到暂存区失败
 - 附件目录同步任务失败
 - 附件目录同步失败
-- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L320, L345, L360, L384, L396, L403
-- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L289, L301 → `POST /api/session/conversation/attachment`
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `drop` L363, L388, L403, L427, L439, L446
+- [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `upload` L332, L344 → `POST /api/session/conversation/attachment`
 
 ### `bug_report_failed`
 
@@ -1071,26 +1459,26 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `cancelled`
 
-- 观察已取消 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L124
+- 观察已取消 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L128
 
 ### `conversation_send`
 
-- 发送任务异常退出 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L175 → `POST /api/session/conversation/send`
+- 发送任务异常退出 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `send` L194 → `POST /api/session/conversation/send`
 
 ### `conversation_start`
 
-- 启动任务异常退出，输入保留 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `restart` L237 → `POST /api/session/conversation/restart`
+- 启动任务异常退出，输入保留 — [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `restart` L280 → `POST /api/session/conversation/restart`
 
 ### `conversation_storage`
 
 - 草稿保存任务失败
 - 草稿清理任务失败
 - [`api/conversation.rs`](../crates/sessiondock/src/api/conversation.rs) `save` L148
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `forget_discarded_launch` L1050
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `forget_discarded_launch` L1109
 
 ### `cwd_check_failed`
 
-- 启动目录检查失败 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `prepare_cwd` L470
+- 启动目录检查失败 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `prepare_cwd` L471
 
 ### `file_attachment_id`
 
@@ -1129,9 +1517,17 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 - 无法分配回收目录编号 — [`files/write.rs`](../crates/sessiondock/src/files/write.rs) `fresh_private_child` L1137
 
+### `freeze_failed`
+
+- 无法冻结或恢复会话进程：{error} — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `freeze` L1363 → `POST /api/session/freeze`
+
+### `freeze_resume_failed`
+
+- 停止前无法恢复冻结进程：{error}；请先恢复运行后重试 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1249 → `POST /api/session/stop`
+
 ### `lifecycle_response`
 
-- 创建状态序列化失败 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `serialize` L261
+- 创建状态序列化失败 — [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `serialize` L262
 
 ### `media_busy`
 
@@ -1148,18 +1544,18 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 ### `process_control_unavailable`
 
 - 无法结束外部会话进程：{error:?}
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1164 → `POST /api/session/stop`
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L779 → `POST /api/term/takeover`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `stop` L1223 → `POST /api/session/stop`
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `takeover` L802 → `POST /api/term/takeover`
 
 ### `process_scan_unavailable`
 
 - 无法核对会话进程：{error}
-- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L564
+- [`api/lifecycle.rs`](../crates/sessiondock/src/api/lifecycle.rs) `external_processes` L577
 - [`api/runtime.rs`](../crates/sessiondock/src/api/runtime.rs) `external_scan_result` L47
 
 ### `reader_busy`
 
-- 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L125
+- 读取服务已关闭 — [`state.rs`](../crates/sessiondock/src/state.rs) `run_wait` L129
 
 ### `records_unreadable`
 
@@ -1203,12 +1599,12 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 - 会话或子代理元数据尚不是完整有效的 JSON
 - 会话在读取期间变化，请重试
 - [`sessions/history.rs`](../crates/sessiondock/src/sessions/history.rs) `parse_prefix` L681
-- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `check_cut` L470
-- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `discover` L754, L761
+- [`sessions/index/graph.rs`](../crates/sessiondock/src/sessions/index/graph.rs) `check_cut` L512
+- [`sessions/index/mod.rs`](../crates/sessiondock/src/sessions/index/mod.rs) `discover` L797, L804
 - [`sessions/index/names.rs`](../crates/sessiondock/src/sessions/index/names.rs) `error` L23
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1347, L1351
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1120
-- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `stamp` L1340
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `file_stamp` L1360, L1364
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `prepare` L1130
+- [`sessions/mod.rs`](../crates/sessiondock/src/sessions/mod.rs) `stamp` L1353
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `allocation_error` L23
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `changed` L14
 - [`sessions/native_input.rs`](../crates/sessiondock/src/sessions/native_input.rs) `read_error` L17
@@ -1242,4 +1638,4 @@ Scanned `crates/sessiondock/src`: **197** (status, code) pairs.
 
 ### `服务正在关闭`
 
-- (dynamic) — [`state.rs`](../crates/sessiondock/src/state.rs) `admit` L102
+- (dynamic) — [`state.rs`](../crates/sessiondock/src/state.rs) `admit` L106

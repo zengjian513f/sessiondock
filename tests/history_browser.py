@@ -91,6 +91,50 @@ def main():
         corpus.put("rotation-new", "codex", [new_meta, codex_message("user", "Rotation continued question", 14)], [])
         corpus.put("rotation-agent", "codex", [batch35_agent_meta("rotation-agent", "codex-rotation"),
                    codex_message("assistant", "Rotation attached agent answer", 15)], [])
+        # Codex 0.159: history_base.thread_id is an immutable rollout UUID.
+        # A fork of a reverted thread inherits the rotated file, not whichever
+        # version currently represents that stable thread in the sidebar.
+        native_sid = "00000000-0000-7000-8000-000000000001"
+        middle_id = "00000000-0000-7000-8000-000000000002"
+        latest_id = "00000000-0000-7000-8000-000000000003"
+        fork_sid = "00000000-0000-7000-8000-000000000004"
+
+        def native_file(key, sid, rollout, hour, rows, archived=False):
+            path = corpus.put(key, "codex", rows, [])
+            directory = corpus.root / "codex" / ("archived_sessions" if archived else "sessions")
+            directory.mkdir(exist_ok=True)
+            suffix = "" if sid == rollout else "_" + rollout
+            renamed = directory / f"rollout-2026-09-11T{hour:02d}-00-00-{sid}{suffix}.jsonl"
+            path.rename(renamed)
+            corpus.paths[key] = renamed
+            return renamed
+
+        meta = batch35_meta(native_sid, "2026-09-11T06:00:00Z")
+        meta["ordinal"] = 10
+        original = native_file("native-original", native_sid, native_sid, 6, [meta,
+            codex_message("user", "Native physical inherited question", 11),
+            codex_message("assistant", "Native physical inherited answer", 12)], archived=True)
+        first_cut = original.stat().st_size
+        with original.open("ab") as stream:
+            stream.write(encoded(codex_message("assistant", "Native discarded old tail", 13)))
+        meta = batch35_meta(native_sid, "2026-09-11T07:00:00Z", history_base={
+            "thread_id": native_sid, "end_byte_offset": first_cut, "end_ordinal_exclusive": 13})
+        meta["ordinal"] = 13
+        middle = native_file("native-middle", native_sid, middle_id, 7, [meta,
+            codex_message("user", "Native middle question", 14),
+            codex_message("assistant", "Native middle answer", 15)])
+        middle_cut = middle.stat().st_size
+        meta = batch35_meta(native_sid, "2026-09-11T08:00:00Z", history_base={
+            "thread_id": middle_id, "end_byte_offset": middle_cut, "end_ordinal_exclusive": 16})
+        meta["ordinal"] = 16
+        native_file("native-latest", native_sid, latest_id, 8, [meta,
+            codex_message("user", "Native latest version only", 17)])
+        meta = batch35_meta(fork_sid, "2026-09-11T09:00:00Z", forked_from_id=native_sid,
+            history_base={"thread_id": middle_id, "end_byte_offset": middle_cut,
+                          "end_ordinal_exclusive": 16})
+        meta["ordinal"] = 16
+        native_file("native-fork", fork_sid, fork_sid, 9, [meta,
+            codex_message("user", "Native fork of reverted thread", 17)])
         with isolated_server(corpus, args.binary) as (base, opener), sync_playwright() as playwright:
             launch = {"headless": True}
             if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -189,6 +233,37 @@ def main():
                 expect(page.locator("#msgs")).to_contain_text("Rotation live appended answer")
                 expect(page.locator("#msgs")).not_to_contain_text("Rotation excluded old tail")
                 print("PASS Codex same-ID rollout rotation: one list row, inherited prefix, excluded old tail, agent ownership, live append, titles, duplicate conflict and recovery")
+                select("native-latest", "Native latest version only")
+                expect(page.locator("#msgs")).to_contain_text("Native physical inherited answer")
+                expect(page.locator("#msgs")).to_contain_text("Native middle answer")
+                expect(page.locator("#msgs")).not_to_contain_text("Native discarded old tail")
+                for key in ("native-original", "native-middle"):
+                    expect(page.locator(f'#side .item[data-uid="{corpus.uid(key)}"]')).to_have_count(0)
+                select("native-fork", "Native fork of reverted thread")
+                expect(page.locator("#msgs")).to_contain_text("Native physical inherited answer")
+                expect(page.locator("#msgs")).to_contain_text("Native middle answer")
+                expect(page.locator("#msgs")).not_to_contain_text("Native latest version only")
+                expect(page.locator("#msgs")).not_to_contain_text("Native discarded old tail")
+                hits = get_json(opener, base, "/api/search?q=Native%20middle%20answer")["results"]
+                assert any(hit["uid"] == corpus.uid("native-fork") for hit in hits), hits
+                # Missing and ambiguous immutable IDs fail consistently in the
+                # list and open, then recover without editing any transcript.
+                hidden = corpus.root / "saved-native-middle.jsonl"
+                middle.rename(hidden)
+                page.reload(wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{corpus.uid("native-fork")}"]').click()
+                expect(page.locator("#detail")).to_contain_text("父线程不在已配置索引中", timeout=15000)
+                hidden.rename(middle)
+                duplicate = original.parent / middle.name
+                duplicate.write_bytes(middle.read_bytes())
+                page.reload(wait_until="networkidle")
+                page.locator(f'#side .item[data-uid="{corpus.uid("native-fork")}"]').click()
+                expect(page.locator("#detail")).to_contain_text("父线程 ID 在已配置索引中存在歧义", timeout=15000)
+                duplicate.unlink()
+                page.reload(wait_until="networkidle")
+                select("native-fork", "Native fork of reverted thread")
+                expect(page.locator("#msgs")).to_contain_text("Native middle answer")
+                print("PASS Codex immutable rollout IDs: three versions, archived dependency, fork of revert, search, missing/duplicate dependency and recovery")
                 select("claude-pasted", "Pasted needle 正文")
                 # Assert the wire result too: a renderer-only fix is insufficient.
                 wire = get_json(opener, base, "/api/messages/" + corpus.uid("claude-pasted"))

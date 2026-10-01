@@ -236,7 +236,8 @@ def run_source(page, context, base, source, work):
     menu_delete = page.locator('#item-menu [data-act="delete"]')
     if source == "shell":
         expect(menu_stop).to_be_visible()
-        expect(menu_delete).to_be_hidden()
+        expect(menu_delete).to_be_visible()
+        expect(menu_delete).to_have_attribute("aria-disabled", "true")
         with page.expect_response(lambda response: urlsplit(response.url).path == "/api/term/kill") as stopped:
             menu_stop.click()
         assert stopped.value.status == 200, stopped.value.text()
@@ -245,7 +246,8 @@ def run_source(page, context, base, source, work):
             arg=receipt["record_id"], timeout=15000)
         row.click(button="right")
         passed("shell: sidebar stop exits the session and retains its row")
-    expect(menu_stop).to_be_hidden()
+    expect(menu_stop).to_be_visible()
+    expect(menu_stop).to_have_attribute("aria-disabled", "true")
     expect(menu_delete).to_be_visible()
     expect(menu_delete).to_have_text("删除会话" if source == "shell" else "丢弃会话")
     page.keyboard.press("Escape")

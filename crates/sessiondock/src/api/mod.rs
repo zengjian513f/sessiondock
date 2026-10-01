@@ -22,6 +22,7 @@ pub(crate) mod runtime;
 mod search;
 mod shell_env;
 mod terminal;
+mod transfer;
 mod trash;
 
 use axum::{
@@ -183,6 +184,8 @@ pub fn router() -> Router<AppState> {
                 "/api/session/rewind",
             ))),
         )
+        .route("/session/clone/plan", post(transfer::plan))
+        .route("/session/clone", post(transfer::execute))
         .route("/term/list", get(terminal::list))
         .route(
             "/term/create",
@@ -319,6 +322,48 @@ pub fn router() -> Router<AppState> {
 /// message, media, file, terminal, SSE and WS route; the static page is 404.
 pub fn node_router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/session/transfer/export",
+            post(transfer::export_bundle),
+        )
+        .route(
+            "/api/session/transfer/receive",
+            post(transfer::receive_bundle).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
+        .route(
+            "/api/session/transfer/release",
+            post(transfer::release_export),
+        )
+        .route(
+            "/api/session/transfer/reserve",
+            post(transfer::reserve_export),
+        )
+        .route("/api/session/transfer/abort", post(transfer::abort_move))
+        .route("/api/session/transfer/interrupt", post(transfer::interrupt))
+        .route(
+            "/api/session/transfer/switch",
+            post(transfer::switch_source),
+        )
+        .route(
+            "/api/session/transfer/activate",
+            post(transfer::activate_target),
+        )
+        .route(
+            "/api/session/transfer/retire",
+            post(transfer::retire_source),
+        )
+        .route(
+            "/api/session/transfer/status",
+            post(transfer::transfer_status),
+        )
+        .route(
+            "/api/session/transfer/manifest",
+            post(transfer::bundle_manifest),
+        )
+        .route(
+            "/api/session/transfer/check",
+            post(transfer::check_bundle).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
         .nest("/api", router())
         .fallback(node_not_found)
 }

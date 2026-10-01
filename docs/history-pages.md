@@ -66,6 +66,9 @@ file, never a full parse — with the persisted metadata applied and re-signed:
   gives no field). An older Codex rollout generation (see *Codex rollout
   rotation*) carries `continued_in` = the latest generation's uid once that
   row's chain validates, so the list shows one row per native thread.
+  Codex generation lookup never applies to another source with the same sid.
+  The mixed-provider clone browser regression covers this collision together
+  with cross-provider `spawned_by` relationships.
 - **List cursor rule.** A supported row (and each supported `agent_items`
   entry) carries `cursor: {end, head}` — the offset after the last complete
   JSONL line and the `rs-m2-1` hash of the committed prefix's first 4 KiB,
@@ -170,11 +173,20 @@ ancestor, cycle, missing declared leaf) are unchanged and non-fatal.
 **Codex rollout rotation.** Codex 0.156.1 can keep a native thread ID while
 starting a new physical rollout whose `history_base.thread_id` is that same
 ID. The new header's ordinal equals `end_ordinal_exclusive`. These explicit
-generations are ordered by native header timestamps; filenames do not establish
-identity. The inherited prefix is resolved among older indexed files using the
+generations are ordered by native header timestamps. With legacy filenames,
+the inherited prefix is resolved among older indexed files using the
 declared byte offset and the ordinal of the record immediately before it,
 excluding the requesting file. A genuinely
 ambiguous prefix still reports 409. The old tail beyond the cutoff is excluded.
+Codex 0.159.0 gives rotated files a separate immutable rollout UUID:
+`rollout-<timestamp>-<threadUUID>_<rolloutUUID>.jsonl` (initial rollout UUID =
+thread UUID). When the filename's thread UUID agrees with `session_meta.id`,
+`history_base.thread_id` resolves that **physical rollout UUID**, including
+files indexed from the archive; it does not select the thread's latest version.
+Later generations may inherit a previous rollout UUID, and a fork of a reverted
+thread may therefore reference a UUID that is not any visible session's ID.
+The independently read prefix checks the same filename/header identity.
+Missing or ambiguous physical dependencies surface the existing 501/409 errors.
 Both physical rows remain readable by uid, but older generations carry
 `continued_in` naming the latest one, so the list shows a single row (the
 frontend's continuation hiding); agent ownership, point title lookup and

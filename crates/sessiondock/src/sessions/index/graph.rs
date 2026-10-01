@@ -166,10 +166,20 @@ pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&Candid
     {
         return None;
     }
-    for entry in &entries[1..] {
+    for (index, entry) in entries.iter().enumerate().skip(1) {
         let codex = entry.summary.codex.as_ref()?;
+        let parent = codex.history_base["thread_id"].as_str()?;
+        let prior = &entries[..index];
+        let inherits_prior = if let Some(rollout) = entry.codex_rollout_id() {
+            // Each new physical version must name an earlier physical version,
+            // and cannot reuse another file's immutable identity.
+            !prior.iter().any(|e| e.codex_rollout_id() == Some(rollout))
+                && prior.iter().any(|e| e.codex_rollout_id() == Some(parent))
+        } else {
+            parent == sid
+        };
         if &entry.summary.sid != sid
-            || codex.history_base["thread_id"].as_str() != Some(sid)
+            || !inherits_prior
             || codex.start_ordinal.is_none()
             || codex.history_base["end_ordinal_exclusive"].as_u64() != codex.start_ordinal
             || codex.history_base["end_byte_offset"].as_u64().is_none()
@@ -178,6 +188,33 @@ pub(super) fn generations(mut entries: Vec<&CandidateRef>) -> Option<Vec<&Candid
         }
     }
     Some(entries)
+}
+
+pub(super) fn rollout_index(
+    entries: &BTreeMap<String, CandidateRef>,
+) -> BTreeMap<String, Vec<String>> {
+    let mut rollouts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (uid, entry) in entries {
+        if let Some(id) = entry.codex_rollout_id() {
+            rollouts.entry(id.to_owned()).or_default().push(uid.clone());
+        }
+    }
+    rollouts
+}
+
+/// A declared physical UUID wins over stable-thread/latest-version lookup.
+/// Ambiguous copies of that UUID remain a conflict, even if bytes agree.
+pub(super) fn rollout_parent<'a>(
+    entries: &'a BTreeMap<String, CandidateRef>,
+    rollouts: &BTreeMap<String, Vec<String>>,
+    id: &str,
+) -> Option<Result<&'a CandidateRef, SessionError>> {
+    let ids = rollouts.get(id)?;
+    Some(match ids.as_slice() {
+        [uid] if entries[uid].summary.agent.is_none() => Ok(&entries[uid]),
+        [_] => Err(unsupported("分叉历史不能把子代理文件当作主线程父历史")),
+        _ => Err(SessionError::new(409, "父线程 ID 在已配置索引中存在歧义")),
+    })
 }
 
 /// Resolve a physical prefix independently from the latest logical generation.
@@ -270,6 +307,7 @@ fn inherited_size(entry: &CandidateRef, chain: &[&CandidateRef]) -> u64 {
 struct Graph<'a> {
     entries: &'a BTreeMap<String, CandidateRef>,
     sids: BTreeMap<(&'a str, &'a str), Vec<String>>,
+    rollouts: BTreeMap<String, Vec<String>>,
     mains: BTreeMap<&'a str, Vec<&'a CandidateRef>>,
     /// Claude `by_sid`: main transcripts by sid, the last in path
     /// order winning (`continued_in` targets).
@@ -291,6 +329,7 @@ impl<'a> Graph<'a> {
         let mut graph = Self {
             entries,
             sids: BTreeMap::new(),
+            rollouts: rollout_index(entries),
             mains: mains_by_sid(entries),
             claude_by_sid: BTreeMap::new(),
             agents: BTreeMap::new(),
@@ -417,6 +456,9 @@ impl<'a> Graph<'a> {
     }
 
     fn history_parent(&self, sid: &str, child: &str, base: &Value) -> Result<String, SessionError> {
+        if let Some(parent) = rollout_parent(self.entries, &self.rollouts, sid) {
+            return parent.map(|entry| entry.uid.clone());
+        }
         let uid = match self.sids.get(&("codex", sid)) {
             Some(ids) if ids.len() > 1 => physical_parent(
                 ids.iter().map(|uid| &self.entries[uid]).collect(),
@@ -554,16 +596,16 @@ impl<'a> Graph<'a> {
     /// rollouts declare the same session id and are not generations.
     fn later_generation(&self, uid: &str) -> Option<&str> {
         let entry = &self.entries[uid];
+        if entry.source != "codex" {
+            return None;
+        }
         let ids = self.sids.get(&("codex", entry.summary.sid.as_str()))?;
         let mains = ids
             .iter()
             .map(|id| &self.entries[id])
             .filter(|entry| entry.summary.agent.is_none())
             .collect();
-        let latest = generations(mains)?
-            .last()?
-            .uid
-            .as_str();
+        let latest = generations(mains)?.last()?.uid.as_str();
         (latest != uid
             && self.entries[latest].summary.unsupported.is_none()
             && self.chain(latest).is_ok())
