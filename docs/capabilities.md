@@ -61,6 +61,35 @@ updates while `visualViewport.scale` differs from 1 do not reinterpret pixel
 magnification as a keyboard or resize the PTY. Chromium touch emulation tests
 this routing; it does not establish mobile Edge device compatibility.
 
+## Group cloning
+
+`session_clone_local_codex` is explicitly `true` only on configured Linux nodes,
+and on the Hub which forwards to the selected node. The menu checks strict `true`;
+a missing flag does not enable cloning. The historically named local flag now
+also covers the Claude/Grok file adapters. The source group is retained.
+The Hub separately declares `session_clone_remote` for cross-node copying with
+new or retained identities. Identical destination files/rows can be reused when retaining IDs;
+different data returns a conflict. The receiver checks Linux, configured root paths, worktree
+contents and native schema before publication. The Hub's `session_move_remote` enables cross-node
+moves with either identity choice, requiring source trash and independent session storage.
+Target publication stays fenced until the source records the handoff; source cleanup can be retried.
+The full `session_move` / `session_clone` flags
+are not enabled. See [the clone contract](session-clone.md#当前接口同节点-codex).
+
+## Unavailable controls
+
+Running sessions show a grey move/copy action in the title bar and sidebar menu.
+Offline machine filters and agent-type filters with no sessions in the selected
+machines use the same treatment. They carry `aria-disabled=true` while remaining
+focusable. Available and unavailable controls both use native `title` tooltips;
+the browser controls their hover delay and position. Unavailable reasons are also
+provided through `aria-description`. Passing the pointer, focusing, clicking or
+touching a control does not create a custom overlay, modal or toast.
+Unavailable controls do not change filters or request a clone plan, including
+right-click/long-press shortcuts. Live status/filter refresh restores availability
+and normal title hints automatically; the backend still rechecks group liveness
+before publishing.
+
 ## Flags
 
 | Flag | Value | Legacy UI (`config.<flag>` / `allows('<flag>')`) | Doc |

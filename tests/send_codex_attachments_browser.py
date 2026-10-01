@@ -3,6 +3,7 @@
 import argparse
 import base64
 import json
+import http.client
 import os
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 from playwright.sync_api import expect, sync_playwright
 
 from history_parity import REPO, BINARY, Corpus, isolated_server
+from node_auth_suite import node_env, free_port, TOKEN
 from media_browser import PNG
 from send_browser import initialize, xterm_includes
 from popups import on_popup  # noqa: E402
@@ -61,9 +63,11 @@ def main():
                     'SESSIONDOCK_TEST_CODEX_ROOT': str(root / 'codex')}}]}))
         launcher.chmod(0o600)
         initialize('--initialize-lifecycle', root / 'ledger')
+        node_port=free_port(); auth_env=node_env(root,node_port,'127.0.0.0/8')
+        held=None
         with isolated_server(Corpus(root), binary, host_dir=root / 'host', lifecycle_dir=root / 'ledger',
                 launcher_config=launcher, state_dir=root / 'state',
-                audit_dir=root / 'audit', extra_env={
+                audit_dir=root / 'audit', extra_env={**auth_env,
                     'SESSIONDOCK_BUG_REPORT_DIR': str(root / 'reports'),
                     'SESSIONDOCK_BUG_REPORT_REPO': str(root / 'work')},
                 file_roots=(root / 'work',), file_write_roots=(root / 'work',)) as (base, _), sync_playwright() as pw:
@@ -154,6 +158,15 @@ def main():
                     params={'uid': page.evaluate('composerUid')}).json()['draft']
                 assert saved['value']['text'] == 'edit while cleanup is pending', saved
                 page.locator('#cinput').fill('')
+                # Keep an authenticated native transfer request receiving data.
+                # Previously this acquired the node-wide migration mutex and
+                # blocked every unrelated composer SEND and lifecycle action.
+                held=http.client.HTTPConnection('127.0.0.1',node_port,timeout=5)
+                held.putrequest('POST','/api/session/transfer/receive')
+                for key,value in {'Content-Type':'application/x-tar','Content-Length':'4096',
+                    'X-SessionDock-Protocol':'1','X-SessionDock-Node-Token':TOKEN}.items():held.putheader(key,value)
+                held.endheaders();held.send(b'partial-tar-header')
+                page.wait_for_timeout(200)
                 png = base64.b64decode(PNG)
                 page.locator('#cadd').click()
                 with page.expect_file_chooser() as chooser:
@@ -169,6 +182,8 @@ def main():
                 with page.expect_response(lambda r: urlsplit(r.url).path == '/api/session/conversation/send', timeout=30000) as sent:
                     page.locator('#csend').click()
                 assert sent.value.status == 200 and sent.value.json()['state'] == 'sent', sent.value.text()
+                held.close();held=None
+                print('PASS composer uploads and sends two attachments while an unrelated native transfer is stalled',flush=True)
                 payload = sent.value.request.post_data_json
                 assert payload['text'] == 'Please inspect both images' and len(payload['attachments']) == 2, payload
                 page.wait_for_function('() => !composerSending')
@@ -316,6 +331,7 @@ def main():
                         'record_id': worker['record_id'], 'instance_id': worker['instance_id']})
                     worker = None
             finally:
+                if held:held.close()
                 if worker and context:
                     context.request.post(base + '/api/term/kill', data={
                         'record_id': worker['record_id'], 'instance_id': worker['instance_id']})

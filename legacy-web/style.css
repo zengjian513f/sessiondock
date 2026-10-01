@@ -792,6 +792,7 @@ main { display: flex; flex: 1; min-height: 0; }
   box-shadow: 0 10px 30px rgba(0, 0, 0, .26), 0 2px 6px rgba(0, 0, 0, .12);
 }
 .ctx-menu[hidden] { display: none; }
+#item-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
 #file-menu { width: min(380px, calc(100vw - 16px)); max-height: calc(100vh - 16px); overflow-y: auto; }
 .ctx-menu-target {
   padding: 8px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
@@ -2312,10 +2313,92 @@ body.dragging-v { cursor: row-resize; user-select: none; }
 /* Global actions live in the session toolbar while the list is hidden. */
 header .btn[data-session-docked] { display: none; }
 
+/* Whole-group transfer: controls first, one row per logical session. */
+#clone-group-dialog, #transfer-tasks-dialog {
+  width: min(800px, calc(100vw / var(--interface-scale, 1) - 32px));
+  max-height: min(820px, calc(100dvh / var(--interface-scale, 1) - 32px));
+  border-radius: 12px;
+}
+.transfer-dialog[open] { display: flex; flex-direction: column; }
+.transfer-head { display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.transfer-head > div { flex: 1; min-width: 0; }
+.transfer-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: .02em; }
+.transfer-close { flex-shrink: 0; display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 26px/1 system-ui; cursor: pointer; }
+.transfer-close:hover { background: var(--hover); color: var(--text); }
+.transfer-body { min-height: 0; overflow-y: auto; padding: 14px 18px; }
+.transfer-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(140px, .7fr); gap: 16px; }
+.transfer-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.transfer-field > span, .transfer-mode legend { font-size: 12px; font-weight: 600; color: var(--muted); }
+.transfer-field select, #transfer-source { box-sizing: border-box; width: 100%; min-width: 0; height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); color: var(--text); font: inherit; }
+#transfer-source:disabled { opacity: .65; color: var(--muted); -webkit-text-fill-color: var(--muted); cursor: default; }
+.transfer-mode { padding: 0; margin: 0; border: 0; min-width: 0; }
+.transfer-mode legend { padding: 0; margin-bottom: 5px; }
+.transfer-segments { display: flex; padding: 3px; height: 34px; box-sizing: border-box; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
+.transfer-segments label { position: relative; flex: 1; min-width: 0; }
+.transfer-segments input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.transfer-segments span { display: grid; height: 100%; place-items: center; border-radius: 5px; color: var(--muted); cursor: pointer; font-size: 13px; }
+.transfer-segments input:checked + span { background: var(--sel); color: var(--accent); font-weight: 600; }
+.transfer-segments input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.transfer-segments input:disabled + span { opacity: .55; cursor: default; }
+.transfer-identity { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-top: 10px; }
+.transfer-identity[hidden] { display: none; }
+.transfer-identity label { display: flex; align-items: center; gap: 6px; font-size: 12px; white-space: nowrap; }
+.transfer-identity input { margin: 0; accent-color: var(--accent); }
+.transfer-section-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; margin: 14px 0 7px; }
+.transfer-section-head h3 { font-size: 13px; margin: 0; font-weight: 600; }
+.transfer-section-head .clone-status { color: var(--muted); font-size: 12px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.transfer-table-scroll { max-height: 340px; overflow: auto; border: 1px solid var(--border); border-radius: 9px; overscroll-behavior: contain; }
+.clone-members { border-collapse: separate; border-spacing: 0; width: 100%; min-width: 600px; table-layout: fixed; font-size: 12px; }
+.clone-members th { position: sticky; top: 0; z-index: 1; padding: 7px 10px; text-align: left; color: var(--muted); font-weight: 500; background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.clone-members th:first-child { width: 47%; }
+.clone-members th:nth-child(2) { width: 11%; }
+.clone-members th:nth-child(3) { width: 16%; }
+.clone-members th:nth-child(4), .clone-members th:nth-child(5) { width: 13%; }
+.clone-members td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.clone-members tr:last-child td { border-bottom: 0; }
+.clone-members tbody tr:hover { background: var(--hover); }
+.transfer-session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 13px; font-weight: 500; }
+.transfer-session-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 3px; color: var(--muted); font-size: 11px; }
+.transfer-badge { display: inline-block; white-space: nowrap; padding: 2px 7px; border-radius: 4px; background: var(--panel-2); color: var(--muted); font-size: 11px; }
+.transfer-selected .transfer-badge { background: var(--sel); color: var(--accent); }
+.clone-members .transfer-number { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.clone-members .transfer-empty { height: 110px; text-align: center; color: var(--muted); }
+.transfer-error { padding: 7px 10px; margin: 14px 0 0; border-radius: 7px; font-size: 12px; overflow-wrap: anywhere; }
+.transfer-notice, .transfer-environment { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 0; color: var(--accent); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.transfer-notice::before, .transfer-environment::before { content: 'ⓘ'; flex-shrink: 0; }
+.transfer-notice[hidden], .transfer-environment[hidden] { display: none; }
+.transfer-error { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+.transfer-footer { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--border); background: var(--panel-2); flex-shrink: 0; }
+.transfer-footer .btn { min-height: 32px; padding-inline: 16px; border-radius: 7px; }
+@media (max-width: 600px) {
+  #clone-group-dialog, #transfer-tasks-dialog { width: calc(100vw / var(--interface-scale, 1) - 16px); max-height: calc(100dvh / var(--interface-scale, 1) - 16px); border-radius: 12px; }
+  .transfer-head { padding: 12px; }
+  .transfer-head h2 { font-size: 17px; }
+  .transfer-body { padding: 12px; }
+  .transfer-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .transfer-mode { grid-column: 1 / -1; }
+  .transfer-footer { padding: 10px 12px; flex-wrap: wrap; }
+  .transfer-footer .clone-cancel { margin-left: auto; }
+  .transfer-section-head .clone-status { margin-left: 0; }
+}
+
+/* Unavailable actions retain native title hints. */
+[data-unavailable-reason], [data-unavailable-reason]:hover {
+  cursor: not-allowed !important; color: var(--muted) !important;
+  filter: grayscale(1); opacity: .55;
+}
+[data-unavailable-reason] .ico { color: var(--muted) !important; }
 #composer-question .question-text-form { display:flex; align-items:flex-end; gap:8px; margin:10px 0; }
 #composer-question .question-text-form label { flex:1; min-width:0; }
 #composer-question .question-text-input { display:block; width:100%; box-sizing:border-box; margin-top:5px; padding:8px; color:var(--text); background:var(--bg); border:1px solid var(--border); border-radius:6px; }
 #composer-question .question-actions { flex-wrap:wrap; }
+
+.transfer-progress { margin: 8px 0 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.transfer-tasks-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.transfer-tasks-table th, .transfer-tasks-table td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+.transfer-tasks-table th { color: var(--muted); background: var(--panel-2); }
+.transfer-tasks-table td:last-child { text-align: right; white-space: nowrap; }
+.transfer-task-count { margin-left: 4px; font-size: 11px; }
 
 /* Node-owned session groups. */
 #view button[hidden] { display: none; }

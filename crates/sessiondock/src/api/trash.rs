@@ -54,7 +54,7 @@ fn valid_uid(uid: &str) -> bool {
 /// Freeze one native snapshot (rows + verified catalog), then observe the
 /// managed runtime against exactly that catalog. Without a host directory the
 /// liveness is unconfigured: every session is unknown.
-async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liveness), ApiError> {
+pub(super) async fn frozen_liveness(state: &AppState) -> Result<(Vec<Value>, Liveness), ApiError> {
     let (rows, catalog) = state
         .reader
         .run_wait(&state.shutdown, |store| {

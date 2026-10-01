@@ -2110,7 +2110,10 @@ fn parse_prefix(
     if let Some(error) = error {
         return Err(unsupported(&format!("父历史固定前缀不受支持：{error}")));
     }
-    if meta["sid"].as_str().unwrap_or("") != sid {
+    let parsed_sid = meta["sid"].as_str().unwrap_or("");
+    let physical_id =
+        super::index::codex_rollout_id(&candidate.data, parsed_sid).unwrap_or(parsed_sid);
+    if physical_id != sid {
         return Err(unsupported("父历史固定前缀不包含相同线程身份"));
     }
     Ok((meta, events, digest))
