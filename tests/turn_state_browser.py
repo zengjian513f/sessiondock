@@ -10,12 +10,16 @@ question tool turns amber, a finished or interrupted turn is a still dot, and
 subagent still runs keeps turning. For the open session the CLI state object's
 `instance.busy` (docs/cli-state.md) wins: typing into the console makes the
 fake CLI print Codex's busy footer, and the header and sidebar dots pulse
-although the transcript says the turn is complete; with a quiet screen, a
+although the transcript says the turn is complete; Codex's live background
+terminal status keeps both dots pulsing after task_complete, survives reload,
+and clears when the terminals end (quoted status and editor text do not count).
+With a quiet screen, a
 finished Claude turn whose Monitor watch or backgrounded command still runs
 keeps turning until its end notice or TaskStop, and a watchdog Monitor that
 tails an ended command's output file no longer holds it. No model binary,
 native CLI home or production host is touched.
 """
+import argparse
 import json
 import os
 from pathlib import Path
@@ -35,7 +39,33 @@ CLAUDE_SID = str(uuid.uuid4())
 CODEX_SID = str(uuid.uuid4())
 CODEX_AGENT = str(uuid.uuid4())
 FAKE_CLI = """#!/bin/sh
-exec /bin/sh -c 'stty -echo 2>/dev/null; printf "RS_SHELL_READY\\n"; while IFS= read -r line; do case "$line" in busy) printf "Working (3s - esc to interrupt)\\n" ;; idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;; *) printf "RS_INPUT_OK\\n" ;; esac; done'
+stty -echo 2>/dev/null
+printf "RS_SHELL_READY\\n"
+while IFS= read -r line; do
+  case "$line" in
+    busy) printf "Working (3s - esc to interrupt)\\n" ;;
+    idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;;
+    background|background-many|background-wrapped|background-zero|quoted|draft)
+      printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic completed answer\\n\\n" "$line"
+      status="1 background terminal running · /ps to view · /stop to close"
+      case "$line" in
+        background-many) status="2 background terminals running · /ps to view · /stop to close" ;;
+        background-wrapped) status="1 background terminal running · /ps to view
+· /stop to close" ;;
+        background-zero) status="0 background terminals running · /ps to view · /stop to close" ;;
+      esac
+      if [ "$line" = draft ]; then
+        printf "› %s\\n" "$status"
+      else
+        printf "%s\\n" "$status"
+        if [ "$line" = quoted ]; then printf "Synthetic quoted tool output ends here\\n"; fi
+        printf "\\n› \\033[2mAsk Codex to do anything\\033[0m\\n"
+      fi
+      printf "\\n  GPT-6-Astra high · Context 73%% used · Main [default]\\n  ? for shortcuts\\n"
+      ;;
+    *) printf "RS_INPUT_OK\\n" ;;
+  esac
+done
 """
 TURN = re.compile(r"\bturn-(working|waiting)\b")
 
@@ -80,7 +110,7 @@ def row_turn(opener, base, uid, size):
     return row.get("turn")
 
 
-def main():
+def main(binary=BINARY):
     if os.name != "posix":
         raise SystemExit("Real launch acceptance currently requires POSIX; no Windows/macOS claim.")
     with tempfile.TemporaryDirectory(prefix="sessiondock-turn-state-") as temporary:
@@ -121,7 +151,7 @@ def main():
                  "resume_args": ["--resume", "{sid}"], "env": environment},
                 {"id": "codex-cli-v1", "source": "codex", "executable": str(root / "bin/fake-cli"),
                  "args": [], "resume_args": ["resume", "{sid}"], "env": environment}]}))
-        initialized = subprocess.run([str(BINARY), "--initialize-lifecycle", str(root / "ledger")],
+        initialized = subprocess.run([str(binary), "--initialize-lifecycle", str(root / "ledger")],
             cwd=REPO, env={"PATH": "/usr/bin:/bin"}, capture_output=True, timeout=15)
         assert initialized.returncode == 0, initialized.stderr.decode()
         with sync_playwright() as playwright:
@@ -130,7 +160,7 @@ def main():
                 options["executable_path"] = os.environ["PLAYWRIGHT_CHROMIUM_EXECUTABLE"]
             browser = playwright.chromium.launch(**options)
             try:
-                with isolated_server(corpus, BINARY, host_dir=root / "host", lifecycle_dir=root / "ledger",
+                with isolated_server(corpus, binary, host_dir=root / "host", lifecycle_dir=root / "ledger",
                                      launcher_config=configuration, state_dir=root / "state") as (base, opener):
                     errors = []
                     context = browser.new_context(viewport={"width": 1280, "height": 900}, service_workers="block")
@@ -431,6 +461,44 @@ def main():
                     # The CLI state object carries the field for every observed session.
                     cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                     assert cli["instance"] == {"running": True, "busy": False}, cli
+
+                    # BUG-20261001-082816-f14dc6: the turn is complete but
+                    # Codex still owns a background terminal. Read the live
+                    # footer through the host, CLI state and watch stream.
+                    for command in ["background", "background-many", "background-wrapped"]:
+                        page.locator("#xterm").click()
+                        page.keyboard.type(command)
+                        page.keyboard.press("Enter")
+                        wait_xterm(page, "background terminal")
+                        wait_busy(page, codex_uid, True)
+                        assert row_turn(opener, base, codex_uid, codex_path.stat().st_size) == "idle"
+                        expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                        expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
+                        assert page.evaluate("getComputedStyle(document.querySelector('#dlive')).animationName") != "none"
+                        page.reload(wait_until="networkidle")
+                        page.wait_for_function("uid => S.sel === uid && S.live.has(uid)", arg=codex_uid)
+                        wait_busy(page, codex_uid, True)
+                        expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                        if not page.locator("#termpane").is_visible():
+                            page.locator("#a-term").click()
+                        wait_xterm(page, "RS_SHELL_READY")
+                        # A normal input remains writable while a background
+                        # terminal runs; activity is not an input veto.
+                        cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
+                        assert cli["input"]["state"] == "ready", cli
+
+                    for command in ["quoted", "draft", "background-zero", "idle"]:
+                        observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
+                        page.locator("#xterm").click()
+                        page.keyboard.type(command)
+                        page.keyboard.press("Enter")
+                        wait_xterm(page, "RS_IDLE" if command == "idle" else "RS_SCREEN_" + command)
+                        page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at",
+                                               arg=[codex_uid, observed], timeout=20000)
+                        wait_busy(page, codex_uid, False)
+                        expect(header).not_to_have_class(TURN)
+                        expect(badge(codex_uid)).not_to_have_class(TURN)
+                    print("PASS Codex background terminal activity, reload, completion and quoted/draft/zero isolation")
                     assert not errors, errors
                     context.close()
                     stop_hosts(root / "host")
@@ -441,4 +509,6 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", type=Path, default=BINARY)
+    sys.exit(main(parser.parse_args().binary))

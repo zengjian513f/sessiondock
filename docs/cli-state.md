@@ -22,7 +22,7 @@
 | --- | --- |
 | `observed_at` | 最近一次成功读到画面的 Unix 秒；从未读到为 `null` |
 | `instance.running` | 最近一次读画面成功为 `true`，失败（实例已退出、宿主不可达）为 `false`，尚未尝试为 `null` |
-| `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`，与投递前判忙同一规则；Claude、Codex）；读失败、尚未读到或 Grok、OpenCode 为 `null` |
+| `instance.busy` | 最近一次读画面成功时画面是否显示 CLI 的忙碌指示（spinner、`esc to interrupt`；Claude、Codex），或 Codex 当前编辑区正上方的 `N background terminal(s) running · /ps to view · /stop to close`（N > 0）；后台终端可在模型回合结束后继续运行，仍算活动中，但不改变输入就绪或发送队列中断判定。历史引用和编辑区文字不算后台状态；读失败、尚未读到或 Grok、OpenCode 为 `null` |
 | `input` | 与 CHECK 相同的分类结果（`ready`/`starting`/`blocked`/`unknown` 及 `code`/`message`）；最近一次读失败时为 `null` |
 | `editor.text` | 识别到编辑区时的可见文字（Claude、Codex）；Grok、OpenCode 尚无提取，为 `null` |
 | `queued` | 终端已接受、原生记录尚未出现的 SEND，按发送顺序；`state` 为 `queued`、`interrupted` 或 `lost` |
