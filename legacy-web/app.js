@@ -2796,13 +2796,35 @@ addEventListener('pageshow', startUiEvents);
 setTimeout(startUiEvents, 0);
 
 function visible() {
-  let pool = (S.results || sidebarSessions()).filter(s => (!sessionHidden(s) || s.uid === S.sel)
-    && !S.off.has(s.source) && nodeSelected(s));
-  pool = pool.filter(s => globalThis.SessionDockGroups?.matches(s) ?? true);
+  const eligible = s => (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
+    && nodeSelected(s) && (globalThis.SessionDockGroups?.matches(s) ?? true);
+  let pool = (S.results || sidebarSessions()).filter(eligible);
   if (S.activeOnly) pool = pool.filter(s => s.pending || S.live.has(s.uid));
-  if (!S.term || S.results) return pool;          // 搜索态下服务端已经筛过
-  return pool.filter(s => sidebarMainMatches(s)
+  if (S.term && S.results === null) pool = pool.filter(s => sidebarMainMatches(s)
     || sidebarAgentItems(s).length > 0);
+  if (S.term && S.nest && S.view !== 'group') {
+    // Retain only the ancestors needed to place matched rows in the tree.
+    // They carry structural metadata, never a child's snippet or siblings.
+    const found = new Map(pool.map(s => [s.uid, s]));
+    const parents = new Map();
+    const {children} = nestEdges(sidebarSessions().filter(eligible));
+    for (const [uid, rows] of children) for (const row of rows) parents.set(row.uid, uid);
+    const indexed = indexedSessions().byUid;
+    for (const match of pool) {
+      const seen = new Set([match.uid]);
+      let uid = parents.get(match.uid);
+      while (uid && !seen.has(uid)) {
+        seen.add(uid);
+        if (!found.has(uid)) {
+          const parent = indexed.get(uid);
+          if (parent) found.set(uid, {...parent, hits: 0, hits_capped: false, snippet: '', agent_items: []});
+        }
+        uid = parents.get(uid);
+      }
+    }
+    pool = [...found.values()];
+  }
+  return pool;
 }
 
 // ---------------------------------------------------------------- 左栏
@@ -4048,6 +4070,10 @@ function sidebarMatchCount(list) {
   return list.reduce((count, s) => count + Number(sidebarMainMatches(s)) + sidebarAgentItems(s).length, 0);
 }
 
+function sidebarRowSnippet(s, agent = null) {
+  return agent ? agent.snippet : sidebarMainMatches(s) ? s.snippet : '';
+}
+
 // Count the rows a branch would expose without sorting or allocating row objects.
 // A nested closed session contributes just its own row, matching expandRows.
 function nestSize(s, children, memo = new Map()) {
@@ -4064,7 +4090,7 @@ function nestSize(s, children, memo = new Map()) {
 
 function expandRows(s, depth, children, out, seen, memo, sizes = new Map()) {
   const row = {s, agent: null, depth, kids: 0, closed: false};
-  const showMain = sidebarMainMatches(s);
+  const showMain = sidebarMainMatches(s) || (S.nest && S.view !== 'group');
   if (showMain) out.push(row);
   // 子代理行与分层开关无关，平铺模式同样挂在会话下面；children 在平铺时为空，
   // 发起的会话只在分层模式缩进。
@@ -4284,7 +4310,7 @@ function patchSidebarRow(node, row, highlightKey) {
   const meta = node.querySelector('.m');
   const metaText = agent ? agentMeta(s.uid, agent) : itemMeta(s);
   if (meta && meta.textContent !== metaText) meta.textContent = metaText;
-  const snippet = node.querySelector('.snip'), snippetText = (agent || s).snippet;
+  const snippet = node.querySelector('.snip'), snippetText = sidebarRowSnippet(s, agent);
   if (snippet && (snippet.title !== snippetText || node._highlightKey !== highlightKey)) {
     snippet.title = snippetText;
     snippet.innerHTML = sidebarSnippet(snippetText);
@@ -4340,13 +4366,14 @@ function sidebarRowIdentity(r, picked, sessionSignatures) {
     S.sel === r.s.uid && (r.agent ? S.agent === r.agent.id : !S.agent),
     S.starBusy.has(r.s.uid), S.live.has(r.s.uid), S.liveTmux.has(r.s.uid)]);
   const structure = JSON.stringify([!!r.agent, S.view, S.nest, !!S.term,
-    r.depth, !!r.kids, !!r.s.pending, !!(r.agent || r.s).snippet, r.s.source]);
+    r.depth, !!r.kids, !!r.s.pending, !!sidebarRowSnippet(r.s, r.agent), r.s.source]);
   return {signature, structure};
 }
 
 function createSidebarRow(r, picked = pickedSessions) {
   if (r.agent) return agentRow(r.s, r.agent, r.depth);
   const s = r.s;
+  const snippet = sidebarRowSnippet(s);
   const meta = itemMeta(s);
   const pickable = S.picking && sessionPickable(s);
   // 正在看的子代理有自己那一行，主会话行不再一起亮
@@ -4364,7 +4391,7 @@ function createSidebarRow(r, picked = pickedSessions) {
        <div class="m">${esc(meta)}</div>
        ${S.view === 'date'
          ? `<div class="cwd" title="${esc(s.cwd)}" data-node-name="${esc(s.node_name || '')}">${timelineDirectoryMarkup(s)}</div>` : ''}
-       ${s.snippet ? `<div class="snip" title="${esc(s.snippet)}">${sidebarSnippet(s.snippet)}</div>` : ''}
+       ${snippet ? `<div class="snip" title="${esc(snippet)}">${sidebarSnippet(snippet)}</div>` : ''}
      </div>
      ${s.pending ? '' : starButtonMarkup(s.uid, !!s.starred, 'item-star')}`);
   globalThis.SessionDockGroups?.paintRow(it, s);
@@ -4438,7 +4465,8 @@ function renderSide(suppliedList = null) {
   for (const [key, rows, summary] of groups) {
     const items = rows.filter(r => !r.agent).map(r => r.s);
     const first = summary ? summary.first : (items[0] || rows[0]?.s);
-    const count = summary ? summary.count : S.term ? rows.length : items.length;
+    const count = summary ? summary.count : S.term
+      ? rows.filter(row => row.agent || sidebarMainMatches(row.s)).length : items.length;
     const g = oldGroups.get(key) || el('div', 'group');
     oldGroups.delete(key);
     g.classList.toggle('closed', sidebarGroupClosed(key));
