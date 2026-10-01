@@ -89,7 +89,7 @@ const NOT_REGISTERED: &str = "机器未注册或已移除";
 pub fn hub_capabilities() -> Value {
     json!({
         "backend": "rust", "hub": true, "session_clone_local_codex": true, "session_clone_remote": true, "session_move_remote": true, "conversation_send": true, "storage_namespace": HUB_STORAGE_NAMESPACE,
-        "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true,
+        "history_pages": true, "unread_batch": true, "media_continuation": true, "ui_events": true, "list_delta": true,
         "history_semantics": "limited_native"
     })
 }
@@ -155,6 +155,10 @@ pub struct HubState {
 pub fn hub_router(state: HubState) -> Router {
     Router::new()
         .fallback(any(dispatch))
+        .layer(middleware::from_fn_with_state(
+            Arc::new(crate::list_sync::Store::default()),
+            crate::list_sync::middleware,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), hub_gate))
         .with_state(state)
 }

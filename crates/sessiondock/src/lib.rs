@@ -21,6 +21,7 @@ pub mod fingerprint;
 pub mod hub;
 pub mod hub_config;
 pub mod lifecycle;
+pub mod list_sync;
 pub mod media;
 pub mod metadata;
 mod native_replay;

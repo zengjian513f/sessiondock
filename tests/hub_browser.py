@@ -43,7 +43,11 @@ class Injector:
     def handle(self, route):
         if not self.on or "/api/sessions" not in route.request.url or route.request.method != "GET":
             return route.continue_()
-        response = route.fetch()
+        # This fixture edits a complete snapshot at the browser boundary.
+        # Keep it independent of the negotiated list transport.
+        headers = {key: value for key, value in route.request.headers.items()
+                   if key.lower() != 'x-sessiondock-list'}
+        response = route.fetch(headers=headers)
         data = response.json() if response.ok else None
         if not isinstance(data, dict) or data.get("unchanged") or "sessions" not in data:
             return route.fulfill(response=response)

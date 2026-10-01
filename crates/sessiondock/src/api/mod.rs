@@ -317,7 +317,12 @@ pub fn router() -> Router<AppState> {
                 request_body_limit("/api/bug-report/capture"),
             )),
         );
-    router.fallback(not_found)
+    router
+        .fallback(not_found)
+        .layer(axum::middleware::from_fn_with_state(
+            std::sync::Arc::new(crate::list_sync::Store::default()),
+            crate::list_sync::middleware,
+        ))
 }
 
 /// The node listener's tree: `/api` only, so the hub can proxy every session,

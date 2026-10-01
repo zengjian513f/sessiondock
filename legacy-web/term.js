@@ -349,6 +349,7 @@ function mergeUnavailableTermRows(rows, previous, errors) {
 }
 
 function loadTermList() {
+  if (SessionDockNetwork.paused) return Promise.resolve();
   const request = fetchTermList().finally(() => { if (T.listRequest === request) T.listRequest = null; });
   T.listRequest = request;
   return request;
@@ -376,6 +377,7 @@ async function fetchTermList() {
     loaded = true;
     transient = false;
   } catch (error) {
+    if (SessionDockNetwork.paused) return;
     failure = error.message || String(error);
     if (error?.name === 'TypeError' || controller.signal.aborted) transient = true;
   } finally { clearTimeout(timer); }
@@ -3668,6 +3670,7 @@ function attachRecordingReplay(view, row, uid) {
 }
 
 async function attachTerm(name, auto = false, directClaim = false) {
+  if (SessionDockNetwork.paused) return;
   const existing = T.views.get(name);
   if (!await loadTerminalRenderer(name)) return false;
   // Loading assets yields: a replaced/disposed host must not be recreated by
@@ -4050,6 +4053,7 @@ function startTermHeartbeat(view, ws, uid, connectionId) {
 
 /** 网络短断后自动恢复。tmux 才是会话本体，WebSocket 只是可随时重建的视图。 */
 function scheduleTermReconnect(view = currentTermViewObject()) {
+  if (SessionDockNetwork.paused) return;
   if (!view || view.revoked || view.retired || view.ended || document.hidden || !navigator.onLine || view.reconnectTimer) return;
   const stillAlive = [...(T.list || []), ...(T.pending || [])].some(x => x.name === view.name);
   if (!stillAlive) return;
@@ -4064,6 +4068,7 @@ function scheduleTermReconnect(view = currentTermViewObject()) {
 
 /** 手机锁屏会冻结一个看似仍 OPEN、实际已经失效的 socket；恢复时必须强制换新。 */
 function reconnectTerm(view = currentTermViewObject()) {
+  if (SessionDockNetwork.paused) return;
   if (!view || view.revoked || view.retired || view.ended || document.hidden || !navigator.onLine) return;
   if (view === currentTermViewObject() && !termPaneRenderable(view)) return;
   attachTerm(view.name, true);
@@ -4495,6 +4500,7 @@ let composerFollowBusy = false, composerFollowedAt = 0;
  *  `revision` is the server revision a poll reported; null forces a read,
  *  throttled to once a second. */
 async function followServerDraft(uid, revision = null) {
+  if (SessionDockNetwork.paused) return false;
   const owner = composerDraftOwner(uid), draft = composerDrafts.get(owner);
   if (!draft || !conversationSendEnabled() || draft.loading || draft.loadFailed || draft.handedOffSession
       || composerSending || composerFollowBusy || composerSaving.has(draft) || composerPendingSaves.has(draft)
@@ -6346,6 +6352,7 @@ function backgroundTerm() {
   suspendTerm();
 }
 function foregroundTerm(force = false) {
+  if (SessionDockNetwork.paused) return;
   if (document.hidden || (!force && !termWasBackgrounded)) return;
   termWasBackgrounded = false;
   for (const view of T.views.values()) {
@@ -6365,6 +6372,7 @@ addEventListener('focus', () => { pollComposerInput(); if (composerUid) followSe
 addEventListener('pagehide', backgroundTerm);
 addEventListener('pageshow', e => foregroundTerm(e.persisted));
 addEventListener('online', () => foregroundTerm(true));
+addEventListener('sessiondock-network-paused', backgroundTerm);
 
 // Native/global process discovery and managed terminal transport are independent
 // Rust capabilities. The live poll normally refreshes this list; do not

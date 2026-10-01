@@ -705,11 +705,12 @@ function markStaleBuild(serverBuild = '') {
     return;
   }
   staleBuildShown = true;
+  SessionDockNetwork.pause('stale');
   document.body.classList.add('stale-build');
   const notice = el('div', 'app-float warn version-stale');
   notice.setAttribute('role', 'alert');
   notice.innerHTML = '<div class="app-float-head"><strong>SessionDock 已更新</strong></div>'
-    + '<span>仍可编辑并自动保存草稿；发送前请重新加载。</span>';
+    + '<span>自动同步已暂停，仍可编辑并自动保存草稿；发送前请重新加载。</span>';
   browserAuditEvent('build.stale', {server_build: serverBuild});
   const reload = el('button', 'btn primary', '重新加载');
   reload.dataset.act = 'reload';
@@ -744,6 +745,7 @@ function markStaleBuild(serverBuild = '') {
 
 let serverHostname = '';
 async function checkServerBuild() {
+  if (SessionDockNetwork.paused) return;
   try {
     const response = await fetch(appUrl('api/meta'), {cache: 'no-store'});
     const data = await response.json();
@@ -1837,6 +1839,7 @@ function scheduleDiffRecovery(uid, agent = null) {
 
 function watchSession(uid, agent = S.agent) {
   closeWatch();
+  if (SessionDockNetwork.paused) return;
   if (migrationReadPaused(uid, agent)) { renderMigrationReadFailure(uid, agent); return; }
   const e = cache.get(viewKey(uid, agent));
   if (!e || !window.EventSource) return;
@@ -2073,6 +2076,7 @@ function clearUnread(uid) {
 
 /** 兜底轮询: SSE 连着的时候只是很慢地对一下账, 断了才回到自适应的快节奏。 */
 function tickSync() {
+  if (SessionDockNetwork.paused) return;
   if (!S.sel || document.hidden) return;
   if (migrationReadPaused(S.sel, S.agent)) return;
   const pushing = _es && _esUid === S.sel && _es.readyState === 1;
@@ -2121,6 +2125,7 @@ async function refreshLive(force = false) {
 
 let livePollRequest = null;
 function pollLive(force = false) {
+  if (SessionDockNetwork.paused) return Promise.resolve();
   if (!SessionDockCapabilities.allows('live')) return Promise.resolve();
   if (document.hidden) return Promise.resolve();
   if (livePollRequest) {
@@ -2605,6 +2610,7 @@ let sessionLoadRetry = null;
 let sessionPollRequest = null, sessionPollController = null, sessionLoadActive = 0;
 
 async function loadSessions(force) {
+  if (SessionDockNetwork.paused) return false;
   const run = ++sessionLoadRun;
   sessionLoadActive = run;
   sessionPollController?.abort();
@@ -2619,7 +2625,7 @@ async function loadSessions(force) {
     d = await r.json();
     if (!Array.isArray(d.sessions)) throw new Error('会话列表格式错误');
   } catch (e) {
-    if (run !== sessionLoadRun) return false;
+    if (run !== sessionLoadRun || SessionDockNetwork.paused) return false;
     $('#stat').textContent = ' 加载失败';
     $('#stat').classList.add('err');
     $('#side').innerHTML = `<div class="empty load-failed">
@@ -2649,6 +2655,7 @@ async function loadSessions(force) {
 
 /** 列表自动跟进磁盘变化。签名没变时服务端只回一个 unchanged, 成本为个位数毫秒。 */
 function pollSessions() {
+  if (SessionDockNetwork.paused) return Promise.resolve();
   if (document.hidden) return Promise.resolve();
   if (!S.sig || sessionLoadActive) return Promise.resolve(false);
   if (sessionPollRequest) return sessionPollRequest;
@@ -2765,6 +2772,7 @@ function closeUiEvents() {
   uiEvents?.close(); uiEvents = null; uiEventsReady = false;
 }
 function startUiEvents() {
+  if (SessionDockNetwork.paused) return;
   if (!SessionDockCapabilities.config.ui_events || !window.EventSource || document.hidden || uiEvents) return;
   clearTimeout(uiEventsRetry);
   const stream = new EventSource(appUrl('api/events'));
@@ -2794,6 +2802,22 @@ document.addEventListener('visibilitychange', () => {
 addEventListener('pagehide', closeUiEvents);
 addEventListener('pageshow', startUiEvents);
 setTimeout(startUiEvents, 0);
+
+addEventListener('sessiondock-network-paused', event => {
+  closeUiEvents();
+  closeWatch();
+  sessionPollController?.abort();
+  clearTimeout(sessionLoadRetry);
+  if (event.detail !== 'login' || $('.login-expired')) return;
+  const notice = el('div', 'app-float warn login-expired');
+  notice.setAttribute('role', 'alert');
+  notice.innerHTML = '<div class="app-float-head"><strong>登录已失效</strong></div>'
+    + '<span>自动同步已暂停。请在新窗口登录，再重新加载本页；未保存的输入仍保留在当前页面。</span>';
+  const login = el('button', 'btn primary', '打开登录页');
+  login.type = 'button'; login.onclick = () => window.open(APP_BASE, '_blank', 'noopener');
+  const actions = el('div', 'app-float-actions'); actions.append(login); notice.append(actions);
+  floatStack().append(notice);
+});
 
 function visible() {
   const eligible = s => (!sessionHidden(s) || s.uid === S.sel) && !S.off.has(s.source)
