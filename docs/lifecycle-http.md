@@ -1,9 +1,10 @@
 # Explicit local creation and pending consoles
 
-The development backend now connects creation receipts, configured CLI profiles,
-guarded host status, browser leases and the legacy pending view. Default startup
-still launches nothing. Batch ten adds explicit operator native binding, not reliable delivery,
-external CLI takeover, rename, authentication, or production deployment.
+The backend connects creation receipts, configured CLI profiles, guarded host
+status, browser leases and the pending view. Configured services support creation,
+resume, external CLI takeover, stop and native association; default startup
+launches nothing. Conversation SEND has its own [contract](conversation.md),
+and public authentication belongs to the reverse proxy.
 
 New sessions open the conversation page. The configured CLI and ptyhost still
 start on the backend; the browser does not claim or attach a console until the
@@ -207,12 +208,12 @@ declared Claude identity: it releases its launch-kind console, opens the native
 session and reclaims the console through the native lease. Legacy `tests/lifecycle_http_suite.py`
 keeps its fake-CLI expectations by injecting an empty synthetic process tree.
 
-Eight HTTP response permits cover queued work through serialization and retained
+HTTP response permits (`max(read_workers * 2, 8)`) cover queued work through serialization and retained
 response bodies, including never-polled responses. Serialization runs off the
 async reactor, and bodies stream in 32 KiB chunks while
 retaining their permits.
-The service has independent bounded work admission. Oversized/busy responses
-fail explicitly; no unbounded background request queue is created.
+The service has independent work admission. Full pools wait for permits; valid
+responses are serialized and streamed without an additional size rejection.
 
 ## Launch identity kinds
 

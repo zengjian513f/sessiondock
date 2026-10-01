@@ -2,8 +2,9 @@
 
 Directory browsing, standalone file previews, downloads, uploads and file-manager
 operations are provided by the independent **FileDock** service. Its entry points
-are `files.html?node=ID&path=ABS` and `file.html?node=ID&path=ABS` beneath the configured
-file-service base URL. A file is identified by its machine and absolute path.
+use `?node=ID&path=ABS` at the configured file-service base URL, for example
+`/files/?node=ID&path=ABS`. Both files and directories use this entry. A file is
+identified by its machine and absolute path; URL-encode query values.
 
 SessionDock's `file.html` and `files.html` are entry adapters. They derive the node
 from the selected session's qualified UID (or `/api/meta` for a local node), resolve

@@ -1,7 +1,8 @@
 # Local developer runbook
 
-Run SessionDock against synthetic or explicitly authorized data. Native histories
-remain read-only.
+Run SessionDock against synthetic or explicitly authorized data. Ordinary reads
+preserve native histories. Explicit clone, move and trash operations change only
+the confirmed group/files under their contracts; test those in a synthetic tree.
 
 ## Never do this
 
@@ -16,7 +17,8 @@ cargo build --release -p sessiondock
 cargo build -p ptyhost
 ```
 
-Add `sessiondock-hub` when exercising Hub federation.
+The `sessiondock` package also builds `sessiondock-hub`; use `--bin sessiondock-hub`
+when selecting that binary alone for Hub federation.
 
 ## 2. Synthetic corpus
 

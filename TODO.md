@@ -5,9 +5,10 @@
 
 ## Runtime and platform coverage
 
-- [ ] 扩展公共进程归属层的平台覆盖与资源计量：Linux 普通 SSH 直连已接入
-  `process-links`，macOS/Windows 采集器、短命进程生命周期事件，以及 GPU、内存、
-  磁盘、网络和 NFS 的统一会话计量仍待实现。连接复用、跳板、NAT 需要额外证据。
+- [ ] 扩展公共进程归属层的平台覆盖与完整计量：Linux `resource-agent` 已提供
+  生命周期事件、CPU/PSS/GPU/proc storage 指标及可选 60 秒 VFS/TCP/NFS 诊断。
+  macOS/Windows 采集器、短命任务无遗漏的累计账本仍待实现；连接复用、跳板、NAT
+  的完整关联需要额外证据，不能将部分观测视为完整计费。
   现行接口与后续计量口径见 [process-links.md](docs/process-links.md)。
 
 - [ ] 为 Windows/macOS 的外部（非 ptyhost 管理）CLI 补齐进程发现与强身份验证。
@@ -24,6 +25,9 @@
   HTTP 或终端写入成功声明完成。
 
 ## Operations and release engineering
+
+- [ ] 评估是否仍需独立合成语料统计工具，以及由源码生成的预算参考表；仅维护
+  仍有效的性能/协议数字，不恢复已删除的输入拒绝规则。
 
 - [ ] 增加服务端请求/响应 tracing 与结构化日志，同时保持凭据、正文和原生记录默认不落盘。
 - [ ] 产出可复现发布包和 Linux/Windows/macOS CI 矩阵；Windows OpenSSH 原生构建遵循

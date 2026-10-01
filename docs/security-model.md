@@ -1,7 +1,11 @@
 # SessionDock trust boundaries
 
 SessionDock serves the existing browser application and follows the
-backend's accepted inputs. Native histories remain read-only. Optional services
+backend's accepted inputs. Ordinary reads do not modify native histories.
+Explicitly confirmed clone, move and trash operations can publish, move or clean
+native files under their [contracts](session-move.md); cloning preserves the
+source and rewrites only required identity, path and dependent offset bytes.
+Optional services
 are enabled by their concrete runtime configuration; configuration is not used
 to invent narrower product inputs.
 
@@ -35,8 +39,8 @@ out of public errors. See [hub.md](hub.md).
 
 ## Explicit configuration
 
-Native Claude, Codex and Grok roots and the ptyhost directory remain explicit;
-there is no CLI-home discovery. State, delivery, lifecycle, launcher, audit,
+Native Claude, Codex, Grok and OpenCode inputs and the ptyhost directory remain explicit;
+there is no CLI-home discovery. State, lifecycle, launcher, audit,
 trash, node and Hub variables select their corresponding stores or services.
 Use `sessiondock --check-config` to inspect the effective configuration.
 
@@ -105,12 +109,14 @@ rather than an authorization error. See
 
 ## 501 ledger (unimplemented writes)
 
-Predecessor-only routes are not kept as migration stubs. Reliable send,
-retry/discard, terminal input, attachments and file upload, trash operations,
+Predecessor-only routes are not kept as migration stubs. Conversation SEND,
+terminal input, attachments and file upload, trash operations,
 external and managed stop, and forced takeover have concrete handlers. A 501 is
 reserved for a capability that truly needs an unconfigured service, such as an
 audit or bug-report backend that has not been enabled. Unknown routes remain 404
-and malformed input remains 400.
+and malformed input remains 400. The old send/retry/discard routes and delivery
+dispatcher are retired; retained migration evidence is read-only. Current drafts,
+submission identities and CLI echo tracking follow [conversation.md](conversation.md).
 
 ## Assumption → enforcement → test
 
@@ -118,7 +124,7 @@ and malformed input remains 400.
 | --- | --- | --- |
 | Ordinary listener stays local and browser-origin checked | `config.rs`, `security.rs` | HTTP/security suites |
 | Node traffic requires peer, protocol and token | `api/node_auth.rs` | node-auth suites |
-| Native history is read-only | sessions readers | history parity suites |
+| Ordinary reads preserve native history; explicit transfer/trash follows its own contract | sessions readers, transfer and trash services | history and transfer/trash suites |
 | Browser terminal writes require the current lease and instance | terminal ownership/service | terminal suites |
 | Hub URLs remain literal IPs inside configured networks | hub registry/client | Hub suites |
 | Diagnostics redact private values | audit and bug-report services | diagnostics suites |

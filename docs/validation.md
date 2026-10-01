@@ -1,7 +1,8 @@
 # Validation suites
 
-One table of every default check in `python3 tests/run_validation.py`, plus the
-opt-in Python benchmarks the runner skips. Narrative rules stay in `AGENTS.md`.
+Tables of the default checks in `python3 tests/run_validation.py`, explicit
+unit/real-CLI/SSH-peer suites and opt-in benchmarks. A documented direct command
+does not imply inclusion in the default sweep. Narrative rules stay in `AGENTS.md`.
 
 ```sh
 python3 tests/run_validation.py            # --jobs 8, --browser-jobs 3 by default
@@ -29,7 +30,8 @@ order; `--jobs 1` runs everything serially in that order.
 
 ## When to run which tier
 
-The full sweep is ~5 min even in parallel, so it is not a per-edit gate.
+The full sweep covers many independent surfaces and is not a per-edit gate.
+Historical timings below describe their dated runs, not today's full-sweep duration.
 
 **Headless browser is the default gate for a feature or bug fix.** After
 the change, run the `*_browser.py` (or `--browser` parity) that covers the
@@ -41,9 +43,9 @@ substitute. Docs-only and deploy-script-only work use the doc/deploy suites.
 headless browser suite that covers it.
 
 - **Small change / one bug fix** — run the affected headless browser suite
-  (`--only <name>`). Do not reflexively full-sweep, push, and deploy-to-all
-  after every small fix — the cost adds up; batch the full sweep, push, and
-  deploy for when the work is ready to land.
+  (`--only <name>`); a full sweep is not required for every edit. Once the change
+  is complete and validated, commit, push and deploy the current workspace to
+  the fleet under `AGENTS.md`, without asking for confirmation again.
 - **Paid CLI checks** — the `*_real` suites spawn real Claude/Codex/Grok and are
   excluded by default; run them deliberately with `--include-real`, per batch,
   not unattended.
@@ -151,7 +153,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | terminal_heartbeat_browser | `python3 tests/terminal_heartbeat_browser.py` | Stalled terminal sockets recover without replaying ambiguous input. | binary, Chromium | n/a |
 | terminal_scrollback_browser | `python3 tests/terminal_scrollback_browser.py` | Real wheel input scrolls PTY history locally in both console renderers. | binary, Chromium | n/a |
 | hub_draft_recovery_browser | `python3 tests/hub_draft_recovery_browser.py --binary target/release/sessiondock` | Six-node draft discovery with stalled/503 peers: successful peers stay cached, per-node retry/backoff, offline recovery, real session opening and newly registered nodes. | binary, hub, Chromium | n/a |
-| hub_browser | `python3 tests/hub_browser.py --binary target/release/sessiondock` | The `sessiondock-hub` page over three `hub_fake_node.py` nodes — machine filter chips, per-machine nesting (same native id never cross-nests), NDJSON search progress + one-machine failure, a session opened through the proxy with media/SSE, settings untick/tick/drag/keyboard reorder/rename, `sessiondock.hub.<path>.` prefix; `sessiondock-hub` taken from the `--binary` directory | binary, Chromium | 12s |
+| hub_browser | `python3 tests/hub_browser.py --binary target/release/sessiondock` | The `sessiondock-hub` page over three `hub_fake_node.py` nodes — machine filter chips, per-machine nesting (same native id never cross-nests), NDJSON search progress + one-machine failure, a session opened through the proxy with media/SSE, settings untick/tick/drag/keyboard reorder/rename, `sessiondock.hub.` prefix; `sessiondock-hub` taken from the `--binary` directory | binary, Chromium | 12s |
 | hub_console_availability_browser | `python3 tests/hub_console_availability_browser.py` | Console-button availability from each synthetic hub node's resume capabilities. | Chromium | n/a |
 | hub_pending_state_browser | `python3 tests/hub_pending_state_browser.py` | New-session receipts remain visible during partial hub lists; recovery and terminal exit update the page. | binary, Chromium | n/a |
 | hub_send_browser | `python3 tests/hub_send_browser.py` | Real hub → authenticated Rust node → fake Claude; different builds, desktop/390 px sends, refresh, real hub asset upgrade with draft preservation and stale-page refusal, raw-input/retry/local-spoof auth gates and hub metadata | debug binaries, Chromium | 30s |
@@ -236,7 +238,7 @@ The table lists the suites `--list` reports (plus the opt-in benchmarks and the 
 | session_bundle_browser | `python3 tests/session_bundle_browser.py` | Real Hub/two-node Chromium copies Codex/Claude/Grok complex groups, opens history/agents, rejects corrupt/truncated/traversal bundles and mismatched roots/cwd, and retries after restart. `--preserve` covers unchanged identities/bytes and reuse; `--move` covers trash, persistent ownership, shared-storage rejection, moving back, interrupted cleanup, new outside references (including Claude SendMessage calls and resolved short destinations during partial cleanup), stale handoff compensation and interrupted withdrawal through the page, reopening tasks after browser reload (including narrow screens), and durable byte/phase progress. Optional `--peer SSH_ALIAS` uses independent remote temporary storage over loopback SSH forwarding. With a peer, `--dependencies` exercises missing and changed typed images, persisted outputs and external bundle symlinks through confirmation, then checks the recorded dependency inventory and successful copy/move without changing those external files. `session_transfer_peer.py` is its private fixture worker. | sessiondock binaries, Chromium; optional SSH peer with shared checkout | n/a |
 | session_prefix_browser | `python3 tests/session_prefix_browser.py --peer SSH_ALIAS` | Explicit two-node Chromium test of Codex/Claude/Grok complex groups: preserved-ID prefix copy and move, divergent target rejection, Codex current-rollout conflict, native-row, display-preference and original-byte restoration after simulated receiver crash, and preservation of target continuation or concurrent preference changes during compensation. Private fixtures and remote loopback forwarding. | sessiondock binaries, Chromium, SSH peer with shared checkout | n/a |
 | session_transfer_environment_browser | `python3 tests/session_transfer_environment_browser.py` | Chromium fourteen-session mixed family: missing, older or unknown target CLI advice; stale destination response isolation; native database and rollout dynamic-tool names (legacy and namespaces) without leaking definitions; older plans remain explicitly unverified; confirmation still copies the group. CLI replies are synthetic and no models run. | sessiondock binaries, Chromium | n/a |
-| session_mixed_clone_browser | `python3 tests/session_mixed_clone_browser.py --binary target/release/sessiondock` | Clone a connected cross-provider family through Chromium, compensate publication failures, and retry after service restart. | binary, ptyhost, Chromium | n/a |
+| session_mixed_clone_browser | `python3 tests/session_mixed_clone_browser.py --binary target/release/sessiondock` | Reject changed staging before publication, replan a connected cross-provider clone after restart, and open native share links without altering sources. | binary, ptyhost, Chromium | n/a |
 | session_local_recovery_browser | `python3 tests/session_local_recovery_browser.py` | Chromium local complex-group copies for Codex/Claude/Grok: actual publication failure, task recovery after reload and Hub/node restart, fixed identities and unchanged source; also crashes the Hub during a blocked Codex database publication and recovers the completed node result through the page. | sessiondock binaries, Chromium | n/a |
 | session_files_clone_browser | `python3 tests/session_files_clone_browser.py` | Real Hub/node Chromium confirms Claude/Grok complex family copy, opens history/agents, checks unchanged source, failed publication rollback and restart retry preserving continued copies. Exact byte comparison covers layout, CRLF, EOF and escaped text; Claude metadata retains absent message fields. Also resumes a different parent’s agent, remaps a resolved short SendMessage destination and isolates same-named calls in other transcripts. | sessiondock binaries, Chromium | n/a |
 | claude_resume_startup | `python3 tests/claude_resume_startup.py --history PATH` | Explicit native Claude TUI resume of a private transcript copy; requires the CLI to remain at its input prompt. `--expect-failure` reproduces the old null-content crash. Temporary home, safe mode, tools disabled, synthetic authentication and loopback endpoint; asserts no model requests and unchanged supplied transcript. No credentials or daily configuration are loaded. | Claude CLI; POSIX PTY | n/a |

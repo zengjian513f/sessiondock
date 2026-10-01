@@ -182,18 +182,17 @@ process-evidence binding keep the fresh, uncached observation. The identity
 memory holds at most 1024 instances, evicting gone/oldest entries first;
 re-checking stale memory runs under the same deadline and concurrency limits.
 
-The endpoint has a separate admission limit of two requests, uses the bounded
-blocking session reader to freeze the native catalog, responds `no-store`, and
-cancels host I/O on shutdown. Admission exhaustion is an explicit 503
-`runtime_busy`; inventory errors/budgets give 503 `runtime_unavailable`. Individual
-host errors remain typed unknown rows. No automatic retry or write occurs.
+The endpoint uses a separate observation pool of `max(read_workers / 2, 2)`
+permits and the blocking session reader to freeze the native catalog. It responds
+`no-store` and cancels host I/O on shutdown. Full admission waits; a closed pool
+returns 503 `runtime_busy`, and inventory failures give 503 `runtime_unavailable`.
+Individual host errors remain typed unknown rows. No automatic retry or write occurs.
 
-Runtime defaults are 256 hosts, eight parallel probes, two seconds per probe,
-and a five-second whole snapshot deadline including discovery. Exceeding the
-host count fails the snapshot rather than silently omitting records. Remaining
-hosts after the shared deadline receive timeout/unknown rows. The HTTP service
-uses a dedicated client with a 64 KiB metadata/control-line limit and a 512-entry
-directory limit rather than the larger terminal-replay client defaults.
+Runtime defaults are eight parallel probes, two seconds per probe, and a
+five-second whole snapshot deadline including discovery. Discovery has no host
+count rejection. Remaining hosts after the shared deadline receive
+timeout/unknown rows. The HTTP service uses a client with the host protocol's
+4 MiB control-line/metadata allowance; directory enumeration has no entry cap.
 
 Validation uses artificial native catalog rows, copied synthetic JSONL fixtures,
 and loopback fake peers. Tests cover exact matches and ambiguity, duplicates,

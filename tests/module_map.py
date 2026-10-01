@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Map the Rust crate src trees as nested Markdown for onboarding.
 
-Walks crates/sessiondock/src, crates/ptyhost-client/src, and
-crates/ptyhost/src. Prints Markdown to stdout. With --write, writes
-docs/module-map.md as the last step.
+Walks every member's src tree from the workspace Cargo.toml.
+Prints Markdown to stdout. With --write, writes
+docs/module-map.md as the last step. Requires Python 3.11+ (stdlib tomllib).
 """
 # run_validation: skip
 from __future__ import annotations
@@ -11,15 +11,28 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "module-map.md"
-CRATES = (
-    ("sessiondock", "crates/sessiondock/src"),
-    ("ptyhost-client", "crates/ptyhost-client/src"),
-    ("ptyhost", "crates/ptyhost/src"),
-)
+
+
+def workspace_crates():
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]
+    excluded = {path for pattern in workspace.get("exclude", []) for path in ROOT.glob(pattern)}
+    crates = []
+    seen = set()
+    for pattern in workspace["members"]:
+        for member in sorted(ROOT.glob(pattern)):
+            if member in excluded or member in seen:
+                continue
+            seen.add(member)
+            manifest = tomllib.loads((member / "Cargo.toml").read_text())
+            crates.append((manifest["package"]["name"], (member / "src").relative_to(ROOT).as_posix()))
+    return crates
+
+
 MOD_RE = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
 TEST_RE = re.compile(r"#\[(?:tokio::)?test\b")
 ATTR_RE = re.compile(r"^\s*#!?\[")
@@ -141,7 +154,7 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="write docs/module-map.md")
     args = parser.parse_args(argv)
-    sections = [(title, rel, collect(ROOT / rel)) for title, rel in CRATES]
+    sections = [(title, rel, collect(ROOT / rel)) for title, rel in workspace_crates()]
     markdown = render(sections)
     try:
         sys.stdout.write(markdown)

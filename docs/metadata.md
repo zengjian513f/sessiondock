@@ -13,7 +13,6 @@ and leaves unrelated directory entries untouched.
 Files:
 
 - `session-metadata.json`: the committed document.
-- `.metadata.lock`: a stable, exclusively locked writer file, retained on exit.
 - `.metadata-tmp-<random>`: one operation's same-directory temporary file.
 - `debug-runs.json` (optional, foreign): the debug-run registry, tolerated here
   and read by `sessions::debug_runs` only.
@@ -36,8 +35,9 @@ The independent Rust schema starts at version 1.
 
 UIDs are nonempty opaque strings. The API separately verifies that a UID exists
 and that a visibility target is a valid fork parent. Metadata stores all retained
-rows and attachment records. Timestamp and persisted-schema validation catch
-invalid state without silently replacing the file with an empty store.
+rows and attachment records. Missing, damaged or unsupported documents are read
+as empty state; a later update can replace them. There is no lifetime file lock.
+An in-process mutex serializes updates, which reload the current document first.
 
 The state directory is created when needed. Existing directory permissions and
 symlink/hardlink aliases follow OS access rules. Writes replace the named metadata

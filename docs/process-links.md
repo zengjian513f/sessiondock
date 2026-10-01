@@ -66,7 +66,11 @@ Windows currently report `supported: false`; platform adapters are follow-up wor
 
 ## Resource collection and aggregation contract
 
-The following defines the extension direction, not metrics already implemented.
+The following defines the measurement and aggregation contract. The Linux
+implementation and its partial coverage are detailed under
+[Independent Linux service](#independent-linux-service) and
+[Temporary I/O diagnostics](#temporary-io-diagnostics). Platform and complete
+historical-accounting gaps remain in [TODO.md](../TODO.md).
 Attribution, measurement and aggregation remain separate so SessionDock and
 Node Status can consume one result without collecting or adding it twice.
 
@@ -136,6 +140,11 @@ The opt-in `resource-agent` deploy target installs the root-owned binary under
 the monitored UID and existing node identity file. The local Unix socket
 `/run/resource-agent/agent.sock` is mode 0600, owned by that UID; the server also
 checks peer credentials. No TCP listener or new network credentials are added.
+SessionDock selects the socket from `SESSIONDOCK_RESOURCE_AGENT_SOCKET`, then
+`RESOURCE_AGENT_SOCKET`, then `/run/resource-agent/agent.sock`. A synthetic
+`SESSIONDOCK_PROC_ROOT` does not connect to the default production socket unless
+one of those socket overrides is explicitly supplied. A missing collector keeps
+the polling compatibility path available.
 The supplied unit bounds capabilities to BPF/performance tracing, reading process
 state, resource limits and socket ownership. It does not make either UI privileged.
 

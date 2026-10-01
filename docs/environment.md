@@ -6,6 +6,10 @@ This file is produced by `tests/env_reference.py`. Regenerate:
 python3 tests/env_reference.py --write
 ```
 
+The first two tables extract `Config::from_env` and `HubConfig::from_env`.
+The runtime section documents resource collector settings read outside those
+constructors; this is not an inventory of every environment variable read by CLIs.
+
 ## Node service (`sessiondock`, `Config::from_env`)
 
 | Variable | Field | Required | Validation | Set by tests | Docs |
@@ -17,13 +21,13 @@ python3 tests/env_reference.py --write
 | `SESSIONDOCK_GROK_ROOT` | `roots.grok` | no (Option) | nonempty; directory when present; missing roots are retried | isolated_server | — |
 | `SESSIONDOCK_OPENCODE_ROOT` | `roots.opencode` | no (Option) | nonempty; directory when present; missing roots are retried | no | [opencode.md](opencode.md) |
 | `SESSIONDOCK_PTYHOST_DIR` | `ptyhost_dir` | no (Option) | Opt-in isolated terminal transport; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md), [processes.md](processes.md), [runbook-dev.md](runbook-dev.md), [terminal-ownership.md](terminal-ownership.md) |
-| `SESSIONDOCK_STATE_DIR` | `state_dir` | no (Option) | SessionDock-owned preferences and grants; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [error-codes.md](error-codes.md), [liveness.md](liveness.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
+| `SESSIONDOCK_STATE_DIR` | `state_dir` | no (Option) | SessionDock-owned preferences and grants; must not be empty; must be a directory | isolated_server | [capabilities.md](capabilities.md), [error-codes.md](error-codes.md), [read-model.md](read-model.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_LIFECYCLE_DIR` | `lifecycle_dir` | no (Option) | Creation receipts directory | isolated_server | [capabilities.md](capabilities.md), [lifecycle-http.md](lifecycle-http.md) |
 | `SESSIONDOCK_LAUNCHER_CONFIG` | `launcher_config` | no (Option) | Server-owned adapter/launcher JSON, not browser input | isolated_server | [lifecycle-http.md](lifecycle-http.md) |
 | `SESSIONDOCK_AUDIT_DIR` | `audit_dir` | no (Option) | Directory for browser diagnostics JSONL | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [deploy-hub.md](deploy-hub.md), [diagnostics.md](diagnostics.md), [hub.md](hub.md) |
 | `SESSIONDOCK_TRASH_DIR` | `trash_dir` | no (Option) | Directory for the session recycle bin | isolated_server | [README.md](README.md), [trash.md](trash.md) |
 | `SESSIONDOCK_CODEX_INDEX` | `codex_index` | no (Option) | Names file; defaults beside the configured Codex sessions root | no | [codex-names.md](codex-names.md) |
-| `SESSIONDOCK_PROC_ROOT` | `proc_root` | no (default) | Process table to scan; `/proc` by default and a synthetic tree in tests | no | [liveness.md](liveness.md), [validation.md](validation.md) |
+| `SESSIONDOCK_PROC_ROOT` | `proc_root` | no (default) | Process table to scan; `/proc` by default and a synthetic tree in tests | no | [liveness.md](liveness.md), [process-links.md](process-links.md), [validation.md](validation.md) |
 | `SESSIONDOCK_GROK_ACTIVE` | `grok_active` | no (Option) | Optional override for `~/.grok/active_sessions.json` | no | [liveness.md](liveness.md) |
 | `SESSIONDOCK_OPENCODE_DB` | `opencode_db` | no (Option) | OpenCode's session database (`opencode.db`), opened read-only and mirrored into `roots.opencode` (`sessions::opencode`); SESSIONDOCK_OPENCODE_DB and SESSIONDOCK_OPENCODE_ROOT are set together | no | [opencode.md](opencode.md) |
 | `SESSIONDOCK_SHELL_ENV_COMMAND` | `shell_env_command` | no (Option) | Login-shell wrapper the service itself was started through (`SESSIONDOCK_SHELL_ENV_COMMAND`); enables `/api/shell-env` | no | [shell-env.md](shell-env.md) |
@@ -57,7 +61,22 @@ python3 tests/env_reference.py --write
 | `SESSIONDOCK_HUB_BIND` | `bind` | no (default) | `SESSIONDOCK_HUB_BIND`, default `127.0.0.1:8742`; loopback only; invalid SESSIONDOCK_HUB_BIND; the hub has no authentication of its own; SESSIONDOCK_HUB_BIND must be a loopback address | no | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
 | `SESSIONDOCK_PUBLIC_HOSTS` | `public_hosts` | no (default) | `SESSIONDOCK_PUBLIC_HOSTS`: authorities accepted besides loopback when the hub page sits behind the authenticated reverse proxy (same rule and parser as the node, `config::parse_public_hosts`) | hub_http.rs | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
 | `SESSIONDOCK_HUB_NODES` | `nodes_file` | no (default) | `SESSIONDOCK_HUB_NODES`: the registry file (`hub-nodes.json`) | no | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
-| `SESSIONDOCK_HUB_CACHE_DIR` | `?` | no (default) |  | no | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
+| `SESSIONDOCK_HUB_CACHE_DIR` | `cache_dir` | no (default) | `SESSIONDOCK_HUB_CACHE_DIR`: offline session snapshots; default `hub-cache` next to the registry file | no | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
 | `SESSIONDOCK_HUB_NETWORKS` | `networks` | no (default) | `SESSIONDOCK_HUB_NETWORKS`: CIDR list a node may be registered from; invalid SESSIONDOCK_HUB_NETWORKS; invalid SESSIONDOCK_HUB_NETWORKS: {error} | no | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md) |
 | `SESSIONDOCK_WEB_DIR` | `web_dir` | no (default) | `SESSIONDOCK_WEB_DIR`, default `legacy-web`; served in hub mode; SESSIONDOCK_WEB_DIR must be an existing directory | isolated_server | [deploy-hub.md](deploy-hub.md), [hub.md](hub.md), [runbook-dev.md](runbook-dev.md) |
 | `SESSIONDOCK_AUDIT_DIR` | `audit_dir` | no (Option) | `SESSIONDOCK_AUDIT_DIR`: where `hub.node.*.changed` records go; unset keeps the hub silent about display/order changes | isolated_server | [README.md](README.md), [capabilities.md](capabilities.md), [deploy-hub.md](deploy-hub.md), [diagnostics.md](diagnostics.md), [hub.md](hub.md) |
+
+## Resource collector runtime
+
+These settings are read by `runtime/process_links.rs` and the shared
+`process-links` client. They do not start or configure the collector service.
+
+| Variable | Default / precedence | Behavior |
+| --- | --- | --- |
+| `SESSIONDOCK_RESOURCE_AGENT_SOCKET` | Overrides `RESOURCE_AGENT_SOCKET` | Node-specific Unix socket path; used when process discovery is configured and the path exists. |
+| `RESOURCE_AGENT_SOCKET` | `/run/resource-agent/agent.sock` | Shared client socket path when no SessionDock override is set. |
+
+With a synthetic proc root, the adapter does not contact the default
+production collector unless one of these paths is explicitly configured.
+An unavailable collector retains the polling attribution path; see
+[process links](process-links.md#independent-linux-service).
