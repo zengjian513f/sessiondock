@@ -61,6 +61,7 @@ impl Disk {
                         let spawned = row.remove("spawned_by");
                         row.remove("invalid_spawned_by");
                         if independent {
+                            row.insert("nest_initialized".into(), serde_json::json!(true));
                             row.remove("nest_parent");
                         } else if !row
                             .get("nest_parent")

@@ -154,9 +154,12 @@ pub(super) struct Row {
     /// Files published by the write service and recorded for this session.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
-    /// User-selected sidebar parent (`{source, sid}`).
+    /// Sidebar parent initialized by a launch or chosen by the user.
     #[serde(skip_serializing_if = "Option::is_none")]
     nest_parent: Option<NestParent>,
+    /// Private durable decision marker, including an explicit detach.
+    #[serde(skip_serializing_if = "no")]
+    nest_initialized: bool,
 }
 
 /// Manual display parent; an absent node keeps the historical local meaning.
@@ -488,6 +491,48 @@ impl MetadataSnapshot {
         self.document.sessions.get(uid)?.nest_parent.as_ref()
     }
 
+    pub fn with_initial_nest_parents(
+        &self,
+        found: &[(String, NestParent)],
+        identities: &BTreeMap<(String, String), String>,
+    ) -> Result<Self, MetadataError> {
+        self.change(|rows| {
+            for (uid, parent) in found {
+                validate_uid(uid)?;
+                field(&parent.source)?;
+                field(&parent.sid)?;
+                // Follow current parents under the writer lock: a manual
+                // attachment can otherwise turn a valid launch into a cycle.
+                let mut next = Some(parent);
+                let mut visited = BTreeSet::from([uid.as_str()]);
+                let mut cycle = false;
+                while let Some(link) = next {
+                    if link.node_id.is_some() {
+                        break;
+                    }
+                    let Some(target) = identities.get(&(link.source.clone(), link.sid.clone()))
+                    else {
+                        break;
+                    };
+                    if !visited.insert(target.as_str()) {
+                        cycle = true;
+                        break;
+                    }
+                    next = rows.get(target).and_then(|row| row.nest_parent.as_ref());
+                }
+                if cycle {
+                    continue;
+                }
+                let row = rows.entry(uid.clone()).or_default();
+                if !row.nest_initialized && row.nest_parent.is_none() {
+                    row.nest_parent = Some(parent.clone());
+                    row.nest_initialized = true;
+                }
+            }
+            Ok(())
+        })
+    }
+
     pub fn with_nest_display(
         &self,
         uid: &str,
@@ -509,6 +554,7 @@ impl MetadataSnapshot {
         self.change(|rows| {
             let row = rows.entry(uid.to_owned()).or_default();
             row.nest_parent = parent;
+            row.nest_initialized = true;
             Ok(())
         })
     }

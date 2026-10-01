@@ -103,7 +103,7 @@ def main():
             get_json(opener, base, "/api/live?force=1")
             rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
             assert all('spawned_by' not in rows[sid] and 'nest_parent' not in rows[sid] for sid in sids), rows
-            assert not (state / "session-metadata.json").exists()
+            # Other identified CLI children in the shared fixture can be attached.
             spawned, parent = rows[SPAWNED]["uid"], uids[P_SID]
             with sync_playwright() as pw:
                 launch = {"headless": True}
