@@ -51,8 +51,54 @@ def wait_argv(log, predicate, timeout=15):
 
 
 def open_dialog(page):
-    page.locator("#new-session").click()
+    page.locator("#new-session:visible, #header-more-btn:visible").first.click()
+    if not page.locator("#new-session-dialog").is_visible():
+        page.locator("#new-session").click()
     expect(page.locator("#new-session-dialog")).to_be_visible()
+
+
+def check_drag_selection(page, cwd):
+    for width, height in ((1280, 900), (390, 844)):
+        page.set_viewport_size({"width": width, "height": height})
+        # Let the responsive header finish moving actions into its menu.
+        page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+        page.wait_for_timeout(40)
+        open_dialog(page)
+        dialog = page.locator("#new-session-dialog")
+        field = page.locator("#new-cwd")
+        field.fill(str(cwd))
+        box = field.bounding_box()
+        bounds = dialog.bounding_box()
+        outside = (bounds["x"] - 10, box["y"] + box["height"] / 2)
+        inside = (box["x"] + 110, outside[1])
+        page.mouse.move(*inside)
+        page.mouse.down()
+        page.mouse.move(*outside, steps=12)
+        page.mouse.up()
+        expect(dialog).to_be_visible()
+        assert field.evaluate("el => el.selectionEnd > el.selectionStart")
+        expect(field).to_have_value(str(cwd))
+        # Neither direction of a drag is an intentional backdrop click.
+        page.mouse.move(*outside)
+        page.mouse.down()
+        page.mouse.move(*inside, steps=12)
+        page.mouse.up()
+        expect(dialog).to_be_visible()
+        # The dialog border is not the backdrop, even with the same target.
+        page.mouse.click(bounds["x"] + 0.5, outside[1])
+        expect(dialog).to_be_visible()
+        page.mouse.click(*outside)
+        expect(dialog).to_be_hidden()
+        open_dialog(page)
+        page.locator("#new-session-dialog .modal-cancel").click()
+        expect(dialog).to_be_hidden()
+        open_dialog(page)
+        page.locator("#new-session-dialog .modal-close").click()
+        expect(dialog).to_be_hidden()
+        open_dialog(page)
+        page.keyboard.press("Escape")
+        expect(dialog).to_be_hidden()
+    page.set_viewport_size({"width": 1280, "height": 900})
 
 
 def pick_source(page, source):
@@ -175,6 +221,7 @@ def main():
             shot = (lambda name: page.screenshot(path=os.path.join(shots, f"model-{name}.png"))) if shots else (lambda name: None)
             page.goto(base, wait_until="networkidle")
             page.wait_for_function("T.listLoaded")
+            check_drag_selection(page, work)
 
             # ---- Claude: aliases, no search at five rows, effort list, one row on desktop.
             open_dialog(page)
@@ -407,6 +454,7 @@ def main():
         browser.close()
         pw.stop()
     print("PASS new_session_model_browser: claude/codex/grok/opencode catalogs, per-model effort shared across nodes, "
+          "drag selection outside keeps the dialog and text, backdrop/cancel/close/Escape dismiss (desktop + phone), "
           "steady row across sources, search above ten, argv and pre-created session carry the model, phone wrap, "
           "an uninstalled CLI cannot be picked")
 
