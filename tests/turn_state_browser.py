@@ -45,7 +45,7 @@ while IFS= read -r line; do
   case "$line" in
     busy) printf "Working (3s - esc to interrupt)\\n" ;;
     idle) printf "\\033[2J\\033[HRS_IDLE\\n" ;;
-    background|background-many|background-wrapped|background-zero|quoted|draft)
+    background|background-many|background-wrapped|background-quota|background-quota-wrapped|background-zero|quoted|quoted-quota|draft)
       printf "\\033[2J\\033[HRS_SHELL_READY\\nRS_SCREEN_%s\\nSynthetic completed answer\\n\\n" "$line"
       status="1 background terminal running · /ps to view · /stop to close"
       case "$line" in
@@ -58,7 +58,13 @@ while IFS= read -r line; do
         printf "› %s\\n" "$status"
       else
         printf "%s\\n" "$status"
-        if [ "$line" = quoted ]; then printf "Synthetic quoted tool output ends here\\n"; fi
+        case "$line" in quoted|quoted-quota) printf "Synthetic quoted tool output ends here\\n" ;; esac
+        case "$line" in
+          background-quota|quoted-quota)
+            printf "\\n  ⚠ weekly limit: 11%% left · resets at 11:26 PM on 7 Oct · /status\\n" ;;
+          background-quota-wrapped)
+            printf "\\n  ⚠ weekly limit: 11%% left · resets at 11:26 PM\\non 7 Oct · /status\\n" ;;
+        esac
         printf "\\n› \\033[2mAsk Codex to do anything\\033[0m\\n"
       fi
       printf "\\n  GPT-6-Astra high · Context 73%% used · Main [default]\\n  ? for shortcuts\\n"
@@ -465,7 +471,10 @@ def main(binary=BINARY):
                     # BUG-20261001-082816-f14dc6: the turn is complete but
                     # Codex still owns a background terminal. Read the live
                     # footer through the host, CLI state and watch stream.
-                    for command in ["background", "background-many", "background-wrapped"]:
+                    # BUG-20261001-100155-ba71d1: the quota banner between
+                    # the live status and composer must not hide background work.
+                    for command in ["background", "background-many", "background-wrapped",
+                                    "background-quota", "background-quota-wrapped"]:
                         page.locator("#xterm").click()
                         page.keyboard.type(command)
                         page.keyboard.press("Enter")
@@ -487,7 +496,38 @@ def main(binary=BINARY):
                         cli = page.evaluate("uid => cache.get(uid).cli", codex_uid)
                         assert cli["input"]["state"] == "ready", cli
 
-                    for command in ["quoted", "draft", "background-zero", "idle"]:
+                    # Phone terminal resizing wraps the model/context footer;
+                    # both list and detail must retain the observed busy state.
+                    for width in (608, 390, 320):
+                        observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
+                        page.set_viewport_size({"width": width, "height": 780})
+                        if page.locator(".mobile-back").is_visible():
+                            page.locator(".mobile-back").click()
+                        expect(badge(codex_uid)).to_be_visible()
+                        page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                        page.wait_for_function("([uid, at]) => cache.get(uid)?.cli?.observed_at > at",
+                                               arg=[codex_uid, observed], timeout=20000)
+                        wait_busy(page, codex_uid, True)
+                        expect(header).to_be_visible()
+                        expect(header).to_have_class(re.compile(r"\bturn-working\b"))
+                        assert header.evaluate("e => getComputedStyle(e).animationName") == "turn-pulse"
+                        assert header.evaluate("""e => {
+                            const r = e.getBoundingClientRect();
+                            return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2) === e;
+                        }""")
+                        page.locator(".mobile-back").click()
+                        expect(badge(codex_uid)).to_have_class(re.compile(r"\bturn-working\b"))
+                    page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                    page.emulate_media(reduced_motion="reduce")
+                    assert header.evaluate("e => getComputedStyle(e).animationName") == "none"
+                    assert header.evaluate("e => getComputedStyle(e).boxShadow") != "none"
+                    page.emulate_media(reduced_motion="no-preference")
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    if not page.locator("#termpane").is_visible():
+                        page.locator("#a-term").click()
+                    wait_xterm(page, "RS_SHELL_READY")
+
+                    for command in ["quoted", "quoted-quota", "draft", "background-zero", "idle"]:
                         observed = page.evaluate("uid => cache.get(uid).cli.observed_at", codex_uid)
                         page.locator("#xterm").click()
                         page.keyboard.type(command)
