@@ -1790,6 +1790,16 @@ mark.cur { background: #ff9f43; box-shadow: 0 0 0 2px rgba(255, 159, 67, .45); }
   display: inline-flex; align-items: center; justify-content: center;
 }
 
+/* Same shade/card as session pause, in the top layer over the whole page,
+   including settings or another open dialog. Only Resume dismisses it. */
+.page-sleep-dialog {
+  padding: 0; border: 0; background: transparent; color: var(--text);
+  max-width: calc(100vw / var(--interface-scale, 1) - 24px);
+}
+.page-sleep-dialog::backdrop { background: var(--freeze-shade); }
+.page-sleep-dialog .session-freeze-line { margin: 0; }
+.page-sleep-dialog .btn { width: auto; padding: 0 10px; gap: 6px; }
+
 /* 已接管会话的输入框 */
 #composer {
   flex: none; display: flex; flex-direction: column; gap: 7px;
