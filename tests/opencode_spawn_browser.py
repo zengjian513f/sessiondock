@@ -3,6 +3,8 @@
 
 BUG-20260929-045938-557b87: `opencode run` launched from a Claude Bash tool names
 no session on its command line, so its session never reached spawner discovery.
+BUG-20261001-073106-7ac242: relation migration dropped that pairing from
+`nest_parent` initialization, including Codex-launched meeting sessions.
 The scan now pairs a new top-level OpenCode session with the OpenCode processes
 running in its directory when it was born; they must all lead to one spawner.
 
@@ -17,11 +19,13 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import shutil
 import sys
 import tempfile
+import time
 
 from playwright.sync_api import expect, sync_playwright
-from history_parity import get_json
+from history_parity import codex_row, get_json
 import spawned_by_suite as base_suite
 from spawned_by_suite import BINARY, BTIME, HZ, P_SID, build, proc_pid, server_with_env
 
@@ -32,6 +36,9 @@ RUN_START = "2026-09-20T00:00:00Z"
 SPAWNED = "ses_0f0000000000spawnedByClaude"  # born while `opencode run` runs in /work/oc
 CHILD = "ses_0f0000000000subagentOfRunXx"    # its OpenCode subagent (parent_id)
 OLDER = "ses_0f0000000000olderThanTheRun"    # same directory, born before the process
+CODEX_PARENT = "codex-opencode-parent"
+CODEX_RUNS = [f"ses_0f0000000000codexFanout{i}" for i in range(3)]
+CONFLICT = "ses_0f0000000000twoSpawnersXx"
 MIXED = "ses_0f0000000000twoCandidatesXx"    # /work/mix: a spawned run and a user's own TUI
 
 
@@ -47,7 +54,8 @@ def seed(db):
     connection = sqlite3.connect(db)
     connection.executescript(fake.SCHEMA)
     t = ms(RUN_START)
-    for project, work in (("ocproject", "/work/oc"), ("mixproject", "/work/mix")):
+    for project, work in (("ocproject", "/work/oc"), ("mixproject", "/work/mix"),
+                          ("codexproject", "/work/codex"), ("conflictproject", "/work/conflict")):
         connection.execute("INSERT INTO project VALUES (?, ?, ?, ?, '[]')", (project, work, t, t))
     sessions = [
         (SPAWNED, "ocproject", None, "/work/oc", "compare luna", ms("2026-09-21T10:00:00Z")),
@@ -55,6 +63,10 @@ def seed(db):
         (OLDER, "ocproject", None, "/work/oc", "older", ms("2026-09-01T10:00:00Z")),
         (MIXED, "mixproject", None, "/work/mix", "mixed", ms("2026-09-21T11:00:00Z")),
     ]
+    sessions += [(sid, "codexproject", None, "/work/codex", f"codex fanout {i}",
+                  ms("2026-09-21T10:00:00Z")) for i, sid in enumerate(CODEX_RUNS)]
+    sessions.append((CONFLICT, "conflictproject", None, "/work/conflict", "conflict",
+                     ms("2026-09-21T10:00:00Z")))
     for sid, project, parent, work, title, created in sessions:
         connection.execute(
             "INSERT INTO session_v2 (id, project_id, parent_id, slug, directory, title, version, agent,"
@@ -74,7 +86,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix="sessiondock-opencode-spawn-") as tmp:
         root = Path(tmp)
         corpus, uids, proc = build(root)
-        for pid in (900, 901, 902, 903):
+        corpus.put(CODEX_PARENT, "codex", [
+            codex_row("session_meta", {"id": CODEX_PARENT, "cwd": "/work/codex",
+                "timestamp": "2026-09-01T00:00:00Z", "source": "cli"}),
+            codex_row("response_item", {"type": "message", "role": "user",
+                "content": "Codex OpenCode meeting"})], [])
+        for pid in range(900, 909):
             base_suite.START[pid] = ticks(RUN_START) + pid
         # P's Bash tool shell runs two `opencode run` jobs; a user's own TUI also sits in /work/mix.
         inherited = (("CLAUDE_CODE_SESSION_ID", P_SID),)
@@ -84,6 +101,16 @@ def main():
         proc_pid(proc, 902, "opencode", ["/home/u/.opencode/bin/opencode", "run", "go"], 900,
                  env=inherited, cwd="/work/mix")
         proc_pid(proc, 903, "opencode", ["opencode"], 1, cwd="/work/mix")
+        codex_env = (("CODEX_THREAD_ID", CODEX_PARENT), ("CODEX_SESSION_ID", CODEX_PARENT))
+        # A detached Python dispatcher preserves Codex identity; parallel runs share one initiator.
+        proc_pid(proc, 904, "python", ["python", "meeting.py"], 1, env=codex_env, cwd="/work/codex")
+        for pid in (905, 906):
+            proc_pid(proc, pid, "opencode", ["opencode", "run", "--standalone", "go"],
+                     904, env=codex_env, cwd="/work/codex")
+        proc_pid(proc, 907, "opencode", ["opencode", "run", "go"], 904,
+                 env=codex_env, cwd="/work/conflict")
+        proc_pid(proc, 908, "opencode", ["opencode", "run", "go"], 900,
+                 env=inherited, cwd="/work/conflict")
         db = root / "opencode.db"
         seed(db)
         state = root / "state"
@@ -92,7 +119,7 @@ def main():
                "SESSIONDOCK_GROK_ACTIVE": root / "no-active.json",
                "SESSIONDOCK_OPENCODE_DB": db, "SESSIONDOCK_OPENCODE_ROOT": root / "mirror"}
         with server_with_env(corpus, env, args.binary) as (base, opener):
-            sids = (SPAWNED, CHILD, OLDER, MIXED)
+            sids = (SPAWNED, CHILD, OLDER, MIXED, CONFLICT, *CODEX_RUNS)
             for _ in range(100):
                 rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
                 if all(sid in rows for sid in sids):
@@ -100,11 +127,19 @@ def main():
                 __import__("time").sleep(0.1)
             else:
                 raise AssertionError(f"mirrored OpenCode rows missing: {sorted(rows)}")
+            deadline = time.monotonic() + 18
+            while not all(rows[sid].get('nest_parent') for sid in (SPAWNED, *CODEX_RUNS)):
+                assert time.monotonic() < deadline, 'OpenCode background nesting never initialized'
+                time.sleep(.1)
+                rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
             get_json(opener, base, "/api/live?force=1")
             rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
-            assert all('spawned_by' not in rows[sid] and 'nest_parent' not in rows[sid] for sid in sids), rows
-            # Other identified CLI children in the shared fixture can be attached.
-            spawned, parent = rows[SPAWNED]["uid"], uids[P_SID]
+            assert rows[SPAWNED].get('nest_parent') == {'source': 'claude', 'sid': P_SID}, rows[SPAWNED]
+            assert all(rows[sid].get('nest_parent') == {'source': 'codex', 'sid': CODEX_PARENT}
+                       for sid in CODEX_RUNS), [rows[sid] for sid in CODEX_RUNS]
+            assert all('nest_parent' not in rows[sid] for sid in (CHILD, OLDER, MIXED, CONFLICT))
+            assert all('spawned_by' not in row and 'nest_initialized' not in row for row in rows.values())
+            spawned = rows[SPAWNED]["uid"]
             with sync_playwright() as pw:
                 launch = {"headless": True}
                 if os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
@@ -120,21 +155,31 @@ def main():
                     page.goto(base)
                     item = page.locator(f'#side .item[data-uid="{spawned}"]')
                     expect(item).to_be_visible()
-                    if page.evaluate("uid => !!S.sessions.find(s => s.uid === uid)?.nest_parent", spawned):
-                        item.click(button="right")
-                        page.locator('#item-menu [data-act="detach"]').click()
                     if not page.evaluate('S.nest'):
                         page.locator("#nest-toggle").click()
-                    expect(item).to_have_attribute("data-depth", "0")
-                    item.click(button="right")
-                    page.locator('#item-menu [data-act="attach"]').click()
-                    page.locator(f'#side .item[data-uid="{parent}"]').click()
                     expect(item).to_have_attribute("data-depth", "1")
-                    # The OpenCode row sits right under its Claude spawner.
-                    order = page.evaluate("() => [...document.querySelectorAll('#side .item[data-uid]')]"
-                                          ".map(n => n.dataset.uid)")
-                    assert order.index(spawned) > order.index(parent), order
-                    for sid in (OLDER, MIXED):
+                    codex_uid = corpus.uid(CODEX_PARENT)
+                    worker = page.locator(f'#side .item[data-uid="{rows[CODEX_RUNS[0]]["uid"]}"]')
+                    expect(worker).to_have_attribute("data-depth", "1" if width == 1280 else "0")
+                    for sid in CODEX_RUNS[1:]:
+                        expect(page.locator(f'#side .item[data-uid="{rows[sid]["uid"]}"]')) \
+                            .to_have_attribute("data-depth", "1")
+                    if width == 1280:
+                        # User detach and reattach decisions must beat every later inference.
+                        worker.click(button="right")
+                        page.locator('#item-menu [data-act="detach"]').click()
+                        expect(worker).to_have_attribute("data-depth", "0")
+                        item.click(button="right")
+                        page.locator('#item-menu [data-act="detach"]').click()
+                        expect(item).to_have_attribute("data-depth", "0")
+                        item.click(button="right")
+                        page.locator('#item-menu [data-act="attach"]').click()
+                        page.locator(f'#side .item[data-uid="{codex_uid}"]').click()
+                        expect(item).to_have_attribute("data-depth", "1")
+                    get_json(opener, base, "/api/live?force=1")
+                    page.evaluate("pollSessions()")
+                    expect(worker).to_have_attribute("data-depth", "0")
+                    for sid in (CHILD, OLDER, MIXED, CONFLICT):
                         expect(page.locator(f'#side .item[data-uid="{rows[sid]["uid"]}"]')) \
                             .to_have_attribute("data-depth", "0")
                     item.click()
@@ -142,8 +187,23 @@ def main():
                     assert not errors, errors
                     context.close()
                 browser.close()
-    print("PASS opencode spawn: `opencode run` from a Claude tool shell stays independent until explicitly attached; subagent child, "
-          "older session and an ambiguous directory stay roots; Chromium nesting/open, desktop + 390px")
+        # Restart with live processes, then after all workers exit: one-time choices persist.
+        for exited in (False, True):
+            if exited:
+                for directory in proc.iterdir():
+                    if directory.is_dir():
+                        shutil.rmtree(directory)
+            with server_with_env(corpus, env, args.binary) as (base, opener):
+                get_json(opener, base, "/api/live?force=1")
+                rows = {r["sid"]: r for r in get_json(opener, base, "/api/sessions?force=1")["sessions"]}
+                assert rows[SPAWNED]['nest_parent'] == {'source': 'codex', 'sid': CODEX_PARENT}
+                assert 'nest_parent' not in rows[CODEX_RUNS[0]]
+                assert all(rows[sid]['nest_parent'] == {'source': 'codex', 'sid': CODEX_PARENT}
+                           for sid in CODEX_RUNS[1:])
+                assert all('nest_parent' not in rows[sid] for sid in (CHILD, OLDER, MIXED, CONFLICT))
+    print("PASS OpenCode auto-attach from Claude and detached Codex fan-out; ambiguous directories, "
+          "native subagents and older sessions stay roots; Chromium open/detach/reattach desktop + 390px; "
+          "manual choices survive scans, restart and exit")
 
 
 if __name__ == "__main__":

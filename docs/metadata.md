@@ -126,7 +126,12 @@ startup-source fallback or restore action. Native subagent relationships remain 
 Local process evidence initializes `nest_parent` once for a newly created CLI
 session: its owned process identifies the child, and inherited session identity
 or an owning CLI ancestor identifies the parent. A detached dispatcher retains
-this evidence. Resuming a session created before the process does not attach it.
+this evidence. For OpenCode, which exposes no per-session file handle, a new
+top-level row is paired with the OpenCode processes already running in its
+directory at birth; every matching process must identify the same initiator.
+An ambiguous directory, a native OpenCode subagent or a session older than
+the process is not inferred this way. Resuming a session created before the
+process does not attach it.
 A private `nest_initialized` decision marker preserves automatic initialization
 and explicit attach/detach across scans, exits and restarts; it is not a second
 relationship or a public row field. Existing manual parents always win. Legacy
