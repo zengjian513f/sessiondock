@@ -67,7 +67,7 @@
     return `<div class="sr-summary-head"><span title="仅合计当前会话相关机器的已知数据；缺失值不代表零。同一进程只计一次。">${nodes.length > 1 ? '跨机器合计' : '合计'}</span><span>${stamp ? `采样 ${esc(stamp)}` : '实时采样'}</span></div>
       <dl class="sr-metrics sr-totals">${metrics(data.totals?.metrics || data.totals)}</dl>
       <div class="sr-section-heading">执行机器 <span>${nodes.length}</span></div>
-      ${nodes.length ? nodes.map(node => `<section class="sr-node"><div class="sr-node-head"><h3>${esc(node.node_name || node.node_id)}</h3><span class="sr-status${node.status === 'ok' ? ' sr-status-ok' : ''}">${esc(node.status === 'ok' ? '在线' : reasons[node.status] || '状态未知')}</span></div>${diagnostic(node)}<dl class="sr-metrics">${metrics(node.metrics, node.status)}</dl></section>`).join('') : '<div class="sr-empty" title="未采集的数据不代表零占用。">暂无关联进程</div>'}`;
+      ${nodes.length ? nodes.map(node => `<section class="sr-node"><div class="sr-node-head"><h3>${esc(node.node_name || node.node_id)}</h3><span class="sr-status${node.status === 'ok' ? ' sr-status-ok' : ''}">${esc(node.status === 'ok' ? '在线' : reasons[node.status] || '状态未知')}</span>${diagnostic(node)}</div><dl class="sr-metrics">${metrics(node.metrics, node.status)}</dl></section>`).join('') : '<div class="sr-empty" title="未采集的数据不代表零占用。">暂无关联进程</div>'}`;
   }
   let dialog, content, subtitle, currentUid = '', scope = 'inclusive', generation = 0, pending = false, probePending = false;
   let loader = async (uid, selectedScope) => {
@@ -86,11 +86,11 @@
     dialog.className = 'session-resources';
     dialog.setAttribute('aria-labelledby', 'sr-title');
     dialog.innerHTML = `<div class="sr-top"><div><h2 id="sr-title" tabindex="0" title="按实际执行机器统计已归属的进程，同一进程只计一次。共享 CLI 内的子代理开销无法仅凭进程树精确拆分。">会话资源</h2><p class="sr-subtitle"></p></div><div class="sr-actions"><button type="button" class="sr-refresh" aria-label="刷新资源">刷新</button><button type="button" class="sr-close" aria-label="关闭资源面板">×</button></div></div>
-      <div class="sr-scopes" role="group" aria-label="资源统计范围">
+      <div class="sr-toolbar"><div class="sr-scopes" role="group" aria-label="资源统计范围">
         <button type="button" data-scope="direct" aria-pressed="false" title="仅统计归属当前会话的进程，包含 SSH 远端命令；不包含已单独归属子会话的进程。">仅当前会话</button>
         <button type="button" data-scope="inclusive" aria-pressed="true" title="包含当前会话及已确认关联的子会话进程，无论在本机还是远端。子代理需要有可识别的进程归属。">包含子会话</button>
       </div>
-      <div class="sr-probe-controls"><button type="button" class="sr-probe" disabled title="${esc(probeTip)}">探测 60 秒</button><span class="sr-probe-error sr-error" role="status"></span></div>
+      <div class="sr-probe-controls"><button type="button" class="sr-probe" disabled title="${esc(probeTip)}">探测 60 秒</button></div></div><span class="sr-probe-error sr-error" role="status"></span>
       <div class="sr-content" aria-live="polite"></div>`;
     document.body.append(dialog);
     content = dialog.querySelector('.sr-content');
@@ -166,9 +166,10 @@
     if (!actions || actions.querySelector('[data-session-resources]')) return;
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'sr-open';
+    button.className = 'iconbtn sr-open';
     button.dataset.sessionResources = '';
-    button.textContent = '资源';
+    button.innerHTML = '<svg class="ui-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 9h3l2-6 3 10 2-6h2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    button.title = '查看会话资源';
     button.setAttribute('aria-label', '查看会话资源');
     button.setAttribute('aria-haspopup', 'dialog');
     button.onclick = open;

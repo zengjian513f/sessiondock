@@ -54,6 +54,10 @@
   before using it. If a gate cannot run, record which checks actually ran;
   `--test none` is not itself validation.
 
+## Visual consistency
+
+- 新增任何视觉元素前，必须参考已有同类视觉元素的风格，优先复用现有组件和样式。按钮、图标、字体、颜色、间距、边框及交互状态应与所在界面保持一致，不另起一套视觉设计。
+
 ## Structure
 
 - Treat SessionDock as an independent project. Current contracts live in `docs/`

@@ -29,6 +29,11 @@ def main():
                 page.goto(base, wait_until='networkidle')
                 page.locator('#side .item').first.click()
                 page.locator('[data-session-resources]').wait_for()
+                resource_button = page.locator('[data-session-resources]')
+                assert 'iconbtn' in resource_button.get_attribute('class')
+                assert resource_button.locator('svg.ui-icon').count() == 1
+                assert resource_button.inner_text() == ''
+                assert resource_button.bounding_box()['width'] == 28
                 page.evaluate('''() => {
                   window.resourceCalls = [];
                   window.probeState = {state:"off", remaining_seconds:0};
@@ -51,7 +56,8 @@ def main():
                 gpu = page.locator('.sr-totals .sr-metric').nth(1)
                 gpu.hover()
                 assert '不代表独占' in gpu.get_attribute('title')
-                assert page.locator('.sr-totals').bounding_box()['height'] < 190
+                assert page.locator('.sr-totals').bounding_box()['height'] < 120
+                assert abs(page.locator('.sr-scopes').bounding_box()['y'] - page.locator('.sr-probe').bounding_box()['y']) < 4
                 offline = page.locator('.sr-node').filter(has_text='compute-b')
                 assert '机器离线' in offline.inner_text() and '—' in offline.inner_text()
                 assert page.evaluate('resourceCalls.at(-1).scope') == 'inclusive'
