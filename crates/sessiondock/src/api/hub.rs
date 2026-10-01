@@ -470,12 +470,9 @@ async fn handle(
     }
     if method == Method::POST && path == "/api/groups" {
         let body = read_body(request).await?;
-        let catalog: crate::metadata::GroupCatalog = serde_json::from_value(Value::Object(body))
-            .map_err(|_| Reply::Invalid("需要有效的分组集合".into()))?;
-        let catalog = crate::metadata::MetadataSnapshot::empty()
-            .with_group_catalog(&catalog)
-            .map_err(|error| Reply::Invalid(error.message))?
-            .group_catalog();
+        let catalog: crate::metadata::GroupCatalogUpdate =
+            serde_json::from_value(Value::Object(body))
+                .map_err(|_| Reply::Invalid("需要有效的分组集合".into()))?;
         let value = state.groups.sync(registry, client, Some(catalog)).await;
         return if value["ok"] == true {
             ok(&value)

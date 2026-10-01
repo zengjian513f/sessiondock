@@ -217,28 +217,46 @@ Platform execution and deployment results are recorded in the batch ledger.
 `group_catalog: {groups: [name, ...]}` is optional in `session-metadata.json`.
 Each session has at most one `group`. Names are trimmed, nonempty and
 case-sensitive; identical names identify the same entry across nodes. Catalogs
-retain unused entries and support creation and assignment.
+retain unused entries and support creation, assignment and deletion.
 
 - `GET /api/groups` reads the catalog, including imported session assignments.
-- `POST /api/groups {groups?}` merges names without changing assignments.
+- `POST /api/groups {create_groups?, delete_groups?}` creates or deletes names.
+  Deletion clears that group's session assignments atomically on each node.
+  It deletes only the organization preference, never sessions or native history.
+- `POST /api/groups {groups?, changes?}` merges a catalog from synchronization.
 - `POST /api/session/group {uid, set_group?, group?}` changes a listed session.
   Omitted or false `set_group` preserves its group; true with null clears it.
   Group, catalog additions and revision commit together. Other preferences and
   native CLI records remain intact. Without metadata these routes return
   `501 metadata_disabled`.
 
-The Hub merges all registered enabled nodes' catalogs and distributes the union
+The Hub merges all registered enabled nodes' catalogs and distributes the result
 back to reachable nodes every ten seconds, independent of browser filters.
 `hub-cache/groups.json` is a rebuildable cache; nodes own the durable catalogs.
 Hub creation requires at least one node to confirm the write. Responses expose
 `synced_nodes` and `sync_errors`; offline nodes catch up after rejoining.
 A node remains independently usable after restarting without a Hub.
 
-The session right-click/hold menu opens a group editor. Multi-select supports
-assigning one group to all selected sessions and defaults to preserving each
-session's existing group. A single group filter and the Group view organize
-sessions across machines; only the filter is stored in the browser. Clone
+The Group view shows named groups, including empty ones, with a delete button
+on each heading; ungrouped sessions are omitted from this view. The final row is
+New group. Clicking it edits the name inline; Enter or Create commits it, and
+Escape cancels. Existing session tree/time views still show ungrouped sessions.
+
+The session right-click/hold menu has a second-level group menu. Its first item
+is Ungrouped, followed by named groups, and a click assigns immediately. Desktop
+hover and ArrowRight open the submenu; ArrowLeft or Escape returns to the parent.
+Multi-select uses the same immediate assignment menu. A single group filter
+organizes sessions across machines; only the filter is browser state. Clone
 preserves the group and catalog reads include imported names.
+
+Catalog `changes` records the latest create/delete operation for each name,
+including deletion markers. Stamps advance beyond observed operations and include
+a random tie breaker. Merges keep the later operation, so offline catalogs and
+cached session rows cannot resurrect a deleted group. Rejoining nodes remove
+its assignments, while a later explicit creation can reuse the name. Deletion
+markers persist even when all groups are deleted. Simultaneous independent
+operations converge by stamp; they do not establish a global causal order until
+nodes communicate.
 
 Session tags have been removed from the UI, API and metadata model. Old
 `label_catalog` documents are read only to preserve their groups; obsolete tag
@@ -247,6 +265,6 @@ reads the groups from its previous `labels.json` cache if the new cache is absen
 Tags are never converted into groups. Old tag API routes are no longer served.
 
 Validation: `python3 tests/groups_browser.py --binary target/release/sessiondock` exercises two independent nodes
-and a real Hub, existing-group preservation, tag removal, catalog union/downsync,
-assignments and batch preservation, group filtering/view, mobile hold/clear,
-offline/rejoin, restarts, standalone use, and unchanged native records.
+and a real Hub, inline creation/cancellation, immediate assignment and batches,
+empty groups, removal without a dialog, hover/keyboard/mobile submenus, offline
+deletion/rejoin, same-name recreation, restarts, and unchanged native records.
