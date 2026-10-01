@@ -207,13 +207,14 @@
         </div>
         <div id="session-group-filters" hidden>
           <label>分组 <select id="session-group-filter" aria-label="分组筛选"><option value="">全部分组</option></select></label>
+          <div id="session-group-status" role="status" aria-live="polite"></div>
         </div>
         <div id="stat" role="status">加载中…</div>
         <div class="side-tools" id="side-tools" hidden>
           <span id="side-picked"></span>
           <button type="button" class="btn" id="side-pick-all">全选</button>
           <button type="button" class="btn" id="side-pick-stop" disabled>停止</button>
-          <button type="button" class="btn" id="side-pick-group" disabled>分组</button>
+          <button type="button" class="btn" id="side-pick-group" aria-controls="session-group-menu" aria-haspopup="menu" aria-expanded="false" disabled>分组</button>
           <button type="button" class="btn" id="side-pick-attach" disabled>附属到…</button>
           <button type="button" class="btn danger" id="side-pick-delete" disabled>删除</button>
           <button type="button" class="btn" id="side-pick-cancel">取消</button>
@@ -310,24 +311,10 @@
   <button type="button" role="menuitem" data-act="reattach" hidden>取消独立</button>
   <button type="button" role="menuitem" data-act="attach" hidden>附属到…</button>
   <button type="button" role="menuitem" data-act="delete">删除会话</button>
-  <button type="button" role="menuitem" data-act="group">移到分组…</button>
+  <button type="button" role="menuitem" data-act="group" aria-controls="session-group-menu" aria-haspopup="menu" aria-expanded="false">分组 <span aria-hidden="true">›</span></button>
   <button type="button" role="menuitem" data-act="pick">多选…</button>
 </div>
-<dialog id="session-group-dialog" class="app-dialog" aria-labelledby="session-group-title">
-  <form id="session-group-form">
-    <div class="modal-head"><div><h2 id="session-group-title">移到分组</h2><p>每个会话属于一个分组</p></div>
-      <button type="button" class="modal-close" id="session-group-close" aria-label="关闭">×</button></div>
-    <p id="session-group-summary"></p>
-    <label class="group-field" for="session-group-select">所属分组
-      <select id="session-group-select" aria-label="所属分组"></select></label>
-    <div class="group-create"><label for="session-group-new">新建分组</label>
-      <div class="group-create-row"><input id="session-group-new" aria-label="新分组名称" placeholder="例如：重要、搁置、稍后" autocomplete="off">
-        <button type="button" class="btn" id="session-group-create">创建并选中</button></div></div>
-    <p id="session-group-note" role="status" aria-live="polite"></p>
-    <div class="modal-actions"><button type="button" class="btn" id="session-group-cancel">取消</button>
-      <button type="submit" class="btn go" id="session-group-save">保存</button></div>
-  </form>
-</dialog>
+<div id="session-group-menu" class="ctx-menu" hidden role="menu" aria-label="会话分组"></div>
 <dialog id="new-session-dialog" aria-labelledby="new-session-title">
   <form id="new-session-form">
     <div class="modal-head">

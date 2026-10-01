@@ -3290,6 +3290,7 @@ let suppressItemClick = false;
 
 function openItemMenu(uid, x, y) {
   const menu = $('#item-menu');
+  globalThis.SessionDockGroups?.closeMenu();
   menuUid = uid;
   const list = sidebarSessions();
   const row = list.find(session => session.uid === uid);
@@ -3320,6 +3321,7 @@ function openItemMenu(uid, x, y) {
 }
 
 function closeItemMenu() {
+  globalThis.SessionDockGroups?.closeMenu();
   $('#item-menu').hidden = true;
   menuUid = '';
 }
@@ -3449,9 +3451,9 @@ $('#item-menu').onclick = async e => {
   const button = e.target.closest('button[data-act]');
   if (!button) return;
   const uid = menuUid;
+  if (button.dataset.act === 'group') { globalThis.SessionDockGroups?.showMenu([uid], button); return; }
   closeItemMenu();
   if (!uid) return;
-  if (button.dataset.act === 'group') { await globalThis.SessionDockGroups?.open([uid]); return; }
   if (button.dataset.act === 'hide') {
     await setForkParentVisibility([uid], false);
     return;
@@ -3489,7 +3491,7 @@ $('#item-menu').onclick = async e => {
 };
 
 document.addEventListener('pointerdown', e => {
-  if (!$('#item-menu').hidden && !e.target.closest('#item-menu')) closeItemMenu();
+  if (!$('#item-menu').hidden && !e.target.closest('#item-menu, #session-group-menu')) closeItemMenu();
 }, true);
 addEventListener('resize', closeItemMenu);
 
@@ -4078,7 +4080,7 @@ function groupBy(list, {skipClosed = false} = {}) {
   const stamp = s => S.nest ? nestStamp(s, children, memo) : (+new Date(s.updated) || 0);
   const m = new Map(), latest = new Map(), dates = new Map();
   for (const s of list) {
-    if (nested.has(s.uid)) continue;
+    if (nested.has(s.uid) || (S.view === 'group' && (!s.group || (globalThis.SessionDockGroups?.available && !globalThis.SessionDockGroups.contains(s.group))))) continue;
     const updated = stamp(s);
     if (S.view === 'date' && !dates.has(updated)) dates.set(updated, dayKey(updated));
     const k = S.view === 'tree' ? (s.node_id ? JSON.stringify([s.node_id, s.cwd || '(未知)']) : (s.cwd || '(未知)'))
@@ -4086,6 +4088,9 @@ function groupBy(list, {skipClosed = false} = {}) {
     if (!m.has(k)) m.set(k, []);
     m.get(k).push(s);
     latest.set(k, Math.max(latest.get(k) ?? -Infinity, updated));
+  }
+  if (S.view === 'group' && !S.term) for (const name of globalThis.SessionDockGroups?.names || []) {
+    const key = `group:${name}`; if (!m.has(key)) { m.set(key, []); latest.set(key, -Infinity); }
   }
   const keys = [...m.keys()];
   if (S.view === 'date') keys.sort().reverse();
@@ -4098,6 +4103,7 @@ function groupBy(list, {skipClosed = false} = {}) {
   const seen = new Set(), sizes = new Map();
   const groups = keys.map(k => {
     const roots = m.get(k);
+    if (!roots.length) return [k, []];
     if (skipClosed && sidebarGroupClosed(k)) {
       // The heading needs a count and a representative, not sorted hidden rows.
       // Pick membership is collected only while selection mode is actually on.
@@ -4369,11 +4375,11 @@ function renderSide(suppliedList = null) {
   const list = suppliedList || visible();
   side._sessionUids = new Set(list.map(row => row.uid));
   const oldGroups = new Map([...side.querySelectorAll(':scope > .group')].map(group => [group.dataset.key, group]));
-  for (const child of [...side.children]) if (!child.classList.contains('group')) child.remove();
+  for (const child of [...side.children]) if (!child.classList.contains('group') && child.id !== 'session-group-create-row') child.remove();
   paintSearchMode(list);
   const picked = syncPickedSessions();
   renderPickBar();
-  if (!list.length) {
+  if (!list.length && !(S.view === 'group' && globalThis.SessionDockGroups?.available)) {
     side._nestTree = null;
     side.replaceChildren();
     if (S.term) {
@@ -4407,7 +4413,7 @@ function renderSide(suppliedList = null) {
     oldGroups.delete(key);
     g.classList.toggle('closed', sidebarGroupClosed(key));
     g.dataset.key = key;
-    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) || '未分组' : key;   // 分组标题不缩写, 只换 ~
+    const label = S.view === 'tree' ? nodeDirectory(first) : S.view === 'group' ? key.slice(6) : key;   // 分组标题不缩写, 只换 ~
     const groupUids = summary ? summary.pickUids : items.filter(sessionPickable).map(x => x.uid);
     const headSignature = JSON.stringify([label, key, count, S.view, first?.node_name]);
     const oldHead = g.querySelector(':scope > .ghead');
@@ -4421,6 +4427,7 @@ function renderSide(suppliedList = null) {
       store.set('closed', [...S.closed]);
       renderSide();
     };
+    if (S.view === 'group') globalThis.SessionDockGroups?.paintHeading(head, label);
     head._signature = headSignature;
     head._pickLabel = label;
     if (head !== oldHead) { if (oldHead) oldHead.replaceWith(head); else g.prepend(head); }
@@ -4462,6 +4469,7 @@ function renderSide(suppliedList = null) {
     syncGroupPickBox(g);
   }
   for (const old of oldGroups.values()) old.remove();
+  globalThis.SessionDockGroups?.paintSidebar(side);
   fitTimelineDirectories();
   side.scrollTop = top;
 }
@@ -9918,6 +9926,7 @@ $('#setting-console-paste-files').onchange = e => store.set('consolePasteFiles',
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (globalThis.SessionDockGroups?.escapeMenu()) return;
   if (!$('#item-menu').hidden) return closeItemMenu();
   if (S.nestAttach) return setNestAttach('');
   if (S.picking) return setPicking(false);
