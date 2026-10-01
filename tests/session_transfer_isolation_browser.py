@@ -34,15 +34,17 @@ def main():
         cwd=source.root/'cwd';(cwd/'dangling-project').symlink_to(root/'missing')
         with (cwd/'build-output').open('wb') as out:out.truncate(8*1024**3)
         huge_atime=(cwd/'build-output').stat().st_atime_ns
-        real_port=free_port();blocked=threading.Event();release=threading.Event();held={'id':None}
+        real_port=free_port();blocked=threading.Event();release=threading.Event();held={'id':None,'phase':'manifest'}
         class Proxy(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
             def do_GET(self):self.forward()
             def do_POST(self):self.forward()
             def forward(self):
                 body=self.rfile.read(int(self.headers.get('Content-Length','0')))
-                if self.path.endswith('/transfer/manifest') and (held['id'] is None or json.loads(body).get('operation_id')==held['id']):
-                    blocked.set();release.wait(30)
+                operation=json.loads(body).get('operation_id') if body and self.headers.get('Content-Type','').startswith('application/json') else None
+                pause = self.path.endswith('/transfer/manifest') if held['phase']=='manifest' else self.path.endswith('/transfer/reserve') and (destination.root/'state/transfers'/str(operation)/'operation.json').exists()
+                if pause and (held['id'] is None or operation==held['id']):
+                    blocked.set();release.wait(120)
                 remote=http.client.HTTPConnection('127.0.0.1',real_port,timeout=35)
                 try:
                     remote.request(self.command,self.path,body=body,headers={k:v for k,v in self.headers.items() if k.lower() not in ('host','connection')})
@@ -120,6 +122,44 @@ def main():
         assert all(path.is_file() for path in claude.values())
         print('PASS in-flight Chromium cancellation bypasses execution lock and restores source before stalled request is released',flush=True)
         release.set()
+        first.close()
+        for action in ('cancel-copy','close-copy','crash-copy','restart-hub'):
+            # Hold the source's final recheck after a complete bundle was received,
+            # before publishing anything. Both nodes must reclaim their payloads.
+            blocked.clear();release.clear();held.update(id=None,phase='received')
+            page=context.new_page();dialog=open_dialog(page,uid('claude',claude[2]),False)
+            # The UI already owns its own preview; capture the request it submits.
+            submitted=[]
+            page.on('request',lambda request:submitted.append(request.post_data_json) if request.url.endswith('/api/session/transfer/clone') else None)
+            dialog.locator('.clone-confirm').click()
+            assert blocked.wait(10),action
+            assert submitted,action
+            operation=submitted[-1]['operation_id'];held['id']=operation
+            target_dir=destination.root/'state/transfers'/operation
+            assert (target_dir/'operation.json').exists()
+            assert any(path.name!='operation.json' for path in target_dir.iterdir())
+            started=time.monotonic()
+            if action in ('cancel-copy','close-copy'):
+                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/cancel'),timeout=10000) as cancelled:
+                    dialog.locator('.transfer-abort' if action=='cancel-copy' else '.transfer-close').click()
+                assert cancelled.value.ok,cancelled.value.text()
+                assert time.monotonic()-started<10
+                if action=='close-copy':expect(dialog).to_have_count(0)
+            else:
+                page.close()
+                if action=='restart-hub':hub.stop();hub.start()
+                deadline=time.monotonic()+45
+                while json.loads((hubroot/'transfers'/f'{operation}.json').read_text())['phase']!='aborted':
+                    assert time.monotonic()<deadline,action
+                    time.sleep(.1)
+            for directory in (source.root/'state/transfers'/operation,target_dir):
+                assert json.loads((directory/'operation.json').read_text())['phase']=='aborted',action
+                assert [path.name for path in directory.iterdir()]==['operation.json'],(action,list(directory.iterdir()))
+            assert all(path.is_file() for path in claude.values())
+            assert not list((source.root/'claude').rglob('.sessiondock-*.pending'))
+            print('PASS '+action+' reclaims both staged copies and preserves source; elapsed '+str(round(time.monotonic()-started,2))+'s',flush=True)
+            release.set()
+            if not page.is_closed():page.close()
         direct=SimpleNamespace(port=real_port)
         status,raw=node_call(direct,'/api/session/clone/plan',{'uid':uid('grok',source.root/'grok/project'/ident(10))})
         assert status==200,raw

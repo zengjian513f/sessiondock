@@ -6,7 +6,6 @@ use super::{
     service::{Operation, TransferService},
 };
 use crate::trash::manifest::{EntryState, FileRecord, FileRole, Manifest, RunStateNote, Stamp};
-use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -47,8 +46,7 @@ impl TransferService {
     /// delayed switch can never succeed after this point, even after restart.
     pub fn abort_source(&self, id: &str, finished: bool) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
-        if !op.moving
-            || op.incoming_digest.is_some()
+        if op.incoming_digest.is_some()
             || !matches!(
                 op.phase.as_str(),
                 "planned" | "exporting" | "aborting" | "aborted"
@@ -60,6 +58,7 @@ impl TransferService {
             ));
         }
         if op.phase == "aborted" {
+            self.cleanup_staging(&op)?;
             return Ok(op);
         }
         if finished && op.phase != "aborting" {
@@ -72,6 +71,7 @@ impl TransferService {
         op.export_lease_until = 0;
         self.save(&op)?;
         if finished {
+            self.cleanup_staging(&op)?;
             for (provider, root) in self.bundle_roots(&op)? {
                 if let Some(probe) = op.storage_probes.get(&provider) {
                     let _ = probe.remove(&root);
@@ -82,8 +82,10 @@ impl TransferService {
     }
     pub fn abort_target(&self, id: &str) -> Result<Operation, TransferError> {
         let mut op = self.load(id)?;
-        if !op.moving
-            || op.incoming_digest.is_none()
+        if !op.moving && op.phase == "complete" {
+            return Ok(op);
+        }
+        if op.incoming_digest.is_none()
             || !matches!(
                 op.phase.as_str(),
                 "planned" | "failed" | "ready" | "rollback_required" | "aborting" | "aborted"
@@ -95,6 +97,7 @@ impl TransferService {
             ));
         }
         if op.phase == "aborted" {
+            self.cleanup_staging(&op)?;
             return Ok(op);
         }
         if matches!(
@@ -107,6 +110,28 @@ impl TransferService {
         }
         op.phase = "aborted".into();
         self.save(&op)?;
+        self.cleanup_staging(&op)?;
+        Ok(op)
+    }
+    pub fn abort_local(&self, id: &str) -> Result<Operation, TransferError> {
+        let mut op = self.load(id)?;
+        if op.moving || op.incoming_digest.is_some() {
+            return Err(TransferError::new("move_plan_stale", "此操作不是同机复制"));
+        }
+        if op.phase == "complete" {
+            return Ok(op);
+        }
+        if matches!(
+            op.phase.as_str(),
+            "publishing" | "verifying" | "rollback_required" | "aborting"
+        ) {
+            op.phase = "aborting".into();
+            self.save(&op)?;
+            self.rollback(&op)?;
+        }
+        op.phase = "aborted".into();
+        self.save(&op)?;
+        self.cleanup_staging(&op)?;
         Ok(op)
     }
     pub fn switch_source(&self, id: &str) -> Result<Operation, TransferError> {
@@ -232,12 +257,10 @@ impl TransferService {
             .candidates()
             .filter(|e| e.source == "codex" && !uids.contains(e.uid.as_str()))
         {
-            let calls = calls_by_thread.entry(e.summary.sid.clone()).or_default();
-            for line in fs::read(&e.data)?.split(|b| *b == b'\n') {
-                if let Ok(row) = serde_json::from_slice::<Value>(line) {
-                    super::codex_tools::collect_call(&row, calls);
-                }
-            }
+            calls_by_thread
+                .entry(e.summary.sid.clone())
+                .or_default()
+                .extend(self.references.get(e)?.calls.clone());
         }
         for e in snapshot
             .index()
@@ -264,94 +287,50 @@ impl TransferService {
             {
                 return Err(changed());
             }
-            if e.source == "codex" || e.source == "claude" {
-                let raw = fs::read(&e.data)?;
-                let rows: Vec<Value> = raw
-                    .split(|b| *b == b'\n')
-                    .filter_map(|line| serde_json::from_slice(line).ok())
-                    .collect();
-                if e.source == "claude" {
-                    let links = super::group::claude_tools::links(&rows);
-                    if links
-                        .requests
-                        .iter()
-                        .chain(links.resumed.values())
-                        .any(|id| references("claude", id))
+            let links = self.references.get(e)?;
+            if let Some((code, message)) = links.errors.first() {
+                return Err(TransferError::new(code, message));
+            }
+            if links
+                .required
+                .iter()
+                .map(|(id, _)| id)
+                .chain(links.optional.iter())
+                .any(|id| {
+                    references(e.source, id)
+                        || (e.source == "grok"
+                            && op.file_plan.as_ref().is_some_and(|plan| {
+                                plan.sessions.contains_key(&format!("grok:{id}"))
+                            }))
+                })
+            {
+                return Err(changed());
+            }
+            if e.source == "codex" {
+                for (call, ids) in &links.outputs {
+                    if calls_by_thread[&e.summary.sid]
+                        .get(call)
+                        .is_some_and(|name| {
+                            matches!(name.as_str(), "__code_agent" | "spawn_agent" | "wait")
+                        })
+                        && ids.iter().any(|id| references("codex", id))
                     {
                         return Err(changed());
-                    }
-                }
-                for row in &rows {
-                    if e.source == "codex"
-                        && super::codex_tools::references(row, &calls_by_thread[&e.summary.sid])
-                            .iter()
-                            .any(|id| references("codex", id))
-                    {
-                        return Err(changed());
-                    }
-                    if e.source == "claude" {
-                        if [
-                            "parentSessionId",
-                            "forkedFromSessionId",
-                            "continuedInSessionId",
-                        ]
-                        .iter()
-                        .any(|key| {
-                            row[*key]
-                                .as_str()
-                                .is_some_and(|id| references("claude", id))
-                        }) {
-                            return Err(changed());
-                        }
-                        if !e.is_agent()
-                            && row.get("parentUuid").is_some()
-                            && row["uuid"].as_str().is_some_and(|id| {
-                                op.file_plan.as_ref().is_some_and(|p| {
-                                    p.records.contains_key(&format!("claude:{id}"))
-                                })
-                            })
-                        {
-                            return Err(changed());
-                        }
                     }
                 }
             }
-            if e.source == "grok"
-                && let Some(path) = &e.summary_path
+            if e.source == "claude"
+                && !e.is_agent()
+                && links.messages.iter().any(|id| {
+                    op.file_plan
+                        .as_ref()
+                        .is_some_and(|plan| plan.records.contains_key(&format!("claude:{id}")))
+                })
             {
-                let rows = super::group::grok_tools::rows(path.parent().unwrap())?;
-                if super::group::grok_tools::references(&rows)
-                    .iter()
-                    .any(|id| {
-                        references("grok", id)
-                            || op.file_plan.as_ref().is_some_and(|plan| {
-                                plan.sessions.contains_key(&format!("grok:{id}"))
-                            })
-                    })
-                {
-                    return Err(changed());
-                }
-                let mut paths = vec![path.clone()];
-                let agents = path.parent().unwrap().join("subagents");
-                if agents.is_dir() {
-                    for child in fs::read_dir(agents)? {
-                        let meta = child?.path().join("meta.json");
-                        if meta.is_file() {
-                            paths.push(meta);
-                        }
-                    }
-                }
-                for path in paths {
-                    let row: Value = serde_json::from_slice(&fs::read(path)?)?;
-                    if ["parent_session_id", "child_session_id"]
-                        .iter()
-                        .any(|key| row[*key].as_str().is_some_and(|id| references("grok", id)))
-                    {
-                        return Err(changed());
-                    }
-                }
+                return Err(changed());
             }
         }
+
         // New sidebar children can appear after publication, including while
         // resuming a partially retired operation. Never leave them orphaned.
         for row in snapshot.list["sessions"].as_array().into_iter().flatten() {

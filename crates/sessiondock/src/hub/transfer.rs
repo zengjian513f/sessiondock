@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
 
 const IDLE: Duration = Duration::from_secs(300);
+const FOREGROUND_LEASE: Duration = Duration::from_secs(30);
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Request {
     pub uid: String,
@@ -30,6 +31,7 @@ struct Journal {
 pub struct Transfers {
     directory: PathBuf,
     gates: crate::transfer::coordination::Locks,
+    heartbeats: std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
     cancellations:
         std::sync::Mutex<std::collections::BTreeMap<String, tokio_util::sync::CancellationToken>>,
 }
@@ -45,7 +47,47 @@ impl Transfers {
             directory,
             gates: Default::default(),
             cancellations: Default::default(),
+            heartbeats: Default::default(),
         })
+    }
+    /// No browser is responsible for finishing compensation or a committed move.
+    /// On restart all unfinished journals are reconciled, never blindly replayed.
+    pub fn spawn(
+        self: Arc<Self>,
+        registry: Arc<Registry>,
+        client: Arc<Client>,
+        shutdown: tokio_util::sync::CancellationToken,
+    ) {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut workers = tokio::task::JoinSet::new();
+            let mut recovering = std::collections::BTreeSet::new();
+            loop {
+                tokio::select! {
+                    _ = shutdown.cancelled() => break,
+                    Some(done) = workers.join_next(), if !workers.is_empty() => {
+                        if let Ok(id) = done { recovering.remove(&id); }
+                    }
+                    _ = interval.tick() => {
+                        let Ok(pending) = self.pending() else { continue };
+                        for value in pending["operations"].as_array().into_iter().flatten() {
+                            let Ok(request) = serde_json::from_value::<Request>(value["request"].clone()) else { continue };
+                            let id = request.operation_id.clone();
+                            let active = self.heartbeats.lock().unwrap_or_else(|e| e.into_inner())
+                                .get(&id).is_some_and(|seen| seen.elapsed() < FOREGROUND_LEASE);
+                            if active || !recovering.insert(id.clone()) { continue; }
+                            let transfers = self.clone(); let registry = registry.clone(); let client = client.clone();
+                            workers.spawn(async move {
+                                // Cancellation first fences late preparation/publication; after
+                                // ownership switch reconciliation completes the same transaction.
+                                let _ = transfers.cancel(registry, client, request).await;
+                                id
+                            });
+                        }
+                    }
+                }
+            }
+        });
     }
     fn path(&self, id: &str) -> Result<PathBuf, TransferError> {
         if id.len() != 36 || !id.bytes().all(|b| b.is_ascii_hexdigit() || b == b'-') {
@@ -109,6 +151,14 @@ impl Transfers {
                 "操作已绑定其他迁移目标",
             ));
         }
+        if let Some(seen) = self
+            .heartbeats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&request.operation_id)
+        {
+            *seen = std::time::Instant::now();
+        }
         // Journals written by older versions have no preview. Fetch only this
         // selected operation; listing tasks must work even when a node is offline.
         if journal.preview.is_none() {
@@ -145,8 +195,8 @@ impl Transfers {
                 && let Ok((_, status)) = call(
                     client,
                     &address,
-                    "/api/session/transfer/status",
-                    &json!({"operation_id":request.operation_id}),
+                    "/api/session/clone/progress",
+                    &json!({"operation_id":request.operation_id,"uid":local_uid}),
                     true,
                 )
                 .await
@@ -199,29 +249,66 @@ impl Transfers {
         let (source_id, _) = namespace::split(&request.uid, true)
             .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
         for id in [&source_id, &request.target_node] {
-            if let Some(node) = registry.get(id) {
-                if let Ok(target) = registry.target(&node) {
-                    let _ = tokio::time::timeout(
-                        Duration::from_secs(3),
-                        call(
-                            &client,
-                            &target,
-                            "/api/session/transfer/interrupt",
-                            &json!({"operation_id":request.operation_id}),
-                            false,
-                        ),
-                    )
-                    .await;
-                }
+            if let Some(node) = registry.get(id)
+                && let Ok(target) = registry.target(&node)
+            {
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    call(
+                        &client,
+                        &target,
+                        "/api/session/transfer/interrupt",
+                        &json!({"operation_id":request.operation_id}),
+                        false,
+                    ),
+                )
+                .await;
             }
         }
         let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
         journal = serde_json::from_slice(&fs::read(self.path(&request.operation_id)?)?)?;
-        let result = self.abort(&registry, &client, &mut journal).await;
+        let result = self.reconcile(registry, client, &mut journal).await;
         if let Err(error) = &result {
             self.record_error(&request, error).await;
         }
         result
+    }
+    async fn reconcile(
+        &self,
+        registry: Arc<Registry>,
+        client: Arc<Client>,
+        journal: &mut Journal,
+    ) -> Result<Value, TransferError> {
+        if matches!(journal.phase.as_str(), "complete" | "aborted") {
+            return Ok(journal
+                .result
+                .clone()
+                .unwrap_or_else(|| json!({"phase":"aborted"})));
+        }
+        let (source_id, _) = namespace::split(&journal.request.uid, true)
+            .map_err(|e| TransferError::new("move_plan_stale", e.to_string()))?;
+        let source = registry
+            .get(&source_id)
+            .ok_or_else(|| TransferError::new("move_node_unavailable", "源机器不可用"))?;
+        let address = registry
+            .target(&source)
+            .map_err(|_| TransferError::new("move_node_unavailable", "源机器不可用"))?;
+        let state = call(
+            &client,
+            &address,
+            "/api/session/transfer/status",
+            &json!({"operation_id":journal.request.operation_id}),
+            true,
+        )
+        .await?
+        .1;
+        if matches!(
+            state["phase"].as_str(),
+            Some("moved" | "retiring" | "retired" | "exported" | "complete")
+        ) {
+            return self.run(registry, client, journal.request.clone()).await;
+        }
+        self.abort(&registry, &client, journal).await
     }
     async fn abort(
         &self,
@@ -254,11 +341,71 @@ impl Transfers {
         )
         .await?
         .1;
-        if source_state["uid"] != local_uid || source_state["mode"] != "move" {
-            return Err(TransferError::new(
-                "move_plan_stale",
-                "操作与源会话或移动模式不符",
-            ));
+        if source_state["uid"] != local_uid {
+            return Err(TransferError::new("move_plan_stale", "操作与源会话不符"));
+        }
+        if source_id == journal.request.target_node {
+            let result = call(
+                client,
+                &source,
+                "/api/session/transfer/abort",
+                &json!({"operation_id":id,"step":"local"}),
+                true,
+            )
+            .await?
+            .1;
+            journal.phase = result["phase"].as_str().unwrap_or("aborted").into();
+            if journal.phase == "complete" {
+                journal.result = Some(namespace::public_payload(
+                    result.clone(),
+                    &registry.get(&source_id).unwrap(),
+                    "/api/session/clone",
+                ));
+            }
+            self.save(journal).await?;
+            return Ok(journal.result.clone().unwrap_or(result));
+        }
+        // A clone publication that won the race with cancellation is committed.
+        // Never delete a complete target which may already be in use.
+        if source_state["mode"] == "clone" {
+            let mut received = call(
+                client,
+                &target,
+                "/api/session/transfer/status",
+                &json!({"operation_id":id}),
+                false,
+            )
+            .await?;
+            if received.0 != 404 {
+                received = call(
+                    client,
+                    &target,
+                    "/api/session/transfer/abort",
+                    &json!({"operation_id":id,"step":"target"}),
+                    true,
+                )
+                .await?;
+            }
+            if received.0 != 404 && received.1["phase"] == "complete" {
+                let mut result = namespace::public_payload(
+                    received.1,
+                    &registry.get(&journal.request.target_node).unwrap(),
+                    "/api/session/clone",
+                );
+                result["uid"] = journal.request.uid.clone().into();
+                call(
+                    client,
+                    &source,
+                    "/api/session/transfer/release",
+                    &json!({"operation_id":id,"completed":true}),
+                    true,
+                )
+                .await?;
+                journal.phase = "complete".into();
+                journal.result = Some(result.clone());
+                self.save(journal).await?;
+                return Ok(result);
+            }
         }
         // Source-first is essential: a delayed switch must be durably rejected
         // before removing any verified target file. A lost reply is retryable.
@@ -309,6 +456,10 @@ impl Transfers {
         request: Request,
     ) -> Result<Value, TransferError> {
         let _guard = self.gates.acquire(vec![request.operation_id.clone()]).await;
+        self.heartbeats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(request.operation_id.clone(), std::time::Instant::now());
         let cancellation = tokio_util::sync::CancellationToken::new();
         self.cancellations
             .lock()
@@ -322,52 +473,19 @@ impl Transfers {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(&request.operation_id);
-        if result
-            .as_ref()
-            .err()
-            .is_some_and(|e| e.code == "move_cancelled")
-        {
-            return result;
-        }
+        self.heartbeats
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&request.operation_id);
         if let Err(error) = &result {
             self.record_error(&request, error).await;
-            if let Ok((source, _)) = namespace::split(&request.uid, true)
-                && source != request.target_node
-                && let Some(node) = registry.get(&source)
-                && let Ok(target) = registry.target(&node)
+            // Release the operation gate before the shared cancellation path.
+            // It interrupts node workers before compensating their publications.
+            drop(_guard);
+            if let Ok(value) = self.cancel(registry, client, request.clone()).await
+                && value["phase"] == "complete"
             {
-                let source_state = call(
-                    &client,
-                    &target,
-                    "/api/session/transfer/status",
-                    &json!({"operation_id":request.operation_id}),
-                    true,
-                )
-                .await;
-                let before_publication = self
-                    .path(&request.operation_id)
-                    .ok()
-                    .and_then(|p| fs::read(p).ok())
-                    .and_then(|raw| serde_json::from_slice::<Journal>(&raw).ok())
-                    .is_some_and(|j| {
-                        matches!(
-                            j.phase.as_str(),
-                            "planned" | "preparing" | "checking" | "transferring"
-                        )
-                    });
-                if source_state
-                    .as_ref()
-                    .is_ok_and(|(_, value)| value["mode"] == "clone" || before_publication)
-                {
-                    let _ = call(
-                        &client,
-                        &target,
-                        "/api/session/transfer/release",
-                        &json!({"operation_id":request.operation_id,"completed":false}),
-                        true,
-                    )
-                    .await;
-                }
+                return Ok(value);
             }
         }
         result
@@ -606,6 +724,24 @@ impl Transfers {
                     ));
                 }
                 return Err(error);
+            }
+            journal.phase = "retiring".into();
+            self.save(&journal).await?;
+            if let Err(error) = call(
+                &client,
+                &source_address,
+                "/api/session/transfer/retire",
+                &operation,
+                true,
+            )
+            .await
+            {
+                journal.phase = "cleanup_pending".into();
+                self.save(&journal).await?;
+                return Err(TransferError::new(
+                    "move_cleanup_pending",
+                    format!("移动已提交，服务端正在重试源端清理：{}", error.message),
+                ));
             }
             current = call(
                 &client,

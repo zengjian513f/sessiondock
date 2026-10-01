@@ -222,6 +222,10 @@ pub fn hub_app(config: &HubConfig, shutdown: CancellationToken) -> std::io::Resu
                 .join("transfers"),
         )?),
     };
+    state
+        .transfers
+        .clone()
+        .spawn(registry.clone(), client.clone(), state.shutdown.clone());
     Ok(HubApp {
         router: hub_router(state),
         registry,
@@ -640,7 +644,7 @@ async fn handle(
             let transfers = state.transfers.clone();
             let registry = state.registry.clone();
             let client = state.client.clone();
-            // Publication survives the browser closing or losing its connection.
+            // Workers own compensation/commit; progress renews their foreground lease.
             let cancel = path == "/api/session/transfer/cancel";
             let progress = path == "/api/session/transfer/progress";
             let result = tokio::spawn(async move {

@@ -379,11 +379,14 @@ def main():
                         reply=response.value
                         if cleanup_obstruction:
                             assert reply.status==409 and reply.json()['code']=='move_cleanup_pending',reply.text()
-                            expect(dialog.locator('.transfer-error')).to_contain_text('源端清理待重试')
+                            expect(dialog.locator('.transfer-error')).to_contain_text('服务端正在重试源端清理')
                             expect(dialog.locator('#transfer-target')).to_be_disabled()
                             with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/cancel')) as too_late:
                                 dialog.locator('.transfer-abort').click()
-                            assert too_late.value.status==409 and too_late.value.json()['code']=='move_recovery_required',too_late.value.text()
+                            assert too_late.value.status==409 and too_late.value.json()['code']=='move_cleanup_pending',too_late.value.text()
+                            status,raw=node_call(b,'/api/session/transfer/status',{'operation_id':operation})
+                            assert status==200 and json.loads(raw)['phase']=='ready',raw
+                            print('PASS failed source retirement leaves the verified target fenced; cancellation continues committed cleanup',flush=True)
                             dialog=reopen_transfer(page,hub,operation)
                             expect(dialog.locator('.transfer-progress')).to_contain_text('源端清理待重试')
                             partial=json.loads((source.root/'state/transfers'/operation/'operation.json').read_text())
@@ -487,10 +490,19 @@ def main():
                                 # An identical call ID in an unrelated thread is not an edge.
                                 first=generations[0]
                                 first.write_text(first.read_text().replace(ident(998),ident(997)))
-                                with page.expect_response(lambda r:r.url.endswith('/api/session/transfer/clone'),timeout=90000) as response:
-                                    dialog.locator('.clone-confirm').click()
-                                reply=response.value
+                                page.close();hub.stop();hub.start()
+                                deadline=time.monotonic()+20
+                                journal=hubroot/'transfers'/f'{operation}.json'
+                                while json.loads(journal.read_text())['phase']!='complete':
+                                    assert time.monotonic()<deadline,journal.read_text()
+                                    time.sleep(.1)
+                                # Read the idempotent completed result only after the
+                                # background reconciler finished without a browser.
+                                reply=context.request.post(f'http://127.0.0.1:{hub.port}/api/session/transfer/clone',data={
+                                    'uid':source_uid,'target_node':b.nid,'operation_id':operation})
                                 assert reply.ok,reply.text()
+                                page=context.new_page();page.goto(f'http://127.0.0.1:{hub.port}/?sid='+reply.json()['target_uid'],wait_until='networkidle')
+                                print('PASS committed move finishes source retirement before target activation after page and Hub restart',flush=True)
                                 for path in generations:path.unlink()
                                 print('PASS Chromium protects cross-generation agent results and scopes call IDs to their thread',flush=True)
                                 print('PASS Chromium retains a new outside fork dependency during partial cleanup and retries without republishing target or releasing source fence',flush=True)
