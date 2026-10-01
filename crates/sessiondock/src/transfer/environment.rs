@@ -45,7 +45,7 @@ pub struct Stamp {
     pub changed_ns: i64,
     pub mode: u32,
 }
-fn stamp(meta: &fs::Metadata) -> Stamp {
+pub(super) fn stamp(meta: &fs::Metadata) -> Stamp {
     #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     Stamp {
