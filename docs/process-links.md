@@ -287,8 +287,10 @@ owned child sessions. The Hub merges execution-machine rows without inferring
 identity from UI UIDs. Offline/unsupported/stale contributors set `partial`;
 missing sessions and measurements remain unknown.
 
-The sidebar polls once every five seconds while visible. It updates only the
-second-row badges, preserving selection, focus, expansion and list ordering.
-Time/size/model metadata stays on the left; compact resource badges follow it
-and align to the right. Long metadata truncates with its full text in a tooltip. Agent subrows
+The optional sidebar resource column defaults to off and remembers its toolbar
+toggle. Enabling it widens the desktop sidebar by 176px and displays a two-row
+resource column beside each original entry. Disabling it restores the normal
+width and stops polling. While enabled and visible it polls every five seconds. It updates only the
+resource values, preserving selection, focus, expansion and list ordering.
+The original title and metadata remain in the main column. Agent subrows
 without independent process attribution never copy the parent's usage.

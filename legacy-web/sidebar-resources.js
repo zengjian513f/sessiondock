@@ -1,4 +1,4 @@
-/* Batch resource badges reuse the sidebar's metadata row and icon system. */
+/* Optional resource column using the existing sidebar controls and icons. */
 (() => {
   'use strict';
   const fields = [
@@ -7,6 +7,8 @@
     ['proc_storage_read_bytes_per_second', 'resource-read', '磁盘读取速度', 'rate'],
     ['proc_storage_write_bytes_per_second', 'resource-write', '磁盘写入速度', 'rate'],
   ];
+  let enabled = !!store.get('sidebarResources', false);
+  const button = document.querySelector('#sidebar-resources-toggle');
   const scope = '当前会话直接归属进程，含 SSH 跨机任务，不含单独归属的子会话';
   let rows = new Map(), localNode = '', sampledAt = 0, partial = false, pending = false;
   const key = s => JSON.stringify([s.node_id || localNode, s.source, s.sid]);
@@ -21,6 +23,13 @@
   function paint(node) {
     const session = node._resourceSession, meta = node.querySelector('.m');
     if (!session || !meta) return;
+    if (!enabled) { node.querySelector('.item-resources')?.remove(); return; }
+    let panel = node.querySelector('.item-resources');
+    if (!panel) {
+      panel = document.createElement('div'); panel.className = 'item-resources';
+      panel.setAttribute('aria-label', '会话资源');
+      node.querySelector('.body').after(panel);
+    }
     const age = Date.now()/1000 - sampledAt;
     const metrics = age >= -5 && age <= 15 && !node._resourceAgent ? rows.get(key(session)) : null;
     const cells = fields.map(([field, icon, label, unit]) => {
@@ -33,15 +42,13 @@
       return {field, icon, label, value, tip:`${label}：${detail} · ${explanation} · ${scope}${partial || m?.status === 'partial' ? ' · 部分覆盖，缺失机器未计入' : ''}${node._resourceMeta ? ' · ' + node._resourceMeta : ''}`};
     });
     const signature = JSON.stringify([cells, node._resourceMeta]);
-    if (meta.dataset.resourceSignature === signature && meta.querySelectorAll('.item-resource').length === 4) return;
-    meta.dataset.resourceSignature = signature;
-    meta.classList.add('item-resource-line');
-    meta.title = [node._resourceMeta, scope].filter(Boolean).join(' · ');
-    meta.innerHTML = `<span class="item-resource-meta" title="${esc(node._resourceMeta || '')}">${esc(node._resourceMeta || '')}</span><span class="item-resources">` + cells.map(c => `<span class="item-resource" data-resource="${c.field}" title="${esc(c.tip)}" role="img" aria-label="${esc(c.tip)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('') + '</span>';
+    if (panel.dataset.resourceSignature === signature) return;
+    panel.dataset.resourceSignature = signature;
+    panel.innerHTML = cells.map(c => `<span class="item-resource" data-resource="${c.field}" title="${esc(c.tip)}" role="img" aria-label="${esc(c.tip)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('');
   }
   function paintVisible() { document.querySelectorAll('#side .item').forEach(paint); }
   async function refresh() {
-    if (pending || document.hidden) return;
+    if (!enabled || pending || document.hidden) return;
     pending = true;
     try {
       const response = await fetch(appUrl('api/resources/summary'), {signal:AbortSignal.timeout(4500)});
@@ -53,8 +60,22 @@
     } catch (_) { rows = new Map(); sampledAt = 0; }
     finally { pending = false; paintVisible(); }
   }
+  function toggle(value, save = true) {
+    enabled = value;
+    if (save) store.set('sidebarResources', enabled);
+    document.body.classList.toggle('sidebar-resources', enabled);
+    button.classList.toggle('on', enabled);
+    button.setAttribute('aria-pressed', String(enabled));
+    button.title = enabled ? '隐藏列表资源列' : '显示列表资源列：CPU、内存、磁盘读写';
+    setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
+    paintVisible();
+    layoutSessionHead();
+    requestAnimationFrame(() => { if (typeof fitTerm === 'function' && T?.term) fitTerm(); });
+    if (enabled) void refresh();
+  }
+  button.onclick = () => toggle(!enabled);
   globalThis.SessionDockSidebarResources = {paint, refresh};
   document.addEventListener('visibilitychange', () => {if (!document.hidden) {paintVisible(); void refresh();}});
   setInterval(() => {if (!document.hidden) {paintVisible(); void refresh();}}, 5000);
-  paintVisible(); void refresh();
+  toggle(enabled, false);
 })();

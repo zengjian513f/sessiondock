@@ -131,19 +131,29 @@ def main():
         page = context.new_page()
         page.goto(base, wait_until='networkidle')
         sidebar = page.locator(f'#side .item[data-uid="{uid}"]')
+        toggle = page.get_by_role('button', name='列表资源', exact=True)
+        assert toggle.get_attribute('aria-pressed') == 'false'
+        assert sidebar.locator('.item-resources').count() == 0
+        original_width = page.locator('#left').bounding_box()['width']
+        original_meta = sidebar.locator('.m').inner_text()
+        toggle.click()
+        assert page.locator('#left').bounding_box()['width'] == original_width + 176
         wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
-        assert sidebar.locator('.m .ui-icon').count() == 4
+        assert sidebar.locator('.item-resources .ui-icon').count() == 4
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
-        assert '不含单独归属的子会话' in sidebar.locator('.m').get_attribute('title')
-        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm item-resource-line'
-        assert sidebar.locator('.item-resource-meta').inner_text() == sidebar.evaluate('(e) => e._resourceMeta')
-        assert sidebar.locator('.m').evaluate('''e => {
-            const meta=e.querySelector('.item-resource-meta').getBoundingClientRect();
-            const values=e.querySelector('.item-resources').getBoundingClientRect();
-            return values.left >= meta.right && Math.abs(values.right-e.getBoundingClientRect().right)<1;
-        }''')
+        assert '不含单独归属的子会话' in sidebar.locator('.item-resource').first.get_attribute('title')
+        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
+        assert sidebar.locator('.m').inner_text() == original_meta
+        assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
+        toggle.click()
+        assert sidebar.locator('.item-resources').count() == 0
+        assert page.locator('#left').bounding_box()['width'] == original_width
+        toggle.click()
+        page.reload(wait_until='networkidle')
+        assert toggle.get_attribute('aria-pressed') == 'true'
+        assert page.locator('#left').bounding_box()['width'] == original_width + 176
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3
@@ -161,7 +171,8 @@ def main():
         if not sidebar.is_visible():
             page.locator('.mobile-back:visible').click()
         assert sidebar.is_visible()
-        assert sidebar.locator('.m').evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
+        assert sidebar.evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
+        assert sidebar.locator('.item-resources').is_visible()
         page.screenshot(path='/tmp/sidebar-resources-mobile.png')
         page.set_viewport_size({'width':1280,'height':960})
 

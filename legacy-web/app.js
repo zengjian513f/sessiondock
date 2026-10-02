@@ -8904,6 +8904,7 @@ function toggleNestFold(uid) {
 
 // ---------------------------------------------------------------- 栏宽拖动
 const SIDE_DEFAULT = 340;
+const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 176 : 0;
 
 function setSideWidth(px, save) {
   if (MOBILE.matches) {
@@ -8914,7 +8915,7 @@ function setSideWidth(px, save) {
   $('#left').style.width = w + 'px';
   document.documentElement.style.setProperty('--side-width',
     document.body.classList.contains('side-collapsed') ? '0px' : w + 'px');
-  if (save) store.set('width', w);
+  if (save) store.set('width', Math.max(200, w - sideResourceExtra()));
 }
 
 function setSideCollapsed(collapsed, save = true) {
@@ -8959,7 +8960,7 @@ function finishSideDrag(e) {
 }
 document.addEventListener('pointerup', finishSideDrag);
 document.addEventListener('pointercancel', finishSideDrag);
-$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT, true));
+$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true));
 window.addEventListener('resize', () => setSideWidth(
   parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
 MOBILE.addEventListener?.('change', e => {
@@ -8976,7 +8977,7 @@ MOBILE.addEventListener?.('change', e => {
   }
   syncSessionStopNotice();
   syncMobileViewport();
-  setSideWidth(store.get('width', SIDE_DEFAULT));
+  setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
   setSideCollapsed(store.get('sideCollapsed', false), false);
 });
 
@@ -10072,7 +10073,7 @@ if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }
-setSideWidth(store.get('width', SIDE_DEFAULT));
+setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
 setSideCollapsed(store.get('sideCollapsed', false), false);
 renderOpts();
 renderPickBar();
