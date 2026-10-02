@@ -279,15 +279,20 @@ no effect on this resident collector. Private agent instances default to off.
 
 ### Sidebar resource summary
 
-`GET /api/resources/summary` reads each execution node once and returns four
+`GET /api/resources/summary` reads each execution node once and returns six
 metrics for all currently attributed sessions, keyed by native node/source/SID:
-CPU cores, PSS, and proc storage read/write bytes per second. The scope is direct
+CPU cores, process count, PSS, GPU count, and proc storage read/write bytes per second.
+Process counts deduplicate sampled process incarnations within each machine; GPU
+counts deduplicate resident device UUIDs within each machine before summing nodes. The scope is direct
 ownership, including SSH commands owned by that session, excluding separately
 owned child sessions. The Hub merges execution-machine rows without inferring
 identity from UI UIDs. Offline/unsupported/stale contributors set `partial`;
 missing sessions and measurements remain unknown.
 
-The sidebar polls once every five seconds while visible. It updates only the
-second-row badges, preserving selection, focus, expansion and list ordering.
-Old time/size/model metadata is retained in that row's tooltip. Agent subrows
+The optional sidebar resource column defaults to off and remembers its toolbar
+toggle. Enabling it widens the desktop sidebar by 176px and displays a three-row
+resource column beside each original entry. Disabling it restores the normal
+width and stops polling. While enabled and visible it polls every five seconds. It updates only the
+resource values, preserving selection, focus, expansion and list ordering.
+The original title and metadata remain in the main column. Agent subrows
 without independent process attribution never copy the parent's usage.

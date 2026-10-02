@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const FIELDS: &[&str] = &[
     "cpu_cores",
+    "process_count",
     "gpu_count",
     "gpu_memory_bytes",
     "memory_pss_bytes",
@@ -101,6 +102,14 @@ pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Val
     FIELDS
         .iter()
         .map(|field| {
+            if *field == "process_count" {
+                let value = if !selected.is_empty() && samples.is_empty() {
+                    unknown("no current process samples for attributed bindings")
+                } else {
+                    json!({"value":samples.len(),"status":if samples.len() < selected.len() {"partial"} else {"ok"},"sampled_at":resources.sampled_at,"reason":"distinct attributed process incarnations with current samples"})
+                };
+                return ((*field).to_owned(), value);
+            }
             let key = if *field == "gpu_count" {
                 "gpu_devices"
             } else {

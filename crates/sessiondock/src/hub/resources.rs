@@ -340,7 +340,9 @@ pub fn list_summary(documents: Vec<(String, Value)>, mut partial: bool) -> Value
             let all = process_links::resource_summary::totals(&rows);
             let metrics: serde_json::Map<_, _> = [
                 "cpu_cores",
+                "process_count",
                 "memory_pss_bytes",
+                "gpu_count",
                 "proc_storage_read_bytes_per_second",
                 "proc_storage_write_bytes_per_second",
             ]
