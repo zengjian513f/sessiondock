@@ -103,3 +103,12 @@ pub async fn session_probe(
         crate::runtime::process_links::probe(&state, body.enabled).await?,
     ))
 }
+
+/// Cached resource badges for all directly owned sessions on this node.
+pub async fn list_resources(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let value = crate::runtime::process_links::resources(&state).await;
+    let node_id = value["node_id"].as_str().unwrap_or_default().to_owned();
+    let mut summary = crate::hub::resources::list_summary(vec![(node_id.clone(), value)], false);
+    summary["node_id"] = serde_json::json!(node_id);
+    Json(summary)
+}
