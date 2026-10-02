@@ -49,6 +49,11 @@ pub struct Sample {
     pub metrics: BTreeMap<String, serde_json::Value>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionMeasurement {
+    pub session: Session,
+    pub metrics: BTreeMap<String, serde_json::Value>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Resources {
     pub version: u32,
     pub node_id: String,
@@ -64,6 +69,9 @@ pub struct Resources {
     pub metric_availability: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub sessions: Vec<serde_json::Value>,
+    /// Measurements native to a session group, never duplicated per process.
+    #[serde(default)]
+    pub session_measurements: Vec<SessionMeasurement>,
 }
 /// One bounded-time local exchange. Application requests never enter SSH's path.
 #[cfg(unix)]

@@ -1,4 +1,5 @@
 use crate::{
+    bandwidth,
     events::{self, Event},
     gpu, io_events, memory,
 };
@@ -43,6 +44,7 @@ struct Config {
     state: PathBuf,
     events: bool,
     io_events: bool,
+    memory_bandwidth: bool,
 }
 impl Config {
     fn load() -> io::Result<Self> {
@@ -51,7 +53,7 @@ impl Config {
         while let Some(key) = args.next() {
             if key == "--help" {
                 println!(
-                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish, probe (60-second lease). Observes only; never signals or moves workloads."
+                    "resource-agent --node-id-file PATH --uid UID [--socket PATH] [--state PATH] [--proc-root PATH] [--events auto|off] [--io-events off|on (default off)] [--memory-bandwidth off|on (default off)]\nLocal JSON-line API: health, report, resources, catalog, publish, probe (60-second lease). Never signals workloads or changes allocation; memory bandwidth uses monitor-only thread groups."
                 );
                 std::process::exit(0);
             }
@@ -63,6 +65,7 @@ impl Config {
                 "--proc-root",
                 "--events",
                 "--io-events",
+                "--memory-bandwidth",
             ]
             .contains(&key.as_str())
             {
@@ -104,7 +107,15 @@ impl Config {
         if !["on", "off"].contains(&io_mode) {
             return Err(io::Error::other("io-events must be on or off"));
         }
+        let bandwidth_mode = options
+            .get("--memory-bandwidth")
+            .map(String::as_str)
+            .unwrap_or("off");
+        if !["on", "off"].contains(&bandwidth_mode) {
+            return Err(io::Error::other("memory-bandwidth must be on or off"));
+        }
         Ok(Self {
+            memory_bandwidth: bandwidth_mode == "on",
             io_events: io_mode == "on",
             node_id,
             uid,
@@ -541,6 +552,7 @@ struct GpuObservation {
 }
 #[derive(Clone, Default)]
 struct SlowObservations {
+    bandwidth: bandwidth::Observation,
     pss: PssCache,
     gpu: GpuObservation,
 }
@@ -785,6 +797,7 @@ impl ResourceSampler {
             bindings: Vec::new(),
             metric_availability,
             sessions: Vec::new(),
+            session_measurements: Vec::new(),
             unavailable: vec![
                 "gpu_per_process_compute_utilization".into(),
                 "nfs_wire_rpc_accounting".into(),
@@ -800,6 +813,33 @@ impl ResourceSampler {
             if result.metric_availability[metric_name]["status"] == "unavailable" {
                 result.unavailable.push(legacy_name.into());
             }
+        }
+        let bandwidth = &slow_cache.bandwidth;
+        let fresh = bandwidth.sampled_at > 0.0 && sampled_at - bandwidth.sampled_at <= 15.0;
+        result.metric_availability.insert(
+            bandwidth::METRIC.into(),
+            metric(
+                Value::Null,
+                if fresh
+                    && bandwidth.rows.iter().any(|row| {
+                        row.metrics
+                            .get(bandwidth::METRIC)
+                            .is_some_and(|m| !m["value"].is_null())
+                    })
+                {
+                    "partial"
+                } else {
+                    "unavailable"
+                },
+                if fresh {
+                    &bandwidth.reason
+                } else {
+                    "内存带宽尚未启用、硬件不支持或采样已过期"
+                },
+            ),
+        );
+        if fresh {
+            result.session_measurements = bandwidth.rows.clone();
         }
         self.previous = Some((result.clone(), sampled));
         result
@@ -1186,6 +1226,50 @@ pub fn run() -> io::Result<()> {
     } else {
         None
     };
+    let bandwidth_worker = if config.memory_bandwidth && config.proc_root == Path::new("/proc") {
+        let bandwidth_state = state.clone();
+        let cache = slow_cache.clone();
+        let node = config.node_id.clone();
+        Some(std::thread::spawn(move || {
+            let mut collector = None;
+            while !STOP.load(Ordering::Relaxed) {
+                let started = Instant::now();
+                if collector.is_none() {
+                    match bandwidth::Collector::open(
+                        Path::new("/sys/fs/resctrl"),
+                        &node,
+                        Path::new("/run/resource-agent/mbm.lock"),
+                    ) {
+                        Ok(value) => collector = Some(value),
+                        Err(error) => {
+                            cache.lock().unwrap_or_else(|e| e.into_inner()).bandwidth =
+                                bandwidth::Observation {
+                                    rows: Vec::new(),
+                                    sampled_at: now(),
+                                    reason: format!("内存带宽不可用：{error}"),
+                                };
+                        }
+                    }
+                }
+                if let Some(collector) = collector.as_mut() {
+                    let bindings = bandwidth_state
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .report
+                        .bindings
+                        .clone();
+                    let observation = collector.collect(&bindings, Path::new("/proc"), now());
+                    cache.lock().unwrap_or_else(|e| e.into_inner()).bandwidth = observation;
+                }
+                while started.elapsed() < Duration::from_secs(5) && !STOP.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+            // Drop removes only this agent's monitor groups; processes keep running.
+        }))
+    } else {
+        None
+    };
     let gpu_worker = if config.proc_root == Path::new("/proc") {
         let gpu_state = state.clone();
         let cache = slow_cache.clone();
@@ -1318,6 +1402,9 @@ pub fn run() -> io::Result<()> {
     let _ = io_worker.join();
     let _ = worker.join();
     if let Some(worker) = pss_worker {
+        let _ = worker.join();
+    }
+    if let Some(worker) = bandwidth_worker {
         let _ = worker.join();
     }
     if let Some(worker) = gpu_worker {

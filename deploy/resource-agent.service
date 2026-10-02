@@ -1,11 +1,12 @@
 [Unit]
 Description=Shared read-only session resource collector
-After=local-fs.target
+After=local-fs.target sys-fs-resctrl.mount
+Wants=sys-fs-resctrl.mount
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/resource-agent.env
-ExecStart=/opt/resource-agent/bin/resource-agent --uid ${MONITOR_UID} --node-id-file ${NODE_ID_FILE} --io-events off
+ExecStart=/opt/resource-agent/bin/resource-agent --uid ${MONITOR_UID} --node-id-file ${NODE_ID_FILE} --io-events off --memory-bandwidth on
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
@@ -25,8 +26,8 @@ ProtectKernelModules=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
-CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_CHOWN
-ReadWritePaths=/run/resource-agent /var/lib/resource-agent
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE CAP_CHOWN
+ReadWritePaths=/run/resource-agent /var/lib/resource-agent -/sys/fs/resctrl
 TasksMax=128
 MemoryMax=512M
 # Allow short page-table walks without throttling the snapshot API with them.
