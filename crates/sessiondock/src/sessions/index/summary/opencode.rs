@@ -66,11 +66,14 @@ pub(super) fn summarize(input: &Input<'_>) -> RowSummary {
         .unwrap_or(0);
     let created = norm_ts(&session["time_created"]).unwrap_or_else(|| iso_seconds(fallback_mtime));
     let updated = norm_ts(&session["time_updated"]).unwrap_or_else(|| iso_seconds(fallback_mtime));
-    let warnings = if hard_error.is_some() {
+    let mut warnings = if hard_error.is_some() {
         Vec::new()
     } else {
         skipped_warnings("opencode", &records)
     };
+    if info["database"].is_string() {
+        warnings.push(crate::sessions::opencode::ISOLATED_CONTROL_NOTE.to_owned());
+    }
     let (native_id, declared_ids) = if hard_error.is_none() {
         native_identity(session.get("id").into_iter())
     } else {
