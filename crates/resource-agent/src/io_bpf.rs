@@ -25,6 +25,12 @@ struct Key {
     kind: u32,
 }
 #[repr(C)]
+#[derive(Default)]
+struct Counter {
+    bytes: u64,
+    operations: u64,
+}
+#[repr(C)]
 struct Config {
     start_ns: u64,
     stop_ns: u64,
@@ -229,12 +235,12 @@ impl Probe {
         let mut samples = Vec::with_capacity(keys.len());
         let mut lost = 0;
         for key in keys {
-            let mut bytes = 0u64;
+            let mut counter = Counter::default();
             if unsafe {
                 (self.api.lookup)(
                     self.totals,
                     (&key as *const Key).cast(),
-                    (&mut bytes as *mut u64).cast(),
+                    (&mut counter as *mut Counter).cast(),
                 )
             } != 0
             {
@@ -268,7 +274,8 @@ impl Probe {
                 },
                 device: key.device,
                 kind,
-                bytes,
+                bytes: counter.bytes,
+                operations: counter.operations,
                 generation,
             });
         }

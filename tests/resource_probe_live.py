@@ -41,7 +41,10 @@ def main():
    wait(lambda:diag()['state']=='off',5)
    assert time.monotonic()-start<70
    values=request(sock,'resources')
-   assert values['metric_availability']['nfs_read_bytes_per_second']['value'] is None
+   for key in ('nfs_read_bytes_per_second', 'disk_read_operations_per_second', 'disk_write_operations_per_second', 'nfs_read_operations_per_second', 'nfs_write_operations_per_second'):
+    assert values['metric_availability'][key]['value'] is None
+    assert all(s['metrics'][key]['value'] is None for s in values['samples'])
+   assert values['metric_availability']['proc_storage_read_bytes_per_second']['status'] == 'partial'
    assert workload.poll() is None
    request(sock,'probe',{'enabled':True});wait(lambda:diag()['state']=='active')
    stopped=time.monotonic();request(sock,'probe',{'enabled':False});wait(lambda:diag()['state']=='off',5)
