@@ -5,11 +5,17 @@
     ['cpu_cores', 'CPU', 'core'], ['gpu_count', 'GPU', 'gpu'],
     ['gpu_memory_bytes', '显存', 'bytes'], ['memory_pss_bytes', '内存 · PSS', 'bytes'],
     ['proc_storage_read_bytes_per_second', '存储层读取', 'rate'], ['proc_storage_write_bytes_per_second', '存储层写入', 'rate'],
+    ['disk_read_operations_per_second', '本地读次数', 'ops'], ['disk_write_operations_per_second', '本地写次数', 'ops'],
+    ['nfs_read_operations_per_second', 'NFS 读次数', 'ops'], ['nfs_write_operations_per_second', 'NFS 写次数', 'ops'],
     ['disk_read_bytes_per_second', '本地文件读取', 'rate'], ['disk_write_bytes_per_second', '本地文件写入', 'rate'],
     ['network_receive_bytes_per_second', 'TCP 接收', 'rate'], ['network_send_bytes_per_second', 'TCP 发送', 'rate'],
     ['nfs_read_bytes_per_second', 'NFS 读取', 'rate'], ['nfs_write_bytes_per_second', 'NFS 写入', 'rate'],
   ];
   const descriptions = {
+    disk_read_operations_per_second: '60 秒临时探测：本地普通文件成功读取次数，含缓存命中；不是硬盘物理 IOPS，不含内存映射、io_uring 和 splice。',
+    disk_write_operations_per_second: '60 秒临时探测：本地普通文件成功写入次数；不是硬盘物理 IOPS，不含内存映射、io_uring 和 splice。',
+    nfs_read_operations_per_second: '60 秒临时探测：NFS 文件成功读取次数，含缓存命中；不是远程 RPC 次数，不含内存映射、io_uring 和 splice。',
+    nfs_write_operations_per_second: '60 秒临时探测：NFS 文件成功写入次数；不是远程 RPC 次数，不含内存映射、io_uring 和 splice。',
     cpu_cores: '占用的逻辑 CPU 核数；不同机器的核数不代表相同算力。',
     gpu_count: '使用到的计算设备数，同机按设备去重；不代表独占或满卡算力。约 10 秒更新。',
     gpu_memory_bytes: '计算进程的显存占用；不含纯图形任务，共享计算服务可能无法细分到工作进程。约 10 秒更新。',
@@ -26,6 +32,7 @@
   const reasons = {unsupported: '采集端不支持', unavailable: '暂无采样', offline: '机器离线', stale: '采样已过期', partial: '部分覆盖', warming_up: '等待下一次采样'};
   const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[ch]));
   function number(value, unit) {
+    if (unit === 'ops') return `${value.toLocaleString('zh-CN', {maximumFractionDigits: 1})}<small> 次/s</small>`;
     if (unit === 'core') return `${value.toLocaleString('zh-CN', {maximumFractionDigits: 2})}<small> 核</small>`;
     if (unit === 'gpu') return `${value.toLocaleString('zh-CN')}<small> 张</small>`;
     const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];

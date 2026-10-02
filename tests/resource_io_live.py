@@ -81,7 +81,7 @@ def main():
                     filesystem = ctypes.create_string_buffer(256)
                     assert lib.fstatfs(f.fileno(), filesystem) == 0
                     magic = ctypes.cast(filesystem, ctypes.POINTER(ctypes.c_long))[0]
-                    os.write(1, ('shared filesystem magic: ' + hex(magic) + '\n').encode())
+                    assert magic != 0  # Do not contaminate file counters by logging from the child.
             listener = socket.socket()
             listener.bind(('127.0.0.1', 0))
             listener.listen()
@@ -101,12 +101,14 @@ def main():
         assert os.waitstatus_to_exitcode(status) == 0
         child = None
         totals = {}
+        operations = {}
         for _ in range(3):
             row = message()
             assert row['lost'] == 0, row
             for sample in row['event'].get('samples', []):
                 if sample['process']['pid'] == identity['pid']:
                     assert sample['process'] == identity, (sample, identity)
+                    operations[sample['kind']] = operations.get(sample['kind'], 0) + sample['operations']
                     totals[sample['kind']] = totals.get(sample['kind'], 0) + sample['bytes']
             if totals.get('tcp_receive') == 8192:
                 break
@@ -117,8 +119,16 @@ def main():
                 expected['local_read'] += 409600
                 expected['local_write'] += 413696
         assert totals == expected, (totals, expected)
+        expected_operations = {'local_read':1100, 'local_write':201}
+        if args.shared_dir:
+            if 'nfs_read' in totals:
+                expected_operations.update(nfs_read=100, nfs_write=101)
+            else:
+                expected_operations['local_read'] += 100
+                expected_operations['local_write'] += 101
+        assert {k:v for k,v in operations.items() if not k.startswith('tcp_')} == expected_operations, operations
         print(json.dumps({'passed': True, 'ready_ms': round(ready_ms, 2), 'links': len(owned),
-                          'process': identity, 'bytes': totals}))
+                          'process': identity, 'bytes': totals, 'operations': operations}))
     finally:
         if child:
             os.kill(child, 9)

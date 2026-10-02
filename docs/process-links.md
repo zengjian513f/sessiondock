@@ -178,7 +178,12 @@ GPU queries also run independently, about every 10 seconds; values older than
 
 Local file and NFS read/write rates are successful synchronous VFS application
 bytes, distinguished by filesystem; they are not physical disk operations or
-NFS RPC traffic. These probes exclude mmap, io_uring and splice. TCP rates are
+NFS RPC traffic. The temporary probe also exports `disk_read_operations_per_second`,
+`disk_write_operations_per_second`, `nfs_read_operations_per_second` and
+`nfs_write_operations_per_second`: successful logical file operations per second,
+including cache hits, not physical IOPS or RPC counts. Counts share the byte
+map and completed two-second interval; they become unavailable when the
+60-second probe stops. These probes exclude mmap, io_uring and splice. TCP rates are
 successful application send/receive bytes, excluding MSG_PEEK, UDP, retransmits
 and NFS kernel RPC traffic. Coverage is explicitly partial. The separate
 `proc_storage_*` rates retain `/proc/PID/io` storage accounting without mixing
