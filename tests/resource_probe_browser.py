@@ -138,6 +138,12 @@ def main():
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
         assert '不含单独归属的子会话' in sidebar.locator('.m').get_attribute('title')
         assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm item-resource-line'
+        assert sidebar.locator('.item-resource-meta').inner_text() == sidebar.evaluate('(e) => e._resourceMeta')
+        assert sidebar.locator('.m').evaluate('''e => {
+            const meta=e.querySelector('.item-resource-meta').getBoundingClientRect();
+            const values=e.querySelector('.item-resources').getBoundingClientRect();
+            return values.left >= meta.right && Math.abs(values.right-e.getBoundingClientRect().right)<1;
+        }''')
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3

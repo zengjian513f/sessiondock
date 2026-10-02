@@ -33,11 +33,11 @@
       return {field, icon, label, value, tip:`${label}：${detail} · ${explanation} · ${scope}${partial || m?.status === 'partial' ? ' · 部分覆盖，缺失机器未计入' : ''}${node._resourceMeta ? ' · ' + node._resourceMeta : ''}`};
     });
     const signature = JSON.stringify([cells, node._resourceMeta]);
-    if (meta.dataset.resourceSignature === signature && meta.children.length === 4) return;
+    if (meta.dataset.resourceSignature === signature && meta.querySelectorAll('.item-resource').length === 4) return;
     meta.dataset.resourceSignature = signature;
     meta.classList.add('item-resource-line');
     meta.title = [node._resourceMeta, scope].filter(Boolean).join(' · ');
-    meta.innerHTML = cells.map(c => `<span class="item-resource" data-resource="${c.field}" title="${esc(c.tip)}" role="img" aria-label="${esc(c.tip)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('');
+    meta.innerHTML = `<span class="item-resource-meta" title="${esc(node._resourceMeta || '')}">${esc(node._resourceMeta || '')}</span><span class="item-resources">` + cells.map(c => `<span class="item-resource" data-resource="${c.field}" title="${esc(c.tip)}" role="img" aria-label="${esc(c.tip)}">${uiIcon(c.icon)}<span class="item-resource-value">${esc(c.value)}</span></span>`).join('') + '</span>';
   }
   function paintVisible() { document.querySelectorAll('#side .item').forEach(paint); }
   async function refresh() {

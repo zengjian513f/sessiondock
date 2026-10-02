@@ -289,5 +289,6 @@ missing sessions and measurements remain unknown.
 
 The sidebar polls once every five seconds while visible. It updates only the
 second-row badges, preserving selection, focus, expansion and list ordering.
-Old time/size/model metadata is retained in that row's tooltip. Agent subrows
+Time/size/model metadata stays on the left; compact resource badges follow it
+and align to the right. Long metadata truncates with its full text in a tooltip. Agent subrows
 without independent process attribution never copy the parent's usage.

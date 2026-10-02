@@ -2430,8 +2430,10 @@ header .btn[data-session-docked] { display: none; }
 #session-group-create-row form button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--accent); background: var(--panel); font: inherit; cursor: pointer; }
 #session-group-create-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Four compact resource values occupy the existing second line. */
-.item .m.item-resource-line { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px; line-height:16px; font-size:11px; }
-.item-resource { display:flex; align-items:center; gap:3px; min-width:0; white-space:nowrap; }
-.item-resource .ui-icon { width:12px; height:12px; flex:none; opacity:.8; }
-.item-resource-value { min-width:0; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+/* Preserve metadata; resource values form a compact trailing group. */
+.item .m.item-resource-line { display:flex; align-items:center; gap:6px; line-height:16px; }
+.item-resource-meta { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.item-resources { display:flex; align-items:center; gap:5px; margin-left:auto; flex:none; font-size:10px; }
+.item-resource { display:inline-flex; align-items:center; gap:2px; white-space:nowrap; }
+.item-resource .ui-icon { width:10px; height:10px; flex:none; opacity:.8; }
+.item-resource-value { font-variant-numeric:tabular-nums; }
