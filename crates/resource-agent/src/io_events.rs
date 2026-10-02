@@ -33,6 +33,7 @@ pub struct IoSample {
     pub device: u64,
     pub kind: IoKind,
     pub bytes: u64,
+    pub operations: u64,
     pub generation: u64,
 }
 

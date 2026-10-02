@@ -21,8 +21,9 @@ static long (*read_kernel)(void *, u32, const void *) = (void *)BPF_FUNC_probe_r
 struct config { u64 start_ns; u64 stop_ns; u32 uid; u32 padding; };
 volatile struct config config = {};
 struct key { u64 start_ns; u64 device; u64 generation; u32 pid; u32 kind; };
+struct counter { u64 bytes; u64 ops; };
 struct pending { u64 device; u32 depth; u32 kind; };
-struct { U(type, BPF_MAP_TYPE_HASH); U(max_entries, 32768); T(key, struct key); T(value, u64); } totals SEC(".maps");
+struct { U(type, BPF_MAP_TYPE_HASH); U(max_entries, 32768); T(key, struct key); T(value, struct counter); } totals SEC(".maps");
 struct { U(type, BPF_MAP_TYPE_HASH); U(max_entries, 4096); T(key, u64); T(value, struct pending); } inflight SEC(".maps");
 struct { U(type, BPF_MAP_TYPE_ARRAY); U(max_entries, 1); T(key, u32); T(value, u64); } losses SEC(".maps");
 static __attribute__((always_inline)) void loss(void) { u32 z=0; u64 *p=lookup(&losses,&z); if(p)__sync_fetch_and_add(p,1); }
@@ -33,11 +34,11 @@ static __attribute__((always_inline)) int account(u32 kind, u64 device, long ret
  if(READ(leader,t->group_leader) || !leader || READ(start,leader->start_boottime)){loss();return 0;}
  u64 timestamp=now(); if(timestamp<config.start_ns || timestamp>=config.stop_ns)return 0;
  struct key k={.start_ns=start,.device=device,.generation=(timestamp-config.start_ns)/2000000000ULL,.pid=pid_tid()>>32,.kind=kind};
- u64 *v=lookup(&totals,&k);
- if(v){__sync_fetch_and_add(v,(u64)ret);return 0;}
- u64 initial=ret;
+ struct counter *v=lookup(&totals,&k);
+ if(v){{__sync_fetch_and_add(&v->bytes,(u64)ret);__sync_fetch_and_add(&v->ops,1);}return 0;}
+ struct counter initial={.bytes=ret,.ops=1};
  if(update(&totals,&k,&initial,BPF_NOEXIST)) {
-  v=lookup(&totals,&k); if(v)__sync_fetch_and_add(v,(u64)ret);else loss();
+  v=lookup(&totals,&k); if(v){__sync_fetch_and_add(&v->bytes,(u64)ret);__sync_fetch_and_add(&v->ops,1);}else loss();
  }
  return 0;
 }

@@ -288,14 +288,14 @@ impl State {
                     || diagnostic.deadline.is_none_or(|d| d <= Instant::now())
                 {
                     for sample in &mut resources.samples {
-                        for (name, _, _) in IO_METRICS {
+                        for (name, _, _, _) in IO_METRICS {
                             sample.metrics.insert(
                                 name.into(),
                                 metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
                             );
                         }
                     }
-                    for (name, _, _) in IO_METRICS {
+                    for (name, _, _, _) in IO_METRICS {
                         resources.metric_availability.insert(
                             name.into(),
                             metric(Value::Null, "unavailable", "临时探测未开启或正在启动"),
@@ -325,36 +325,66 @@ impl State {
 fn metric(value: Value, status: &str, reason: &str) -> Value {
     json!({"value":value, "status":status, "reason":reason})
 }
-const IO_METRICS: [(&str, io_events::IoKind, &str); 6] = [
+const IO_METRICS: [(&str, io_events::IoKind, &str, bool); 10] = [
     (
         "disk_read_bytes_per_second",
         io_events::IoKind::LocalRead,
         "Synchronous local regular-file VFS reads; excludes NFS, mmap, io_uring and splice; logical bytes, not physical disk traffic",
+        false,
     ),
     (
         "disk_write_bytes_per_second",
         io_events::IoKind::LocalWrite,
         "Synchronous local regular-file VFS writes; excludes NFS, mmap, io_uring and splice; logical bytes, not physical disk traffic",
+        false,
     ),
     (
         "network_receive_bytes_per_second",
         io_events::IoKind::TcpReceive,
         "Application TCP recvmsg payload; excludes UDP, splice and kernel/NFS wire traffic",
+        false,
     ),
     (
         "network_send_bytes_per_second",
         io_events::IoKind::TcpSend,
         "Application TCP sendmsg payload; excludes UDP, splice and kernel/NFS wire traffic",
+        false,
     ),
     (
         "nfs_read_bytes_per_second",
         io_events::IoKind::NfsRead,
         "Synchronous NFS VFS reads, including page-cache hits; excludes mmap/io_uring/splice; not RPC or network bytes",
+        false,
     ),
     (
         "nfs_write_bytes_per_second",
         io_events::IoKind::NfsWrite,
         "Synchronous NFS VFS writes; excludes mmap/io_uring/splice; not RPC, retransmissions or network bytes",
+        false,
+    ),
+    (
+        "disk_read_operations_per_second",
+        io_events::IoKind::LocalRead,
+        "Successful synchronous disk file read operations including cache hits; excludes mmap/io_uring/splice; not physical device IOPS or NFS RPCs",
+        true,
+    ),
+    (
+        "disk_write_operations_per_second",
+        io_events::IoKind::LocalWrite,
+        "Successful synchronous disk file write operations including cache hits; excludes mmap/io_uring/splice; not physical device IOPS or NFS RPCs",
+        true,
+    ),
+    (
+        "nfs_read_operations_per_second",
+        io_events::IoKind::NfsRead,
+        "Successful synchronous nfs file read operations including cache hits; excludes mmap/io_uring/splice; not physical device IOPS or NFS RPCs",
+        true,
+    ),
+    (
+        "nfs_write_operations_per_second",
+        io_events::IoKind::NfsWrite,
+        "Successful synchronous nfs file write operations including cache hits; excludes mmap/io_uring/splice; not physical device IOPS or NFS RPCs",
+        true,
     ),
 ];
 
@@ -413,8 +443,10 @@ impl IoWindow {
         process: Option<&Process>,
         started_at: f64,
         total_lost: u64,
+        operations: bool,
     ) -> Value {
-        let mut result = self.measurement(kind, reason, process, started_at, total_lost);
+        let mut result =
+            self.measurement(kind, reason, process, started_at, total_lost, operations);
         result["io_lost_events_total"] = json!(total_lost);
         result
     }
@@ -425,6 +457,7 @@ impl IoWindow {
         process: Option<&Process>,
         started_at: f64,
         total_lost: u64,
+        operations: bool,
     ) -> Value {
         let lost = self.interval_lost + total_lost.saturating_sub(self.lost_before);
         if self.status != "partial" {
@@ -468,7 +501,16 @@ impl IoWindow {
                 if lost > 0 && rows.is_empty() {
                     Value::Null
                 } else {
-                    json!(rows.iter().map(|s| s.bytes as f64).sum::<f64>() / 2.0)
+                    json!(
+                        rows.iter()
+                            .map(|s| if operations {
+                                s.operations as f64
+                            } else {
+                                s.bytes as f64
+                            })
+                            .sum::<f64>()
+                            / 2.0
+                    )
                 }
             })
             .unwrap_or(Value::Null);
@@ -665,7 +707,7 @@ impl ResourceSampler {
                 }
                 sample.metrics.get_mut(name).unwrap()["refresh_interval_seconds"] = json!(10);
             }
-            for (name, kind, reason) in IO_METRICS {
+            for (name, kind, reason, operations) in IO_METRICS {
                 sample.metrics.insert(
                     name.into(),
                     io.metric(
@@ -674,6 +716,7 @@ impl ResourceSampler {
                         Some(&sample.process),
                         entry.started_at,
                         io_lost,
+                        operations,
                     ),
                 );
             }
@@ -720,8 +763,11 @@ impl ResourceSampler {
                 if !readable {"unavailable"} else if elapsed.is_none() {"warming_up"} else {"partial"},
                 "Linux /proc/PID/io storage-layer counters; not VFS/NFS logical bytes; delayed writeback attribution may differ"));
         }
-        for (name, kind, reason) in IO_METRICS {
-            metric_availability.insert(name.into(), io.metric(kind, reason, None, 0.0, io_lost));
+        for (name, kind, reason, operations) in IO_METRICS {
+            metric_availability.insert(
+                name.into(),
+                io.metric(kind, reason, None, 0.0, io_lost, operations),
+            );
         }
         let mut result = Resources {
             version: 1,
@@ -835,6 +881,7 @@ mod metric_tests {
                 Some(process),
                 0.0,
                 lost,
+                false,
             )
         };
         assert_eq!(measure(&window, &process, 0)["status"], "warming_up");
@@ -845,10 +892,22 @@ mod metric_tests {
                 device: 7,
                 kind: io_events::IoKind::NfsRead,
                 bytes: 4096,
+                operations: 8,
                 generation: 0,
             }],
         });
         assert_eq!(measure(&window, &process, 0)["value"], 2048.0);
+        assert_eq!(
+            window.metric(
+                io_events::IoKind::NfsRead,
+                "logical operations",
+                Some(&process),
+                0.0,
+                0,
+                true
+            )["value"],
+            4.0
+        );
         assert_eq!(measure(&window, &process, 0)["status"], "partial");
         assert_eq!(
             measure(
@@ -888,7 +947,7 @@ mod metric_tests {
             1,
         );
         assert_eq!(
-            window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1)["status"],
+            window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false)["status"],
             "unavailable"
         );
         window.observe(
@@ -898,7 +957,7 @@ mod metric_tests {
             },
             1,
         );
-        let value = window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1);
+        let value = window.metric(io_events::IoKind::TcpReceive, "tcp", None, 0.0, 1, false);
         assert_eq!(value["status"], "partial");
         assert_eq!(value["io_lost_events_total"], 1);
     }

@@ -52,7 +52,11 @@ class Collector:
                         self.enabled = request['data']['enabled']
                         result = {'state': 'active' if self.enabled else 'off', 'remaining_seconds': 60 if self.enabled else 0}
                     elif op == 'resources':
-                        result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': [],
+                        samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
+                                    'read_bytes': None, 'write_bytes': None, 'metrics': {
+                                        'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
+                                   for b in self.bindings]
+                        result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
                                   'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic}
                     else:
                         result = report
@@ -123,11 +127,14 @@ def main():
         page.get_by_role('button', name='查看会话资源').click()
         page.get_by_role('button', name='探测 60 秒', exact=True).click()
         page.get_by_role('button', name='停止探测', exact=True).wait_for()
+        page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).filter(has_text='12.5').first.wait_for()
+        assert '次/s' in page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).last.inner_text()
         assert [c.calls for c in collectors] == [[{'enabled': True}], [{'enabled': True}], [], []]
         view = context.request.get(resource_url).json()
         assert all(row['diagnostic']['state'] == 'active' and row['diagnostic']['remaining_seconds'] == 60 for row in view['nodes'])
         page.get_by_role('button', name='停止探测', exact=True).click()
         page.get_by_role('button', name='探测 60 秒', exact=True).wait_for()
+        page.wait_for_function("Array.from(document.querySelectorAll('.sr-metric')).filter(e => e.querySelector('dt').textContent === '本地读次数').every(e => e.querySelector('dd').textContent === '—')")
         assert all(c.calls[-1] == {'enabled': False} for c in collectors[:2])
         collectors[1].fail = True
         page.get_by_role('button', name='探测 60 秒', exact=True).click()
