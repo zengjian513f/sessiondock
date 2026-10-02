@@ -57,7 +57,9 @@ class Collector:
                                         'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
                                    for b in self.bindings]
                         result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
-                                  'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic}
+                                  'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic,
+                                  'session_measurements': [{'session': self.bindings[0]['session'], 'metrics': {
+                                      'memory_bandwidth_bytes_per_second': {'value':32*1024**2,'status':'partial','sampled_at':time.time()}}}]}
                     else:
                         result = report
                     conn.sendall(json.dumps({'ok': True, 'result': result}).encode() + b'\n')
@@ -125,6 +127,7 @@ def main():
         page.goto(base, wait_until='networkidle')
         page.locator(f'[data-uid="{uid}"]').first.click()
         page.get_by_role('button', name='查看会话资源').click()
+        assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         page.get_by_role('button', name='探测 60 秒', exact=True).click()
         page.get_by_role('button', name='停止探测', exact=True).wait_for()
         page.locator('.sr-metric').filter(has=page.locator('dt', has_text='本地读次数')).filter(has_text='12.5').first.wait_for()
@@ -136,6 +139,7 @@ def main():
         page.get_by_role('button', name='探测 60 秒', exact=True).wait_for()
         page.wait_for_function("Array.from(document.querySelectorAll('.sr-metric')).filter(e => e.querySelector('dt').textContent === '本地读次数').every(e => e.querySelector('dd').textContent === '—')")
         assert all(c.calls[-1] == {'enabled': False} for c in collectors[:2])
+        assert '64' in page.locator('.sr-totals .sr-metric').filter(has=page.locator('dt', has_text='内存带宽')).inner_text()
         collectors[1].fail = True
         page.get_by_role('button', name='探测 60 秒', exact=True).click()
         page.get_by_text('b：机器探测请求失败，请检查采集服务', exact=True).wait_for()

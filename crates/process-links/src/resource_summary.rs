@@ -9,6 +9,7 @@ pub const FIELDS: &[&str] = &[
     "gpu_count",
     "gpu_memory_bytes",
     "memory_pss_bytes",
+    "memory_bandwidth_bytes_per_second",
     "disk_read_operations_per_second",
     "disk_write_operations_per_second",
     "nfs_read_operations_per_second",
@@ -106,6 +107,36 @@ pub fn metrics(resources: &Resources, session: &Session, inclusive: bool) -> Val
                 field
             };
             let fallback = resources.metric_availability.get(key).unwrap_or(&absent);
+            if *field == "memory_bandwidth_bytes_per_second" {
+                // Group-native counters are summed once per owning session.
+                // Inclusive launch chains select child groups, not each child PID.
+                let mut owners = BTreeMap::new();
+                owners.insert((&session.node_id, &session.source, &session.sid), session);
+                for b in &resources.bindings {
+                    if selected.contains(&b.process) {
+                        owners.insert(
+                            (&b.session.node_id, &b.session.source, &b.session.sid),
+                            &b.session,
+                        );
+                    }
+                }
+                let mut value = sum(
+                    owners.values().map(|owner| {
+                        resources
+                            .session_measurements
+                            .iter()
+                            .find(|m| same(&m.session, owner))
+                            .and_then(|m| m.metrics.get(*field))
+                            .unwrap_or(fallback)
+                    }),
+                    fallback,
+                    false,
+                );
+                if value["sampled_at"].is_null() && !value["value"].is_null() {
+                    value["sampled_at"] = json!(resources.sampled_at);
+                }
+                return ((*field).to_owned(), value);
+            }
             let mut value = sum(
                 samples
                     .values()
@@ -181,6 +212,47 @@ mod tests {
         assert_eq!(inclusive["cpu_cores"]["sampled_at"], 10.0);
         assert_eq!(inclusive["gpu_count"]["value"], 1.0);
         assert_eq!(inclusive["memory_pss_bytes"]["value"], Value::Null);
+    }
+    #[test]
+    fn bandwidth_is_group_native_and_inclusive_deduplicates_owners() {
+        let mut data = fixture();
+        let parent = data.bindings[0].session.clone();
+        let child = data.bindings[1].session.clone();
+        data.bindings.push(data.bindings[1].clone());
+        data.session_measurements = vec![
+            crate::agent::SessionMeasurement {
+                session: parent.clone(),
+                metrics: BTreeMap::from([(
+                    "memory_bandwidth_bytes_per_second".into(),
+                    json!({"value":100,"status":"partial","sampled_at":12}),
+                )]),
+            },
+            crate::agent::SessionMeasurement {
+                session: child,
+                metrics: BTreeMap::from([(
+                    "memory_bandwidth_bytes_per_second".into(),
+                    json!({"value":200,"status":"partial","sampled_at":10}),
+                )]),
+            },
+        ];
+        assert_eq!(
+            metrics(&data, &parent, false)["memory_bandwidth_bytes_per_second"]["value"],
+            100.0
+        );
+        let inclusive = metrics(&data, &parent, true);
+        assert_eq!(
+            inclusive["memory_bandwidth_bytes_per_second"]["value"],
+            300.0
+        );
+        assert_eq!(
+            inclusive["memory_bandwidth_bytes_per_second"]["sampled_at"],
+            10.0
+        );
+        data.session_measurements.pop();
+        assert_eq!(
+            metrics(&data, &parent, true)["memory_bandwidth_bytes_per_second"]["status"],
+            "partial"
+        );
     }
     #[test]
     fn unavailable_machine_does_not_become_zero() {

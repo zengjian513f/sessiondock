@@ -43,6 +43,7 @@ class ResourceAgentHandler(TargetHandler):
         self.temp = temp.strip()
         self.sh.upload(self.a.binaries['resource-agent'], self.temp+'/resource-agent')
         self.sh.upload(ROOT/'deploy/resource-agent.service', self.temp+'/resource-agent.service')
+        self.sh.upload(ROOT/'deploy/sys-fs-resctrl.mount', self.temp+'/sys-fs-resctrl.mount')
         _, sha = self.sh.run('sha256sum '+q(self.temp+'/resource-agent'), check=True)
         if sha.split()[0] != self.a.sha256['resource-agent']: raise RuntimeError('collector upload hash mismatch')
         config = f'MONITOR_UID={self.uid}\nNODE_ID_FILE={self.node_file}\n'
@@ -52,7 +53,7 @@ class ResourceAgentHandler(TargetHandler):
         self.backup_dir = self.t.prefix+'/backup-deploy-'+self.a.short+'-'+stamp
         script = '\n'.join([
             'set -e', 'sudo -n mkdir -p '+q(self.backup_dir),
-            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' /etc/systemd/system/resource-agent.service /etc/resource-agent.env; do',
+            'for f in '+q(self.t.prefix+'/bin/resource-agent')+' /etc/systemd/system/resource-agent.service /etc/systemd/system/sys-fs-resctrl.mount /etc/resource-agent.env; do',
             'if [ -f "$f" ]; then sudo -n cp -p "$f" '+q(self.backup_dir)+'/; fi', 'done',
             'systemctl is-enabled '+UNIT+' > '+q(self.temp+'/enabled')+' 2>/dev/null || true',
             'sudo -n cp '+q(self.temp+'/enabled')+' '+q(self.backup_dir+'/enabled'),
@@ -65,6 +66,7 @@ class ResourceAgentHandler(TargetHandler):
             'sudo -n install -m 0755 '+q(self.temp+'/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.new'),
             'sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),
             'sudo -n install -m 0644 '+q(self.temp+'/resource-agent.service')+' /etc/systemd/system/resource-agent.service',
+            'sudo -n install -m 0644 '+q(self.temp+'/sys-fs-resctrl.mount')+' /etc/systemd/system/sys-fs-resctrl.mount',
             'sudo -n install -m 0600 '+q(self.temp+'/resource-agent.env')+' /etc/resource-agent.env',
             'sudo -n systemctl daemon-reload',
             'sudo -n systemctl enable '+UNIT,
@@ -93,13 +95,15 @@ class ResourceAgentHandler(TargetHandler):
         _, has = self.sh.run('sudo -n test -f '+q(backup_dir+'/resource-agent')+' && echo yes')
         if has.strip() == 'yes':
             self.sh.run('sudo -n cp '+q(backup_dir+'/resource-agent')+' '+q(self.t.prefix+'/bin/resource-agent.new')+' && sudo -n mv '+q(self.t.prefix+'/bin/resource-agent.new')+' '+q(self.t.prefix+'/bin/resource-agent'),check=True)
-            for name, target in [('resource-agent.service','/etc/systemd/system/resource-agent.service'),('resource-agent.env','/etc/resource-agent.env')]:
-                self.sh.run('sudo -n cp '+q(backup_dir+'/'+name)+' '+q(target),check=True)
+            for name, target in [('sys-fs-resctrl.mount','/etc/systemd/system/sys-fs-resctrl.mount'),('resource-agent.service','/etc/systemd/system/resource-agent.service'),('resource-agent.env','/etc/resource-agent.env')]:
+                self.sh.run('if sudo -n test -f '+q(backup_dir+'/'+name)+'; then sudo -n cp '+q(backup_dir+'/'+name)+' '+q(target)+'; else sudo -n rm -f '+q(target)+'; fi',check=True)
             self.sh.run('sudo -n systemctl daemon-reload',check=True)
             _, enabled = self.sh.run('sudo -n cat '+q(backup_dir+'/enabled'))
             self.sh.run('sudo -n systemctl '+('enable' if enabled.strip()=='enabled' else 'disable')+' '+UNIT,check=True)
             if self.before and self.before.active: self.restart()
         else:
+            mount_backup = q(backup_dir+'/sys-fs-resctrl.mount')
+            self.sh.run('if sudo -n test -f '+mount_backup+'; then sudo -n cp '+mount_backup+' /etc/systemd/system/sys-fs-resctrl.mount; else sudo -n rm -f /etc/systemd/system/sys-fs-resctrl.mount; fi',check=True)
             self.sh.run('sudo -n systemctl disable '+UNIT,check=True)
             self.sh.run('sudo -n rm -f /etc/systemd/system/resource-agent.service /etc/resource-agent.env '+q(self.t.prefix+'/bin/resource-agent'),check=True)
             self.sh.run('sudo -n systemctl daemon-reload',check=True)

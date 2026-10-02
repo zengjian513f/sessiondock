@@ -1,0 +1,10 @@
+[Unit]
+Description=Hardware resource monitoring filesystem
+ConditionPathExists=/sys/fs/resctrl
+Before=resource-agent.service
+
+[Mount]
+What=resctrl
+Where=/sys/fs/resctrl
+Type=resctrl
+Options=nosuid,nodev,noexec
