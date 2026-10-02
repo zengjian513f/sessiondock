@@ -411,7 +411,10 @@ instance is `409 freeze_instance_changed`. A failed OS operation is
 `503 freeze_failed`. The response includes `ok`, `frozen`, `instance_id` and
 `process_count`. `capabilities.session_freeze` is advertised only on Linux
 with lifecycle and terminal transport enabled. Supported `term/list` rows
-carry `frozen`, which also gates the Hub button per node; other nodes have no button.
+carry `frozen`, which also gates the Hub button per node. Unsupported nodes and
+sessions without a verified running instance retain a gray pause button with a
+hover explanation; it cannot submit a freeze request. The same state appears in
+the folded action menu.
 
 The server pins each process incarnation with a Linux pidfd, checks its start
 time, stops the CLI with SIGSTOP and recursively stops its descendants.

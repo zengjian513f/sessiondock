@@ -6214,19 +6214,25 @@ function unusedNewAssignedLaunch(session) {
 
 function renderSessionFreeze(m, button = $('#a-session-freeze')) {
   if (!button || m.uid !== S.sel) return;
-  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid
-    && row.instance_id && !row.stale && typeof row.frozen === 'boolean');
-  const wasHidden = button.hidden;
-  button.hidden = !row || (!HUB_MODE && SessionDockCapabilities.config.session_freeze !== true);
-  const heading = button.closest('.dhead');
-  if (wasHidden !== button.hidden && heading?.isConnected)
-    requestAnimationFrame(() => { if (heading.isConnected) layoutSessionHead(heading); });
-  if (button.hidden) return;
-  const label = row.frozen ? '恢复运行' : '冻结现场';
-  button.innerHTML = uiIcon(row.frozen ? 'play' : 'pause');
+  const row = typeof T !== 'undefined' && (T.list || []).find(row => row.uid === m.uid);
+  const reason = typeof T === 'undefined' || !T.listLoaded
+    ? '正在读取会话运行状态，请稍后重试。'
+    : !HUB_MODE && SessionDockCapabilities.config.session_freeze !== true
+      ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。'
+      : row?.stale ? '会话运行状态已失效，请等待所属节点恢复连接。'
+      : !row?.instance_id ? '当前会话没有可验证的运行实例，无法冻结现场。'
+      : typeof row.frozen !== 'boolean'
+        ? '当前节点不支持冻结现场；此功能仅适用于已启用会话管理的 Linux 节点。' : '';
+  const frozen = !reason && row.frozen;
+  const label = frozen ? '恢复运行' : '冻结现场';
+  button.hidden = false;
+  button.innerHTML = uiIcon(frozen ? 'play' : 'pause');
   button.title = button.ariaLabel = label;
-  button.setAttribute('aria-pressed', String(row.frozen));
+  button.setAttribute('aria-pressed', String(!!frozen));
+  setControlUnavailable(button, reason);
   labelSessionAction(button);
+  button.onclick = null;
+  if (reason) return;
   button.onclick = async () => {
     button.disabled = true;
     try {

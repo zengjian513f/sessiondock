@@ -58,6 +58,41 @@ def freeze_button(page):
     return button
 
 
+def check_unavailable_pause(page, reason):
+    requests = []
+    def record(request):
+        if urlsplit(request.url).path == '/api/session/freeze':
+            requests.append(request)
+    page.on('request', record)
+    for width in [1698, 390]:
+        page.set_viewport_size({'width': width, 'height': 900})
+        page.wait_for_timeout(80)
+        if width == 390 and page.locator('#side').is_visible():
+            page.locator(f'#side .item[data-uid="{page.evaluate("S.sel")}"]').click()
+        button = freeze_button(page)
+        expect(button.locator('use')).to_have_attribute('href', '#i-pause')
+        # SVG geometry catches an empty/invisible glyph, not just button layout.
+        assert button.locator('use').evaluate('e => e.getBBox().height') > 0
+        expect(button).to_have_attribute('aria-disabled', 'true')
+        expect(button).to_have_attribute('aria-label', '冻结现场')
+        expect(button).to_have_attribute('title', re.compile(reason))
+        for theme in ['light', 'dark']:
+            page.evaluate('theme => applyTheme(theme)', theme)
+            button.hover()
+            expect(button).to_have_css('color', 'rgb(107, 114, 128)' if theme == 'light' else 'rgb(139, 147, 161)')
+            expect(button).to_have_css('opacity', '0.55')
+        bounds = button.bounding_box()
+        page.mouse.click(bounds['x'] + bounds['width']/2, bounds['y'] + bounds['height']/2)
+        button.focus()
+        page.keyboard.press('Enter')
+        page.keyboard.press('Escape')
+    assert not requests, 'Unavailable pause must not submit a freeze request'
+    page.remove_listener('request', record)
+    page.evaluate("applyTheme('light')")
+    page.set_viewport_size({'width': 1280, 'height': 900})
+    print(f'PASS unavailable pause: {reason}, desktop/mobile, both themes, mouse/keyboard', flush=True)
+
+
 def check_pause_badges(page, uid):
     side = page.locator(f'#side .item[data-uid="{uid}"] > .ico > .item-status')
     header = page.locator('#dlive')
@@ -164,9 +199,22 @@ def main():
                     errors = []
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     on_popup(page, lambda dialog: dialog.accept())
+                    # Windows/macOS standalone capability: no Linux freeze support.
+                    def unsupported_page(route):
+                        response = route.fetch()
+                        body = response.text()
+                        assert '&quot;session_freeze&quot;:true' in body
+                        route.fulfill(response=response, body=body.replace(
+                            '&quot;session_freeze&quot;:true', '&quot;session_freeze&quot;:false'))
+                    page.route(base + '/', unsupported_page)
+                    page.goto(base, wait_until='networkidle')
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    check_unavailable_pause(page, '当前节点不支持冻结现场')
+                    page.unroute(base + '/', unsupported_page)
                     page.goto(base, wait_until='networkidle')
                     assert page.evaluate('SessionDockCapabilities.config.session_freeze') is True
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    check_unavailable_pause(page, '没有可验证的运行实例')
                     expect(page.locator('#a-term')).to_have_attribute('data-unavailable', 'false')
                     with page.expect_response(lambda r: urlsplit(r.url).path == '/api/term/takeover') as response:
                         page.locator('#a-term').click()
@@ -258,14 +306,33 @@ def main():
                     page = context.new_page()
                     page.on('pageerror', lambda error: errors.append(str(error)))
                     on_popup(page, lambda dialog: dialog.accept())
+                    # Hub keeps its own capability; Windows node rows omit frozen.
+                    def unsupported_rows(route):
+                        headers = {key: value for key, value in route.request.headers.items()
+                                   if key.lower() != 'x-sessiondock-list'}
+                        response = route.fetch(headers=headers)
+                        data = response.json()
+                        assert 'sessions' in data, (response.status, data)
+                        for row in data['sessions']:
+                            row.pop('frozen', None)
+                        route.fulfill(response=response, json=data)
+                    page.route('**/api/term/list', unsupported_rows)
+                    page.goto(base, wait_until='networkidle')
+                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    check_unavailable_pause(page, '当前节点不支持冻结现场')
+                    page.unroute('**/api/term/list', unsupported_rows)
                     page.goto(base, wait_until='networkidle')
                     page.locator(f'#side .item[data-uid="{uid}"]').click()
                     page.wait_for_function('uid => T.list.some(row => row.uid === uid && row.frozen === false)', arg=uid)
                     button = freeze_button(page)
                     expect(button).to_have_attribute('aria-label', '冻结现场')
+                    expect(button).not_to_have_attribute('aria-disabled', 'true')
+                    expect(button).to_have_attribute('title', '冻结现场')
                     # Mobile action menu uses the same recovery control and fits.
                     page.set_viewport_size({'width': 390, 'height': 844})
-                    page.locator(f'#side .item[data-uid="{uid}"]').click()
+                    page.wait_for_timeout(80)
+                    if page.locator('#side').is_visible():
+                        page.locator(f'#side .item[data-uid="{uid}"]').click()
                     button = freeze_button(page)
                     bounds = button.bounding_box()
                     assert bounds and bounds['x'] >= 0 and bounds['x'] + bounds['width'] <= 391, bounds
@@ -317,7 +384,8 @@ def main():
                             'request': {'op': 'kill', 'force': True}}).encode() + b'\n')
                 except OSError:
                     pass
-    print('PASS freeze browser: real parent/child stop and progress resume, idempotency, stale instance refusal, '
+    print('PASS freeze browser: unsupported Node/Hub and absent instance retain gray pause glyph and hover reason, '
+          'mouse/keyboard cannot freeze unavailable sessions, real parent/child stop and progress resume, idempotency, stale instance refusal, '
           'session-specific pause badges and unread counts, centered themed session overlay, mobile list hides overlay, single-line pause message and play control, report dialog and frozen snapshot, reload recovery, authenticated Hub, 390px menu, ordinary stop, native files preserved')
 
 
