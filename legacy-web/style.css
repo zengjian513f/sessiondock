@@ -2431,12 +2431,12 @@ header .btn[data-session-docked] { display: none; }
 #session-group-create-row form button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--accent); background: var(--panel); font: inherit; cursor: pointer; }
 #session-group-create-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
-/* Optional two-row resource column; normal metadata keeps its full row. */
+/* Optional three-row resource column; normal metadata keeps its full row. */
 #sidebar-resources-toggle { display:flex; align-items:center; gap:4px; }
 .item-resources { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:12px; row-gap:2px; align-self:center; flex:0 0 160px; padding-left:12px; border-left:1px solid var(--border); font-size:11.5px; line-height:16px; color:var(--muted); }
-.item-resource { display:flex; align-items:center; gap:5px; min-width:0; white-space:nowrap; }
+.item-resource { display:flex; align-items:center; gap:3px; min-width:0; white-space:nowrap; }
 .item-resource .ui-icon { width:12px; height:12px; flex:none; }
-.item-resource-value { margin-left:auto; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; color:var(--text); }
+.item-resource-value { overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; color:var(--text); }
 @media (max-width:600px) {
   .item-resources { flex-basis:136px; padding-left:8px; column-gap:8px; font-size:11px; }
 }

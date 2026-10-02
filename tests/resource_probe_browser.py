@@ -56,11 +56,13 @@ class Collector:
                         samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
                                     'read_bytes': None, 'write_bytes': None, 'metrics': {
                                         'cpu_cores': {'value':self.cpu,'status':'ok'},
+                                        'gpu_devices': {'value':['GPU-fixture'],'status':'partial'},
                                         'memory_pss_bytes': {'value':32*1024**2,'status':'ok'},
                                         'proc_storage_read_bytes_per_second': {'value':1024,'status':'partial'},
                                         'proc_storage_write_bytes_per_second': {'value':2048,'status':'partial'},
                                         'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
                                    for b in self.bindings]
+                        samples += samples[:1]  # Repeated records must not inflate process/GPU counts.
                         result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
                                   'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic,
                                   'session_measurements': [{'session': self.bindings[0]['session'], 'metrics': {
@@ -139,7 +141,16 @@ def main():
         toggle.click()
         assert page.locator('#left').bounding_box()['width'] == original_width + 176
         wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
-        assert sidebar.locator('.item-resources .ui-icon').count() == 4
+        assert sidebar.locator('.item-resources .ui-icon').count() == 6
+        assert sidebar.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '2'
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '2'
+        assert sidebar.locator('.item-resources').evaluate('''e => {
+            const cells=[...e.children];
+            const names=cells.map(c=>c.dataset.resource);
+            return names.join(',')==='cpu_cores,process_count,memory_pss_bytes,gpu_count,proc_storage_read_bytes_per_second,proc_storage_write_bytes_per_second'
+              && [0,2,4].every(i=>cells[i].getBoundingClientRect().top===cells[i+1].getBoundingClientRect().top)
+              && cells.every(c=>{const gap=c.querySelector('.item-resource-value').getBoundingClientRect().left-c.querySelector('.ui-icon').getBoundingClientRect().right;return gap>=2 && gap<=4;});
+        }''')
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
