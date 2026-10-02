@@ -20,6 +20,14 @@ from hub_http_suite import Hub, free_port, scoped
 from node_auth_suite import node_env, TOKEN
 
 
+def prepare_confirmed(page, node, operation):
+    """Explicit execution preparation for publication fault injection only."""
+    from node_auth_suite import GOOD
+    reply = page.request.post(f'http://127.0.0.1:{node.port}/api/session/transfer/manifest',
+                              headers=GOOD, data={'operation_id': operation})
+    assert reply.ok, reply.text()
+
+
 def prepare(root):
     cwd = root / 'workspace'
     cwd.mkdir(parents=True)
@@ -457,6 +465,7 @@ def main():
                     assert planned.ok,planned.text()
                     next_id=planned.json()['operation_id']
                     journal=corpus.root/'state/transfers'/next_id/'operation.json'
+                    prepare_confirmed(page,node,next_id)
                     next_op=json.loads(journal.read_text())
                     if not restart:
                         interrupted=journal

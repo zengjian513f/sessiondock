@@ -97,6 +97,7 @@ impl Operation {
 pub struct TransferService {
     inventory: SessionStore,
     pub(super) references: super::references::Cache,
+    relationship_refresh: std::sync::Mutex<()>,
     pub directory: PathBuf,
     pub roots: SessionRoots,
     pub home: PathBuf,
@@ -193,7 +194,8 @@ impl TransferService {
         }
         let service = Self {
             inventory: SessionStore::with_metadata(roots.clone(), metadata.clone()),
-            references: Default::default(),
+            references: super::references::Cache::open(directory.join("relationships-v1.json")),
+            relationship_refresh: Default::default(),
             directory,
             roots,
             home,
@@ -274,7 +276,52 @@ impl TransferService {
     pub fn store(&self) -> &SessionStore {
         &self.inventory
     }
+    pub fn spawn_relationship_index(
+        self: &Arc<Self>,
+        shutdown: tokio_util::sync::CancellationToken,
+    ) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            loop {
+                if shutdown.is_cancelled() {
+                    return;
+                }
+                let service = service.clone();
+                let stopping = shutdown.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let Ok(_guard) = service.relationship_refresh.lock() else {
+                        return;
+                    };
+                    let Ok(snapshot) = service.store().search_snapshot() else {
+                        return;
+                    };
+                    let index = snapshot.index();
+                    service
+                        .references
+                        .retain(&index.candidates().map(|e| e.data.clone()).collect());
+                    for entry in index.candidates() {
+                        if stopping.is_cancelled() {
+                            break;
+                        }
+                        let _ = service.references.get(entry);
+                    }
+                    service.references.save();
+                })
+                .await;
+                tokio::select! {
+                    _ = shutdown.cancelled() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(60)) => {},
+                }
+            }
+        });
+    }
     fn group(&self, selected: &str) -> Result<group::Group, TransferError> {
+        // Only the relationship inventory is serialized; page, composer and
+        // history readers use their own store and never wait on this lock.
+        let _guard = self
+            .relationship_refresh
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
         let snapshot = self
             .store()
@@ -407,34 +454,13 @@ impl TransferService {
             reclaimed_by: BTreeMap::new(),
             ownership_sequence: 0,
         };
-        // Stage at planning time: every reference/offset/native row is validated
-        // before confirmation, and retry always uses this exact identity map.
-        let staged = codex::stage(&op.plan, &directory.join("staging"))?;
-        let rewritten = native::rewrite(&op.native, &op.plan, &staged, &self.home)?;
-        if new_ids {
-            native::preflight(&rewritten)?;
-        }
-        if let Some(files) = &op.file_plan {
-            let staging = directory.join("staging-files");
-            files.stage(&staging)?;
-            for file in &files.files {
-                let stage = staging.join(&file.provider).join(&file.target);
-                op.file_publications.push(Publication {
-                    source: file.source.clone(),
-                    target: files.roots[&file.provider].join(&file.target),
-                    sha256: hash(&stage)?,
-                    symlink: file.format == "symlink",
-                    staging: stage,
-                });
-            }
-        }
         let selected_file = op
             .group()
             .members
             .iter()
             .find(|m| m.uid == selected)
             .unwrap();
-        op.target_uid = Some(self.member_target_uid(&op, selected_file, &staged)?);
+        op.target_uid = Some(self.planned_target_uid(&op, selected_file)?);
         if let Some(metadata) = &self.metadata {
             let snapshot = metadata
                 .snapshot()
@@ -470,15 +496,73 @@ impl TransferService {
                     after.insert("clone_operation".into(), op.id.clone().into());
                 }
                 op.metadata_after
-                    .insert(self.member_target_uid(&op, member, &staged)?, after.into());
+                    .insert(self.planned_target_uid(&op, member)?, after.into());
             }
         }
-        op.rewritten = Some(rewritten);
-        op.staged = Some(staged);
         self.save(&op)?;
         planning.1 = true;
         self.touch(&op.id);
         Ok(op)
+    }
+    /// Preparation belongs to execution, never to opening the preview dialog.
+    /// Persist only complete staging; interrupted preparation is rebuilt from
+    /// the same confirmed identity map on retry.
+    pub(super) fn prepare(&self, op: &mut Operation) -> Result<(), TransferError> {
+        if op.staged.is_some() {
+            return Ok(());
+        }
+        let directory = self.directory.join(&op.id);
+        for name in ["staging", "staging-files"] {
+            let path = directory.join(name);
+            if path.exists() {
+                fs::remove_dir_all(path)?;
+            }
+        }
+        op.file_publications.clear();
+        let staged = codex::stage(&op.plan, &directory.join("staging"))?;
+        let rewritten = native::rewrite(&op.native, &op.plan, &staged, &self.home)?;
+        if op.new_ids() {
+            native::preflight(&rewritten)?;
+        }
+        if let Some(files) = &op.file_plan {
+            let staging = directory.join("staging-files");
+            files.stage(&staging)?;
+            for file in &files.files {
+                let stage = staging.join(&file.provider).join(&file.target);
+                op.file_publications.push(Publication {
+                    source: file.source.clone(),
+                    target: files.roots[&file.provider].join(&file.target),
+                    sha256: hash(&stage)?,
+                    symlink: file.format == "symlink",
+                    staging: stage,
+                });
+            }
+        }
+        op.rewritten = Some(rewritten);
+        op.staged = Some(staged);
+        self.save(op)
+    }
+    fn planned_target_uid(
+        &self,
+        op: &Operation,
+        member: &group::Member,
+    ) -> Result<String, TransferError> {
+        if member.source == "codex" {
+            let file = op
+                .plan
+                .files
+                .iter()
+                .find(|f| f.source == member.path)
+                .ok_or_else(|| TransferError::new("move_identity", "缺少目标历史"))?;
+            Ok(uid(&self
+                .home
+                .join(codex::relative(file, &op.plan.identities)?)))
+        } else {
+            Ok(crate::sessions::uid_for(
+                &member.source,
+                &op.file_plan.as_ref().unwrap().member_target(member)?,
+            ))
+        }
     }
     pub fn recheck(&self, op: &Operation) -> Result<(), TransferError> {
         let current = self.group(&op.uid)?;
@@ -709,6 +793,7 @@ impl TransferService {
                 ));
             }
             self.recheck(&op)?;
+            self.prepare(&mut op)?;
         } else {
             let snapshots: Vec<super::environment::Snapshot> = serde_json::from_slice(&fs::read(
                 self.directory

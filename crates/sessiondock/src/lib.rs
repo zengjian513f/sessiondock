@@ -391,6 +391,9 @@ fn build_app(
     } else {
         None
     };
+    if let Some(service) = &transfer {
+        service.spawn_relationship_index(shutdown.clone());
+    }
     let reader = Reader {
         store: Arc::new(sessions::SessionStore::with_metadata_and_names(
             config.roots.clone(),
