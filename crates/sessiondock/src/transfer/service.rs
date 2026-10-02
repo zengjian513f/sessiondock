@@ -133,10 +133,11 @@ pub fn uid(path: &Path) -> String {
 }
 pub(super) fn persist(path: &Path, value: &impl Serialize) -> Result<(), TransferError> {
     let temp = path.with_extension("tmp");
-    let mut file = fs::File::create(&temp)?;
+    let mut file = std::io::BufWriter::new(fs::File::create(&temp)?);
     serde_json::to_writer(&mut file, value)?;
     file.write_all(b"\n")?;
-    file.sync_all()?;
+    file.flush()?;
+    file.get_ref().sync_all()?;
     fs::rename(temp, path)?;
     fs::File::open(path.parent().unwrap())?.sync_all()?;
     Ok(())
