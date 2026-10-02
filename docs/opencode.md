@@ -10,27 +10,6 @@ source with native UID `opencode:<hash>` and native SID `ses_…`.
 Only the OpenCode 2 store (`session_v2`) is supported. A database without
 that table mirrors nothing.
 
-Completed Codex command receipts can also recover OpenCode sessions kept in
-independent temporary sandbox homes (BUG-20261002-073151-2e5619). Discovery reads
-an executed Python launcher script containing `opencode run`, searches only its
-temporary job directory for `.local/share/opencode/opencode.db`, and opens those
-stores read-only. A top-level session must have been born inside that command's
-recorded execution interval and have its native SID present in command stdout;
-exactly one older initiating session must agree. User/assistant message text
-does not supply evidence. Native OpenCode children retain their own identities.
-
-Supplemental projections use `discovered-<project>/<session>` below the private
-mirror root; the default database's cleanup cannot remove them. The same evidence
-recovers their initial sidebar parent after workers exit or SessionDock restarts;
-explicit user attachment/detachment still wins. History, list and search use the
-usual OpenCode projection. Their detail explains that resume/delete in the
-original sandbox is unavailable: the default CLI must not act on another store.
-This recovery requires retained command receipts, launcher scripts and databases;
-it does not discover every possible custom HOME or promise live visibility before
-the launch command completes. `tests/opencode_spawn_browser.py` exercises six
-isolated homes, native children, chronology, diagnostic-text exclusion, browser
-history/control actions and persistent manual detachment.
-
 A pre-created launch is unused only while neither its catalog cursor nor the
 accepted conversation window contains native records. An older empty catalog
 snapshot cannot turn a populated, running session's stop action into deletion.

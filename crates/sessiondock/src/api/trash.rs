@@ -204,16 +204,6 @@ async fn delete_opencode(
                 .push(refused("not_found", "会话不存在", None));
             continue;
         };
-        if row["path"].as_str().is_some_and(|path| {
-            crate::sessions::opencode::isolated_store(std::path::Path::new(path))
-        }) {
-            outcome.failed.push(refused(
-                "opencode_sandbox_unavailable",
-                crate::sessions::opencode::ISOLATED_CONTROL_NOTE,
-                None,
-            ));
-            continue;
-        }
         let note = match liveness.state(&uid) {
             RunState::Running(detail) => {
                 outcome.skipped.push(refused(
@@ -433,7 +423,6 @@ pub async fn delete_session(
         .or_else(|| outcome.failed.pop())
         .ok_or_else(encoding)?;
     let status = match refused.code {
-        "opencode_sandbox_unavailable" => StatusCode::NOT_IMPLEMENTED,
         "not_found" => StatusCode::NOT_FOUND,
         "fork_parent_protected"
         | "session_running"
