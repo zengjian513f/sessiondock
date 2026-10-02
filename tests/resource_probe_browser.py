@@ -56,11 +56,13 @@ class Collector:
                         samples = [{'process': b['process'], 'cpu_seconds': 0, 'rss_bytes': 0, 'threads': 1,
                                     'read_bytes': None, 'write_bytes': None, 'metrics': {
                                         'cpu_cores': {'value':self.cpu,'status':'ok'},
+                                        'gpu_devices': {'value':['GPU-fixture'],'status':'partial'},
                                         'memory_pss_bytes': {'value':32*1024**2,'status':'ok'},
                                         'proc_storage_read_bytes_per_second': {'value':1024,'status':'partial'},
                                         'proc_storage_write_bytes_per_second': {'value':2048,'status':'partial'},
                                         'disk_read_operations_per_second': {'value': 12.5 if self.enabled else None, 'status': 'partial' if self.enabled else 'unavailable'}}}
                                    for b in self.bindings]
+                        samples += samples[:1]  # Repeated records must not inflate process/GPU counts.
                         result = {**report, 'availability': 'observed', 'method': 'fixture', 'samples': samples,
                                   'unavailable': [], 'metric_availability': {}, 'sessions': [], 'diagnostic': diagnostic,
                                   'session_measurements': [{'session': self.bindings[0]['session'], 'metrics': {
@@ -131,13 +133,57 @@ def main():
         page = context.new_page()
         page.goto(base, wait_until='networkidle')
         sidebar = page.locator(f'#side .item[data-uid="{uid}"]')
+        toggle = page.get_by_role('button', name='列表资源', exact=True)
+        assert toggle.get_attribute('aria-pressed') == 'false'
+        assert sidebar.locator('.item-resources').count() == 0
+        original_width = page.locator('#left').bounding_box()['width']
+        original_meta = sidebar.locator('.m').inner_text()
+        toggle.click()
+        assert page.locator('#left').bounding_box()['width'] == original_width + 176
         wait_for(lambda: sidebar.locator('[data-resource="cpu_cores"] .item-resource-value').inner_text() == '4')
-        assert sidebar.locator('.m .ui-icon').count() == 4
+        assert sidebar.locator('.item-resources .ui-icon').count() == 6
+        assert sidebar.locator('[data-resource="process_count"] .item-resource-value').inner_text() == '2'
+        assert sidebar.locator('[data-resource="gpu_count"] .item-resource-value').inner_text() == '2'
+        assert sidebar.locator('.item-resources').evaluate('''e => {
+            const cells=[...e.children];
+            const names=cells.map(c=>c.dataset.resource);
+            return names.join(',')==='cpu_cores,process_count,memory_pss_bytes,gpu_count,proc_storage_read_bytes_per_second,proc_storage_write_bytes_per_second'
+              && [0,2,4].every(i=>cells[i].getBoundingClientRect().top===cells[i+1].getBoundingClientRect().top)
+              && cells.every(c=>{const gap=c.querySelector('.item-resource-value').getBoundingClientRect().left-c.querySelector('.ui-icon').getBoundingClientRect().right;return gap>=2 && gap<=4;});
+        }''')
         assert sidebar.locator('[data-resource="memory_pss_bytes"] .item-resource-value').inner_text() == '64M'
         assert sidebar.locator('[data-resource="proc_storage_read_bytes_per_second"] .item-resource-value').inner_text() == '2K/s'
         assert sidebar.locator('[data-resource="proc_storage_write_bytes_per_second"] .item-resource-value').inner_text() == '4K/s'
-        assert '不含单独归属的子会话' in sidebar.locator('.m').get_attribute('title')
-        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm item-resource-line'
+        assert '不含单独归属的子会话' in sidebar.locator('.item-resource').first.get_attribute('title')
+        assert sidebar.locator('.body > :nth-child(2)').get_attribute('class') == 'm'
+        assert sidebar.locator('.m').inner_text() == original_meta
+        assert sidebar.evaluate("e => e.querySelector('.item-resources').getBoundingClientRect().left >= e.querySelector('.body').getBoundingClientRect().right")
+        toggle.click()
+        assert sidebar.locator('.item-resources').count() == 0
+        assert page.locator('#left').bounding_box()['width'] == original_width
+        toggle.click()
+        page.reload(wait_until='networkidle')
+        assert toggle.get_attribute('aria-pressed') == 'true'
+        assert page.locator('#left').bounding_box()['width'] == original_width + 176
+        # Rows without a star keep the same resource-column boundary.
+        star = sidebar.locator('.item-star')
+        aligned_left = sidebar.locator('.item-resources').bounding_box()['x']
+        sidebar.evaluate("e => { e._testStar=e.querySelector('.item-star'); e._testStar.remove(); }")
+        assert abs(sidebar.locator('.item-resources').bounding_box()['x']-aligned_left)<1
+        sidebar.evaluate("e => { e.append(e._testStar); delete e._testStar; }")
+        # Pointer moves change only the guide; releasing commits one new width.
+        handle = page.locator('#drag').bounding_box()
+        start_width = page.locator('#left').bounding_box()['width']
+        x, y = handle['x']+handle['width']/2, handle['y']+80
+        page.mouse.move(x,y)
+        page.mouse.down()
+        page.mouse.move(x+100,y,steps=20)
+        assert page.locator('#left').bounding_box()['width']==start_width
+        assert page.locator('#drag').bounding_box()['x']>handle['x']+90
+        page.mouse.up()
+        assert page.locator('#left').bounding_box()['width']>=start_width+99
+        page.locator('#drag').dblclick()
+        assert page.locator('#left').bounding_box()['width']==original_width+176
         sidebar.click()
         saved = sidebar.element_handle()
         collectors[0].cpu = 3
@@ -155,7 +201,8 @@ def main():
         if not sidebar.is_visible():
             page.locator('.mobile-back:visible').click()
         assert sidebar.is_visible()
-        assert sidebar.locator('.m').evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
+        assert sidebar.evaluate('(e) => e.clientWidth > 0 && e.scrollWidth <= e.clientWidth')
+        assert sidebar.locator('.item-resources').is_visible()
         page.screenshot(path='/tmp/sidebar-resources-mobile.png')
         page.set_viewport_size({'width':1280,'height':960})
 

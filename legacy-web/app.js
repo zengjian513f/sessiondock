@@ -8904,6 +8904,7 @@ function toggleNestFold(uid) {
 
 // ---------------------------------------------------------------- 栏宽拖动
 const SIDE_DEFAULT = 340;
+const sideResourceExtra = () => document.body.classList.contains('sidebar-resources') ? 176 : 0;
 
 function setSideWidth(px, save) {
   if (MOBILE.matches) {
@@ -8914,7 +8915,7 @@ function setSideWidth(px, save) {
   $('#left').style.width = w + 'px';
   document.documentElement.style.setProperty('--side-width',
     document.body.classList.contains('side-collapsed') ? '0px' : w + 'px');
-  if (save) store.set('width', w);
+  if (save) store.set('width', Math.max(200, w - sideResourceExtra()));
 }
 
 function setSideCollapsed(collapsed, save = true) {
@@ -8939,27 +8940,42 @@ $('#side-toggle').onclick = () => setSideCollapsed(
 // 横屏手机和平板也走这套桌面分栏；手指拖动只产生 pointer/touch 事件，
 // 浏览器不会为触摸合成 mousemove，所以和 #tgrip 一样用 pointer 事件加捕获。
 let dragging = false;
-let dragPointer = null;
-$('#drag').addEventListener('pointerdown', e => {
+let dragPointer = null, dragWidth = 0, dragStartWidth = 0, dragFrame = 0;
+const sideDragHandle = $('#drag');
+sideDragHandle.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || dragging) return;
   dragging = true;
   dragPointer = e.pointerId;
+  dragWidth = dragStartWidth = $('#left').getBoundingClientRect().width;
   e.currentTarget.setPointerCapture?.(e.pointerId);
   document.body.classList.add('dragging');
-  e.preventDefault();                 // 否则拖动会选中文本、输入框失焦
+  e.preventDefault();
 });
 document.addEventListener('pointermove', e => {
-  if (dragging && e.pointerId === dragPointer) setSideWidth(e.clientX);
+  if (!dragging || e.pointerId !== dragPointer) return;
+  dragWidth = Math.round(Math.max(200, Math.min(e.clientX, window.innerWidth - 320)));
+  if (!dragFrame) dragFrame = requestAnimationFrame(() => {
+    dragFrame = 0;
+    // Move only the compositor-backed guide; leave thousands of rows and the
+    // terminal at their current size until the gesture finishes.
+    sideDragHandle.style.transform = `translateX(${dragWidth - dragStartWidth}px)`;
+  });
 });
 function finishSideDrag(e) {
   if (!dragging || e.pointerId !== dragPointer) return;
+  const commit = e.type === 'pointerup';
   dragging = false;
   dragPointer = null;
+  cancelAnimationFrame(dragFrame);
+  dragFrame = 0;
+  sideDragHandle.style.removeProperty('transform');
   document.body.classList.remove('dragging');
-  setSideWidth(parseInt($('#left').style.width, 10), true);
+  if (commit) setSideWidth(dragWidth, true);
 }
 document.addEventListener('pointerup', finishSideDrag);
 document.addEventListener('pointercancel', finishSideDrag);
-$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT, true));
+sideDragHandle.addEventListener('lostpointercapture', finishSideDrag);
+$('#drag').addEventListener('dblclick', () => setSideWidth(SIDE_DEFAULT + sideResourceExtra(), true));
 window.addEventListener('resize', () => setSideWidth(
   parseInt($('#left').style.width, 10) || store.get('width', SIDE_DEFAULT)));
 MOBILE.addEventListener?.('change', e => {
@@ -8976,7 +8992,7 @@ MOBILE.addEventListener?.('change', e => {
   }
   syncSessionStopNotice();
   syncMobileViewport();
-  setSideWidth(store.get('width', SIDE_DEFAULT));
+  setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
   setSideCollapsed(store.get('sideCollapsed', false), false);
 });
 
@@ -10072,7 +10088,7 @@ if (backendNotice && SessionDockCapabilities.config.configuration_error) {
   backendNotice.textContent = '能力配置无效，请检查服务配置。';
   backendNotice.hidden = false;
 }
-setSideWidth(store.get('width', SIDE_DEFAULT));
+setSideWidth(store.get('width', SIDE_DEFAULT) + sideResourceExtra());
 setSideCollapsed(store.get('sideCollapsed', false), false);
 renderOpts();
 renderPickBar();
